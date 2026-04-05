@@ -17,6 +17,7 @@ function analyticsApp() {
         trackerStatusKind: "info",
         detail: null,
         detailImageIndex: 0,
+        activeView: "overview",
     };
 
     const elements = {};
@@ -27,6 +28,17 @@ function analyticsApp() {
         elements.searchButtonLabel = document.getElementById("search-btn-label");
         elements.errorBar = document.getElementById("error-bar");
         elements.errorText = document.getElementById("error-text");
+        elements.helperPanel = document.getElementById("helper-panel");
+        elements.summaryStrip = document.getElementById("summary-strip");
+        elements.summaryQuery = document.getElementById("summary-query");
+        elements.summaryMedian = document.getElementById("summary-median");
+        elements.summaryCoverage = document.getElementById("summary-coverage");
+        elements.viewTabs = Array.from(document.querySelectorAll("[data-view]"));
+        elements.views = {
+            overview: document.getElementById("overview-view"),
+            ads: document.getElementById("ads-view"),
+            trackers: document.getElementById("trackers-view"),
+        };
         elements.statsSection = document.getElementById("stats-section");
         elements.chartSection = document.getElementById("chart-section");
         elements.segmentsSection = document.getElementById("segments-section");
@@ -46,7 +58,6 @@ function analyticsApp() {
         elements.listingsList = document.getElementById("listings-list");
         elements.sortButtons = Array.from(document.querySelectorAll("[data-sort]"));
         elements.quickChips = Array.from(document.querySelectorAll("[data-query]"));
-        elements.capabilityButtons = Array.from(document.querySelectorAll("[data-section-target], [data-action]"));
         elements.trackerPanel = document.getElementById("tracker-panel");
         elements.trackQueryButton = document.getElementById("track-query-btn");
         elements.reloadTrackersButton = document.getElementById("reload-trackers-btn");
@@ -215,11 +226,13 @@ function analyticsApp() {
         const message = typeof state.error === "string" ? state.error.trim() : "";
         if (!message) {
             elements.errorBar.hidden = true;
+            elements.errorBar.classList.remove("is-visible");
             elements.errorText.textContent = "";
             return;
         }
         elements.errorText.textContent = message;
         elements.errorBar.hidden = false;
+        elements.errorBar.classList.add("is-visible");
     }
 
     function renderLoading() {
@@ -235,6 +248,43 @@ function analyticsApp() {
     function renderCurrencyButtons() {
         for (const [currency, button] of Object.entries(elements.currencyButtons)) {
             button.classList.toggle("active", state.currency === currency);
+        }
+    }
+
+    function renderViewTabs() {
+        for (const button of elements.viewTabs) {
+            button.classList.toggle("active", button.dataset.view === state.activeView);
+        }
+    }
+
+    function renderSummary() {
+        if (!state.stats || !state.query) {
+            elements.summaryStrip.hidden = true;
+            elements.summaryQuery.textContent = "—";
+            elements.summaryMedian.textContent = "—";
+            elements.summaryCoverage.textContent = "—";
+            return;
+        }
+
+        elements.summaryQuery.textContent = state.query;
+        elements.summaryMedian.textContent = formatPrice(state.stats.median);
+        elements.summaryCoverage.textContent =
+            `${state.stats.analyzed_count || state.stats.count || 0} / ${state.stats.total_results || 0}`;
+        elements.summaryStrip.hidden = false;
+    }
+
+    function renderHelper() {
+        const shouldShow =
+            !state.loading &&
+            !state.error &&
+            !state.stats &&
+            state.activeView !== "trackers";
+        elements.helperPanel.hidden = !shouldShow;
+    }
+
+    function renderViews() {
+        for (const [name, panel] of Object.entries(elements.views)) {
+            panel.hidden = state.activeView !== name;
         }
     }
 
@@ -380,7 +430,7 @@ function analyticsApp() {
         }
 
         elements.trackerStatus.textContent = message;
-        elements.trackerStatus.className = `tracker-status ${state.trackerStatusKind}`;
+        elements.trackerStatus.className = `tracker-status is-visible ${state.trackerStatusKind}`;
         elements.trackerStatus.hidden = false;
     }
 
@@ -518,44 +568,15 @@ function analyticsApp() {
         renderDetailModal();
     }
 
-    function scrollToElement(element) {
-        if (!element) return;
-        window.requestAnimationFrame(() => {
-            element.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-    }
+    async function switchView(view) {
+        state.activeView = view;
+        renderViewTabs();
+        renderViews();
+        renderHelper();
 
-    async function openFeatureCard(button) {
-        const action = button.dataset.action;
-        if (action === "tracker-help") {
-            scrollToElement(elements.trackerPanel);
-            return;
+        if (view === "ads" && state.query && !state.listings.length && !state.loading) {
+            await search("ads");
         }
-
-        const sectionId = button.dataset.sectionTarget;
-        const sortTarget = button.dataset.sortTarget;
-        const targetElement = sectionId ? document.getElementById(sectionId) : null;
-        const hasQuery = Boolean(elements.searchInput.value.trim());
-
-        if (!hasQuery && sectionId !== "rate-strip") {
-            elements.searchInput.focus();
-            return;
-        }
-
-        if (sortTarget && state.sort !== sortTarget) {
-            if (state.stats) {
-                await loadListings(sortTarget);
-            } else {
-                state.sort = sortTarget;
-                renderSortButtons();
-            }
-        }
-
-        if (hasQuery && !state.stats && sectionId !== "rate-strip") {
-            await search();
-        }
-
-        scrollToElement(targetElement);
     }
 
     async function openListingDetail(item) {
@@ -664,7 +685,11 @@ function analyticsApp() {
     function renderAll() {
         renderLoading();
         renderError();
+        renderHelper();
+        renderSummary();
         renderCurrencyButtons();
+        renderViewTabs();
+        renderViews();
         renderSortButtons();
         renderStats();
         renderSegments();
@@ -743,9 +768,10 @@ function analyticsApp() {
         }
     }
 
-    async function search() {
+    async function search(targetView = null) {
         state.query = elements.searchInput.value.trim();
         if (!state.query) return;
+        state.activeView = targetView || (state.activeView === "trackers" ? "overview" : state.activeView);
 
         state.loading = true;
         state.error = null;
@@ -815,11 +841,13 @@ function analyticsApp() {
     }
 
     function bindEvents() {
-        elements.searchButton.addEventListener("click", search);
+        elements.searchButton.addEventListener("click", () => {
+            void search();
+        });
         elements.searchInput.addEventListener("keydown", (event) => {
             if (event.key === "Enter") {
                 event.preventDefault();
-                search();
+                void search();
             }
         });
         elements.searchInput.addEventListener("input", () => {
@@ -840,13 +868,13 @@ function analyticsApp() {
                 elements.searchInput.value = query;
                 state.query = query;
                 renderLoading();
-                search();
+                void search("overview");
             });
         }
 
-        for (const button of elements.capabilityButtons) {
+        for (const button of elements.viewTabs) {
             button.addEventListener("click", () => {
-                void openFeatureCard(button);
+                void switchView(button.dataset.view || "overview");
             });
         }
 

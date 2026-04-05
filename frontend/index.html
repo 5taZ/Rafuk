@@ -68,37 +68,27 @@
         <button class="quick-chip" data-query="playstation 5" type="button">PlayStation 5</button>
     </section>
 
-    <section class="capabilities-section" aria-label="Функции Mini App">
-        <button class="cap-card" data-section-target="stats-section" type="button">
-            <span class="cap-badge">Mini App</span>
-            <strong class="cap-title">Средняя цена</strong>
-            <span class="cap-copy">Медиана, среднее, диапазон и охват полного рынка.</span>
-        </button>
-        <button class="cap-card" data-section-target="listings-section" data-sort-target="newest" type="button">
-            <span class="cap-badge">Mini App</span>
-            <strong class="cap-title">Новые объявления</strong>
-            <span class="cap-copy">Свежая лента по запросу с ценой и быстрым переходом.</span>
-        </button>
-        <button class="cap-card" data-section-target="listings-section" type="button">
-            <span class="cap-badge">Mini App</span>
-            <strong class="cap-title">Топ объявлений</strong>
-            <span class="cap-copy">Сортировка по новизне, цене и близости к медиане.</span>
-        </button>
-        <button class="cap-card" data-section-target="segments-section" type="button">
-            <span class="cap-badge">Mini App</span>
-            <strong class="cap-title">Срез по фильтрам</strong>
-            <span class="cap-copy">Новый / б.у. и частник / магазин по отдельным сегментам.</span>
-        </button>
-        <button class="cap-card" data-section-target="rate-strip" type="button">
-            <span class="cap-badge">Mini App</span>
-            <strong class="cap-title">BYN и USD</strong>
-            <span class="cap-copy">Переключение валют и актуальный курс НБРБ.</span>
-        </button>
-        <button class="cap-card is-muted" data-action="tracker-help" type="button">
-            <span class="cap-badge">Бот</span>
-            <strong class="cap-title">Детектор новых объявлений</strong>
-            <span class="cap-copy">Уведомления о новых лотах пока запускаются через `/track`.</span>
-        </button>
+    <nav class="view-nav" aria-label="Разделы Mini App">
+        <button class="view-tab active" data-view="overview" type="button">Обзор</button>
+        <button class="view-tab" data-view="ads" type="button">Объявления</button>
+        <button class="view-tab" data-view="trackers" type="button">Трекеры</button>
+    </nav>
+
+    <section class="summary-strip" id="summary-strip" hidden>
+        <div class="summary-main">
+            <span class="summary-kicker">Текущий запрос</span>
+            <strong class="summary-query" id="summary-query">—</strong>
+        </div>
+        <div class="summary-metrics">
+            <div class="summary-pill">
+                <span class="summary-pill-label">Медиана</span>
+                <strong class="summary-pill-value mono" id="summary-median">—</strong>
+            </div>
+            <div class="summary-pill">
+                <span class="summary-pill-label">Охват</span>
+                <strong class="summary-pill-value mono" id="summary-coverage">—</strong>
+            </div>
+        </div>
     </section>
 
     <div class="err-bar" id="error-bar" hidden>
@@ -111,87 +101,99 @@
         <span id="error-text"></span>
     </div>
 
-    <section class="section" id="stats-section" hidden>
-        <div class="sec-head">
-            <h2 class="sec-title">Статистика</h2>
-            <span class="badge" id="market-total-badge"></span>
-        </div>
-        <div class="stats-grid" id="stats-grid">
-            <div class="stat-card is-accent">
-                <span class="stat-lbl">Медиана</span>
-                <span class="stat-val mono" id="stat-median">—</span>
-                <span class="stat-sub"></span>
+    <div class="helper-panel" id="helper-panel">
+        Введите запрос или выберите быстрый сценарий выше. Основная аналитика собрана в разделе
+        <span class="mono">Обзор</span>, свежие лоты лежат в <span class="mono">Объявления</span>,
+        а мониторинг новых лотов находится в <span class="mono">Трекеры</span>.
+    </div>
+
+    <section class="view-panel" id="overview-view">
+        <section class="section" id="stats-section" hidden>
+            <div class="sec-head">
+                <h2 class="sec-title">Статистика</h2>
+                <span class="badge" id="market-total-badge"></span>
             </div>
-            <div class="stat-card">
-                <span class="stat-lbl">Среднее</span>
-                <span class="stat-val mono" id="stat-mean">—</span>
-                <span class="stat-sub"></span>
+            <div class="stats-grid" id="stats-grid">
+                <div class="stat-card is-accent">
+                    <span class="stat-lbl">Медиана</span>
+                    <span class="stat-val mono" id="stat-median">—</span>
+                    <span class="stat-sub"></span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-lbl">Среднее</span>
+                    <span class="stat-val mono" id="stat-mean">—</span>
+                    <span class="stat-sub"></span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-lbl">Минимум</span>
+                    <span class="stat-val mono" id="stat-min">—</span>
+                    <span class="stat-sub"></span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-lbl">Максимум</span>
+                    <span class="stat-val mono" id="stat-max">—</span>
+                    <span class="stat-sub"></span>
+                </div>
+                <div class="stat-card wide">
+                    <span class="stat-lbl">Охват</span>
+                    <span class="stat-val mono" id="stat-coverage">—</span>
+                    <span class="stat-sub">с ценой / всего на рынке</span>
+                </div>
             </div>
-            <div class="stat-card">
-                <span class="stat-lbl">Минимум</span>
-                <span class="stat-val mono" id="stat-min">—</span>
-                <span class="stat-sub"></span>
+        </section>
+
+        <section class="section" id="chart-section" hidden>
+            <div class="sec-head">
+                <h2 class="sec-title">Распределение цен</h2>
             </div>
-            <div class="stat-card">
-                <span class="stat-lbl">Максимум</span>
-                <span class="stat-val mono" id="stat-max">—</span>
-                <span class="stat-sub"></span>
+            <div class="chart-box">
+                <canvas id="priceChart"></canvas>
             </div>
-            <div class="stat-card wide">
-                <span class="stat-lbl">Охват</span>
-                <span class="stat-val mono" id="stat-coverage">—</span>
-                <span class="stat-sub">с ценой / всего на рынке</span>
+        </section>
+
+        <section class="section" id="segments-section" hidden>
+            <div class="sec-head">
+                <h2 class="sec-title">По сегментам</h2>
             </div>
-        </div>
+            <div class="segs-grid" id="segments-grid"></div>
+        </section>
     </section>
 
-    <section class="section" id="chart-section" hidden>
-        <div class="sec-head">
-            <h2 class="sec-title">Распределение цен</h2>
-        </div>
-        <div class="chart-box">
-            <canvas id="priceChart"></canvas>
-        </div>
-    </section>
-
-    <section class="section" id="segments-section" hidden>
-        <div class="sec-head">
-            <h2 class="sec-title">По сегментам</h2>
-        </div>
-        <div class="segs-grid" id="segments-grid"></div>
-    </section>
-
-    <section class="section" id="listings-section" hidden>
-        <div class="sec-head listings-head">
-            <h2 class="sec-title">Объявления</h2>
-            <span class="badge" id="listings-total-badge"></span>
-        </div>
-        <div class="sort-row">
-            <button class="s-tab active" data-sort="newest" type="button">Новые</button>
-            <button class="s-tab" data-sort="price_asc" type="button">Дешевле</button>
-            <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
-            <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
-        </div>
-        <div class="listings-list" id="listings-list"></div>
-    </section>
-
-    <section class="section" id="tracker-panel">
-        <div class="sec-head">
-            <h2 class="sec-title">Детектор новинок</h2>
-            <span class="badge">Mini App + бот</span>
-        </div>
-        <div class="tracker-card">
-            <p class="tracker-title">Следите за запросом прямо в Mini App.</p>
-            <p class="tracker-copy">
-                Добавьте текущий запрос в мониторинг, а уведомление о новом лоте придёт в чат Telegram.
-            </p>
-            <div class="tracker-actions">
-                <button class="primary-btn" id="track-query-btn" type="button">Следить за текущим запросом</button>
-                <button class="ghost-btn" id="reload-trackers-btn" type="button">Обновить список</button>
+    <section class="view-panel" id="ads-view" hidden>
+        <section class="section" id="listings-section" hidden>
+            <div class="sec-head listings-head">
+                <h2 class="sec-title">Объявления</h2>
+                <span class="badge" id="listings-total-badge"></span>
             </div>
-            <div class="tracker-status" id="tracker-status" hidden></div>
-            <div class="trackers-list" id="trackers-list"></div>
-        </div>
+            <div class="sort-row">
+                <button class="s-tab active" data-sort="newest" type="button">Новые</button>
+                <button class="s-tab" data-sort="price_asc" type="button">Дешевле</button>
+                <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
+                <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
+            </div>
+            <div class="listings-list" id="listings-list"></div>
+        </section>
+    </section>
+
+    <section class="view-panel" id="trackers-view" hidden>
+        <section class="section" id="tracker-panel">
+            <div class="sec-head">
+                <h2 class="sec-title">Детектор новинок</h2>
+                <span class="badge">Mini App + бот</span>
+            </div>
+            <div class="tracker-card">
+                <p class="tracker-title">Следите за запросом прямо в Mini App.</p>
+                <p class="tracker-copy">
+                    Добавьте текущий запрос в мониторинг, а уведомление о новом лоте придёт в чат Telegram.
+                </p>
+                <div class="tracker-actions">
+                    <button class="primary-btn" id="track-query-btn" type="button">Следить за текущим запросом</button>
+                    <button class="ghost-btn" id="reload-trackers-btn" type="button">Обновить список</button>
+                </div>
+                <div class="tracker-status" id="tracker-status" hidden></div>
+                <div class="trackers-list" id="trackers-list"></div>
+            </div>
+        </section>
     </section>
 
     <div class="detail-modal" id="detail-modal" hidden>
