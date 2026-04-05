@@ -35,7 +35,7 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
     from api.main import create_app
     from api.routers import segments
 
-    async def fake_parallel_search(client, tasks, settings):
+    async def fake_parallel_search_all(client, tasks, settings):
         del client, tasks, settings
         return [
             {"ads": [{"price_byn": 200000}]},
@@ -45,7 +45,7 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
         ]
 
     monkeypatch.setattr(segments, "KufarClient", FakeKufarClient)
-    monkeypatch.setattr(segments, "parallel_search", fake_parallel_search)
+    monkeypatch.setattr(segments, "parallel_search_all", fake_parallel_search_all)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()

@@ -100,6 +100,52 @@ class KufarClient:
             f"Kufar API request failed after {MAX_RETRIES} attempts"
         ) from last_error
 
+    async def search_all_ads(
+        self,
+        query: str,
+        size: int = 200,
+        currency: str = "USD",
+        sort: str = "lst.d",
+        region: int | None = None,
+        condition: str | None = None,
+        seller_type: str | None = None,
+    ) -> dict[str, Any]:
+        response = await self.search(
+            query=query,
+            size=size,
+            currency=currency,
+            sort=sort,
+            region=region,
+            condition=condition,
+            seller_type=seller_type,
+        )
+        ads = list(response.get("ads", []))
+        total = self.extract_total(response) or len(ads)
+        cursor = self.extract_next_cursor(response)
+
+        while cursor:
+            page = await self.search(
+                query=query,
+                size=size,
+                currency=currency,
+                sort=sort,
+                cursor=cursor,
+                region=region,
+                condition=condition,
+                seller_type=seller_type,
+            )
+            ads.extend(page.get("ads", []))
+            cursor = self.extract_next_cursor(page)
+            if total and len(ads) >= total:
+                break
+
+        return {
+            **response,
+            "ads": ads,
+            "total": total,
+            "fetched_count": len(ads),
+        }
+
     @staticmethod
     def extract_next_cursor(response: dict[str, Any]) -> str | None:
         try:
@@ -109,3 +155,16 @@ class KufarClient:
         if not pages:
             return None
         return pages[0].get("token")
+
+    @staticmethod
+    def extract_total(response: dict[str, Any]) -> int | None:
+        try:
+            total = response.get("total")
+        except AttributeError:
+            return None
+        if total is None:
+            return None
+        try:
+            return int(total)
+        except (TypeError, ValueError):
+            return None

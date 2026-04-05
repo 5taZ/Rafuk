@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.config import get_settings
 from api.database import get_engine, get_session_factory
 from api.models import Base
-from api.routers import currency, listings, price_stats, segments
+from api.routers import currency, listing_detail, listings, price_stats, segments, trackers
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
 
@@ -50,6 +50,8 @@ def create_app() -> FastAPI:
     app.include_router(listings.router, prefix="/api/v1")
     app.include_router(segments.router, prefix="/api/v1")
     app.include_router(currency.router, prefix="/api/v1")
+    app.include_router(listing_detail.router, prefix="/api/v1")
+    app.include_router(trackers.router, prefix="/api/v1")
     return app
 
 

@@ -9,7 +9,7 @@ from api.services.aggregator import compute_price_stats, extract_prices
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
-from api.services.parallel_kufar import parallel_search
+from api.services.parallel_kufar import parallel_search_all
 
 router = APIRouter(tags=["analytics"])
 
@@ -72,7 +72,7 @@ async def get_segments(
         },
     ]
     try:
-        responses = await parallel_search(client, tasks, settings)
+        responses = await parallel_search_all(client, tasks, settings)
     finally:
         await client.aclose()
 

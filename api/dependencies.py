@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from fastapi import Header, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings, get_settings
+from api.database import get_engine
+from api.database import get_session_factory as build_session_factory
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
 from api.services.cache import CacheBackend, RedisCache
 from api.services.currency_service import CurrencyService
@@ -24,6 +27,13 @@ def get_currency_service(request: Request) -> CurrencyService:
     if service is not None:
         return service
     return CurrencyService(get_cache(request))
+
+
+def get_session_factory_dependency(request: Request) -> async_sessionmaker[AsyncSession]:
+    factory = getattr(request.app.state, "session_factory", None)
+    if factory is not None:
+        return factory
+    return build_session_factory(get_engine())
 
 
 def get_telegram_user(

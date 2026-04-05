@@ -26,9 +26,10 @@ class FakeKufarClient:
     def __init__(self, settings) -> None:
         del settings
 
-    async def search(self, **kwargs) -> dict:
+    async def search_all_ads(self, **kwargs) -> dict:
         del kwargs
         return {
+            "total": 7,
             "ads": [
                 {
                     "ad_id": 1,
@@ -59,5 +60,6 @@ def test_listings_endpoint_returns_items(monkeypatch) -> None:
         response = client.get("/api/v1/listings", params={"query": "iphone", "currency": "USD"})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["total"] == 1
+    assert payload["total"] == 7
+    assert payload["returned"] == 1
     assert payload["listings"][0]["title"] == "iPhone 15"

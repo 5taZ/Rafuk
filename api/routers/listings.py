@@ -16,6 +16,7 @@ from api.services.aggregator import (
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
+from api.services.listing_mapper import first_image_url
 
 router = APIRouter(tags=["analytics"])
 
@@ -36,7 +37,7 @@ async def get_listings(
 
     client = KufarClient(settings)
     try:
-        response = await client.search(query=query, currency=currency)
+        response = await client.search_all_ads(query=query, currency=currency)
     finally:
         await client.aclose()
 
@@ -45,8 +46,9 @@ async def get_listings(
     rates_payload = await currency_service.get_rates()
     rates = rates_payload["rates"]
 
+    sorted_ads = sort_listings(ads, sort, median_byn)
     listings = []
-    for ad in sort_listings(ads, sort, median_byn):
+    for ad in sorted_ads[:200]:
         price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
         listings.append(
             ListingItem(
@@ -60,6 +62,7 @@ async def get_listings(
                 condition=get_param(ad, "condition"),
                 seller_type=get_param(ad, "seller_type"),
                 price_vs_median=compute_price_vs_median(ad, median_byn),
+                thumbnail=first_image_url(ad),
             )
         )
 
@@ -67,7 +70,8 @@ async def get_listings(
         query=query,
         currency=currency,
         sort=sort,
-        total=len(listings),
+        total=int(response.get("total", len(ads))),
+        returned=len(listings),
         listings=listings,
     )
     await cache.set_json(

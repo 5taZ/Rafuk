@@ -131,3 +131,28 @@ async def test_search_parses_next_cursor(ok_response: MagicMock, mock_settings: 
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=ok_response):
         result = await KufarClient(mock_settings).search(query="test")
     assert KufarClient.extract_next_cursor(result) == "next_cursor_token"
+
+
+@pytest.mark.asyncio
+async def test_search_all_ads_collects_all_pages(mock_settings: MagicMock) -> None:
+    first = MagicMock(spec=httpx.Response)
+    first.raise_for_status = MagicMock()
+    first.json.return_value = {
+        "ads": [{"ad_id": 1}, {"ad_id": 2}],
+        "pagination": {"pages": [{"token": "cursor-2"}]},
+        "total": 3,
+    }
+    second = MagicMock(spec=httpx.Response)
+    second.raise_for_status = MagicMock()
+    second.json.return_value = {
+        "ads": [{"ad_id": 3}],
+        "pagination": {"pages": []},
+        "total": 3,
+    }
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=[first, second]):
+        result = await KufarClient(mock_settings).search_all_ads(query="test")
+
+    assert result["total"] == 3
+    assert result["fetched_count"] == 3
+    assert [ad["ad_id"] for ad in result["ads"]] == [1, 2, 3]

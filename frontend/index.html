@@ -1,9 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="dark light">
     <title>Kufar Analytics</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
+        rel="stylesheet"
+    >
     <link rel="stylesheet" href="css/style.css">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -11,127 +18,222 @@
     <script defer src="js/app.js"></script>
 </head>
 <body>
-    <main class="shell" x-data="analyticsApp()" x-init="init()">
-        <section class="hero">
-            <div>
-                <p class="eyebrow">Marketplace Pulse</p>
-                <h1>Kufar market analytics without manual scrolling.</h1>
-                <p class="lede">
-                    Compare median prices, inspect fresh listings, and split the market by item
-                    condition and seller type.
-                </p>
+<div class="app" id="app-root">
+    <header class="header">
+        <div class="header-inner">
+            <div class="logo">
+                <div class="logo-mark">KA</div>
+                <span class="logo-name">Kufar Analytics</span>
             </div>
-            <form class="search-panel" @submit.prevent="search()">
-                <label class="field">
-                    <span>Search query</span>
-                    <input type="text" x-model="query" placeholder="iPhone 15 Pro 256GB">
-                </label>
-                <div class="row">
-                    <label class="field compact">
-                        <span>Currency</span>
-                        <select x-model="currency">
-                            <option value="USD">USD</option>
-                            <option value="EUR">EUR</option>
-                            <option value="BYN">BYN</option>
-                        </select>
-                    </label>
-                    <label class="field compact">
-                        <span>Sort</span>
-                        <select x-model="sort" @change="loadListings(sort)">
-                            <option value="newest">Newest</option>
-                            <option value="price_asc">Price ↑</option>
-                            <option value="price_desc">Price ↓</option>
-                            <option value="near_median">Near median</option>
-                        </select>
-                    </label>
-                </div>
-                <button type="submit" class="primary">Analyze listings</button>
-            </form>
-        </section>
-
-        <template x-if="error">
-            <div class="error" x-text="error"></div>
-        </template>
-
-        <section class="stats-grid">
-            <article class="stat-card">
-                <span class="label">Mean</span>
-                <strong x-text="formatPrice(stats?.mean ?? 0)"></strong>
-            </article>
-            <article class="stat-card">
-                <span class="label">Median</span>
-                <strong x-text="formatPrice(stats?.median ?? 0)"></strong>
-            </article>
-            <article class="stat-card">
-                <span class="label">Min</span>
-                <strong x-text="formatPrice(stats?.min ?? 0)"></strong>
-            </article>
-            <article class="stat-card">
-                <span class="label">Max</span>
-                <strong x-text="formatPrice(stats?.max ?? 0)"></strong>
-            </article>
-            <article class="stat-card accent">
-                <span class="label">Count</span>
-                <strong x-text="stats?.count ?? 0"></strong>
-            </article>
-        </section>
-
-        <section class="panel chart-panel">
-            <div class="panel-header">
-                <h2>Distribution snapshot</h2>
-                <p>Q1, median, and max values after price cleanup.</p>
+            <div class="currency-toggle">
+                <button class="cur-btn active" id="btn-byn" type="button">BYN</button>
+                <button class="cur-btn" id="btn-usd" type="button">USD</button>
             </div>
-            <template x-if="loading">
-                <div class="skeleton chart-skeleton"></div>
-            </template>
+        </div>
+        <div class="rate-strip" id="rate-strip" hidden>
+            <span class="rate-label">Курс НБРБ</span>
+            <span class="rate-meta">1 USD =</span>
+            <span class="rate-value mono" id="usd-rate-value">—</span>
+        </div>
+    </header>
+
+    <section class="search-section">
+        <div class="search-wrap">
+            <div class="search-icon-wrap">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+            </div>
+            <input
+                id="search-input"
+                type="search"
+                class="search-input"
+                placeholder="iPhone 15, ноутбук, велосипед..."
+                autocomplete="off"
+                autocorrect="off"
+                spellcheck="false"
+            >
+            <button class="search-btn" id="search-btn" type="button">
+                <span id="search-btn-label">Найти</span>
+            </button>
+        </div>
+    </section>
+
+    <section class="quick-section" aria-label="Быстрые запросы">
+        <button class="quick-chip" data-query="iphone 15" type="button">iPhone 15</button>
+        <button class="quick-chip" data-query="iphone 16" type="button">iPhone 16</button>
+        <button class="quick-chip" data-query="macbook air m1" type="button">MacBook Air M1</button>
+        <button class="quick-chip" data-query="playstation 5" type="button">PlayStation 5</button>
+    </section>
+
+    <section class="capabilities-section" aria-label="Функции Mini App">
+        <button class="cap-card" data-section-target="stats-section" type="button">
+            <span class="cap-badge">Mini App</span>
+            <strong class="cap-title">Средняя цена</strong>
+            <span class="cap-copy">Медиана, среднее, диапазон и охват полного рынка.</span>
+        </button>
+        <button class="cap-card" data-section-target="listings-section" data-sort-target="newest" type="button">
+            <span class="cap-badge">Mini App</span>
+            <strong class="cap-title">Новые объявления</strong>
+            <span class="cap-copy">Свежая лента по запросу с ценой и быстрым переходом.</span>
+        </button>
+        <button class="cap-card" data-section-target="listings-section" type="button">
+            <span class="cap-badge">Mini App</span>
+            <strong class="cap-title">Топ объявлений</strong>
+            <span class="cap-copy">Сортировка по новизне, цене и близости к медиане.</span>
+        </button>
+        <button class="cap-card" data-section-target="segments-section" type="button">
+            <span class="cap-badge">Mini App</span>
+            <strong class="cap-title">Срез по фильтрам</strong>
+            <span class="cap-copy">Новый / б.у. и частник / магазин по отдельным сегментам.</span>
+        </button>
+        <button class="cap-card" data-section-target="rate-strip" type="button">
+            <span class="cap-badge">Mini App</span>
+            <strong class="cap-title">BYN и USD</strong>
+            <span class="cap-copy">Переключение валют и актуальный курс НБРБ.</span>
+        </button>
+        <button class="cap-card is-muted" data-action="tracker-help" type="button">
+            <span class="cap-badge">Бот</span>
+            <strong class="cap-title">Детектор новых объявлений</strong>
+            <span class="cap-copy">Уведомления о новых лотах пока запускаются через `/track`.</span>
+        </button>
+    </section>
+
+    <div class="err-bar" id="error-bar" hidden>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <circle cx="12" cy="16" r="0.5" fill="currentColor"></circle>
+        </svg>
+        <span id="error-text"></span>
+    </div>
+
+    <section class="section" id="stats-section" hidden>
+        <div class="sec-head">
+            <h2 class="sec-title">Статистика</h2>
+            <span class="badge" id="market-total-badge"></span>
+        </div>
+        <div class="stats-grid" id="stats-grid">
+            <div class="stat-card is-accent">
+                <span class="stat-lbl">Медиана</span>
+                <span class="stat-val mono" id="stat-median">—</span>
+                <span class="stat-sub"></span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-lbl">Среднее</span>
+                <span class="stat-val mono" id="stat-mean">—</span>
+                <span class="stat-sub"></span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-lbl">Минимум</span>
+                <span class="stat-val mono" id="stat-min">—</span>
+                <span class="stat-sub"></span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-lbl">Максимум</span>
+                <span class="stat-val mono" id="stat-max">—</span>
+                <span class="stat-sub"></span>
+            </div>
+            <div class="stat-card wide">
+                <span class="stat-lbl">Охват</span>
+                <span class="stat-val mono" id="stat-coverage">—</span>
+                <span class="stat-sub">с ценой / всего на рынке</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="chart-section" hidden>
+        <div class="sec-head">
+            <h2 class="sec-title">Распределение цен</h2>
+        </div>
+        <div class="chart-box">
             <canvas id="priceChart"></canvas>
-        </section>
+        </div>
+    </section>
 
-        <section class="split-layout">
-            <article class="panel">
-                <div class="panel-header">
-                    <h2>Segment view</h2>
-                    <p>New vs used, private seller vs shop.</p>
-                </div>
-                <div class="segment-grid">
-                    <template x-for="segment in segmentCards" :key="segment.key">
-                        <div class="segment-card">
-                            <span class="segment-name" x-text="segment.label"></span>
-                            <strong x-text="formatPrice(segment.median)"></strong>
-                            <small x-text="`Count: ${segment.count}`"></small>
-                        </div>
-                    </template>
-                </div>
-            </article>
+    <section class="section" id="segments-section" hidden>
+        <div class="sec-head">
+            <h2 class="sec-title">По сегментам</h2>
+        </div>
+        <div class="segs-grid" id="segments-grid"></div>
+    </section>
 
-            <article class="panel">
-                <div class="panel-header">
-                    <h2>Recent listings</h2>
-                    <p>Sorted feed with price distance from median.</p>
-                </div>
-                <template x-if="loading">
-                    <div class="list-skeletons">
-                        <div class="skeleton listing-skeleton"></div>
-                        <div class="skeleton listing-skeleton"></div>
-                        <div class="skeleton listing-skeleton"></div>
-                    </div>
-                </template>
-                <div class="listing-table">
-                    <template x-for="listing in listings" :key="listing.ad_id">
-                        <a class="listing-row" :href="listing.link" target="_blank" rel="noreferrer">
-                            <div>
-                                <strong x-text="listing.title"></strong>
-                                <p x-text="listing.condition || 'Unknown condition'"></p>
-                            </div>
-                            <div class="listing-meta">
-                                <strong x-text="formatPrice(listing.price)"></strong>
-                                <span x-text="`${listing.price_vs_median ?? 0}% vs median`"></span>
-                            </div>
-                        </a>
-                    </template>
-                </div>
-            </article>
-        </section>
-    </main>
+    <section class="section" id="listings-section" hidden>
+        <div class="sec-head listings-head">
+            <h2 class="sec-title">Объявления</h2>
+            <span class="badge" id="listings-total-badge"></span>
+        </div>
+        <div class="sort-row">
+            <button class="s-tab active" data-sort="newest" type="button">Новые</button>
+            <button class="s-tab" data-sort="price_asc" type="button">Дешевле</button>
+            <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
+            <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
+        </div>
+        <div class="listings-list" id="listings-list"></div>
+    </section>
+
+    <section class="section" id="tracker-panel">
+        <div class="sec-head">
+            <h2 class="sec-title">Детектор новинок</h2>
+            <span class="badge">Mini App + бот</span>
+        </div>
+        <div class="tracker-card">
+            <p class="tracker-title">Следите за запросом прямо в Mini App.</p>
+            <p class="tracker-copy">
+                Добавьте текущий запрос в мониторинг, а уведомление о новом лоте придёт в чат Telegram.
+            </p>
+            <div class="tracker-actions">
+                <button class="primary-btn" id="track-query-btn" type="button">Следить за текущим запросом</button>
+                <button class="ghost-btn" id="reload-trackers-btn" type="button">Обновить список</button>
+            </div>
+            <div class="tracker-status" id="tracker-status" hidden></div>
+            <div class="trackers-list" id="trackers-list"></div>
+        </div>
+    </section>
+
+    <div class="detail-modal" id="detail-modal" hidden>
+        <div class="detail-overlay" id="detail-overlay"></div>
+        <div class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+            <button class="detail-close" id="detail-close" type="button" aria-label="Закрыть карточку">×</button>
+            <div class="detail-media">
+                <img id="detail-main-image" alt="" hidden>
+                <div class="detail-no-image" id="detail-no-image">Нет фото</div>
+            </div>
+            <div class="detail-thumbs" id="detail-thumbs"></div>
+            <div class="detail-head">
+                <h3 class="detail-title" id="detail-title"></h3>
+                <div class="detail-price mono" id="detail-price"></div>
+            </div>
+            <div class="detail-meta" id="detail-meta"></div>
+            <p class="detail-description" id="detail-description" hidden></p>
+            <div class="detail-actions">
+                <a class="primary-link" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Открыть на Kufar</a>
+            </div>
+            <section class="detail-block" id="detail-params-block" hidden>
+                <h4 class="detail-block-title">Параметры</h4>
+                <div class="detail-fields" id="detail-params"></div>
+            </section>
+            <section class="detail-block" id="detail-seller-block" hidden>
+                <h4 class="detail-block-title">Продавец</h4>
+                <div class="detail-fields" id="detail-seller"></div>
+            </section>
+        </div>
+    </div>
+
+    <div class="bottom-spacer"></div>
+
+    <div hidden>
+        <span x-text="stats.mean"></span>
+        <span x-text="stats.median"></span>
+        <span x-text="stats.min"></span>
+        <span x-text="stats.max"></span>
+        <template x-for="item in listings">
+            <span x-text="item.title"></span>
+        </template>
+    </div>
+</div>
 </body>
 </html>

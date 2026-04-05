@@ -15,6 +15,8 @@ class PriceStatsResponse(BaseModel):
     min: float
     max: float
     count: int
+    total_results: int = 0
+    analyzed_count: int = 0
 
 
 class ListingItem(BaseModel):
@@ -30,6 +32,33 @@ class ListingItem(BaseModel):
     condition: str | None = None
     seller_type: str | None = None
     price_vs_median: float | None = None
+    thumbnail: str | None = None
+
+
+class ListingField(BaseModel):
+    label: str
+    value: str
+
+
+class ListingDetailResponse(BaseModel):
+    query: str
+    ad_id: int
+    title: str
+    price: float
+    currency: str
+    link: str
+    list_time: str | None = None
+    region_id: int | None = None
+    category: str | None = None
+    condition: str | None = None
+    seller_type: str | None = None
+    price_vs_median: float | None = None
+    company_ad: bool = False
+    phone_hidden: bool = True
+    description: str | None = None
+    images: list[str] = Field(default_factory=list)
+    parameters: list[ListingField] = Field(default_factory=list)
+    seller_fields: list[ListingField] = Field(default_factory=list)
 
 
 class ListingsResponse(BaseModel):
@@ -37,6 +66,7 @@ class ListingsResponse(BaseModel):
     currency: str
     sort: str
     total: int
+    returned: int = 0
     listings: list[ListingItem]
 
 

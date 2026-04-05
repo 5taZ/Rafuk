@@ -46,7 +46,8 @@ async def cmd_price(message: Message, command: CommandObject) -> None:
         return
     await message.answer(
         f"{query}\n"
-        f"Count: {stats['count']}\n"
+        f"Market total: {stats.get('total_results', stats['count'])}\n"
+        f"Analyzed: {stats.get('analyzed_count', stats['count'])}\n"
         f"Mean: {stats['mean']} {stats['currency']}\n"
         f"Median: {stats['median']} {stats['currency']}\n"
         f"Range: {stats['min']} - {stats['max']} {stats['currency']}"
