@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BOT_TOKEN", "7123456789:AAFtesttoken")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("API_BASE_URL", "https://kufar-analytics.example.com")
+    monkeypatch.setenv("MINI_APP_URL", "https://kufar-analytics.example.com/app")
+
+    try:
+        from api.config import get_settings
+
+        get_settings.cache_clear()
+    except Exception:
+        pass
+
+
+@pytest.fixture
+def sample_ads() -> list[dict[str, object]]:
+    return [
+        {
+            "ad_id": 1,
+            "subject": "iPhone 15",
+            "price_byn": 200000,
+            "currency": "BYN",
+            "ad_link": "https://www.kufar.by/item/1",
+            "list_time": "2026-04-01T10:00:00",
+            "region_id": 6,
+            "ad_parameters": [
+                {"p": "condition", "v": "Новый"},
+                {"p": "seller_type", "v": "Частное лицо"},
+            ],
+        },
+        {
+            "ad_id": 2,
+            "subject": "iPhone 15 Pro",
+            "price_byn": 220000,
+            "currency": "BYN",
+            "ad_link": "https://www.kufar.by/item/2",
+            "list_time": "2026-04-01T12:00:00",
+            "region_id": 6,
+            "ad_parameters": [
+                {"p": "condition", "v": "Б/у"},
+                {"p": "seller_type", "v": "Магазин"},
+            ],
+        },
+        {
+            "ad_id": 3,
+            "subject": "iPhone 15 Pro Max",
+            "price_byn": 250000,
+            "currency": "BYN",
+            "ad_link": "https://www.kufar.by/item/3",
+            "list_time": "2026-04-01T09:00:00",
+            "region_id": 6,
+            "ad_parameters": [
+                {"p": "condition", "v": "Новый"},
+                {"p": "seller_type", "v": "Магазин"},
+            ],
+        },
+        {
+            "ad_id": 4,
+            "subject": "iPhone 15 Used",
+            "price_byn": 180000,
+            "currency": "BYN",
+            "ad_link": "https://www.kufar.by/item/4",
+            "list_time": "2026-03-31T18:00:00",
+            "region_id": 6,
+            "ad_parameters": [
+                {"p": "condition", "v": "Б/у"},
+                {"p": "seller_type", "v": "Частное лицо"},
+            ],
+        },
+        {
+            "ad_id": 5,
+            "subject": "Broken listing",
+            "price_byn": 0,
+            "currency": "BYN",
+            "ad_link": "https://www.kufar.by/item/5",
+            "list_time": "",
+            "region_id": 6,
+            "ad_parameters": [],
+        },
+        {
+            "ad_id": 6,
+            "subject": "Anomaly",
+            "price_byn": 15000000,
+            "currency": "BYN",
+            "ad_link": "https://www.kufar.by/item/6",
+            "list_time": "",
+            "region_id": 6,
+            "ad_parameters": [],
+        },
+    ]

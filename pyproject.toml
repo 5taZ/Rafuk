@@ -1,0 +1,53 @@
+[project]
+name = "kufar-analytics"
+version = "0.1.0"
+description = "Telegram Mini App for analyzing the kufar.by marketplace"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "redis[hiredis]>=5.2.0",
+    "httpx>=0.27.0",
+    "beautifulsoup4>=4.12.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "python-dotenv>=1.0.1",
+    "aiogram>=3.15.0",
+    "apscheduler>=3.10.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "aiosqlite>=0.20.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "SIM", "TCH"]
+ignore = ["B008", "TC001", "TC002", "TC003"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["api", "bot", "scheduler"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.hatch.build.targets.wheel]
+packages = ["api", "bot", "scheduler"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

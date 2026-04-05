@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Kufar Analytics</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script defer src="js/app.js"></script>
+</head>
+<body>
+    <main class="shell" x-data="analyticsApp()" x-init="init()">
+        <section class="hero">
+            <div>
+                <p class="eyebrow">Marketplace Pulse</p>
+                <h1>Kufar market analytics without manual scrolling.</h1>
+                <p class="lede">
+                    Compare median prices, inspect fresh listings, and split the market by item
+                    condition and seller type.
+                </p>
+            </div>
+            <form class="search-panel" @submit.prevent="search()">
+                <label class="field">
+                    <span>Search query</span>
+                    <input type="text" x-model="query" placeholder="iPhone 15 Pro 256GB">
+                </label>
+                <div class="row">
+                    <label class="field compact">
+                        <span>Currency</span>
+                        <select x-model="currency">
+                            <option value="USD">USD</option>
+                            <option value="EUR">EUR</option>
+                            <option value="BYN">BYN</option>
+                        </select>
+                    </label>
+                    <label class="field compact">
+                        <span>Sort</span>
+                        <select x-model="sort" @change="loadListings(sort)">
+                            <option value="newest">Newest</option>
+                            <option value="price_asc">Price ↑</option>
+                            <option value="price_desc">Price ↓</option>
+                            <option value="near_median">Near median</option>
+                        </select>
+                    </label>
+                </div>
+                <button type="submit" class="primary">Analyze listings</button>
+            </form>
+        </section>
+
+        <template x-if="error">
+            <div class="error" x-text="error"></div>
+        </template>
+
+        <section class="stats-grid">
+            <article class="stat-card">
+                <span class="label">Mean</span>
+                <strong x-text="formatPrice(stats?.mean ?? 0)"></strong>
+            </article>
+            <article class="stat-card">
+                <span class="label">Median</span>
+                <strong x-text="formatPrice(stats?.median ?? 0)"></strong>
+            </article>
+            <article class="stat-card">
+                <span class="label">Min</span>
+                <strong x-text="formatPrice(stats?.min ?? 0)"></strong>
+            </article>
+            <article class="stat-card">
+                <span class="label">Max</span>
+                <strong x-text="formatPrice(stats?.max ?? 0)"></strong>
+            </article>
+            <article class="stat-card accent">
+                <span class="label">Count</span>
+                <strong x-text="stats?.count ?? 0"></strong>
+            </article>
+        </section>
+
+        <section class="panel chart-panel">
+            <div class="panel-header">
+                <h2>Distribution snapshot</h2>
+                <p>Q1, median, and max values after price cleanup.</p>
+            </div>
+            <template x-if="loading">
+                <div class="skeleton chart-skeleton"></div>
+            </template>
+            <canvas id="priceChart"></canvas>
+        </section>
+
+        <section class="split-layout">
+            <article class="panel">
+                <div class="panel-header">
+                    <h2>Segment view</h2>
+                    <p>New vs used, private seller vs shop.</p>
+                </div>
+                <div class="segment-grid">
+                    <template x-for="segment in segmentCards" :key="segment.key">
+                        <div class="segment-card">
+                            <span class="segment-name" x-text="segment.label"></span>
+                            <strong x-text="formatPrice(segment.median)"></strong>
+                            <small x-text="`Count: ${segment.count}`"></small>
+                        </div>
+                    </template>
+                </div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-header">
+                    <h2>Recent listings</h2>
+                    <p>Sorted feed with price distance from median.</p>
+                </div>
+                <template x-if="loading">
+                    <div class="list-skeletons">
+                        <div class="skeleton listing-skeleton"></div>
+                        <div class="skeleton listing-skeleton"></div>
+                        <div class="skeleton listing-skeleton"></div>
+                    </div>
+                </template>
+                <div class="listing-table">
+                    <template x-for="listing in listings" :key="listing.ad_id">
+                        <a class="listing-row" :href="listing.link" target="_blank" rel="noreferrer">
+                            <div>
+                                <strong x-text="listing.title"></strong>
+                                <p x-text="listing.condition || 'Unknown condition'"></p>
+                            </div>
+                            <div class="listing-meta">
+                                <strong x-text="formatPrice(listing.price)"></strong>
+                                <span x-text="`${listing.price_vs_median ?? 0}% vs median`"></span>
+                            </div>
+                        </a>
+                    </template>
+                </div>
+            </article>
+        </section>
+    </main>
+</body>
+</html>

@@ -1,0 +1,72 @@
+services:
+  api:
+    build: .
+    environment:
+      SERVICE: api
+      BOT_TOKEN: ${BOT_TOKEN}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      API_BASE_URL: ${API_BASE_URL}
+      MINI_APP_URL: ${MINI_APP_URL}
+      KUFAR_REQUEST_DELAY: ${KUFAR_REQUEST_DELAY:-1.0}
+      KUFAR_PARALLEL_SEMAPHORE: ${KUFAR_PARALLEL_SEMAPHORE:-3}
+      ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
+    depends_on:
+      - db
+      - redis
+
+  bot:
+    build: .
+    environment:
+      SERVICE: bot
+      BOT_TOKEN: ${BOT_TOKEN}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      API_BASE_URL: ${API_BASE_URL}
+      MINI_APP_URL: ${MINI_APP_URL}
+    depends_on:
+      - api
+      - db
+
+  scheduler:
+    build: .
+    environment:
+      SERVICE: scheduler
+      BOT_TOKEN: ${BOT_TOKEN}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      API_BASE_URL: ${API_BASE_URL}
+      MINI_APP_URL: ${MINI_APP_URL}
+      ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
+    depends_on:
+      - api
+      - db
+
+  frontend:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8081:80"
+    depends_on:
+      - api
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: kufar
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+
+volumes:
+  pgdata:

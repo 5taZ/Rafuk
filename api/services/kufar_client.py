@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+import httpx
+
+from api.config import Settings
+
+logger = logging.getLogger(__name__)
+
+KUFAR_BASE_URL = "https://api.kufar.by/search-api/v2/search/rendered-paginated"
+USER_AGENT = "Mozilla/5.0 (compatible; KufarAnalytics/1.0; +https://kufar.by)"
+MAX_RETRIES = 3
+BACKOFF_BASE_SECONDS = 1.0
+
+
+class KufarAPIError(Exception):
+    """Raised when Kufar API remains unavailable after retries."""
+
+
+class KufarClient:
+    def __init__(self, settings: Settings, http_client: httpx.AsyncClient | None = None) -> None:
+        self._settings = settings
+        self._http_client = http_client
+        self._owns_client = http_client is None
+        self._last_request_time = 0.0
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=self._settings.kufar_timeout)
+        return self._http_client
+
+    async def aclose(self) -> None:
+        if self._owns_client and self._http_client is not None:
+            await self._http_client.aclose()
+
+    async def _enforce_delay(self) -> None:
+        loop = asyncio.get_running_loop()
+        elapsed = loop.time() - self._last_request_time
+        delay = self._settings.kufar_request_delay
+        if elapsed < delay:
+            await asyncio.sleep(delay - elapsed)
+        self._last_request_time = loop.time()
+
+    async def search(
+        self,
+        query: str,
+        size: int = 200,
+        currency: str = "USD",
+        sort: str = "lst.d",
+        cursor: str | None = None,
+        region: int | None = None,
+        condition: str | None = None,
+        seller_type: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "query": query,
+            "size": size,
+            "cur": currency,
+            "sort": sort,
+        }
+        if cursor:
+            params["cursor"] = cursor
+        if region is not None:
+            params["rgn"] = region
+        if condition:
+            params["cnd"] = condition
+        if seller_type:
+            params["otype"] = seller_type
+
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+            "Referer": "https://www.kufar.by/",
+        }
+
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                await self._enforce_delay()
+                client = await self._get_client()
+                response = await client.get(KUFAR_BASE_URL, params=params, headers=headers)
+                response.raise_for_status()
+                return response.json()
+            except (httpx.HTTPError, httpx.TimeoutException) as exc:
+                last_error = exc
+                logger.warning(
+                    "Kufar request failed on attempt %s/%s for query=%s: %s",
+                    attempt + 1,
+                    MAX_RETRIES,
+                    query,
+                    exc,
+                )
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(BACKOFF_BASE_SECONDS * (2**attempt))
+
+        raise KufarAPIError(
+            f"Kufar API request failed after {MAX_RETRIES} attempts"
+        ) from last_error
+
+    @staticmethod
+    def extract_next_cursor(response: dict[str, Any]) -> str | None:
+        try:
+            pages = response["pagination"]["pages"]
+        except (KeyError, TypeError):
+            return None
+        if not pages:
+            return None
+        return pages[0].get("token")
