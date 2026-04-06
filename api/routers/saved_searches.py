@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -97,12 +97,12 @@ async def create_saved_search(
     name = (payload.name or "").strip() or default_saved_search_name(query)
     async with session_factory() as session:
         count_result = await session.execute(
-            select(SavedSearch).where(
+            select(func.count()).select_from(SavedSearch).where(
                 SavedSearch.user_id == telegram_user.user_id,
                 SavedSearch.active.is_(True),
             )
         )
-        active_count = len(list(count_result.scalars()))
+        active_count = count_result.scalar_one()
         if active_count >= MAX_ACTIVE_SAVED_SEARCHES:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

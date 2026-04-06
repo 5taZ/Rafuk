@@ -65,7 +65,7 @@ def normalize_search_text(value: str) -> str:
     text = re.sub(r"(\d+)\s*гб\b", r"\1", text)
     text = re.sub(r"(\d+)\s*/\s*(\d+)", r"\1 \2", text)
     text = re.sub(r"\b([12])\s*(?:tb|тб)\b", lambda match: str(int(match.group(1)) * 1024), text)
-    text = re.sub(r"[^a-zа-я0-9]+", " ", text)
+    text = re.sub(r"[^a-zа-я0-9]+", " ", text, flags=re.IGNORECASE)
     return " ".join(text.split())
 
 
@@ -95,7 +95,11 @@ def is_strict_match(title: str, query: str) -> bool:
     if extra_variants:
         return False
 
-    return True
+    query_index = 0
+    for token in title_tokens:
+        if query_index < len(query_tokens) and token == query_tokens[query_index]:
+            query_index += 1
+    return query_index == len(query_tokens)
 
 
 def apply_search_mode(

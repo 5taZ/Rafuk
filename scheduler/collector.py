@@ -17,6 +17,7 @@ from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
 from api.models import Tracker, TrackerEvent
 from api.services.aggregator import (
+    PriceStats,
     apply_search_mode,
     build_query_key,
     compute_price_stats,
@@ -97,7 +98,7 @@ def _filter_sync_result_for_tracker(
     sync_result: QuerySyncResult,
     ads_by_id: dict[int, dict[str, object]],
     duplicate_index: dict[int, int],
-    market_stats: object,
+    market_stats: PriceStats,
 ) -> QuerySyncResult:
     new_listings = [
         state

@@ -9,6 +9,10 @@ from urllib.parse import urlencode
 
 import pytest
 
+from api.middleware.telegram_auth import TelegramInitData
+
+FAKE_TELEGRAM_USER = TelegramInitData(user_id=123456, first_name="Test", raw={})
+
 
 def make_telegram_init_data(user_id: int = 123456) -> str:
     """Create a valid Telegram initData string for testing."""
