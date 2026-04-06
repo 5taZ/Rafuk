@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from api.dependencies import get_telegram_user
 from api.services.cache import MemoryCache
+from tests.conftest import FAKE_TELEGRAM_USER
 
 
 class FakeCurrencyService:
@@ -23,9 +25,6 @@ class FakeCurrencyService:
 
 
 class FakeKufarClient:
-    def __init__(self, settings) -> None:
-        del settings
-
     async def search_all_ads(self, **kwargs) -> dict:
         return {
             "total": 7,
@@ -64,15 +63,21 @@ class FakeKufarClient:
         return None
 
 
-def test_listings_endpoint_returns_items(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+def _make_app_with_fake_client(fake_client=None):
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
-    from api.routers import listings
 
-    monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
+    client = fake_client or FakeKufarClient()
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
+    app.dependency_overrides[get_kufar_client] = lambda: client
+    return app
+
+
+def test_listings_endpoint_returns_items(monkeypatch) -> None:
+    app = _make_app_with_fake_client()
     with TestClient(app) as client:
         response = client.get("/api/v1/listings", params={"query": "iphone", "currency": "USD"})
     assert response.status_code == 200
@@ -88,14 +93,7 @@ def test_listings_endpoint_returns_items(monkeypatch) -> None:
 
 
 def test_listings_endpoint_supports_cheap_sort(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
-    from api.main import create_app
-    from api.routers import listings
-
-    monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
-    app = create_app()
-    app.dependency_overrides[get_cache] = lambda: MemoryCache()
-    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app = _make_app_with_fake_client()
     with TestClient(app) as client:
         response = client.get(
             "/api/v1/listings",
@@ -117,14 +115,7 @@ def test_listings_endpoint_supports_cheap_sort(monkeypatch) -> None:
 
 
 def test_listings_endpoint_supports_strict_search(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
-    from api.main import create_app
-    from api.routers import listings
-
-    monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
-    app = create_app()
-    app.dependency_overrides[get_cache] = lambda: MemoryCache()
-    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app = _make_app_with_fake_client()
     with TestClient(app) as client:
         response = client.get(
             "/api/v1/listings",
@@ -138,14 +129,7 @@ def test_listings_endpoint_supports_strict_search(monkeypatch) -> None:
 
 
 def test_listings_endpoint_normalizes_alias_queries(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
-    from api.main import create_app
-    from api.routers import listings
-
-    monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
-    app = create_app()
-    app.dependency_overrides[get_cache] = lambda: MemoryCache()
-    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app = _make_app_with_fake_client()
     with TestClient(app) as client:
         response = client.get(
             "/api/v1/listings",
@@ -159,14 +143,7 @@ def test_listings_endpoint_normalizes_alias_queries(monkeypatch) -> None:
 
 
 def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
-    from api.main import create_app
-    from api.routers import listings
-
     class SignalsClient:
-        def __init__(self, settings) -> None:
-            del settings
-
         async def search_all_ads(self, **kwargs) -> dict:
             del kwargs
             return {
@@ -223,10 +200,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
         async def aclose(self) -> None:
             return None
 
-    monkeypatch.setattr(listings, "KufarClient", SignalsClient)
-    app = create_app()
-    app.dependency_overrides[get_cache] = lambda: MemoryCache()
-    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app = _make_app_with_fake_client(SignalsClient())
     with TestClient(app) as client:
         response = client.get("/api/v1/listings", params={"query": "iphone", "currency": "BYN"})
 

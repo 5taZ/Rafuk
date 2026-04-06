@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 import urllib.parse
 
 import pytest
@@ -11,10 +12,12 @@ from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_
 BOT_TOKEN = "7123456789:AAFtesttoken"
 
 
-def _make_init_data(user_id: int, bot_token: str) -> str:
+def _make_init_data(user_id: int, bot_token: str, auth_date: str | None = None) -> str:
+    if auth_date is None:
+        auth_date = str(int(time.time()))
     data_dict = {
         "user": f'{{"id":{user_id},"first_name":"Test"}}',
-        "auth_date": "1700000000",
+        "auth_date": auth_date,
         "query_id": "AAHtest",
     }
     data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(data_dict.items()))
@@ -31,9 +34,15 @@ def test_valid_init_data_returns_parsed_object() -> None:
     assert result.user_id == 123456
 
 
+def test_expired_auth_date_raises_value_error() -> None:
+    init_data = _make_init_data(user_id=123456, bot_token=BOT_TOKEN, auth_date="1000000000")
+    with pytest.raises(ValueError, match="expired"):
+        verify_telegram_init_data(init_data, BOT_TOKEN)
+
+
 def test_tampered_hash_raises_value_error() -> None:
     init_data = _make_init_data(user_id=123456, bot_token=BOT_TOKEN)
-    tampered = init_data.replace("auth_date=1700000000", "auth_date=9999999999")
+    tampered = init_data.replace(f"auth_date={init_data.split('auth_date=')[1].split('&')[0]}", "auth_date=9999999999")
     with pytest.raises(ValueError, match="Invalid Telegram initData signature"):
         verify_telegram_init_data(tampered, BOT_TOKEN)
 

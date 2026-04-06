@@ -17,6 +17,7 @@ from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
 from api.models import Tracker, TrackerEvent
 from api.services.aggregator import (
+    PriceStats,
     apply_search_mode,
     build_query_key,
     compute_price_stats,
@@ -29,7 +30,7 @@ from api.services.history_service import (
     sync_query_listing_states,
     upsert_query_snapshot,
 )
-from api.services.kufar_client import KufarClient
+from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.market_signals import duplicate_counts
 from api.services.reseller_tools import matches_tracker_filters
 from bot.keyboards import tracker_alert_keyboard
@@ -97,8 +98,8 @@ def _filter_sync_result_for_tracker(
     sync_result: QuerySyncResult,
     ads_by_id: dict[int, dict[str, object]],
     duplicate_index: dict[int, int],
+    market_stats: PriceStats,
 ) -> QuerySyncResult:
-    market_stats = compute_price_stats(extract_prices(list(ads_by_id.values())))
     new_listings = [
         state
         for state in sync_result.new_listings
@@ -209,72 +210,79 @@ async def check_trackers(
             bucket_at = snapshot_bucket(observed_at)
 
             for (query, strict_mode), query_trackers in trackers_by_query.items():
-                payload = await client.search(query=query, currency="BYN", size=50)
-                ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
-                search_key = build_query_key(query, strict_mode)
-                await upsert_query_snapshot(
-                    session,
-                    query=search_key,
-                    ads=ads,
-                    total_results=len(ads),
-                    bucket_at=bucket_at,
-                )
-                sync_result = await sync_query_listing_states(
-                    session,
-                    query=search_key,
-                    ads=ads,
-                    observed_at=observed_at,
-                    total_results=len(ads),
-                )
-                ads_by_id = {
-                    int(ad.get("ad_id", 0)): ad
-                    for ad in ads
-                    if int(ad.get("ad_id", 0)) > 0
-                }
-                duplicate_index = duplicate_counts(ads)
+                try:
+                    payload = await client.search(query=query, currency="BYN", size=50)
+                    ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
+                    search_key = build_query_key(query, strict_mode)
+                    await upsert_query_snapshot(
+                        session,
+                        query=search_key,
+                        ads=ads,
+                        total_results=len(ads),
+                        bucket_at=bucket_at,
+                    )
+                    sync_result = await sync_query_listing_states(
+                        session,
+                        query=search_key,
+                        ads=ads,
+                        observed_at=observed_at,
+                        total_results=len(ads),
+                    )
+                    ads_by_id = {
+                        int(ad.get("ad_id", 0)): ad
+                        for ad in ads
+                        if int(ad.get("ad_id", 0)) > 0
+                    }
+                    duplicate_index = duplicate_counts(ads)
+                    market_stats = compute_price_stats(extract_prices(list(ads_by_id.values())))
 
-                newest_id = int(ads[0].get("ad_id", 0)) if ads else None
-                newest_price_byn = normalize_price_byn(ads[0].get("price_byn")) if ads else None
+                    newest_id = int(ads[0].get("ad_id", 0)) if ads else None
+                    newest_price_byn = normalize_price_byn(ads[0].get("price_byn")) if ads else None
 
-                for tracker in query_trackers:
-                    if tracker.last_checked_at is None:
+                    for tracker in query_trackers:
+                        if tracker.last_checked_at is None:
+                            tracker.last_seen_ad_id = newest_id
+                            tracker.last_seen_price_byn = newest_price_byn
+                            tracker.last_checked_at = observed_at
+                            continue
+
+                        tracker_sync_result = _filter_sync_result_for_tracker(
+                            tracker,
+                            sync_result,
+                            ads_by_id,
+                            duplicate_index,
+                            market_stats,
+                        )
+                        message = _build_tracker_message(query, strict_mode, tracker_sync_result)
+                        if message:
+                            created_events = persist_tracker_events(session, tracker, tracker_sync_result)
+                            await session.flush()
+                            primary_event = created_events[0] if created_events else None
+                            keyboard = (
+                                tracker_alert_keyboard(
+                                    settings.mini_app_url,
+                                    query=primary_event.query,
+                                    listing_url=primary_event.link,
+                                    event_id=primary_event.id,
+                                )
+                                if primary_event is not None
+                                else None
+                            )
+                            await notify_user(
+                                bot,
+                                tracker.user_id,
+                                message,
+                                session,
+                                reply_markup=keyboard,
+                            )
+
                         tracker.last_seen_ad_id = newest_id
                         tracker.last_seen_price_byn = newest_price_byn
                         tracker.last_checked_at = observed_at
-                        continue
-
-                    tracker_sync_result = _filter_sync_result_for_tracker(
-                        tracker,
-                        sync_result,
-                        ads_by_id,
-                        duplicate_index,
-                    )
-                    message = _build_tracker_message(query, strict_mode, tracker_sync_result)
-                    if message:
-                        created_events = persist_tracker_events(session, tracker, tracker_sync_result)
-                        await session.flush()
-                        primary_event = created_events[0] if created_events else None
-                        keyboard = (
-                            tracker_alert_keyboard(
-                                settings.mini_app_url,
-                                query=primary_event.query,
-                                listing_url=primary_event.link,
-                                event_id=primary_event.id,
-                            )
-                            if primary_event is not None
-                            else None
-                        )
-                        await notify_user(
-                            bot,
-                            tracker.user_id,
-                            message,
-                            session,
-                            reply_markup=keyboard,
-                        )
-
-                    tracker.last_seen_ad_id = newest_id
-                    tracker.last_seen_price_byn = newest_price_byn
-                    tracker.last_checked_at = observed_at
+                except KufarAPIError as exc:
+                    logger.error("Kufar API error for query %r (strict=%s): %s", query, strict_mode, exc)
+                except Exception as exc:
+                    logger.exception("Unexpected error for query %r (strict=%s): %s", query, strict_mode, exc)
 
             await session.commit()
         finally:

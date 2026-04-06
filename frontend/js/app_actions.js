@@ -396,6 +396,9 @@ function createAppActions(context) {
             return;
         }
 
+        elements.trackersList.innerHTML = '<div class="loading-placeholder"><span class="spin"></span> Загрузка...</div>';
+        elements.trackerEventsList.innerHTML = '<div class="loading-placeholder"><span class="spin"></span> Загрузка...</div>';
+
         const [trackersResult, eventsResult] = await Promise.allSettled([
             getJson("/api/v1/trackers"),
             getJson("/api/v1/tracker-events"),
@@ -423,6 +426,9 @@ function createAppActions(context) {
             renderLeads();
             return;
         }
+
+        elements.leadInboxList.innerHTML = '<div class="loading-placeholder"><span class="spin"></span> Загрузка...</div>';
+
         try {
             state.leads = await getJson("/api/v1/leads");
         } catch (_) {
@@ -438,6 +444,9 @@ function createAppActions(context) {
             renderWatchlist();
             return;
         }
+
+        elements.watchlistList.innerHTML = '<div class="loading-placeholder"><span class="spin"></span> Загрузка...</div>';
+
         try {
             state.watchlist = await getJson("/api/v1/watchlist");
         } catch (_) {
@@ -454,6 +463,8 @@ function createAppActions(context) {
             return;
         }
 
+        elements.savedSearchesList.innerHTML = '<div class="loading-placeholder"><span class="spin"></span> Загрузка...</div>';
+
         try {
             state.savedSearches = await getJson("/api/v1/saved-searches");
         } catch (_) {
@@ -469,6 +480,8 @@ function createAppActions(context) {
             renderOpportunityBoard();
             return;
         }
+
+        elements.opportunityBoardList.innerHTML = '<div class="loading-placeholder"><span class="spin"></span> Загрузка...</div>';
 
         try {
             state.opportunityBoard = await getJson(`/api/v1/opportunity-board?currency=${state.currency}`);
@@ -1031,7 +1044,6 @@ function createAppActions(context) {
                 const existing = parseComparisonQueries(state.comparisonQuery);
                 const nextValues = Array.from(new Set([...existing, query])).slice(0, 2);
                 state.comparisonQuery = nextValues.join(", ");
-                elements.compareInput.value = query;
                 elements.compareInput.value = state.comparisonQuery;
                 setPanelOpen("comparison", true);
                 renderComparison();

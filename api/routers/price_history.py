@@ -9,6 +9,7 @@ from api.dependencies import (
     get_currency_service,
     get_session_factory_dependency,
     get_settings_dependency,
+    get_telegram_user,
 )
 from api.schemas import PriceHistoryPoint, PriceHistoryResponse
 from api.services.aggregator import build_query_key
@@ -17,7 +18,7 @@ from api.services.currency_service import CurrencyService
 from api.services.history_service import load_query_snapshots
 from api.validators import MAX_QUERY_LENGTH
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(tags=["analytics"], dependencies=[Depends(get_telegram_user)])
 
 
 @router.get("/price-history", response_model=PriceHistoryResponse)

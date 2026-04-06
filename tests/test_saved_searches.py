@@ -4,11 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-from api.middleware.telegram_auth import TelegramInitData
-
-
-def fake_telegram_user() -> TelegramInitData:
-    return TelegramInitData(user_id=123456, first_name="Test", raw={})
+from tests.conftest import FAKE_TELEGRAM_USER
 
 
 class FakeCurrencyService:
@@ -76,7 +72,7 @@ def test_saved_searches_crud_and_board(monkeypatch) -> None:
 
     monkeypatch.setattr(saved_searches, "KufarClient", FakeKufarClient)
     app = create_app()
-    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:

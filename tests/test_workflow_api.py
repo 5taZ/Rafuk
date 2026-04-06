@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from api.middleware.telegram_auth import TelegramInitData
-
-
-def fake_telegram_user() -> TelegramInitData:
-    return TelegramInitData(user_id=123456, first_name="Test", raw={})
+from tests.conftest import FAKE_TELEGRAM_USER
 
 
 class FakeKufarClient:
@@ -50,7 +46,7 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
 
     monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
     app = create_app()
-    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
 
     with TestClient(app) as client:
         lead_response = client.post(

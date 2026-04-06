@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from api.config import Settings
-from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.dependencies import get_cache, get_currency_service, get_kufar_client, get_settings_dependency, get_telegram_user
 from api.schemas import ListingsResponse
 from api.services.aggregator import (
     filter_deal_ads,
@@ -19,7 +19,7 @@ from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(tags=["analytics"], dependencies=[Depends(get_telegram_user)])
 
 
 @router.get("/listings", response_model=ListingsResponse)
@@ -34,6 +34,7 @@ async def get_listings(
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> ListingsResponse:
     effective_from_source = (
         discount_from_percent if discount_from_percent is not None else discount_percent
@@ -56,7 +57,7 @@ async def get_listings(
         currency=currency,
         strict_search=strict_search,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
     )
     median_byn = dataset.price_stats.median
     duplicate_index = duplicate_counts(dataset.ads)

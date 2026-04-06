@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.config import Settings
-from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.dependencies import get_cache, get_currency_service, get_kufar_client, get_settings_dependency, get_telegram_user
 from api.schemas import ListingDetailResponse
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
@@ -14,7 +14,7 @@ from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
 from api.validators import MAX_QUERY_LENGTH
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(tags=["analytics"], dependencies=[Depends(get_telegram_user)])
 
 
 @router.get("/listing-detail", response_model=ListingDetailResponse)
@@ -26,6 +26,7 @@ async def get_listing_detail(
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> ListingDetailResponse:
     cache_key = f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}"
     cached = await cache.get_json(cache_key)
@@ -37,7 +38,7 @@ async def get_listing_detail(
         currency=currency,
         strict_search=strict_search,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
     )
     ad = next((item for item in dataset.ads if int(item.get("ad_id", 0)) == ad_id), None)
     if ad is None:

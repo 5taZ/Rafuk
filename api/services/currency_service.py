@@ -73,7 +73,7 @@ class CurrencyService:
             code = item.get("Cur_Abbreviation")
             official_rate = item.get("Cur_OfficialRate")
             scale = item.get("Cur_Scale", 1)
-            if code == "USD" and official_rate:
+            if code and official_rate:
                 rates[code] = float(official_rate) / float(scale)
         if "USD" not in rates:
             raise ValueError("USD rate is missing")

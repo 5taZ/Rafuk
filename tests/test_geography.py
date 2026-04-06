@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from api.dependencies import get_telegram_user
 from api.services.cache import MemoryCache
+from tests.conftest import FAKE_TELEGRAM_USER
 
 
 class FakeCurrencyService:
@@ -23,9 +25,6 @@ class FakeCurrencyService:
 
 
 class FakeKufarClient:
-    def __init__(self, settings) -> None:
-        del settings
-
     async def search_all_ads(self, **kwargs) -> dict:
         del kwargs
         return {
@@ -67,14 +66,14 @@ class FakeKufarClient:
 
 
 def test_geography_endpoint_returns_region_stats(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
-    from api.routers import geography
 
-    monkeypatch.setattr(geography, "KufarClient", FakeKufarClient)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient()
 
     with TestClient(app) as client:
         response = client.get("/api/v1/geography", params={"query": "iphone", "currency": "BYN"})

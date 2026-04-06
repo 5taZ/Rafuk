@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from api.dependencies import get_telegram_user
 from api.services.cache import MemoryCache
+from tests.conftest import FAKE_TELEGRAM_USER
 
 
 class FakeCurrencyService:
@@ -23,15 +25,12 @@ class FakeCurrencyService:
 
 
 class FakeKufarClient:
-    def __init__(self, settings) -> None:
-        del settings
-
     async def aclose(self) -> None:
         return None
 
 
 def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import segments
 
@@ -44,11 +43,12 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
             {"ads": [{"price_byn": 220000}]},
         ]
 
-    monkeypatch.setattr(segments, "KufarClient", FakeKufarClient)
     monkeypatch.setattr(segments, "parallel_search_all", fake_parallel_search_all)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient()
     with TestClient(app) as client:
         response = client.get("/api/v1/segments", params={"query": "iphone", "currency": "USD"})
     assert response.status_code == 200

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
@@ -9,6 +9,8 @@ from api.middleware.telegram_auth import TelegramInitData
 from api.models import Tracker, TrackerEvent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead
 from api.services.reseller_tools import default_config_keyword
+
+MAX_ACTIVE_TRACKERS = 10
 
 router = APIRouter(tags=["trackers"])
 
@@ -58,6 +60,19 @@ async def create_tracker(
         )
 
     async with session_factory() as session:
+        count_result = await session.execute(
+            select(func.count()).select_from(Tracker).where(
+                Tracker.user_id == telegram_user.user_id,
+                Tracker.active.is_(True),
+            )
+        )
+        active_count = count_result.scalar_one()
+        if active_count >= MAX_ACTIVE_TRACKERS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Maximum {MAX_ACTIVE_TRACKERS} active trackers allowed",
+            )
+
         tracker = Tracker(
             user_id=telegram_user.user_id,
             query=query,

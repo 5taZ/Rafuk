@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+LeadStatus = Literal[
+    "new", "reviewing", "in_progress", "negotiating", "deferred", "bought", "reselling",
+]
+LeadSource = Literal["manual", "telegram_alert"]
+WatchlistWorkflowStatus = Literal["watching", "reviewing", "in_progress"]
 
 
 class PriceStatsResponse(BaseModel):
@@ -247,13 +254,13 @@ class LeadCreate(BaseModel):
     link: str
     price_byn: float | None = None
     target_resale_byn: float | None = None
-    status: str = "new"
-    source: str = "manual"
+    status: LeadStatus = "new"
+    source: LeadSource = "manual"
     notes: str | None = None
 
 
 class LeadUpdate(BaseModel):
-    status: str | None = None
+    status: LeadStatus | None = None
     target_resale_byn: float | None = None
     notes: str | None = None
 
@@ -286,7 +293,7 @@ class WatchlistCreate(BaseModel):
 
 
 class WatchlistUpdate(BaseModel):
-    workflow_status: str | None = None
+    workflow_status: WatchlistWorkflowStatus | None = None
     notes: str | None = None
 
 

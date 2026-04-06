@@ -6,9 +6,11 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
+from api.dependencies import get_telegram_user
 from api.models import QuerySnapshot
 from api.services.aggregator import build_query_key
 from api.services.cache import MemoryCache
+from tests.conftest import FAKE_TELEGRAM_USER
 
 
 class FakeCurrencyService:
@@ -27,9 +29,6 @@ class FakeCurrencyService:
 
 
 class FakeKufarClient:
-    def __init__(self, settings) -> None:
-        del settings
-
     async def search_all_ads(self, **kwargs) -> dict:
         return {
             "total": 3,
@@ -95,6 +94,7 @@ def test_price_history_endpoint_returns_snapshots() -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 history"))
@@ -118,6 +118,7 @@ def test_price_history_caps_days_at_ninety() -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 caps"))
@@ -130,15 +131,15 @@ def test_price_history_caps_days_at_ninety() -> None:
     assert response.json()["days"] == 90
 
 
-def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+def test_price_stats_request_persists_snapshot() -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
-    from api.routers import price_stats
 
-    monkeypatch.setattr(price_stats, "KufarClient", FakeKufarClient)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient()
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 persist-old"))

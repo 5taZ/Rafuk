@@ -68,10 +68,16 @@ async def load_query_dataset(
     currency: str,
     strict_search: bool,
     settings: Settings,
-    client_factory: type[SupportsSearchAllAds],
+    client_factory: type[SupportsSearchAllAds] | None = None,
+    client: SupportsSearchAllAds | None = None,
     search_kwargs: dict[str, Any] | None = None,
 ) -> QueryDataset:
-    client = client_factory(settings)
+    owns_client = False
+    if client is None:
+        if client_factory is None:
+            raise ValueError("Either client or client_factory must be provided")
+        client = client_factory(settings)
+        owns_client = True
     try:
         response = await client.search_all_ads(
             query=query,
@@ -79,7 +85,8 @@ async def load_query_dataset(
             **(search_kwargs or {}),
         )
     finally:
-        await client.aclose()
+        if owns_client:
+            await client.aclose()
 
     ads = apply_search_mode(response.get("ads", []), query, strict_search)
     return QueryDataset(
@@ -97,10 +104,16 @@ async def load_segment_datasets(
     currency: str,
     strict_search: bool,
     settings: Settings,
-    client_factory: type[SupportsSearchAllAds],
+    client_factory: type[SupportsSearchAllAds] | None = None,
+    client: SupportsSearchAllAds | None = None,
     parallel_search: SupportsParallelSearch,
 ) -> dict[str, QueryDataset]:
-    client = client_factory(settings)
+    owns_client = False
+    if client is None:
+        if client_factory is None:
+            raise ValueError("Either client or client_factory must be provided")
+        client = client_factory(settings)
+        owns_client = True
     tasks = [
         {
             "query": query,
@@ -113,7 +126,8 @@ async def load_segment_datasets(
     try:
         responses = await parallel_search(client, tasks, settings)
     finally:
-        await client.aclose()
+        if owns_client:
+            await client.aclose()
 
     datasets: dict[str, QueryDataset] = {}
     for (segment_name, _), response in zip(SEGMENT_TASKS, responses, strict=True):

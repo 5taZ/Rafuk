@@ -7,19 +7,27 @@ from api.config import Settings, get_settings
 from api.database import get_engine
 from api.database import get_session_factory as build_session_factory
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
-from api.services.cache import CacheBackend, RedisCache
+from api.services.cache import CacheBackend, MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
+from api.services.kufar_client import KufarClient
 
 
 def get_settings_dependency() -> Settings:
     return get_settings()
 
 
+def get_kufar_client(request: Request) -> KufarClient:
+    client = getattr(request.app.state, "kufar_client", None)
+    if client is not None:
+        return client
+    return KufarClient(get_settings())
+
+
 def get_cache(request: Request) -> CacheBackend:
     cache = getattr(request.app.state, "cache", None)
     if cache is not None:
         return cache
-    return RedisCache.from_url(get_settings().redis_url)
+    return MemoryCache()
 
 
 def get_currency_service(request: Request) -> CurrencyService:

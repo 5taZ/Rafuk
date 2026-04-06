@@ -5,8 +5,9 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from api.dependencies import get_telegram_user
 from api.services.cache import MemoryCache
-from tests.conftest import init_test_tables
+from tests.conftest import FAKE_TELEGRAM_USER, init_test_tables
 
 
 class FakeCurrencyService:
@@ -25,9 +26,6 @@ class FakeCurrencyService:
 
 
 class FakeKufarClient:
-    def __init__(self, settings) -> None:
-        del settings
-
     async def search_all_ads(self, **kwargs) -> dict:
         del kwargs
         return {
@@ -40,14 +38,14 @@ class FakeKufarClient:
 
 
 def test_price_stats_endpoint_returns_payload(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
-    from api.routers import price_stats
 
-    monkeypatch.setattr(price_stats, "KufarClient", FakeKufarClient)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient()
     with TestClient(app) as client:
         asyncio.get_event_loop().run_until_complete(init_test_tables(app))
         response = client.get("/api/v1/price-stats", params={"query": "iphone", "currency": "USD"})

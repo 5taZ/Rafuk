@@ -10,5 +10,5 @@ htmlcov/
 dist/
 build/
 .run/
-bot.db
 *.db
+*.md

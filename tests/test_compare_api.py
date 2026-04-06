@@ -5,9 +5,11 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
+from api.dependencies import get_telegram_user
 from api.models import Base, QuerySnapshot
 from api.services.aggregator import build_query_key
 from api.services.cache import MemoryCache
+from tests.conftest import FAKE_TELEGRAM_USER
 
 
 class FakeCurrencyService:
@@ -26,9 +28,6 @@ class FakeCurrencyService:
 
 
 class FakeKufarClient:
-    def __init__(self, settings) -> None:
-        del settings
-
     async def search_all_ads(self, **kwargs) -> dict:
         query = str(kwargs.get("query", "")).casefold()
         if "iphone 16" in query:
@@ -91,14 +90,14 @@ async def create_tables(engine) -> None:
 
 
 def test_compare_endpoint_returns_multi_query_summary(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
-    from api.routers import compare
 
-    monkeypatch.setattr(compare, "KufarClient", FakeKufarClient)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: FAKE_TELEGRAM_USER
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient()
 
     with TestClient(app) as client:
         asyncio.run(create_tables(app.state.engine))
