@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
+from api.models import TrackerEvent
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -40,3 +44,39 @@ def test_trackers_crud() -> None:
         list_response_after_delete = client.get("/api/v1/trackers")
         assert list_response_after_delete.status_code == 200
         assert list_response_after_delete.json() == []
+
+
+async def seed_tracker_event(session_factory) -> None:
+    async with session_factory() as session:
+        session.add(
+            TrackerEvent(
+                tracker_id=1,
+                user_id=123456,
+                query="iphone 15",
+                strict_mode=True,
+                event_type="new_listing",
+                title="iPhone 15 256GB",
+                link="https://www.kufar.by/item/1",
+                price_byn=2400.0,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
+def test_tracker_events_endpoint() -> None:
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        asyncio.run(seed_tracker_event(app.state.session_factory))
+        response = client.get("/api/v1/tracker-events")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["event_type"] == "new_listing"
+    assert payload[0]["strict_mode"] is True

@@ -135,3 +135,19 @@ class TrackerRead(BaseModel):
     last_checked_at: datetime | None = None
     active: bool
     created_at: datetime
+
+
+class TrackerEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    tracker_id: int
+    user_id: int
+    query: str
+    strict_mode: bool
+    event_type: str
+    title: str
+    link: str
+    price_byn: float | None = None
+    delta_byn: float | None = None
+    created_at: datetime

@@ -113,3 +113,33 @@ class QueryListingState(Base):
         Index("idx_query_listing_states_query", "query"),
         Index("idx_query_listing_states_active", "active"),
     )
+
+
+class TrackerEvent(Base):
+    __tablename__ = "tracker_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tracker_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    query: Mapped[str] = mapped_column(String(255), nullable=False)
+    strict_mode: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    link: Mapped[str] = mapped_column(String(512), nullable=False)
+    price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delta_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_tracker_events_user", "user_id"),
+        Index("idx_tracker_events_created", "created_at"),
+    )

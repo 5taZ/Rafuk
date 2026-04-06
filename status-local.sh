@@ -42,6 +42,12 @@ else
     print_status "bot" "stopped"
 fi
 
+if is_pid_running "$RUN_DIR/scheduler.pid" || pgrep -f 'python -m scheduler.collector' >/dev/null 2>&1; then
+    print_status "scheduler" "running"
+else
+    print_status "scheduler" "stopped"
+fi
+
 if is_pid_running "$RUN_DIR/cloudflared.pid"; then
     print_status "tunnel" "running"
 else

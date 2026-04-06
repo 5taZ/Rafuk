@@ -7,6 +7,7 @@ def test_tracker_table_exists() -> None:
     assert "trackers" in Base.metadata.tables
     assert "query_snapshots" in Base.metadata.tables
     assert "query_listing_states" in Base.metadata.tables
+    assert "tracker_events" in Base.metadata.tables
 
 
 def test_tracker_columns_and_types() -> None:
@@ -54,6 +55,11 @@ def test_history_tables_have_indexes() -> None:
     assert "uq_query_listing_state" in state_constraints
     assert "idx_query_listing_states_query" in state_indexes
     assert "idx_query_listing_states_active" in state_indexes
+
+    tracker_events = Base.metadata.tables["tracker_events"]
+    tracker_event_indexes = {index.name for index in tracker_events.indexes}
+    assert "idx_tracker_events_user" in tracker_event_indexes
+    assert "idx_tracker_events_created" in tracker_event_indexes
 
 
 def test_get_engine_returns_async_engine() -> None:

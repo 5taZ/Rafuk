@@ -23,7 +23,12 @@ def upgrade() -> None:
     if "strict_mode" not in tracker_columns:
         op.add_column(
             "trackers",
-            sa.Column("strict_mode", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+            sa.Column(
+                "strict_mode",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.text("false"),
+            ),
         )
 
 

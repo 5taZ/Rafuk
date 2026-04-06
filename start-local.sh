@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR="$ROOT_DIR/.run"
 API_LOG="$RUN_DIR/api.log"
 BOT_LOG="$RUN_DIR/bot.log"
+SCHEDULER_LOG="$RUN_DIR/scheduler.log"
 CLOUDFLARED_LOG="$RUN_DIR/cloudflared.log"
 
 WITH_TUNNEL=0
@@ -43,6 +44,7 @@ stop_existing() {
     pkill -f 'uv run uvicorn api.main:app --host 0.0.0.0 --port 8010' || true
     pkill -f 'uv run uvicorn api.main:app --host 127.0.0.1 --port 8010' || true
     pkill -f 'python -m bot.main' || true
+    pkill -f 'python -m scheduler.collector' || true
 
     if [[ -f "$RUN_DIR/cloudflared.pid" ]]; then
         kill "$(cat "$RUN_DIR/cloudflared.pid")" 2>/dev/null || true
@@ -57,6 +59,11 @@ stop_existing() {
     if [[ -f "$RUN_DIR/bot.pid" ]]; then
         kill "$(cat "$RUN_DIR/bot.pid")" 2>/dev/null || true
         rm -f "$RUN_DIR/bot.pid"
+    fi
+
+    if [[ -f "$RUN_DIR/scheduler.pid" ]]; then
+        kill "$(cat "$RUN_DIR/scheduler.pid")" 2>/dev/null || true
+        rm -f "$RUN_DIR/scheduler.pid"
     fi
 }
 
@@ -134,6 +141,13 @@ start_bot() {
     echo $! >"$RUN_DIR/bot.pid"
 }
 
+start_scheduler() {
+    : >"$SCHEDULER_LOG"
+    echo "Starting scheduler ..."
+    nohup uv run python -m scheduler.collector >"$SCHEDULER_LOG" 2>&1 &
+    echo $! >"$RUN_DIR/scheduler.pid"
+}
+
 main() {
     cd "$ROOT_DIR"
     stop_existing
@@ -146,6 +160,7 @@ main() {
     migrate_db
     start_api
     start_bot
+    start_scheduler
 
     echo
     echo "Project is up."
@@ -158,6 +173,7 @@ main() {
     echo "Logs:"
     echo "  API:  $API_LOG"
     echo "  Bot:  $BOT_LOG"
+    echo "  Scheduler: $SCHEDULER_LOG"
     if [[ "$WITH_TUNNEL" -eq 1 ]]; then
         echo "  Tunnel: $CLOUDFLARED_LOG"
     fi

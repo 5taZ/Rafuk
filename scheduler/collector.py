@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
-from api.models import Base, Tracker
+from api.models import Base, Tracker, TrackerEvent
 from api.services.aggregator import apply_search_mode, build_query_key, normalize_price_byn
 from api.services.history_service import (
     QuerySyncResult,
@@ -31,6 +31,41 @@ async def notify_user(bot: Bot, user_id: int, message: str, session: AsyncSessio
             update(Tracker).where(Tracker.user_id == user_id).values(active=False)
         )
         await session.commit()
+
+
+def persist_tracker_events(
+    session: AsyncSession,
+    tracker: Tracker,
+    sync_result: QuerySyncResult,
+) -> None:
+    for state in sync_result.new_listings[:10]:
+        session.add(
+            TrackerEvent(
+                tracker_id=tracker.id,
+                user_id=tracker.user_id,
+                query=tracker.query,
+                strict_mode=tracker.strict_mode,
+                event_type="new_listing",
+                title=state.title,
+                link=state.link,
+                price_byn=state.last_price_byn,
+            )
+        )
+
+    for state, delta in sync_result.price_drops[:10]:
+        session.add(
+            TrackerEvent(
+                tracker_id=tracker.id,
+                user_id=tracker.user_id,
+                query=tracker.query,
+                strict_mode=tracker.strict_mode,
+                event_type="price_drop",
+                title=state.title,
+                link=state.link,
+                price_byn=state.last_price_byn,
+                delta_byn=delta,
+            )
+        )
 
 
 def _format_price_byn(value: float | None) -> str:
@@ -129,6 +164,7 @@ async def check_trackers(
 
                     message = _build_tracker_message(query, strict_mode, sync_result)
                     if message:
+                        persist_tracker_events(session, tracker, sync_result)
                         await notify_user(bot, tracker.user_id, message, session)
 
                     tracker.last_seen_ad_id = newest_id

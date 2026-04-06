@@ -6,10 +6,27 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import Tracker
-from api.schemas import TrackerCreate, TrackerRead
+from api.models import Tracker, TrackerEvent
+from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead
 
 router = APIRouter(tags=["trackers"])
+
+
+@router.get("/tracker-events", response_model=list[TrackerEventRead])
+async def get_tracker_events(
+    limit: int = 20,
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> list[TrackerEventRead]:
+    bounded_limit = max(1, min(limit, 50))
+    async with session_factory() as session:
+        result = await session.execute(
+            select(TrackerEvent)
+            .where(TrackerEvent.user_id == telegram_user.user_id)
+            .order_by(TrackerEvent.created_at.desc(), TrackerEvent.id.desc())
+            .limit(bounded_limit)
+        )
+        return list(result.scalars())
 
 
 @router.get("/trackers", response_model=list[TrackerRead])
