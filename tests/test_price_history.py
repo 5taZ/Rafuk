@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 
 from api.models import QuerySnapshot
 from api.services.aggregator import build_query_key
@@ -54,13 +55,16 @@ class FakeKufarClient:
         return None
 
 
-async def seed_history(session_factory) -> None:
+async def seed_history(session_factory, query: str = "iphone 16") -> None:
     async with session_factory() as session:
+        await session.execute(
+            delete(QuerySnapshot).where(QuerySnapshot.query == build_query_key(query, False))
+        )
         now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
         session.add_all(
             [
                 QuerySnapshot(
-                    query=build_query_key("iphone 16", False),
+                    query=build_query_key(query, False),
                     snapshot_at=now - timedelta(days=2),
                     total_results=100,
                     analyzed_count=80,
@@ -70,7 +74,7 @@ async def seed_history(session_factory) -> None:
                     max_byn=3300,
                 ),
                 QuerySnapshot(
-                    query=build_query_key("iphone 16", False),
+                    query=build_query_key(query, False),
                     snapshot_at=now - timedelta(hours=6),
                     total_results=120,
                     analyzed_count=92,
@@ -93,18 +97,37 @@ def test_price_history_endpoint_returns_snapshots() -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        asyncio.run(seed_history(app.state.session_factory))
+        asyncio.run(seed_history(app.state.session_factory, query="iphone 16 history"))
         response = client.get(
             "/api/v1/price-history",
-            params={"query": "iphone 16", "currency": "USD", "days": 7},
+            params={"query": "iphone 16 history", "currency": "USD", "days": 7},
         )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["query"] == "iphone 16"
+    assert payload["query"] == "iphone 16 history"
     assert payload["days"] == 7
     assert len(payload["points"]) == 2
     assert payload["points"][-1]["median"] == 816.67
+
+
+def test_price_history_caps_days_at_ninety() -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        asyncio.run(seed_history(app.state.session_factory, query="iphone 16 caps"))
+        response = client.get(
+            "/api/v1/price-history",
+            params={"query": "iphone 16 caps", "currency": "BYN", "days": 365},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["days"] == 90
 
 
 def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
@@ -118,13 +141,14 @@ def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
+        asyncio.run(seed_history(app.state.session_factory, query="iphone 16 persist-old"))
         stats_response = client.get(
             "/api/v1/price-stats",
-            params={"query": "iphone 16", "currency": "BYN"},
+            params={"query": "iphone 16 fresh", "currency": "BYN"},
         )
         history_response = client.get(
             "/api/v1/price-history",
-            params={"query": "iphone 16", "currency": "BYN", "days": 1},
+            params={"query": "iphone 16 fresh", "currency": "BYN", "days": 1},
         )
 
     assert stats_response.status_code == 200

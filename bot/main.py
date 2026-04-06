@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 
 from api.config import get_settings
+from bot.database import close_bot_engine, init_bot_engine
 from bot.handlers.price import router as price_router
 from bot.handlers.start import router as start_router
 from bot.handlers.tracker import router as tracker_router
@@ -24,6 +25,7 @@ def build_dispatcher() -> Dispatcher:
 
 async def main() -> None:
     settings = get_settings()
+    await init_bot_engine()
     bot = Bot(settings.bot_token)
     await bot.set_my_commands(
         [
@@ -36,7 +38,11 @@ async def main() -> None:
         ]
     )
     dispatcher = build_dispatcher()
-    await dispatcher.start_polling(bot)
+    try:
+        await dispatcher.start_polling(bot)
+    finally:
+        await close_bot_engine()
+        await bot.session.close()
 
 
 if __name__ == "__main__":

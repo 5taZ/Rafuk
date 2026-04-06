@@ -1,39 +1,21 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from api.config import Settings
 from api.dependencies import get_cache, get_currency_service, get_settings_dependency
 from api.schemas import SegmentsResponse
-from api.services.aggregator import apply_search_mode, compute_price_stats, extract_prices
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
 from api.services.parallel_kufar import parallel_search_all
+from api.services.query_pipeline import convert_price_stats, load_segment_datasets
+from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
-
-
-def _convert_segment(
-    stats: dict[str, float | int],
-    currency: str,
-    rates: dict[str, float],
-    currency_service: CurrencyService,
-) -> dict[str, float | int]:
-    return {
-        **stats,
-        "mean": currency_service.convert_from_byn(float(stats["mean"]), currency, rates),
-        "median": currency_service.convert_from_byn(float(stats["median"]), currency, rates),
-        "q1": currency_service.convert_from_byn(float(stats["q1"]), currency, rates),
-        "q3": currency_service.convert_from_byn(float(stats["q3"]), currency, rates),
-        "min": currency_service.convert_from_byn(float(stats["min"]), currency, rates),
-        "max": currency_service.convert_from_byn(float(stats["max"]), currency, rates),
-    }
-
-
 @router.get("/segments", response_model=SegmentsResponse)
 async def get_segments(
-    query: str,
+    query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: str = "USD",
     strict_search: bool = False,
     settings: Settings = Depends(get_settings_dependency),
@@ -45,51 +27,29 @@ async def get_segments(
     if cached:
         return SegmentsResponse(**cached)
 
-    client = KufarClient(settings)
-    tasks = [
-        {
-            "query": query,
-            "currency": currency,
-            "condition": "new",
-            "seller_type": "search_owner",
-        },
-        {
-            "query": query,
-            "currency": currency,
-            "condition": "new",
-            "seller_type": "search_business",
-        },
-        {
-            "query": query,
-            "currency": currency,
-            "condition": "used",
-            "seller_type": "search_owner",
-        },
-        {
-            "query": query,
-            "currency": currency,
-            "condition": "used",
-            "seller_type": "search_business",
-        },
-    ]
-    try:
-        responses = await parallel_search_all(client, tasks, settings)
-    finally:
-        await client.aclose()
-
+    datasets = await load_segment_datasets(
+        query=query,
+        currency=currency,
+        strict_search=strict_search,
+        settings=settings,
+        client_factory=KufarClient,
+        parallel_search=parallel_search_all,
+    )
     rates_payload = await currency_service.get_rates()
     rates = rates_payload["rates"]
-    segment_names = ("new_private", "new_shop", "used_private", "used_shop")
-    segment_values = []
-    for response in responses:
-        ads = apply_search_mode(response.get("ads", []), query, strict_search)
-        stats = compute_price_stats(extract_prices(ads)).model_dump()
-        segment_values.append(_convert_segment(stats, currency, rates, currency_service))
 
     payload = SegmentsResponse(
         query=query,
         currency=currency,
-        **dict(zip(segment_names, segment_values, strict=True)),
+        **{
+            name: convert_price_stats(
+                dataset.price_stats,
+                currency=currency,
+                rates=rates,
+                currency_service=currency_service,
+            )
+            for name, dataset in datasets.items()
+        },
     )
     await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
     return payload

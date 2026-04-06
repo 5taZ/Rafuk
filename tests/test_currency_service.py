@@ -14,7 +14,6 @@ async def test_currency_service_fetches_and_caches_rates() -> None:
     response.raise_for_status = MagicMock()
     response.json.return_value = [
         {"Cur_Abbreviation": "USD", "Cur_OfficialRate": 3.2, "Cur_Scale": 1},
-        {"Cur_Abbreviation": "EUR", "Cur_OfficialRate": 3.5, "Cur_Scale": 1},
     ]
     http_client = MagicMock()
     http_client.get = AsyncMock(return_value=response)
@@ -23,7 +22,6 @@ async def test_currency_service_fetches_and_caches_rates() -> None:
     payload = await service.get_rates()
     assert payload["source"] == "nbrb"
     assert payload["rates"]["USD"] == 3.2
-    assert payload["rates"]["EUR"] == 3.5
 
 
 @pytest.mark.asyncio

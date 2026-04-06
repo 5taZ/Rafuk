@@ -1,35 +1,50 @@
 from __future__ import annotations
 
-import httpx
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from api.config import get_settings
+from api.services.aggregator import compute_price_stats, extract_prices
+from api.services.kufar_client import KufarClient
 
 router = Router(name="price")
 
 
-async def fetch_price_stats(query: str) -> dict:
+async def fetch_price_stats(query: str, currency: str = "USD") -> dict:
     settings = get_settings()
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(
-            f"{settings.api_base_url}/api/v1/price-stats",
-            params={"query": query, "currency": "USD"},
-        )
-        response.raise_for_status()
-        return response.json()
+    client = KufarClient(settings)
+    try:
+        payload = await client.search(query=query, currency="BYN", size=100)
+    finally:
+        await client.aclose()
+    ads = payload.get("ads", [])
+    prices = extract_prices(ads)
+    stats = compute_price_stats(prices)
+    return {
+        "total_results": len(ads),
+        "count": len(ads),
+        "analyzed_count": len(ads),
+        "mean": stats.mean,
+        "median": stats.median,
+        "min": stats.min_price,
+        "max": stats.max_price,
+        "currency": currency,
+    }
 
 
-async def fetch_listings(query: str) -> dict:
+async def fetch_listings(query: str, currency: str = "USD") -> dict:
+    from api.services.listing_mapper import map_to_listing_items
+
     settings = get_settings()
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(
-            f"{settings.api_base_url}/api/v1/listings",
-            params={"query": query, "currency": "USD", "sort": "newest"},
-        )
-        response.raise_for_status()
-        return response.json()
+    client = KufarClient(settings)
+    try:
+        payload = await client.search(query=query, currency="BYN", size=50)
+    finally:
+        await client.aclose()
+    ads = payload.get("ads", [])
+    items = map_to_listing_items(ads, currency=currency, rates={})
+    return {"listings": items}
 
 
 @router.message(Command("price"))
@@ -41,7 +56,7 @@ async def cmd_price(message: Message, command: CommandObject) -> None:
 
     try:
         stats = await fetch_price_stats(query)
-    except httpx.HTTPError:
+    except Exception:
         await message.answer("Price lookup is temporarily unavailable.")
         return
     await message.answer(
@@ -63,7 +78,7 @@ async def cmd_top(message: Message, command: CommandObject) -> None:
 
     try:
         payload = await fetch_listings(query)
-    except httpx.HTTPError:
+    except Exception:
         await message.answer("Listings lookup is temporarily unavailable.")
         return
     listings = payload.get("listings", [])[:5]
@@ -73,5 +88,5 @@ async def cmd_top(message: Message, command: CommandObject) -> None:
 
     lines = [f"Top listings for {query}:"]
     for item in listings:
-        lines.append(f"- {item['title']}: {item['price']} {item['currency']}")
+        lines.append(f"- {item.title}: {item.price} {item.currency}")
     await message.answer("\n".join(lines))

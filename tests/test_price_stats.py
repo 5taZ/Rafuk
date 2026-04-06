@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
 from api.services.cache import MemoryCache
+from tests.conftest import init_test_tables
 
 
 class FakeCurrencyService:
@@ -47,6 +49,7 @@ def test_price_stats_endpoint_returns_payload(monkeypatch) -> None:
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
+        asyncio.get_event_loop().run_until_complete(init_test_tables(app))
         response = client.get("/api/v1/price-stats", params={"query": "iphone", "currency": "USD"})
     assert response.status_code == 200
     payload = response.json()

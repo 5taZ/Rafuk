@@ -1,31 +1,30 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from api.config import Settings
 from api.dependencies import get_cache, get_currency_service, get_settings_dependency
-from api.schemas import ListingItem, ListingsResponse
+from api.schemas import ListingsResponse
 from api.services.aggregator import (
-    apply_search_mode,
-    compute_price_stats,
-    compute_price_vs_median,
-    extract_prices,
     filter_deal_ads,
-    get_param,
-    normalize_price_byn,
     sort_listings,
 )
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
+from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
-from api.services.listing_mapper import first_image_url
+from api.services.listing_mapper import build_listing_item
+from api.services.market_signals import duplicate_counts
+from api.services.query_pipeline import load_query_dataset
+from api.services.reseller_tools import analyze_query_text
+from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
 
 
 @router.get("/listings", response_model=ListingsResponse)
 async def get_listings(
-    query: str,
+    query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     sort: str = "newest",
     currency: str = "USD",
     strict_search: bool = False,
@@ -52,47 +51,61 @@ async def get_listings(
     if cached:
         return ListingsResponse(**cached)
 
-    client = KufarClient(settings)
-    try:
-        response = await client.search_all_ads(query=query, currency=currency)
-    finally:
-        await client.aclose()
-
-    ads = apply_search_mode(response.get("ads", []), query, strict_search)
-    median_byn = compute_price_stats(extract_prices(ads)).median
+    dataset = await load_query_dataset(
+        query=query,
+        currency=currency,
+        strict_search=strict_search,
+        settings=settings,
+        client_factory=KufarClient,
+    )
+    median_byn = dataset.price_stats.median
+    duplicate_index = duplicate_counts(dataset.ads)
+    liquidity = compute_liquidity_insight(dataset.ads, dataset.price_stats)
     rates_payload = await currency_service.get_rates()
     rates = rates_payload["rates"]
+    insights = analyze_query_text(query)
 
     deal_ads = (
-        filter_deal_ads(ads, median_byn, effective_from, effective_to)
+        filter_deal_ads(dataset.ads, median_byn, effective_from, effective_to)
         if sort == "cheap"
-        else ads
+        else dataset.ads
     )
-    sorted_ads = sort_listings(deal_ads, sort, median_byn)
+    effective_sort = "newest" if sort == "deal_score" else sort
+    sorted_ads = sort_listings(deal_ads, effective_sort, median_byn)
     listings = []
     for ad in sorted_ads[:200]:
-        price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
+        duplicate_count = duplicate_index.get(int(ad.get("ad_id", 0)), 0)
         listings.append(
-            ListingItem(
-                ad_id=int(ad.get("ad_id", 0)),
-                subject=str(ad.get("subject", "")),
-                price=currency_service.convert_from_byn(price_byn, currency, rates),
+            build_listing_item(
+                ad,
+                query=query,
                 currency=currency,
-                ad_link=str(ad.get("ad_link", "")),
-                list_time=ad.get("list_time"),
-                region_id=ad.get("region_id"),
-                condition=get_param(ad, "condition"),
-                seller_type=get_param(ad, "seller_type"),
-                price_vs_median=compute_price_vs_median(ad, median_byn),
-                thumbnail=first_image_url(ad),
+                rates=rates,
+                currency_service=currency_service,
+                median_byn=median_byn,
+                market_stats=dataset.price_stats,
+                liquidity=liquidity,
+                duplicate_count=duplicate_count,
+            )
+        )
+    if sort in {"cheap", "deal_score"}:
+        listings.sort(
+            key=lambda item: (
+                -float(item.deal_score or 0.0),
+                float(item.price_vs_median or 0.0),
+                item.title,
             )
         )
 
     payload = ListingsResponse(
         query=query,
         currency=currency,
+        normalized_query=insights.normalized_query,
+        config_summary=insights.config_summary,
+        storage_gb=insights.storage_gb,
+        ram_gb=insights.ram_gb,
         sort=sort,
-        total=len(ads),
+        total=dataset.total_results,
         returned=len(listings),
         discount_percent=effective_from if sort == "cheap" else None,
         discount_from_percent=effective_from if sort == "cheap" else None,

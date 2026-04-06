@@ -82,6 +82,13 @@ def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
     assert payload["images"][0].endswith("/adim1/test.jpg")
     assert payload["parameters"][0]["label"] == "Подкатегория"
     assert payload["seller_fields"][0]["value"] == "Иван"
+    assert payload["fair_price_label"] is not None
+    assert payload["region_name"] == "Регион 6"
+    assert payload["normalized_query"] == "iphone"
+    assert payload["deal_verdict"] in {"Забирать", "Смотреть", "Норм", "Мимо"}
+    assert payload["price_byn"] == 2000
+    assert payload["liquidity"] is not None
+    assert payload["flip_estimates"]
 
 
 def test_listing_detail_not_found(monkeypatch) -> None:

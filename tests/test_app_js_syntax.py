@@ -5,6 +5,12 @@ import subprocess
 from pathlib import Path
 
 APP_JS = Path("frontend/js/app.js")
+JS_MODULES = [
+    APP_JS,
+    Path("frontend/js/app_core.js"),
+    Path("frontend/js/app_renderers.js"),
+    Path("frontend/js/app_actions.js"),
+]
 
 
 def test_file_is_not_empty() -> None:
@@ -30,5 +36,6 @@ def test_has_required_methods_and_endpoints() -> None:
 
 
 def test_node_syntax_check() -> None:
-    result = subprocess.run(["node", "--check", str(APP_JS)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    for script in JS_MODULES:
+        result = subprocess.run(["node", "--check", str(script)], capture_output=True, text=True)
+        assert result.returncode == 0, f"{script}: {result.stderr}"

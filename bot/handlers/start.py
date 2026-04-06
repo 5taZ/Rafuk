@@ -15,7 +15,7 @@ async def cmd_start(message: Message) -> None:
     settings = get_settings()
     keyboard = mini_app_keyboard(settings.mini_app_url)
     text = (
-        "Kufar Analytics helps you inspect market prices, listings, and tracker alerts.\n"
+        "Rafuks helps you inspect market prices, listings, and tracker alerts.\n"
         "Use /app to open the mini app or /help to see commands."
     )
     if keyboard is None:
@@ -45,6 +45,6 @@ async def cmd_app(message: Message) -> None:
         )
         return
     await message.answer(
-        "Open the analytics mini app.",
+        "Open Rafuks mini app.",
         reply_markup=keyboard,
     )

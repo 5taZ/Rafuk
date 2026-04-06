@@ -7,15 +7,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import get_settings
 from api.database import get_engine, get_session_factory
-from api.models import Base
 from api.routers import (
+    compare,
     currency,
+    geography,
     listing_detail,
     listings,
     price_history,
     price_stats,
+    saved_searches,
     segments,
     trackers,
+    workflow,
 )
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
@@ -36,8 +39,6 @@ async def lifespan(app: FastAPI):
     app.state.cache = cache
     app.state.currency_service = currency_service
 
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
     try:
         yield
     finally:
@@ -47,20 +48,24 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="Kufar Analytics API", lifespan=lifespan)
+    app = FastAPI(title="Rafuks API", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.mini_app_url, settings.api_base_url],
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
     app.include_router(price_stats.router, prefix="/api/v1")
     app.include_router(price_history.router, prefix="/api/v1")
     app.include_router(listings.router, prefix="/api/v1")
     app.include_router(segments.router, prefix="/api/v1")
+    app.include_router(geography.router, prefix="/api/v1")
     app.include_router(currency.router, prefix="/api/v1")
+    app.include_router(compare.router, prefix="/api/v1")
     app.include_router(listing_detail.router, prefix="/api/v1")
     app.include_router(trackers.router, prefix="/api/v1")
+    app.include_router(saved_searches.router, prefix="/api/v1")
+    app.include_router(workflow.router, prefix="/api/v1")
     return app
 
 
