@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from api.config import Settings
 from api.dependencies import get_cache, get_currency_service, get_settings_dependency
 from api.schemas import SegmentsResponse
-from api.services.aggregator import compute_price_stats, extract_prices
+from api.services.aggregator import apply_search_mode, compute_price_stats, extract_prices
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
@@ -35,11 +35,12 @@ def _convert_segment(
 async def get_segments(
     query: str,
     currency: str = "USD",
+    strict_search: bool = False,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
 ) -> SegmentsResponse:
-    cache_key = f"segments:{query}:{currency}"
+    cache_key = f"segments:{query}:{currency}:{strict_search}"
     cached = await cache.get_json(cache_key)
     if cached:
         return SegmentsResponse(**cached)
@@ -81,7 +82,8 @@ async def get_segments(
     segment_names = ("new_private", "new_shop", "used_private", "used_shop")
     segment_values = []
     for response in responses:
-        stats = compute_price_stats(extract_prices(response.get("ads", []))).model_dump()
+        ads = apply_search_mode(response.get("ads", []), query, strict_search)
+        stats = compute_price_stats(extract_prices(ads)).model_dump()
         segment_values.append(_convert_segment(stats, currency, rates, currency_service))
 
     payload = SegmentsResponse(

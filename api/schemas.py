@@ -67,6 +67,9 @@ class ListingsResponse(BaseModel):
     sort: str
     total: int
     returned: int = 0
+    discount_percent: float | None = None
+    discount_from_percent: float | None = None
+    discount_to_percent: float | None = None
     listings: list[ListingItem]
 
 
@@ -96,8 +99,26 @@ class CurrencyRatesResponse(BaseModel):
     fetched_at: datetime
 
 
+class PriceHistoryPoint(BaseModel):
+    snapshot_at: datetime
+    mean: float
+    median: float
+    min: float
+    max: float
+    analyzed_count: int
+    total_results: int
+
+
+class PriceHistoryResponse(BaseModel):
+    query: str
+    currency: str
+    days: int
+    points: list[PriceHistoryPoint]
+
+
 class TrackerCreate(BaseModel):
     query: str
+    strict_mode: bool = False
     interval_min: int = 15
 
 
@@ -107,7 +128,10 @@ class TrackerRead(BaseModel):
     id: int
     user_id: int
     query: str
+    strict_mode: bool = False
     interval_min: int
     last_seen_ad_id: int | None = None
+    last_seen_price_byn: float | None = None
+    last_checked_at: datetime | None = None
     active: bool
     created_at: datetime

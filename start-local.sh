@@ -109,6 +109,11 @@ start_tunnel() {
     echo "Tunnel URL: $tunnel_url"
 }
 
+migrate_db() {
+    echo "Running database migrations ..."
+    uv run alembic -c migrations/alembic.ini upgrade head
+}
+
 start_api() {
     : >"$API_LOG"
     echo "Starting API on 0.0.0.0:8010 ..."
@@ -138,6 +143,7 @@ main() {
         start_tunnel
     fi
 
+    migrate_db
     start_api
     start_bot
 

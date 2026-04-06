@@ -17,18 +17,27 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "trackers",
-        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("query", sa.String(length=255), nullable=False),
-        sa.Column("interval_min", sa.Integer(), nullable=False, server_default="15"),
-        sa.Column("last_seen_ad_id", sa.BigInteger(), nullable=True),
-        sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-    )
-    op.create_index("idx_trackers_user", "trackers", ["user_id"])
-    op.create_index("idx_trackers_active", "trackers", ["active"])
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    tables = set(inspector.get_table_names())
+
+    if "trackers" not in tables:
+        op.create_table(
+            "trackers",
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column("user_id", sa.BigInteger(), nullable=False),
+            sa.Column("query", sa.String(length=255), nullable=False),
+            sa.Column("interval_min", sa.Integer(), nullable=False, server_default="15"),
+            sa.Column("last_seen_ad_id", sa.BigInteger(), nullable=True),
+            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        )
+
+    indexes = {index["name"] for index in inspector.get_indexes("trackers")}
+    if "idx_trackers_user" not in indexes:
+        op.create_index("idx_trackers_user", "trackers", ["user_id"])
+    if "idx_trackers_active" not in indexes:
+        op.create_index("idx_trackers_active", "trackers", ["active"])
 
 
 def downgrade() -> None:

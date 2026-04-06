@@ -8,6 +8,7 @@ import httpx
 from api.services.cache import CacheBackend
 
 NBRB_URL = "https://api.nbrb.by/exrates/rates?periodicity=0"
+DEFAULT_USD_RATE = 3.0
 
 
 class CurrencyService:
@@ -27,12 +28,12 @@ class CurrencyService:
 
     async def get_rates(self) -> dict[str, Any]:
         cached = await self._cache.get_json("currency:rates")
-        if cached:
+        cached_usd = float(cached.get("rates", {}).get("USD", 0.0)) if cached else 0.0
+        if cached and cached_usd > 0:
             return cached
 
         rates = {
-            "USD": 0.0,
-            "EUR": 0.0,
+            "USD": DEFAULT_USD_RATE,
         }
         source = "fallback"
         fetched_at = datetime.now(UTC).isoformat()
@@ -44,7 +45,7 @@ class CurrencyService:
             items = response.json()
             rates = self._extract_rates(items)
             source = "nbrb"
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, RuntimeError):
             # Keep fallback payload shape stable for the API.
             pass
 
@@ -74,6 +75,6 @@ class CurrencyService:
             scale = item.get("Cur_Scale", 1)
             if code in {"USD", "EUR"} and official_rate:
                 rates[code] = float(official_rate) / float(scale)
-        if "USD" not in rates or "EUR" not in rates:
-            raise ValueError("Required currencies are missing")
+        if "USD" not in rates:
+            raise ValueError("USD rate is missing")
         return rates

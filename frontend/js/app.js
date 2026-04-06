@@ -3,14 +3,20 @@
 function analyticsApp() {
     const state = {
         query: "",
+        strictSearch: false,
         currency: "BYN",
         sort: "newest",
+        discountFromPercent: 10,
+        discountToPercent: 30,
         loading: false,
         error: null,
         stats: null,
         listings: [],
+        dealListings: [],
         segments: null,
         chart: null,
+        history: [],
+        historyChart: null,
         usdRateByn: null,
         trackers: [],
         trackerStatus: "",
@@ -26,6 +32,7 @@ function analyticsApp() {
         elements.searchInput = document.getElementById("search-input");
         elements.searchButton = document.getElementById("search-btn");
         elements.searchButtonLabel = document.getElementById("search-btn-label");
+        elements.strictSearchToggle = document.getElementById("strict-search-toggle");
         elements.errorBar = document.getElementById("error-bar");
         elements.errorText = document.getElementById("error-text");
         elements.helperPanel = document.getElementById("helper-panel");
@@ -37,14 +44,19 @@ function analyticsApp() {
         elements.views = {
             overview: document.getElementById("overview-view"),
             ads: document.getElementById("ads-view"),
+            deals: document.getElementById("deals-view"),
             trackers: document.getElementById("trackers-view"),
         };
         elements.statsSection = document.getElementById("stats-section");
         elements.chartSection = document.getElementById("chart-section");
+        elements.historySection = document.getElementById("history-section");
+        elements.historyEmpty = document.getElementById("history-empty");
         elements.segmentsSection = document.getElementById("segments-section");
         elements.listingsSection = document.getElementById("listings-section");
+        elements.dealsSection = document.getElementById("deals-section");
         elements.marketTotalBadge = document.getElementById("market-total-badge");
         elements.listingsTotalBadge = document.getElementById("listings-total-badge");
+        elements.dealsTotalBadge = document.getElementById("deals-total-badge");
         elements.stats = {
             median: document.getElementById("stat-median"),
             mean: document.getElementById("stat-mean"),
@@ -56,7 +68,12 @@ function analyticsApp() {
         elements.usdRateValue = document.getElementById("usd-rate-value");
         elements.segmentsGrid = document.getElementById("segments-grid");
         elements.listingsList = document.getElementById("listings-list");
+        elements.dealsList = document.getElementById("deals-list");
         elements.sortButtons = Array.from(document.querySelectorAll("[data-sort]"));
+        elements.discountButtons = Array.from(document.querySelectorAll("[data-discount-from]"));
+        elements.dealFromInput = document.getElementById("deal-from-input");
+        elements.dealToInput = document.getElementById("deal-to-input");
+        elements.dealApplyButton = document.getElementById("deal-apply-btn");
         elements.quickChips = Array.from(document.querySelectorAll("[data-query]"));
         elements.trackerPanel = document.getElementById("tracker-panel");
         elements.trackQueryButton = document.getElementById("track-query-btn");
@@ -251,6 +268,12 @@ function analyticsApp() {
         }
     }
 
+    function renderStrictSearch() {
+        if (elements.strictSearchToggle) {
+            elements.strictSearchToggle.checked = state.strictSearch;
+        }
+    }
+
     function renderViewTabs() {
         for (const button of elements.viewTabs) {
             button.classList.toggle("active", button.dataset.view === state.activeView);
@@ -291,6 +314,26 @@ function analyticsApp() {
     function renderSortButtons() {
         for (const button of elements.sortButtons) {
             button.classList.toggle("active", button.dataset.sort === state.sort);
+        }
+    }
+
+    function renderDiscountButtons() {
+        for (const button of elements.discountButtons) {
+            const from = Number(button.dataset.discountFrom);
+            const to = Number(button.dataset.discountTo);
+            button.classList.toggle(
+                "active",
+                from === state.discountFromPercent && to === state.discountToPercent
+            );
+        }
+    }
+
+    function renderDealInputs() {
+        if (elements.dealFromInput) {
+            elements.dealFromInput.value = String(state.discountFromPercent);
+        }
+        if (elements.dealToInput) {
+            elements.dealToInput.value = String(state.discountToPercent);
         }
     }
 
@@ -368,56 +411,93 @@ function analyticsApp() {
         elements.segmentsSection.hidden = false;
     }
 
+    function buildListingNode(item) {
+        const listing = document.createElement("article");
+        listing.className = "listing";
+
+        const condition = item.condition ? `<span class="tag">${formatCondition(item.condition)}</span>` : "";
+        const seller = item.seller_type ? `<span class="tag">${formatSeller(item.seller_type)}</span>` : "";
+        const delta = formatDelta(item.price_vs_median);
+        const deltaMarkup = delta
+            ? `<span class="delta ${deltaClass(item.price_vs_median)}">${delta}</span>`
+            : "";
+        const thumbMarkup = item.thumbnail
+            ? `<img class="listing-thumb" src="${item.thumbnail}" alt="">`
+            : `<div class="listing-thumb placeholder">Нет фото</div>`;
+        const dateMarkup = item.list_time ? `<span class="listing-date">${formatDate(item.list_time)}</span>` : "";
+
+        listing.innerHTML = `
+            <div class="listing-main">
+                ${thumbMarkup}
+                <div class="listing-info">
+                    <span class="listing-name">${item.title}</span>
+                    <div class="listing-tags">${condition}${seller}${dateMarkup}</div>
+                </div>
+            </div>
+            <div class="listing-right">
+                <span class="listing-price mono">${formatPrice(item.price)}</span>
+                ${deltaMarkup}
+            </div>
+            <div class="listing-actions">
+                <button class="ghost-btn small" type="button">Карточка</button>
+                <a class="primary-link small" href="${item.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
+            </div>
+        `;
+
+        const detailButton = listing.querySelector("button");
+        detailButton?.addEventListener("click", () => {
+            void openListingDetail(item);
+        });
+        return listing;
+    }
+
+    function renderListingsCollection(items, container, badge, emptyText, totalOverride = null) {
+        container.innerHTML = "";
+        if (!items.length) {
+            const note = document.createElement("p");
+            note.className = "tracker-empty";
+            note.textContent = emptyText;
+            container.appendChild(note);
+            if (badge) {
+                badge.textContent = "0";
+            }
+            return false;
+        }
+
+        for (const item of items) {
+            container.appendChild(buildListingNode(item));
+        }
+
+        if (badge) {
+            const total = totalOverride ?? state.stats?.total_results ?? items.length;
+            badge.textContent = `${items.length} из ${total}`;
+        }
+        return true;
+    }
+
     function renderListings() {
-        elements.listingsList.innerHTML = "";
-        if (!state.listings.length) {
-            elements.listingsSection.hidden = true;
-            return;
+        const hasContent = renderListingsCollection(
+            state.listings,
+            elements.listingsList,
+            elements.listingsTotalBadge,
+            "По этому запросу пока нечего показать."
+        );
+        elements.listingsSection.hidden = !hasContent;
+    }
+
+    function renderDeals() {
+        const rangeLabel = `${state.discountFromPercent}-${state.discountToPercent}`;
+        const hasContent = renderListingsCollection(
+            state.dealListings,
+            elements.dealsList,
+            elements.dealsTotalBadge,
+            `Нет лотов в диапазоне ${rangeLabel}% ниже медианы. Попробуйте расширить диапазон или другой запрос.`,
+            state.stats?.total_results || state.listings.length || state.dealListings.length
+        );
+        elements.dealsSection.hidden = !state.query;
+        if (!hasContent && state.query) {
+            elements.dealsSection.hidden = false;
         }
-
-        for (const item of state.listings) {
-            const listing = document.createElement("article");
-            listing.className = "listing";
-
-            const condition = item.condition ? `<span class="tag">${formatCondition(item.condition)}</span>` : "";
-            const seller = item.seller_type ? `<span class="tag">${formatSeller(item.seller_type)}</span>` : "";
-            const delta = formatDelta(item.price_vs_median);
-            const deltaMarkup = delta
-                ? `<span class="delta ${deltaClass(item.price_vs_median)}">${delta}</span>`
-                : "";
-            const thumbMarkup = item.thumbnail
-                ? `<img class="listing-thumb" src="${item.thumbnail}" alt="">`
-                : `<div class="listing-thumb placeholder">Нет фото</div>`;
-            const dateMarkup = item.list_time ? `<span class="listing-date">${formatDate(item.list_time)}</span>` : "";
-
-            listing.innerHTML = `
-                <div class="listing-main">
-                    ${thumbMarkup}
-                    <div class="listing-info">
-                        <span class="listing-name">${item.title}</span>
-                        <div class="listing-tags">${condition}${seller}${dateMarkup}</div>
-                    </div>
-                </div>
-                <div class="listing-right">
-                    <span class="listing-price mono">${formatPrice(item.price)}</span>
-                    ${deltaMarkup}
-                </div>
-                <div class="listing-actions">
-                    <button class="ghost-btn small" type="button">Карточка</button>
-                    <a class="primary-link small" href="${item.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
-                </div>
-            `;
-
-            const detailButton = listing.querySelector("button");
-            detailButton?.addEventListener("click", () => {
-                void openListingDetail(item);
-            });
-            elements.listingsList.appendChild(listing);
-        }
-
-        const total = state.stats?.total_results || state.listings.length;
-        elements.listingsTotalBadge.textContent = `${state.listings.length} из ${total}`;
-        elements.listingsSection.hidden = false;
     }
 
     function renderTrackerStatus() {
@@ -459,7 +539,7 @@ function analyticsApp() {
             row.innerHTML = `
                 <div class="tracker-row-main">
                     <strong class="tracker-query">${tracker.query}</strong>
-                    <span class="tracker-meta mono">каждые ${tracker.interval_min} мин</span>
+                    <span class="tracker-meta mono">каждые ${tracker.interval_min} мин${tracker.strict_mode ? " • строгий" : ""}</span>
                 </div>
                 <div class="tracker-row-actions">
                     <button class="ghost-btn small" data-role="open" type="button">Открыть</button>
@@ -469,6 +549,8 @@ function analyticsApp() {
             row.querySelector('[data-role="open"]')?.addEventListener("click", () => {
                 elements.searchInput.value = tracker.query;
                 state.query = tracker.query;
+                state.strictSearch = Boolean(tracker.strict_mode);
+                renderStrictSearch();
                 renderLoading();
                 void search();
             });
@@ -483,6 +565,13 @@ function analyticsApp() {
         if (state.chart) {
             state.chart.destroy();
             state.chart = null;
+        }
+    }
+
+    function destroyHistoryChart() {
+        if (state.historyChart) {
+            state.historyChart.destroy();
+            state.historyChart = null;
         }
     }
 
@@ -577,12 +666,16 @@ function analyticsApp() {
         if (view === "ads" && state.query && !state.listings.length && !state.loading) {
             await search("ads");
         }
+        if (view === "deals" && state.query && !state.dealListings.length && !state.loading) {
+            await loadDeals();
+        }
     }
 
     async function openListingDetail(item) {
         try {
             const detail = await getJson(
                 `/api/v1/listing-detail?query=${encodeURIComponent(state.query)}&ad_id=${item.ad_id}&currency=${state.currency}`
+                + `&strict_search=${state.strictSearch}`
             );
             state.detail = detail;
             state.detailImageIndex = 0;
@@ -682,21 +775,140 @@ function analyticsApp() {
         });
     }
 
+    function renderHistory() {
+        const hasHistory = state.history.length > 0;
+        elements.historySection.hidden = !state.query;
+        elements.historyEmpty.hidden = hasHistory;
+        if (!state.query) {
+            destroyHistoryChart();
+            return;
+        }
+        if (!hasHistory) {
+            destroyHistoryChart();
+            return;
+        }
+        renderHistoryChart();
+    }
+
+    function renderHistoryChart() {
+        const canvas = document.getElementById("historyChart");
+        if (!canvas || !state.history.length) {
+            destroyHistoryChart();
+            return;
+        }
+
+        destroyHistoryChart();
+        const isDark = document.documentElement.getAttribute("data-theme") !== "light";
+        const lineColor = isDark ? "#F59E0B" : "#D97706";
+        const fillColor = isDark ? "rgba(245,158,11,0.12)" : "rgba(217,119,6,0.12)";
+        const muted = isDark ? "rgba(136,128,120,0.75)" : "rgba(114,105,94,0.75)";
+        const grid = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.05)";
+        const tooltipBackground = isDark ? "#1A1A1D" : "#FFFFFF";
+        const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
+
+        state.historyChart = new Chart(canvas, {
+            type: "line",
+            data: {
+                labels: state.history.map((point) => formatDate(point.snapshot_at) || ""),
+                datasets: [
+                    {
+                        label: "Медиана",
+                        data: state.history.map((point) => point.median),
+                        borderColor: lineColor,
+                        backgroundColor: fillColor,
+                        fill: true,
+                        tension: 0.28,
+                        pointRadius: 2.5,
+                        pointHoverRadius: 4,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: tooltipBackground,
+                        titleColor: tooltipText,
+                        bodyColor: lineColor,
+                        borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
+                        borderWidth: 1,
+                        padding: 10,
+                        callbacks: {
+                            label(context) {
+                                return ` ${formatPrice(context.parsed.y)}`;
+                            },
+                        },
+                    },
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        border: { display: false },
+                        ticks: {
+                            color: muted,
+                            font: { family: "'JetBrains Mono'", size: 9 },
+                            maxTicksLimit: 6,
+                        },
+                    },
+                    y: {
+                        grid: { color: grid },
+                        border: { display: false },
+                        ticks: {
+                            color: muted,
+                            font: { family: "'JetBrains Mono'", size: 9 },
+                            maxTicksLimit: 4,
+                            callback(value) {
+                                return formatPrice(value);
+                            },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
     function renderAll() {
         renderLoading();
         renderError();
         renderHelper();
         renderSummary();
         renderCurrencyButtons();
+        renderStrictSearch();
         renderViewTabs();
         renderViews();
         renderSortButtons();
+        renderDiscountButtons();
+        renderDealInputs();
         renderStats();
+        renderHistory();
         renderSegments();
         renderListings();
+        renderDeals();
         renderRates();
         renderTrackerStatus();
         renderTrackers();
+    }
+
+    async function loadPriceHistory() {
+        if (!state.query) {
+            state.history = [];
+            renderHistory();
+            return;
+        }
+
+        try {
+            const payload = await getJson(
+                `/api/v1/price-history?query=${encodeURIComponent(state.query)}&currency=${state.currency}&days=7`
+                + `&strict_search=${state.strictSearch}`
+            );
+            state.history = payload.points || [];
+        } catch (_) {
+            state.history = [];
+        } finally {
+            renderHistory();
+        }
     }
 
     async function loadTrackers() {
@@ -739,7 +951,7 @@ function analyticsApp() {
         try {
             await getJson("/api/v1/trackers", {
                 method: "POST",
-                body: JSON.stringify({ query, interval_min: 30 }),
+                body: JSON.stringify({ query, strict_mode: state.strictSearch, interval_min: 30 }),
             });
             state.trackerStatus = `Трекер для "${query}" добавлен.`;
             state.trackerStatusKind = "success";
@@ -777,27 +989,44 @@ function analyticsApp() {
         state.error = null;
         state.stats = null;
         state.listings = [];
+        state.dealListings = [];
+        state.history = [];
         state.segments = null;
         destroyChart();
+        destroyHistoryChart();
         renderAll();
 
         try {
             const [statsData, listingsData] = await Promise.all([
-                getJson(`/api/v1/price-stats?query=${encodeURIComponent(state.query)}&currency=${state.currency}`),
-                getJson(`/api/v1/listings?query=${encodeURIComponent(state.query)}&sort=${state.sort}&currency=${state.currency}`),
+                getJson(
+                    `/api/v1/price-stats?query=${encodeURIComponent(state.query)}&currency=${state.currency}`
+                    + `&strict_search=${state.strictSearch}`
+                ),
+                getJson(
+                    `/api/v1/listings?query=${encodeURIComponent(state.query)}&sort=${state.sort}&currency=${state.currency}`
+                    + `&strict_search=${state.strictSearch}`
+                ),
             ]);
 
             state.stats = statsData;
             state.listings = listingsData.listings || [];
             renderAll();
             renderChart(statsData);
+            await loadPriceHistory();
 
-            getJson(`/api/v1/segments?query=${encodeURIComponent(state.query)}&currency=${state.currency}`)
+            getJson(
+                `/api/v1/segments?query=${encodeURIComponent(state.query)}&currency=${state.currency}`
+                + `&strict_search=${state.strictSearch}`
+            )
                 .then((data) => {
                     state.segments = data;
                     renderSegments();
                 })
                 .catch(() => {});
+
+            if (state.activeView === "deals") {
+                await loadDeals();
+            }
         } catch (error) {
             state.error = error.message || "Ошибка загрузки данных";
             renderAll();
@@ -819,11 +1048,36 @@ function analyticsApp() {
         try {
             const data = await getJson(
                 `/api/v1/listings?query=${encodeURIComponent(state.query)}&sort=${sortOrder}&currency=${state.currency}`
+                + `&strict_search=${state.strictSearch}`
             );
             state.listings = data.listings || [];
             renderListings();
         } catch (error) {
             state.error = error.message || "Ошибка обновления";
+            renderError();
+        } finally {
+            state.loading = false;
+            renderLoading();
+        }
+    }
+
+    async function loadDeals() {
+        state.query = elements.searchInput.value.trim();
+        if (!state.query) return;
+
+        state.loading = true;
+        renderLoading();
+        try {
+            const data = await getJson(
+                `/api/v1/listings?query=${encodeURIComponent(state.query)}&sort=cheap&currency=${state.currency}`
+                + `&strict_search=${state.strictSearch}`
+                + `&discount_from_percent=${state.discountFromPercent}`
+                + `&discount_to_percent=${state.discountToPercent}`
+            );
+            state.dealListings = data.listings || [];
+            renderDeals();
+        } catch (error) {
+            state.error = error.message || "Ошибка загрузки дешёвых объявлений";
             renderError();
         } finally {
             state.loading = false;
@@ -854,6 +1108,13 @@ function analyticsApp() {
             state.query = elements.searchInput.value;
             renderLoading();
         });
+        elements.strictSearchToggle.addEventListener("change", () => {
+            state.strictSearch = Boolean(elements.strictSearchToggle.checked);
+            renderStrictSearch();
+            if (elements.searchInput.value.trim() && state.stats) {
+                void search();
+            }
+        });
 
         elements.currencyButtons.BYN.addEventListener("click", () => setCurrency("BYN"));
         elements.currencyButtons.USD.addEventListener("click", () => setCurrency("USD"));
@@ -861,6 +1122,40 @@ function analyticsApp() {
         for (const button of elements.sortButtons) {
             button.addEventListener("click", () => loadListings(button.dataset.sort));
         }
+
+        for (const button of elements.discountButtons) {
+            button.addEventListener("click", () => {
+                state.discountFromPercent = Number(button.dataset.discountFrom) || 10;
+                state.discountToPercent = Number(button.dataset.discountTo) || 30;
+                renderDealInputs();
+                renderDiscountButtons();
+                void loadDeals();
+            });
+        }
+
+        function applyDealRange() {
+            const fromValue = Math.max(0, Number(elements.dealFromInput.value) || 0);
+            const toValue = Math.max(0, Number(elements.dealToInput.value) || 0);
+            state.discountFromPercent = Math.min(fromValue, toValue);
+            state.discountToPercent = Math.max(fromValue, toValue);
+            renderDealInputs();
+            renderDiscountButtons();
+            void loadDeals();
+        }
+
+        elements.dealApplyButton.addEventListener("click", applyDealRange);
+        elements.dealFromInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                applyDealRange();
+            }
+        });
+        elements.dealToInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                applyDealRange();
+            }
+        });
 
         for (const chip of elements.quickChips) {
             chip.addEventListener("click", () => {
@@ -907,6 +1202,7 @@ function analyticsApp() {
         init,
         search,
         loadListings,
+        loadDeals,
         renderChart,
         renderBoxPlot: renderChart,
         setCurrency,

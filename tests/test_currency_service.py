@@ -26,6 +26,18 @@ async def test_currency_service_fetches_and_caches_rates() -> None:
     assert payload["rates"]["EUR"] == 3.5
 
 
+@pytest.mark.asyncio
+async def test_currency_service_uses_safe_fallback_when_fetch_fails() -> None:
+    http_client = MagicMock()
+    http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
+
+    service = CurrencyService(MemoryCache(), http_client=http_client)
+    payload = await service.get_rates()
+
+    assert payload["source"] == "fallback"
+    assert payload["rates"]["USD"] == 3.0
+
+
 def test_convert_from_byn() -> None:
     service = CurrencyService(MemoryCache())
     assert service.convert_from_byn(3200.0, "USD", {"USD": 3.2}) == 1000.0

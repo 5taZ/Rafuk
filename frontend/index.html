@@ -59,6 +59,11 @@
                 <span id="search-btn-label">Найти</span>
             </button>
         </div>
+        <label class="strict-toggle" for="strict-search-toggle">
+            <input id="strict-search-toggle" type="checkbox">
+            <span class="strict-toggle-pill"></span>
+            <span class="strict-toggle-copy">Строгий поиск</span>
+        </label>
     </section>
 
     <section class="quick-section" aria-label="Быстрые запросы">
@@ -71,6 +76,7 @@
     <nav class="view-nav" aria-label="Разделы Mini App">
         <button class="view-tab active" data-view="overview" type="button">Обзор</button>
         <button class="view-tab" data-view="ads" type="button">Объявления</button>
+        <button class="view-tab" data-view="deals" type="button">Дёшево</button>
         <button class="view-tab" data-view="trackers" type="button">Трекеры</button>
     </nav>
 
@@ -104,7 +110,8 @@
     <div class="helper-panel" id="helper-panel">
         Введите запрос или выберите быстрый сценарий выше. Основная аналитика собрана в разделе
         <span class="mono">Обзор</span>, свежие лоты лежат в <span class="mono">Объявления</span>,
-        а мониторинг новых лотов находится в <span class="mono">Трекеры</span>.
+        выгодные позиции вынесены в <span class="mono">Дёшево</span>, а мониторинг новых лотов находится
+        в <span class="mono">Трекеры</span>.
     </div>
 
     <section class="view-panel" id="overview-view">
@@ -151,6 +158,19 @@
             </div>
         </section>
 
+        <section class="section" id="history-section" hidden>
+            <div class="sec-head">
+                <h2 class="sec-title">Динамика медианы</h2>
+                <span class="badge">7 дней</span>
+            </div>
+            <div class="chart-box history-chart-box">
+                <canvas id="historyChart"></canvas>
+            </div>
+            <p class="section-note" id="history-empty" hidden>
+                История для этого запроса ещё копится. Данные появляются после поиска и фоновых проверок.
+            </p>
+        </section>
+
         <section class="section" id="segments-section" hidden>
             <div class="sec-head">
                 <h2 class="sec-title">По сегментам</h2>
@@ -172,6 +192,41 @@
                 <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
             </div>
             <div class="listings-list" id="listings-list"></div>
+        </section>
+    </section>
+
+    <section class="view-panel" id="deals-view" hidden>
+        <section class="section" id="deals-section" hidden>
+            <div class="sec-head listings-head">
+                <h2 class="sec-title">Дешевле рынка</h2>
+                <span class="badge" id="deals-total-badge"></span>
+            </div>
+            <p class="section-note">
+                Показываем объявления ниже текущей рыночной медианы. Порог можно менять без нового полного поиска.
+            </p>
+            <div class="deal-range-row">
+                <label class="deal-range-field" for="deal-from-input">
+                    <span>От</span>
+                    <div class="deal-range-input-wrap">
+                        <input id="deal-from-input" type="number" min="0" step="1" inputmode="numeric" value="10">
+                        <span>%</span>
+                    </div>
+                </label>
+                <label class="deal-range-field" for="deal-to-input">
+                    <span>До</span>
+                    <div class="deal-range-input-wrap">
+                        <input id="deal-to-input" type="number" min="0" step="1" inputmode="numeric" value="30">
+                        <span>%</span>
+                    </div>
+                </label>
+                <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
+            </div>
+            <div class="sort-row" id="deal-threshold-row">
+                <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button">10-20%</button>
+                <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
+                <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
+            </div>
+            <div class="listings-list" id="deals-list"></div>
         </section>
     </section>
 

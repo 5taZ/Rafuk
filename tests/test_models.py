@@ -5,6 +5,8 @@ from api.models import Base
 
 def test_tracker_table_exists() -> None:
     assert "trackers" in Base.metadata.tables
+    assert "query_snapshots" in Base.metadata.tables
+    assert "query_listing_states" in Base.metadata.tables
 
 
 def test_tracker_columns_and_types() -> None:
@@ -13,8 +15,11 @@ def test_tracker_columns_and_types() -> None:
     assert "id" in columns and columns["id"].primary_key
     assert "user_id" in columns and not columns["user_id"].nullable
     assert "query" in columns and columns["query"].type.length == 255
+    assert "strict_mode" in columns and columns["strict_mode"].default.arg is False
     assert "interval_min" in columns and columns["interval_min"].default.arg == 15
     assert "last_seen_ad_id" in columns and columns["last_seen_ad_id"].nullable
+    assert "last_seen_price_byn" in columns and columns["last_seen_price_byn"].nullable
+    assert "last_checked_at" in columns
     assert "active" in columns and columns["active"].default.arg is True
     assert "created_at" in columns
 
@@ -32,7 +37,23 @@ def test_tracker_model_defaults() -> None:
     tracker = Tracker(user_id=123, query="iPhone 15")
     assert tracker.interval_min == 15
     assert tracker.active is True
+    assert tracker.strict_mode is False
     assert tracker.last_seen_ad_id is None
+    assert tracker.last_seen_price_byn is None
+    assert tracker.last_checked_at is None
+
+
+def test_history_tables_have_indexes() -> None:
+    snapshots = Base.metadata.tables["query_snapshots"]
+    snapshot_constraints = {constraint.name for constraint in snapshots.constraints}
+    assert "uq_query_snapshot_bucket" in snapshot_constraints
+
+    states = Base.metadata.tables["query_listing_states"]
+    state_constraints = {constraint.name for constraint in states.constraints}
+    state_indexes = {index.name for index in states.indexes}
+    assert "uq_query_listing_state" in state_constraints
+    assert "idx_query_listing_states_query" in state_indexes
+    assert "idx_query_listing_states_active" in state_indexes
 
 
 def test_get_engine_returns_async_engine() -> None:

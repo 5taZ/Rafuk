@@ -21,8 +21,10 @@ def test_has_required_methods_and_endpoints() -> None:
     text = APP_JS.read_text(encoding="utf-8")
     assert re.search(r"\bsearch\s*\(", text)
     assert re.search(r"\bloadListings\s*\(", text)
+    assert re.search(r"\bloadDeals\s*\(", text)
     assert re.search(r"\brenderChart\b|\brenderBoxPlot\b", text)
     assert "/api/v1/price-stats" in text
+    assert "/api/v1/price-history" in text
     assert "/api/v1/listings" in text
     assert "Telegram.WebApp" in text
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import statistics
 from typing import Any
 
@@ -7,6 +8,20 @@ from pydantic import BaseModel
 
 KOPECKS = 100
 MAX_PRICE_BYN = 100_000.0
+STRICT_VARIANT_TOKENS = {
+    "pro",
+    "max",
+    "plus",
+    "mini",
+    "ultra",
+    "air",
+    "lite",
+    "note",
+    "fe",
+    "flip",
+    "fold",
+    "studio",
+}
 
 
 class PriceStats(BaseModel):
@@ -17,6 +32,60 @@ class PriceStats(BaseModel):
     min: float
     max: float
     count: int
+
+
+def normalize_search_text(value: str) -> str:
+    text = value.casefold()
+    text = re.sub(r"(\d+)\s*gb\b", r"\1", text)
+    text = re.sub(r"[^a-zа-я0-9]+", " ", text, flags=re.IGNORECASE)
+    return " ".join(text.split())
+
+
+def tokenize_search_text(value: str) -> list[str]:
+    normalized = normalize_search_text(value)
+    return normalized.split() if normalized else []
+
+
+def build_query_key(query: str, strict_search: bool) -> str:
+    mode = "strict" if strict_search else "broad"
+    return f"{mode}::{normalize_search_text(query)}"
+
+
+def is_strict_match(title: str, query: str) -> bool:
+    query_tokens = tokenize_search_text(query)
+    title_tokens = tokenize_search_text(title)
+    if not query_tokens or not title_tokens:
+        return False
+
+    title_set = set(title_tokens)
+    if not all(token in title_set for token in query_tokens):
+        return False
+
+    query_variants = {token for token in query_tokens if token in STRICT_VARIANT_TOKENS}
+    title_variants = {token for token in title_tokens if token in STRICT_VARIANT_TOKENS}
+    extra_variants = title_variants - query_variants
+    if extra_variants:
+        return False
+
+    query_index = 0
+    for token in title_tokens:
+        if query_index < len(query_tokens) and token == query_tokens[query_index]:
+            query_index += 1
+    return query_index == len(query_tokens)
+
+
+def apply_search_mode(
+    ads: list[dict[str, Any]],
+    query: str,
+    strict_search: bool,
+) -> list[dict[str, Any]]:
+    if not strict_search:
+        return ads
+    return [
+        ad
+        for ad in ads
+        if is_strict_match(str(ad.get("subject", "")), query)
+    ]
 
 
 def normalize_price_byn(raw_price: Any) -> float | None:
@@ -79,7 +148,43 @@ def compute_price_vs_median(ad: dict[str, Any], median: float) -> float:
     return round((price_byn - median) / median * 100.0, 2)
 
 
+def filter_deal_ads(
+    ads: list[dict[str, Any]],
+    median: float,
+    discount_from_percent: float,
+    discount_to_percent: float | None = None,
+) -> list[dict[str, Any]]:
+    if not median:
+        return []
+
+    lower_bound = abs(discount_from_percent)
+    upper_bound = abs(discount_to_percent) if discount_to_percent is not None else None
+    if upper_bound is not None and upper_bound < lower_bound:
+        lower_bound, upper_bound = upper_bound, lower_bound
+
+    filtered = []
+    for ad in ads:
+        delta = compute_price_vs_median(ad, median)
+        if delta >= 0:
+            continue
+        discount = abs(delta)
+        if discount < lower_bound:
+            continue
+        if upper_bound is not None and discount > upper_bound:
+            continue
+        filtered.append(ad)
+    return filtered
+
+
 def sort_listings(ads: list[dict[str, Any]], sort: str, median: float) -> list[dict[str, Any]]:
+    if sort == "cheap":
+        return sorted(
+            ads,
+            key=lambda ad: (
+                compute_price_vs_median(ad, median),
+                normalize_price_byn(ad.get("price_byn")) or 0.0,
+            ),
+        )
     if sort == "price_asc":
         return sorted(ads, key=lambda ad: normalize_price_byn(ad.get("price_byn")) or 0.0)
     if sort == "price_desc":

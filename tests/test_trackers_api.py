@@ -19,11 +19,12 @@ def test_trackers_crud() -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/api/v1/trackers",
-            json={"query": "iphone 15", "interval_min": 30},
+            json={"query": "iphone 15", "strict_mode": True, "interval_min": 30},
         )
         assert create_response.status_code == 201
         created = create_response.json()
         assert created["query"] == "iphone 15"
+        assert created["strict_mode"] is True
         assert created["interval_min"] == 30
 
         list_response = client.get("/api/v1/trackers")
@@ -31,6 +32,7 @@ def test_trackers_crud() -> None:
         trackers = list_response.json()
         assert len(trackers) == 1
         assert trackers[0]["id"] == created["id"]
+        assert trackers[0]["strict_mode"] is True
 
         delete_response = client.delete(f"/api/v1/trackers/{created['id']}")
         assert delete_response.status_code == 204

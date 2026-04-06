@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from api.config import Settings
 from api.dependencies import get_cache, get_currency_service, get_settings_dependency
 from api.schemas import ListingDetailResponse
-from api.services.aggregator import compute_price_stats, extract_prices
+from api.services.aggregator import apply_search_mode, compute_price_stats, extract_prices
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
@@ -19,11 +19,12 @@ async def get_listing_detail(
     query: str,
     ad_id: int,
     currency: str = "BYN",
+    strict_search: bool = False,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
 ) -> ListingDetailResponse:
-    cache_key = f"listing-detail:{query}:{ad_id}:{currency}"
+    cache_key = f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}"
     cached = await cache.get_json(cache_key)
     if cached:
         return ListingDetailResponse(**cached)
@@ -34,7 +35,7 @@ async def get_listing_detail(
     finally:
         await client.aclose()
 
-    ads = response.get("ads", [])
+    ads = apply_search_mode(response.get("ads", []), query, strict_search)
     ad = next((item for item in ads if int(item.get("ad_id", 0)) == ad_id), None)
     if ad is None:
         raise HTTPException(

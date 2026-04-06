@@ -43,8 +43,10 @@ def test_html_loads_required_scripts(soup: BeautifulSoup) -> None:
 
 def test_html_has_stats_and_listings(soup: BeautifulSoup) -> None:
     assert len(soup.find_all(attrs={"x-text": True})) >= 4
-    assert soup.find("canvas") is not None
+    canvases = soup.find_all("canvas")
+    assert len(canvases) >= 2
     assert len(soup.find_all(attrs={"x-for": True})) >= 1
+    assert soup.find(attrs={"data-view": "deals"}) is not None
 
 
 def test_css_has_required_building_blocks(css_text: str) -> None:

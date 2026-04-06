@@ -291,6 +291,58 @@ body {
     cursor: default;
 }
 
+.strict-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.strict-toggle input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.strict-toggle-pill {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    border-radius: 999px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.strict-toggle-pill::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: transform 0.15s, background 0.15s;
+}
+
+.strict-toggle input:checked + .strict-toggle-pill {
+    background: var(--accent-soft);
+    border-color: var(--accent-glow);
+}
+
+.strict-toggle input:checked + .strict-toggle-pill::after {
+    transform: translateX(16px);
+    background: var(--accent);
+}
+
+.strict-toggle-copy {
+    line-height: 1;
+}
+
 .quick-section {
     display: flex;
     gap: 8px;
@@ -324,7 +376,7 @@ body {
 
 .view-nav {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
     margin: 4px 0 10px;
 }
@@ -793,6 +845,72 @@ body {
     padding: 14px 14px 12px;
     height: 175px;
     position: relative;
+}
+
+.history-chart-box {
+    height: 190px;
+}
+
+.section-note {
+    margin: 8px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.deal-range-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    gap: 8px;
+    margin: 12px 0 10px;
+    align-items: end;
+}
+
+.deal-range-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.deal-range-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 0 10px;
+    height: 40px;
+    color: var(--text-muted);
+}
+
+.deal-range-input-wrap input {
+    width: 100%;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: 700 14px var(--font-mono);
+    outline: none;
+}
+
+.deal-range-input-wrap input::-webkit-outer-spin-button,
+.deal-range-input-wrap input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.deal-range-input-wrap input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+.deal-apply-btn {
+    height: 40px;
 }
 
 .segs-grid {
@@ -1320,7 +1438,15 @@ body {
     }
 
     .view-nav {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .deal-range-row {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .deal-apply-btn {
+        grid-column: 1 / -1;
     }
 
     .summary-strip {

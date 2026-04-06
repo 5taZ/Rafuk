@@ -43,6 +43,7 @@ async def create_tracker(
         tracker = Tracker(
             user_id=telegram_user.user_id,
             query=query,
+            strict_mode=payload.strict_mode,
             interval_min=payload.interval_min,
         )
         session.add(tracker)
