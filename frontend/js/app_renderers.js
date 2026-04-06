@@ -1,5 +1,15 @@
 /* global Chart */
 
+function escapeHtml(str) {
+    if (typeof str !== "string") return str;
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 function createAppRenderers(context) {
     const {
         state,
@@ -338,7 +348,7 @@ function createAppRenderers(context) {
                 return `
                     <article class="compare-card">
                         <span class="compare-kicker">${isBase ? "База" : "Сравнение"}</span>
-                        <strong class="compare-query">${item.query}</strong>
+                        <strong class="compare-query">${escapeHtml(item.query)}</strong>
                         <div class="compare-deltas">
                             <span class="compare-delta-chip ${medianDelta?.className || ""}">
                                 медиана ${medianDelta?.text || "—"}
@@ -359,7 +369,7 @@ function createAppRenderers(context) {
                             <div class="compare-metric wide">
                                 <span class="compare-label">Размер рынка</span>
                                 <strong class="compare-value mono">${item.total_results || 0}</strong>
-                                <span class="compare-meta">${bestListing ? `${bestListing.title} · ${formatPrice(bestListing.price)}` : "Лучший оффер пока не найден"}</span>
+                                <span class="compare-meta">${bestListing ? `${escapeHtml(bestListing.title)} · ${formatPrice(bestListing.price)}` : "Лучший оффер пока не найден"}</span>
                             </div>
                         </div>
                     </article>
@@ -484,7 +494,7 @@ function createAppRenderers(context) {
             card.className = "geo-card";
             card.innerHTML = `
                 <div class="geo-head">
-                    <strong class="geo-name">${region.region_name}</strong>
+                    <strong class="geo-name">${escapeHtml(region.region_name)}</strong>
                     <span class="geo-share">${region.share_percent}% выборки</span>
                 </div>
                 <span class="geo-price mono">${formatPrice(region.median)}</span>
@@ -505,25 +515,25 @@ function createAppRenderers(context) {
 
         const condition = item.condition ? `<span class="tag">${formatCondition(item.condition)}</span>` : "";
         const seller = item.seller_type ? `<span class="tag">${formatSeller(item.seller_type)}</span>` : "";
-        const region = item.region_name ? `<span class="tag">${item.region_name}</span>` : "";
+        const region = item.region_name ? `<span class="tag">${escapeHtml(item.region_name)}</span>` : "";
         const delta = formatDelta(item.price_vs_median);
         const deltaMarkup = delta
             ? `<span class="delta ${deltaClass(item.price_vs_median)}">${delta}</span>`
             : "";
         const fairMarkup = item.fair_price_label
-            ? `<span class="listing-signal ${item.fair_price_band || ""}">${item.fair_price_label}</span>`
+            ? `<span class="listing-signal ${item.fair_price_band || ""}">${escapeHtml(item.fair_price_label)}</span>`
             : "";
         const verdictMarkup = item.deal_verdict
-            ? `<span class="listing-signal verdict verdict-${verdictClassName(item.deal_verdict)}">${item.deal_verdict}${item.deal_score ? ` · ${Math.round(item.deal_score)}` : ""}</span>`
+            ? `<span class="listing-signal verdict verdict-${verdictClassName(item.deal_verdict)}">${escapeHtml(item.deal_verdict)}${item.deal_score ? ` · ${Math.round(item.deal_score)}` : ""}</span>`
             : "";
         const liquidityMarkup = item.liquidity
-            ? `<span class="listing-signal">${item.liquidity.label} ликвидность · ${Math.round(item.liquidity.score)}</span>`
+            ? `<span class="listing-signal">${escapeHtml(item.liquidity.label)} ликвидность · ${Math.round(item.liquidity.score)}</span>`
             : "";
         const duplicateMarkup = item.is_duplicate
             ? `<span class="listing-flag duplicate">Похоже на дубль${item.duplicate_count > 1 ? ` ×${item.duplicate_count + 1}` : ""}</span>`
             : "";
         const anomalyMarkup = (item.anomaly_labels || [])
-            .map((label) => `<span class="listing-flag anomaly">${label}</span>`)
+            .map((label) => `<span class="listing-flag anomaly">${escapeHtml(label)}</span>`)
             .join("");
         const thumbMarkup = item.thumbnail
             ? `<img class="listing-thumb" src="${item.thumbnail}" alt="">`
@@ -534,11 +544,11 @@ function createAppRenderers(context) {
             <div class="listing-main">
                 ${thumbMarkup}
                 <div class="listing-info">
-                    <span class="listing-name">${item.title}</span>
+                    <span class="listing-name">${escapeHtml(item.title)}</span>
                     <div class="listing-tags">${condition}${seller}${region}${dateMarkup}</div>
                     <div class="listing-signals">${verdictMarkup}${liquidityMarkup}${fairMarkup}${duplicateMarkup}${anomalyMarkup}</div>
-                    ${(item.deal_reasons || []).length ? `<div class="listing-reasons">${item.deal_reasons.join(" · ")}</div>` : ""}
-                    ${(item.flip_estimates || []).length ? `<div class="listing-reasons">flip: ${(item.flip_estimates || []).map((estimate) => `${estimate.label} ${Math.round(estimate.profit_byn)} BYN`).join(" · ")}</div>` : ""}
+                    ${(item.deal_reasons || []).length ? `<div class="listing-reasons">${item.deal_reasons.map((reason) => escapeHtml(reason)).join(" · ")}</div>` : ""}
+                    ${(item.flip_estimates || []).length ? `<div class="listing-reasons">flip: ${(item.flip_estimates || []).map((estimate) => `${escapeHtml(estimate.label)} ${Math.round(estimate.profit_byn)} BYN`).join(" · ")}</div>` : ""}
                 </div>
             </div>
             <div class="listing-right">
@@ -665,8 +675,8 @@ function createAppRenderers(context) {
             group.innerHTML = `
                 <div class="tracker-row tracker-row-group">
                     <div class="tracker-row-main">
-                        <strong class="tracker-query">${groupName}</strong>
-                        <span class="tracker-meta mono">${searches.length} запросов • ${modelLabels.join(" • ")}</span>
+                        <strong class="tracker-query">${escapeHtml(groupName)}</strong>
+                        <span class="tracker-meta mono">${searches.length} запросов • ${modelLabels.map((l) => escapeHtml(l)).join(" • ")}</span>
                     </div>
                     <div class="tracker-row-actions">
                         <button class="ghost-btn small" data-role="run-group" type="button">Запустить набор</button>
@@ -683,16 +693,16 @@ function createAppRenderers(context) {
                 row.className = "tracker-row";
                 const meta = [
                     savedSearch.strict_mode ? "строгий" : "",
-                    savedSearch.config_summary || "",
+                    savedSearch.config_summary ? escapeHtml(savedSearch.config_summary) : "",
                     savedSearch.target_discount_percent ? `от -${Math.round(savedSearch.target_discount_percent)}%` : "",
                     savedSearch.exclude_duplicates ? "без дублей" : "",
                     savedSearch.seller_type === "Частное лицо" ? "частники" : "",
-                    savedSearch.condition || "",
-                    savedSearch.region_name || "",
+                    savedSearch.condition ? escapeHtml(savedSearch.condition) : "",
+                    savedSearch.region_name ? escapeHtml(savedSearch.region_name) : "",
                 ].filter(Boolean);
                 row.innerHTML = `
                     <div class="tracker-row-main">
-                        <strong class="tracker-query">${savedSearch.name}</strong>
+                        <strong class="tracker-query">${escapeHtml(savedSearch.name)}</strong>
                         <span class="tracker-meta mono">${meta.join(" • ")}</span>
                     </div>
                     <div class="tracker-row-actions">
@@ -746,18 +756,18 @@ function createAppRenderers(context) {
         function buildOpportunityCard(item, extraBadge = "") {
             const card = document.createElement("article");
             card.className = "opportunity-card";
-            const reasons = (item.listing.deal_reasons || []).join(" · ");
+            const reasons = (item.listing.deal_reasons || []).map((reason) => escapeHtml(reason)).join(" · ");
             const badge = item.signal_label || extraBadge;
             card.innerHTML = `
                 <div class="opportunity-top">
-                    <span class="badge">${item.saved_search_name}</span>
-                    <span class="listing-signal verdict verdict-${verdictClassName(item.listing.deal_verdict || "Смотреть")}">${item.listing.deal_verdict || "Смотреть"} · ${Math.round(item.listing.deal_score || 0)}</span>
+                    <span class="badge">${escapeHtml(item.saved_search_name)}</span>
+                    <span class="listing-signal verdict verdict-${verdictClassName(item.listing.deal_verdict || "Смотреть")}">${escapeHtml(item.listing.deal_verdict || "Смотреть")} · ${Math.round(item.listing.deal_score || 0)}</span>
                 </div>
-                <strong class="opportunity-title">${item.listing.title}</strong>
+                <strong class="opportunity-title">${escapeHtml(item.listing.title)}</strong>
                 <div class="opportunity-meta">
                     <span class="mono">${formatPrice(item.listing.price)}</span>
-                    <span>${item.listing.region_name || "Без региона"}</span>
-                    ${badge ? `<span class="board-inline-flag">${badge}</span>` : ""}
+                    <span>${escapeHtml(item.listing.region_name || "Без региона")}</span>
+                    ${badge ? `<span class="board-inline-flag">${escapeHtml(badge)}</span>` : ""}
                 </div>
                 ${reasons ? `<p class="opportunity-copy">${reasons}</p>` : ""}
                 <div class="listing-actions">
@@ -809,8 +819,8 @@ function createAppRenderers(context) {
                 row.className = "tracker-row signal-row";
                 row.innerHTML = `
                     <div class="tracker-row-main">
-                        <strong class="tracker-query">${signal.title}</strong>
-                        <span class="tracker-meta mono">${signal.subtitle} • ${signal.metric}</span>
+                        <strong class="tracker-query">${escapeHtml(signal.title)}</strong>
+                        <span class="tracker-meta mono">${escapeHtml(signal.subtitle)} • ${escapeHtml(signal.metric)}</span>
                     </div>
                     <div class="tracker-row-actions">
                         <button class="ghost-btn small" type="button">Открыть</button>
@@ -836,8 +846,8 @@ function createAppRenderers(context) {
                 row.className = "tracker-row signal-row";
                 row.innerHTML = `
                     <div class="tracker-row-main">
-                        <strong class="tracker-query">${signal.title}</strong>
-                        <span class="tracker-meta mono">${signal.subtitle} • ${signal.metric}</span>
+                        <strong class="tracker-query">${escapeHtml(signal.title)}</strong>
+                        <span class="tracker-meta mono">${escapeHtml(signal.subtitle)} • ${escapeHtml(signal.metric)}</span>
                     </div>
                 `;
                 elements.opportunityBoardSignals.appendChild(row);
@@ -994,8 +1004,8 @@ function createAppRenderers(context) {
             row.className = "tracker-row workflow-row";
             row.innerHTML = `
                 <div class="tracker-row-main">
-                    <strong class="tracker-query">${lead.title}</strong>
-                    <span class="tracker-meta mono">${workflowLabel(lead.status)} • ${lead.price_byn ? `${Math.round(lead.price_byn)} BYN` : "без цены"}${lead.target_resale_byn ? ` • цель ${Math.round(lead.target_resale_byn)} BYN` : ""}</span>
+                    <strong class="tracker-query">${escapeHtml(lead.title)}</strong>
+                    <span class="tracker-meta mono">${escapeHtml(workflowLabel(lead.status))} • ${lead.price_byn ? `${Math.round(lead.price_byn)} BYN` : "без цены"}${lead.target_resale_byn ? ` • цель ${Math.round(lead.target_resale_byn)} BYN` : ""}</span>
                 </div>
                 <div class="tracker-row-actions">
                     <select class="deal-select" data-role="status">
@@ -1093,8 +1103,8 @@ function createAppRenderers(context) {
                 : `${item.price_delta_byn > 0 ? "+" : ""}${Math.round(item.price_delta_byn)} BYN`;
             row.innerHTML = `
                 <div class="tracker-row-main">
-                    <strong class="tracker-query">${item.title}</strong>
-                    <span class="tracker-meta mono">${workflowLabel(item.workflow_status)} • ${marketLabel(item.market_status)} • ${delta}</span>
+                    <strong class="tracker-query">${escapeHtml(item.title)}</strong>
+                    <span class="tracker-meta mono">${escapeHtml(workflowLabel(item.workflow_status))} • ${escapeHtml(marketLabel(item.market_status))} • ${delta}</span>
                 </div>
                 <div class="tracker-row-actions">
                     <select class="deal-select" data-role="status">
@@ -1173,7 +1183,7 @@ function createAppRenderers(context) {
             ].filter(Boolean);
             row.innerHTML = `
                 <div class="tracker-row-main">
-                    <strong class="tracker-query">${tracker.query}</strong>
+                    <strong class="tracker-query">${escapeHtml(tracker.query)}</strong>
                     <span class="tracker-meta mono">${trackerMeta.join(" • ")}</span>
                 </div>
                 <div class="tracker-row-actions">
@@ -1239,7 +1249,7 @@ function createAppRenderers(context) {
             const typeClass = event.event_type === "price_drop" ? "drop" : "new";
             const meta = [];
             if (event.query) {
-                meta.push(event.strict_mode ? `${event.query} • строгий` : event.query);
+                meta.push(event.strict_mode ? `${escapeHtml(event.query)} • строгий` : escapeHtml(event.query));
             }
             if (event.price_byn) {
                 meta.push(`${Math.round(event.price_byn)} р.`);
@@ -1252,7 +1262,7 @@ function createAppRenderers(context) {
                     <span class="tracker-event-type ${typeClass}">${typeLabel}</span>
                     <span class="tracker-event-time mono">${formatDate(event.created_at)}</span>
                 </div>
-                <strong class="tracker-event-title">${event.title}</strong>
+                <strong class="tracker-event-title">${escapeHtml(event.title)}</strong>
                 <div class="tracker-event-meta">${meta.map((item) => `<span>${item}</span>`).join("")}</div>
                 <div class="listing-actions">
                     <button class="ghost-btn small" data-role="open-query" type="button">Открыть запрос</button>
@@ -1319,7 +1329,7 @@ function createAppRenderers(context) {
             const item = document.createElement("div");
             item.className = "detail-field";
             item.innerHTML = `
-                <span class="detail-field-label">${estimate.label}</span>
+                <span class="detail-field-label">${escapeHtml(estimate.label)}</span>
                 <span class="detail-field-value">${formatPrice(estimate.target_price)} • ${Math.round(estimate.profit_byn)} BYN (${estimate.profit_percent > 0 ? "+" : ""}${estimate.profit_percent}%)</span>
             `;
             elements.detailProfit.appendChild(item);
@@ -1331,22 +1341,22 @@ function createAppRenderers(context) {
             const item = document.createElement("div");
             item.className = "detail-field";
             item.innerHTML = `
-                <span class="detail-field-label">${detail.liquidity.label}</span>
-                <span class="detail-field-value">${Math.round(detail.liquidity.score)} • ${(detail.liquidity.reasons || []).join(" · ")}</span>
+                <span class="detail-field-label">${escapeHtml(detail.liquidity.label)}</span>
+                <span class="detail-field-value">${Math.round(detail.liquidity.score)} • ${(detail.liquidity.reasons || []).map((reason) => escapeHtml(reason)).join(" · ")}</span>
             `;
             elements.detailLiquidity.appendChild(item);
         }
         elements.detailLiquidityBlock.hidden = !detail.liquidity;
 
         const metaItems = [
-            detail.category,
+            detail.category ? escapeHtml(detail.category) : "",
             detail.condition ? formatCondition(detail.condition) : "",
             detail.seller_type ? formatSeller(detail.seller_type) : "",
-            detail.region_name || "",
+            detail.region_name ? escapeHtml(detail.region_name) : "",
             detail.list_time ? formatDate(detail.list_time) : "",
-            detail.fair_price_label || "",
+            detail.fair_price_label ? escapeHtml(detail.fair_price_label) : "",
             detail.is_duplicate ? "Похоже на дубль" : "",
-            ...(detail.anomaly_labels || []),
+            ...(detail.anomaly_labels || []).map((label) => escapeHtml(label)),
             formatDelta(detail.price_vs_median),
         ].filter(Boolean);
         elements.detailMeta.innerHTML = metaItems.map((item) => `<span class="detail-pill">${item}</span>`).join("");
@@ -1379,8 +1389,8 @@ function createAppRenderers(context) {
             const item = document.createElement("div");
             item.className = "detail-field";
             item.innerHTML = `
-                <span class="detail-field-label">${field.label}</span>
-                <span class="detail-field-value">${field.value}</span>
+                <span class="detail-field-label">${escapeHtml(field.label)}</span>
+                <span class="detail-field-value">${escapeHtml(field.value)}</span>
             `;
             elements.detailParams.appendChild(item);
         }
@@ -1392,8 +1402,8 @@ function createAppRenderers(context) {
             const item = document.createElement("div");
             item.className = "detail-field";
             item.innerHTML = `
-                <span class="detail-field-label">${field.label}</span>
-                <span class="detail-field-value">${field.value}</span>
+                <span class="detail-field-label">${escapeHtml(field.label)}</span>
+                <span class="detail-field-value">${escapeHtml(field.value)}</span>
             `;
             elements.detailSeller.appendChild(item);
         }

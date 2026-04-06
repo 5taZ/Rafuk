@@ -35,6 +35,8 @@ from api.services.reseller_tools import (
     matches_tracker_filters,
 )
 
+MAX_ACTIVE_SAVED_SEARCHES = 10
+
 router = APIRouter(tags=["saved-searches"])
 
 
@@ -93,6 +95,19 @@ async def create_saved_search(
 
     name = (payload.name or "").strip() or default_saved_search_name(query)
     async with session_factory() as session:
+        count_result = await session.execute(
+            select(SavedSearch).where(
+                SavedSearch.user_id == telegram_user.user_id,
+                SavedSearch.active.is_(True),
+            )
+        )
+        active_count = len(list(count_result.scalars()))
+        if active_count >= MAX_ACTIVE_SAVED_SEARCHES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Maximum {MAX_ACTIVE_SAVED_SEARCHES} active saved searches allowed",
+            )
+
         saved_search = SavedSearch(
             user_id=telegram_user.user_id,
             name=name,

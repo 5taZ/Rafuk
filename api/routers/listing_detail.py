@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.config import Settings
-from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.dependencies import get_cache, get_currency_service, get_settings_dependency, get_telegram_user
 from api.schemas import ListingDetailResponse
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
@@ -14,7 +14,7 @@ from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
 from api.validators import MAX_QUERY_LENGTH
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(tags=["analytics"], dependencies=[Depends(get_telegram_user)])
 
 
 @router.get("/listing-detail", response_model=ListingDetailResponse)

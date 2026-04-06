@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from api.config import Settings
-from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.dependencies import get_cache, get_currency_service, get_settings_dependency, get_telegram_user
 from api.schemas import ListingsResponse
 from api.services.aggregator import (
     filter_deal_ads,
@@ -19,7 +19,7 @@ from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(tags=["analytics"], dependencies=[Depends(get_telegram_user)])
 
 
 @router.get("/listings", response_model=ListingsResponse)

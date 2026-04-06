@@ -95,11 +95,7 @@ def is_strict_match(title: str, query: str) -> bool:
     if extra_variants:
         return False
 
-    query_index = 0
-    for token in title_tokens:
-        if query_index < len(query_tokens) and token == query_tokens[query_index]:
-            query_index += 1
-    return query_index == len(query_tokens)
+    return True
 
 
 def apply_search_mode(

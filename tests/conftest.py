@@ -1,9 +1,33 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import time
 from pathlib import Path
+from urllib.parse import urlencode
 
 import pytest
+
+
+def make_telegram_init_data(user_id: int = 123456) -> str:
+    """Create a valid Telegram initData string for testing."""
+    bot_token = "7123456789:AAFtesttoken"
+    data_dict = {
+        "user": f'{{"id":{user_id},"first_name":"Test"}}',
+        "auth_date": str(int(time.time())),
+        "query_id": "AAHtest",
+    }
+    data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(data_dict.items()))
+    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    signature = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    data_dict["hash"] = signature
+    return urlencode(data_dict)
+
+
+@pytest.fixture
+def telegram_headers() -> dict[str, str]:
+    return {"X-Telegram-Init-Data": make_telegram_init_data()}
 
 
 @pytest.fixture(autouse=True)

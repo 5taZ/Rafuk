@@ -53,7 +53,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[settings.mini_app_url, settings.api_base_url],
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["X-Telegram-Init-Data", "Content-Type", "Accept"],
     )
     app.include_router(price_stats.router, prefix="/api/v1")
     app.include_router(price_history.router, prefix="/api/v1")

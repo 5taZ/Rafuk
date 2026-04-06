@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from api.config import Settings
-from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.dependencies import get_cache, get_currency_service, get_settings_dependency, get_telegram_user
 from api.schemas import SegmentsResponse
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
@@ -12,7 +12,7 @@ from api.services.parallel_kufar import parallel_search_all
 from api.services.query_pipeline import convert_price_stats, load_segment_datasets
 from api.validators import MAX_QUERY_LENGTH
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(tags=["analytics"], dependencies=[Depends(get_telegram_user)])
 @router.get("/segments", response_model=SegmentsResponse)
 async def get_segments(
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),

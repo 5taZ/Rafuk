@@ -27,23 +27,43 @@ async def fetch_price_stats(query: str, currency: str = "USD") -> dict:
         "analyzed_count": len(ads),
         "mean": stats.mean,
         "median": stats.median,
-        "min": stats.min_price,
-        "max": stats.max_price,
+        "min": stats.min,
+        "max": stats.max,
         "currency": currency,
     }
 
 
 async def fetch_listings(query: str, currency: str = "USD") -> dict:
-    from api.services.listing_mapper import map_to_listing_items
+    from api.services.aggregator import compute_price_stats, extract_prices
+    from api.services.cache import MemoryCache
+    from api.services.currency_service import CurrencyService
+    from api.services.listing_mapper import build_listing_item
 
     settings = get_settings()
     client = KufarClient(settings)
+    cache = MemoryCache()
+    currency_service = CurrencyService(cache)
     try:
         payload = await client.search(query=query, currency="BYN", size=50)
     finally:
         await client.aclose()
     ads = payload.get("ads", [])
-    items = map_to_listing_items(ads, currency=currency, rates={})
+    prices = extract_prices(ads)
+    market_stats = compute_price_stats(prices)
+    median_byn = market_stats.median
+    rates: dict[str, float] = {}
+    items = [
+        build_listing_item(
+            ad,
+            query=query,
+            currency=currency,
+            rates=rates,
+            currency_service=currency_service,
+            median_byn=median_byn,
+            market_stats=market_stats,
+        )
+        for ad in ads
+    ]
     return {"listings": items}
 
 

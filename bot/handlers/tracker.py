@@ -61,6 +61,10 @@ async def cmd_untrack(message: Message, command: CommandObject) -> None:
         await message.answer("Usage: /untrack <id>")
         return
 
+    if not tracker_id_raw.isdigit():
+        await message.answer("Usage: /untrack <id>")
+        return
+
     engine = get_bot_engine()
     session_factory = get_bot_session_factory(engine)
     async with session_factory() as session:

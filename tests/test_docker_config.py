@@ -18,6 +18,8 @@ def test_compose_has_core_services() -> None:
     assert "db:" in compose
 
 
-def test_nginx_has_cors_header() -> None:
+def test_nginx_has_security_headers() -> None:
     nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
-    assert "Access-Control-Allow-Origin" in nginx_conf
+    assert "X-Content-Type-Options" in nginx_conf
+    assert "X-Frame-Options" in nginx_conf
+    assert "Content-Security-Policy" in nginx_conf

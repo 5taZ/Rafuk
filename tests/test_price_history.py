@@ -6,9 +6,13 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
+from api.dependencies import get_telegram_user
+from api.middleware.telegram_auth import TelegramInitData
 from api.models import QuerySnapshot
 from api.services.aggregator import build_query_key
 from api.services.cache import MemoryCache
+
+_fake_telegram_user = TelegramInitData(user_id=123456, first_name="Test", raw={})
 
 
 class FakeCurrencyService:
@@ -95,6 +99,7 @@ def test_price_history_endpoint_returns_snapshots() -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: _fake_telegram_user
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 history"))
@@ -118,6 +123,7 @@ def test_price_history_caps_days_at_ninety() -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: _fake_telegram_user
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 caps"))
@@ -139,6 +145,7 @@ def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: _fake_telegram_user
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 persist-old"))

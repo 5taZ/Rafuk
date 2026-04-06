@@ -10,6 +10,8 @@ from api.models import Tracker, TrackerEvent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead
 from api.services.reseller_tools import default_config_keyword
 
+MAX_ACTIVE_TRACKERS = 10
+
 router = APIRouter(tags=["trackers"])
 
 
@@ -58,6 +60,19 @@ async def create_tracker(
         )
 
     async with session_factory() as session:
+        count_result = await session.execute(
+            select(Tracker).where(
+                Tracker.user_id == telegram_user.user_id,
+                Tracker.active.is_(True),
+            )
+        )
+        active_count = len(list(count_result.scalars()))
+        if active_count >= MAX_ACTIVE_TRACKERS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Maximum {MAX_ACTIVE_TRACKERS} active trackers allowed",
+            )
+
         tracker = Tracker(
             user_id=telegram_user.user_id,
             query=query,

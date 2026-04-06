@@ -11,6 +11,7 @@ from api.dependencies import (
     get_currency_service,
     get_session_factory_dependency,
     get_settings_dependency,
+    get_telegram_user,
 )
 from api.schemas import PriceStatsResponse
 from api.services.aggregator import (
@@ -24,7 +25,7 @@ from api.services.query_pipeline import convert_price_stats, load_query_dataset
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(tags=["analytics"], dependencies=[Depends(get_telegram_user)])
 
 
 @router.get("/price-stats", response_model=PriceStatsResponse)

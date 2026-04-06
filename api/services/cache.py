@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import MutableMapping
+import time
+from collections import OrderedDict
 from typing import Any, Protocol
 
 from redis.asyncio import Redis
@@ -19,16 +20,32 @@ class CacheBackend(Protocol):
     async def ping(self) -> bool: ...
 
 
+_MAX_ENTRIES = 1000
+
+
 class MemoryCache:
     def __init__(self) -> None:
-        self._storage: MutableMapping[str, str] = {}
+        self._storage: OrderedDict[str, str] = OrderedDict()
+        self._expiry: dict[str, float] = {}
 
     async def get(self, key: str) -> str | None:
+        if key in self._expiry and self._expiry[key] <= time.monotonic():
+            self._storage.pop(key, None)
+            del self._expiry[key]
+            return None
         return self._storage.get(key)
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
-        del ttl
+        if key in self._storage:
+            del self._storage[key]
         self._storage[key] = value
+        if ttl is not None:
+            self._expiry[key] = time.monotonic() + ttl
+        elif key in self._expiry:
+            del self._expiry[key]
+        while len(self._storage) > _MAX_ENTRIES:
+            evicted_key, _ = self._storage.popitem(last=False)
+            self._expiry.pop(evicted_key, None)
 
     async def get_json(self, key: str) -> Any:
         value = await self.get(key)

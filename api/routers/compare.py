@@ -10,6 +10,7 @@ from api.dependencies import (
     get_currency_service,
     get_session_factory_dependency,
     get_settings_dependency,
+    get_telegram_user,
 )
 from api.schemas import CompareRequestItem, CompareResponse
 from api.services.aggregator import build_query_key, filter_deal_ads
@@ -22,7 +23,7 @@ from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(tags=["analytics"], dependencies=[Depends(get_telegram_user)])
 
 
 def _split_compare_queries(values: list[str]) -> list[str]:

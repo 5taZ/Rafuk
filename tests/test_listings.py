@@ -4,7 +4,11 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from api.dependencies import get_telegram_user
+from api.middleware.telegram_auth import TelegramInitData
 from api.services.cache import MemoryCache
+
+_fake_telegram_user = TelegramInitData(user_id=123456, first_name="Test", raw={})
 
 
 class FakeCurrencyService:
@@ -73,6 +77,7 @@ def test_listings_endpoint_returns_items(monkeypatch) -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: _fake_telegram_user
     with TestClient(app) as client:
         response = client.get("/api/v1/listings", params={"query": "iphone", "currency": "USD"})
     assert response.status_code == 200
@@ -96,6 +101,7 @@ def test_listings_endpoint_supports_cheap_sort(monkeypatch) -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: _fake_telegram_user
     with TestClient(app) as client:
         response = client.get(
             "/api/v1/listings",
@@ -125,6 +131,7 @@ def test_listings_endpoint_supports_strict_search(monkeypatch) -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: _fake_telegram_user
     with TestClient(app) as client:
         response = client.get(
             "/api/v1/listings",
@@ -146,6 +153,7 @@ def test_listings_endpoint_normalizes_alias_queries(monkeypatch) -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: _fake_telegram_user
     with TestClient(app) as client:
         response = client.get(
             "/api/v1/listings",
@@ -227,6 +235,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_telegram_user] = lambda: _fake_telegram_user
     with TestClient(app) as client:
         response = client.get("/api/v1/listings", params={"query": "iphone", "currency": "BYN"})
 
