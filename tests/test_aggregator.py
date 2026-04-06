@@ -12,6 +12,7 @@ from api.services.aggregator import (
     extract_prices,
     filter_deal_ads,
     is_strict_match,
+    normalize_search_text,
     sort_listings,
 )
 
@@ -91,3 +92,8 @@ def test_apply_search_mode_filters_ads_in_strict_mode() -> None:
 def test_build_query_key_separates_modes() -> None:
     assert build_query_key("iphone 15 256", False) == "broad::iphone 15 256"
     assert build_query_key("iphone 15 256", True) == "strict::iphone 15 256"
+
+
+def test_normalize_search_text_supports_reseller_aliases() -> None:
+    assert normalize_search_text("айфон 15 про макс 256гб") == "iphone 15 pro max 256"
+    assert normalize_search_text("пс5 слим 1 тб") == "ps5 slim 1024"

@@ -21,6 +21,29 @@ STRICT_VARIANT_TOKENS = {
     "flip",
     "fold",
     "studio",
+    "slim",
+    "fat",
+}
+
+SEARCH_ALIASES = {
+    "айфон": "iphone",
+    "макбук": "macbook",
+    "мак бук": "macbook",
+    "playstation": "ps",
+    "play station": "ps",
+    "плейстейшен": "ps",
+    "пс": "ps",
+    "пс5": "ps5",
+    "пс4": "ps4",
+    "ps 5": "ps5",
+    "ps 4": "ps4",
+    "слим": "slim",
+    "phat": "fat",
+    "фат": "fat",
+    "обычная": "fat",
+    "обычный": "fat",
+    "про макс": "pro max",
+    "promax": "pro max",
 }
 
 
@@ -36,7 +59,12 @@ class PriceStats(BaseModel):
 
 def normalize_search_text(value: str) -> str:
     text = value.casefold()
+    for source, target in SEARCH_ALIASES.items():
+        text = text.replace(source, target)
     text = re.sub(r"(\d+)\s*gb\b", r"\1", text)
+    text = re.sub(r"(\d+)\s*гб\b", r"\1", text)
+    text = re.sub(r"(\d+)\s*/\s*(\d+)", r"\1 \2", text)
+    text = re.sub(r"\b([12])\s*(?:tb|тб)\b", lambda match: str(int(match.group(1)) * 1024), text)
     text = re.sub(r"[^a-zа-я0-9]+", " ", text, flags=re.IGNORECASE)
     return " ".join(text.split())
 

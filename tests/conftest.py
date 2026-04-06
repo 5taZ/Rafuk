@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,13 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         get_settings.cache_clear()
     except Exception:
         pass
+
+
+async def init_test_tables(app) -> None:
+    """Create all tables for a test app instance."""
+    from api.models import Base
+    async with app.state.engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
 @pytest.fixture

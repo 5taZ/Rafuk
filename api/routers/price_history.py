@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -15,13 +15,14 @@ from api.services.aggregator import build_query_key
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.history_service import load_query_snapshots
+from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
 
 
 @router.get("/price-history", response_model=PriceHistoryResponse)
 async def get_price_history(
-    query: str,
+    query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: str = "BYN",
     days: int = 7,
     strict_search: bool = False,
@@ -30,7 +31,7 @@ async def get_price_history(
     currency_service: CurrencyService = Depends(get_currency_service),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> PriceHistoryResponse:
-    bounded_days = max(1, min(days, 30))
+    bounded_days = max(1, min(days, 90))
     search_key = build_query_key(query, strict_search)
     cache_key = f"price-history:{search_key}:{currency}:{bounded_days}"
     cached = await cache.get_json(cache_key)

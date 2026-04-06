@@ -8,6 +8,7 @@ from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import Tracker, TrackerEvent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead
+from api.services.reseller_tools import default_config_keyword
 
 router = APIRouter(tags=["trackers"])
 
@@ -62,6 +63,13 @@ async def create_tracker(
             query=query,
             strict_mode=payload.strict_mode,
             interval_min=payload.interval_min,
+            min_discount_percent=payload.min_discount_percent,
+            max_price_byn=payload.max_price_byn,
+            seller_type=payload.seller_type,
+            condition=payload.condition,
+            region_name=payload.region_name,
+            config_keyword=payload.config_keyword or default_config_keyword(query),
+            exclude_duplicates=payload.exclude_duplicates,
         )
         session.add(tracker)
         await session.commit()
