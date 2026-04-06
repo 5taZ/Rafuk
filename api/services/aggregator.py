@@ -65,7 +65,7 @@ def normalize_search_text(value: str) -> str:
     text = re.sub(r"(\d+)\s*гб\b", r"\1", text)
     text = re.sub(r"(\d+)\s*/\s*(\d+)", r"\1 \2", text)
     text = re.sub(r"\b([12])\s*(?:tb|тб)\b", lambda match: str(int(match.group(1)) * 1024), text)
-    text = re.sub(r"[^a-zа-я0-9]+", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^a-zа-я0-9]+", " ", text)
     return " ".join(text.split())
 
 

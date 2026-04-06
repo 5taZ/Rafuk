@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.config import Settings
 from api.dependencies import (
     get_currency_service,
+    get_kufar_client,
     get_session_factory_dependency,
     get_settings_dependency,
     get_telegram_user,
@@ -52,13 +53,14 @@ async def _build_compare_item(
     settings: Settings,
     currency_service: CurrencyService,
     session_factory: async_sessionmaker[AsyncSession],
+    kufar_client: KufarClient,
 ) -> CompareRequestItem:
     dataset = await load_query_dataset(
         query=query,
         currency=currency,
         strict_search=strict_search,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
     )
     duplicate_index = duplicate_counts(dataset.ads)
     rates_payload = await currency_service.get_rates()
@@ -121,6 +123,7 @@ async def compare_queries(
     settings: Settings = Depends(get_settings_dependency),
     currency_service: CurrencyService = Depends(get_currency_service),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> CompareResponse:
     compare_queries = _split_compare_queries(compare_query or [])
     queries = [base_query.strip(), *compare_queries]
@@ -133,6 +136,7 @@ async def compare_queries(
                 settings=settings,
                 currency_service=currency_service,
                 session_factory=session_factory,
+                kufar_client=kufar_client,
             )
             for query in queries
             if query

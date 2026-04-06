@@ -22,6 +22,7 @@ from api.routers import (
 )
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
+from api.services.kufar_client import KufarClient
 
 
 @asynccontextmanager
@@ -33,15 +34,18 @@ async def lifespan(app: FastAPI):
     if not await cache.ping():
         cache = MemoryCache()
     currency_service = CurrencyService(cache)
+    kufar_client = KufarClient(settings)
 
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.cache = cache
     app.state.currency_service = currency_service
+    app.state.kufar_client = kufar_client
 
     try:
         yield
     finally:
+        await kufar_client.aclose()
         await currency_service.aclose()
         await engine.dispose()
 

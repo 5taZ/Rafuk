@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.config import Settings
 from api.dependencies import (
     get_currency_service,
+    get_kufar_client,
     get_session_factory_dependency,
     get_settings_dependency,
     get_telegram_user,
@@ -156,13 +157,14 @@ async def _load_saved_search_opportunities(
     currency: str,
     settings: Settings,
     currency_service: CurrencyService,
+    kufar_client: KufarClient,
 ) -> list[OpportunityItem]:
     dataset = await load_query_dataset(
         query=saved_search.query,
         currency=currency,
         strict_search=saved_search.strict_mode,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
     )
     duplicate_index = duplicate_counts(dataset.ads)
     candidate_ads = filter_deal_ads(
@@ -262,6 +264,7 @@ async def get_opportunity_board(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),
     currency_service: CurrencyService = Depends(get_currency_service),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> OpportunityBoardResponse:
     async with session_factory() as session:
         result = await session.execute(
@@ -288,6 +291,7 @@ async def get_opportunity_board(
                 currency=currency,
                 settings=settings,
                 currency_service=currency_service,
+                kufar_client=kufar_client,
             )
             for saved_search in saved_searches
         ]

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
 from api.dependencies import (
+    get_kufar_client,
     get_session_factory_dependency,
     get_settings_dependency,
     get_telegram_user,
@@ -212,6 +213,7 @@ async def refresh_watchlist(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> WatchlistRefreshResponse:
     async with session_factory() as session:
         result = await session.execute(
@@ -234,7 +236,7 @@ async def refresh_watchlist(
                 currency="BYN",
                 strict_search=False,
                 settings=settings,
-                client_factory=KufarClient,
+                client=kufar_client,
             )
             ads_by_id = {
                 int(ad.get("ad_id", 0)): ad
