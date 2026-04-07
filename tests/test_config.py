@@ -30,23 +30,38 @@ def test_settings_loads_from_env_vars() -> None:
 
 
 def test_settings_applies_defaults() -> None:
-    env = {
-        "BOT_TOKEN": "test",
-        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
-        "REDIS_URL": "redis://localhost:6379/0",
-        "API_BASE_URL": "https://example.com",
-        "MINI_APP_URL": "https://example.com/app",
-    }
-    with patch.dict(os.environ, env, clear=False):
-        from api import config
+    # Save original env vars
+    import os
 
-        config.get_settings.cache_clear()
-        importlib.reload(config)
-        s = config.Settings()
-        assert s.kufar_request_delay == 1.0
-        assert s.kufar_parallel_semaphore == 3
-        assert s.scheduler_snapshot_hour == 9
-        assert s.alert_check_interval == 30
+    original_env = {}
+    for key in ["KUFAR_REQUEST_DELAY", "KUFAR_PARALLEL_SEMAPHORE", "SCHEDULER_SNAPSHOT_HOUR", "ALERT_CHECK_INTERVAL"]:
+        if key in os.environ:
+            original_env[key] = os.environ[key]
+            del os.environ[key]
+
+    try:
+        env = {
+            "BOT_TOKEN": "test",
+            "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+            "REDIS_URL": "redis://localhost:6379/0",
+            "API_BASE_URL": "https://example.com",
+            "MINI_APP_URL": "https://example.com/app",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            # Clear any existing .env file influence
+            from api import config
+
+            config.get_settings.cache_clear()
+            importlib.reload(config)
+            s = config.Settings(_env_file=None)  # Ignore .env file
+            assert s.kufar_request_delay == 1.0
+            assert s.kufar_parallel_semaphore == 3
+            assert s.scheduler_snapshot_hour == 9
+            assert s.alert_check_interval == 30
+    finally:
+        # Restore original env vars
+        for key, value in original_env.items():
+            os.environ[key] = value
 
 
 def test_settings_missing_required_raises() -> None:

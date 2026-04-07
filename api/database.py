@@ -16,7 +16,13 @@ def get_engine(url: str | None = None) -> AsyncEngine:
     database_url = url or get_settings().database_url
     kwargs: dict[str, object] = {"echo": False}
     if not database_url.startswith("sqlite"):
-        kwargs.update(pool_size=5, max_overflow=10)
+        kwargs.update(
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,      # Verify connection health before use
+            pool_recycle=1800,       # Recycle connections every 30 minutes
+            pool_timeout=30,         # Wait up to 30s for a connection
+        )
     return create_async_engine(database_url, **kwargs)
 
 

@@ -109,7 +109,6 @@ async def create_saved_search(
         )
         session.add(saved_search)
         await session.commit()
-        await session.refresh(saved_search)
     return _serialize_saved_search(saved_search)
 
 

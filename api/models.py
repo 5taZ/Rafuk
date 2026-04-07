@@ -7,23 +7,68 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Float,
+    ForeignKey,
     Index,
     Integer,
     String,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     """Base declarative model."""
 
 
-class UserIDMixin:
-    """Mixin for models that have a user_id field."""
+class User(Base):
+    """Telegram users registered in the system."""
 
-    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    first_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_bot: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    trackers = relationship("Tracker", back_populates="user", cascade="all, delete-orphan")
+    saved_searches = relationship("SavedSearch", back_populates="user", cascade="all, delete-orphan")
+    tracker_events = relationship("TrackerEvent", back_populates="user", cascade="all, delete-orphan")
+    lead_items = relationship("LeadItem", back_populates="user", cascade="all, delete-orphan")
+    watchlist_items = relationship("WatchlistItem", back_populates="user", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_users_telegram_id", "telegram_user_id"),
+    )
+
+
+class UserIDMixin:
+    """Mixin for models that have a user_id field with FK to users table."""
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
 
 class ActiveMixin:
@@ -34,6 +79,10 @@ class ActiveMixin:
         nullable=False,
         default=True,
         server_default="true",
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
 
@@ -96,6 +145,10 @@ class Tracker(
         nullable=True,
     )
 
+    # Relationships
+    user = relationship("User", back_populates="trackers")
+    events = relationship("TrackerEvent", back_populates="tracker", cascade="all, delete-orphan")
+
     __table_args__ = (
         Index("idx_trackers_user", "user_id"),
         Index("idx_trackers_active", "active"),
@@ -127,6 +180,9 @@ class SavedSearch(
         default=10.0,
         server_default="10",
     )
+
+    # Relationships
+    user = relationship("User", back_populates="saved_searches")
 
     __table_args__ = (
         Index("idx_saved_searches_user", "user_id"),
@@ -194,7 +250,12 @@ class TrackerEvent(Base, UserIDMixin):
     __tablename__ = "tracker_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    tracker_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    tracker_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("trackers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     ad_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     query: Mapped[str] = mapped_column(String(255), nullable=False)
     strict_mode: Mapped[bool] = mapped_column(
@@ -213,6 +274,10 @@ class TrackerEvent(Base, UserIDMixin):
         nullable=False,
         server_default=func.now(),
     )
+
+    # Relationships
+    user = relationship("User", back_populates="tracker_events")
+    tracker = relationship("Tracker", back_populates="events")
 
     __table_args__ = (
         Index("idx_tracker_events_user", "user_id"),
@@ -248,6 +313,9 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+    # Relationships
+    user = relationship("User", back_populates="lead_items")
 
     __table_args__ = (
         UniqueConstraint("user_id", "ad_id", name="uq_lead_items_user_ad"),
@@ -291,6 +359,9 @@ class WatchlistItem(Base, UserIDMixin, TimestampMixin):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+    # Relationships
+    user = relationship("User", back_populates="watchlist_items")
 
     __table_args__ = (
         UniqueConstraint("user_id", "ad_id", name="uq_watchlist_items_user_ad"),

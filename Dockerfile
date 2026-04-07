@@ -9,8 +9,16 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y curl nodejs && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir uv
 
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+
 COPY . .
 RUN uv sync --no-dev
+
+# Change ownership of app directory to appuser
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 ENV PATH="/app/.venv/bin:${PATH}"
 ENV SERVICE=api

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -25,10 +27,13 @@ from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("/price-stats", response_model=PriceStatsResponse)
+@limiter.limit("30/minute")
 async def get_price_stats(
+    request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: str = "USD",
     strict_search: bool = False,

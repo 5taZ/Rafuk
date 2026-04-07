@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from api.config import get_settings
 from api.database import get_engine, get_session_factory
@@ -22,6 +25,23 @@ from api.routers import (
 )
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
+
+
+# Rate limiter setup
+limiter = Limiter(key_func=get_remote_address)
+
+
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """Handle rate limit exceeded."""
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Rate limit exceeded. Please try again later.",
+            "limit": str(exc.detail),
+        },
+    )
 
 
 @asynccontextmanager
@@ -49,12 +69,20 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="Rafuks API", lifespan=lifespan)
+
+    # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.mini_app_url, settings.api_base_url],
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
+
+    # Add rate limiter to app state
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+    # Include routers
     app.include_router(price_stats.router, prefix="/api/v1")
     app.include_router(price_history.router, prefix="/api/v1")
     app.include_router(listings.router, prefix="/api/v1")

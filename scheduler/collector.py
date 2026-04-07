@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -43,14 +43,20 @@ async def notify_user(
     message: str,
     session: AsyncSession,
     reply_markup: InlineKeyboardMarkup | None = None,
-) -> None:
+) -> bool:
+    """Send message to user. Returns False if tracker should be deactivated."""
     try:
         await bot.send_message(user_id, message, reply_markup=reply_markup)
+        return True
     except TelegramForbiddenError:
+        # Mark tracker as inactive - caller will commit
         await session.execute(
-            update(Tracker).where(Tracker.user_id == user_id).values(active=False)
+            update(Tracker).where(
+                Tracker.user_id == user_id,
+                Tracker.active.is_(True),
+            ).values(active=False)
         )
-        await session.commit()
+        return False
 
 
 def persist_tracker_events(
@@ -264,13 +270,19 @@ async def check_trackers(
                             if primary_event is not None
                             else None
                         )
-                        await notify_user(
+                        can_notify = await notify_user(
                             bot,
                             tracker.user_id,
                             message,
                             session,
                             reply_markup=keyboard,
                         )
+                        if not can_notify:
+                            logger.info(
+                                "Deactivated tracker %s for user %s (Telegram forbidden error)",
+                                tracker.id,
+                                tracker.user_id,
+                            )
 
                     tracker.last_seen_ad_id = newest_id
                     tracker.last_seen_price_byn = newest_price_byn
@@ -295,7 +307,63 @@ def create_scheduler(
         id="tracker-check",
         replace_existing=True,
     )
+    # Daily cleanup of old events and inactive listings
+    scheduler.add_job(
+        run_cleanup,
+        trigger="cron",
+        hour=3,  # Run at 3 AM
+        minute=0,
+        kwargs={"session_factory": session_factory},
+        id="daily-cleanup",
+        replace_existing=True,
+    )
     return scheduler
+
+
+async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """Run daily cleanup of old data."""
+    async with session_factory() as session:
+        try:
+            await cleanup_old_events(session, days=30)
+            await cleanup_inactive_listing_states(session, days=90)
+            await session.commit()
+            logger.info("Daily cleanup completed successfully")
+        except Exception:
+            await session.rollback()
+            logger.exception("Daily cleanup failed")
+
+
+async def cleanup_old_events(session: AsyncSession, days: int = 30) -> int:
+    """Delete tracker events older than specified days."""
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    result = await session.execute(
+        delete(TrackerEvent).where(TrackerEvent.created_at < cutoff)
+    )
+    deleted_count = result.rowcount
+    if deleted_count > 0:
+        logger.info("Cleaned up %d old tracker events (older than %d days)", deleted_count, days)
+    return deleted_count
+
+
+async def cleanup_inactive_listing_states(session: AsyncSession, days: int = 90) -> int:
+    """Delete inactive listing states older than specified days."""
+    from api.models import QueryListingState
+
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    result = await session.execute(
+        delete(QueryListingState).where(
+            QueryListingState.active.is_(False),
+            QueryListingState.last_seen_at < cutoff,
+        )
+    )
+    deleted_count = result.rowcount
+    if deleted_count > 0:
+        logger.info(
+            "Cleaned up %d inactive listing states (older than %d days)",
+            deleted_count,
+            days,
+        )
+    return deleted_count
 
 
 async def check_db_health(engine) -> bool:

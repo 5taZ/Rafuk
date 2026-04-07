@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
+from httpx import HTTPError
 
 from api.config import get_settings
 from api.services.aggregator import compute_price_stats, extract_prices
-from api.services.kufar_client import KufarClient
+from api.services.kufar_client import KufarAPIError, KufarClient
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="price")
 
@@ -56,8 +61,12 @@ async def cmd_price(message: Message, command: CommandObject) -> None:
 
     try:
         stats = await fetch_price_stats(query)
-    except Exception:
+    except (KufarAPIError, HTTPError):
         await message.answer("Price lookup is temporarily unavailable.")
+        return
+    except Exception:
+        logger.exception("Unexpected error in /price command for query: %s", query)
+        await message.answer("An unexpected error occurred. Please try again later.")
         return
     await message.answer(
         f"{query}\n"
@@ -78,8 +87,12 @@ async def cmd_top(message: Message, command: CommandObject) -> None:
 
     try:
         payload = await fetch_listings(query)
-    except Exception:
+    except (KufarAPIError, HTTPError):
         await message.answer("Listings lookup is temporarily unavailable.")
+        return
+    except Exception:
+        logger.exception("Unexpected error in /top command for query: %s", query)
+        await message.answer("An unexpected error occurred. Please try again later.")
         return
     listings = payload.get("listings", [])[:5]
     if not listings:

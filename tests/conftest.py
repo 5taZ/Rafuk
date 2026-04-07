@@ -22,6 +22,21 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         pass
 
 
+@pytest.fixture(autouse=True)
+async def create_test_tables():
+    """Auto-create test database tables for all tests."""
+    from api.database import get_engine
+    from api.models import Base
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
 async def init_test_tables(app) -> None:
     """Create all tables for a test app instance."""
     from api.models import Base

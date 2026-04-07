@@ -12,3 +12,4 @@ build/
 .run/
 bot.db
 *.db
+*.md

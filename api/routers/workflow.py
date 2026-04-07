@@ -98,7 +98,6 @@ async def create_lead(
             notes=payload.notes,
         )
         await session.commit()
-        await session.refresh(lead)
         return LeadRead.model_validate(lead)
 
 
@@ -122,7 +121,7 @@ async def update_lead(
         if "notes" in payload.model_fields_set:
             lead.notes = payload.notes
         await session.commit()
-        await session.refresh(lead)
+        await session.refresh(lead)  # Refresh to get server-generated updated_at
         return LeadRead.model_validate(lead)
 
 
@@ -158,7 +157,6 @@ async def create_watchlist_item(
             notes=payload.notes,
         )
         await session.commit()
-        await session.refresh(item)
         return _serialize_watchlist(item)
 
 
@@ -183,7 +181,7 @@ async def update_watchlist_item(
         if "notes" in payload.model_fields_set:
             item.notes = payload.notes
         await session.commit()
-        await session.refresh(item)
+        await session.refresh(item)  # Refresh to get server-generated updated_at
         return _serialize_watchlist(item)
 
 

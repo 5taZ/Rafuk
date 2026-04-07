@@ -12,8 +12,16 @@ services:
       KUFAR_PARALLEL_SEMAPHORE: ${KUFAR_PARALLEL_SEMAPHORE:-3}
       ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   bot:
     build: .
@@ -25,8 +33,10 @@ services:
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
     depends_on:
-      - api
-      - db
+      api:
+        condition: service_healthy
+      db:
+        condition: service_healthy
 
   scheduler:
     build: .
@@ -39,8 +49,10 @@ services:
       MINI_APP_URL: ${MINI_APP_URL}
       ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
     depends_on:
-      - api
-      - db
+      api:
+        condition: service_healthy
+      db:
+        condition: service_healthy
 
   frontend:
     image: nginx:1.27-alpine
@@ -52,10 +64,16 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "8081:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   db:
     image: postgres:16-alpine
     environment:
+      # WARNING: Change these defaults in production! Use strong passwords!
       POSTGRES_DB: ${POSTGRES_DB:-kufar}
       POSTGRES_USER: ${POSTGRES_USER:-user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pass}
@@ -63,11 +81,22 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   redis:
     image: redis:7-alpine
     ports:
       - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   pgdata:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
@@ -85,8 +88,14 @@ async def create_tracker(
             exclude_duplicates=payload.exclude_duplicates,
         )
         session.add(tracker)
-        await session.commit()
-        await session.refresh(tracker)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A tracker with this configuration already exists",
+            )
         return TrackerRead.model_validate(tracker)
 
 
@@ -108,5 +117,6 @@ async def delete_tracker(
         if tracker is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
         tracker.active = False
+        tracker.deleted_at = datetime.now(UTC)
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

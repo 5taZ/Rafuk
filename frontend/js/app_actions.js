@@ -1052,6 +1052,23 @@ function createAppActions(context) {
                 closeDetailModal();
             }
         });
+
+        // Fix for Telegram Mini App mobile: intercept external links and open them properly
+        // On mobile, target="_blank" doesn't work correctly in the webview
+        document.addEventListener("click", (event) => {
+            const link = event.target.closest("a[target='_blank']");
+            if (link && link.href && !link.href.startsWith("#") && !link.href.startsWith("javascript:")) {
+                event.preventDefault();
+                event.stopPropagation();
+
+                // Use Telegram WebApp API for mobile, fallback to window.open for desktop
+                if (window.Telegram?.WebApp?.openLink) {
+                    window.Telegram.WebApp.openLink(link.href);
+                } else {
+                    window.open(link.href, "_blank", "noopener,noreferrer");
+                }
+            }
+        });
     }
 
     return {
