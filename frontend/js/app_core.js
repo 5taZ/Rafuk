@@ -23,8 +23,6 @@ function createAppCore() {
         history: [],
         historyChart: null,
         usdRateByn: null,
-        savedSearches: [],
-        savedSearchGroupName: "Мои модели",
         leads: [],
         leadFilter: "active",
         watchlist: [],
@@ -75,13 +73,14 @@ function createAppCore() {
         elements.summaryMedian = document.getElementById("summary-median");
         elements.summaryMarketTotal = document.getElementById("summary-market-total");
         elements.summaryCoverage = document.getElementById("summary-coverage");
-        elements.summaryActions = Array.from(document.querySelectorAll("[data-summary-target]"));
         elements.viewTabs = Array.from(document.querySelectorAll("[data-view]"));
         elements.views = {
             overview: document.getElementById("overview-view"),
             ads: document.getElementById("ads-view"),
+            tracking: document.getElementById("tracking-view"),
+            cheap: document.getElementById("cheap-view"),
+            monitoring: document.getElementById("monitoring-view"),
             deals: document.getElementById("deals-view"),
-            trackers: document.getElementById("trackers-view"),
         };
         elements.statsSection = document.getElementById("stats-section");
         elements.chartSection = document.getElementById("chart-section");
@@ -131,7 +130,6 @@ function createAppCore() {
         elements.quickChips = Array.from(document.querySelectorAll("[data-query]"));
         elements.trackerPanel = document.getElementById("tracker-panel");
         elements.trackQueryButton = document.getElementById("track-query-btn");
-        elements.reloadTrackersButton = document.getElementById("reload-trackers-btn");
         elements.trackerMinDiscountInput = document.getElementById("tracker-min-discount-input");
         elements.trackerMaxPriceInput = document.getElementById("tracker-max-price-input");
         elements.trackerExcludeDuplicatesToggle = document.getElementById("tracker-exclude-duplicates-toggle");
@@ -142,6 +140,7 @@ function createAppCore() {
         elements.trackerStatus = document.getElementById("tracker-status");
         elements.trackersList = document.getElementById("trackers-list");
         elements.trackerEventsList = document.getElementById("tracker-events-list");
+        elements.clearEventsButton = document.getElementById("clear-events-btn");
         elements.leadInboxSection = document.getElementById("lead-inbox-section");
         elements.reloadLeadsButton = document.getElementById("reload-leads-btn");
         elements.leadInboxNote = document.getElementById("lead-inbox-note");
@@ -152,11 +151,6 @@ function createAppCore() {
         elements.watchlistNote = document.getElementById("watchlist-note");
         elements.watchlistFilterButtons = Array.from(document.querySelectorAll("[data-watch-filter]"));
         elements.watchlistList = document.getElementById("watchlist-list");
-        elements.savedSearchesSection = document.getElementById("saved-searches-section");
-        elements.saveSearchButton = document.getElementById("save-search-btn");
-        elements.savedSearchesNote = document.getElementById("saved-searches-note");
-        elements.savedSearchGroupInput = document.getElementById("saved-search-group-input");
-        elements.savedSearchesList = document.getElementById("saved-searches-list");
         elements.opportunityBoardSection = document.getElementById("opportunity-board-section");
         elements.reloadOpportunityBoardButton = document.getElementById("reload-opportunity-board-btn");
         elements.opportunityBoardNote = document.getElementById("opportunity-board-note");
@@ -164,6 +158,10 @@ function createAppCore() {
         elements.opportunityBoardDrops = document.getElementById("opportunity-board-drops");
         elements.opportunityBoardRare = document.getElementById("opportunity-board-rare");
         elements.opportunityBoardSignals = document.getElementById("opportunity-board-signals");
+        elements.trackingHeroStats = document.getElementById("tracking-hero-stats");
+        elements.cheapHeroStats = document.getElementById("cheap-hero-stats");
+        elements.monitoringHeroStats = document.getElementById("monitoring-hero-stats");
+        elements.dealsHeroStats = document.getElementById("deals-hero-stats");
         elements.detailModal = document.getElementById("detail-modal");
         elements.detailOverlay = document.getElementById("detail-overlay");
         elements.detailClose = document.getElementById("detail-close");
@@ -185,6 +183,7 @@ function createAppCore() {
         elements.detailParams = document.getElementById("detail-params");
         elements.detailSellerBlock = document.getElementById("detail-seller-block");
         elements.detailSeller = document.getElementById("detail-seller");
+        elements.toastContainer = document.getElementById("toast-container");
         elements.currencyButtons = {
             BYN: document.getElementById("btn-byn"),
             USD: document.getElementById("btn-usd"),

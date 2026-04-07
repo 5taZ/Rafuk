@@ -21,11 +21,11 @@ function createAppActions(context) {
         renderTrackerEventFilters,
         renderLeads,
         renderWatchlist,
-        renderSavedSearches,
         renderOpportunityBoard,
         renderDetailModal,
         closeDetailModal,
         setPanelOpen,
+        showToast,
     } = context;
 
     function telegramHeaders() {
@@ -189,6 +189,10 @@ function createAppActions(context) {
     function focusTarget(target) {
         if (target === "ads") {
             setActiveView("ads");
+            return;
+        }
+        if (target === "cheap") {
+            setActiveView("cheap");
             return;
         }
         if (target === "deals") {
@@ -447,22 +451,6 @@ function createAppActions(context) {
         }
     }
 
-    async function loadSavedSearches() {
-        if (!hasTelegramInitData()) {
-            state.savedSearches = [];
-            renderSavedSearches();
-            return;
-        }
-
-        try {
-            state.savedSearches = await getJson("/api/v1/saved-searches");
-        } catch (_) {
-            state.savedSearches = [];
-        } finally {
-            renderSavedSearches();
-        }
-    }
-
     async function loadOpportunityBoard() {
         if (!hasTelegramInitData()) {
             state.opportunityBoard = { items: [], top_price_drops: [], rare_opportunities: [], market_signals: [] };
@@ -481,23 +469,24 @@ function createAppActions(context) {
 
     async function createTracker() {
         if (!hasTelegramInitData()) {
-            state.trackerStatus = "Эта функция доступна только внутри Telegram Mini App.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
+            showToast("Доступно только в Telegram");
             return;
         }
 
         const query = state.query.trim();
         if (!query) {
-            state.trackerStatus = "Сначала введите запрос.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
+            showToast("Сначала введите запрос");
             return;
         }
 
-        state.trackerStatus = "Сохраняю трекер...";
-        state.trackerStatusKind = "info";
-        renderTrackerStatus();
+        const normalizedQuery = query.toLocaleLowerCase("ru-RU");
+        const duplicate = state.trackers.find(
+            (t) => t.query.trim().toLocaleLowerCase("ru-RU") === normalizedQuery
+        );
+        if (duplicate) {
+            showToast("Такой трекер уже существует");
+            return;
+        }
 
         try {
             await postJson("/api/v1/trackers", {
@@ -512,10 +501,9 @@ function createAppActions(context) {
                 config_keyword: state.trackerConfigKeyword || null,
                 exclude_duplicates: state.trackerExcludeDuplicates,
             });
-            state.trackerStatus = "Трекер добавлен.";
-            state.trackerStatusKind = "success";
-            renderTrackerStatus();
+            showToast("Трекер добавлен");
             await loadTrackers();
+            renderAll();
         } catch (error) {
             state.trackerStatus = error.message || "Не удалось создать трекер.";
             state.trackerStatusKind = "error";
@@ -539,14 +527,10 @@ function createAppActions(context) {
                 status: "new",
                 source,
             });
-            state.trackerStatus = "Лот добавлен в Inbox.";
-            state.trackerStatusKind = "success";
-            renderTrackerStatus();
+            showToast("Добавлено в покупки");
             await loadLeads();
         } catch (error) {
-            state.trackerStatus = error.message || "Не удалось добавить лот в Inbox.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
+            showToast(error.message || "Не удалось добавить в покупки");
         }
     }
 
@@ -562,14 +546,10 @@ function createAppActions(context) {
                 link: item.link,
                 price_byn: item.price_byn,
             });
-            state.trackerStatus = "Лот добавлен в Watchlist.";
-            state.trackerStatusKind = "success";
-            renderTrackerStatus();
+            showToast("Добавлено в избранное");
             await loadWatchlist();
         } catch (error) {
-            state.trackerStatus = error.message || "Не удалось добавить лот в Watchlist.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
+            showToast(error.message || "Не удалось добавить в избранное");
         }
     }
 
@@ -586,9 +566,7 @@ function createAppActions(context) {
             });
             await loadLeads();
         } catch (error) {
-            state.trackerStatus = error.message || "Не удалось обновить статус в Inbox.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
+            showToast(error.message || "Не удалось обновить");
         }
     }
 
@@ -605,9 +583,7 @@ function createAppActions(context) {
             });
             await loadWatchlist();
         } catch (error) {
-            state.trackerStatus = error.message || "Не удалось обновить Watchlist.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
+            showToast(error.message || "Не удалось обновить");
         }
     }
 
@@ -632,142 +608,21 @@ function createAppActions(context) {
     async function deleteWatchlistItem(watchlistId) {
         try {
             await deleteJson(`/api/v1/watchlist/${watchlistId}`);
+            showToast("Удалено из избранного");
             await loadWatchlist();
         } catch (error) {
-            state.trackerStatus = error.message || "Не удалось удалить лот из Watchlist.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
+            showToast(error.message || "Не удалось удалить");
         }
     }
 
     async function refreshWatchlist() {
         try {
             const payload = await postJson("/api/v1/watchlist/refresh", {});
-            state.trackerStatus = `Watchlist обновлён: ${payload.updated} проверено, ${payload.price_drops} падений цены, ${payload.missing} пропавших.`;
-            state.trackerStatusKind = "success";
-            renderTrackerStatus();
+            showToast(`Обновлено: ${payload.updated} проверено, ${payload.price_drops} падений цены`);
             await loadWatchlist();
         } catch (error) {
-            state.trackerStatus = error.message || "Не удалось обновить Watchlist.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
+            showToast(error.message || "Не удалось обновить цены");
         }
-    }
-
-    async function saveCurrentSearch() {
-        if (!hasTelegramInitData()) {
-            return;
-        }
-
-        const query = state.query.trim();
-        if (!query) {
-            state.trackerStatus = "Сначала выполните поиск, затем сохраните его.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
-            return;
-        }
-
-        try {
-            await postJson("/api/v1/saved-searches", {
-                query,
-                group_name: elements.savedSearchGroupInput?.value?.trim() || state.savedSearchGroupName,
-                strict_mode: state.strictSearch,
-                target_discount_percent: state.discountFromPercent,
-                max_price_byn: state.trackerMaxPriceByn,
-                seller_type: state.trackerSellerType || null,
-                condition: state.trackerCondition || null,
-                region_name: state.trackerRegionName || null,
-                config_keyword: state.trackerConfigKeyword || null,
-                exclude_duplicates: state.trackerExcludeDuplicates,
-            });
-            state.trackerStatus = "Поиск сохранён.";
-            state.trackerStatusKind = "success";
-            renderTrackerStatus();
-            await loadSavedSearches();
-            await loadOpportunityBoard();
-        } catch (error) {
-            state.trackerStatus = error.message || "Не удалось сохранить поиск.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
-        }
-    }
-
-    async function deleteSavedSearch(savedSearchId) {
-        if (!savedSearchId) {
-            return;
-        }
-
-        try {
-            await deleteJson(`/api/v1/saved-searches/${savedSearchId}`);
-            await loadSavedSearches();
-            await loadOpportunityBoard();
-        } catch (error) {
-            state.trackerStatus = error.message || "Не удалось удалить сохранённый поиск.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
-        }
-    }
-
-    async function applySavedSearch(savedSearch, mode = "search") {
-        if (!savedSearch) {
-            return;
-        }
-
-        if (mode === "compare") {
-            const existing = parseComparisonQueries(state.comparisonQuery);
-            const nextValues = Array.from(new Set([...existing, savedSearch.query])).slice(0, 2);
-            state.comparisonQuery = nextValues.join(", ");
-            elements.compareInput.value = state.comparisonQuery;
-            setPanelOpen("comparison", true);
-            setActiveView("overview");
-            renderComparison();
-            if (state.query.trim()) {
-                await loadComparison();
-            }
-            return;
-        }
-
-        state.strictSearch = Boolean(savedSearch.strict_mode);
-        state.discountFromPercent = Math.round(savedSearch.target_discount_percent || 10);
-        state.trackerMinDiscountPercent = Math.round(savedSearch.target_discount_percent || 10);
-        state.trackerMaxPriceByn = savedSearch.max_price_byn ?? null;
-        state.trackerExcludeDuplicates = Boolean(savedSearch.exclude_duplicates);
-        state.trackerSellerType = savedSearch.seller_type || "";
-        state.trackerCondition = savedSearch.condition || "";
-        state.trackerRegionName = savedSearch.region_name || "";
-        state.trackerConfigKeyword = savedSearch.config_keyword || "";
-        elements.searchInput.value = savedSearch.query;
-        state.query = savedSearch.query;
-        renderStrictSearch();
-        renderDealInputs();
-        renderTrackerInputs();
-        await search("overview");
-    }
-
-    async function applySavedSearchGroup(savedSearches) {
-        if (!savedSearches?.length) {
-            return;
-        }
-        const [baseSearch, ...rest] = savedSearches;
-        state.strictSearch = Boolean(baseSearch.strict_mode);
-        state.discountFromPercent = Math.round(baseSearch.target_discount_percent || 10);
-        state.trackerMinDiscountPercent = Math.round(baseSearch.target_discount_percent || 10);
-        state.trackerMaxPriceByn = baseSearch.max_price_byn ?? null;
-        state.savedSearchGroupName = baseSearch.group_name || "Мои модели";
-        state.trackerExcludeDuplicates = Boolean(baseSearch.exclude_duplicates);
-        state.trackerSellerType = baseSearch.seller_type || "";
-        state.trackerCondition = baseSearch.condition || "";
-        state.trackerRegionName = baseSearch.region_name || "";
-        state.trackerConfigKeyword = baseSearch.config_keyword || "";
-        elements.searchInput.value = baseSearch.query;
-        state.query = baseSearch.query;
-        state.comparisonQuery = rest.slice(0, 2).map((item) => item.query).join(", ");
-        elements.compareInput.value = state.comparisonQuery;
-        renderStrictSearch();
-        renderDealInputs();
-        renderTrackerInputs();
-        setPanelOpen("comparison", true);
-        await search("overview");
     }
 
     async function openOpportunityQuery(item) {
@@ -821,10 +676,9 @@ function createAppActions(context) {
 
         try {
             await deleteJson(`/api/v1/trackers/${trackerId}`);
-            state.trackerStatus = "Трекер удалён.";
-            state.trackerStatusKind = "success";
-            renderTrackerStatus();
+            showToast("Трекер удалён");
             await loadTrackers();
+            renderAll();
         } catch (error) {
             state.trackerStatus = error.message || "Не удалось удалить трекер.";
             state.trackerStatusKind = "error";
@@ -965,19 +819,21 @@ function createAppActions(context) {
                 }
                 setActiveView(view);
                 renderAll();
-                if (view === "trackers") {
+                if (view === "tracking") {
                     void loadTrackers();
-                    void loadLeads();
+                }
+                if (view === "monitoring") {
                     void loadWatchlist();
-                    void loadSavedSearches();
+                }
+                if (view === "deals") {
+                    void loadLeads();
                     void loadOpportunityBoard();
                 }
-            });
-        }
-
-        for (const button of elements.summaryActions || []) {
-            button.addEventListener("click", () => {
-                focusTarget(button.dataset.summaryTarget || "overview");
+                if (view === "cheap") {
+                    if (state.query.trim()) {
+                        void loadDeals();
+                    }
+                }
             });
         }
 
@@ -1065,7 +921,7 @@ function createAppActions(context) {
                 state.discountToPercent = Math.max(from, to);
                 renderDiscountButtons();
                 renderDealInputs();
-                setActiveView("deals");
+                setActiveView("cheap");
                 if (state.query.trim()) {
                     void loadDeals();
                 }
@@ -1079,7 +935,7 @@ function createAppActions(context) {
             state.discountToPercent = Math.max(from, to);
             renderDiscountButtons();
             renderDealInputs();
-            setActiveView("deals");
+            setActiveView("cheap");
             if (state.query.trim()) {
                 void loadDeals();
             }
@@ -1089,8 +945,17 @@ function createAppActions(context) {
             void createTracker();
         });
 
-        elements.reloadTrackersButton?.addEventListener("click", () => {
-            void loadTrackers();
+        elements.clearEventsButton?.addEventListener("click", () => {
+            void (async () => {
+                try {
+                    await deleteJson("/api/v1/tracker-events");
+                } catch (_) {
+                    // ignore — clear locally anyway
+                }
+                state.trackerEvents = [];
+                showToast("События очищены");
+                renderTrackerEvents();
+            })();
         });
 
         elements.reloadLeadsButton?.addEventListener("click", () => {
@@ -1101,16 +966,8 @@ function createAppActions(context) {
             void refreshWatchlist();
         });
 
-        elements.saveSearchButton?.addEventListener("click", () => {
-            void saveCurrentSearch();
-        });
-
         elements.reloadOpportunityBoardButton?.addEventListener("click", () => {
             void loadOpportunityBoard();
-        });
-
-        elements.savedSearchGroupInput?.addEventListener("input", () => {
-            state.savedSearchGroupName = elements.savedSearchGroupInput.value.trim() || "Мои модели";
         });
 
         elements.trackerMinDiscountInput?.addEventListener("input", () => {
@@ -1209,7 +1066,6 @@ function createAppActions(context) {
         loadTrackers,
         loadLeads,
         loadWatchlist,
-        loadSavedSearches,
         loadOpportunityBoard,
         createTracker,
         addLeadFromListing,
@@ -1222,10 +1078,6 @@ function createAppActions(context) {
         deleteWatchlistItem,
         refreshWatchlist,
         deleteTracker,
-        saveCurrentSearch,
-        deleteSavedSearch,
-        applySavedSearch,
-        applySavedSearchGroup,
         openOpportunityQuery,
         openOpportunityDetail,
         openListingDetail,

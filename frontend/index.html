@@ -77,10 +77,30 @@
     </section>
 
     <nav class="view-nav" aria-label="Разделы Mini App">
-        <button class="view-tab active" data-view="overview" type="button">Обзор</button>
-        <button class="view-tab" data-view="ads" type="button">Объявления</button>
-        <button class="view-tab" data-view="deals" type="button">Дёшево</button>
-        <button class="view-tab" data-view="trackers" type="button">Трекеры</button>
+        <button class="view-tab active" data-view="overview" type="button">
+            <span class="view-tab-icon">📊</span>
+            <span class="view-tab-label">Обзор</span>
+        </button>
+        <button class="view-tab" data-view="ads" type="button">
+            <span class="view-tab-icon">📋</span>
+            <span class="view-tab-label">Объявления</span>
+        </button>
+        <button class="view-tab" data-view="tracking" type="button">
+            <span class="view-tab-icon">🔔</span>
+            <span class="view-tab-label">Автопоиск</span>
+        </button>
+        <button class="view-tab" data-view="cheap" type="button">
+            <span class="view-tab-icon">🏷</span>
+            <span class="view-tab-label">Выгодно</span>
+        </button>
+        <button class="view-tab" data-view="monitoring" type="button">
+            <span class="view-tab-icon">⭐</span>
+            <span class="view-tab-label">Избранное</span>
+        </button>
+        <button class="view-tab" data-view="deals" type="button">
+            <span class="view-tab-icon">💰</span>
+            <span class="view-tab-label">Покупки</span>
+        </button>
     </nav>
 
     <section class="summary-strip" id="summary-strip" hidden>
@@ -105,12 +125,6 @@
                 </div>
             </div>
         </div>
-        <div class="summary-actions" aria-label="Быстрые действия">
-            <button class="summary-action" data-summary-target="ads" type="button">Объявления</button>
-            <button class="summary-action" data-summary-target="deals" type="button">Дёшево</button>
-            <button class="summary-action" data-summary-target="history" type="button">История</button>
-            <button class="summary-action" data-summary-target="comparison" type="button">Сравнить</button>
-        </div>
     </section>
 
     <div class="err-bar" id="error-bar" hidden>
@@ -124,10 +138,7 @@
     </div>
 
     <div class="helper-panel" id="helper-panel">
-        Введите запрос или выберите быстрый сценарий выше. Основная аналитика собрана в разделе
-        <span class="mono">Обзор</span>, свежие лоты лежат в <span class="mono">Объявления</span>,
-        выгодные позиции вынесены в <span class="mono">Дёшево</span>, а мониторинг новых лотов находится
-        в <span class="mono">Трекеры</span>.
+        Введите запрос или выберите быстрый сценарий выше.
     </div>
 
     <section class="view-panel" id="overview-view">
@@ -269,7 +280,7 @@
             </div>
             <div class="sort-row">
                 <button class="s-tab active" data-sort="newest" type="button">Новые</button>
-                <button class="s-tab" data-sort="deal_score" type="button">Сделки</button>
+                <button class="s-tab" data-sort="deal_score" type="button">Выгодные</button>
                 <button class="s-tab" data-sort="price_asc" type="button">Дешевле</button>
                 <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
                 <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
@@ -278,55 +289,20 @@
         </section>
     </section>
 
-    <section class="view-panel" id="deals-view" hidden>
-        <section class="section" id="deals-section" hidden>
-            <div class="sec-head listings-head">
-                <h2 class="sec-title">Дешевле рынка</h2>
-                <span class="badge" id="deals-total-badge"></span>
-            </div>
-            <p class="section-note">
-                Показываем объявления ниже текущей рыночной медианы. Порог можно менять без нового полного поиска.
-            </p>
-            <div class="deal-range-row">
-                <label class="deal-range-field" for="deal-from-input">
-                    <span>От</span>
-                    <div class="deal-range-input-wrap">
-                        <input id="deal-from-input" type="number" min="0" step="1" inputmode="numeric" value="10">
-                        <span>%</span>
-                    </div>
-                </label>
-                <label class="deal-range-field" for="deal-to-input">
-                    <span>До</span>
-                    <div class="deal-range-input-wrap">
-                        <input id="deal-to-input" type="number" min="0" step="1" inputmode="numeric" value="30">
-                        <span>%</span>
-                    </div>
-                </label>
-                <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
-            </div>
-            <div class="sort-row" id="deal-threshold-row">
-                <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button">10-20%</button>
-                <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
-                <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
-            </div>
-            <div class="listings-list" id="deals-list"></div>
-        </section>
-    </section>
-
-    <section class="view-panel" id="trackers-view" hidden>
+    <section class="view-panel" id="tracking-view" hidden>
+        <div class="view-hero tracking-hero">
+            <div class="view-hero-icon">🔔</div>
+            <h2 class="view-hero-title">Автопоиск</h2>
+            <p class="view-hero-desc">Создавайте трекеры для автоматического мониторинга новых лотов и падений цен по вашим запросам</p>
+            <div class="view-hero-stats" id="tracking-hero-stats"></div>
+        </div>
         <section class="section" id="tracker-panel">
-            <div class="sec-head">
+            <div class="sec-head sec-head--center">
                 <h2 class="sec-title">Детектор новинок</h2>
-                <span class="badge">Mini App + бот</span>
             </div>
             <div class="tracker-card">
-                <p class="tracker-title">Следите за запросом прямо в Mini App.</p>
-                <p class="tracker-copy">
-                    Добавьте текущий запрос в мониторинг, а уведомление о новом лоте придёт в чат Telegram.
-                </p>
                 <div class="tracker-actions">
                     <button class="primary-btn" id="track-query-btn" type="button">Следить за текущим запросом</button>
-                    <button class="ghost-btn" id="reload-trackers-btn" type="button">Обновить список</button>
                 </div>
                 <div class="deal-range-row tracker-filter-row">
                     <label class="deal-range-field" for="tracker-min-discount-input">
@@ -384,47 +360,83 @@
                     <span class="strict-toggle-copy">Только без дублей</span>
                 </label>
                 <p class="tracker-form-hint">
-                    Этот smart-профиль применяется и к трекеру, и к кнопке «Сохранить текущий».
+                    Профиль фильтров применяется к создаваемому трекеру.
                 </p>
                 <div class="tracker-status" id="tracker-status" hidden></div>
                 <div class="trackers-list" id="trackers-list"></div>
                 <div class="tracker-events-block">
-                    <div class="sec-head events-head">
-                        <h3 class="sec-title">Последние события</h3>
-                        <span class="badge">чат + Mini App</span>
+                    <div class="sec-head events-head sec-head--center">
+                        <h3 class="sec-title">Лента событий</h3>
                     </div>
-                    <div class="sort-row" id="tracker-event-filter-row">
-                        <button class="s-tab active" data-event-filter="all" type="button">Все</button>
-                        <button class="s-tab" data-event-filter="new_listing" type="button">Новые</button>
-                        <button class="s-tab" data-event-filter="price_drop" type="button">Подешевело</button>
+                    <div class="tracker-event-controls">
+                        <div class="sort-row" id="tracker-event-filter-row">
+                            <button class="s-tab active" data-event-filter="all" type="button">Все</button>
+                            <button class="s-tab" data-event-filter="price_drop" type="button">Упали в цене</button>
+                            <button class="s-tab" data-event-filter="new_listing" type="button">Новые лоты</button>
+                        </div>
+                        <button class="ghost-btn small tracker-clear-btn" id="clear-events-btn" type="button">Очистить</button>
                     </div>
                     <div class="tracker-events-list" id="tracker-events-list"></div>
                 </div>
             </div>
         </section>
-        <section class="section" id="lead-inbox-section">
+    </section>
+
+    <section class="view-panel" id="cheap-view" hidden>
+        <div class="view-hero cheap-hero">
+            <div class="view-hero-icon">🏷</div>
+            <h2 class="view-hero-title">Выгодные предложения</h2>
+            <p class="view-hero-desc">Объявления ниже текущей рыночной медианы — выбирайте порог скидки</p>
+            <div class="view-hero-stats" id="cheap-hero-stats"></div>
+        </div>
+        <section class="section" id="deals-section" hidden>
             <div class="sec-head listings-head">
-                <h2 class="sec-title">Inbox сделок</h2>
-                <button class="ghost-btn small" id="reload-leads-btn" type="button">Обновить</button>
+                <h2 class="sec-title">Фильтр скидки</h2>
+                <span class="badge" id="deals-total-badge"></span>
             </div>
-            <p class="section-note" id="lead-inbox-note">
-                Сюда складываются лоты, которые ты взял в работу или решил проверить позже.
+            <p class="section-note">
+                Порог можно менять без нового полного поиска.
             </p>
-            <div class="sort-row workflow-filter-row" id="lead-filter-row">
-                <button class="s-tab" data-lead-filter="all" type="button">Все</button>
-                <button class="s-tab active" data-lead-filter="active" type="button">Активные</button>
-                <button class="s-tab" data-lead-filter="buy" type="button">Куплено/в продаже</button>
-                <button class="s-tab" data-lead-filter="done" type="button">Завершено</button>
+            <div class="deal-range-row">
+                <label class="deal-range-field" for="deal-from-input">
+                    <span>От</span>
+                    <div class="deal-range-input-wrap">
+                        <input id="deal-from-input" type="number" min="0" step="1" inputmode="numeric" value="10">
+                        <span>%</span>
+                    </div>
+                </label>
+                <label class="deal-range-field" for="deal-to-input">
+                    <span>До</span>
+                    <div class="deal-range-input-wrap">
+                        <input id="deal-to-input" type="number" min="0" step="1" inputmode="numeric" value="30">
+                        <span>%</span>
+                    </div>
+                </label>
+                <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
             </div>
-            <div class="trackers-list" id="lead-inbox-list"></div>
+            <div class="sort-row" id="deal-threshold-row">
+                <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button">10-20%</button>
+                <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
+                <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
+            </div>
+            <div class="listings-list" id="deals-list"></div>
         </section>
+    </section>
+
+    <section class="view-panel" id="monitoring-view" hidden>
+        <div class="view-hero monitoring-hero">
+            <div class="view-hero-icon">⭐</div>
+            <h2 class="view-hero-title">Избранное</h2>
+            <p class="view-hero-desc">Следите за конкретными объявлениями: падение цены, пропажа из выдачи, дубли</p>
+            <div class="view-hero-stats" id="monitoring-hero-stats"></div>
+        </div>
         <section class="section" id="watchlist-section">
             <div class="sec-head listings-head">
-                <h2 class="sec-title">Watchlist</h2>
-                <button class="ghost-btn small" id="refresh-watchlist-btn" type="button">Проверить снова</button>
+                <h2 class="sec-title">Сохранённые лоты</h2>
+                <button class="ghost-btn small" id="refresh-watchlist-btn" type="button">Проверить цены</button>
             </div>
             <p class="section-note" id="watchlist-note">
-                Отслеживай конкретные объявления: падение цены, пропажа из выдачи и дубли.
+                Добавляйте объявления через кнопку «Следить» в карточке или списке.
             </p>
             <div class="sort-row workflow-filter-row" id="watch-filter-row">
                 <button class="s-tab" data-watch-filter="all" type="button">Все</button>
@@ -434,23 +446,30 @@
             </div>
             <div class="trackers-list" id="watchlist-list"></div>
         </section>
-        <section class="section" id="saved-searches-section">
+    </section>
+
+    <section class="view-panel" id="deals-view" hidden>
+        <div class="view-hero deals-hero">
+            <div class="view-hero-icon">💰</div>
+            <h2 class="view-hero-title">Покупки</h2>
+            <p class="view-hero-desc">Управляйте сделками: отбор, покупка, продажа и лучшие возможности рынка</p>
+            <div class="view-hero-stats" id="deals-hero-stats"></div>
+        </div>
+        <section class="section" id="lead-inbox-section">
             <div class="sec-head listings-head">
-                <h2 class="sec-title">Сохранённые поиски</h2>
-                <button class="ghost-btn small" id="save-search-btn" type="button">Сохранить текущий</button>
+                <h2 class="sec-title">В работе</h2>
+                <button class="ghost-btn small" id="reload-leads-btn" type="button">Обновить</button>
             </div>
-            <p class="section-note" id="saved-searches-note">
-                Сохраняйте связки моделей и конфигураций, чтобы быстро запускать поиск, сравнение и ежедневную проверку.
+            <p class="section-note" id="lead-inbox-note">
+                Лоты, которые вы взяли в работу или решили проверить позже.
             </p>
-            <div class="deal-range-row tracker-filter-row">
-                <label class="deal-range-field" for="saved-search-group-input">
-                    <span>Группа</span>
-                    <div class="deal-range-input-wrap">
-                        <input id="saved-search-group-input" type="text" placeholder="Мой набор моделей">
-                    </div>
-                </label>
+            <div class="sort-row workflow-filter-row" id="lead-filter-row">
+                <button class="s-tab" data-lead-filter="all" type="button">Все</button>
+                <button class="s-tab active" data-lead-filter="active" type="button">Активные</button>
+                <button class="s-tab" data-lead-filter="buy" type="button">Куплено/в продаже</button>
+                <button class="s-tab" data-lead-filter="done" type="button">Завершено</button>
             </div>
-            <div class="trackers-list" id="saved-searches-list"></div>
+            <div class="trackers-list" id="lead-inbox-list"></div>
         </section>
         <section class="section" id="opportunity-board-section">
             <div class="sec-head listings-head">
@@ -477,7 +496,7 @@
                 </section>
                 <section class="board-section">
                     <div class="board-section-head">
-                        <h3 class="board-section-title">Редкие офферы</h3>
+                        <h3 class="board-section-title">Редкие предложения</h3>
                         <span class="board-section-copy">Тонкий рынок и низкая конкуренция</span>
                     </div>
                     <div class="listings-list" id="opportunity-board-rare"></div>
@@ -496,31 +515,30 @@
     <div class="detail-modal" id="detail-modal" hidden>
         <div class="detail-overlay" id="detail-overlay"></div>
         <div class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detail-title">
-            <button class="detail-close" id="detail-close" type="button" aria-label="Закрыть карточку">×</button>
+            <div class="detail-top-bar">
+                <button class="detail-close" id="detail-close" type="button" aria-label="Закрыть">×</button>
+            </div>
             <div class="detail-media">
                 <img id="detail-main-image" alt="" hidden>
                 <div class="detail-no-image" id="detail-no-image">Нет фото</div>
             </div>
             <div class="detail-thumbs" id="detail-thumbs"></div>
             <div class="detail-head">
-                <h3 class="detail-title" id="detail-title"></h3>
-                <div class="detail-price mono" id="detail-price"></div>
+                <div class="detail-head-main">
+                    <h3 class="detail-title" id="detail-title"></h3>
+                    <div class="detail-price mono" id="detail-price"></div>
+                </div>
             </div>
             <div class="detail-meta" id="detail-meta"></div>
             <p class="detail-description" id="detail-description" hidden></p>
             <section class="detail-block" id="detail-profit-block" hidden>
-                <h4 class="detail-block-title">Flip калькулятор</h4>
+                <h4 class="detail-block-title">Перепродажа</h4>
                 <div class="detail-fields" id="detail-profit"></div>
             </section>
             <section class="detail-block" id="detail-liquidity-block" hidden>
                 <h4 class="detail-block-title">Ликвидность</h4>
                 <div class="detail-fields" id="detail-liquidity"></div>
             </section>
-            <div class="detail-actions">
-                <button class="ghost-btn small" id="detail-add-lead-btn" type="button">В Inbox</button>
-                <button class="ghost-btn small" id="detail-add-watchlist-btn" type="button">Watch</button>
-                <a class="primary-link" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Открыть на Kufar</a>
-            </div>
             <section class="detail-block" id="detail-params-block" hidden>
                 <h4 class="detail-block-title">Параметры</h4>
                 <div class="detail-fields" id="detail-params"></div>
@@ -529,8 +547,15 @@
                 <h4 class="detail-block-title">Продавец</h4>
                 <div class="detail-fields" id="detail-seller"></div>
             </section>
+            <div class="listing-actions detail-bottom-actions">
+                <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
+                <button class="listing-btn" id="detail-add-watchlist-btn" type="button">Следить</button>
+                <a class="listing-btn listing-btn--accent" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
+            </div>
         </div>
     </div>
+
+    <div class="toast-container" id="toast-container"></div>
 
     <div class="bottom-spacer"></div>
 

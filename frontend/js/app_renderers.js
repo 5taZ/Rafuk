@@ -15,6 +15,17 @@ function createAppRenderers(context) {
         hasTelegramInitData,
     } = context;
 
+    function showToast(message) {
+        if (!elements.toastContainer) return;
+        const toast = document.createElement("div");
+        toast.className = "toast";
+        toast.textContent = message;
+        elements.toastContainer.appendChild(toast);
+        setTimeout(() => {
+            toast.remove();
+        }, 1400);
+    }
+
     function renderRates() {
         if (!state.usdRateByn) {
             elements.rateStrip.hidden = true;
@@ -149,7 +160,9 @@ function createAppRenderers(context) {
             !state.loading &&
             !state.error &&
             !state.stats &&
-            state.activeView !== "trackers";
+            state.activeView !== "tracking" &&
+            state.activeView !== "monitoring" &&
+            state.activeView !== "deals";
         elements.helperPanel.hidden = !shouldShow;
     }
 
@@ -157,6 +170,49 @@ function createAppRenderers(context) {
         for (const [name, panel] of Object.entries(elements.views)) {
             panel.hidden = state.activeView !== name;
         }
+    }
+
+    function renderTrackingHeroStats() {
+        if (!elements.trackingHeroStats) return;
+        const trackerCount = state.trackers.length;
+        const eventCount = state.trackerEvents.length;
+        elements.trackingHeroStats.innerHTML = [
+            `<span class="hero-stat"><span class="hero-stat-val mono">${trackerCount}</span> трекеров</span>`,
+            `<span class="hero-stat"><span class="hero-stat-val mono">${eventCount}</span> событий</span>`,
+        ].join("");
+    }
+
+    function renderCheapHeroStats() {
+        if (!elements.cheapHeroStats) return;
+        const cheapCount = state.dealListings.length;
+        const range = state.discountFromPercent === state.discountToPercent
+            ? `${state.discountFromPercent}%`
+            : `${state.discountFromPercent}-${state.discountToPercent}%`;
+        elements.cheapHeroStats.innerHTML = [
+            `<span class="hero-stat"><span class="hero-stat-val mono">${cheapCount}</span> лотов дешевле рынка</span>`,
+            `<span class="hero-stat">диапазон <span class="hero-stat-val mono">${range}</span></span>`,
+        ].join("");
+    }
+
+    function renderMonitoringHeroStats() {
+        if (!elements.monitoringHeroStats) return;
+        const watchCount = state.watchlist.length;
+        const riskCount = state.watchlist.filter((item) => ["price_drop", "missing", "duplicate"].includes(item.market_status)).length;
+        elements.monitoringHeroStats.innerHTML = [
+            `<span class="hero-stat"><span class="hero-stat-val mono">${watchCount}</span> объявлений</span>`,
+            `<span class="hero-stat"><span class="hero-stat-val mono">${riskCount}</span> сигналов</span>`,
+        ].join("");
+    }
+
+    function renderDealsHeroStats() {
+        if (!elements.dealsHeroStats) return;
+        const activeLeads = state.leads.filter((l) => ["new", "reviewing", "in_progress", "negotiating", "deferred"].includes(l.status)).length;
+        const totalLeads = state.leads.length;
+        const oppCount = (state.opportunityBoard.items || []).length;
+        elements.dealsHeroStats.innerHTML = [
+            `<span class="hero-stat"><span class="hero-stat-val mono">${activeLeads}</span> активных из ${totalLeads}</span>`,
+            `<span class="hero-stat"><span class="hero-stat-val mono">${oppCount}</span> кандидатов</span>`,
+        ].join("");
     }
 
     function renderSortButtons() {
@@ -177,6 +233,8 @@ function createAppRenderers(context) {
     }
 
     function renderTrackerEventFilters() {
+        // Filter labels and counts are now rendered inside renderTrackerEvents()
+        // This function only toggles active state for standalone calls
         for (const button of elements.trackerEventFilterButtons) {
             button.classList.toggle("active", button.dataset.eventFilter === state.trackerEventFilter);
         }
@@ -224,12 +282,6 @@ function createAppRenderers(context) {
         }
         if (elements.trackerConfigInput) {
             elements.trackerConfigInput.value = state.trackerConfigKeyword || "";
-        }
-    }
-
-    function renderSavedSearchInputs() {
-        if (elements.savedSearchGroupInput) {
-            elements.savedSearchGroupInput.value = state.savedSearchGroupName || "Мои модели";
         }
     }
 
@@ -317,7 +369,7 @@ function createAppRenderers(context) {
         elements.comparisonNote.textContent = summary;
         const compareSummaryItems = [
             `${state.comparisonItems.length} запроса в работе`,
-            `${otherItems.reduce((sum, item) => sum + Number(item.cheap_count || 0), 0)} дешёвых лотов в compare`,
+            `${otherItems.reduce((sum, item) => sum + Number(item.cheap_count || 0), 0)} дешёвых лотов в сравнении`,
             `рынок ${state.comparisonItems.map((item) => item.total_results || 0).join(" / ")}`,
         ];
         elements.comparisonSummary.innerHTML = compareSummaryItems
@@ -505,51 +557,42 @@ function createAppRenderers(context) {
 
         const condition = item.condition ? `<span class="tag">${formatCondition(item.condition)}</span>` : "";
         const seller = item.seller_type ? `<span class="tag">${formatSeller(item.seller_type)}</span>` : "";
-        const region = item.region_name ? `<span class="tag">${item.region_name}</span>` : "";
         const delta = formatDelta(item.price_vs_median);
         const deltaMarkup = delta
-            ? `<span class="delta ${deltaClass(item.price_vs_median)}">${delta}</span>`
+            ? `<span class="listing-badge ${deltaClass(item.price_vs_median)}">${delta}</span>`
             : "";
         const fairMarkup = item.fair_price_label
-            ? `<span class="listing-signal ${item.fair_price_band || ""}">${item.fair_price_label}</span>`
+            ? `<span class="listing-badge ${item.fair_price_band || "neutral"}">${item.fair_price_label}</span>`
             : "";
         const verdictMarkup = item.deal_verdict
-            ? `<span class="listing-signal verdict verdict-${verdictClassName(item.deal_verdict)}">${item.deal_verdict}${item.deal_score ? ` · ${Math.round(item.deal_score)}` : ""}</span>`
-            : "";
-        const liquidityMarkup = item.liquidity
-            ? `<span class="listing-signal">${item.liquidity.label} ликвидность · ${Math.round(item.liquidity.score)}</span>`
+            ? `<span class="listing-badge verdict-${verdictClassName(item.deal_verdict)}">${item.deal_verdict}</span>`
             : "";
         const duplicateMarkup = item.is_duplicate
-            ? `<span class="listing-flag duplicate">Похоже на дубль${item.duplicate_count > 1 ? ` ×${item.duplicate_count + 1}` : ""}</span>`
+            ? `<span class="listing-badge warn">Дубль${item.duplicate_count > 1 ? ` ×${item.duplicate_count + 1}` : ""}</span>`
             : "";
         const anomalyMarkup = (item.anomaly_labels || [])
-            .map((label) => `<span class="listing-flag anomaly">${label}</span>`)
+            .map((label) => `<span class="listing-badge warn">${label}</span>`)
             .join("");
         const thumbMarkup = item.thumbnail
-            ? `<img class="listing-thumb" src="${item.thumbnail}" alt="">`
+            ? `<img class="listing-thumb" src="${item.thumbnail}" alt="" loading="lazy">`
             : `<div class="listing-thumb placeholder">Нет фото</div>`;
-        const dateMarkup = item.list_time ? `<span class="listing-date">${formatDate(item.list_time)}</span>` : "";
+        const badgesMarkup = [verdictMarkup, deltaMarkup, fairMarkup, duplicateMarkup, anomalyMarkup].filter(Boolean).join("");
 
         listing.innerHTML = `
-            <div class="listing-main">
+            <div class="listing-top">
                 ${thumbMarkup}
-                <div class="listing-info">
+                <div class="listing-body">
                     <span class="listing-name">${item.title}</span>
-                    <div class="listing-tags">${condition}${seller}${region}${dateMarkup}</div>
-                    <div class="listing-signals">${verdictMarkup}${liquidityMarkup}${fairMarkup}${duplicateMarkup}${anomalyMarkup}</div>
-                    ${(item.deal_reasons || []).length ? `<div class="listing-reasons">${item.deal_reasons.join(" · ")}</div>` : ""}
-                    ${(item.flip_estimates || []).length ? `<div class="listing-reasons">flip: ${(item.flip_estimates || []).map((estimate) => `${estimate.label} ${Math.round(estimate.profit_byn)} BYN`).join(" · ")}</div>` : ""}
+                    <div class="listing-tags">${condition}${seller}</div>
+                    <span class="listing-price mono">${formatPrice(item.price)}</span>
                 </div>
             </div>
-            <div class="listing-right">
-                <span class="listing-price mono">${formatPrice(item.price)}</span>
-                ${deltaMarkup}
-            </div>
+            ${badgesMarkup ? `<div class="listing-badges">${badgesMarkup}</div>` : ""}
             <div class="listing-actions">
-                <button class="ghost-btn small" type="button">Карточка</button>
-                <button class="ghost-btn small" data-role="lead" type="button">В Inbox</button>
-                <button class="ghost-btn small" data-role="watch" type="button">Watch</button>
-                <a class="primary-link small" href="${item.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                <button class="listing-btn" type="button">Подробнее</button>
+                <button class="listing-btn" data-role="lead" type="button">В покупки</button>
+                <button class="listing-btn" data-role="watch" type="button">Следить</button>
+                <a class="listing-btn listing-btn--accent" href="${item.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
             </div>
         `;
 
@@ -615,106 +658,6 @@ function createAppRenderers(context) {
         }
     }
 
-    function renderSavedSearches() {
-        elements.savedSearchesList.innerHTML = "";
-        if (elements.savedSearchesNote) {
-            elements.savedSearchesNote.textContent =
-                "Сохраняйте связки моделей и конфигураций, чтобы быстро запускать поиск, сравнение и ежедневную проверку.";
-        }
-
-        if (!hasTelegramInitData()) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Сохранённые поиски доступны внутри Telegram Mini App.";
-            elements.savedSearchesList.appendChild(note);
-            return;
-        }
-
-        if (!state.savedSearches.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Сохранённых поисков пока нет.";
-            elements.savedSearchesList.appendChild(note);
-            return;
-        }
-
-        if (elements.savedSearchesNote) {
-            const groupsCount = new Set(
-                state.savedSearches.map((item) => item.group_name || "Без группы")
-            ).size;
-            elements.savedSearchesNote.textContent =
-                `${state.savedSearches.length} поисков в ${groupsCount} группах. Один тап запускает весь набор моделей.`;
-        }
-
-        const groups = new Map();
-        for (const savedSearch of state.savedSearches) {
-            const groupName = savedSearch.group_name || "Без группы";
-            if (!groups.has(groupName)) {
-                groups.set(groupName, []);
-            }
-            groups.get(groupName).push(savedSearch);
-        }
-
-        for (const [groupName, searches] of groups.entries()) {
-            const group = document.createElement("div");
-            group.className = "saved-search-group";
-            const modelLabels = searches
-                .slice(0, 3)
-                .map((item) => item.config_summary || item.query)
-                .filter(Boolean);
-            group.innerHTML = `
-                <div class="tracker-row tracker-row-group">
-                    <div class="tracker-row-main">
-                        <strong class="tracker-query">${groupName}</strong>
-                        <span class="tracker-meta mono">${searches.length} запросов • ${modelLabels.join(" • ")}</span>
-                    </div>
-                    <div class="tracker-row-actions">
-                        <button class="ghost-btn small" data-role="run-group" type="button">Запустить набор</button>
-                    </div>
-                </div>
-            `;
-            group.querySelector('[data-role="run-group"]')?.addEventListener("click", () => {
-                void actions.applySavedSearchGroup(searches);
-            });
-            elements.savedSearchesList.appendChild(group);
-
-            for (const savedSearch of searches) {
-                const row = document.createElement("div");
-                row.className = "tracker-row";
-                const meta = [
-                    savedSearch.strict_mode ? "строгий" : "",
-                    savedSearch.config_summary || "",
-                    savedSearch.target_discount_percent ? `от -${Math.round(savedSearch.target_discount_percent)}%` : "",
-                    savedSearch.exclude_duplicates ? "без дублей" : "",
-                    savedSearch.seller_type === "Частное лицо" ? "частники" : "",
-                    savedSearch.condition || "",
-                    savedSearch.region_name || "",
-                ].filter(Boolean);
-                row.innerHTML = `
-                    <div class="tracker-row-main">
-                        <strong class="tracker-query">${savedSearch.name}</strong>
-                        <span class="tracker-meta mono">${meta.join(" • ")}</span>
-                    </div>
-                    <div class="tracker-row-actions">
-                        <button class="ghost-btn small" data-role="open" type="button">Открыть</button>
-                        <button class="ghost-btn small" data-role="compare" type="button">Сравнить</button>
-                        <button class="ghost-btn small danger" data-role="delete" type="button">Удалить</button>
-                    </div>
-                `;
-                row.querySelector('[data-role="open"]')?.addEventListener("click", () => {
-                    void actions.applySavedSearch(savedSearch, "search");
-                });
-                row.querySelector('[data-role="compare"]')?.addEventListener("click", () => {
-                    void actions.applySavedSearch(savedSearch, "compare");
-                });
-                row.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
-                    void actions.deleteSavedSearch(savedSearch.id);
-                });
-                elements.savedSearchesList.appendChild(row);
-            }
-        }
-    }
-
     function renderOpportunityBoard() {
         elements.opportunityBoardList.innerHTML = "";
         elements.opportunityBoardDrops.innerHTML = "";
@@ -728,7 +671,7 @@ function createAppRenderers(context) {
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
-            note.textContent = "Board доступен внутри Telegram Mini App.";
+            note.textContent = "Доска возможностей доступна внутри Telegram Mini App.";
             elements.opportunityBoardList.appendChild(note);
             return;
         }
@@ -762,16 +705,18 @@ function createAppRenderers(context) {
                 ${reasons ? `<p class="opportunity-copy">${reasons}</p>` : ""}
                 <div class="listing-actions">
                     <button class="ghost-btn small" data-role="open-query" type="button">Открыть запрос</button>
-                    <button class="ghost-btn small" data-role="open-detail" type="button">Карточка</button>
-                    <button class="ghost-btn small" data-role="lead" type="button">В Inbox</button>
-                    <button class="ghost-btn small" data-role="watch" type="button">Watch</button>
+                    <button class="ghost-btn small" data-role="open-detail" type="button">Подробнее</button>
+                    <button class="ghost-btn small" data-role="lead" type="button">В покупки</button>
+                    <button class="ghost-btn small" data-role="watch" type="button">Следить</button>
                     <a class="primary-link small" href="${item.listing.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
                 </div>
             `;
             card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
+                showToast("Загружаю...");
                 void actions.openOpportunityQuery(item);
             });
             card.querySelector('[data-role="open-detail"]')?.addEventListener("click", () => {
+                showToast("Открываю...");
                 void actions.openOpportunityDetail(item);
             });
             card.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
@@ -817,6 +762,7 @@ function createAppRenderers(context) {
                     </div>
                 `;
                 row.querySelector("button")?.addEventListener("click", () => {
+                    showToast("Загружаю...");
                     elements.searchInput.value = signal.query;
                     state.query = signal.query;
                     void actions.search("overview");
@@ -828,7 +774,7 @@ function createAppRenderers(context) {
         if (!(state.opportunityBoard.market_signals || []).length) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
-            note.textContent = "Сигналы рынка появятся, когда накопится больше saved searches и истории.";
+            note.textContent = "Сигналы рынка появятся, когда накопится больше сохранённых поисков и истории.";
             elements.opportunityBoardSignals.appendChild(note);
         } else {
             for (const signal of state.opportunityBoard.market_signals || []) {
@@ -967,7 +913,7 @@ function createAppRenderers(context) {
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
-            note.textContent = "Inbox доступен внутри Telegram Mini App.";
+            note.textContent = "Сделки доступны внутри Telegram Mini App.";
             elements.leadInboxList.appendChild(note);
             return;
         }
@@ -983,12 +929,12 @@ function createAppRenderers(context) {
         if (!filteredLeads.length) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
-            note.textContent = "По текущему фильтру Inbox пуст.";
+            note.textContent = "Нет сделок в работе. Добавьте лот через поиск или раздел «Дешевле рынка».";
             elements.leadInboxList.appendChild(note);
             return;
         }
         const activeCount = state.leads.filter((lead) => ["new", "reviewing", "in_progress", "negotiating", "deferred"].includes(lead.status)).length;
-        elements.leadInboxNote.textContent = `${filteredLeads.length} из ${state.leads.length} лотов в фильтре. Активных: ${activeCount}.`;
+        elements.leadInboxNote.textContent = `${filteredLeads.length} из ${state.leads.length} лотов в фильтре · ${activeCount} активных`;
         for (const lead of filteredLeads) {
             const row = document.createElement("div");
             row.className = "tracker-row workflow-row";
@@ -1063,7 +1009,7 @@ function createAppRenderers(context) {
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
-            note.textContent = "Watchlist доступен внутри Telegram Mini App.";
+            note.textContent = "Отслеживание лотов доступно внутри Telegram Mini App.";
             elements.watchlistList.appendChild(note);
             return;
         }
@@ -1079,7 +1025,7 @@ function createAppRenderers(context) {
         if (!filteredWatchlist.length) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
-            note.textContent = "По текущему фильтру Watchlist пуст.";
+            note.textContent = "Сохранённых лотов по текущему фильтру нет.";
             elements.watchlistList.appendChild(note);
             return;
         }
@@ -1103,7 +1049,7 @@ function createAppRenderers(context) {
                         <option value="in_progress">В работе</option>
                         <option value="skipped">Пропустить</option>
                     </select>
-                    <button class="ghost-btn small" data-role="lead" type="button">В Inbox</button>
+                    <button class="ghost-btn small" data-role="lead" type="button">В покупки</button>
                     <button class="ghost-btn small danger" data-role="delete" type="button">Удалить</button>
                 </div>
                 <div class="workflow-fields">
@@ -1182,6 +1128,7 @@ function createAppRenderers(context) {
                 </div>
             `;
             row.querySelector('[data-role="open"]')?.addEventListener("click", () => {
+                showToast("Загружаю...");
                 elements.searchInput.value = tracker.query;
                 state.query = tracker.query;
                 state.strictSearch = Boolean(tracker.strict_mode);
@@ -1210,9 +1157,25 @@ function createAppRenderers(context) {
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
             note.className = "tracker-event-empty";
-            note.textContent = "Откройте Mini App внутри Telegram, чтобы видеть последние события.";
+            note.textContent = "Откройте Mini App внутри Telegram, чтобы видеть события.";
             elements.trackerEventsList.appendChild(note);
             return;
+        }
+
+        const dropCount = state.trackerEvents.filter((e) => e.event_type === "price_drop").length;
+        const newCount = state.trackerEvents.filter((e) => e.event_type === "new_listing").length;
+        const totalCount = state.trackerEvents.length;
+
+        if (elements.trackerEventsBadge) {
+            elements.trackerEventsBadge.textContent = totalCount > 0 ? `${totalCount} событий` : "чат + Mini App";
+        }
+
+        for (const button of elements.trackerEventFilterButtons) {
+            const filter = button.dataset.eventFilter;
+            const count = filter === "all" ? totalCount : filter === "price_drop" ? dropCount : newCount;
+            const label = filter === "all" ? "Все" : filter === "price_drop" ? "Упали в цене" : "Новые лоты";
+            button.textContent = count > 0 ? `${label} (${count})` : label;
+            button.classList.toggle("active", filter === state.trackerEventFilter);
         }
 
         const filteredEvents = state.trackerEvents.filter((event) => {
@@ -1226,7 +1189,7 @@ function createAppRenderers(context) {
             const note = document.createElement("p");
             note.className = "tracker-event-empty";
             note.textContent = state.trackerEventFilter === "all"
-                ? "Событий пока нет. Они появятся после первой проверки scheduler."
+                ? "Событий пока нет. Они появятся после первой проверки планировщика."
                 : "По этому фильтру событий пока нет.";
             elements.trackerEventsList.appendChild(note);
             return;
@@ -1234,9 +1197,10 @@ function createAppRenderers(context) {
 
         for (const event of filteredEvents) {
             const row = document.createElement("article");
-            row.className = "tracker-event-row";
-            const typeLabel = event.event_type === "price_drop" ? "Падение цены" : "Новый лот";
-            const typeClass = event.event_type === "price_drop" ? "drop" : "new";
+            const isPriceDrop = event.event_type === "price_drop";
+            row.className = `tracker-event-row${isPriceDrop ? " price-drop" : ""}`;
+            const typeLabel = isPriceDrop ? "Падение цены" : "Новый лот";
+            const typeClass = isPriceDrop ? "drop" : "new";
             const meta = [];
             if (event.query) {
                 meta.push(event.strict_mode ? `${event.query} • строгий` : event.query);
@@ -1255,17 +1219,25 @@ function createAppRenderers(context) {
                 <strong class="tracker-event-title">${event.title}</strong>
                 <div class="tracker-event-meta">${meta.map((item) => `<span>${item}</span>`).join("")}</div>
                 <div class="listing-actions">
-                    <button class="ghost-btn small" data-role="open-query" type="button">Открыть запрос</button>
-                    <button class="ghost-btn small" data-role="lead" type="button">В Inbox</button>
-                    <a class="primary-link small" href="${event.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                    <button class="listing-btn" data-role="open-query" type="button">Открыть</button>
+                    <button class="listing-btn" data-role="lead" type="button">В покупки</button>
+                    <a class="listing-btn listing-btn--accent" href="${event.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
                 </div>
             `;
             row.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
-                elements.searchInput.value = event.query;
-                state.query = event.query;
+                showToast("Открываю...");
+                if (event.query) {
+                    elements.searchInput.value = event.query;
+                    state.query = event.query;
+                }
                 state.strictSearch = Boolean(event.strict_mode);
                 renderStrictSearch();
-                void actions.search("overview");
+                void actions.openListingDetail({
+                    ad_id: event.ad_id,
+                    title: event.title,
+                    link: event.link,
+                    price_byn: event.price_byn,
+                });
             });
             row.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
                 void actions.addLeadFromListing(
@@ -1642,13 +1614,16 @@ function createAppRenderers(context) {
         renderStrictSearch();
         renderViewTabs();
         renderViews();
+        renderTrackingHeroStats();
+        renderCheapHeroStats();
+        renderMonitoringHeroStats();
+        renderDealsHeroStats();
         renderSortButtons();
         renderDiscountButtons();
         renderTrackerEventFilters();
         renderHistoryRangeButtons();
         renderDealInputs();
         renderTrackerInputs();
-        renderSavedSearchInputs();
         renderStats();
         renderHistory();
         renderComparison();
@@ -1663,11 +1638,11 @@ function createAppRenderers(context) {
         renderTrackerEvents();
         renderLeads();
         renderWatchlist();
-        renderSavedSearches();
         renderOpportunityBoard();
     }
 
     return {
+        showToast,
         renderRates,
         renderError,
         renderLoading,
@@ -1679,6 +1654,10 @@ function createAppRenderers(context) {
         renderSummary,
         renderHelper,
         renderViews,
+        renderTrackingHeroStats,
+        renderCheapHeroStats,
+        renderMonitoringHeroStats,
+        renderDealsHeroStats,
         renderSortButtons,
         renderDiscountButtons,
         renderTrackerEventFilters,
@@ -1696,7 +1675,6 @@ function createAppRenderers(context) {
         renderTrackerEvents,
         renderLeads,
         renderWatchlist,
-        renderSavedSearches,
         renderOpportunityBoard,
         destroyChart,
         destroyHistoryChart,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
@@ -28,6 +28,19 @@ async def get_tracker_events(
             .limit(bounded_limit)
         )
         return list(result.scalars())
+
+
+@router.delete("/tracker-events", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_tracker_events(
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> Response:
+    async with session_factory() as session:
+        await session.execute(
+            delete(TrackerEvent).where(TrackerEvent.user_id == telegram_user.user_id)
+        )
+        await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/trackers", response_model=list[TrackerRead])
