@@ -690,6 +690,15 @@ function createAppActions(context) {
         if (!item?.ad_id) {
             return;
         }
+
+        // Check if already in leads
+        const alreadyInLeads = state.leads.some((l) => l.ad_id === item.ad_id);
+        if (alreadyInLeads) {
+            showToast("Уже в покупках");
+            return;
+        }
+
+        // Add to leads, then remove from watchlist entirely
         await addLeadFromListing(
             {
                 ad_id: item.ad_id,
@@ -702,7 +711,7 @@ function createAppActions(context) {
             "watchlist",
             item.query
         );
-        await updateWatchlistMeta(item.id, { workflow_status: "in_progress" });
+        await deleteWatchlistItem(item.id);
     }
 
     async function openWatchlistDetail(item) {
@@ -735,7 +744,6 @@ function createAppActions(context) {
     async function deleteWatchlistItem(watchlistId) {
         try {
             await deleteJson(`/api/v1/watchlist/${watchlistId}`);
-            showToast("Удалено из избранного");
             await loadWatchlist();
             renderMonitoringHeroStats();
         } catch (error) {
@@ -1208,35 +1216,8 @@ function createAppActions(context) {
             })();
         });
 
-        elements.refreshLeadsButton?.addEventListener("click", () => {
-            void refreshLeads();
-        });
-
-        let clearLeadsConfirmed = false;
         elements.clearAllLeadsButton?.addEventListener("click", () => {
-            void (async () => {
-                if (state.leads.length === 0) {
-                    showToast("Список уже пуст");
-                    return;
-                }
-                if (!clearLeadsConfirmed) {
-                    clearLeadsConfirmed = true;
-                    elements.clearAllLeadsButton.textContent = "Удалить все?";
-                    showToast("Нажмите ещё раз для подтверждения");
-                    setTimeout(() => {
-                        clearLeadsConfirmed = false;
-                        if (elements.clearAllLeadsButton) {
-                            elements.clearAllLeadsButton.textContent = "Очистить";
-                        }
-                    }, 3000);
-                    return;
-                }
-                clearLeadsConfirmed = false;
-                if (elements.clearAllLeadsButton) {
-                    elements.clearAllLeadsButton.textContent = "Очистить";
-                }
-                await clearAllLeads();
-            })();
+            void clearAllLeads();
         });
 
         let clearWatchlistConfirmed = false;
@@ -1314,13 +1295,6 @@ function createAppActions(context) {
                 state.trackerEventFilter = button.dataset.eventFilter || "all";
                 renderTrackerEventFilters();
                 renderTrackerEvents();
-            });
-        }
-
-        for (const button of elements.leadFilterButtons || []) {
-            button.addEventListener("click", () => {
-                state.leadFilter = button.dataset.leadFilter || "all";
-                renderLeads();
             });
         }
 

@@ -216,11 +216,9 @@ function createAppRenderers(context) {
 
     function renderDealsHeroStats() {
         if (!elements.dealsHeroStats) return;
-        const activeLeads = state.leads.filter((l) => ["new", "reviewing", "in_progress", "negotiating"].includes(l.status)).length;
         const totalLeads = state.leads.length;
         elements.dealsHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${activeLeads} активных</span></span>`,
-            `<span class="hero-stat"><span class="hero-stat-val mono">${totalLeads} всего</span></span>`,
+            `<span class="hero-stat"><span class="hero-stat-val mono">${totalLeads}</span> сделок</span>`,
         ].join("");
     }
 
@@ -834,12 +832,6 @@ function createAppRenderers(context) {
         elements.trackerStatus.hidden = false;
     }
 
-    function renderLeadFilters() {
-        for (const button of elements.leadFilterButtons || []) {
-            button.classList.toggle("active", button.dataset.leadFilter === state.leadFilter);
-        }
-    }
-
     function renderWatchlistFilters() {
         for (const button of elements.watchlistFilterButtons || []) {
             button.classList.toggle("active", button.dataset.watchFilter === state.watchlistFilter);
@@ -873,13 +865,6 @@ function createAppRenderers(context) {
             missing: "Пропало",
         };
         return labels[value] || value || "Без сигнала";
-    }
-
-    function leadMatchesFilter(lead) {
-        if (state.leadFilter === "all") {
-            return true;
-        }
-        return lead.status === state.leadFilter;
     }
 
     function watchlistMatchesFilter(item) {
@@ -922,7 +907,6 @@ function createAppRenderers(context) {
 
     function renderLeads() {
         elements.leadInboxList.innerHTML = "";
-        renderLeadFilters();
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
@@ -931,7 +915,6 @@ function createAppRenderers(context) {
             return;
         }
         const filteredLeads = [...state.leads]
-            .filter(leadMatchesFilter)
             .sort((left, right) => {
                 const rankDelta = leadSortValue(left) - leadSortValue(right);
                 if (rankDelta !== 0) {
@@ -946,9 +929,8 @@ function createAppRenderers(context) {
             elements.leadInboxList.appendChild(note);
             return;
         }
-        const activeCount = state.leads.filter((lead) => ["new", "reviewing", "in_progress", "negotiating"].includes(lead.status)).length;
         const soldCount = state.leads.filter((lead) => lead.status === "sold").length;
-        elements.leadInboxNote.textContent = `${filteredLeads.length} из ${state.leads.length} сделок · ${activeCount} активных${soldCount ? ` · ${soldCount} продано` : ""}`;
+        elements.leadInboxNote.textContent = `${filteredLeads.length} сделок${soldCount ? ` · ${soldCount} продано` : ""}`;
         for (const lead of filteredLeads) {
             const isSold = lead.status === "sold";
             const isMissing = lead.market_status === "missing";
