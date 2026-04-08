@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     scheduler_snapshot_hour: int = 9
     alert_check_interval: int = 30
     cache_ttl_seconds: int = 300
+    auto_remove_missing_days: int = 7
 
 
 @lru_cache(maxsize=1)

@@ -47,6 +47,10 @@ class QueryDataset:
 
     @property
     def total_results(self) -> int:
+        """Total results from Kufar API (before strict filtering)."""
+        api_total = self.response.get("total")
+        if isinstance(api_total, int) and api_total > 0:
+            return api_total
         return len(self.ads)
 
     @property

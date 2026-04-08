@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     UniqueConstraint,
     func,
@@ -49,11 +50,21 @@ class User(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
-    trackers = relationship("Tracker", back_populates="user", cascade="all, delete-orphan")
-    saved_searches = relationship("SavedSearch", back_populates="user", cascade="all, delete-orphan")
-    tracker_events = relationship("TrackerEvent", back_populates="user", cascade="all, delete-orphan")
-    lead_items = relationship("LeadItem", back_populates="user", cascade="all, delete-orphan")
-    watchlist_items = relationship("WatchlistItem", back_populates="user", cascade="all, delete-orphan")
+    trackers = relationship(
+        "Tracker", back_populates="user", cascade="all, delete-orphan"
+    )
+    saved_searches = relationship(
+        "SavedSearch", back_populates="user", cascade="all, delete-orphan"
+    )
+    tracker_events = relationship(
+        "TrackerEvent", back_populates="user", cascade="all, delete-orphan"
+    )
+    lead_items = relationship(
+        "LeadItem", back_populates="user", cascade="all, delete-orphan"
+    )
+    watchlist_items = relationship(
+        "WatchlistItem", back_populates="user", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("idx_users_telegram_id", "telegram_user_id"),
@@ -308,6 +319,18 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         server_default="manual",
     )
     notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    sold_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    market_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="active",
+        server_default="active",
+    )
+    missing_since_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         nullable=False,
         server_default=func.now(),
@@ -316,11 +339,13 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
 
     # Relationships
     user = relationship("User", back_populates="lead_items")
+    expenses = relationship("DealExpense", back_populates="lead", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("user_id", "ad_id", name="uq_lead_items_user_ad"),
         Index("idx_lead_items_user", "user_id"),
         Index("idx_lead_items_status", "status"),
+        Index("idx_lead_items_market_status", "market_status"),
     )
 
 
@@ -332,13 +357,14 @@ class WatchlistItem(Base, UserIDMixin, TimestampMixin):
     query: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     link: Mapped[str] = mapped_column(String(512), nullable=False)
+    thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
     initial_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
     current_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
     workflow_status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-        default="watching",
-        server_default="watching",
+        default="default",
+        server_default="default",
     )
     market_status: Mapped[str] = mapped_column(
         String(32),
@@ -352,8 +378,12 @@ class WatchlistItem(Base, UserIDMixin, TimestampMixin):
         default=0,
         server_default="0",
     )
+    market_median_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    missing_since_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         nullable=False,
         server_default=func.now(),
@@ -367,4 +397,76 @@ class WatchlistItem(Base, UserIDMixin, TimestampMixin):
         UniqueConstraint("user_id", "ad_id", name="uq_watchlist_items_user_ad"),
         Index("idx_watchlist_items_user", "user_id"),
         Index("idx_watchlist_items_market_status", "market_status"),
+    )
+
+
+class DealExpense(Base):
+    """Expense tracking for deals (delivery, repair, etc.)."""
+
+    __tablename__ = "deal_expenses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lead_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("lead_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    expense_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount_byn: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    expense_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    lead = relationship("LeadItem", back_populates="expenses")
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("idx_deal_expenses_lead", "lead_id"),
+        Index("idx_deal_expenses_user", "user_id"),
+    )
+
+
+class Contact(Base):
+    """Seller contacts extracted from listings."""
+
+    __tablename__ = "contacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    seller_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    kufar_profile: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    saved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "phone", name="uq_contacts_user_phone"),
+        Index("idx_contacts_user", "user_id"),
     )

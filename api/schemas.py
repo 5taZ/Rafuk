@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class ExpenseTypeEnum(StrEnum):
+    """Allowed expense types."""
+
+    delivery = "delivery"
+    repair = "repair"
+    other = "other"
 
 
 class PriceStatsResponse(BaseModel):
@@ -66,6 +75,7 @@ class ListingItem(BaseModel):
     liquidity: LiquidityInsight | None = None
     flip_estimates: list[FlipEstimate] = Field(default_factory=list)
     thumbnail: str | None = None
+    seller_rating: float | None = None
 
 
 class ListingField(BaseModel):
@@ -109,6 +119,7 @@ class ListingDetailResponse(BaseModel):
     images: list[str] = Field(default_factory=list)
     parameters: list[ListingField] = Field(default_factory=list)
     seller_fields: list[ListingField] = Field(default_factory=list)
+    seller_rating: float | None = None
 
 
 class ListingsResponse(BaseModel):
@@ -246,6 +257,7 @@ class LeadCreate(BaseModel):
     title: str
     link: str
     price_byn: float | None = None
+    thumbnail: str | None = None
     target_resale_byn: float | None = None
     status: str = "new"
     source: str = "manual"
@@ -268,10 +280,19 @@ class LeadRead(BaseModel):
     title: str
     link: str
     price_byn: float | None = None
+    thumbnail: str | None = None
     target_resale_byn: float | None = None
     status: str
     source: str
     notes: str | None = None
+    sold_price_byn: float | None = None
+    sold_at: datetime | None = None
+    market_status: str = "active"
+    missing_since_at: datetime | None = None
+    # Computed fields (not in DB)
+    total_expenses: float = 0.0
+    actual_profit: float | None = None
+    roi_percent: float | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -281,7 +302,9 @@ class WatchlistCreate(BaseModel):
     ad_id: int
     title: str
     link: str
+    thumbnail: str | None = None
     price_byn: float | None = None
+    market_median_byn: float | None = None
     notes: str | None = None
 
 
@@ -299,6 +322,7 @@ class WatchlistRead(BaseModel):
     query: str
     title: str
     link: str
+    thumbnail: str | None = None
     initial_price_byn: float | None = None
     current_price_byn: float | None = None
     price_delta_byn: float | None = None
@@ -306,9 +330,11 @@ class WatchlistRead(BaseModel):
     workflow_status: str
     market_status: str
     duplicate_count: int = 0
+    market_median_byn: float | None = None
     notes: str | None = None
     created_at: datetime
     last_seen_at: datetime | None = None
+    missing_since_at: datetime | None = None
     updated_at: datetime
 
 
@@ -316,6 +342,13 @@ class WatchlistRefreshResponse(BaseModel):
     updated: int
     missing: int
     price_drops: int
+    auto_removed: int = 0
+
+
+class LeadsRefreshResponse(BaseModel):
+    checked: int
+    active: int
+    missing: int
 
 
 class SavedSearchCreate(BaseModel):
@@ -404,3 +437,62 @@ class CompareResponse(BaseModel):
     currency: str
     base_query: str
     items: list[CompareRequestItem]
+
+
+# Deal Expenses schemas
+class DealExpenseCreate(BaseModel):
+    expense_type: ExpenseTypeEnum  # delivery, repair, other
+    amount_byn: float = Field(gt=0, description="Expense amount in BYN (must be positive)")
+    notes: str | None = None
+    expense_date: datetime | None = None
+
+
+class DealExpenseUpdate(BaseModel):
+    expense_type: str | None = None
+    amount_byn: float | None = None
+    notes: str | None = None
+    expense_date: datetime | None = None
+
+
+class DealExpenseRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lead_id: int
+    user_id: int
+    expense_type: str
+    amount_byn: float
+    notes: str | None = None
+    expense_date: datetime
+    created_at: datetime
+
+
+# Contacts schemas
+class ContactCreate(BaseModel):
+    phone: str | None = None
+    seller_name: str | None = None
+    kufar_profile: str | None = None
+
+
+class ContactRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    phone: str | None = None
+    seller_name: str | None = None
+    kufar_profile: str | None = None
+    saved_at: datetime
+
+
+# Risk assessment schemas
+class RiskItem(BaseModel):
+    type: str  # too_cheap, suspicious_words, duplicates
+    level: str  # low, medium, high
+    message: str
+
+
+class RiskAssessmentResponse(BaseModel):
+    risks: list[RiskItem] = Field(default_factory=list)
+    overall_risk: str  # low, medium, high
+    overall_emoji: str  # 🟢, 🟡, 🔴

@@ -21,11 +21,19 @@ function createAppActions(context) {
         renderTrackerEventFilters,
         renderLeads,
         renderWatchlist,
-        renderOpportunityBoard,
         renderDetailModal,
         closeDetailModal,
         setPanelOpen,
         showToast,
+        renderExpensesModal,
+        openExpensesModal,
+        closeExpensesModal,
+        renderProfitDashboard,
+        renderPipelineStepper,
+        renderVelocity,
+        renderDetailRisks,
+        renderMonitoringHeroStats,
+        renderDealsHeroStats,
     } = context;
 
     function telegramHeaders() {
@@ -375,16 +383,19 @@ function createAppActions(context) {
             return;
         }
 
+        showToast("Загружаю...");
         state.error = null;
         renderError();
         try {
-            state.detail = await getJson(
+            const fullDetail = await getJson(
                 `/api/v1/listing-detail?${buildCommonQuery({ ad_id: item.ad_id })}`
             );
+            state.detail = fullDetail;
             state.detailImageIndex = 0;
+            state.detailFromWatchlist = false;
             renderDetailModal();
         } catch (error) {
-            state.error = error.message || "Не удалось открыть карточку";
+            state.error = error.message || "Не удалось загрузить детали";
             renderError();
         }
     }
@@ -436,6 +447,22 @@ function createAppActions(context) {
         }
     }
 
+    async function clearAllLeads() {
+        if (!state.leads.length) {
+            showToast("Список уже пуст");
+            return;
+        }
+        try {
+            await deleteJson("/api/v1/leads/all");
+            showToast(`Удалено ${state.leads.length} сделок`);
+            state.leads = [];
+            renderLeads();
+            renderDealsHeroStats();
+        } catch (error) {
+            showToast(error.message || "Не удалось очистить");
+        }
+    }
+
     async function loadWatchlist() {
         if (!hasTelegramInitData()) {
             state.watchlist = [];
@@ -448,22 +475,6 @@ function createAppActions(context) {
             state.watchlist = [];
         } finally {
             renderWatchlist();
-        }
-    }
-
-    async function loadOpportunityBoard() {
-        if (!hasTelegramInitData()) {
-            state.opportunityBoard = { items: [], top_price_drops: [], rare_opportunities: [], market_signals: [] };
-            renderOpportunityBoard();
-            return;
-        }
-
-        try {
-            state.opportunityBoard = await getJson(`/api/v1/opportunity-board?currency=${state.currency}`);
-        } catch (_) {
-            state.opportunityBoard = { items: [], top_price_drops: [], rare_opportunities: [], market_signals: [] };
-        } finally {
-            renderOpportunityBoard();
         }
     }
 
@@ -515,6 +526,14 @@ function createAppActions(context) {
         if (!hasTelegramInitData() || !item?.ad_id) {
             return;
         }
+
+        // Check if already in leads
+        const alreadyInLeads = state.leads.some((l) => l.ad_id === item.ad_id);
+        if (alreadyInLeads) {
+            showToast("Уже в покупках");
+            return;
+        }
+
         try {
             const marketEstimate = (item.flip_estimates || []).find((entry) => entry.label === "По рынку");
             await postJson("/api/v1/leads", {
@@ -526,6 +545,7 @@ function createAppActions(context) {
                 target_resale_byn: marketEstimate?.target_price || null,
                 status: "new",
                 source,
+                thumbnail: item.thumbnail || null,
             });
             showToast("Добавлено в покупки");
             await loadLeads();
@@ -538,6 +558,14 @@ function createAppActions(context) {
         if (!hasTelegramInitData() || !item?.ad_id) {
             return;
         }
+
+        // Check if already in watchlist
+        const alreadyInWatchlist = state.watchlist.some((w) => w.ad_id === item.ad_id);
+        if (alreadyInWatchlist) {
+            showToast("Уже в избранном");
+            return;
+        }
+
         try {
             await postJson("/api/v1/watchlist", {
                 query: queryOverride || state.query || "",
@@ -545,6 +573,10 @@ function createAppActions(context) {
                 title: item.title,
                 link: item.link,
                 price_byn: item.price_byn,
+                thumbnail: item.thumbnail || null,
+                market_median_byn: state.stats?.median
+                    ? (state.currency === "USD" ? Number(state.stats.median) * (state.usdRateByn || 1) : Number(state.stats.median))
+                    : null,
             });
             showToast("Добавлено в избранное");
             await loadWatchlist();
@@ -567,6 +599,73 @@ function createAppActions(context) {
             await loadLeads();
         } catch (error) {
             showToast(error.message || "Не удалось обновить");
+        }
+    }
+
+    async function deleteLead(leadId) {
+        try {
+            await deleteJson(`/api/v1/leads/${leadId}`);
+            showToast("Сделка удалена");
+            await loadLeads();
+        } catch (error) {
+            showToast(error.message || "Не удалось удалить");
+        }
+    }
+
+    async function markLeadAsBought(lead) {
+        await updateLeadMeta(lead.id, { status: "bought" });
+        showToast("Сделка отмечена как купленная");
+    }
+
+    async function cancelLead(leadId) {
+        try {
+            await deleteJson(`/api/v1/leads/${leadId}`);
+            showToast("Сделка отменена");
+            await loadLeads();
+        } catch (error) {
+            showToast(error.message || "Не удалось отменить");
+        }
+    }
+
+    async function markLeadAsSold(lead, priceNum) {
+        if (!priceNum || !Number.isFinite(priceNum) || priceNum <= 0) {
+            showToast("Введите корректную цену");
+            return;
+        }
+        await updateLeadMeta(lead.id, {
+            status: "sold",
+            sold_price_byn: priceNum,
+        });
+        const profit = priceNum - (lead.price_byn || 0);
+        const profitSign = profit >= 0 ? "+" : "";
+        showToast(`Сделка продана! Прибыль: ${profitSign}${Math.round(profit)} BYN`);
+    }
+
+    async function openLeadDetail(lead) {
+        if (!lead?.ad_id) {
+            showToast("Не удалось открыть: нет ID объявления");
+            return;
+        }
+        const queryToUse = lead.query || state.query || "";
+        if (!queryToUse) {
+            showToast("Не удалось открыть: нет привязки к запросу");
+            return;
+        }
+
+        showToast("Загружаю...");
+        state.error = null;
+        renderError();
+        try {
+            const fullDetail = await getJson(
+                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${lead.ad_id}`
+            );
+            state.detail = fullDetail;
+            state.detailImageIndex = 0;
+            state.detailFromWatchlist = false;
+            renderDetailModal();
+        } catch (error) {
+            state.error = error.message || "Не удалось загрузить детали";
+            renderError();
         }
     }
 
@@ -597,6 +696,7 @@ function createAppActions(context) {
                 title: item.title,
                 link: item.link,
                 price_byn: item.current_price_byn || item.initial_price_byn,
+                thumbnail: item.thumbnail || null,
                 flip_estimates: [],
             },
             "watchlist",
@@ -605,23 +705,88 @@ function createAppActions(context) {
         await updateWatchlistMeta(item.id, { workflow_status: "in_progress" });
     }
 
+    async function openWatchlistDetail(item) {
+        if (!item?.ad_id) {
+            return;
+        }
+        const queryToUse = item.query || state.query || "";
+        if (!queryToUse) {
+            showToast("Не удалось открыть: нет привязки к запросу");
+            return;
+        }
+
+        showToast("Загружаю...");
+        state.error = null;
+        renderError();
+        try {
+            const fullDetail = await getJson(
+                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${item.ad_id}`
+            );
+            state.detail = fullDetail;
+            state.detailImageIndex = 0;
+            state.detailFromWatchlist = true;
+            renderDetailModal();
+        } catch (error) {
+            state.error = error.message || "Не удалось загрузить детали";
+            renderError();
+        }
+    }
+
     async function deleteWatchlistItem(watchlistId) {
         try {
             await deleteJson(`/api/v1/watchlist/${watchlistId}`);
             showToast("Удалено из избранного");
             await loadWatchlist();
+            renderMonitoringHeroStats();
         } catch (error) {
             showToast(error.message || "Не удалось удалить");
+        }
+    }
+
+    async function deleteAllWatchlist() {
+        if (!state.watchlist.length) {
+            showToast("Список уже пуст");
+            return;
+        }
+        try {
+            await deleteJson("/api/v1/watchlist/all");
+            showToast(`Удалено ${state.watchlist.length} лотов`);
+            state.watchlist = [];
+            renderWatchlist();
+            renderMonitoringHeroStats();
+        } catch (error) {
+            showToast(error.message || "Не удалось очистить");
         }
     }
 
     async function refreshWatchlist() {
         try {
             const payload = await postJson("/api/v1/watchlist/refresh", {});
-            showToast(`Обновлено: ${payload.updated} проверено, ${payload.price_drops} падений цены`);
+            const parts = [`${payload.updated} проверено`, `${payload.price_drops} падений цены`];
+            if (payload.missing > 0) {
+                parts.push(`${payload.missing} пропало`);
+            }
+            if (payload.auto_removed > 0) {
+                parts.push(`${payload.auto_removed} удалено (устарело)`);
+            }
+            showToast(`Обновлено: ${parts.join(", ")}`);
             await loadWatchlist();
         } catch (error) {
             showToast(error.message || "Не удалось обновить цены");
+        }
+    }
+
+    async function refreshLeads() {
+        try {
+            const payload = await postJson("/api/v1/leads/refresh", {});
+            const parts = [`${payload.checked} проверено`, `${payload.active} активно`];
+            if (payload.missing > 0) {
+                parts.push(`${payload.missing} пропало`);
+            }
+            showToast(`Покупки: ${parts.join(", ")}`);
+            await loadLeads();
+        } catch (error) {
+            showToast(error.message || "Не удалось проверить покупки");
         }
     }
 
@@ -698,7 +863,6 @@ function createAppActions(context) {
             state.loading = true;
             renderAll();
             await search(state.activeView);
-            await loadOpportunityBoard();
             return;
         }
 
@@ -766,7 +930,94 @@ function createAppActions(context) {
             await loadComparison();
         }
         if (!state.error) {
-            void loadOpportunityBoard();
+            void loadMarketVelocity();
+        }
+    }
+
+    // ===== Expenses Actions =====
+    async function loadExpenses(leadId) {
+        try {
+            state.expenses = await getJson(`/api/v1/leads/${leadId}/expenses`);
+            renderExpensesModal();
+        } catch (_) {
+            state.expenses = [];
+            renderExpensesModal();
+        }
+    }
+
+    async function createExpense(leadId, payload) {
+        try {
+            await postJson(`/api/v1/leads/${leadId}/expenses`, payload);
+            showToast("Расход добавлен");
+            await loadExpenses(leadId);
+        } catch (error) {
+            showToast(error.message || "Не удалось добавить расход");
+        }
+    }
+
+    async function deleteExpense(leadId, expenseId) {
+        try {
+            await deleteJson(`/api/v1/leads/${leadId}/expenses/${expenseId}`);
+            showToast("Расход удалён");
+            await loadExpenses(leadId);
+        } catch (error) {
+            showToast(error.message || "Не удалось удалить расход");
+        }
+    }
+
+    // ===== CSV Export =====
+    async function exportLeadsCSV() {
+        try {
+            const initData = window.Telegram?.WebApp?.initData;
+            const headers = initData ? { "X-Telegram-Init-Data": initData } : {};
+            const response = await fetch("/api/v1/leads/export?format=csv", {
+                headers,
+            });
+            if (!response.ok) {
+                throw new Error("Не удалось экспортировать данные");
+            }
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "leads_export.csv";
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast("Файл загружен");
+        } catch (error) {
+            showToast(error.message || "Не удалось экспортировать");
+        }
+    }
+
+    // ===== Market Velocity =====
+    async function loadMarketVelocity() {
+        if (!state.query) {
+            renderVelocity(null);
+            return;
+        }
+        try {
+            renderVelocity(null);
+        } catch (_) {
+            renderVelocity(null);
+        }
+    }
+
+    // ===== Detail Risk Assessment =====
+    async function loadDetailRisks(item) {
+        if (!item || !item.price) {
+            renderDetailRisks(null);
+            return;
+        }
+        try {
+            const data = await postJson("/api/v1/risk-assessment", {
+                price_byn: item.price_byn || item.price || null,
+                description: item.description || "",
+                photo_count: item.photo_count || 0,
+                market_median: state.stats?.median || null,
+            });
+            renderDetailRisks(data);
+        } catch (_) {
+            renderDetailRisks(null);
         }
     }
 
@@ -827,7 +1078,6 @@ function createAppActions(context) {
                 }
                 if (view === "deals") {
                     void loadLeads();
-                    void loadOpportunityBoard();
                 }
                 if (view === "cheap") {
                     if (state.query.trim()) {
@@ -958,16 +1208,84 @@ function createAppActions(context) {
             })();
         });
 
-        elements.reloadLeadsButton?.addEventListener("click", () => {
-            void loadLeads();
+        elements.refreshLeadsButton?.addEventListener("click", () => {
+            void refreshLeads();
         });
 
-        elements.refreshWatchlistButton?.addEventListener("click", () => {
-            void refreshWatchlist();
+        let clearLeadsConfirmed = false;
+        elements.clearAllLeadsButton?.addEventListener("click", () => {
+            void (async () => {
+                if (state.leads.length === 0) {
+                    showToast("Список уже пуст");
+                    return;
+                }
+                if (!clearLeadsConfirmed) {
+                    clearLeadsConfirmed = true;
+                    elements.clearAllLeadsButton.textContent = "Удалить все?";
+                    showToast("Нажмите ещё раз для подтверждения");
+                    setTimeout(() => {
+                        clearLeadsConfirmed = false;
+                        if (elements.clearAllLeadsButton) {
+                            elements.clearAllLeadsButton.textContent = "Очистить";
+                        }
+                    }, 3000);
+                    return;
+                }
+                clearLeadsConfirmed = false;
+                if (elements.clearAllLeadsButton) {
+                    elements.clearAllLeadsButton.textContent = "Очистить";
+                }
+                try {
+                    const promises = state.leads.map((lead) =>
+                        fetch(`/api/v1/leads/${lead.id}`, {
+                            method: "DELETE",
+                            headers: telegramHeaders(),
+                        })
+                    );
+                    await Promise.allSettled(promises);
+                    showToast(`Удалено ${state.leads.length} сделок`);
+                    state.leads = [];
+                    renderLeads();
+                    renderDealsHeroStats();
+                } catch (error) {
+                    showToast(error.message || "Не удалось очистить");
+                }
+            })();
         });
 
-        elements.reloadOpportunityBoardButton?.addEventListener("click", () => {
-            void loadOpportunityBoard();
+        let clearWatchlistConfirmed = false;
+        elements.deleteAllWatchlistButton?.addEventListener("click", () => {
+            void (async () => {
+                if (state.watchlist.length === 0) {
+                    showToast("Список уже пуст");
+                    return;
+                }
+                if (!clearWatchlistConfirmed) {
+                    clearWatchlistConfirmed = true;
+                    elements.deleteAllWatchlistButton.textContent = "Удалить все?";
+                    showToast("Нажмите ещё раз для подтверждения");
+                    setTimeout(() => {
+                        clearWatchlistConfirmed = false;
+                        if (elements.deleteAllWatchlistButton) {
+                            elements.deleteAllWatchlistButton.textContent = "Очистить";
+                        }
+                    }, 3000);
+                    return;
+                }
+                clearWatchlistConfirmed = false;
+                if (elements.deleteAllWatchlistButton) {
+                    elements.deleteAllWatchlistButton.textContent = "Очистить";
+                }
+                try {
+                    await deleteJson("/api/v1/watchlist/all");
+                    showToast(`Удалено ${state.watchlist.length} лотов`);
+                    state.watchlist = [];
+                    renderWatchlist();
+                    renderMonitoringHeroStats();
+                } catch (error) {
+                    showToast(error.message || "Не удалось очистить");
+                }
+            })();
         });
 
         elements.trackerMinDiscountInput?.addEventListener("input", () => {
@@ -1053,6 +1371,63 @@ function createAppActions(context) {
             }
         });
 
+        // Swipe support for detail modal photos
+        let touchStartX = 0;
+        let touchEndX = 0;
+        let isSwiping = false;
+        elements.detailModal?.addEventListener("touchstart", (e) => {
+            touchStartX = e.changedTouches[0].screenX;
+            isSwiping = false;
+        }, { passive: true });
+        elements.detailModal?.addEventListener("touchend", (e) => {
+            if (isSwiping) return;
+            touchEndX = e.changedTouches[0].screenX;
+            const swipeDistance = touchStartX - touchEndX;
+            if (Math.abs(swipeDistance) > 50 && state.detail?.images?.length > 1) {
+                isSwiping = true;
+                const mediaEl = elements.detailModal?.querySelector(".detail-media");
+                if (mediaEl) {
+                    mediaEl.classList.add("swipe-anim");
+                    setTimeout(() => {
+                        if (swipeDistance > 0) {
+                            state.detailImageIndex = Math.min(state.detail.images.length - 1, state.detailImageIndex + 1);
+                        } else {
+                            state.detailImageIndex = Math.max(0, state.detailImageIndex - 1);
+                        }
+                        renderDetailModal();
+                        requestAnimationFrame(() => {
+                            setTimeout(() => {
+                                mediaEl.classList.remove("swipe-anim");
+                                isSwiping = false;
+                            }, 50);
+                        });
+                    }, 150);
+                }
+            }
+        }, { passive: true });
+
+        // Keyboard arrow navigation for photos
+        document.addEventListener("keydown", (event) => {
+            if (!state.detail || !(state.detail?.images?.length > 1)) return;
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                const mediaEl = elements.detailModal?.querySelector(".detail-media");
+                if (mediaEl) {
+                    mediaEl.classList.add("swipe-anim");
+                    setTimeout(() => {
+                        if (event.key === "ArrowLeft") {
+                            state.detailImageIndex = Math.max(0, state.detailImageIndex - 1);
+                        } else {
+                            state.detailImageIndex = Math.min(state.detail.images.length - 1, state.detailImageIndex + 1);
+                        }
+                        renderDetailModal();
+                        requestAnimationFrame(() => {
+                            setTimeout(() => mediaEl.classList.remove("swipe-anim"), 50);
+                        });
+                    }, 150);
+                }
+            }
+        });
+
         // Fix for Telegram Mini App mobile: intercept external links and open them properly
         // On mobile, target="_blank" doesn't work correctly in the webview
         document.addEventListener("click", (event) => {
@@ -1069,6 +1444,53 @@ function createAppActions(context) {
                 }
             }
         });
+
+        // ===== Expenses Modal Events =====
+        elements.expensesClose?.addEventListener("click", () => {
+            closeExpensesModal();
+        });
+
+        elements.expensesOverlay?.addEventListener("click", () => {
+            closeExpensesModal();
+        });
+
+        elements.saveExpenseButton?.addEventListener("click", () => {
+            const leadId = state.currentExpenseLeadId;
+            if (!leadId) return;
+            const type = elements.expenseTypeSelect?.value || "other";
+            const rawAmount = elements.expenseAmountInput?.value?.trim();
+            const amount = rawAmount ? Number(rawAmount) : null;
+            const notes = elements.expenseNotesInput?.value?.trim() || "";
+            if (!amount || amount <= 0) {
+                showToast("Введите корректную сумму");
+                return;
+            }
+            void actions.createExpense(leadId, { expense_type: type, amount_byn: amount, notes });
+            if (elements.expenseAmountInput) elements.expenseAmountInput.value = "";
+            if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";
+        });
+
+        elements.cancelExpenseButton?.addEventListener("click", () => {
+            closeExpensesModal();
+        });
+
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && !elements.expensesModal?.hidden) {
+                closeExpensesModal();
+            }
+        });
+
+        // ===== CSV Export =====
+        elements.exportLeadsButton?.addEventListener("click", () => {
+            void actions.exportLeadsCSV();
+        });
+
+        // ===== Profit Dashboard =====
+        elements.reloadProfitButton?.addEventListener("click", () => {
+            void loadLeads();
+            renderProfitDashboard();
+            renderPipelineStepper();
+        });
     }
 
     return {
@@ -1082,8 +1504,13 @@ function createAppActions(context) {
         swapComparisonQueries,
         loadTrackers,
         loadLeads,
+        clearAllLeads,
+        deleteLead,
+        markLeadAsBought,
+        cancelLead,
+        markLeadAsSold,
+        openLeadDetail,
         loadWatchlist,
-        loadOpportunityBoard,
         createTracker,
         addLeadFromListing,
         addWatchlistFromListing,
@@ -1093,12 +1520,21 @@ function createAppActions(context) {
         updateWatchlistMeta,
         promoteWatchlistToLead,
         deleteWatchlistItem,
+        deleteAllWatchlist,
         refreshWatchlist,
+        refreshLeads,
+        openWatchlistDetail,
         deleteTracker,
         openOpportunityQuery,
         openOpportunityDetail,
         openListingDetail,
         setCurrency,
         applyLaunchParams,
+        loadExpenses,
+        createExpense,
+        deleteExpense,
+        exportLeadsCSV,
+        loadMarketVelocity,
+        loadDetailRisks,
     };
 }

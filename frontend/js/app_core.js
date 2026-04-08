@@ -24,15 +24,9 @@ function createAppCore() {
         historyChart: null,
         usdRateByn: null,
         leads: [],
-        leadFilter: "active",
+        leadFilter: "all",
         watchlist: [],
-        watchlistFilter: "attention",
-        opportunityBoard: {
-            items: [],
-            top_price_drops: [],
-            rare_opportunities: [],
-            market_signals: [],
-        },
+        watchlistFilter: "all",
         trackers: [],
         trackerEvents: [],
         trackerEventFilter: "all",
@@ -47,7 +41,13 @@ function createAppCore() {
         trackerConfigKeyword: "",
         detail: null,
         detailImageIndex: 0,
+        detailFromWatchlist: false,
         activeView: "overview",
+        expenses: [],
+        currentExpenseLeadId: null,
+        profitData: null,
+        profitChart: null,
+        pipelineStep: "active",
         panels: {
             distribution: false,
             history: true,
@@ -142,22 +142,16 @@ function createAppCore() {
         elements.trackerEventsList = document.getElementById("tracker-events-list");
         elements.clearEventsButton = document.getElementById("clear-events-btn");
         elements.leadInboxSection = document.getElementById("lead-inbox-section");
-        elements.reloadLeadsButton = document.getElementById("reload-leads-btn");
         elements.leadInboxNote = document.getElementById("lead-inbox-note");
         elements.leadFilterButtons = Array.from(document.querySelectorAll("[data-lead-filter]"));
         elements.leadInboxList = document.getElementById("lead-inbox-list");
+        elements.clearAllLeadsButton = document.getElementById("clear-all-leads-btn");
+        elements.refreshLeadsButton = document.getElementById("refresh-leads-btn");
         elements.watchlistSection = document.getElementById("watchlist-section");
-        elements.refreshWatchlistButton = document.getElementById("refresh-watchlist-btn");
+        elements.deleteAllWatchlistButton = document.getElementById("delete-all-watchlist-btn");
         elements.watchlistNote = document.getElementById("watchlist-note");
         elements.watchlistFilterButtons = Array.from(document.querySelectorAll("[data-watch-filter]"));
         elements.watchlistList = document.getElementById("watchlist-list");
-        elements.opportunityBoardSection = document.getElementById("opportunity-board-section");
-        elements.reloadOpportunityBoardButton = document.getElementById("reload-opportunity-board-btn");
-        elements.opportunityBoardNote = document.getElementById("opportunity-board-note");
-        elements.opportunityBoardList = document.getElementById("opportunity-board-list");
-        elements.opportunityBoardDrops = document.getElementById("opportunity-board-drops");
-        elements.opportunityBoardRare = document.getElementById("opportunity-board-rare");
-        elements.opportunityBoardSignals = document.getElementById("opportunity-board-signals");
         elements.trackingHeroStats = document.getElementById("tracking-hero-stats");
         elements.cheapHeroStats = document.getElementById("cheap-hero-stats");
         elements.monitoringHeroStats = document.getElementById("monitoring-hero-stats");
@@ -183,6 +177,26 @@ function createAppCore() {
         elements.detailParams = document.getElementById("detail-params");
         elements.detailSellerBlock = document.getElementById("detail-seller-block");
         elements.detailSeller = document.getElementById("detail-seller");
+        elements.detailRiskBlock = document.getElementById("detail-risk-block");
+        elements.detailRisks = document.getElementById("detail-risks");
+        elements.expensesModal = document.getElementById("expenses-modal");
+        elements.expensesOverlay = document.getElementById("expenses-overlay");
+        elements.expensesClose = document.getElementById("expenses-close");
+        elements.expensesTitle = document.getElementById("expenses-title");
+        elements.expensesSubtitle = document.getElementById("expenses-subtitle");
+        elements.expensesList = document.getElementById("expenses-list");
+        elements.expenseFormWrap = document.getElementById("expense-form-wrap");
+        elements.expenseTypeSelect = document.getElementById("expense-type-select");
+        elements.expenseAmountInput = document.getElementById("expense-amount-input");
+        elements.expenseNotesInput = document.getElementById("expense-notes-input");
+        elements.saveExpenseButton = document.getElementById("save-expense-btn");
+        elements.cancelExpenseButton = document.getElementById("cancel-expense-btn");
+        elements.profitDashboardSection = document.getElementById("profit-dashboard-section");
+        elements.profitCards = document.getElementById("profit-cards");
+        elements.profitChartBox = document.getElementById("profit-chart-box");
+        elements.reloadProfitButton = document.getElementById("reload-profit-btn");
+        elements.pipelineStepper = document.getElementById("pipeline-stepper");
+        elements.exportLeadsButton = document.getElementById("export-leads-btn");
         elements.toastContainer = document.getElementById("toast-container");
         elements.currencyButtons = {
             BYN: document.getElementById("btn-byn"),

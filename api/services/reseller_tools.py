@@ -232,20 +232,32 @@ def compute_deal_score(
     market_stats: PriceStats,
     duplicate_count: int = 0,
 ) -> DealScore:
-    score = 55.0
     reasons: list[str] = []
     delta = compute_price_vs_median(ad, market_stats.median)
+
+    # Verdict is driven purely by price vs median
+    if delta <= -15:
+        verdict = "Хорошая цена"
+    elif delta <= -3:
+        verdict = "Ниже рынка"
+    elif delta <= 3:
+        verdict = "Средняя цена"
+    else:
+        verdict = "Выше рынка"
+
+    # Score is also primarily price-driven, with small bonuses/penalties
+    score = 50.0
     if delta < 0:
         discount = abs(delta)
-        score += min(discount * 1.5, 30)
+        score += min(discount * 2.0, 35)
         reasons.append(f"-{discount:.0f}% к медиане")
     elif delta > 0:
-        score -= min(delta * 1.2, 24)
+        score -= min(delta * 1.5, 30)
         reasons.append(f"+{delta:.0f}% к медиане")
 
     seller_type = get_param(ad, "seller_type")
     if seller_type == "Частное лицо":
-        score += 8
+        score += 5
         reasons.append("частник")
     elif seller_type == "Магазин":
         score -= 2
@@ -270,14 +282,6 @@ def compute_deal_score(
         reasons.append("есть аномалии")
 
     score = round(max(0.0, min(100.0, score)), 1)
-    if score >= 78:
-        verdict = "Забирать"
-    elif score >= 62:
-        verdict = "Смотреть"
-    elif score >= 45:
-        verdict = "Норм"
-    else:
-        verdict = "Мимо"
 
     unique_reasons = list(dict.fromkeys(reasons))
     return DealScore(

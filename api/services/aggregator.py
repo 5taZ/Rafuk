@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 KOPECKS = 100
 MAX_PRICE_BYN = 100_000.0
+MIN_PRICE_BYN = 0.5  # Ignore listings priced below 0.50 BYN (kopecks remainder / spam)
 STRICT_VARIANT_TOKENS = {
     "pro",
     "max",
@@ -23,15 +24,25 @@ STRICT_VARIANT_TOKENS = {
     "studio",
     "slim",
     "fat",
+    "ti",
+    "super",
+    "se",
+    "xs",
+    "xr",
 }
+# Tokens shorter than 3 chars are too ambiguous for variant matching and cause
+# false positives (e.g. "s" matching inside "s24", "x" matching "xs").
+# They are excluded from the variant-extras check but still used for token matching.
 
 SEARCH_ALIASES = {
     "айфон": "iphone",
     "макбук": "macbook",
     "мак бук": "macbook",
+    "mac book": "macbook",
     "playstation": "ps",
     "play station": "ps",
     "плейстейшен": "ps",
+    "плей стейшен": "ps",
     "пс": "ps",
     "пс5": "ps5",
     "пс4": "ps4",
@@ -44,6 +55,19 @@ SEARCH_ALIASES = {
     "обычный": "fat",
     "про макс": "pro max",
     "promax": "pro max",
+    "самсунг": "samsung",
+    "галакси": "galaxy",
+    "гэлакси": "galaxy",
+    "сяоми": "xiaomi",
+    "редми": "redmi",
+    "поко": "poco",
+    "поук": "poco",
+    "найк": "nike",
+    "адидас": "adidas",
+    "нот": "note",
+    "нубия": "nubia",
+    "хуавей": "huawei",
+    "хонор": "honor",
 }
 
 
@@ -80,6 +104,15 @@ def build_query_key(query: str, strict_search: bool) -> str:
 
 
 def is_strict_match(title: str, query: str) -> bool:
+    """Check if a listing title strictly matches the search query.
+
+    A strict match requires:
+    1. Every query token must appear in the title (set-based containment).
+    2. The title must not contain variant tokens (pro/max/ultra/etc.) that
+       the query does not also contain. This prevents "iphone 15 pro" from
+       matching a search for just "iphone 15".
+    3. Numeric storage/ram values in the query must appear in the title.
+    """
     query_tokens = tokenize_search_text(query)
     title_tokens = tokenize_search_text(title)
     if not query_tokens or not title_tokens:
@@ -92,14 +125,7 @@ def is_strict_match(title: str, query: str) -> bool:
     query_variants = {token for token in query_tokens if token in STRICT_VARIANT_TOKENS}
     title_variants = {token for token in title_tokens if token in STRICT_VARIANT_TOKENS}
     extra_variants = title_variants - query_variants
-    if extra_variants:
-        return False
-
-    query_index = 0
-    for token in title_tokens:
-        if query_index < len(query_tokens) and token == query_tokens[query_index]:
-            query_index += 1
-    return query_index == len(query_tokens)
+    return not extra_variants
 
 
 def apply_search_mode(
@@ -128,6 +154,8 @@ def normalize_price_byn(raw_price: Any) -> float | None:
     price_byn = numeric / KOPECKS
     if price_byn > MAX_PRICE_BYN:
         return None
+    if price_byn < MIN_PRICE_BYN:
+        return None
     return price_byn
 
 
@@ -152,10 +180,32 @@ def _percentile(data: list[float], percentile: float) -> float:
     return data[floor_idx] + (k - floor_idx) * (data[ceil_idx] - data[floor_idx])
 
 
+def _remove_outliers(prices: list[float]) -> list[float]:
+    """Remove statistical outliers using the IQR method.
+
+    Prices outside [Q1 - 2.5*IQR, Q3 + 2.5*IQR] are excluded. This prevents
+    bogus listings (e.g. 1 BYN phones or 99999 BYN accessories) from polluting
+    median and mean calculations. Only applied when there are enough data points
+    for IQR to be meaningful (>= 8).
+    """
+    if len(prices) < 8:
+        return prices
+    sorted_prices = sorted(prices)
+    q1 = _percentile(sorted_prices, 25)
+    q3 = _percentile(sorted_prices, 75)
+    iqr = q3 - q1
+    if iqr <= 0:
+        return prices
+    lower = q1 - 2.5 * iqr
+    upper = q3 + 2.5 * iqr
+    return [p for p in prices if lower <= p <= upper]
+
+
 def compute_price_stats(prices: list[float]) -> PriceStats:
     if not prices:
         return PriceStats(mean=0.0, median=0.0, q1=0.0, q3=0.0, min=0.0, max=0.0, count=0)
-    sorted_prices = sorted(prices)
+    cleaned = _remove_outliers(prices)
+    sorted_prices = sorted(cleaned)
     return PriceStats(
         mean=round(statistics.mean(sorted_prices), 2),
         median=round(statistics.median(sorted_prices), 2),

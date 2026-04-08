@@ -23,7 +23,6 @@ function analyticsApp() {
         void actions.loadTrackers();
         void actions.loadLeads();
         void actions.loadWatchlist();
-        void actions.loadOpportunityBoard();
         void actions.applyLaunchParams();
     }
 

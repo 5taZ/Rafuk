@@ -12,12 +12,16 @@ from api.config import get_settings
 from api.database import get_engine, get_session_factory
 from api.routers import (
     compare,
+    contacts,
     currency,
+    expenses,
+    export,
     geography,
     listing_detail,
     listings,
     price_history,
     price_stats,
+    risks,
     saved_searches,
     segments,
     trackers,
@@ -25,7 +29,6 @@ from api.routers import (
 )
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
-
 
 # Rate limiter setup
 limiter = Limiter(key_func=get_remote_address)
@@ -94,6 +97,10 @@ def create_app() -> FastAPI:
     app.include_router(trackers.router, prefix="/api/v1")
     app.include_router(saved_searches.router, prefix="/api/v1")
     app.include_router(workflow.router, prefix="/api/v1")
+    app.include_router(contacts.router, prefix="/api/v1")
+    app.include_router(expenses.router, prefix="/api/v1")
+    app.include_router(risks.router, prefix="/api/v1")
+    app.include_router(export.router, prefix="/api/v1")
     return app
 
 

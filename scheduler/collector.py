@@ -257,7 +257,9 @@ async def check_trackers(
                     )
                     message = _build_tracker_message(query, strict_mode, tracker_sync_result)
                     if message:
-                        created_events = persist_tracker_events(session, tracker, tracker_sync_result)
+                        created_events = persist_tracker_events(
+                            session, tracker, tracker_sync_result
+                        )
                         await session.flush()
                         primary_event = created_events[0] if created_events else None
                         keyboard = (
@@ -322,10 +324,12 @@ def create_scheduler(
 
 async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None:
     """Run daily cleanup of old data."""
+    settings = get_settings()
     async with session_factory() as session:
         try:
             await cleanup_old_events(session, days=30)
             await cleanup_inactive_listing_states(session, days=90)
+            await cleanup_stale_missing_watchlist(session, days=settings.auto_remove_missing_days)
             await session.commit()
             logger.info("Daily cleanup completed successfully")
         except Exception:
@@ -360,6 +364,28 @@ async def cleanup_inactive_listing_states(session: AsyncSession, days: int = 90)
     if deleted_count > 0:
         logger.info(
             "Cleaned up %d inactive listing states (older than %d days)",
+            deleted_count,
+            days,
+        )
+    return deleted_count
+
+
+async def cleanup_stale_missing_watchlist(session: AsyncSession, days: int = 7) -> int:
+    """Auto-remove watchlist items that have been missing for longer than the threshold."""
+    from api.models import WatchlistItem
+
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    result = await session.execute(
+        delete(WatchlistItem).where(
+            WatchlistItem.market_status == "missing",
+            WatchlistItem.missing_since_at.isnot(None),
+            WatchlistItem.missing_since_at < cutoff,
+        )
+    )
+    deleted_count = result.rowcount
+    if deleted_count > 0:
+        logger.info(
+            "Auto-removed %d watchlist items missing for more than %d days",
             deleted_count,
             days,
         )

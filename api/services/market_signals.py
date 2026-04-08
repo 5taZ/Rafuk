@@ -58,6 +58,11 @@ def detect_anomaly_flags(ad: dict[str, Any], stats: PriceStats) -> list[str]:
 
 
 def duplicate_counts(ads: list[dict[str, Any]]) -> dict[int, int]:
+    """Count how many near-duplicate listings each ad has.
+
+    Two listings are considered duplicates if they have the same normalized
+    title, same seller type, same region, and prices within 8% of each other.
+    """
     grouped: dict[tuple[str, str, int | None], list[tuple[int, float | None]]] = defaultdict(list)
 
     for ad in ads:
@@ -85,7 +90,7 @@ def duplicate_counts(ads: list[dict[str, Any]]) -> dict[int, int]:
                 if price is None or other_price is None:
                     similar += 1
                     continue
-                if price == 0:
+                if price <= 0 or other_price <= 0:
                     continue
                 if abs(other_price - price) / price <= 0.08:
                     similar += 1

@@ -17,6 +17,7 @@ async def upsert_lead(
     title: str,
     link: str,
     price_byn: float | None,
+    thumbnail: str | None = None,
     target_resale_byn: float | None = None,
     status: str = "new",
     source: str = "manual",
@@ -33,6 +34,7 @@ async def upsert_lead(
             title=title,
             link=link,
             price_byn=price_byn,
+            thumbnail=thumbnail,
             target_resale_byn=target_resale_byn,
             status=status,
             source=source,
@@ -45,6 +47,7 @@ async def upsert_lead(
     existing.title = title
     existing.link = link
     existing.price_byn = price_byn
+    existing.thumbnail = thumbnail or existing.thumbnail
     if target_resale_byn is not None:
         existing.target_resale_byn = target_resale_byn
     if notes is not None:
@@ -63,6 +66,8 @@ async def upsert_watchlist(
     title: str,
     link: str,
     price_byn: float | None,
+    thumbnail: str | None = None,
+    market_median_byn: float | None = None,
     notes: str | None = None,
 ) -> WatchlistItem:
     existing = await session.scalar(
@@ -75,8 +80,10 @@ async def upsert_watchlist(
             query=query,
             title=title,
             link=link,
+            thumbnail=thumbnail,
             initial_price_byn=price_byn,
             current_price_byn=price_byn,
+            market_median_byn=market_median_byn,
             notes=notes,
             last_seen_at=datetime.now(UTC),
         )
@@ -86,8 +93,11 @@ async def upsert_watchlist(
     existing.query = query
     existing.title = title
     existing.link = link
+    existing.thumbnail = thumbnail or existing.thumbnail
     existing.current_price_byn = price_byn
     existing.last_seen_at = datetime.now(UTC)
+    if market_median_byn is not None:
+        existing.market_median_byn = market_median_byn
     if notes is not None:
         existing.notes = notes
     if existing.initial_price_byn is None:

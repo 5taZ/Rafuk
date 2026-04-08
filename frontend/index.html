@@ -433,16 +433,18 @@
         <section class="section" id="watchlist-section">
             <div class="sec-head listings-head">
                 <h2 class="sec-title">Сохранённые лоты</h2>
-                <button class="ghost-btn small" id="refresh-watchlist-btn" type="button">Проверить цены</button>
+                <div class="lead-actions-wrap">
+                    <button class="ghost-btn small danger" id="delete-all-watchlist-btn" type="button">Очистить</button>
+                </div>
             </div>
             <p class="section-note" id="watchlist-note">
                 Добавляйте объявления через кнопку «Следить» в карточке или списке.
             </p>
             <div class="sort-row workflow-filter-row" id="watch-filter-row">
-                <button class="s-tab" data-watch-filter="all" type="button">Все</button>
-                <button class="s-tab active" data-watch-filter="attention" type="button">Требуют внимания</button>
-                <button class="s-tab" data-watch-filter="watching" type="button">Слежу</button>
-                <button class="s-tab" data-watch-filter="risk" type="button">Риск/сигнал</button>
+                <button class="s-tab active" data-watch-filter="all" type="button">Все</button>
+                <button class="s-tab" data-watch-filter="default" type="button">Обычные</button>
+                <button class="s-tab" data-watch-filter="important" type="button">Важные</button>
+                <button class="s-tab" data-watch-filter="very_important" type="button">Очень важные</button>
             </div>
             <div class="trackers-list" id="watchlist-list"></div>
         </section>
@@ -452,63 +454,42 @@
         <div class="view-hero deals-hero">
             <div class="view-hero-icon">💰</div>
             <h2 class="view-hero-title">Покупки</h2>
-            <p class="view-hero-desc">Управляйте сделками: отбор, покупка, продажа и лучшие возможности рынка</p>
+            <p class="view-hero-desc">Отслеживайте сделки: от поиска до продажи</p>
             <div class="view-hero-stats" id="deals-hero-stats"></div>
         </div>
+        <section class="section" id="profit-dashboard-section">
+            <div class="sec-head listings-head">
+                <h2 class="sec-title">Финансы</h2>
+                <button class="ghost-btn small" id="reload-profit-btn" type="button">Обновить</button>
+            </div>
+            <div class="profit-cards" id="profit-cards"></div>
+            <div class="chart-box profit-chart-box" id="profit-chart-box" hidden>
+                <canvas id="profitChart"></canvas>
+            </div>
+        </section>
         <section class="section" id="lead-inbox-section">
             <div class="sec-head listings-head">
-                <h2 class="sec-title">В работе</h2>
-                <button class="ghost-btn small" id="reload-leads-btn" type="button">Обновить</button>
+                <h2 class="sec-title">Мои сделки</h2>
+                <div class="lead-actions-wrap">
+                    <button class="ghost-btn small" id="refresh-leads-btn" type="button">🔄 Проверить</button>
+                    <button class="ghost-btn small danger" id="clear-all-leads-btn" type="button">Очистить</button>
+                    <button class="ghost-btn small" id="export-leads-btn" type="button">📥 Экспорт</button>
+                </div>
             </div>
             <p class="section-note" id="lead-inbox-note">
-                Лоты, которые вы взяли в работу или решили проверить позже.
+                Лоты, которые вы взяли в работу.
             </p>
             <div class="sort-row workflow-filter-row" id="lead-filter-row">
-                <button class="s-tab" data-lead-filter="all" type="button">Все</button>
-                <button class="s-tab active" data-lead-filter="active" type="button">Активные</button>
-                <button class="s-tab" data-lead-filter="buy" type="button">Куплено/в продаже</button>
-                <button class="s-tab" data-lead-filter="done" type="button">Завершено</button>
+                <button class="s-tab active" data-lead-filter="all" type="button">Все</button>
+                <button class="s-tab" data-lead-filter="new" type="button">Новые</button>
+                <button class="s-tab" data-lead-filter="reviewing" type="button">Смотреть</button>
+                <button class="s-tab" data-lead-filter="in_progress" type="button">В работе</button>
+                <button class="s-tab" data-lead-filter="negotiating" type="button">Торг</button>
+                <button class="s-tab" data-lead-filter="bought" type="button">Купил</button>
+                <button class="s-tab" data-lead-filter="reselling" type="button">В продаже</button>
+                <button class="s-tab" data-lead-filter="sold" type="button">Продано</button>
             </div>
             <div class="trackers-list" id="lead-inbox-list"></div>
-        </section>
-        <section class="section" id="opportunity-board-section">
-            <div class="sec-head listings-head">
-                <h2 class="sec-title">Что покупать сегодня</h2>
-                <button class="ghost-btn small" id="reload-opportunity-board-btn" type="button">Обновить</button>
-            </div>
-            <p class="section-note" id="opportunity-board-note">
-                Показываем лучшие дешёвые лоты по сохранённым поискам.
-            </p>
-            <div class="board-grid">
-                <section class="board-section">
-                    <div class="board-section-head">
-                        <h3 class="board-section-title">Лучшие сделки</h3>
-                        <span class="board-section-copy">Кандидаты на выкуп прямо сейчас</span>
-                    </div>
-                    <div class="listings-list" id="opportunity-board-list"></div>
-                </section>
-                <section class="board-section">
-                    <div class="board-section-head">
-                        <h3 class="board-section-title">Топ падений цены</h3>
-                        <span class="board-section-copy">Что заметно просело последним</span>
-                    </div>
-                    <div class="trackers-list" id="opportunity-board-drops"></div>
-                </section>
-                <section class="board-section">
-                    <div class="board-section-head">
-                        <h3 class="board-section-title">Редкие предложения</h3>
-                        <span class="board-section-copy">Тонкий рынок и низкая конкуренция</span>
-                    </div>
-                    <div class="listings-list" id="opportunity-board-rare"></div>
-                </section>
-                <section class="board-section">
-                    <div class="board-section-head">
-                        <h3 class="board-section-title">Сигналы рынка</h3>
-                        <span class="board-section-copy">Где сегодня есть дефицит или маржа</span>
-                    </div>
-                    <div class="trackers-list" id="opportunity-board-signals"></div>
-                </section>
-            </div>
         </section>
     </section>
 
@@ -547,10 +528,57 @@
                 <h4 class="detail-block-title">Продавец</h4>
                 <div class="detail-fields" id="detail-seller"></div>
             </section>
+            <section class="detail-block" id="detail-risk-block" hidden>
+                <h4 class="detail-block-title">⚠️ Оценка рисков</h4>
+                <div class="detail-fields" id="detail-risks"></div>
+            </section>
             <div class="listing-actions detail-bottom-actions">
                 <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
-                <button class="listing-btn" id="detail-add-watchlist-btn" type="button">Следить</button>
+                <button class="listing-btn" id="detail-add-watchlist-btn" type="button">В избранное</button>
                 <a class="listing-btn listing-btn--accent" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="detail-modal" id="expenses-modal" hidden>
+        <div class="detail-overlay" id="expenses-overlay"></div>
+        <div class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="expenses-title">
+            <div class="detail-top-bar">
+                <button class="detail-close" id="expenses-close" type="button" aria-label="Закрыть">×</button>
+            </div>
+            <h3 class="detail-title" id="expenses-title">Расходы</h3>
+            <p class="section-note" id="expenses-subtitle" hidden></p>
+            <div class="expenses-list" id="expenses-list"></div>
+            <div class="expense-form-wrap" id="expense-form-wrap">
+                <div class="contact-form">
+                    <label class="workflow-field">
+                        <span class="workflow-field-label">Тип</span>
+                        <div class="deal-range-input-wrap workflow-input-wrap">
+                            <select id="expense-type-select" class="deal-select">
+                                <option value="delivery">Доставка</option>
+                                <option value="repair">Ремонт</option>
+                                <option value="other">Другое</option>
+                            </select>
+                        </div>
+                    </label>
+                    <label class="workflow-field">
+                        <span class="workflow-field-label">Сумма</span>
+                        <div class="deal-range-input-wrap workflow-input-wrap">
+                            <input id="expense-amount-input" type="number" min="0" step="1" inputmode="numeric" placeholder="50">
+                            <span>BYN</span>
+                        </div>
+                    </label>
+                    <label class="workflow-field workflow-field-wide">
+                        <span class="workflow-field-label">Заметка</span>
+                        <div class="deal-range-input-wrap workflow-input-wrap">
+                            <input id="expense-notes-input" type="text" placeholder="курьер, ремонт экрана">
+                        </div>
+                    </label>
+                    <div class="contact-form-actions">
+                        <button class="primary-btn small" id="save-expense-btn" type="button">Добавить</button>
+                        <button class="ghost-btn small" id="cancel-expense-btn" type="button">Отмена</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

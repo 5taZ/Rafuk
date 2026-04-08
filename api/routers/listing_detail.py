@@ -48,7 +48,7 @@ async def get_listing_detail(
 
     median_byn = dataset.price_stats.median
     duplicate_index = duplicate_counts(dataset.ads)
-    liquidity = compute_liquidity_insight(dataset.ads, dataset.price_stats)
+    liquidity = compute_liquidity_insight(dataset.ads, dataset.price_stats, ad=ad)
     rates_payload = await currency_service.get_rates()
     payload = build_listing_detail(
         ad=ad,

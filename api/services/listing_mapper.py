@@ -82,6 +82,26 @@ def category_label(ad: dict[str, Any]) -> str | None:
     return None
 
 
+def extract_seller_rating(ad: dict[str, Any]) -> float | None:
+    for param in ad.get("account_parameters", []):
+        p = param.get("p", "")
+        if p in ("retention_rate", "positive_feedback_percent", "seller_rating"):
+            val = param.get("v") or param.get("vl")
+            try:
+                return round(float(val), 1)
+            except (TypeError, ValueError):
+                continue
+    # Also check top-level field
+    for key in ("retention_rate", "seller_rating"):
+        val = ad.get(key)
+        if val is not None:
+            try:
+                return round(float(val), 1)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 def build_listing_detail(
     ad: dict[str, Any],
     query: str,
@@ -142,6 +162,7 @@ def build_listing_detail(
         images=[url for image in ad.get("images", []) if (url := image_url(image))],
         parameters=collect_fields(ad.get("ad_parameters", []), ignored=IGNORED_AD_PARAMETER_KEYS),
         seller_fields=collect_fields(ad.get("account_parameters", [])),
+        seller_rating=extract_seller_rating(ad),
     )
 
 
@@ -194,4 +215,5 @@ def build_listing_item(
         liquidity=liquidity,
         flip_estimates=compute_flip_estimates(ad, market_stats),
         thumbnail=first_image_url(ad),
+        seller_rating=extract_seller_rating(ad),
     )
