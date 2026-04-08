@@ -45,7 +45,8 @@ def get_telegram_user(
             detail="Missing Telegram initData header",
         )
     try:
-        return verify_telegram_init_data(x_telegram_init_data, get_settings().bot_token)
+        bot_token = get_settings().bot_token.get_secret_value()
+        return verify_telegram_init_data(x_telegram_init_data, bot_token)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

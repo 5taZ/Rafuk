@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
+from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import Tracker, TrackerEvent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead
@@ -34,7 +35,9 @@ async def get_tracker_events(
 
 
 @router.delete("/tracker-events", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
 async def clear_tracker_events(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
@@ -61,7 +64,9 @@ async def get_trackers(
 
 
 @router.post("/trackers", response_model=TrackerRead, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
 async def create_tracker(
+    request: Request,
     payload: TrackerCreate,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
@@ -100,7 +105,9 @@ async def create_tracker(
 
 
 @router.delete("/trackers/{tracker_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
 async def delete_tracker(
+    request: Request,
     tracker_id: int,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),

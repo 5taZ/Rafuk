@@ -26,7 +26,7 @@ def build_dispatcher() -> Dispatcher:
 async def main() -> None:
     settings = get_settings()
     await init_bot_engine()
-    bot = Bot(settings.bot_token)
+    bot = Bot(settings.bot_token.get_secret_value())
     await bot.set_my_commands(
         [
             BotCommand(command="app", description="Open mini app"),

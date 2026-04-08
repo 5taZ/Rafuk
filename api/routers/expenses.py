@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
+from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import DealExpense, LeadItem
 from api.schemas import DealExpenseCreate, DealExpenseRead, DealExpenseUpdate
@@ -16,7 +17,9 @@ router = APIRouter(tags=["expenses"])
 
 
 @router.post("/leads/{lead_id}/expenses", response_model=DealExpenseRead, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
 async def create_expense(
+    request: Request,
     lead_id: int,
     payload: DealExpenseCreate,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
@@ -71,7 +74,9 @@ async def get_expenses(
 
 
 @router.patch("/leads/{lead_id}/expenses/{expense_id}", response_model=DealExpenseRead)
+@limiter.limit("20/minute")
 async def update_expense(
+    request: Request,
     lead_id: int,
     expense_id: int,
     payload: DealExpenseUpdate,
@@ -99,7 +104,9 @@ async def update_expense(
 
 
 @router.delete("/leads/{lead_id}/expenses/{expense_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
 async def delete_expense(
+    request: Request,
     lead_id: int,
     expense_id: int,
     telegram_user: TelegramInitData = Depends(get_telegram_user),

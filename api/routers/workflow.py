@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -13,6 +13,7 @@ from api.dependencies import (
     get_settings_dependency,
     get_telegram_user,
 )
+from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import DealExpense, LeadItem, WatchlistItem
 from api.schemas import (
@@ -120,7 +121,9 @@ async def get_leads(
 
 
 @router.post("/leads", response_model=LeadRead, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
 async def create_lead(
+    request: Request,
     payload: LeadCreate,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
@@ -145,7 +148,9 @@ async def create_lead(
 
 
 @router.patch("/leads/{lead_id}", response_model=LeadRead)
+@limiter.limit("20/minute")
 async def update_lead(
+    request: Request,
     lead_id: int,
     payload: LeadUpdate,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
@@ -171,7 +176,9 @@ async def update_lead(
 
 
 @router.delete("/leads/{lead_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
 async def delete_lead(
+    request: Request,
     lead_id: int,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
@@ -190,17 +197,16 @@ async def delete_lead(
 
 
 @router.delete("/leads/all", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
 async def delete_all_leads(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     async with session_factory() as session:
-        result = await session.execute(
-            select(LeadItem).where(LeadItem.user_id == telegram_user.user_id)
+        await session.execute(
+            delete(LeadItem).where(LeadItem.user_id == telegram_user.user_id)
         )
-        items = list(result.scalars())
-        for item in items:
-            await session.delete(item)
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -220,7 +226,9 @@ async def get_watchlist(
 
 
 @router.post("/watchlist", response_model=WatchlistRead, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
 async def create_watchlist_item(
+    request: Request,
     payload: WatchlistCreate,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
@@ -243,7 +251,9 @@ async def create_watchlist_item(
 
 
 @router.patch("/watchlist/{watchlist_id}", response_model=WatchlistRead)
+@limiter.limit("20/minute")
 async def update_watchlist_item(
+    request: Request,
     watchlist_id: int,
     payload: WatchlistUpdate,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
@@ -271,23 +281,24 @@ async def update_watchlist_item(
 
 
 @router.delete("/watchlist/all", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
 async def delete_all_watchlist_items(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     async with session_factory() as session:
-        result = await session.execute(
-            select(WatchlistItem).where(WatchlistItem.user_id == telegram_user.user_id)
+        await session.execute(
+            delete(WatchlistItem).where(WatchlistItem.user_id == telegram_user.user_id)
         )
-        items = list(result.scalars())
-        for item in items:
-            await session.delete(item)
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/watchlist/{watchlist_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
 async def delete_watchlist_item(
+    request: Request,
     watchlist_id: int,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
@@ -310,7 +321,9 @@ async def delete_watchlist_item(
 
 
 @router.post("/watchlist/refresh", response_model=WatchlistRefreshResponse)
+@limiter.limit("20/minute")
 async def refresh_watchlist(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),
@@ -389,7 +402,9 @@ async def refresh_watchlist(
 
 
 @router.post("/leads/refresh", response_model=LeadsRefreshResponse)
+@limiter.limit("20/minute")
 async def refresh_leads(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),

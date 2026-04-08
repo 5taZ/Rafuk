@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from api.dependencies import get_telegram_user
+from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.schemas import RiskAssessmentResponse, RiskItem
 from api.services.risk_detector import assess_listing_risks
@@ -19,7 +20,9 @@ class RiskAssessmentRequest(BaseModel):
 
 
 @router.post("/risk-assessment", response_model=RiskAssessmentResponse)
+@limiter.limit("20/minute")
 async def assess_risk(
+    request: Request,
     payload: RiskAssessmentRequest,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
 ) -> RiskAssessmentResponse:

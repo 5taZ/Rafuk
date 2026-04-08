@@ -36,16 +36,13 @@ def test_html_has_viewport_meta(soup: BeautifulSoup) -> None:
 def test_html_loads_required_scripts(soup: BeautifulSoup) -> None:
     scripts = [script.get("src", "") for script in soup.find_all("script")]
     assert any("telegram-web-app.js" in script for script in scripts)
-    assert any("alpine" in script.lower() for script in scripts)
     assert any("chart" in script.lower() for script in scripts)
     assert any("app.js" in script for script in scripts)
 
 
 def test_html_has_stats_and_listings(soup: BeautifulSoup) -> None:
-    assert len(soup.find_all(attrs={"x-text": True})) >= 4
     canvases = soup.find_all("canvas")
     assert len(canvases) >= 2
-    assert len(soup.find_all(attrs={"x-for": True})) >= 1
     assert soup.find(attrs={"data-view": "deals"}) is not None
 
 

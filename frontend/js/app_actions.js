@@ -1235,21 +1235,7 @@ function createAppActions(context) {
                 if (elements.clearAllLeadsButton) {
                     elements.clearAllLeadsButton.textContent = "Очистить";
                 }
-                try {
-                    const promises = state.leads.map((lead) =>
-                        fetch(`/api/v1/leads/${lead.id}`, {
-                            method: "DELETE",
-                            headers: telegramHeaders(),
-                        })
-                    );
-                    await Promise.allSettled(promises);
-                    showToast(`Удалено ${state.leads.length} сделок`);
-                    state.leads = [];
-                    renderLeads();
-                    renderDealsHeroStats();
-                } catch (error) {
-                    showToast(error.message || "Не удалось очистить");
-                }
+                await clearAllLeads();
             })();
         });
 

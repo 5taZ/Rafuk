@@ -4,12 +4,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from api.config import get_settings
 from api.database import get_engine, get_session_factory
+from api.limiter import limiter
 from api.routers import (
     compare,
     contacts,
@@ -29,9 +28,6 @@ from api.routers import (
 )
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
-
-# Rate limiter setup
-limiter = Limiter(key_func=get_remote_address)
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):

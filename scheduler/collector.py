@@ -407,7 +407,7 @@ async def main() -> None:
     settings = get_settings()
     engine = get_engine()
     session_factory = get_session_factory(engine)
-    bot = Bot(settings.bot_token)
+    bot = Bot(settings.bot_token.get_secret_value())
     scheduler = create_scheduler(bot, session_factory, settings)
 
     # Initial health check

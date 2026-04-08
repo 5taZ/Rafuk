@@ -17,12 +17,14 @@ function createAppRenderers(context) {
 
     /**
      * Escape HTML special characters to prevent XSS attacks.
+     * Uses a singleton DOM element to avoid creating new elements on every call.
      */
+    const _escapeDiv = document.createElement("div");
+
     function escapeHtml(str) {
         if (str == null) return "";
-        const div = document.createElement("div");
-        div.textContent = String(str);
-        return div.innerHTML;
+        _escapeDiv.textContent = String(str);
+        return _escapeDiv.innerHTML;
     }
 
     function showToast(message) {
@@ -396,7 +398,7 @@ function createAppRenderers(context) {
                 return `
                     <article class="compare-card">
                         <span class="compare-kicker">${isBase ? "База" : "Сравнение"}</span>
-                        <strong class="compare-query">${item.query}</strong>
+                        <strong class="compare-query">${escapeHtml(item.query)}</strong>
                         <div class="compare-deltas">
                             <span class="compare-delta-chip ${medianDelta?.className || ""}">
                                 медиана ${medianDelta?.text || "—"}
@@ -417,7 +419,7 @@ function createAppRenderers(context) {
                             <div class="compare-metric wide">
                                 <span class="compare-label">Размер рынка</span>
                                 <strong class="compare-value mono">${item.total_results || 0}</strong>
-                                <span class="compare-meta">${bestListing ? `${bestListing.title} · ${formatPrice(bestListing.price)}` : "Лучший оффер пока не найден"}</span>
+                                <span class="compare-meta">${bestListing ? `${escapeHtml(bestListing.title)} · ${formatPrice(bestListing.price)}` : "Лучший оффер пока не найден"}</span>
                             </div>
                         </div>
                     </article>
@@ -542,8 +544,8 @@ function createAppRenderers(context) {
             card.className = "geo-card";
             card.innerHTML = `
                 <div class="geo-head">
-                    <strong class="geo-name">${region.region_name}</strong>
-                    <span class="geo-share">${region.share_percent}% выборки</span>
+                    <strong class="geo-name">${escapeHtml(region.region_name)}</strong>
+                    <span class="geo-share">${escapeHtml(region.share_percent)}% выборки</span>
                 </div>
                 <span class="geo-price mono">${formatPrice(region.median)}</span>
                 <div class="geo-meta">
@@ -1435,8 +1437,8 @@ function createAppRenderers(context) {
             const item = document.createElement("div");
             item.className = "detail-field";
             item.innerHTML = `
-                <span class="detail-field-label">${estimate.label}</span>
-                <span class="detail-field-value">${formatPrice(estimate.target_price)} • ${Math.round(estimate.profit_byn)} BYN (${estimate.profit_percent > 0 ? "+" : ""}${estimate.profit_percent}%)</span>
+                <span class="detail-field-label">${escapeHtml(estimate.label)}</span>
+                <span class="detail-field-value">${formatPrice(estimate.target_price)} • ${Math.round(estimate.profit_byn)} BYN (${estimate.profit_percent > 0 ? "+" : ""}${escapeHtml(estimate.profit_percent)}%)</span>
             `;
             elements.detailProfit.appendChild(item);
         }
@@ -1447,8 +1449,8 @@ function createAppRenderers(context) {
             const item = document.createElement("div");
             item.className = "detail-field";
             item.innerHTML = `
-                <span class="detail-field-label">${detail.liquidity.label}</span>
-                <span class="detail-field-value">${Math.round(detail.liquidity.score)} • ${(detail.liquidity.reasons || []).join(" · ")}</span>
+                <span class="detail-field-label">${escapeHtml(detail.liquidity.label)}</span>
+                <span class="detail-field-value">${Math.round(detail.liquidity.score)} • ${(detail.liquidity.reasons || []).map(String).map(escapeHtml).join(" · ")}</span>
             `;
             elements.detailLiquidity.appendChild(item);
         }
@@ -1464,7 +1466,7 @@ function createAppRenderers(context) {
             detail.is_duplicate ? "Похоже на дубль" : "",
             formatDelta(detail.price_vs_median),
         ].filter(Boolean);
-        elements.detailMeta.innerHTML = metaItems.map((item) => `<span class="detail-pill">${item}</span>`).join("");
+        elements.detailMeta.innerHTML = metaItems.map((item) => `<span class="detail-pill">${escapeHtml(item)}</span>`).join("");
 
         elements.detailMainImage.hidden = !hasImages;
         elements.detailNoImage.hidden = hasImages;
@@ -1480,7 +1482,7 @@ function createAppRenderers(context) {
             const button = document.createElement("button");
             button.type = "button";
             button.className = `detail-thumb${state.detailImageIndex === index ? " active" : ""}`;
-            button.innerHTML = `<img src="${image}" alt="">`;
+            button.innerHTML = `<img src="${escapeHtml(image)}" alt="">`;
             button.addEventListener("click", () => {
                 state.detailImageIndex = index;
                 renderDetailModal();
@@ -1494,8 +1496,8 @@ function createAppRenderers(context) {
             const item = document.createElement("div");
             item.className = "detail-field";
             item.innerHTML = `
-                <span class="detail-field-label">${field.label}</span>
-                <span class="detail-field-value">${field.value}</span>
+                <span class="detail-field-label">${escapeHtml(field.label)}</span>
+                <span class="detail-field-value">${escapeHtml(field.value)}</span>
             `;
             elements.detailParams.appendChild(item);
         }
@@ -1507,8 +1509,8 @@ function createAppRenderers(context) {
             const item = document.createElement("div");
             item.className = "detail-field";
             item.innerHTML = `
-                <span class="detail-field-label">${field.label}</span>
-                <span class="detail-field-value">${field.value}</span>
+                <span class="detail-field-label">${escapeHtml(field.label)}</span>
+                <span class="detail-field-value">${escapeHtml(field.value)}</span>
             `;
             elements.detailSeller.appendChild(item);
         }
@@ -1548,12 +1550,12 @@ function createAppRenderers(context) {
                     medium: "risk-medium",
                     high: "risk-high",
                 }[risk.level] || "";
-                return `<span class="risk-badge ${levelClass}">${risk.message}</span>`;
+                return `<span class="risk-badge ${levelClass}">${escapeHtml(risk.message)}</span>`;
             })
             .join("");
 
         item.innerHTML = `
-            <span class="detail-field-label">${overallEmoji} ${overallLabel}</span>
+            <span class="detail-field-label">${escapeHtml(overallEmoji)} ${escapeHtml(overallLabel)}</span>
             <div class="risk-badges-wrap">${riskBadges}</div>
         `;
         elements.detailRisks.appendChild(item);

@@ -21,11 +21,13 @@ class KufarAPIError(Exception):
 
 
 class KufarClient:
+    # Class-level shared state — all instances share the same rate delay
+    _last_request_time: float = 0.0
+
     def __init__(self, settings: Settings, http_client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings
         self._http_client = http_client
         self._owns_client = http_client is None
-        self._last_request_time = 0.0
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
@@ -122,8 +124,10 @@ class KufarClient:
         ads = list(response.get("ads", []))
         total = self.extract_total(response) or len(ads)
         cursor = self.extract_next_cursor(response)
+        pages_fetched = 1
 
-        while cursor:
+        # Safety cap: max 25 pages or 5000 ads (whichever comes first)
+        while cursor and pages_fetched < 25 and len(ads) < 5000:
             page = await self.search(
                 query=query,
                 size=size,
@@ -136,6 +140,7 @@ class KufarClient:
             )
             ads.extend(page.get("ads", []))
             cursor = self.extract_next_cursor(page)
+            pages_fetched += 1
             if total and len(ads) >= total:
                 break
 

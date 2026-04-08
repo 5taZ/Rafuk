@@ -22,7 +22,7 @@ def test_settings_loads_from_env_vars() -> None:
         config.get_settings.cache_clear()
         importlib.reload(config)
         s = config.Settings()
-        assert s.bot_token == "7123456789:AAFtesttoken"
+        assert s.bot_token.get_secret_value() == "7123456789:AAFtesttoken"
         assert s.database_url == "postgresql+asyncpg://user:pass@db:5432/kufar"
         assert s.redis_url == "redis://redis:6379/0"
         assert s.api_base_url == "https://kufar-analytics.example.com"

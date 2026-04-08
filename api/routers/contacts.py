@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
+from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import Contact
 from api.schemas import ContactCreate, ContactRead
@@ -29,7 +30,9 @@ router = APIRouter(prefix="/contacts", tags=["contacts"])
         200: {"description": "Existing contact updated (upsert)"},
     },
 )
+@limiter.limit("20/minute")
 async def create_contact(
+    request: Request,
     payload: ContactCreate,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
@@ -122,7 +125,9 @@ async def list_contacts(
         404: {"description": "Contact not found"},
     },
 )
+@limiter.limit("20/minute")
 async def delete_contact(
+    request: Request,
     contact_id: int,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),

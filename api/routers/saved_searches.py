@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -13,6 +13,7 @@ from api.dependencies import (
     get_settings_dependency,
     get_telegram_user,
 )
+from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import SavedSearch, TrackerEvent
 from api.schemas import (
@@ -79,7 +80,9 @@ async def get_saved_searches(
 
 
 @router.post("/saved-searches", response_model=SavedSearchRead, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
 async def create_saved_search(
+    request: Request,
     payload: SavedSearchCreate,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
@@ -113,7 +116,9 @@ async def create_saved_search(
 
 
 @router.delete("/saved-searches/{saved_search_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
 async def delete_saved_search(
+    request: Request,
     saved_search_id: int,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),

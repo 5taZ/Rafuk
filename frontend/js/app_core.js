@@ -258,7 +258,7 @@ function createAppCore() {
             "1": "Б/у",
             "2": "Новый",
         };
-        return map[condition] || condition || "";
+        return map[condition] || "";
     }
 
     function formatSeller(seller) {
@@ -268,7 +268,7 @@ function createAppCore() {
             private: "Частное",
             shop: "Магазин",
         };
-        return map[seller] || seller || "";
+        return map[seller] || "";
     }
 
     function formatDelta(delta) {
