@@ -15,6 +15,16 @@ function createAppRenderers(context) {
         hasTelegramInitData,
     } = context;
 
+    /**
+     * Escape HTML special characters to prevent XSS attacks.
+     */
+    function escapeHtml(str) {
+        if (str == null) return "";
+        const div = document.createElement("div");
+        div.textContent = String(str);
+        return div.innerHTML;
+    }
+
     function showToast(message) {
         if (!elements.toastContainer) return;
         const toast = document.createElement("div");
@@ -587,7 +597,7 @@ function createAppRenderers(context) {
             : "";
 
         const thumbMarkup = item.thumbnail
-            ? `<img class="listing-thumb" src="${item.thumbnail}" alt="" loading="lazy">`
+            ? `<img class="listing-thumb" src="${escapeHtml(item.thumbnail)}" alt="" loading="lazy">`
             : `<div class="listing-thumb placeholder">Нет фото</div>`;
         const badgesMarkup = [freshnessMarkup, verdictMarkup, deltaMarkup, duplicateMarkup].filter(Boolean).join("");
 
@@ -595,7 +605,7 @@ function createAppRenderers(context) {
             <div class="listing-top">
                 ${thumbMarkup}
                 <div class="listing-body">
-                    <span class="listing-name">${item.title}</span>
+                    <span class="listing-name">${escapeHtml(item.title)}</span>
                     <div class="listing-tags">${condition}${seller}</div>
                     <span class="listing-price mono">${formatPrice(item.price)}</span>
                 </div>
@@ -605,7 +615,7 @@ function createAppRenderers(context) {
                 <button class="listing-btn" type="button">Подробнее</button>
                 <button class="listing-btn" data-role="lead" type="button">В покупки</button>
                 <button class="listing-btn" data-role="watch" type="button">В избранное</button>
-                <a class="listing-btn listing-btn--accent" href="${item.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                <a class="listing-btn listing-btn--accent" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer noopener">Kufar</a>
             </div>
         `;
 
@@ -706,22 +716,22 @@ function createAppRenderers(context) {
             const badge = item.signal_label || extraBadge;
             card.innerHTML = `
                 <div class="opportunity-top">
-                    <span class="badge">${item.saved_search_name}</span>
-                    <span class="listing-signal verdict verdict-${verdictClassName(item.listing.deal_verdict || "Смотреть")}">${item.listing.deal_verdict || "Смотреть"} · ${Math.round(item.listing.deal_score || 0)}</span>
+                    <span class="badge">${escapeHtml(item.saved_search_name)}</span>
+                    <span class="listing-signal verdict verdict-${verdictClassName(item.listing.deal_verdict || "Смотреть")}">${escapeHtml(item.listing.deal_verdict || "Смотреть")} · ${Math.round(item.listing.deal_score || 0)}</span>
                 </div>
-                <strong class="opportunity-title">${item.listing.title}</strong>
+                <strong class="opportunity-title">${escapeHtml(item.listing.title)}</strong>
                 <div class="opportunity-meta">
                     <span class="mono">${formatPrice(item.listing.price)}</span>
-                    <span>${item.listing.region_name || "Без региона"}</span>
-                    ${badge ? `<span class="board-inline-flag">${badge}</span>` : ""}
+                    <span>${escapeHtml(item.listing.region_name || "Без региона")}</span>
+                    ${badge ? `<span class="board-inline-flag">${escapeHtml(badge)}</span>` : ""}
                 </div>
-                ${reasons ? `<p class="opportunity-copy">${reasons}</p>` : ""}
+                ${reasons ? `<p class="opportunity-copy">${escapeHtml(reasons)}</p>` : ""}
                 <div class="listing-actions">
                     <button class="ghost-btn small" data-role="open-query" type="button">Открыть запрос</button>
                     <button class="ghost-btn small" data-role="open-detail" type="button">Подробнее</button>
                     <button class="ghost-btn small" data-role="lead" type="button">В покупки</button>
                     <button class="ghost-btn small" data-role="watch" type="button">В избранное</button>
-                    <a class="primary-link small" href="${item.listing.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                    <a class="primary-link small" href="${escapeHtml(item.listing.link)}" target="_blank" rel="noreferrer noopener">Kufar</a>
                 </div>
             `;
             card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
@@ -956,7 +966,7 @@ function createAppRenderers(context) {
             }
 
             const thumbMarkup = lead.thumbnail
-                ? `<img class="watchlist-thumb" src="${lead.thumbnail}" alt="" loading="lazy">`
+                ? `<img class="watchlist-thumb" src="${escapeHtml(lead.thumbnail)}" alt="" loading="lazy">`
                 : `<div class="watchlist-thumb-placeholder">Нет фото</div>`;
 
             const missingBanner = isMissing
@@ -972,7 +982,7 @@ function createAppRenderers(context) {
                     ${thumbMarkup}
                     <div class="lead-card-body">
                         <div class="lead-card-title-row">
-                            <strong class="lead-card-title">${lead.title}</strong>
+                            <strong class="lead-card-title">${escapeHtml(lead.title)}</strong>
                         </div>
                         <span class="lead-card-price mono">${priceByn ? `${priceByn} BYN` : "без цены"}</span>
                         ${missingBadge}
@@ -998,7 +1008,7 @@ function createAppRenderers(context) {
                     ${!isSold && lead.status !== "bought" && lead.status !== "reselling" ? `<button class="lead-btn lead-btn--success" data-role="bought" type="button">✅ Купил</button>` : ""}
                     ${lead.status === "bought" || lead.status === "reselling" ? `<button class="lead-btn lead-btn--success" data-role="sold" type="button">💰 Продано</button>` : ""}
                     ${!isSold ? `<button class="lead-btn lead-btn--danger" data-role="cancel" type="button">Отмена</button>` : ""}
-                    ${!isMissing ? `<a class="lead-btn lead-btn--accent" href="${lead.link}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>` : ""}
+                    ${!isMissing ? `<a class="lead-btn lead-btn--accent" href="${escapeHtml(lead.link)}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>` : ""}
                 </div>
             `;
 
@@ -1140,7 +1150,7 @@ function createAppRenderers(context) {
             }
 
             const thumbMarkup = item.thumbnail
-                ? `<img class="watchlist-thumb" src="${item.thumbnail}" alt="" loading="lazy">`
+                ? `<img class="watchlist-thumb" src="${escapeHtml(item.thumbnail)}" alt="" loading="lazy">`
                 : `<div class="watchlist-thumb-placeholder">Нет фото</div>`;
 
             const isMissing = item.market_status === "missing";
@@ -1153,7 +1163,7 @@ function createAppRenderers(context) {
                 <div class="watchlist-card-top${isMissing ? " is-missing" : ""}">
                     ${thumbMarkup}
                     <div class="watchlist-card-body">
-                        <strong class="watchlist-card-title">${item.title}</strong>
+                        <strong class="watchlist-card-title">${escapeHtml(item.title)}</strong>
                         <div class="watchlist-card-price-row">
                             <span class="watchlist-card-price mono">${currentPriceDisplay ? `${currentPriceDisplay} ${currencySymbol}` : "—"}</span>
                             ${deltaMarkup}
@@ -1183,7 +1193,7 @@ function createAppRenderers(context) {
                 <div class="watchlist-card-actions">
                     <button class="wl-btn wl-btn--detail" data-role="detail" type="button">Подробнее</button>
                     ${!isMissing ? `<button class="wl-btn wl-btn--accent" data-role="lead" type="button">В покупки</button>` : ""}
-                    ${!isMissing ? `<a class="wl-btn" href="${item.link}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>` : ""}
+                    ${!isMissing ? `<a class="wl-btn" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>` : ""}
                     <button class="wl-btn wl-btn--danger" data-role="delete" type="button">Удалить</button>
                 </div>
             `;
@@ -1348,12 +1358,12 @@ function createAppRenderers(context) {
                     <span class="tracker-event-type ${typeClass}">${typeLabel}</span>
                     <span class="tracker-event-time mono">${formatDate(event.created_at)}</span>
                 </div>
-                <strong class="tracker-event-title">${event.title}</strong>
-                <div class="tracker-event-meta">${meta.map((item) => `<span>${item}</span>`).join("")}</div>
+                <strong class="tracker-event-title">${escapeHtml(event.title)}</strong>
+                <div class="tracker-event-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
                 <div class="listing-actions">
                     <button class="listing-btn" data-role="open-query" type="button">Открыть</button>
                     <button class="listing-btn" data-role="lead" type="button">В покупки</button>
-                    <a class="listing-btn listing-btn--accent" href="${event.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                    <a class="listing-btn listing-btn--accent" href="${escapeHtml(event.link)}" target="_blank" rel="noreferrer noopener">Kufar</a>
                 </div>
             `;
             row.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
@@ -1781,43 +1791,6 @@ function createAppRenderers(context) {
                 },
             },
         });
-    }
-
-    function renderAll() {
-        renderLoading();
-        renderError();
-        renderHelper();
-        renderSummary();
-        renderCurrencyButtons();
-        renderStrictSearch();
-        renderViewTabs();
-        renderViews();
-        renderTrackingHeroStats();
-        renderCheapHeroStats();
-        renderMonitoringHeroStats();
-        renderDealsHeroStats();
-        renderSortButtons();
-        renderDiscountButtons();
-        renderTrackerEventFilters();
-        renderHistoryRangeButtons();
-        renderDealInputs();
-        renderTrackerInputs();
-        renderStats();
-        renderHistory();
-        renderComparison();
-        renderSegments();
-        renderGeography();
-        renderPanels();
-        renderListings();
-        renderDeals();
-        renderRates();
-        renderTrackerStatus();
-        renderTrackers();
-        renderTrackerEvents();
-        renderLeads();
-        renderWatchlist();
-        renderProfitDashboard();
-        renderVelocity(null);
     }
 
     /* ===== Pipeline Stepper ===== */

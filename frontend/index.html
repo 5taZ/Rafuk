@@ -13,7 +13,6 @@
     >
     <link rel="stylesheet" href="css/style.css">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script defer src="js/app_core.js"></script>
     <script defer src="js/app_renderers.js"></script>
@@ -586,16 +585,6 @@
     <div class="toast-container" id="toast-container"></div>
 
     <div class="bottom-spacer"></div>
-
-    <div hidden>
-        <span x-text="stats.mean"></span>
-        <span x-text="stats.median"></span>
-        <span x-text="stats.min"></span>
-        <span x-text="stats.max"></span>
-        <template x-for="item in listings">
-            <span x-text="item.title"></span>
-        </template>
-    </div>
 </div>
 </body>
 </html>

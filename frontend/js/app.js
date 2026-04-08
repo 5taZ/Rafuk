@@ -61,4 +61,24 @@ function analyticsApp() {
 document.addEventListener("DOMContentLoaded", () => {
     const app = analyticsApp();
     app.init();
+
+    // Offline / online detection
+    function showOfflineBanner() {
+        let banner = document.getElementById("offline-banner");
+        if (!banner) {
+            banner = document.createElement("div");
+            banner.id = "offline-banner";
+            banner.textContent = "Нет подключения к интернету";
+            banner.style.cssText = "position:fixed;top:0;left:0;right:0;background:#fb7185;color:#fff;text-align:center;padding:6px 12px;font-size:13px;font-family:system-ui;z-index:10000;";
+            document.body.appendChild(banner);
+        }
+    }
+    function hideOfflineBanner() {
+        const banner = document.getElementById("offline-banner");
+        if (banner) banner.remove();
+    }
+
+    if (!navigator.onLine) showOfflineBanner();
+    window.addEventListener("offline", showOfflineBanner);
+    window.addEventListener("online", hideOfflineBanner);
 });

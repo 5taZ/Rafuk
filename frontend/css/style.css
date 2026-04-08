@@ -28,6 +28,17 @@
     --shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--border);
 }
 
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
 [data-theme="dark"] {
     --bg: #0d0d0f;
     --bg-card: #141416;
