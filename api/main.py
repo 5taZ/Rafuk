@@ -16,6 +16,7 @@ from api.routers import (
     expenses,
     export,
     geography,
+    health,
     listing_detail,
     listings,
     price_history,
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(workflow.router, prefix="/api/v1")
     app.include_router(contacts.router, prefix="/api/v1")
     app.include_router(expenses.router, prefix="/api/v1")
+    app.include_router(health.router, prefix="/api/v1")
     app.include_router(risks.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
     return app

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -9,6 +11,8 @@ from api.database import get_session_factory as build_session_factory
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
 from api.services.cache import CacheBackend, RedisCache
 from api.services.currency_service import CurrencyService
+
+logger = logging.getLogger(__name__)
 
 
 def get_settings_dependency() -> Settings:
@@ -33,6 +37,10 @@ def get_session_factory_dependency(request: Request) -> async_sessionmaker[Async
     factory = getattr(request.app.state, "session_factory", None)
     if factory is not None:
         return factory
+    logger.warning(
+        "Falling back to creating a new DB engine/session_factory. "
+        "Ensure lifespan-managed session_factory is available in production."
+    )
     return build_session_factory(get_engine())
 
 
