@@ -79,7 +79,11 @@ async def get_saved_searches(
     return [_serialize_saved_search(item) for item in saved_searches]
 
 
-@router.post("/saved-searches", response_model=SavedSearchRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/saved-searches",
+    response_model=SavedSearchRead,
+    status_code=status.HTTP_201_CREATED,
+)
 @limiter.limit("20/minute")
 async def create_saved_search(
     request: Request,
@@ -133,7 +137,10 @@ async def delete_saved_search(
         )
         saved_search = result.scalar_one_or_none()
         if saved_search is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved search not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Saved search not found",
+            )
         saved_search.active = False
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

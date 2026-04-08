@@ -99,7 +99,10 @@ async def create_contact(
     "",
     response_model=list[ContactRead],
     summary="List all contacts for the authenticated user",
-    description="Returns every contact owned by the current Telegram user, ordered by most recently saved first.",
+    description=(
+        "Returns every contact owned by the current Telegram user, "
+        "ordered by most recently saved first."
+    ),
 )
 async def list_contacts(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
@@ -119,7 +122,10 @@ async def list_contacts(
     "/{contact_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a contact",
-    description="Permanently delete a contact by ID. Returns 404 if the contact does not belong to the user.",
+    description=(
+        "Permanently delete a contact by ID. "
+        "Returns 404 if the contact does not belong to the user."
+    ),
     responses={
         204: {"description": "Contact deleted successfully"},
         404: {"description": "Contact not found"},

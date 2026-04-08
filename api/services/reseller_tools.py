@@ -174,7 +174,11 @@ def _model_tokens(tokens: list[str], storage_gb: int | None, ram_gb: int | None)
     ]
 
 
-def _format_config_summary(storage_gb: int | None, ram_gb: int | None, tokens: list[str]) -> str | None:
+def _format_config_summary(
+    storage_gb: int | None,
+    ram_gb: int | None,
+    tokens: list[str],
+) -> str | None:
     parts: list[str] = []
     variants = [token.title() for token in tokens if token in _CONFIG_TOKENS]
     if variants:
@@ -316,18 +320,26 @@ def compute_deal_score(
     if freshness_reason:
         reasons.append(freshness_reason)
 
-    config_bonus, config_summary, config_reason = profile_match_bonus(query, str(ad.get("subject", "")))
+    config_bonus, config_summary, config_reason = profile_match_bonus(
+        query, str(ad.get("subject", ""))
+    )
     score += config_bonus
     if config_reason:
         reasons.append(config_reason)
 
     if duplicate_count > 0:
-        score -= min(duplicate_count * SCORING.duplicate_penalty_per_ad, SCORING.duplicate_penalty_cap)
+        score -= min(
+            duplicate_count * SCORING.duplicate_penalty_per_ad,
+            SCORING.duplicate_penalty_cap,
+        )
         reasons.append("есть дубли")
 
     anomaly_flags = detect_anomaly_flags(ad, market_stats)
     if anomaly_flags:
-        score -= min(len(anomaly_flags) * SCORING.anomaly_penalty_per_flag, SCORING.anomaly_penalty_cap)
+        score -= min(
+            len(anomaly_flags) * SCORING.anomaly_penalty_per_flag,
+            SCORING.anomaly_penalty_cap,
+        )
         reasons.append("есть аномалии")
 
     score = round(max(0.0, min(100.0, score)), 1)

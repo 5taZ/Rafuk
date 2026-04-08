@@ -79,7 +79,10 @@ async def export_leads_csv(
 
         # Calculate profit and ROI
         actual_profit = (sold_price - total_cost) if sold_price > 0 else None
-        roi_percent = ((actual_profit / total_cost) * 100) if actual_profit is not None and total_cost > 0 else None
+        if actual_profit is not None and total_cost > 0:
+            roi_percent = (actual_profit / total_cost) * 100
+        else:
+            roi_percent = None
 
         writer.writerow([
             lead.id,

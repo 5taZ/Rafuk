@@ -25,7 +25,10 @@ def compute_liquidity_insight(
     ad: dict[str, Any] | None = None,
 ) -> LiquidityInsight:
     total = len(ads)
-    fresh_count = sum(1 for a in ads if (_age := _age_hours(a.get("list_time"))) is not None and _age <= 72)
+    fresh_count = sum(
+        1 for a in ads
+        if (_age := _age_hours(a.get("list_time"))) is not None and _age <= 72
+    )
     deal_count = len(filter_deal_ads(ads, market_stats.median, 8.0)) if market_stats.median else 0
 
     # Market-level base score (0-40)

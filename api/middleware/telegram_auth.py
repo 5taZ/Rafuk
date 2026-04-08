@@ -25,7 +25,9 @@ def verify_telegram_init_data(init_data: str, bot_token: str) -> TelegramInitDat
 
     data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(parsed.items()))
     secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
-    expected_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    expected_hash = hmac.new(
+        secret_key, data_check_string.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
 
     if not hmac.compare_digest(expected_hash, received_hash):
         raise ValueError("Invalid Telegram initData signature")

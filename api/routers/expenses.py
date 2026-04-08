@@ -16,7 +16,11 @@ from api.schemas import DealExpenseCreate, DealExpenseRead, DealExpenseUpdate
 router = APIRouter(tags=["expenses"])
 
 
-@router.post("/leads/{lead_id}/expenses", response_model=DealExpenseRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/leads/{lead_id}/expenses",
+    response_model=DealExpenseRead,
+    status_code=status.HTTP_201_CREATED,
+)
 @limiter.limit("20/minute")
 async def create_expense(
     request: Request,
@@ -43,12 +47,12 @@ async def create_expense(
         session.add(expense)
         try:
             await session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             await session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Failed to create expense",
-            )
+            ) from exc
         return DealExpenseRead.model_validate(expense)
 
 
@@ -86,7 +90,11 @@ async def update_expense(
     """Update an expense."""
     async with session_factory() as session:
         expense = await session.get(DealExpense, expense_id)
-        if expense is None or expense.user_id != telegram_user.user_id or expense.lead_id != lead_id:
+        if (
+            expense is None
+            or expense.user_id != telegram_user.user_id
+            or expense.lead_id != lead_id
+        ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
 
         if payload.expense_type is not None:
@@ -115,7 +123,11 @@ async def delete_expense(
     """Delete an expense."""
     async with session_factory() as session:
         expense = await session.get(DealExpense, expense_id)
-        if expense is None or expense.user_id != telegram_user.user_id or expense.lead_id != lead_id:
+        if (
+            expense is None
+            or expense.user_id != telegram_user.user_id
+            or expense.lead_id != lead_id
+        ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
 
         await session.delete(expense)
