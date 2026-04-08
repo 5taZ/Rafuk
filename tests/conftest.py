@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -8,8 +7,16 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import os
+
     monkeypatch.setenv("BOT_TOKEN", "7123456789:AAFtesttoken")
-    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+
+    # Use TEST_DATABASE_URL if set (CI uses PostgreSQL), otherwise SQLite for local dev
+    db_url = os.environ.get("TEST_DATABASE_URL")
+    if db_url is None:
+        db_url = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("API_BASE_URL", "https://kufar-analytics.example.com")
     monkeypatch.setenv("MINI_APP_URL", "https://kufar-analytics.example.com/app")
