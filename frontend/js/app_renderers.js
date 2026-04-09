@@ -907,6 +907,7 @@ function createAppRenderers(context) {
 
     function renderLeads() {
         elements.leadInboxList.innerHTML = "";
+        renderDealsHeroStats();
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
             note.className = "tracker-empty";

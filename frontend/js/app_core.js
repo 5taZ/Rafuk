@@ -146,7 +146,6 @@ function createAppCore() {
         elements.leadFilterButtons = Array.from(document.querySelectorAll("[data-lead-filter]"));
         elements.leadInboxList = document.getElementById("lead-inbox-list");
         elements.clearAllLeadsButton = document.getElementById("clear-all-leads-btn");
-        elements.refreshLeadsButton = document.getElementById("refresh-leads-btn");
         elements.watchlistSection = document.getElementById("watchlist-section");
         elements.deleteAllWatchlistButton = document.getElementById("delete-all-watchlist-btn");
         elements.watchlistNote = document.getElementById("watchlist-note");
@@ -194,7 +193,6 @@ function createAppCore() {
         elements.profitDashboardSection = document.getElementById("profit-dashboard-section");
         elements.profitCards = document.getElementById("profit-cards");
         elements.profitChartBox = document.getElementById("profit-chart-box");
-        elements.reloadProfitButton = document.getElementById("reload-profit-btn");
         elements.pipelineStepper = document.getElementById("pipeline-stepper");
         elements.exportLeadsButton = document.getElementById("export-leads-btn");
         elements.toastContainer = document.getElementById("toast-container");

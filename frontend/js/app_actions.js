@@ -436,6 +436,7 @@ function createAppActions(context) {
         if (!hasTelegramInitData()) {
             state.leads = [];
             renderLeads();
+            renderDealsHeroStats();
             return;
         }
         try {
@@ -444,6 +445,7 @@ function createAppActions(context) {
             state.leads = [];
         } finally {
             renderLeads();
+            renderDealsHeroStats();
         }
     }
 
@@ -457,7 +459,6 @@ function createAppActions(context) {
             showToast(`Удалено ${state.leads.length} сделок`);
             state.leads = [];
             renderLeads();
-            renderDealsHeroStats();
         } catch (error) {
             showToast(error.message || "Не удалось очистить");
         }
@@ -1443,13 +1444,6 @@ function createAppActions(context) {
         // ===== CSV Export =====
         elements.exportLeadsButton?.addEventListener("click", () => {
             void actions.exportLeadsCSV();
-        });
-
-        // ===== Profit Dashboard =====
-        elements.reloadProfitButton?.addEventListener("click", () => {
-            void loadLeads();
-            renderProfitDashboard();
-            renderPipelineStepper();
         });
     }
 
