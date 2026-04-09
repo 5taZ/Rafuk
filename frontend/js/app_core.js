@@ -54,6 +54,7 @@ function createAppCore() {
             comparison: false,
             segments: false,
             geography: false,
+            historyDeals: false,
         },
     };
 
@@ -192,6 +193,9 @@ function createAppCore() {
         elements.profitCards = document.getElementById("profit-cards");
         elements.profitChartBox = document.getElementById("profit-chart-box");
         elements.exportLeadsButton = document.getElementById("export-leads-btn");
+        elements.historyDealsSection = document.getElementById("history-deals-section");
+        elements.historyDealsCount = document.getElementById("history-deals-count");
+        elements.historyDealsList = document.getElementById("history-deals-list");
         elements.toastContainer = document.getElementById("toast-container");
         elements.currencyButtons = {
             BYN: document.getElementById("btn-byn"),
@@ -204,6 +208,7 @@ function createAppCore() {
             comparison: document.getElementById("comparison-body"),
             segments: document.getElementById("segments-body"),
             geography: document.getElementById("geography-body"),
+            historyDeals: document.getElementById("history-deals-body"),
         };
     }
 

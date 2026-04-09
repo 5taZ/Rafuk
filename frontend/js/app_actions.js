@@ -769,6 +769,17 @@ function createAppActions(context) {
         }
     }
 
+    async function deleteHistoryDeal(leadId) {
+        try {
+            await deleteJson(`/api/v1/leads/${leadId}`);
+            showToast("✓ Сделка удалена из истории");
+            await loadLeads();
+        } catch (error) {
+            console.error("Failed to delete history deal:", error);
+            showToast(error.message || "Не удалось удалить сделку");
+        }
+    }
+
     async function revertLeadStage(leadId, currentStatus) {
         try {
             // Always revert to "new" stage, clearing all prices
@@ -1673,6 +1684,7 @@ function createAppActions(context) {
         confirmLead,
         cancelLead,
         closeDeal,
+        deleteHistoryDeal,
         revertLeadStage,
         markLeadAsSold,
         openLeadDetail,

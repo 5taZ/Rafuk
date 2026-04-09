@@ -3863,6 +3863,120 @@ body {
     color: #111;
 }
 
+/* ===== History Deals Section ===== */
+.history-deals-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.history-deal-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    transition: all 0.12s;
+    opacity: 0.85;
+}
+
+.history-deal-card:hover {
+    opacity: 1;
+    border-color: var(--border-hover);
+}
+
+.history-deal-thumb,
+.history-deal-thumb-placeholder {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--r-md);
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.history-deal-thumb-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-elevated);
+    font-size: 20px;
+}
+
+.history-deal-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.history-deal-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.history-deal-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.history-deal-price {
+    font-family: var(--font-mono);
+    font-weight: 600;
+}
+
+.history-deal-date {
+    flex-shrink: 0;
+}
+
+.history-deal-profit {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 13px;
+    flex-shrink: 0;
+    min-width: 70px;
+    text-align: right;
+}
+
+.history-profit-positive {
+    color: var(--green);
+}
+
+.history-profit-negative {
+    color: var(--red);
+}
+
+.history-deal-delete {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--r-sm);
+    transition: all 0.12s;
+    flex-shrink: 0;
+}
+
+.history-deal-delete:hover {
+    color: var(--red);
+    background: var(--red-soft);
+}
+
+.history-deal-delete:active {
+    transform: scale(0.95);
+}
+
 /* Responsive adjustments for card layouts */
 @media (max-width: 380px) {
     .watchlist-thumb,

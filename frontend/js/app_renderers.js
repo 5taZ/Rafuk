@@ -906,6 +906,7 @@ function createAppRenderers(context) {
         elements.leadInboxList.innerHTML = "";
         renderDealsHeroStats();
         renderProfitDashboard();
+        renderHistoryDeals();
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
@@ -913,6 +914,11 @@ function createAppRenderers(context) {
             elements.leadInboxList.appendChild(note);
             return;
         }
+
+        // Currency conversion setup (same pattern as watchlist)
+        const rate = state.usdRateByn || 1;
+        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
+
         const filteredLeads = [...state.leads]
             .filter((l) => l.status !== "closed") // Hide closed deals from the list
             .sort((left, right) => {
@@ -936,18 +942,24 @@ function createAppRenderers(context) {
             card.className = `lead-card status-${lead.status}`;
             card.dataset.leadId = lead.id;
 
-            const priceByn = lead.price_byn ? Math.round(lead.price_byn) : null;
-            const buyPrice = lead.buy_price_byn ? Math.round(lead.buy_price_byn) : null;
-            const soldPrice = lead.sold_price_byn ? Math.round(lead.sold_price_byn) : null;
+            const priceBynRaw = lead.price_byn ? Number(lead.price_byn) : null;
+            const buyPriceBynRaw = lead.buy_price_byn ? Number(lead.buy_price_byn) : null;
+            const soldPriceBynRaw = lead.sold_price_byn ? Number(lead.sold_price_byn) : null;
+
+            // Convert prices for display
+            const priceByn = priceBynRaw ? (state.currency === "USD" ? Math.round(priceBynRaw / rate) : Math.round(priceBynRaw)) : null;
+            const buyPrice = buyPriceBynRaw ? (state.currency === "USD" ? Math.round(buyPriceBynRaw / rate) : Math.round(buyPriceBynRaw)) : null;
+            const soldPrice = soldPriceBynRaw ? (state.currency === "USD" ? Math.round(soldPriceBynRaw / rate) : Math.round(soldPriceBynRaw)) : null;
 
             let profitMarkup = "";
-            if (isSold && soldPrice && buyPrice) {
-                const profit = soldPrice - buyPrice;
-                const profitPercent = buyPrice > 0 ? ((profit / buyPrice) * 100).toFixed(0) : "0";
+            if (isSold && soldPriceBynRaw && buyPriceBynRaw) {
+                const profitRaw = soldPriceBynRaw - buyPriceBynRaw;
+                const profit = state.currency === "USD" ? profitRaw / rate : profitRaw;
+                const profitPercent = buyPriceBynRaw > 0 ? ((profitRaw / buyPriceBynRaw) * 100).toFixed(0) : "0";
                 const profitSign = profit >= 0 ? "+" : "";
                 const profitClass = profit >= 0 ? "profit-positive" : "profit-negative";
                 const profitLabel = profit >= 0 ? "Потенциальная прибыль" : "Потенциальный убыток";
-                profitMarkup = `<div class="lead-financial-item ${profitClass}">${profitLabel}: <span class="mono">${profitSign}${profit} BYN (${profitSign}${profitPercent}%)</span></div>`;
+                profitMarkup = `<div class="lead-financial-item ${profitClass}">${profitLabel}: <span class="mono">${profitSign}${Math.round(profit)} ${currencySymbol} (${profitSign}${profitPercent}%)</span></div>`;
             }
 
             const thumbMarkup = lead.thumbnail
@@ -972,7 +984,7 @@ function createAppRenderers(context) {
                         <div class="lead-card-title-row">
                             <strong class="lead-card-title">${escapeHtml(lead.title)}</strong>
                         </div>
-                        <span class="lead-card-price mono">${priceByn ? `${priceByn} BYN` : "без цены"}</span>
+                        <span class="lead-card-price mono">${priceByn ? `${priceByn} ${currencySymbol}` : "без цены"}</span>
                         ${missingBadge}
                         ${profitMarkup}
                     </div>
@@ -985,14 +997,14 @@ function createAppRenderers(context) {
                         </div>
                         <div class="lead-field-wrap">
                             <input data-role="buy-price" type="text" min="0" placeholder="цена покупки">
-                            <span class="unit">BYN</span>
+                            <span class="unit">${currencySymbol}</span>
                         </div>
                     </label>
                     <label class="lead-field">
                         <span class="lead-field-label">Продал за</span>
                         <div class="lead-field-wrap">
                             <input data-role="sold-price" type="text" min="0" placeholder="цена продажи">
-                            <span class="unit">BYN</span>
+                            <span class="unit">${currencySymbol}</span>
                         </div>
                     </label>
                 </div>
@@ -1814,6 +1826,10 @@ function createAppRenderers(context) {
 
         elements.profitDashboardSection.hidden = false;
 
+        // Currency conversion setup
+        const rate = state.usdRateByn || 1;
+        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
+
         // Only count CLOSED deals in finances - not bought or sold
         const closedLeads = state.leads.filter(
             (l) => l.status === "closed" && l.buy_price_byn && l.sold_price_byn
@@ -1827,21 +1843,24 @@ function createAppRenderers(context) {
             totalSoldRevenue += Number(l.sold_price_byn || 0);
         });
 
-        const totalProfit = totalSoldRevenue - totalInvested;
-        const roi = totalInvested > 0 ? ((totalProfit / totalInvested) * 100).toFixed(1) : "0";
+        // Convert totals for display
+        const displayInvested = state.currency === "USD" ? totalInvested / rate : totalInvested;
+        const displaySoldRevenue = state.currency === "USD" ? totalSoldRevenue / rate : totalSoldRevenue;
+        const displayProfit = displaySoldRevenue - displayInvested;
+        const roi = totalInvested > 0 ? (((totalSoldRevenue - totalInvested) / totalInvested) * 100).toFixed(1) : "0";
 
         const cards = [
             {
                 label: "Вложено",
-                value: `${Math.round(totalInvested)} BYN`,
+                value: `${Math.round(displayInvested)} ${currencySymbol}`,
                 sub: `${closedLeads.length} закрытых сделок`,
                 className: "",
             },
             {
                 label: "Прибыль",
-                value: `${totalProfit >= 0 ? "+" : ""}${Math.round(totalProfit)} BYN`,
+                value: `${displayProfit >= 0 ? "+" : ""}${Math.round(displayProfit)} ${currencySymbol}`,
                 sub: `${closedLeads.length} закрытых`,
-                className: totalProfit >= 0 ? "is-accent" : "is-warning",
+                className: displayProfit >= 0 ? "is-accent" : "is-warning",
             },
             {
                 label: "ROI",
@@ -1864,6 +1883,81 @@ function createAppRenderers(context) {
 
     }
 
+    /* ===== History Deals ===== */
+    function renderHistoryDeals() {
+        if (!elements.historyDealsList) return;
+        elements.historyDealsList.innerHTML = "";
+
+        // Currency conversion setup
+        const rate = state.usdRateByn || 1;
+        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
+
+        // Get only closed deals
+        const closedLeads = state.leads.filter((l) => l.status === "closed");
+
+        // Update count badge
+        if (elements.historyDealsCount) {
+            elements.historyDealsCount.textContent = String(closedLeads.length);
+        }
+
+        if (!closedLeads.length) {
+            const note = document.createElement("p");
+            note.className = "tracker-empty";
+            note.textContent = "Закрытых сделок пока нет. Завершите текущие сделки, чтобы они появились здесь.";
+            elements.historyDealsList.appendChild(note);
+            return;
+        }
+
+        // Sort by most recent first
+        const sortedLeads = [...closedLeads].sort((a, b) => {
+            return String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
+        });
+
+        for (const lead of sortedLeads) {
+            const card = document.createElement("div");
+            card.className = "history-deal-card";
+            card.dataset.leadId = lead.id;
+
+            const buyPriceBynRaw = lead.buy_price_byn ? Number(lead.buy_price_byn) : null;
+            const soldPriceBynRaw = lead.sold_price_byn ? Number(lead.sold_price_byn) : null;
+            
+            // Convert prices for display
+            const buyPrice = buyPriceBynRaw ? (state.currency === "USD" ? Math.round(buyPriceBynRaw / rate) : Math.round(buyPriceBynRaw)) : "?";
+            const soldPrice = soldPriceBynRaw ? (state.currency === "USD" ? Math.round(soldPriceBynRaw / rate) : Math.round(soldPriceBynRaw)) : "?";
+            const profitRaw = soldPriceBynRaw && buyPriceBynRaw ? soldPriceBynRaw - buyPriceBynRaw : null;
+            const profit = profitRaw !== null ? (state.currency === "USD" ? profitRaw / rate : profitRaw) : null;
+            const profitSign = profit && profit >= 0 ? "+" : "";
+            const profitClass = profit && profit >= 0 ? "history-profit-positive" : "history-profit-negative";
+
+            const dateStr = lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("ru-RU") : "";
+
+            const thumbMarkup = lead.thumbnail
+                ? `<img class="history-deal-thumb" src="${escapeHtml(lead.thumbnail)}" alt="" loading="lazy">`
+                : `<div class="history-deal-thumb-placeholder">📦</div>`;
+
+            card.innerHTML = `
+                ${thumbMarkup}
+                <div class="history-deal-info">
+                    <strong class="history-deal-title">${escapeHtml(lead.title)}</strong>
+                    <div class="history-deal-meta">
+                        <span class="history-deal-price">${buyPrice} → ${soldPrice} ${currencySymbol}</span>
+                        <span class="history-deal-date">${dateStr}</span>
+                    </div>
+                </div>
+                <div class="history-deal-profit ${profitClass}">
+                    ${profit !== null ? `${profitSign}${Math.round(profit)} ${currencySymbol}` : "—"}
+                </div>
+                <button class="history-deal-delete" data-role="delete-history-deal" type="button" aria-label="Удалить из истории">✕</button>
+            `;
+
+            card.querySelector('[data-role="delete-history-deal"]')?.addEventListener("click", () => {
+                void actions.deleteHistoryDeal(lead.id);
+            });
+
+            elements.historyDealsList.appendChild(card);
+        }
+    }
+
     /* ===== Expenses Modal ===== */
     function renderExpensesModal() {
         if (!elements.expensesModal) return;
@@ -1877,10 +1971,15 @@ function createAppRenderers(context) {
             return;
         }
 
+        // Currency conversion setup
+        const rate = state.usdRateByn || 1;
+        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
+
         let totalExpenses = 0;
         for (const expense of state.expenses) {
             const amount = Number(expense.amount_byn || 0);
             totalExpenses += amount;
+            const displayAmount = state.currency === "USD" ? Math.round(amount / rate) : Math.round(amount);
             const row = document.createElement("div");
             row.className = "expense-row";
             const typeLabels = { delivery: "🚚 Доставка", repair: "🔧 Ремонт", other: "📦 Другое" };
@@ -1889,7 +1988,7 @@ function createAppRenderers(context) {
                     <span class="expense-type">${typeLabels[expense.expense_type] || expense.expense_type}</span>
                     <span class="expense-meta">${expense.notes || ""}</span>
                 </div>
-                <span class="expense-amount mono">-${Math.round(amount)} BYN</span>
+                <span class="expense-amount mono">-${displayAmount} ${currencySymbol}</span>
                 <button class="expense-delete-btn" data-expense-id="${expense.id}" type="button" aria-label="Удалить расход">✕</button>
             `;
             row.querySelector('[data-expense-id]')?.addEventListener("click", () => {
@@ -1899,11 +1998,12 @@ function createAppRenderers(context) {
         }
 
         // Show total
+        const displayTotal = state.currency === "USD" ? Math.round(totalExpenses / rate) : Math.round(totalExpenses);
         const totalRow = document.createElement("div");
         totalRow.className = "expense-total";
         totalRow.innerHTML = `
             <span class="expense-total-label">Итого расходов</span>
-            <span class="expense-total-value mono">-${Math.round(totalExpenses)} BYN</span>
+            <span class="expense-total-value mono">-${displayTotal} ${currencySymbol}</span>
         `;
         elements.expensesList.prepend(totalRow);
     }
@@ -2005,6 +2105,7 @@ function createAppRenderers(context) {
         renderTrackers,
         renderTrackerEvents,
         renderLeads,
+        renderHistoryDeals,
         renderWatchlist,
         renderProfitDashboard,
         renderExpensesModal,
