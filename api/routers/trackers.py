@@ -13,6 +13,7 @@ from api.middleware.telegram_auth import TelegramInitData
 from api.models import Tracker, TrackerEvent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead
 from api.services.reseller_tools import default_config_keyword
+from api.services.workflow_store import ensure_user, resolve_user_id
 
 router = APIRouter(tags=["trackers"])
 
@@ -25,9 +26,12 @@ async def get_tracker_events(
 ) -> list[TrackerEventRead]:
     bounded_limit = max(1, min(limit, 50))
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is None:
+            return []
         result = await session.execute(
             select(TrackerEvent)
-            .where(TrackerEvent.user_id == telegram_user.user_id)
+            .where(TrackerEvent.user_id == user_id)
             .order_by(TrackerEvent.created_at.desc(), TrackerEvent.id.desc())
             .limit(bounded_limit)
         )
@@ -42,10 +46,12 @@ async def clear_tracker_events(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     async with session_factory() as session:
-        await session.execute(
-            delete(TrackerEvent).where(TrackerEvent.user_id == telegram_user.user_id)
-        )
-        await session.commit()
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is not None:
+            await session.execute(
+                delete(TrackerEvent).where(TrackerEvent.user_id == user_id)
+            )
+            await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -55,9 +61,12 @@ async def get_trackers(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[TrackerRead]:
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is None:
+            return []
         result = await session.execute(
             select(Tracker)
-            .where(Tracker.user_id == telegram_user.user_id, Tracker.active.is_(True))
+            .where(Tracker.user_id == user_id, Tracker.active.is_(True))
             .order_by(Tracker.created_at.desc(), Tracker.id.desc())
         )
         return list(result.scalars())
@@ -79,8 +88,13 @@ async def create_tracker(
         )
 
     async with session_factory() as session:
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=telegram_user.user_id,
+            first_name=telegram_user.first_name,
+        )
         tracker = Tracker(
-            user_id=telegram_user.user_id,
+            user_id=user_id,
             query=query,
             strict_mode=payload.strict_mode,
             interval_min=payload.interval_min,
@@ -113,10 +127,11 @@ async def delete_tracker(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         result = await session.execute(
             select(Tracker).where(
                 Tracker.id == tracker_id,
-                Tracker.user_id == telegram_user.user_id,
+                Tracker.user_id == user_id,
                 Tracker.active.is_(True),
             )
         )

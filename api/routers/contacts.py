@@ -10,6 +10,7 @@ from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import Contact
 from api.schemas import ContactCreate, ContactRead
+from api.services.workflow_store import ensure_user, resolve_user_id
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -42,19 +43,24 @@ async def create_contact(
         raise HTTPException(status_code=400, detail="Phone or name is required")
 
     async with session_factory() as session:
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=telegram_user.user_id,
+            first_name=telegram_user.first_name,
+        )
         # Try to find an existing contact by phone (if provided) or by name
         existing = None
         if payload.phone:
             existing = await session.scalar(
                 select(Contact).where(
-                    Contact.user_id == telegram_user.user_id,
+                    Contact.user_id == user_id,
                     Contact.phone == payload.phone,
                 )
             )
         if existing is None and payload.seller_name:
             existing = await session.scalar(
                 select(Contact).where(
-                    Contact.user_id == telegram_user.user_id,
+                    Contact.user_id == user_id,
                     Contact.seller_name == payload.seller_name,
                 )
             )
@@ -75,7 +81,7 @@ async def create_contact(
             )
 
         contact = Contact(
-            user_id=telegram_user.user_id,
+            user_id=user_id,
             phone=payload.phone,
             seller_name=payload.seller_name,
             kufar_profile=payload.kufar_profile,
@@ -110,9 +116,12 @@ async def list_contacts(
 ) -> list[ContactRead]:
     """Return all contacts scoped to the authenticated user."""
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user.user_id)
+        if user_id is None:
+            return []
         result = await session.execute(
             select(Contact)
-            .where(Contact.user_id == telegram_user.user_id)
+            .where(Contact.user_id == user_id)
             .order_by(Contact.saved_at.desc(), Contact.id.desc())
         )
         return [ContactRead.model_validate(item) for item in result.scalars()]
@@ -144,10 +153,16 @@ async def delete_contact(
     to the current user.
     """
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user.user_id)
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Contact not found",
+            )
         contact = await session.scalar(
             select(Contact).where(
                 Contact.id == contact_id,
-                Contact.user_id == telegram_user.user_id,
+                Contact.user_id == user_id,
             )
         )
         if contact is None:

@@ -305,6 +305,8 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     link: Mapped[str] = mapped_column(String(512), nullable=False)
     price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    buy_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    sold_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     target_resale_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(
         String(32),
@@ -318,9 +320,7 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         default="manual",
         server_default="manual",
     )
-    notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
     thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    sold_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     market_status: Mapped[str] = mapped_column(
         String(32),

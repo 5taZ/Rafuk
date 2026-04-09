@@ -3593,6 +3593,43 @@ body {
     letter-spacing: 0.08em;
 }
 
+.lead-field-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.lead-field-chip {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--accent);
+    border-radius: var(--r-sm);
+    padding: 2px 6px;
+    font: 600 9px var(--font-mono);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.12s;
+    line-height: 1.4;
+}
+
+.lead-field-chip:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    transform: scale(1.02);
+}
+
+.lead-field-chip:active {
+    transform: scale(0.98);
+}
+
+.lead-field-chip:disabled {
+    cursor: default;
+    opacity: 0.4;
+    pointer-events: none;
+}
+
 .lead-field-wrap {
     display: flex;
     align-items: center;
@@ -3640,8 +3677,13 @@ body {
 
 .lead-card-actions {
     display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lead-btn-row {
+    display: flex;
+    gap: 8px;
 }
 
 .lead-card-actions .lead-btn {
@@ -3711,6 +3753,82 @@ body {
 .lead-btn--danger:hover {
     background: var(--red-soft);
     border-color: rgba(251, 113, 133, 0.25);
+}
+
+/* Stage 1: New lead buttons */
+.lead-btn--kufar {
+    color: var(--text-muted);
+    border-color: var(--border);
+    background: transparent;
+}
+
+.lead-btn--kufar:hover {
+    border-color: var(--border-hover);
+    color: var(--text);
+    background: var(--bg-elevated);
+}
+
+.lead-btn--confirm {
+    color: var(--green);
+    border-color: var(--green);
+    background: transparent;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.lead-btn--confirm:hover {
+    background: var(--green);
+    color: #0d0d0f;
+}
+
+.lead-btn--delete {
+    color: var(--red);
+    border-color: var(--red);
+    background: transparent;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.lead-btn--delete:hover {
+    background: var(--red-soft);
+    border-color: var(--red);
+}
+
+/* Stage 2-3: Bought/Sold lead buttons */
+.lead-btn--close-deal {
+    color: #0d0d0f;
+    background: var(--green);
+    border-color: var(--green);
+    font-weight: 700;
+}
+
+.lead-btn--close-deal:hover {
+    background: #22c55e;
+    border-color: #22c55e;
+}
+
+.lead-btn--sold {
+    color: #0d0d0f;
+    background: var(--green);
+    border-color: var(--green);
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.lead-btn--sold:hover {
+    background: #22c55e;
+    border-color: #22c55e;
+}
+
+.lead-btn--revert {
+    color: var(--red);
+    border-color: var(--red);
+    background: transparent;
+}
+
+.lead-btn--revert:hover {
+    background: var(--red-soft);
+    border-color: var(--red);
 }
 
 .lead-field-readonly {

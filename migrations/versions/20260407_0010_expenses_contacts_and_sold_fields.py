@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy import BigInteger, DateTime, Float, Integer, String, Text, Numeric
+from sqlalchemy import BigInteger, DateTime, Integer, Numeric, String
 
 revision = "20260407_0010"
 down_revision = "20260407_0009"
@@ -25,13 +25,13 @@ def upgrade() -> None:
     # Step 1: Add sold fields to lead_items
     if "lead_items" in tables:
         columns = {col["name"] for col in inspector.get_columns("lead_items")}
-        
+
         if "sold_price_byn" not in columns:
             op.add_column(
                 "lead_items",
                 sa.Column("sold_price_byn", Numeric(10, 2), nullable=True),
             )
-        
+
         if "sold_at" not in columns:
             op.add_column(
                 "lead_items",
@@ -88,9 +88,9 @@ def downgrade() -> None:
     # Drop sold fields from lead_items
     if "lead_items" in tables:
         columns = {col["name"] for col in inspector.get_columns("lead_items")}
-        
+
         if "sold_at" in columns:
             op.drop_column("lead_items", "sold_at")
-        
+
         if "sold_price_byn" in columns:
             op.drop_column("lead_items", "sold_price_byn")

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy import BigInteger, DateTime, Integer, String
+from sqlalchemy import String
 
 revision = "20260408_0013"
 down_revision = "20260408_0012"

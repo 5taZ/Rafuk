@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import DealExpense, LeadItem
+from api.services.workflow_store import resolve_user_id
 
 router = APIRouter(tags=["export"])
 
@@ -22,9 +23,28 @@ async def export_leads_csv(
 ) -> Response:
     """Export leads to CSV file."""
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user.user_id)
+        if user_id is None:
+            # Return empty CSV with headers only
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow([
+                "id", "query", "title", "link", "price_byn", "target_resale_byn",
+                "status", "source", "notes", "sold_price_byn", "sold_at",
+                "total_expenses", "actual_profit", "roi_percent", "created_at", "updated_at"
+            ])
+            csv_content = output.getvalue()
+            output.close()
+            return Response(
+                content=csv_content,
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": 'attachment; filename="leads_export.csv"',
+                },
+            )
         result = await session.execute(
             select(LeadItem)
-            .where(LeadItem.user_id == telegram_user.user_id)
+            .where(LeadItem.user_id == user_id)
             .order_by(LeadItem.created_at.desc())
         )
         leads = list(result.scalars())

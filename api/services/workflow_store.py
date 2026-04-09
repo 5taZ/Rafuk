@@ -5,7 +5,41 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models import LeadItem, WatchlistItem
+from api.models import LeadItem, User, WatchlistItem
+
+
+async def ensure_user(
+    session: AsyncSession,
+    *,
+    telegram_user_id: int,
+    first_name: str = "",
+    username: str | None = None,
+) -> int:
+    """Return the ``users.id`` for a Telegram user, creating the row if missing.
+
+    Returns the internal auto-increment ``users.id``, **not** the Telegram user ID.
+    """
+    existing = await session.scalar(
+        select(User).where(User.telegram_user_id == telegram_user_id)
+    )
+    if existing is not None:
+        return existing.id
+    user = User(
+        telegram_user_id=telegram_user_id,
+        first_name=first_name,
+        username=username,
+    )
+    session.add(user)
+    await session.flush()
+    return user.id
+
+
+async def resolve_user_id(session: AsyncSession, telegram_user_id: int) -> int | None:
+    """Return ``users.id`` for a Telegram user, or ``None`` if not found."""
+    row = await session.scalar(
+        select(User.id).where(User.telegram_user_id == telegram_user_id)
+    )
+    return row
 
 
 async def upsert_lead(
@@ -21,7 +55,6 @@ async def upsert_lead(
     target_resale_byn: float | None = None,
     status: str = "new",
     source: str = "manual",
-    notes: str | None = None,
 ) -> LeadItem:
     existing = await session.scalar(
         select(LeadItem).where(LeadItem.user_id == user_id, LeadItem.ad_id == ad_id)
@@ -38,7 +71,6 @@ async def upsert_lead(
             target_resale_byn=target_resale_byn,
             status=status,
             source=source,
-            notes=notes,
         )
         session.add(existing)
         return existing
@@ -50,8 +82,6 @@ async def upsert_lead(
     existing.thumbnail = thumbnail or existing.thumbnail
     if target_resale_byn is not None:
         existing.target_resale_byn = target_resale_byn
-    if notes is not None:
-        existing.notes = notes
     existing.status = status or existing.status
     existing.source = source or existing.source
     return existing

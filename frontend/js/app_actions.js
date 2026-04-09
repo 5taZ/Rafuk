@@ -29,7 +29,6 @@ function createAppActions(context) {
         openExpensesModal,
         closeExpensesModal,
         renderProfitDashboard,
-        renderPipelineStepper,
         renderVelocity,
         renderDetailRisks,
         renderMonitoringHeroStats,
@@ -437,6 +436,7 @@ function createAppActions(context) {
             state.leads = [];
             renderLeads();
             renderDealsHeroStats();
+            renderProfitDashboard();
             return;
         }
         try {
@@ -446,21 +446,49 @@ function createAppActions(context) {
         } finally {
             renderLeads();
             renderDealsHeroStats();
+            renderProfitDashboard();
         }
     }
 
     async function clearAllLeads() {
-        if (!state.leads.length) {
-            showToast("Список уже пуст");
+        // Count only active leads (not closed)
+        const activeLeads = state.leads.filter((l) => l.status !== "closed");
+        if (!activeLeads.length) {
+            showToast("Нет активных сделок для удаления");
             return;
         }
         try {
             await deleteJson("/api/v1/leads/all");
-            showToast(`Удалено ${state.leads.length} сделок`);
-            state.leads = [];
-            renderLeads();
+            const count = activeLeads.length;
+            // Reload leads to get the updated list (closed deals remain)
+            await loadLeads();
+            renderDealsHeroStats();
+            showToast(`Удалено ${count} сделок`);
         } catch (error) {
-            showToast(error.message || "Не удалось очистить");
+            console.error("Failed to clear leads:", error);
+            showToast(error.message || "Не удалось очистить список");
+            // Reload to ensure UI is in sync
+            await loadLeads();
+        }
+    }
+
+    async function clearAllWatchlist() {
+        if (!state.watchlist.length) {
+            showToast("Список уже пуст");
+            return;
+        }
+        try {
+            await deleteJson("/api/v1/watchlist/all");
+            const count = state.watchlist.length;
+            state.watchlist = [];
+            await loadWatchlist();
+            renderMonitoringHeroStats();
+            showToast(`Удалено ${count} лотов`);
+        } catch (error) {
+            console.error("Failed to clear watchlist:", error);
+            showToast(error.message || "Не удалось очистить список");
+            // Reload to ensure UI is in sync
+            await loadWatchlist();
         }
     }
 
@@ -597,9 +625,15 @@ function createAppActions(context) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
+            // Always reload leads to ensure UI consistency
             await loadLeads();
+            return true;
         } catch (error) {
-            showToast(error.message || "Не удалось обновить");
+            console.error("Failed to update lead:", error);
+            showToast(error.message || "Не удалось обновить сделку");
+            // Still reload leads to ensure UI consistency even on error
+            await loadLeads();
+            return false;
         }
     }
 
@@ -613,18 +647,164 @@ function createAppActions(context) {
         }
     }
 
-    async function markLeadAsBought(lead) {
-        await updateLeadMeta(lead.id, { status: "bought" });
-        showToast("Сделка отмечена как купленная");
+    async function confirmLead(lead, cardElement) {
+        const buyPriceInput = cardElement.querySelector('[data-role="buy-price"]');
+        const soldPriceInput = cardElement.querySelector('[data-role="sold-price"]');
+
+        const buyPriceRaw = buyPriceInput?.value?.trim();
+        const soldPriceRaw = soldPriceInput?.value?.trim();
+
+        // Validation: both prices must be filled
+        if (!buyPriceRaw || !soldPriceRaw) {
+            showToast("Заполните оба поля: цена покупки и цена продажи");
+            if (!buyPriceRaw) {
+                buyPriceInput?.focus();
+            } else {
+                soldPriceInput?.focus();
+            }
+            return;
+        }
+
+        // Validate: must be positive integers only (no decimals, no text)
+        const buyPriceNum = parseInt(buyPriceRaw, 10);
+        const soldPriceNum = parseInt(soldPriceRaw, 10);
+
+        if (!Number.isInteger(buyPriceNum) || buyPriceNum <= 0) {
+            showToast("Введите целую цену покупки больше 0");
+            buyPriceInput?.focus();
+            return;
+        }
+
+        if (!Number.isInteger(soldPriceNum) || soldPriceNum <= 0) {
+            showToast("Введите целую цену продажи больше 0");
+            soldPriceInput?.focus();
+            return;
+        }
+
+        try {
+            const payload = {
+                buy_price_byn: buyPriceNum,
+                sold_price_byn: soldPriceNum,
+                status: "sold",
+            };
+
+            // Update backend
+            await requestJson(`/api/v1/leads/${lead.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+
+            // Update local state
+            const leadInState = state.leads.find((l) => l.id === lead.id);
+            if (leadInState) {
+                leadInState.buy_price_byn = buyPriceNum;
+                leadInState.sold_price_byn = soldPriceNum;
+                leadInState.status = "sold";
+            }
+
+            // Re-render leads
+            renderLeads();
+
+            const profit = soldPriceNum - buyPriceNum;
+            const profitSign = profit >= 0 ? "+" : "";
+            const profitLabel = profit >= 0 ? "потенциальная прибыль" : "потенциальный убыток";
+            showToast(`✓ Сделка подтверждена! ${profitLabel}: ${profitSign}${Math.round(profit)} BYN`);
+
+            // Scroll to the card after re-render (it moved down)
+            setTimeout(() => {
+                const updatedCard = elements.leadInboxList?.querySelector(
+                    `[data-lead-id="${lead.id}"]`
+                );
+                if (updatedCard) {
+                    updatedCard.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
+            }, 100);
+        } catch (error) {
+            console.error("Failed to confirm lead:", error);
+            showToast(error.message || "Не удалось подтвердить сделку");
+        }
     }
 
     async function cancelLead(leadId) {
         try {
             await deleteJson(`/api/v1/leads/${leadId}`);
-            showToast("Сделка отменена");
+            showToast("✓ Сделка отменена");
             await loadLeads();
         } catch (error) {
-            showToast(error.message || "Не удалось отменить");
+            console.error("Failed to cancel lead:", error);
+            showToast(error.message || "Не удалось отменить сделку");
+        }
+    }
+
+    async function closeDeal(leadId) {
+        try {
+            // Find the lead in state to calculate profit
+            const lead = state.leads.find((l) => l.id === leadId);
+            const buyPrice = lead?.buy_price_byn || 0;
+            const soldPrice = lead?.sold_price_byn || 0;
+            const profit = soldPrice - buyPrice;
+
+            // Update status to "closed" - now it will count in finances
+            await requestJson(`/api/v1/leads/${leadId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: "closed" }),
+            });
+
+            // Update local state
+            if (lead) {
+                lead.status = "closed";
+            }
+            renderLeads();
+
+            if (profit >= 0) {
+                showToast(`✓ Сделка закрыта. Прибыль: +${Math.round(profit)} BYN`);
+            } else {
+                showToast(`✓ Сделка закрыта. Убыль: ${Math.round(profit)} BYN`);
+            }
+        } catch (error) {
+            console.error("Failed to close deal:", error);
+            showToast(error.message || "Не удалось закрыть сделку");
+        }
+    }
+
+    async function revertLeadStage(leadId, currentStatus) {
+        try {
+            // Always revert to "new" stage, clearing all prices
+            await requestJson(`/api/v1/leads/${leadId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    status: "new",
+                    buy_price_byn: null,
+                    sold_price_byn: null,
+                }),
+            });
+            
+            // Update local state
+            const leadInState = state.leads.find((l) => l.id === leadId);
+            if (leadInState) {
+                leadInState.status = "new";
+                leadInState.buy_price_byn = null;
+                leadInState.sold_price_byn = null;
+            }
+            renderLeads();
+            
+            showToast("↩ Сделка возвращена на этап «Новая»");
+            
+            // Scroll to the card after re-render (it moved up)
+            setTimeout(() => {
+                const updatedCard = elements.leadInboxList?.querySelector(
+                    `[data-lead-id="${leadId}"]`
+                );
+                if (updatedCard) {
+                    updatedCard.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
+            }, 100);
+        } catch (error) {
+            console.error("Failed to revert lead stage:", error);
+            showToast(error.message || "Не удалось вернуть сделку");
         }
     }
 
@@ -633,13 +813,27 @@ function createAppActions(context) {
             showToast("Введите корректную цену");
             return;
         }
-        await updateLeadMeta(lead.id, {
-            status: "sold",
-            sold_price_byn: priceNum,
+        
+        await requestJson(`/api/v1/leads/${lead.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                status: "sold",
+                sold_price_byn: priceNum,
+            }),
         });
+        
+        // Update local state
+        const leadInState = state.leads.find((l) => l.id === lead.id);
+        if (leadInState) {
+            leadInState.status = "sold";
+            leadInState.sold_price_byn = priceNum;
+        }
+        renderLeads();
+        
         const profit = priceNum - (lead.price_byn || 0);
         const profitSign = profit >= 0 ? "+" : "";
-        showToast(`Сделка продана! Прибыль: ${profitSign}${Math.round(profit)} BYN`);
+        showToast(`✓ Сделка продана! Прибыль: ${profitSign}${Math.round(profit)} BYN`);
     }
 
     async function openLeadDetail(lead) {
@@ -1217,8 +1411,32 @@ function createAppActions(context) {
             })();
         });
 
+        let clearLeadsConfirmed = false;
         elements.clearAllLeadsButton?.addEventListener("click", () => {
-            void clearAllLeads();
+            void (async () => {
+                const activeLeads = state.leads.filter((l) => l.status !== "closed");
+                if (activeLeads.length === 0) {
+                    showToast("Нет активных сделок для удаления");
+                    return;
+                }
+                if (!clearLeadsConfirmed) {
+                    clearLeadsConfirmed = true;
+                    elements.clearAllLeadsButton.textContent = "Удалить все?";
+                    showToast("Нажмите ещё раз для подтверждения");
+                    setTimeout(() => {
+                        clearLeadsConfirmed = false;
+                        if (elements.clearAllLeadsButton) {
+                            elements.clearAllLeadsButton.textContent = "Очистить";
+                        }
+                    }, 3000);
+                    return;
+                }
+                clearLeadsConfirmed = false;
+                if (elements.clearAllLeadsButton) {
+                    elements.clearAllLeadsButton.textContent = "Очистить";
+                }
+                await clearAllLeads();
+            })();
         });
 
         let clearWatchlistConfirmed = false;
@@ -1244,15 +1462,7 @@ function createAppActions(context) {
                 if (elements.deleteAllWatchlistButton) {
                     elements.deleteAllWatchlistButton.textContent = "Очистить";
                 }
-                try {
-                    await deleteJson("/api/v1/watchlist/all");
-                    showToast(`Удалено ${state.watchlist.length} лотов`);
-                    state.watchlist = [];
-                    renderWatchlist();
-                    renderMonitoringHeroStats();
-                } catch (error) {
-                    showToast(error.message || "Не удалось очистить");
-                }
+                await clearAllWatchlist();
             })();
         });
 
@@ -1460,8 +1670,10 @@ function createAppActions(context) {
         loadLeads,
         clearAllLeads,
         deleteLead,
-        markLeadAsBought,
+        confirmLead,
         cancelLead,
+        closeDeal,
+        revertLeadStage,
         markLeadAsSold,
         openLeadDetail,
         loadWatchlist,

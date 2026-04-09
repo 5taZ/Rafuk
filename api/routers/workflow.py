@@ -30,7 +30,7 @@ from api.services.aggregator import normalize_price_byn
 from api.services.kufar_client import KufarClient
 from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
-from api.services.workflow_store import upsert_lead, upsert_watchlist
+from api.services.workflow_store import ensure_user, resolve_user_id, upsert_lead, upsert_watchlist
 
 router = APIRouter(tags=["workflow"])
 
@@ -74,9 +74,12 @@ async def get_leads(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[LeadRead]:
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is None:
+            return []
         result = await session.execute(
             select(LeadItem)
-            .where(LeadItem.user_id == telegram_user.user_id)
+            .where(LeadItem.user_id == user_id)
             .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
         )
         leads = list(result.scalars())
@@ -103,14 +106,22 @@ async def get_leads(
             roi_percent: float | None = None
 
             if lead.sold_price_byn is not None:
+                sold_price = float(lead.sold_price_byn)
                 total_cost = (lead.price_byn or 0.0) + total_expenses
-                actual_profit = round(lead.sold_price_byn - total_cost, 2)
+                actual_profit = round(sold_price - total_cost, 2)
                 if total_cost > 0:
                     roi_percent = round((actual_profit / total_cost) * 100, 2)
 
             lead_dict = lead.__dict__.copy()
             # Remove _sa_instance_state if present
             lead_dict.pop("_sa_instance_state", None)
+            # Convert Decimal fields to float for JSON serialization
+            lead_dict["buy_price_byn"] = (
+                float(lead.buy_price_byn) if lead.buy_price_byn is not None else None
+            )
+            lead_dict["sold_price_byn"] = (
+                float(lead.sold_price_byn) if lead.sold_price_byn is not None else None
+            )
             lead_dict["total_expenses"] = total_expenses
             lead_dict["actual_profit"] = actual_profit
             lead_dict["roi_percent"] = roi_percent
@@ -129,9 +140,14 @@ async def create_lead(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> LeadRead:
     async with session_factory() as session:
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=telegram_user.user_id,
+            first_name=telegram_user.first_name,
+        )
         lead = await upsert_lead(
             session,
-            user_id=telegram_user.user_id,
+            user_id=user_id,
             ad_id=payload.ad_id,
             query=payload.query,
             title=payload.title,
@@ -141,7 +157,6 @@ async def create_lead(
             target_resale_byn=payload.target_resale_byn,
             status=payload.status,
             source=payload.source,
-            notes=payload.notes,
         )
         await session.commit()
         return LeadRead.model_validate(lead)
@@ -157,9 +172,14 @@ async def update_lead(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> LeadRead:
     async with session_factory() as session:
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=telegram_user.user_id,
+            first_name=telegram_user.first_name,
+        )
         lead = await session.scalar(
             select(LeadItem).where(
-                LeadItem.id == lead_id, LeadItem.user_id == telegram_user.user_id
+                LeadItem.id == lead_id, LeadItem.user_id == user_id
             )
         )
         if lead is None:
@@ -168,11 +188,45 @@ async def update_lead(
             lead.status = payload.status
         if "target_resale_byn" in payload.model_fields_set:
             lead.target_resale_byn = payload.target_resale_byn
-        if "notes" in payload.model_fields_set:
-            lead.notes = payload.notes
+        if "buy_price_byn" in payload.model_fields_set:
+            lead.buy_price_byn = payload.buy_price_byn
+        if "sold_price_byn" in payload.model_fields_set:
+            lead.sold_price_byn = payload.sold_price_byn
+            if payload.sold_price_byn is not None and lead.status != "sold":
+                lead.status = "sold"
+                lead.sold_at = datetime.now(UTC)
         await session.commit()
         await session.refresh(lead)  # Refresh to get server-generated updated_at
         return LeadRead.model_validate(lead)
+
+
+@router.delete("/leads/all", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
+async def delete_all_leads(
+    request: Request,
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> Response:
+    async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is not None:
+            # Delete expenses for active leads only (not closed ones)
+            active_lead_ids = select(LeadItem.id).where(
+                LeadItem.user_id == user_id,
+                LeadItem.status != "closed",
+            )
+            await session.execute(
+                delete(DealExpense).where(DealExpense.lead_id.in_(active_lead_ids))
+            )
+            # Delete only active leads (keep closed deals for finance tracking)
+            await session.execute(
+                delete(LeadItem).where(
+                    LeadItem.user_id == user_id,
+                    LeadItem.status != "closed",
+                )
+            )
+        await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/leads/{lead_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -184,29 +238,19 @@ async def delete_lead(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     async with session_factory() as session:
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=telegram_user.user_id,
+            first_name=telegram_user.first_name,
+        )
         lead = await session.scalar(
             select(LeadItem).where(
-                LeadItem.id == lead_id, LeadItem.user_id == telegram_user.user_id
+                LeadItem.id == lead_id, LeadItem.user_id == user_id
             )
         )
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
         await session.delete(lead)
-        await session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.delete("/leads/all", status_code=status.HTTP_204_NO_CONTENT)
-@limiter.limit("10/minute")
-async def delete_all_leads(
-    request: Request,
-    telegram_user: TelegramInitData = Depends(get_telegram_user),
-    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
-) -> Response:
-    async with session_factory() as session:
-        await session.execute(
-            delete(LeadItem).where(LeadItem.user_id == telegram_user.user_id)
-        )
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -217,9 +261,12 @@ async def get_watchlist(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[WatchlistRead]:
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is None:
+            return []
         result = await session.execute(
             select(WatchlistItem)
-            .where(WatchlistItem.user_id == telegram_user.user_id)
+            .where(WatchlistItem.user_id == user_id)
             .order_by(WatchlistItem.updated_at.desc(), WatchlistItem.id.desc())
         )
         return [_serialize_watchlist(item) for item in result.scalars()]
@@ -234,9 +281,14 @@ async def create_watchlist_item(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> WatchlistRead:
     async with session_factory() as session:
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=telegram_user.user_id,
+            first_name=telegram_user.first_name,
+        )
         item = await upsert_watchlist(
             session,
-            user_id=telegram_user.user_id,
+            user_id=user_id,
             ad_id=payload.ad_id,
             query=payload.query,
             title=payload.title,
@@ -260,10 +312,15 @@ async def update_watchlist_item(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> WatchlistRead:
     async with session_factory() as session:
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=telegram_user.user_id,
+            first_name=telegram_user.first_name,
+        )
         item = await session.scalar(
             select(WatchlistItem).where(
                 WatchlistItem.id == watchlist_id,
-                WatchlistItem.user_id == telegram_user.user_id,
+                WatchlistItem.user_id == user_id,
             )
         )
         if item is None:
@@ -288,9 +345,11 @@ async def delete_all_watchlist_items(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     async with session_factory() as session:
-        await session.execute(
-            delete(WatchlistItem).where(WatchlistItem.user_id == telegram_user.user_id)
-        )
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is not None:
+            await session.execute(
+                delete(WatchlistItem).where(WatchlistItem.user_id == user_id)
+            )
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -304,10 +363,15 @@ async def delete_watchlist_item(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     async with session_factory() as session:
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=telegram_user.user_id,
+            first_name=telegram_user.first_name,
+        )
         item = await session.scalar(
             select(WatchlistItem).where(
                 WatchlistItem.id == watchlist_id,
-                WatchlistItem.user_id == telegram_user.user_id,
+                WatchlistItem.user_id == user_id,
             )
         )
         if item is None:
@@ -329,8 +393,11 @@ async def refresh_watchlist(
     settings: Settings = Depends(get_settings_dependency),
 ) -> WatchlistRefreshResponse:
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is None:
+            return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, auto_removed=0)
         result = await session.execute(
-            select(WatchlistItem).where(WatchlistItem.user_id == telegram_user.user_id)
+            select(WatchlistItem).where(WatchlistItem.user_id == user_id)
         )
         items = list(result.scalars())
         if not items:
@@ -414,9 +481,12 @@ async def refresh_leads(
     Marks missing ones but does NOT auto-delete them.
     """
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is None:
+            return LeadsRefreshResponse(checked=0, active=0, missing=0)
         result = await session.execute(
             select(LeadItem).where(
-                LeadItem.user_id == telegram_user.user_id,
+                LeadItem.user_id == user_id,
                 LeadItem.status.notin_(["sold", "skipped"]),
             )
         )

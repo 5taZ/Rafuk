@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text, text
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy import BigInteger, DateTime, Integer, String
 
 revision = "20260407_0009"
 down_revision = "20260407_0008"

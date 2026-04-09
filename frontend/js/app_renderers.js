@@ -216,9 +216,10 @@ function createAppRenderers(context) {
 
     function renderDealsHeroStats() {
         if (!elements.dealsHeroStats) return;
-        const totalLeads = state.leads.length;
+        // Only count non-closed deals (active deals in progress)
+        const activeLeads = state.leads.filter((l) => l.status !== "closed");
         elements.dealsHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${totalLeads}</span> сделок</span>`,
+            `<span class="hero-stat"><span class="hero-stat-val mono">${activeLeads.length}</span> сделок</span>`,
         ].join("");
     }
 
@@ -814,10 +815,6 @@ function createAppRenderers(context) {
         }
     }
 
-    function renderPipelineStepper() {
-        // Removed - no longer used
-    }
-
     function renderTrackerStatus() {
         const message = typeof state.trackerStatus === "string" ? state.trackerStatus.trim() : "";
         if (!message) {
@@ -908,6 +905,7 @@ function createAppRenderers(context) {
     function renderLeads() {
         elements.leadInboxList.innerHTML = "";
         renderDealsHeroStats();
+        renderProfitDashboard();
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
@@ -916,6 +914,7 @@ function createAppRenderers(context) {
             return;
         }
         const filteredLeads = [...state.leads]
+            .filter((l) => l.status !== "closed") // Hide closed deals from the list
             .sort((left, right) => {
                 const rankDelta = leadSortValue(left) - leadSortValue(right);
                 if (rankDelta !== 0) {
@@ -930,24 +929,25 @@ function createAppRenderers(context) {
             elements.leadInboxList.appendChild(note);
             return;
         }
-        const soldCount = state.leads.filter((lead) => lead.status === "sold").length;
-        elements.leadInboxNote.textContent = `${filteredLeads.length} сделок${soldCount ? ` · ${soldCount} продано` : ""}`;
         for (const lead of filteredLeads) {
             const isSold = lead.status === "sold";
             const isMissing = lead.market_status === "missing";
             const card = document.createElement("article");
             card.className = `lead-card status-${lead.status}`;
+            card.dataset.leadId = lead.id;
 
             const priceByn = lead.price_byn ? Math.round(lead.price_byn) : null;
+            const buyPrice = lead.buy_price_byn ? Math.round(lead.buy_price_byn) : null;
             const soldPrice = lead.sold_price_byn ? Math.round(lead.sold_price_byn) : null;
 
             let profitMarkup = "";
-            if (isSold && soldPrice && priceByn) {
-                const profit = soldPrice - priceByn;
-                const profitPercent = priceByn > 0 ? ((profit / priceByn) * 100).toFixed(0) : "0";
+            if (isSold && soldPrice && buyPrice) {
+                const profit = soldPrice - buyPrice;
+                const profitPercent = buyPrice > 0 ? ((profit / buyPrice) * 100).toFixed(0) : "0";
                 const profitSign = profit >= 0 ? "+" : "";
                 const profitClass = profit >= 0 ? "profit-positive" : "profit-negative";
-                profitMarkup = `<div class="lead-financial-item ${profitClass}">Прибыль: <span class="mono">${profitSign}${profit} BYN (${profitSign}${profitPercent}%)</span></div>`;
+                const profitLabel = profit >= 0 ? "Потенциальная прибыль" : "Потенциальный убыток";
+                profitMarkup = `<div class="lead-financial-item ${profitClass}">${profitLabel}: <span class="mono">${profitSign}${profit} BYN (${profitSign}${profitPercent}%)</span></div>`;
             }
 
             const thumbMarkup = lead.thumbnail
@@ -961,6 +961,9 @@ function createAppRenderers(context) {
                 ? `<span class="market-badge missing">Пропало</span>`
                 : "";
 
+            // Stage 1: New lead - show Confirm and Delete buttons, no Kufar
+            // Stage 2: Bought lead - show Close Deal and Revert buttons, Kufar visible
+            // Stage 3: Sold lead - show Close Deal button, Kufar visible
             card.innerHTML = `
                 ${missingBanner}
                 <div class="lead-card-top${isMissing ? " is-missing" : ""}">
@@ -976,67 +979,89 @@ function createAppRenderers(context) {
                 </div>
                 <div class="lead-card-fields">
                     <label class="lead-field">
-                        <span class="lead-field-label">Цена продажи</span>
+                        <div class="lead-field-label-row">
+                            <span class="lead-field-label">Купил за</span>
+                            <button class="lead-field-chip" data-role="fill-buy-price" type="button" ${!priceByn ? 'disabled style="opacity:0.4;pointer-events:none;"' : ''}>📋 ${priceByn ? priceByn : '—'}</button>
+                        </div>
                         <div class="lead-field-wrap">
-                            <input data-role="sold-price" type="number" min="0" step="1" inputmode="numeric" placeholder="цена продажи">
+                            <input data-role="buy-price" type="text" min="0" placeholder="цена покупки">
                             <span class="unit">BYN</span>
                         </div>
                     </label>
-                    <label class="lead-field lead-field-wide">
-                        <span class="lead-field-label">Заметка</span>
+                    <label class="lead-field">
+                        <span class="lead-field-label">Продал за</span>
                         <div class="lead-field-wrap">
-                            <input data-role="notes" type="text" placeholder="позвонил, торг, забрать вечером">
+                            <input data-role="sold-price" type="text" min="0" placeholder="цена продажи">
+                            <span class="unit">BYN</span>
                         </div>
                     </label>
                 </div>
                 <div class="lead-card-actions">
-                    ${!isSold && lead.status !== "bought" && lead.status !== "reselling" ? `<button class="lead-btn lead-btn--success" data-role="bought" type="button">✅ Купил</button>` : ""}
-                    ${lead.status === "bought" || lead.status === "reselling" ? `<button class="lead-btn lead-btn--success" data-role="sold" type="button">💰 Продано</button>` : ""}
-                    ${!isSold ? `<button class="lead-btn lead-btn--danger" data-role="cancel" type="button">Отмена</button>` : ""}
-                    ${!isMissing ? `<a class="lead-btn lead-btn--accent" href="${escapeHtml(lead.link)}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>` : ""}
+                    ${!isSold ? `
+                        <div class="lead-btn-row">
+                            <a class="lead-btn lead-btn--kufar" href="${escapeHtml(lead.link)}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
+                        </div>
+                        <div class="lead-btn-row">
+                            <button class="lead-btn lead-btn--confirm" data-role="confirm" type="button">✓</button>
+                            <button class="lead-btn lead-btn--delete" data-role="cancel" type="button">✕</button>
+                        </div>
+                    ` : ""}
+                    ${isSold ? `
+                        <div class="lead-btn-row">
+                            <button class="lead-btn lead-btn--success" data-role="close-deal" type="button">✓ Готово</button>
+                            <button class="lead-btn lead-btn--revert" data-role="revert" type="button">↩ Назад</button>
+                        </div>
+                    ` : ""}
                 </div>
             `;
 
-            card.querySelector('[data-role="bought"]')?.addEventListener("click", () => {
-                void actions.markLeadAsBought(lead);
-            });
-            card.querySelector('[data-role="sold"]')?.addEventListener("click", () => {
-                const soldPriceInput = card.querySelector('[data-role="sold-price"]');
-                const rawValue = soldPriceInput?.value?.trim();
-                if (!rawValue) {
-                    showToast("Введите цену продажи");
-                    soldPriceInput?.focus();
-                    return;
-                }
-                const priceNum = Number(rawValue);
-                if (!Number.isFinite(priceNum) || priceNum <= 0) {
-                    showToast("Введите корректную цену");
-                    soldPriceInput?.focus();
-                    return;
-                }
-                void actions.markLeadAsSold(lead, priceNum);
+            // Event listeners
+            card.querySelector('[data-role="confirm"]')?.addEventListener("click", () => {
+                void actions.confirmLead(lead, card);
             });
             card.querySelector('[data-role="cancel"]')?.addEventListener("click", () => {
                 void actions.cancelLead(lead.id);
             });
+            card.querySelector('[data-role="close-deal"]')?.addEventListener("click", () => {
+                void actions.closeDeal(lead.id);
+            });
+            card.querySelector('[data-role="revert"]')?.addEventListener("click", () => {
+                void actions.revertLeadStage(lead.id, lead.status);
+            });
+            
+            // Buy price input - use text inputmode for better mobile control
+            const buyPriceInput = card.querySelector('[data-role="buy-price"]');
+            if (buyPriceInput) {
+                buyPriceInput.value = lead.buy_price_byn ?? "";
+                // Only update on explicit confirm button click, not on every blur
+                buyPriceInput.addEventListener("input", (e) => {
+                    // Strip non-numeric characters except the decimal point
+                    let val = e.target.value.replace(/[^\d]/g, "");
+                    if (val !== e.target.value) {
+                        e.target.value = val;
+                    }
+                });
+            }
+
+            // Fill buy price from original listing price
+            card.querySelector('[data-role="fill-buy-price"]')?.addEventListener("click", () => {
+                if (buyPriceInput && priceByn) {
+                    buyPriceInput.value = String(priceByn);
+                    buyPriceInput.focus();
+                }
+            });
+
+            // Sold price input - use text inputmode for better mobile control
             const soldPriceInput = card.querySelector('[data-role="sold-price"]');
             if (soldPriceInput) {
                 soldPriceInput.value = lead.sold_price_byn ?? "";
-                soldPriceInput.addEventListener("change", () => {
-                    const rawValue = soldPriceInput.value.trim();
-                    const nextValue = rawValue ? Math.abs(Number(rawValue)) : null;
-                    void actions.updateLeadMeta(lead.id, {
-                        sold_price_byn: Number.isFinite(nextValue) ? nextValue : null,
-                    });
-                });
-            }
-            const notesInput = card.querySelector('[data-role="notes"]');
-            if (notesInput) {
-                notesInput.value = lead.notes || "";
-                notesInput.addEventListener("change", () => {
-                    void actions.updateLeadMeta(lead.id, {
-                        notes: notesInput.value.trim() || null,
-                    });
+                // Only update on explicit confirm button click, not on every blur
+                soldPriceInput.addEventListener("input", (e) => {
+                    // Strip non-numeric characters except the decimal point
+                    let val = e.target.value.replace(/[^\d]/g, "");
+                    if (val !== e.target.value) {
+                        e.target.value = val;
+                    }
                 });
             }
             elements.leadInboxList.appendChild(card);
@@ -1072,7 +1097,6 @@ function createAppRenderers(context) {
             elements.watchlistList.appendChild(note);
             return;
         }
-        elements.watchlistNote.textContent = `${filteredWatchlist.length} из ${state.watchlist.length} объявлений в фильтре.`;
 
         // Always compute in BYN, convert for display at the end.
         const rate = state.usdRateByn || 1;
@@ -1778,11 +1802,6 @@ function createAppRenderers(context) {
         });
     }
 
-    /* ===== Pipeline Stepper ===== */
-    function renderPipelineStepper() {
-        // Removed - no longer used
-    }
-
     /* ===== Profit Dashboard ===== */
     function renderProfitDashboard() {
         if (!elements.profitCards) return;
@@ -1795,17 +1814,16 @@ function createAppRenderers(context) {
 
         elements.profitDashboardSection.hidden = false;
 
-        const soldLeads = state.leads.filter((l) => l.status === "sold" && l.sold_price_byn);
-        const boughtLeads = state.leads.filter((l) => ["bought", "reselling", "sold"].includes(l.status));
+        // Only count CLOSED deals in finances - not bought or sold
+        const closedLeads = state.leads.filter(
+            (l) => l.status === "closed" && l.buy_price_byn && l.sold_price_byn
+        );
 
         let totalInvested = 0;
         let totalSoldRevenue = 0;
 
-        boughtLeads.forEach((l) => {
-            totalInvested += Number(l.price_byn || 0);
-        });
-
-        soldLeads.forEach((l) => {
+        closedLeads.forEach((l) => {
+            totalInvested += Number(l.buy_price_byn || 0);
             totalSoldRevenue += Number(l.sold_price_byn || 0);
         });
 
@@ -1816,13 +1834,13 @@ function createAppRenderers(context) {
             {
                 label: "Вложено",
                 value: `${Math.round(totalInvested)} BYN`,
-                sub: `${boughtLeads.length} сделок`,
+                sub: `${closedLeads.length} закрытых сделок`,
                 className: "",
             },
             {
                 label: "Прибыль",
                 value: `${totalProfit >= 0 ? "+" : ""}${Math.round(totalProfit)} BYN`,
-                sub: `${soldLeads.length} продано`,
+                sub: `${closedLeads.length} закрытых`,
                 className: totalProfit >= 0 ? "is-accent" : "is-warning",
             },
             {
@@ -1844,80 +1862,6 @@ function createAppRenderers(context) {
             elements.profitCards.appendChild(el);
         }
 
-        // Render profit chart if we have sold leads
-        renderProfitChart(soldLeads);
-    }
-
-    function renderProfitChart(soldLeads) {
-        if (!elements.profitChartBox) return;
-
-        if (!soldLeads.length) {
-            elements.profitChartBox.hidden = true;
-            return;
-        }
-
-        elements.profitChartBox.hidden = false;
-
-        // Group by month
-        const monthlyData = {};
-        soldLeads.forEach((l) => {
-            const d = new Date(l.updated_at || l.created_at || Date.now());
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-            if (!monthlyData[key]) monthlyData[key] = { profit: 0, count: 0 };
-            const profit = (l.sold_price_byn || 0) - (l.price_byn || 0);
-            monthlyData[key].profit += profit;
-            monthlyData[key].count += 1;
-        });
-
-        const sortedMonths = Object.keys(monthlyData).sort();
-        const labels = sortedMonths.map((m) => {
-            const [year, month] = m.split("-");
-            return `${month}.${year}`;
-        });
-        const profits = sortedMonths.map((m) => Math.round(monthlyData[m].profit));
-
-        if (state.profitChart) {
-            state.profitChart.destroy();
-        }
-
-        const ctx = document.getElementById("profitChart");
-        if (!ctx) return;
-
-        const isDark = document.documentElement.getAttribute("data-theme") !== "light";
-        const textColor = isDark ? "#f2efe8" : "#1a1917";
-        const gridColor = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
-
-        state.profitChart = new Chart(ctx, {
-            type: "bar",
-            data: {
-                labels,
-                datasets: [{
-                    label: "Прибыль (BYN)",
-                    data: profits,
-                    backgroundColor: profits.map((v) => v >= 0 ? "rgba(52, 211, 153, 0.7)" : "rgba(251, 113, 133, 0.7)"),
-                    borderColor: profits.map((v) => v >= 0 ? "#34d399" : "#fb7185"),
-                    borderWidth: 1,
-                    borderRadius: 6,
-                }],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                },
-                scales: {
-                    x: {
-                        ticks: { color: textColor, font: { size: 10 } },
-                        grid: { color: gridColor },
-                    },
-                    y: {
-                        ticks: { color: textColor, font: { size: 10 }, callback: (v) => `${v} р.` },
-                        grid: { color: gridColor },
-                    },
-                },
-            },
-        });
     }
 
     /* ===== Expenses Modal ===== */
@@ -2026,7 +1970,6 @@ function createAppRenderers(context) {
         renderLeads();
         renderWatchlist();
         renderProfitDashboard();
-        renderPipelineStepper();
     }
 
     return {
@@ -2064,8 +2007,6 @@ function createAppRenderers(context) {
         renderLeads,
         renderWatchlist,
         renderProfitDashboard,
-        renderProfitChart,
-        renderPipelineStepper,
         renderExpensesModal,
         openExpensesModal,
         closeExpensesModal,

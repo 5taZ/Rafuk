@@ -26,12 +26,8 @@ async def cmd_start(message: Message) -> None:
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await message.answer(
-        "/app - open the mini app\n"
-        "/price <query> - get price summary\n"
-        "/top <query> - get top listings\n"
-        "/track <query> - enable tracker\n"
-        "/tracks - list active trackers\n"
-        "/untrack <id> - disable tracker"
+        "/app — открыть мини-апп\n"
+        "/start — приветственное сообщение"
     )
 
 

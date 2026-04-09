@@ -261,13 +261,13 @@ class LeadCreate(BaseModel):
     target_resale_byn: float | None = None
     status: str = "new"
     source: str = "manual"
-    notes: str | None = None
 
 
 class LeadUpdate(BaseModel):
     status: str | None = None
     target_resale_byn: float | None = None
-    notes: str | None = None
+    buy_price_byn: float | None = None
+    sold_price_byn: float | None = None
 
 
 class LeadRead(BaseModel):
@@ -280,12 +280,12 @@ class LeadRead(BaseModel):
     title: str
     link: str
     price_byn: float | None = None
+    buy_price_byn: float | None = None
+    sold_price_byn: float | None = None
     thumbnail: str | None = None
     target_resale_byn: float | None = None
     status: str
     source: str
-    notes: str | None = None
-    sold_price_byn: float | None = None
     sold_at: datetime | None = None
     market_status: str = "active"
     missing_since_at: datetime | None = None

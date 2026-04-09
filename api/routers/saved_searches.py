@@ -35,6 +35,7 @@ from api.services.reseller_tools import (
     default_saved_search_name,
     matches_tracker_filters,
 )
+from api.services.workflow_store import ensure_user, resolve_user_id
 
 router = APIRouter(tags=["saved-searches"])
 
@@ -70,9 +71,12 @@ async def get_saved_searches(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[SavedSearchRead]:
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user.user_id)
+        if user_id is None:
+            return []
         result = await session.execute(
             select(SavedSearch)
-            .where(SavedSearch.user_id == telegram_user.user_id, SavedSearch.active.is_(True))
+            .where(SavedSearch.user_id == user_id, SavedSearch.active.is_(True))
             .order_by(SavedSearch.created_at.desc(), SavedSearch.id.desc())
         )
         saved_searches = list(result.scalars())
@@ -101,7 +105,11 @@ async def create_saved_search(
     name = (payload.name or "").strip() or default_saved_search_name(query)
     async with session_factory() as session:
         saved_search = SavedSearch(
-            user_id=telegram_user.user_id,
+            user_id=await ensure_user(
+                session,
+                telegram_user_id=telegram_user.user_id,
+                first_name=telegram_user.first_name,
+            ),
             name=name,
             group_name=(payload.group_name or "").strip() or None,
             query=query,
@@ -128,10 +136,16 @@ async def delete_saved_search(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user.user_id)
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Saved search not found",
+            )
         result = await session.execute(
             select(SavedSearch).where(
                 SavedSearch.id == saved_search_id,
-                SavedSearch.user_id == telegram_user.user_id,
+                SavedSearch.user_id == user_id,
                 SavedSearch.active.is_(True),
             )
         )
@@ -260,9 +274,18 @@ async def get_opportunity_board(
     currency_service: CurrencyService = Depends(get_currency_service),
 ) -> OpportunityBoardResponse:
     async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user.user_id)
+        if user_id is None:
+            return OpportunityBoardResponse(
+                currency=currency,
+                items=[],
+                top_price_drops=[],
+                rare_opportunities=[],
+                market_signals=[],
+            )
         result = await session.execute(
             select(SavedSearch)
-            .where(SavedSearch.user_id == telegram_user.user_id, SavedSearch.active.is_(True))
+            .where(SavedSearch.user_id == user_id, SavedSearch.active.is_(True))
             .order_by(SavedSearch.created_at.desc(), SavedSearch.id.desc())
             .limit(8)
         )
@@ -301,7 +324,7 @@ async def get_opportunity_board(
         )
     )
     top_price_drops = await _load_price_drop_signals(
-        user_id=telegram_user.user_id,
+        user_id=user_id,
         session_factory=session_factory,
     )
     market_signals = []

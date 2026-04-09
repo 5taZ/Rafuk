@@ -142,13 +142,11 @@ function createAppCore() {
         elements.trackerEventsList = document.getElementById("tracker-events-list");
         elements.clearEventsButton = document.getElementById("clear-events-btn");
         elements.leadInboxSection = document.getElementById("lead-inbox-section");
-        elements.leadInboxNote = document.getElementById("lead-inbox-note");
         elements.leadFilterButtons = Array.from(document.querySelectorAll("[data-lead-filter]"));
         elements.leadInboxList = document.getElementById("lead-inbox-list");
         elements.clearAllLeadsButton = document.getElementById("clear-all-leads-btn");
         elements.watchlistSection = document.getElementById("watchlist-section");
         elements.deleteAllWatchlistButton = document.getElementById("delete-all-watchlist-btn");
-        elements.watchlistNote = document.getElementById("watchlist-note");
         elements.watchlistFilterButtons = Array.from(document.querySelectorAll("[data-watch-filter]"));
         elements.watchlistList = document.getElementById("watchlist-list");
         elements.trackingHeroStats = document.getElementById("tracking-hero-stats");
@@ -193,7 +191,6 @@ function createAppCore() {
         elements.profitDashboardSection = document.getElementById("profit-dashboard-section");
         elements.profitCards = document.getElementById("profit-cards");
         elements.profitChartBox = document.getElementById("profit-chart-box");
-        elements.pipelineStepper = document.getElementById("pipeline-stepper");
         elements.exportLeadsButton = document.getElementById("export-leads-btn");
         elements.toastContainer = document.getElementById("toast-container");
         elements.currencyButtons = {
