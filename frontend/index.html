@@ -147,7 +147,7 @@
                 <span class="badge" id="market-total-badge"></span>
             </div>
             <div class="stats-grid" id="stats-grid">
-                <div class="stat-card is-accent">
+                <div class="stat-card">
                     <span class="stat-lbl">Медиана</span>
                     <span class="stat-val mono" id="stat-median">—</span>
                     <span class="stat-sub"></span>
@@ -157,7 +157,7 @@
                     <span class="stat-val mono" id="stat-mean">—</span>
                     <span class="stat-sub"></span>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card wide">
                     <span class="stat-lbl">Справедливо</span>
                     <span class="stat-val stat-range mono" id="stat-fair-range">—</span>
                     <span class="stat-sub">обычно в этих пределах</span>
@@ -364,8 +364,11 @@
                 <div class="tracker-status" id="tracker-status" hidden></div>
                 <div class="trackers-list" id="trackers-list"></div>
                 <div class="tracker-events-block">
-                    <div class="sec-head events-head sec-head--center">
+                    <div class="sec-head events-head listings-head">
                         <h3 class="sec-title">Лента событий</h3>
+                        <div class="lead-actions-wrap">
+                            <button class="ghost-btn small danger" id="clear-events-btn" type="button">Очистить</button>
+                        </div>
                     </div>
                     <div class="tracker-event-controls">
                         <div class="sort-row" id="tracker-event-filter-row">
@@ -373,7 +376,6 @@
                             <button class="s-tab" data-event-filter="price_drop" type="button">Упали в цене</button>
                             <button class="s-tab" data-event-filter="new_listing" type="button">Новые лоты</button>
                         </div>
-                        <button class="ghost-btn small tracker-clear-btn" id="clear-events-btn" type="button">Очистить</button>
                     </div>
                     <div class="tracker-events-list" id="tracker-events-list"></div>
                 </div>

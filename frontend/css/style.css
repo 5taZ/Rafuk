@@ -524,21 +524,21 @@ body {
     display: flex;
     gap: 8px;
     flex-shrink: 0;
-    flex-wrap: wrap;
-    justify-content: flex-start;
+    flex-wrap: nowrap;
     width: 100%;
 }
 
 .summary-pill {
-    min-width: 78px;
-    padding: 9px 10px;
+    min-width: 0;
+    padding: 8px 10px;
     border-radius: var(--r-md);
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    flex: 1;
+    gap: 2px;
+    flex: 1 1 0;
+    align-items: center;
 }
 
 [data-theme="light"] .summary-pill {
@@ -550,12 +550,18 @@ body {
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
+    text-align: center;
 }
 
 .summary-pill-value {
     color: var(--text);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+    line-height: 1.3;
 }
 
 .helper-panel {
@@ -843,11 +849,6 @@ body {
     margin-bottom: 10px;
 }
 
-.tracker-clear-btn {
-    width: 100%;
-    text-align: center;
-}
-
 .events-head {
     margin-bottom: 8px;
 }
@@ -966,6 +967,16 @@ body {
 .tracker-meta {
     font-size: 10px;
     color: var(--text-muted);
+}
+
+.tracker-last-checked {
+    font-size: 10px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 3px;
 }
 
 .tracker-row-actions {
@@ -1222,6 +1233,9 @@ body {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
     transition: background 0.15s;
 }
 
@@ -1248,6 +1262,9 @@ body {
     border-radius: var(--r-md);
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border);
+    justify-content: center;
+    align-items: center;
+    text-align: center;
 }
 
 .range-label {
@@ -1273,11 +1290,14 @@ body {
 
 .stat-val {
     font-family: var(--font-mono);
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 700;
     color: var(--text);
     letter-spacing: -0.04em;
-    line-height: 1.1;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .stat-range {
@@ -2946,11 +2966,9 @@ body {
         width: 64px;
         height: 64px;
     }
-}
 
-@media (min-width: 420px) {
-    .summary-pill {
-        min-width: 92px;
+    .stat-val {
+        font-size: 17px;
     }
 }
 
@@ -3871,7 +3889,8 @@ body {
 }
 
 .history-deal-card {
-    display: flex;
+    display: grid;
+    grid-template-columns: 48px 1fr auto auto auto;
     align-items: center;
     gap: 12px;
     padding: 12px;
@@ -3893,7 +3912,6 @@ body {
     height: 48px;
     border-radius: var(--r-md);
     object-fit: cover;
-    flex-shrink: 0;
 }
 
 .history-deal-thumb-placeholder {
@@ -3905,7 +3923,6 @@ body {
 }
 
 .history-deal-info {
-    flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -3919,6 +3936,7 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    line-height: 1.3;
 }
 
 .history-deal-meta {
@@ -3932,19 +3950,40 @@ body {
 .history-deal-price {
     font-family: var(--font-mono);
     font-weight: 600;
+    white-space: nowrap;
+    min-width: 0;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .history-deal-date {
+    white-space: nowrap;
+    color: var(--text-muted);
     flex-shrink: 0;
+}
+
+.history-deal-profit-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+    white-space: nowrap;
 }
 
 .history-deal-profit {
     font-family: var(--font-mono);
     font-weight: 700;
-    font-size: 13px;
-    flex-shrink: 0;
-    min-width: 70px;
+    font-size: 14px;
+    line-height: 1;
     text-align: right;
+}
+
+.history-deal-profit-currency {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
 }
 
 .history-profit-positive {
@@ -3965,7 +4004,6 @@ body {
     padding: 4px 8px;
     border-radius: var(--r-sm);
     transition: all 0.12s;
-    flex-shrink: 0;
 }
 
 .history-deal-delete:hover {
@@ -4009,5 +4047,63 @@ body {
 
     .lead-card-actions {
         flex-wrap: wrap;
+    }
+
+    .history-deal-card {
+        grid-template-columns: 48px 1fr auto;
+        gap: 10px;
+    }
+
+    .history-deal-profit-wrap {
+        grid-column: 2;
+        grid-row: 2;
+    }
+
+    .history-deal-delete {
+        grid-column: 3;
+        grid-row: 2;
+        justify-self: end;
+    }
+}
+
+@media (max-width: 500px) {
+    .history-deal-card {
+        grid-template-columns: 48px 1fr auto;
+        grid-template-rows: auto auto;
+        gap: 8px;
+    }
+
+    .history-deal-info {
+        min-width: 0;
+    }
+
+    .history-deal-title {
+        font-size: 12px;
+    }
+
+    .history-deal-meta {
+        gap: 8px;
+        font-size: 10px;
+    }
+
+    .history-deal-date {
+        flex-shrink: 0;
+    }
+
+    .history-deal-profit-wrap {
+        grid-column: 2 / 4;
+        grid-row: 2;
+        justify-self: start;
+        margin-top: -2px;
+    }
+
+    .history-deal-delete {
+        grid-column: 3;
+        grid-row: 1;
+        align-self: start;
+    }
+
+    .history-deal-profit {
+        font-size: 13px;
     }
 }

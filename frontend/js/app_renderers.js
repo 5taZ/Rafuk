@@ -1280,11 +1280,33 @@ function createAppRenderers(context) {
                 tracker.exclude_duplicates ? "без дублей" : "",
                 tracker.seller_type === "Частное лицо" ? "частники" : "",
             ].filter(Boolean);
+
+            // Format "last checked" indicator
+            let lastCheckedLabel = "";
+            if (tracker.last_checked_at) {
+                const checkedDate = new Date(tracker.last_checked_at);
+                if (isNaN(checkedDate.getTime())) {
+                    lastCheckedLabel = "";
+                } else {
+                    const diffMs = Math.max(0, Date.now() - checkedDate.getTime());
+                    const diffMin = Math.floor(diffMs / 60000);
+                    if (diffMin < 1) {
+                        lastCheckedLabel = "только что";
+                    } else if (diffMin < 60) {
+                        lastCheckedLabel = `${diffMin} мин назад`;
+                    } else {
+                        const diffHr = Math.floor(diffMin / 60);
+                        lastCheckedLabel = `${diffHr} ч назад`;
+                    }
+                }
+            }
+
             row.innerHTML = `
                 <div class="tracker-row-main">
-                    <strong class="tracker-query">${tracker.query}</strong>
-                    <span class="tracker-meta mono">${trackerMeta.join(" • ")}</span>
+                    <strong class="tracker-query">${escapeHtml(tracker.query)}</strong>
+                    <span class="tracker-meta mono">${trackerMeta.map(s => escapeHtml(s)).join(" &bull; ")}</span>
                 </div>
+                ${lastCheckedLabel ? `<span class="tracker-last-checked" title="Последняя проверка: ${escapeHtml(tracker.last_checked_at)}">🕐 ${escapeHtml(lastCheckedLabel)}</span>` : ""}
                 <div class="tracker-row-actions">
                     <button class="ghost-btn small" data-role="open" type="button">Открыть</button>
                     <button class="ghost-btn small danger" data-role="delete" type="button">Удалить</button>
@@ -1944,8 +1966,11 @@ function createAppRenderers(context) {
                         <span class="history-deal-date">${dateStr}</span>
                     </div>
                 </div>
-                <div class="history-deal-profit ${profitClass}">
-                    ${profit !== null ? `${profitSign}${Math.round(profit)} ${currencySymbol}` : "—"}
+                <div class="history-deal-profit-wrap">
+                    <div class="history-deal-profit ${profitClass}">
+                        ${profit !== null ? `${profitSign}${Math.round(profit)}` : "—"}
+                    </div>
+                    <span class="history-deal-profit-currency">${currencySymbol}</span>
                 </div>
                 <button class="history-deal-delete" data-role="delete-history-deal" type="button" aria-label="Удалить из истории">✕</button>
             `;

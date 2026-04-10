@@ -35,6 +35,46 @@ function createAppActions(context) {
         renderDealsHeroStats,
     } = context;
 
+    // Auto-refresh tracker events every 30s when on tracking view
+    let trackerRefreshTimer = null;
+    const TRACKER_REFRESH_MS = 30_000;
+
+    function startTrackerRefresh() {
+        stopTrackerRefresh();
+        trackerRefreshTimer = setInterval(() => {
+            void refreshTrackerEvents();
+        }, TRACKER_REFRESH_MS);
+    }
+
+    function stopTrackerRefresh() {
+        if (trackerRefreshTimer) {
+            clearInterval(trackerRefreshTimer);
+            trackerRefreshTimer = null;
+        }
+    }
+
+    async function refreshTrackerEvents() {
+        if (!hasTelegramInitData()) return;
+        if (state.activeView !== "tracking") return;
+        try {
+            const [trackersResult, eventsResult] = await Promise.allSettled([
+                getJson("/api/v1/trackers"),
+                getJson("/api/v1/tracker-events"),
+            ]);
+            if (trackersResult.status === "fulfilled") {
+                state.trackers = trackersResult.value;
+                renderTrackers();
+            }
+            if (eventsResult.status === "fulfilled") {
+                state.trackerEvents = eventsResult.value;
+                renderTrackerEvents();
+                renderTrackerEventFilters();
+            }
+        } catch (err) {
+            console.warn("[tracker-refresh] background refresh failed", err);
+        }
+    }
+
     function telegramHeaders() {
         const initData = window.Telegram?.WebApp?.initData;
         return initData ? { "X-Telegram-Init-Data": initData } : {};
@@ -706,10 +746,10 @@ function createAppActions(context) {
             // Re-render leads
             renderLeads();
 
+            // Show success toast with profit
             const profit = soldPriceNum - buyPriceNum;
             const profitSign = profit >= 0 ? "+" : "";
-            const profitLabel = profit >= 0 ? "потенциальная прибыль" : "потенциальный убыток";
-            showToast(`✓ Сделка подтверждена! ${profitLabel}: ${profitSign}${Math.round(profit)} BYN`);
+            showToast(`✓ Сделка подтверждена! ${profitSign}${Math.round(profit)} BYN`);
 
             // Scroll to the card after re-render (it moved down)
             setTimeout(() => {
@@ -962,14 +1002,16 @@ function createAppActions(context) {
             showToast("Список уже пуст");
             return;
         }
+        const count = state.watchlist.length;
         try {
             await deleteJson("/api/v1/watchlist/all");
-            showToast(`Удалено ${state.watchlist.length} лотов`);
             state.watchlist = [];
-            renderWatchlist();
+            await loadWatchlist();
             renderMonitoringHeroStats();
+            showToast(`Удалено ${count} лотов`);
         } catch (error) {
             showToast(error.message || "Не удалось очистить");
+            await loadWatchlist();
         }
     }
 
@@ -1286,6 +1328,9 @@ function createAppActions(context) {
                 renderAll();
                 if (view === "tracking") {
                     void loadTrackers();
+                    startTrackerRefresh();
+                } else {
+                    stopTrackerRefresh();
                 }
                 if (view === "monitoring") {
                     void loadWatchlist();
@@ -1409,8 +1454,25 @@ function createAppActions(context) {
             void createTracker();
         });
 
+        let clearEventsConfirmed = false;
         elements.clearEventsButton?.addEventListener("click", () => {
             void (async () => {
+                if (!clearEventsConfirmed) {
+                    clearEventsConfirmed = true;
+                    elements.clearEventsButton.textContent = "Удалить все?";
+                    setTimeout(() => {
+                        clearEventsConfirmed = false;
+                        if (elements.clearEventsButton) {
+                            elements.clearEventsButton.textContent = "Очистить";
+                        }
+                    }, 3000);
+                    showToast("Нажмите ещё раз для подтверждения");
+                    return;
+                }
+                clearEventsConfirmed = false;
+                if (elements.clearEventsButton) {
+                    elements.clearEventsButton.textContent = "Очистить";
+                }
                 try {
                     await deleteJson("/api/v1/tracker-events");
                 } catch (_) {
@@ -1665,6 +1727,15 @@ function createAppActions(context) {
         // ===== CSV Export =====
         elements.exportLeadsButton?.addEventListener("click", () => {
             void actions.exportLeadsCSV();
+        });
+
+        // Pause auto-refresh when the app is backgrounded
+        document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+                stopTrackerRefresh();
+            } else if (state.activeView === "tracking") {
+                startTrackerRefresh();
+            }
         });
     }
 
