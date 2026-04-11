@@ -3,6 +3,7 @@ function createAppActions(context) {
         state,
         elements,
         hasTelegramInitData,
+        trapFocus,
         renderAll,
         renderError,
         renderLoading,
@@ -1161,8 +1162,11 @@ function createAppActions(context) {
         if (elements.editConfigInput) elements.editConfigInput.value = tracker.config_keyword || "";
         if (elements.editExcludeDuplicatesToggle) elements.editExcludeDuplicatesToggle.checked = Boolean(tracker.exclude_duplicates);
 
-        // Show modal
-        if (elements.editTrackerModal) elements.editTrackerModal.hidden = false;
+        // Show modal and trap focus
+        if (elements.editTrackerModal) {
+            elements.editTrackerModal.hidden = false;
+            trapFocus(elements.editTrackerModal);
+        }
     }
 
     // Close edit tracker modal
@@ -1726,8 +1730,15 @@ function createAppActions(context) {
         });
 
         document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape" && state.detail) {
-                closeDetailModal();
+            if (event.key === "Escape") {
+                // Close any open modal — check in order of z-index priority
+                if (!state.detail && !elements.editTrackerModal?.hidden) {
+                    closeEditTracker();
+                } else if (!elements.expensesModal?.hidden) {
+                    closeExpensesModal();
+                } else if (state.detail) {
+                    closeDetailModal();
+                }
             }
         });
 

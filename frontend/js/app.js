@@ -68,8 +68,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!banner) {
             banner = document.createElement("div");
             banner.id = "offline-banner";
+            banner.setAttribute("role", "alert");
             banner.textContent = "Нет подключения к интернету";
-            banner.style.cssText = "position:fixed;top:0;left:0;right:0;background:#fb7185;color:#fff;text-align:center;padding:6px 12px;font-size:13px;font-family:system-ui;z-index:10000;";
             document.body.appendChild(banner);
         }
     }

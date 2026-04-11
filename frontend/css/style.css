@@ -41,6 +41,38 @@
     }
 }
 
+/* Focus-visible for keyboard navigation */
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+select:focus:not(:focus-visible),
+a:focus:not(:focus-visible) {
+    outline: none;
+}
+
+button:focus-visible,
+.view-tab:focus-visible,
+.quick-chip:focus-visible,
+.s-tab:focus-visible,
+.section-toggle:focus-visible,
+.listing-btn:focus-visible,
+.wl-btn:focus-visible,
+.lead-btn:focus-visible,
+.primary-btn:focus-visible,
+.ghost-btn:focus-visible,
+.cur-btn:focus-visible,
+.deal-range-chip:focus-visible,
+.watchlist-filter-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
 [data-theme="dark"] {
     --bg: #0b0d10;
     --bg-card: #111318;
@@ -1081,7 +1113,7 @@ body {
 }
 
 .watchlist-section-header .sec-title {
-    color: #60a5fa;
+    color: var(--accent);
 }
 
 .deals-section-header {
@@ -1373,12 +1405,12 @@ body {
     box-shadow: var(--shadow-card);
     border-radius: var(--r-xl);
     padding: 16px 14px 14px;
-    height: 175px;
+    min-height: 175px;
     position: relative;
 }
 
 .history-chart-box {
-    height: 190px;
+    min-height: 190px;
 }
 
 .section-note {
@@ -2021,8 +2053,9 @@ body {
 
 /* Action buttons — uniform row */
 .listing-actions {
-    display: flex;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
 }
 
 .listing-btn {
@@ -2031,17 +2064,19 @@ body {
     background: transparent;
     color: var(--text-muted);
     border-radius: var(--r-md);
-    padding: 9px 0;
-    font: 600 12px var(--font);
+    padding: 10px 4px;
+    font: 600 11px var(--font);
     cursor: pointer;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     transition: all 0.12s;
-    flex: 1;
     text-align: center;
     text-decoration: none;
     display: flex;
     align-items: center;
     justify-content: center;
+    min-height: 44px;
 }
 
 .listing-btn:hover {
@@ -2067,133 +2102,8 @@ body {
     color: #fff;
 }
 
-/* ===== Opportunity Board ===== */
-.opportunity-card {
-    background: var(--bg-card);
-    box-shadow: var(--shadow-card);
-    border-radius: var(--r-lg);
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
 
-.opportunity-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-}
-
-.opportunity-title {
-    font-size: 13px;
-    color: var(--text);
-    line-height: 1.35;
-}
-
-.opportunity-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    color: var(--text-muted);
-    font-size: 12px;
-}
-
-.opportunity-copy {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.55;
-}
-
-.board-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-}
-
-.board-section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.board-section-head {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.board-section-title {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text);
-}
-
-.board-section-copy {
-    margin: 0;
-    font-size: 12px;
-    color: var(--text-muted);
-}
-
-.board-inline-flag {
-    padding: 2px 6px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 700;
-    background: var(--accent-soft);
-    color: var(--accent);
-}
-
-.signal-row {
-    align-items: center;
-}
-
-.listing-signal {
-    font-size: 12px;
-    font-weight: 700;
-    padding: 2px 7px;
-    border-radius: 999px;
-    letter-spacing: 0.02em;
-}
-
-.listing-signal.verdict {
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.03);
-    color: var(--text-muted);
-}
-
-.listing-signal.verdict-zabirat {
-    color: var(--green);
-    background: var(--green-soft);
-    border-color: rgba(52, 211, 153, 0.2);
-}
-
-.listing-signal.verdict-smotret {
-    color: var(--accent);
-    background: var(--accent-soft);
-    border-color: var(--accent-glow);
-}
-
-.listing-signal.verdict-mimo {
-    color: var(--red);
-    background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.2);
-}
-
-@media (max-width: 860px) {
-    .board-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
-@media (max-width: 720px) {
-    .profile-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
+/* ===== Detail Modal ===== */
 .detail-modal {
     position: fixed;
     inset: 0;
@@ -2430,92 +2340,34 @@ body {
     word-break: break-word;
 }
 
-.sk {
-    background: linear-gradient(
-        90deg,
-        var(--bg-elevated) 0%,
-        var(--bg-input) 50%,
-        var(--bg-elevated) 100%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.4s ease-in-out infinite;
-    border-radius: 5px;
-}
-
-@keyframes shimmer {
-    0% {
-        background-position: 200% 0;
-    }
-    100% {
-        background-position: -200% 0;
-    }
-}
-
-.sk-lbl {
-    height: 10px;
-    width: 38%;
-    margin-bottom: 8px;
-}
-
-.sk-val {
-    height: 22px;
-    width: 62%;
-}
-
-.sk-mid {
-    height: 10px;
-    width: 50%;
-}
-
-.sk-name {
-    height: 13px;
-    width: 70%;
-    margin-bottom: 5px;
-}
-
-.sk-tag {
-    height: 10px;
-    width: 40%;
-}
-
-.sk-price {
-    height: 16px;
-    width: 64px;
-}
-
-.sk-card {
-    background: var(--bg-card) !important;
-    box-shadow: var(--shadow-card) !important;
-    border-radius: var(--r-lg);
-    padding: 13px 14px;
-}
-
-.sk-listing {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    background: var(--bg-card);
-    box-shadow: var(--shadow-card);
-    border-radius: var(--r-lg);
-    padding: 12px 14px;
-}
-
-.sk-block {
-    display: block;
-}
-
-@keyframes skeleton-pulse {
-    0%, 100% {
-        opacity: 1;
-    }
-    50% {
-        opacity: 0.4;
-    }
-}
-
 .bottom-spacer {
     height: 28px;
+}
+
+/* Offline Banner */
+#offline-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10000;
+    background: var(--red);
+    color: var(--text);
+    text-align: center;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: var(--font);
+    font-weight: 600;
+    animation: slideDown 0.25s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-100%);
+    }
+    to {
+        transform: translateY(0);
+    }
 }
 
 .toast-container {
@@ -2716,7 +2568,7 @@ body {
 }
 
 .profit-chart-box {
-    height: 200px;
+    min-height: 200px;
 }
 
 .lead-actions-wrap {
@@ -2818,115 +2670,14 @@ body {
     color: var(--red);
 }
 
-/* ===== Contacts ===== */
-.contacts-hero {
-    /* reuse view-hero styles */
-}
-
-.contact-card {
-    padding: 12px;
-    border-radius: var(--r-md);
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-}
-
-.contact-main {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
-}
-
-.contact-name {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--text);
-}
-
-.contact-phone {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--accent);
-}
-
-.contact-notes {
-    font-size: 12px;
-    color: var(--text-muted);
-}
-
-.contact-actions {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-}
-
-.contact-form {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 12px;
-    background: var(--bg-elevated);
-    border-radius: var(--r-md);
-    border: 1px solid var(--border);
-    margin-bottom: 10px;
-}
-
-.contact-form-actions {
-    display: flex;
-    gap: 8px;
-}
-
+/* ===== Small Button Variants ===== */
 .primary-btn.small,
 .ghost-btn.small {
     padding: 7px 11px;
     font-size: 12px;
 }
 
-/* ===== Velocity Panel ===== */
-.velocity-panel {
-    margin-top: 12px;
-}
-
-.velocity-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-}
-
-.velocity-card {
-    background: var(--bg-card);
-    box-shadow: var(--shadow-card);
-    border-radius: var(--r-lg);
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    border: 1px solid var(--border);
-}
-
-.velocity-label {
-    color: var(--text-dim);
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-
-.velocity-value {
-    font-family: var(--font-mono);
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--text);
-}
-
-.velocity-sub {
-    font-size: 12px;
-    color: var(--text-muted);
-}
-
+/* ===== Responsive: 380px ===== */
 @media (max-width: 380px) {
     html {
         font-size: 14px;
@@ -2934,6 +2685,12 @@ body {
 
     .view-nav {
         grid-template-columns: 1fr 1fr;
+    }
+
+    /* Listing action buttons: 2x2 grid on very narrow screens */
+    .listing-actions {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
     }
 
     .deal-range-row {
@@ -3018,7 +2775,7 @@ body {
 .risk-badge {
     display: inline-block;
     padding: 4px 10px;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     font-size: 0.78rem;
     font-weight: 500;
     line-height: 1.4;
@@ -3026,21 +2783,21 @@ body {
 }
 
 .risk-badge.risk-low {
-    background: rgba(52, 211, 153, 0.12);
-    color: #34d399;
-    border: 1px solid rgba(52, 211, 153, 0.25);
+    background: var(--green-soft);
+    color: var(--green);
+    border: 1px solid rgba(16, 185, 105, 0.25);
 }
 
 .risk-badge.risk-medium {
-    background: rgba(251, 191, 36, 0.12);
-    color: #fbbf24;
-    border: 1px solid rgba(251, 191, 36, 0.25);
+    background: var(--amber-soft);
+    color: var(--amber);
+    border: 1px solid rgba(245, 158, 11, 0.25);
 }
 
 .risk-badge.risk-high {
-    background: rgba(251, 113, 133, 0.12);
-    color: #fb7185;
-    border: 1px solid rgba(251, 113, 133, 0.25);
+    background: var(--red-soft);
+    color: var(--red);
+    border: 1px solid rgba(244, 63, 94, 0.25);
 }
 
 .risk-badges-wrap {
@@ -3050,40 +2807,23 @@ body {
     margin-top: 6px;
 }
 
-/* ===== Contacts in Monitoring Section ===== */
-#contacts-section-in-monitoring {
-    margin-top: 0;
-}
-
-#contacts-section-in-monitoring .section-body {
-    padding-top: 12px;
-}
-
-#contacts-section-in-monitoring .sec-head.listings-head {
-    margin-bottom: 8px;
-}
-
-#contacts-section-in-monitoring .sec-head.listings-head .sec-title {
-    font-size: 0.95rem;
-    font-weight: 600;
-}
-
+/* ===== Light Theme Risk Badge Overrides ===== */
 [data-theme="light"] .risk-badge.risk-low {
-    background: rgba(16, 185, 129, 0.1);
-    color: #059669;
-    border-color: rgba(16, 185, 129, 0.2);
+    background: rgba(4, 120, 87, 0.08);
+    color: var(--green);
+    border-color: rgba(4, 120, 87, 0.2);
 }
 
 [data-theme="light"] .risk-badge.risk-medium {
-    background: rgba(245, 158, 11, 0.1);
-    color: #b45309;
-    border-color: rgba(245, 158, 11, 0.2);
+    background: rgba(217, 119, 6, 0.08);
+    color: var(--amber);
+    border-color: rgba(217, 119, 6, 0.2);
 }
 
 [data-theme="light"] .risk-badge.risk-high {
-    background: rgba(239, 68, 68, 0.1);
-    color: #dc2626;
-    border-color: rgba(239, 68, 68, 0.2);
+    background: rgba(190, 18, 60, 0.08);
+    color: var(--red);
+    border-color: rgba(190, 18, 60, 0.2);
 }
 
 /* ===== Watchlist Card Layout ===== */
@@ -3354,8 +3094,8 @@ body {
 }
 
 .wl-btn--accent:hover {
-    background: #fbbf24;
-    border-color: #fbbf24;
+    background: var(--accent-dark);
+    border-color: var(--accent-dark);
     color: #fff;
 }
 
@@ -3476,37 +3216,37 @@ body {
     transform: scale(0.995);
 }
 
-.lead-card.status-bought::after,
-.lead-card.status-reselling::after,
-.lead-card.status-sold::after,
-.lead-card.status-in_progress::after,
-.lead-card.status-negotiating::after {
+.lead-card.status-bought::before,
+.lead-card.status-reselling::before,
+.lead-card.status-sold::before,
+.lead-card.status-in_progress::before,
+.lead-card.status-negotiating::before {
     content: "";
     position: absolute;
-    left: 0;
-    top: 12px;
-    bottom: 12px;
-    width: 2px;
-    border-radius: 1px;
+    top: 0;
+    left: 12px;
+    right: 12px;
+    height: 2px;
+    border-radius: 0 0 2px 2px;
 }
 
-.lead-card.status-bought::after {
+.lead-card.status-bought::before {
     background: var(--green);
 }
 
-.lead-card.status-reselling::after {
+.lead-card.status-reselling::before {
     background: #06b6d4;
 }
 
-.lead-card.status-sold::after {
+.lead-card.status-sold::before {
     background: #15803d;
 }
 
-.lead-card.status-in_progress::after {
+.lead-card.status-in_progress::before {
     background: var(--accent);
 }
 
-.lead-card.status-negotiating::after {
+.lead-card.status-negotiating::before {
     background: var(--amber);
 }
 
@@ -3543,6 +3283,71 @@ body {
     margin: 0;
 }
 
+/* Deal Pipeline Indicator */
+.lead-pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-top: 6px;
+}
+
+.lead-pipeline-step {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.lead-pipeline-dot {
+    display: block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: background 0.15s;
+}
+
+.lead-pipeline-step.active .lead-pipeline-dot {
+    background: var(--accent);
+}
+
+.lead-pipeline-line {
+    width: 16px;
+    height: 2px;
+    background: var(--border);
+    border-radius: 1px;
+    margin: 0 2px;
+    transition: background 0.15s;
+}
+
+.lead-pipeline-line.active {
+    background: var(--accent);
+}
+
+.lead-pipeline-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+}
+
+.lead-pipeline-step.active .lead-pipeline-label {
+    color: var(--text-muted);
+}
+
+.lead-stage-badge {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 7px;
+    border-radius: 999px;
+}
+
 /* Lead Status Badges */
 .lead-status-badge {
     display: inline-flex;
@@ -3557,9 +3362,9 @@ body {
 }
 
 .lead-status-badge.new {
-    color: #60a5fa;
-    background: rgba(96, 165, 250, 0.12);
-    border: 1px solid rgba(96, 165, 250, 0.2);
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-glow);
 }
 
 .lead-status-badge.reviewing {
@@ -3800,8 +3605,8 @@ body {
 }
 
 .lead-btn--accent:hover {
-    background: #fbbf24;
-    border-color: #fbbf24;
+    background: var(--accent-dark);
+    border-color: var(--accent-dark);
     color: #fff;
 }
 
@@ -3879,8 +3684,8 @@ body {
 }
 
 .lead-btn--close-deal:hover {
-    background: #22c55e;
-    border-color: #22c55e;
+    background: var(--green);
+    border-color: var(--green);
 }
 
 .lead-btn--sold {
@@ -3892,8 +3697,8 @@ body {
 }
 
 .lead-btn--sold:hover {
-    background: #22c55e;
-    border-color: #22c55e;
+    background: var(--green);
+    border-color: var(--green);
 }
 
 .lead-btn--revert {
@@ -4351,11 +4156,11 @@ body {
 .tracker-event-card::before {
     content: "";
     position: absolute;
-    left: 0;
-    top: 8px;
-    bottom: 8px;
-    width: 2px;
-    border-radius: 1px;
+    top: 0;
+    left: 10px;
+    right: 10px;
+    height: 2px;
+    border-radius: 0 0 2px 2px;
 }
 
 .tracker-event-card.price-drop::before {
@@ -4646,18 +4451,95 @@ body {
     .form-row {
         grid-template-columns: 1fr;
     }
-    
+
     .tracker-stats {
         grid-template-columns: repeat(2, 1fr);
     }
-    
+
     .event-header {
         flex-direction: column;
         align-items: flex-start;
     }
-    
+
     .event-thumbnail {
         width: 100%;
         height: 120px;
+    }
+}
+
+/* ===== Responsive: 420px (common phone width) ===== */
+@media (max-width: 420px) {
+    .view-nav {
+        gap: 2px;
+    }
+
+    .view-tab {
+        padding: 10px 6px;
+        font-size: 12px;
+    }
+
+    .view-tab-icon {
+        font-size: 16px;
+    }
+
+    .s-tab {
+        padding: 10px 12px;
+        font-size: 12px;
+        min-height: 40px;
+    }
+
+    .section-toggle {
+        padding: 10px 12px;
+        min-height: 40px;
+    }
+
+    .cur-btn {
+        padding: 10px 14px;
+        min-height: 40px;
+    }
+
+    .quick-chip {
+        padding: 10px 14px;
+        min-height: 40px;
+        font-size: 12px;
+    }
+
+    .deal-range-chip {
+        padding: 10px 12px;
+        min-height: 40px;
+    }
+
+    .listing-btn {
+        padding: 12px 16px;
+        min-height: 44px;
+    }
+
+    .wl-btn {
+        padding: 10px 14px;
+        min-height: 40px;
+    }
+
+    .lead-btn {
+        padding: 10px 14px;
+        min-height: 40px;
+    }
+
+    .stat-card {
+        padding: 12px 14px;
+    }
+
+    .chart-box {
+        min-height: 160px;
+        height: auto;
+    }
+
+    .history-chart-box {
+        min-height: 170px;
+        height: auto;
+    }
+
+    .profit-chart-box {
+        min-height: 180px;
+        height: auto;
     }
 }

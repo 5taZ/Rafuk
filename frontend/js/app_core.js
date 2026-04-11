@@ -317,6 +317,42 @@ function createAppCore() {
         );
     }
 
+    // Focus trap for modals — prevents Tab from escaping modal boundaries
+    function trapFocus(container) {
+        const focusableSelectors = [
+            'button:not([disabled])',
+            'input:not([disabled])',
+            'select:not([disabled])',
+            'textarea:not([disabled])',
+            'a[href]',
+            '[tabindex]:not([tabindex="-1"])',
+        ].join(", ");
+        const focusable = container.querySelectorAll(focusableSelectors);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        function handleKeydown(e) {
+            if (e.key !== "Tab") return;
+            if (e.shiftKey) {
+                if (document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                }
+            } else {
+                if (document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            }
+        }
+
+        container.addEventListener("keydown", handleKeydown);
+        // Focus the first focusable element
+        first.focus();
+        return () => container.removeEventListener("keydown", handleKeydown);
+    }
+
     return {
         state,
         elements,
@@ -329,6 +365,7 @@ function createAppCore() {
         formatDelta,
         deltaClass,
         formatDate,
+        trapFocus,
         hasTelegramInitData,
     };
 }

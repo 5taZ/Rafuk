@@ -12,6 +12,7 @@ function createAppRenderers(context) {
         formatDelta,
         deltaClass,
         formatDate,
+        trapFocus,
         hasTelegramInitData,
     } = context;
 
@@ -973,6 +974,29 @@ function createAppRenderers(context) {
                 ? `<span class="market-badge missing">Пропало</span>`
                 : "";
 
+            // Pipeline stage indicator — shows where the lead is in the deal workflow
+            const stageNames = { new: "Новый", bought: "Куплен", sold: "Продан", closed: "Закрыт", cancelled: "Отменён" };
+            const currentStage = stageNames[lead.status] || lead.status;
+            const stageMarkup = `
+                <div class="lead-pipeline">
+                    <div class="lead-pipeline-step ${lead.status === 'new' || lead.status === 'bought' || lead.status === 'sold' ? 'active' : ''}">
+                        <span class="lead-pipeline-dot"></span>
+                        <span class="lead-pipeline-label">Новый</span>
+                    </div>
+                    <div class="lead-pipeline-line ${lead.status === 'bought' || lead.status === 'sold' ? 'active' : ''}"></div>
+                    <div class="lead-pipeline-step ${lead.status === 'bought' || lead.status === 'sold' ? 'active' : ''}">
+                        <span class="lead-pipeline-dot"></span>
+                        <span class="lead-pipeline-label">Куплен</span>
+                    </div>
+                    <div class="lead-pipeline-line ${lead.status === 'sold' ? 'active' : ''}"></div>
+                    <div class="lead-pipeline-step ${lead.status === 'sold' ? 'active' : ''}">
+                        <span class="lead-pipeline-dot"></span>
+                        <span class="lead-pipeline-label">Продан</span>
+                    </div>
+                    <span class="lead-stage-badge">${currentStage}</span>
+                </div>
+            `;
+
             // Stage 1: New lead - show Confirm and Delete buttons, no Kufar
             // Stage 2: Bought lead - show Close Deal and Revert buttons, Kufar visible
             // Stage 3: Sold lead - show Close Deal button, Kufar visible
@@ -986,6 +1010,7 @@ function createAppRenderers(context) {
                         </div>
                         <span class="lead-card-price mono">${priceByn ? `${priceByn} ${currencySymbol}` : "без цены"}</span>
                         ${missingBadge}
+                        ${stageMarkup}
                         ${profitMarkup}
                     </div>
                 </div>
@@ -2132,6 +2157,7 @@ function createAppRenderers(context) {
         }
         if (elements.expensesModal) {
             elements.expensesModal.hidden = false;
+            trapFocus(elements.expensesModal);
         }
         void actions.loadExpenses(leadId);
     }

@@ -61,8 +61,8 @@
                 <span id="search-btn-label">Найти</span>
             </button>
         </div>
-        <label class="strict-toggle" for="strict-search-toggle">
-            <input id="strict-search-toggle" type="checkbox">
+        <label class="strict-toggle" for="strict-search-toggle" title="Точное совпадение запроса">
+            <input id="strict-search-toggle" type="checkbox" aria-label="Включить строгий поиск (точное совпадение)">
             <span class="strict-toggle-pill"></span>
             <span class="strict-toggle-copy">Строгий поиск</span>
         </label>
@@ -75,29 +75,29 @@
         <button class="quick-chip" data-query="playstation 5" type="button">PlayStation 5</button>
     </section>
 
-    <nav class="view-nav" aria-label="Разделы Mini App">
-        <button class="view-tab active" data-view="overview" type="button">
-            <span class="view-tab-icon">📊</span>
+    <nav class="view-nav" role="tablist" aria-label="Разделы Mini App">
+        <button class="view-tab active" data-view="overview" type="button" role="tab" aria-selected="true" aria-controls="overview-view" id="tab-overview">
+            <span class="view-tab-icon" aria-hidden="true">📊</span>
             <span class="view-tab-label">Обзор</span>
         </button>
-        <button class="view-tab" data-view="ads" type="button">
-            <span class="view-tab-icon">📋</span>
+        <button class="view-tab" data-view="ads" type="button" role="tab" aria-selected="false" aria-controls="ads-view" id="tab-ads">
+            <span class="view-tab-icon" aria-hidden="true">📋</span>
             <span class="view-tab-label">Объявления</span>
         </button>
-        <button class="view-tab" data-view="tracking" type="button">
-            <span class="view-tab-icon">🔔</span>
+        <button class="view-tab" data-view="tracking" type="button" role="tab" aria-selected="false" aria-controls="tracking-view" id="tab-tracking">
+            <span class="view-tab-icon" aria-hidden="true">🔔</span>
             <span class="view-tab-label">Автопоиск</span>
         </button>
-        <button class="view-tab" data-view="cheap" type="button">
-            <span class="view-tab-icon">🏷</span>
+        <button class="view-tab" data-view="cheap" type="button" role="tab" aria-selected="false" aria-controls="cheap-view" id="tab-cheap">
+            <span class="view-tab-icon" aria-hidden="true">🏷</span>
             <span class="view-tab-label">Выгодно</span>
         </button>
-        <button class="view-tab" data-view="monitoring" type="button">
-            <span class="view-tab-icon">⭐</span>
+        <button class="view-tab" data-view="monitoring" type="button" role="tab" aria-selected="false" aria-controls="monitoring-view" id="tab-monitoring">
+            <span class="view-tab-icon" aria-hidden="true">⭐</span>
             <span class="view-tab-label">Избранное</span>
         </button>
-        <button class="view-tab" data-view="deals" type="button">
-            <span class="view-tab-icon">💰</span>
+        <button class="view-tab" data-view="deals" type="button" role="tab" aria-selected="false" aria-controls="deals-view" id="tab-deals">
+            <span class="view-tab-icon" aria-hidden="true">💰</span>
             <span class="view-tab-label">Покупки</span>
         </button>
     </nav>
@@ -284,7 +284,7 @@
                 <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
                 <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
             </div>
-            <div class="listings-list" id="listings-list"></div>
+            <div class="listings-list" id="listings-list" role="list" aria-live="polite"></div>
         </section>
     </section>
 
@@ -372,7 +372,7 @@
                 <div class="tracker-status" id="tracker-status" hidden></div>
                 
                 <!-- Active trackers list -->
-                <div class="trackers-list" id="trackers-list"></div>
+                <div class="trackers-list" id="trackers-list" role="list" aria-live="polite"></div>
             </div>
         </section>
         
@@ -393,7 +393,7 @@
                 </div>
             </div>
             
-            <div class="tracker-events-list" id="tracker-events-list"></div>
+            <div class="tracker-events-list" id="tracker-events-list" role="list" aria-live="polite"></div>
         </section>
     </section>
 
@@ -434,7 +434,7 @@
                 <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
                 <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
             </div>
-            <div class="listings-list" id="deals-list"></div>
+            <div class="listings-list" id="deals-list" role="list" aria-live="polite"></div>
         </section>
     </section>
 
@@ -458,7 +458,7 @@
                 <button class="s-tab" data-watch-filter="important" type="button">Важные</button>
                 <button class="s-tab" data-watch-filter="very_important" type="button">Очень важные</button>
             </div>
-            <div class="trackers-list" id="watchlist-list"></div>
+            <div class="trackers-list" id="watchlist-list" role="list" aria-live="polite"></div>
         </section>
     </section>
 
@@ -495,7 +495,7 @@
                 <button class="section-toggle" data-panel-toggle="historyDeals" type="button">Показать</button>
             </div>
             <div class="section-body" id="history-deals-body" hidden>
-                <div class="history-deals-list" id="history-deals-list"></div>
+                <div class="history-deals-list" id="history-deals-list" role="list" aria-live="polite"></div>
             </div>
         </section>
     </section>
@@ -592,10 +592,10 @@
 
     <!-- Edit Tracker Modal -->
     <div class="modal-overlay" id="edit-tracker-modal" hidden>
-        <div class="modal-content">
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-tracker-title">
             <div class="modal-header">
-                <h3 class="modal-title">✏️ Редактировать трекер</h3>
-                <button class="modal-close" id="close-edit-modal" type="button">&times;</button>
+                <h3 class="modal-title" id="edit-tracker-title">✏️ Редактировать трекер</h3>
+                <button class="modal-close" id="close-edit-modal" type="button" aria-label="Закрыть">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="edit-tracker-form">
@@ -670,7 +670,7 @@
         </div>
     </div>
 
-    <div class="toast-container" id="toast-container"></div>
+    <div class="toast-container" id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
 
     <div class="bottom-spacer"></div>
 </div>
