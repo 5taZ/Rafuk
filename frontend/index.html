@@ -295,14 +295,22 @@
             <p class="view-hero-desc">Создавайте трекеры для автоматического мониторинга новых лотов и падений цен по вашим запросам</p>
             <div class="view-hero-stats" id="tracking-hero-stats"></div>
         </div>
+        
         <section class="section" id="tracker-panel">
             <div class="sec-head sec-head--center">
-                <h2 class="sec-title">Детектор новинок</h2>
+                <h2 class="sec-title">Управление трекерами</h2>
             </div>
+            
             <div class="tracker-card">
-                <div class="tracker-actions">
-                    <button class="primary-btn" id="track-query-btn" type="button">Следить за текущим запросом</button>
+                <!-- Create tracker section -->
+                <div class="tracker-create-section">
+                    <button class="primary-btn" id="track-query-btn" type="button">
+                        <span class="btn-icon">➕</span>
+                        Следить за текущим запросом
+                    </button>
                 </div>
+                
+                <!-- Tracker filters -->
                 <div class="deal-range-row tracker-filter-row">
                     <label class="deal-range-field" for="tracker-min-discount-input">
                         <span>Мин. скидка</span>
@@ -362,24 +370,30 @@
                     Профиль фильтров применяется к создаваемому трекеру.
                 </p>
                 <div class="tracker-status" id="tracker-status" hidden></div>
+                
+                <!-- Active trackers list -->
                 <div class="trackers-list" id="trackers-list"></div>
-                <div class="tracker-events-block">
-                    <div class="sec-head events-head listings-head">
-                        <h3 class="sec-title">Лента событий</h3>
-                        <div class="lead-actions-wrap">
-                            <button class="ghost-btn small danger" id="clear-events-btn" type="button">Очистить</button>
-                        </div>
-                    </div>
-                    <div class="tracker-event-controls">
-                        <div class="sort-row" id="tracker-event-filter-row">
-                            <button class="s-tab active" data-event-filter="all" type="button">Все</button>
-                            <button class="s-tab" data-event-filter="price_drop" type="button">Упали в цене</button>
-                            <button class="s-tab" data-event-filter="new_listing" type="button">Новые лоты</button>
-                        </div>
-                    </div>
-                    <div class="tracker-events-list" id="tracker-events-list"></div>
+            </div>
+        </section>
+        
+        <!-- Event feed section -->
+        <section class="section" id="tracker-events-section">
+            <div class="sec-head events-head listings-head">
+                <h3 class="sec-title">📡 Лента событий</h3>
+                <div class="lead-actions-wrap">
+                    <button class="ghost-btn small danger" id="clear-events-btn" type="button">Очистить</button>
                 </div>
             </div>
+            
+            <div class="tracker-event-controls">
+                <div class="sort-row" id="tracker-event-filter-row">
+                    <button class="s-tab active" data-event-filter="all" type="button">Все</button>
+                    <button class="s-tab" data-event-filter="price_drop" type="button">Упали в цене</button>
+                    <button class="s-tab" data-event-filter="new_listing" type="button">Новые лоты</button>
+                </div>
+            </div>
+            
+            <div class="tracker-events-list" id="tracker-events-list"></div>
         </section>
     </section>
 
@@ -570,6 +584,86 @@
                     <div class="contact-form-actions">
                         <button class="primary-btn small" id="save-expense-btn" type="button">Добавить</button>
                         <button class="ghost-btn small" id="cancel-expense-btn" type="button">Отмена</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Tracker Modal -->
+    <div class="modal-overlay" id="edit-tracker-modal" hidden>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">✏️ Редактировать трекер</h3>
+                <button class="modal-close" id="close-edit-modal" type="button">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="edit-tracker-form">
+                    <div class="form-field">
+                        <label class="form-field-label">Запрос</label>
+                        <input id="edit-tracker-query" type="text" disabled class="form-input-disabled">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-field">
+                            <span class="form-field-label">Строгий режим</span>
+                            <label class="strict-toggle" for="edit-strict-mode-toggle">
+                                <input id="edit-strict-mode-toggle" type="checkbox">
+                                <span class="strict-toggle-pill"></span>
+                            </label>
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-field">
+                            <span class="form-field-label">Мин. скидка</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="edit-min-discount-input" type="number" min="0" step="1" inputmode="numeric" value="10">
+                                <span>%</span>
+                            </div>
+                        </label>
+                        <label class="form-field">
+                            <span class="form-field-label">Макс. цена</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="edit-max-price-input" type="number" min="0" step="1" inputmode="numeric" placeholder="необязательно">
+                                <span>BYN</span>
+                            </div>
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-field">
+                            <span class="form-field-label">Продавец</span>
+                            <select id="edit-seller-select" class="deal-select">
+                                <option value="">Любой</option>
+                                <option value="Частное лицо">Частник</option>
+                                <option value="Магазин">Магазин</option>
+                            </select>
+                        </label>
+                        <label class="form-field">
+                            <span class="form-field-label">Состояние</span>
+                            <select id="edit-condition-select" class="deal-select">
+                                <option value="">Любое</option>
+                                <option value="Новый">Новый</option>
+                                <option value="Б/у">Б/у</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-field">
+                            <span class="form-field-label">Регион</span>
+                            <input id="edit-region-input" type="text" class="form-text-input" placeholder="Минск, Регион 6">
+                        </label>
+                        <label class="form-field">
+                            <span class="form-field-label">Конфиг</span>
+                            <input id="edit-config-input" type="text" class="form-text-input" placeholder="pro max 256">
+                        </label>
+                    </div>
+                    <label class="strict-toggle" for="edit-exclude-duplicates-toggle">
+                        <input id="edit-exclude-duplicates-toggle" type="checkbox">
+                        <span class="strict-toggle-pill"></span>
+                        <span class="strict-toggle-copy">Только без дублей</span>
+                    </label>
+                    <div class="form-actions">
+                        <button class="primary-btn" id="save-tracker-btn" type="button">💾 Сохранить</button>
+                        <button class="ghost-btn" id="cancel-edit-btn" type="button">Отмена</button>
                     </div>
                 </div>
             </div>

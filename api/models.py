@@ -15,6 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -155,6 +156,15 @@ class Tracker(
         DateTime(timezone=True),
         nullable=True,
     )
+    # Pause support
+    paused: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    pause_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="trackers")
@@ -163,12 +173,14 @@ class Tracker(
     __table_args__ = (
         Index("idx_trackers_user", "user_id"),
         Index("idx_trackers_active", "active"),
+        Index("idx_trackers_paused", "paused"),
     )
 
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("interval_min", 15)
         kwargs.setdefault("active", True)
         kwargs.setdefault("strict_mode", False)
+        kwargs.setdefault("paused", False)
         super().__init__(**kwargs)
 
 
@@ -280,6 +292,11 @@ class TrackerEvent(Base, UserIDMixin):
     link: Mapped[str] = mapped_column(String(512), nullable=False)
     price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
     delta_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Enriched metadata
+    thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    parameters: Mapped[dict | None] = mapped_column(postgresql.JSONB, nullable=True)
+    seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

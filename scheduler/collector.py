@@ -63,9 +63,21 @@ def persist_tracker_events(
     session: AsyncSession,
     tracker: Tracker,
     sync_result: QuerySyncResult,
+    ads_by_id: dict[int, dict[str, object]] | None = None,
 ) -> list[TrackerEvent]:
     created: list[TrackerEvent] = []
     for state in sync_result.new_listings[:10]:
+        # Get enriched data from ad if available
+        ad = ads_by_id.get(state.ad_id) if ads_by_id else None
+        thumbnail = ad.get("thumbnail") if ad else None
+        seller_type = ad.get("seller_type") if ad else None
+        region_name = None
+        if ad:
+            for key in ("region_name", "location_name", "area_name"):
+                if ad.get(key):
+                    region_name = ad.get(key)
+                    break
+        
         event = TrackerEvent(
             tracker_id=tracker.id,
             user_id=tracker.user_id,
@@ -76,11 +88,25 @@ def persist_tracker_events(
             title=state.title,
             link=state.link,
             price_byn=state.last_price_byn,
+            thumbnail=thumbnail,
+            seller_type=seller_type,
+            region_name=region_name,
         )
         session.add(event)
         created.append(event)
 
     for state, delta in sync_result.price_drops[:10]:
+        # Get enriched data from ad if available
+        ad = ads_by_id.get(state.ad_id) if ads_by_id else None
+        thumbnail = ad.get("thumbnail") if ad else None
+        seller_type = ad.get("seller_type") if ad else None
+        region_name = None
+        if ad:
+            for key in ("region_name", "location_name", "area_name"):
+                if ad.get(key):
+                    region_name = ad.get(key)
+                    break
+        
         event = TrackerEvent(
             tracker_id=tracker.id,
             user_id=tracker.user_id,
@@ -92,6 +118,9 @@ def persist_tracker_events(
             link=state.link,
             price_byn=state.last_price_byn,
             delta_byn=delta,
+            thumbnail=thumbnail,
+            seller_type=seller_type,
+            region_name=region_name,
         )
         session.add(event)
         created.append(event)
@@ -203,7 +232,13 @@ async def check_trackers(
     settings: Settings,
 ) -> None:
     async with session_factory() as session:
-        result = await session.execute(select(Tracker).where(Tracker.active.is_(True)))
+        # Only check active AND non-paused trackers
+        result = await session.execute(
+            select(Tracker).where(
+                Tracker.active.is_(True),
+                Tracker.paused.is_(False)
+            )
+        )
         trackers = list(result.scalars())
         trackers_by_query: dict[tuple[str, bool], list[Tracker]] = defaultdict(list)
         for tracker in trackers:
@@ -258,7 +293,7 @@ async def check_trackers(
                     message = _build_tracker_message(query, strict_mode, tracker_sync_result)
                     if message:
                         created_events = persist_tracker_events(
-                            session, tracker, tracker_sync_result
+                            session, tracker, tracker_sync_result, ads_by_id
                         )
                         await session.flush()
                         primary_event = created_events[0] if created_events else None

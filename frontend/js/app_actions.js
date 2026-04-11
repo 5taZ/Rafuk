@@ -1107,6 +1107,102 @@ function createAppActions(context) {
         }
     }
 
+    // Pause a tracker
+    async function pauseTracker(trackerId) {
+        if (!hasTelegramInitData()) {
+            showToast("Доступно только в Telegram");
+            return;
+        }
+        try {
+            await postJson(`/api/v1/trackers/${trackerId}/pause`);
+            showToast("Трекер приостановлен");
+            await loadTrackers();
+            renderAll();
+        } catch (error) {
+            showToast(error.message || "Не удалось приостановить трекер");
+        }
+    }
+
+    // Resume a paused tracker
+    async function resumeTracker(trackerId) {
+        if (!hasTelegramInitData()) {
+            showToast("Доступно только в Telegram");
+            return;
+        }
+        try {
+            await postJson(`/api/v1/trackers/${trackerId}/resume`);
+            showToast("Трекер возобновлен");
+            await loadTrackers();
+            renderAll();
+        } catch (error) {
+            showToast(error.message || "Не удалось возобновить трекер");
+        }
+    }
+
+    // Open edit tracker modal
+    function openEditTracker(trackerId) {
+        const tracker = state.trackers.find((t) => t.id === trackerId);
+        if (!tracker) {
+            showToast("Трекер не найден");
+            return;
+        }
+
+        // Store current editing tracker ID
+        state.editingTrackerId = trackerId;
+
+        // Populate modal fields
+        if (elements.editTrackerQuery) elements.editTrackerQuery.value = tracker.query;
+        if (elements.editStrictModeToggle) elements.editStrictModeToggle.checked = Boolean(tracker.strict_mode);
+        if (elements.editMinDiscountInput) elements.editMinDiscountInput.value = tracker.min_discount_percent ?? 10;
+        if (elements.editMaxPriceInput) elements.editMaxPriceInput.value = tracker.max_price_byn ?? "";
+        if (elements.editSellerSelect) elements.editSellerSelect.value = tracker.seller_type || "";
+        if (elements.editConditionSelect) elements.editConditionSelect.value = tracker.condition || "";
+        if (elements.editRegionInput) elements.editRegionInput.value = tracker.region_name || "";
+        if (elements.editConfigInput) elements.editConfigInput.value = tracker.config_keyword || "";
+        if (elements.editExcludeDuplicatesToggle) elements.editExcludeDuplicatesToggle.checked = Boolean(tracker.exclude_duplicates);
+
+        // Show modal
+        if (elements.editTrackerModal) elements.editTrackerModal.hidden = false;
+    }
+
+    // Close edit tracker modal
+    function closeEditTracker() {
+        state.editingTrackerId = null;
+        if (elements.editTrackerModal) elements.editTrackerModal.hidden = true;
+    }
+
+    // Save edited tracker
+    async function saveTracker() {
+        if (!hasTelegramInitData() || !state.editingTrackerId) {
+            showToast("Ошибка");
+            return;
+        }
+
+        try {
+            await requestJson(`/api/v1/trackers/${state.editingTrackerId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    strict_mode: elements.editStrictModeToggle?.checked,
+                    min_discount_percent: Number(elements.editMinDiscountInput?.value) || null,
+                    max_price_byn: elements.editMaxPriceInput?.value ? Number(elements.editMaxPriceInput.value) : null,
+                    seller_type: elements.editSellerSelect?.value || null,
+                    condition: elements.editConditionSelect?.value || null,
+                    region_name: elements.editRegionInput?.value || null,
+                    config_keyword: elements.editConfigInput?.value || null,
+                    exclude_duplicates: elements.editExcludeDuplicatesToggle?.checked,
+                }),
+            });
+
+            showToast("Трекер обновлен");
+            closeEditTracker();
+            await loadTrackers();
+            renderAll();
+        } catch (error) {
+            showToast(error.message || "Не удалось обновить трекер");
+        }
+    }
+
     async function setCurrency(currency) {
         if (!currency || state.currency === currency) {
             return;
@@ -1574,9 +1670,29 @@ function createAppActions(context) {
             state.trackerConfigKeyword = elements.trackerConfigInput.value.trim();
         });
 
+        // Edit tracker modal event listeners
+        elements.closeEditModal?.addEventListener("click", () => {
+            closeEditTracker();
+        });
+        elements.cancelEditBtn?.addEventListener("click", () => {
+            closeEditTracker();
+        });
+        elements.saveTrackerBtn?.addEventListener("click", () => {
+            void saveTracker();
+        });
+
+        // Also close edit modal on overlay click / Escape key
+        elements.editTrackerModal?.addEventListener("click", (event) => {
+            // Close when clicking on the overlay background (not the modal content)
+            if (event.target === elements.editTrackerModal) {
+                closeEditTracker();
+            }
+        });
+
         for (const button of elements.trackerEventFilterButtons || []) {
             button.addEventListener("click", () => {
                 state.trackerEventFilter = button.dataset.eventFilter || "all";
+                state.trackerEventFilterTrackerId = null; // Clear tracker-specific filter
                 renderTrackerEventFilters();
                 renderTrackerEvents();
             });
@@ -1719,8 +1835,12 @@ function createAppActions(context) {
         });
 
         document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape" && !elements.expensesModal?.hidden) {
-                closeExpensesModal();
+            if (event.key === "Escape") {
+                if (!elements.expensesModal?.hidden) {
+                    closeExpensesModal();
+                } else if (!elements.editTrackerModal?.hidden) {
+                    closeEditTracker();
+                }
             }
         });
 
@@ -1774,6 +1894,11 @@ function createAppActions(context) {
         refreshLeads,
         openWatchlistDetail,
         deleteTracker,
+        pauseTracker,
+        resumeTracker,
+        openEditTracker,
+        closeEditTracker,
+        saveTracker,
         openOpportunityQuery,
         openOpportunityDetail,
         openListingDetail,

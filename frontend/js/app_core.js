@@ -30,6 +30,7 @@ function createAppCore() {
         trackers: [],
         trackerEvents: [],
         trackerEventFilter: "all",
+        trackerEventFilterTrackerId: null,
         trackerStatus: "",
         trackerStatusKind: "info",
         trackerMinDiscountPercent: 10,
@@ -39,6 +40,7 @@ function createAppCore() {
         trackerCondition: "",
         trackerRegionName: "",
         trackerConfigKeyword: "",
+        editingTrackerId: null,
         detail: null,
         detailImageIndex: 0,
         detailFromWatchlist: false,
@@ -201,6 +203,19 @@ function createAppCore() {
             BYN: document.getElementById("btn-byn"),
             USD: document.getElementById("btn-usd"),
         };
+        elements.editTrackerModal = document.getElementById("edit-tracker-modal");
+        elements.editTrackerQuery = document.getElementById("edit-tracker-query");
+        elements.editStrictModeToggle = document.getElementById("edit-strict-mode-toggle");
+        elements.editMinDiscountInput = document.getElementById("edit-min-discount-input");
+        elements.editMaxPriceInput = document.getElementById("edit-max-price-input");
+        elements.editSellerSelect = document.getElementById("edit-seller-select");
+        elements.editConditionSelect = document.getElementById("edit-condition-select");
+        elements.editRegionInput = document.getElementById("edit-region-input");
+        elements.editConfigInput = document.getElementById("edit-config-input");
+        elements.editExcludeDuplicatesToggle = document.getElementById("edit-exclude-duplicates-toggle");
+        elements.closeEditModal = document.getElementById("close-edit-modal");
+        elements.saveTrackerBtn = document.getElementById("save-tracker-btn");
+        elements.cancelEditBtn = document.getElementById("cancel-edit-btn");
         elements.panelToggles = Array.from(document.querySelectorAll("[data-panel-toggle]"));
         elements.panelBodies = {
             distribution: document.getElementById("distribution-body"),

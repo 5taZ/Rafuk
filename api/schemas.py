@@ -212,6 +212,19 @@ class TrackerCreate(BaseModel):
     exclude_duplicates: bool = False
 
 
+class TrackerUpdate(BaseModel):
+    """Schema for updating an existing tracker."""
+    strict_mode: bool | None = None
+    interval_min: int | None = None
+    min_discount_percent: float | None = None
+    max_price_byn: float | None = None
+    seller_type: str | None = None
+    condition: str | None = None
+    region_name: str | None = None
+    config_keyword: str | None = None
+    exclude_duplicates: bool | None = None
+
+
 class TrackerRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -230,6 +243,15 @@ class TrackerRead(BaseModel):
     last_seen_ad_id: int | None = None
     last_seen_price_byn: float | None = None
     last_checked_at: datetime | None = None
+    # Pause support
+    paused: bool = False
+    paused_at: datetime | None = None
+    # Computed stats (not stored in DB, added by API)
+    event_count: int = 0
+    new_listings_count: int = 0
+    price_drops_count: int = 0
+    last_event_at: datetime | None = None
+    avg_events_per_day: float = 0.0
     active: bool
     created_at: datetime
 
@@ -248,6 +270,11 @@ class TrackerEventRead(BaseModel):
     link: str
     price_byn: float | None = None
     delta_byn: float | None = None
+    # Enriched metadata
+    thumbnail: str | None = None
+    parameters: dict | None = None
+    seller_type: str | None = None
+    region_name: str | None = None
     created_at: datetime
 
 

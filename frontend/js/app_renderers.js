@@ -1250,6 +1250,23 @@ function createAppRenderers(context) {
         }
     }
 
+    /**
+     * Format a relative time from an ISO date string for display.
+     */
+    function formatLastEventTime(isoDate) {
+        if (!isoDate) return "нет";
+        const date = new Date(isoDate);
+        if (isNaN(date.getTime())) return "нет";
+        const diffMs = Math.max(0, Date.now() - date.getTime());
+        const diffMin = Math.floor(diffMs / 60000);
+        if (diffMin < 1) return "только что";
+        if (diffMin < 60) return `${diffMin} мин`;
+        const diffHr = Math.floor(diffMin / 60);
+        if (diffHr < 24) return `${diffHr} ч`;
+        const diffDays = Math.floor(diffHr / 24);
+        return `${diffDays} д`;
+    }
+
     function renderTrackers() {
         elements.trackersList.innerHTML = "";
 
@@ -1270,28 +1287,15 @@ function createAppRenderers(context) {
         }
 
         for (const tracker of state.trackers) {
-            const row = document.createElement("div");
-            row.className = "tracker-row";
-            const trackerMeta = [
-                `каждые ${tracker.interval_min} мин`,
-                tracker.strict_mode ? "строгий" : "",
-                tracker.min_discount_percent ? `от -${Math.round(tracker.min_discount_percent)}%` : "",
-                tracker.max_price_byn ? `до ${Math.round(tracker.max_price_byn)} BYN` : "",
-                tracker.exclude_duplicates ? "без дублей" : "",
-                tracker.seller_type === "Частное лицо" ? "частники" : "",
-            ].filter(Boolean);
-
             // Format "last checked" indicator
             let lastCheckedLabel = "";
             if (tracker.last_checked_at) {
                 const checkedDate = new Date(tracker.last_checked_at);
-                if (isNaN(checkedDate.getTime())) {
-                    lastCheckedLabel = "";
-                } else {
+                if (!isNaN(checkedDate.getTime())) {
                     const diffMs = Math.max(0, Date.now() - checkedDate.getTime());
                     const diffMin = Math.floor(diffMs / 60000);
                     if (diffMin < 1) {
-                        lastCheckedLabel = "только что";
+                        lastCheckedLabel = "проверено только что";
                     } else if (diffMin < 60) {
                         lastCheckedLabel = `${diffMin} мин назад`;
                     } else {
@@ -1301,18 +1305,79 @@ function createAppRenderers(context) {
                 }
             }
 
-            row.innerHTML = `
-                <div class="tracker-row-main">
-                    <strong class="tracker-query">${escapeHtml(tracker.query)}</strong>
-                    <span class="tracker-meta mono">${trackerMeta.map(s => escapeHtml(s)).join(" &bull; ")}</span>
+            const card = document.createElement("div");
+            card.className = `tracker-card-enhanced${tracker.paused ? " paused" : ""}`;
+            card.innerHTML = `
+                <div class="tracker-header">
+                    <div class="tracker-icon">🔍</div>
+                    <div class="tracker-title-wrap">
+                        <h4 class="tracker-query-title">${escapeHtml(tracker.query)}</h4>
+                    </div>
                 </div>
-                ${lastCheckedLabel ? `<span class="tracker-last-checked" title="Последняя проверка: ${escapeHtml(tracker.last_checked_at)}">🕐 ${escapeHtml(lastCheckedLabel)}</span>` : ""}
-                <div class="tracker-row-actions">
-                    <button class="ghost-btn small" data-role="open" type="button">Открыть</button>
-                    <button class="ghost-btn small danger" data-role="delete" type="button">Удалить</button>
+                <div class="tracker-filters">
+                    <span class="tracker-filter-tag">каждые ${tracker.interval_min} мин</span>
+                    ${tracker.strict_mode ? '<span class="tracker-filter-tag">строгий</span>' : ""}
+                    ${tracker.min_discount_percent ? `<span class="tracker-filter-tag">от -${Math.round(tracker.min_discount_percent)}%</span>` : ""}
+                    ${tracker.max_price_byn ? `<span class="tracker-filter-tag">до ${Math.round(tracker.max_price_byn)} BYN</span>` : ""}
+                    ${tracker.exclude_duplicates ? '<span class="tracker-filter-tag">без дублей</span>' : ""}
+                    ${tracker.seller_type === "Частное лицо" ? '<span class="tracker-filter-tag">частники</span>' : ""}
+                    ${tracker.condition ? `<span class="tracker-filter-tag">${escapeHtml(tracker.condition)}</span>` : ""}
+                    ${tracker.region_name ? `<span class="tracker-filter-tag">${escapeHtml(tracker.region_name)}</span>` : ""}
+                </div>
+                <div class="tracker-stats">
+                    <div class="tracker-stat">
+                        <span class="tracker-stat-label">События</span>
+                        <span class="tracker-stat-value highlight">${tracker.event_count || 0}</span>
+                    </div>
+                    <div class="tracker-stat">
+                        <span class="tracker-stat-label">В среднем</span>
+                        <span class="tracker-stat-value">${tracker.avg_events_per_day || 0}/день</span>
+                    </div>
+                    <div class="tracker-stat">
+                        <span class="tracker-stat-label">Посл. событие</span>
+                        <span class="tracker-stat-value">${formatLastEventTime(tracker.last_event_at)}</span>
+                    </div>
+                </div>
+                ${lastCheckedLabel ? `<div class="tracker-last-checked">🕐 ${escapeHtml(lastCheckedLabel)}</div>` : ""}
+                <div class="tracker-card-actions">
+                    <button class="ghost-btn small" data-role="${tracker.paused ? "resume" : "pause"}" type="button">
+                        <span class="btn-icon">${tracker.paused ? "▶️" : "⏸️"}</span>
+                        ${tracker.paused ? "Возобновить" : "Пауза"}
+                    </button>
+                    <button class="ghost-btn small" data-role="edit" type="button">
+                        <span class="btn-icon">✏️</span> Изменить
+                    </button>
+                    <button class="ghost-btn small" data-role="view-events" type="button">
+                        <span class="btn-icon">📋</span> События
+                    </button>
+                    <button class="ghost-btn small danger" data-role="delete" type="button">
+                        <span class="btn-icon">🗑️</span> Удалить
+                    </button>
                 </div>
             `;
-            row.querySelector('[data-role="open"]')?.addEventListener("click", () => {
+
+            // Bind action buttons
+            card.querySelector('[data-role="pause"]')?.addEventListener("click", () => {
+                void actions.pauseTracker(tracker.id);
+            });
+            card.querySelector('[data-role="resume"]')?.addEventListener("click", () => {
+                void actions.resumeTracker(tracker.id);
+            });
+            card.querySelector('[data-role="edit"]')?.addEventListener("click", () => {
+                actions.openEditTracker(tracker.id);
+            });
+            card.querySelector('[data-role="view-events"]')?.addEventListener("click", () => {
+                // Filter events to show only this tracker's events
+                state.trackerEvents = state.trackerEvents || [];
+                // Store the tracker query to filter by
+                state.trackerEventFilterTrackerId = tracker.id;
+                renderTrackerEvents();
+            });
+            card.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
+                void actions.deleteTracker(tracker.id);
+            });
+            // Keep existing [data-role="open"] behavior — open query in search
+            card.querySelector('[data-role="open"]')?.addEventListener("click", () => {
                 showToast("Загружаю...");
                 elements.searchInput.value = tracker.query;
                 state.query = tracker.query;
@@ -1329,10 +1394,7 @@ function createAppRenderers(context) {
                 renderLoading();
                 void actions.search();
             });
-            row.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
-                void actions.deleteTracker(tracker.id);
-            });
-            elements.trackersList.appendChild(row);
+            elements.trackersList.appendChild(card);
         }
     }
 
@@ -1355,6 +1417,7 @@ function createAppRenderers(context) {
             elements.trackerEventsBadge.textContent = totalCount > 0 ? `${totalCount} событий` : "чат + Mini App";
         }
 
+        // Update filter button labels and active states
         for (const button of elements.trackerEventFilterButtons) {
             const filter = button.dataset.eventFilter;
             const count = filter === "all" ? totalCount : filter === "price_drop" ? dropCount : newCount;
@@ -1363,53 +1426,80 @@ function createAppRenderers(context) {
             button.classList.toggle("active", filter === state.trackerEventFilter);
         }
 
-        const filteredEvents = state.trackerEvents.filter((event) => {
+        // Filter events by type and optionally by tracker
+        let filteredEvents = state.trackerEvents.filter((event) => {
             if (state.trackerEventFilter === "all") {
                 return true;
             }
             return event.event_type === state.trackerEventFilter;
         });
 
+        // If a specific tracker is selected, filter by its query
+        if (state.trackerEventFilterTrackerId) {
+            const tracker = state.trackers.find((t) => t.id === state.trackerEventFilterTrackerId);
+            if (tracker) {
+                const trackerQuery = tracker.query.trim().toLocaleLowerCase("ru-RU");
+                filteredEvents = filteredEvents.filter((e) => {
+                    return (e.query || "").trim().toLocaleLowerCase("ru-RU") === trackerQuery;
+                });
+            }
+        }
+
         if (!filteredEvents.length) {
             const note = document.createElement("p");
             note.className = "tracker-event-empty";
-            note.textContent = state.trackerEventFilter === "all"
-                ? "Событий пока нет. Они появятся после первой проверки планировщика."
-                : "По этому фильтру событий пока нет.";
+            if (state.trackerEventFilterTrackerId) {
+                const tracker = state.trackers.find((t) => t.id === state.trackerEventFilterTrackerId);
+                note.textContent = tracker
+                    ? `Нет событий для "${tracker.query}".`
+                    : "По этому фильтру событий пока нет.";
+            } else if (state.trackerEventFilter === "all") {
+                note.textContent = "Событий пока нет. Они появятся после первой проверки планировщика.";
+            } else {
+                note.textContent = "По этому фильтру событий пока нет.";
+            }
             elements.trackerEventsList.appendChild(note);
             return;
         }
 
         for (const event of filteredEvents) {
-            const row = document.createElement("article");
+            const card = document.createElement("article");
             const isPriceDrop = event.event_type === "price_drop";
-            row.className = `tracker-event-row${isPriceDrop ? " price-drop" : ""}`;
-            const typeLabel = isPriceDrop ? "Падение цены" : "Новый лот";
-            const typeClass = isPriceDrop ? "drop" : "new";
-            const meta = [];
-            if (event.query) {
-                meta.push(event.strict_mode ? `${event.query} • строгий` : event.query);
-            }
-            if (event.price_byn) {
-                meta.push(`${Math.round(event.price_byn)} р.`);
-            }
-            if (event.delta_byn) {
-                meta.push(`-${Math.round(event.delta_byn)} р.`);
-            }
-            row.innerHTML = `
-                <div class="tracker-event-top">
-                    <span class="tracker-event-type ${typeClass}">${typeLabel}</span>
-                    <span class="tracker-event-time mono">${formatDate(event.created_at)}</span>
+            card.className = `tracker-event-card${isPriceDrop ? " price-drop" : ""}`;
+            card.innerHTML = `
+                <div class="event-header">
+                    ${event.thumbnail
+                        ? `<img class="event-thumbnail" src="${escapeHtml(event.thumbnail)}" alt="" loading="lazy">`
+                        : `<div class="event-thumbnail-placeholder">📱</div>`
+                    }
+                    <div class="event-body">
+                        <div class="event-top-row">
+                            <span class="event-type-badge ${isPriceDrop ? "drop" : "new"}">
+                                ${isPriceDrop ? "🔽 Падение цены" : "🆕 Новый лот"}
+                            </span>
+                            <span class="event-time">${formatDate(event.created_at)}</span>
+                        </div>
+                        <strong class="event-title">${escapeHtml(event.title)}</strong>
+                        <div class="event-price-row">
+                            <span class="event-price mono">${event.price_byn ? `${Math.round(event.price_byn)} р.` : "без цены"}</span>
+                            ${event.delta_byn ? `<span class="event-delta">-${Math.round(event.delta_byn)} р.</span>` : ""}
+                        </div>
+                        <div class="event-meta">
+                            ${event.region_name ? `<span class="event-meta-item">📍 ${escapeHtml(event.region_name)}</span>` : ""}
+                            ${event.seller_type ? `<span class="event-meta-item">👤 ${escapeHtml(event.seller_type)}</span>` : ""}
+                        </div>
+                        <span class="event-tracker-source">🔍 ${escapeHtml(event.query)}</span>
+                    </div>
                 </div>
-                <strong class="tracker-event-title">${escapeHtml(event.title)}</strong>
-                <div class="tracker-event-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
-                <div class="listing-actions">
+                <div class="event-actions">
                     <button class="listing-btn" data-role="open-query" type="button">Открыть</button>
                     <button class="listing-btn" data-role="lead" type="button">В покупки</button>
-                    <a class="listing-btn listing-btn--accent" href="${escapeHtml(event.link)}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                    <a class="listing-btn listing-btn--accent" href="${escapeHtml(event.link)}" target="_blank" rel="noreferrer noopener">Kufar →</a>
                 </div>
             `;
-            row.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
+
+            // Event listeners
+            card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
                 showToast("Открываю...");
                 if (event.query) {
                     elements.searchInput.value = event.query;
@@ -1424,7 +1514,7 @@ function createAppRenderers(context) {
                     price_byn: event.price_byn,
                 });
             });
-            row.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
+            card.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
                 void actions.addLeadFromListing(
                     {
                         ad_id: event.ad_id,
@@ -1437,7 +1527,7 @@ function createAppRenderers(context) {
                     event.query
                 );
             });
-            elements.trackerEventsList.appendChild(row);
+            elements.trackerEventsList.appendChild(card);
         }
     }
 

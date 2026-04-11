@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -11,7 +11,7 @@ from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import Tracker, TrackerEvent
-from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead
+from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead, TrackerUpdate
 from api.services.reseller_tools import default_config_keyword
 from api.services.workflow_store import ensure_user, resolve_user_id
 
@@ -69,7 +69,41 @@ async def get_trackers(
             .where(Tracker.user_id == user_id, Tracker.active.is_(True))
             .order_by(Tracker.created_at.desc(), Tracker.id.desc())
         )
-        return list(result.scalars())
+        trackers = list(result.scalars())
+        
+        # Enrich trackers with event statistics
+        enriched_trackers = []
+        for tracker in trackers:
+            # Get event counts and last event time
+            stats_result = await session.execute(
+                select(
+                    func.count(TrackerEvent.id).label('total_events'),
+                    func.count(TrackerEvent.id).filter(TrackerEvent.event_type == 'new_listing').label('new_listings'),
+                    func.count(TrackerEvent.id).filter(TrackerEvent.event_type == 'price_drop').label('price_drops'),
+                    func.max(TrackerEvent.created_at).label('last_event_at')
+                ).where(TrackerEvent.tracker_id == tracker.id)
+            )
+            stats = stats_result.one()
+            
+            # Calculate average events per day
+            now = datetime.now(UTC)
+            days_active = 1
+            if tracker.created_at:
+                delta = now - tracker.created_at.replace(tzinfo=UTC) if tracker.created_at.tzinfo is None else now - tracker.created_at
+                days_active = max(1, delta.total_seconds() / 86400)
+            
+            avg_events_per_day = round(stats.total_events / days_active, 2) if stats.total_events > 0 else 0.0
+            
+            # Create enriched response
+            tracker_dict = TrackerRead.model_validate(tracker)
+            tracker_dict.event_count = stats.total_events
+            tracker_dict.new_listings_count = stats.new_listings
+            tracker_dict.price_drops_count = stats.price_drops
+            tracker_dict.last_event_at = stats.last_event_at
+            tracker_dict.avg_events_per_day = avg_events_per_day
+            enriched_trackers.append(tracker_dict)
+        
+        return enriched_trackers
 
 
 @router.post("/trackers", response_model=TrackerRead, status_code=status.HTTP_201_CREATED)
@@ -142,3 +176,92 @@ async def delete_tracker(
         tracker.deleted_at = datetime.now(UTC)
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch("/trackers/{tracker_id}", response_model=TrackerRead)
+@limiter.limit("20/minute")
+async def update_tracker(
+    request: Request,
+    tracker_id: int,
+    payload: TrackerUpdate,
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> TrackerRead:
+    async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        result = await session.execute(
+            select(Tracker).where(
+                Tracker.id == tracker_id,
+                Tracker.user_id == user_id,
+                Tracker.active.is_(True),
+            )
+        )
+        tracker = result.scalar_one_or_none()
+        if tracker is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
+        
+        # Update only provided fields
+        update_data = payload.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(tracker, field, value)
+        
+        await session.commit()
+        await session.refresh(tracker)
+        return TrackerRead.model_validate(tracker)
+
+
+@router.post("/trackers/{tracker_id}/pause", response_model=TrackerRead)
+@limiter.limit("10/minute")
+async def pause_tracker(
+    request: Request,
+    tracker_id: int,
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> TrackerRead:
+    async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        result = await session.execute(
+            select(Tracker).where(
+                Tracker.id == tracker_id,
+                Tracker.user_id == user_id,
+                Tracker.active.is_(True),
+            )
+        )
+        tracker = result.scalar_one_or_none()
+        if tracker is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
+        
+        tracker.paused = True
+        tracker.paused_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(tracker)
+        return TrackerRead.model_validate(tracker)
+
+
+@router.post("/trackers/{tracker_id}/resume", response_model=TrackerRead)
+@limiter.limit("10/minute")
+async def resume_tracker(
+    request: Request,
+    tracker_id: int,
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> TrackerRead:
+    async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        result = await session.execute(
+            select(Tracker).where(
+                Tracker.id == tracker_id,
+                Tracker.user_id == user_id,
+                Tracker.active.is_(True),
+            )
+        )
+        tracker = result.scalar_one_or_none()
+        if tracker is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
+        
+        tracker.paused = False
+        tracker.paused_at = None
+        tracker.pause_reason = None
+        await session.commit()
+        await session.refresh(tracker)
+        return TrackerRead.model_validate(tracker)
