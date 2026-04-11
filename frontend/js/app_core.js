@@ -242,9 +242,9 @@ function createAppCore() {
     }
 
     function formatPrice(value) {
-        if (value == null || value === 0) return "—";
+        if (value == null || value === 0) return "Договорная";
         const numeric = Number(value);
-        if (Number.isNaN(numeric)) return "—";
+        if (Number.isNaN(numeric)) return "Договорная";
 
         if (state.currency === "BYN") {
             if (numeric >= 10000) {

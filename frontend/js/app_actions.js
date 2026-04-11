@@ -1602,6 +1602,12 @@ function createAppActions(context) {
         let clearEventsConfirmed = false;
         elements.clearEventsButton?.addEventListener("click", () => {
             void (async () => {
+                // Check if there are any events to clear BEFORE asking for confirmation
+                if (state.trackerEvents.length === 0) {
+                    showToast("Нет событий для удаления");
+                    return;
+                }
+                
                 if (!clearEventsConfirmed) {
                     clearEventsConfirmed = true;
                     elements.clearEventsButton.textContent = "Удалить все?";
@@ -1900,10 +1906,7 @@ function createAppActions(context) {
             }
         });
 
-        // ===== CSV Export =====
-        elements.exportLeadsButton?.addEventListener("click", () => {
-            void actions.exportLeadsCSV();
-        });
+        // Export button removed - functionality deprecated
 
         // Pause auto-refresh when the app is backgrounded
         document.addEventListener("visibilitychange", () => {

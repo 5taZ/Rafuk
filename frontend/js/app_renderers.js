@@ -994,17 +994,6 @@ function createAppRenderers(context) {
             const buyPrice = buyPriceBynRaw ? (state.currency === "USD" ? Math.round(buyPriceBynRaw / rate) : Math.round(buyPriceBynRaw)) : null;
             const soldPrice = soldPriceBynRaw ? (state.currency === "USD" ? Math.round(soldPriceBynRaw / rate) : Math.round(soldPriceBynRaw)) : null;
 
-            let profitMarkup = "";
-            if (isSold && soldPriceBynRaw && buyPriceBynRaw) {
-                const profitRaw = soldPriceBynRaw - buyPriceBynRaw;
-                const profit = state.currency === "USD" ? profitRaw / rate : profitRaw;
-                const profitPercent = buyPriceBynRaw > 0 ? ((profitRaw / buyPriceBynRaw) * 100).toFixed(0) : "0";
-                const profitSign = profit >= 0 ? "+" : "";
-                const profitClass = profit >= 0 ? "profit-positive" : "profit-negative";
-                const profitLabel = profit >= 0 ? "Потенциальная прибыль" : "Потенциальный убыток";
-                profitMarkup = `<div class="lead-financial-item ${profitClass}">${profitLabel}: <span class="mono">${profitSign}${Math.round(profit)} ${currencySymbol} (${profitSign}${profitPercent}%)</span></div>`;
-            }
-
             const thumbMarkup = lead.thumbnail
                 ? `<img class="watchlist-thumb" src="${escapeHtml(lead.thumbnail)}" alt="" loading="lazy">`
                 : `<div class="watchlist-thumb-placeholder">Нет фото</div>`;
@@ -1016,22 +1005,25 @@ function createAppRenderers(context) {
                 ? `<span class="market-badge missing">Пропало</span>`
                 : "";
 
-            // Simplified pipeline: In Progress → Completed
-            // Only 2 stages since "bought" and "sold" happen simultaneously
-            const isCompleted = lead.status === 'closed' || lead.status === 'cancelled';
-            const stageMarkup = `
-                <div class="lead-pipeline">
-                    <div class="lead-pipeline-step ${!isCompleted ? 'active' : ''}">
-                        <span class="lead-pipeline-dot"></span>
-                        <span class="lead-pipeline-label">В процессе</span>
-                    </div>
-                    <div class="lead-pipeline-line ${isCompleted ? 'active' : ''}"></div>
-                    <div class="lead-pipeline-step ${isCompleted ? 'active' : ''}">
-                        <span class="lead-pipeline-dot"></span>
-                        <span class="lead-pipeline-label">Завершено</span>
-                    </div>
-                </div>
-            `;
+            // Calculate and display potential/actual profit
+            let profitMarkup = "";
+            const hasBothPrices = buyPriceBynRaw && soldPriceBynRaw;
+            
+            if (hasBothPrices) {
+                const profitRaw = soldPriceBynRaw - buyPriceBynRaw;
+                const profit = state.currency === "USD" ? profitRaw / rate : profitRaw;
+                const profitPercent = buyPriceBynRaw > 0 ? ((profitRaw / buyPriceBynRaw) * 100).toFixed(0) : "0";
+                const profitSign = profit >= 0 ? "+" : "";
+                const profitClass = profit >= 0 ? "profit-positive" : "profit-negative";
+                
+                if (isSold) {
+                    // Actual profit for completed deals
+                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Прибыль: <span class="mono">${profitSign}${Math.round(profit)} ${currencySymbol} (${profitSign}${profitPercent}%)</span></div>`;
+                } else if (lead.status === 'new' || lead.status === 'bought') {
+                    // Potential profit for in-progress deals
+                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Потенциальная прибыль: <span class="mono">${profitSign}${Math.round(profit)} ${currencySymbol} (${profitSign}${profitPercent}%)</span></div>`;
+                }
+            }
 
             // Stage 1: New lead - show Confirm and Delete buttons, no Kufar
             // Stage 2: Bought lead - show Close Deal and Revert buttons, Kufar visible
@@ -1046,18 +1038,15 @@ function createAppRenderers(context) {
                         </div>
                         <span class="lead-card-price mono">${priceByn ? `${priceByn} ${currencySymbol}` : "без цены"}</span>
                         ${missingBadge}
-                        ${stageMarkup}
                         ${profitMarkup}
                     </div>
                 </div>
                 <div class="lead-card-fields">
                     <label class="lead-field">
-                        <div class="lead-field-label-row">
-                            <span class="lead-field-label">Купил за</span>
-                            <button class="lead-field-chip" data-role="fill-buy-price" type="button" ${!priceByn ? 'disabled style="opacity:0.4;pointer-events:none;"' : ''}>📋 ${priceByn ? priceByn : '—'}</button>
-                        </div>
+                        <span class="lead-field-label">Купил за</span>
                         <div class="lead-field-wrap">
                             <input data-role="buy-price" type="text" min="0" placeholder="цена покупки">
+                            <button class="lead-field-chip" data-role="fill-buy-price" type="button" ${!priceByn ? 'disabled style="opacity:0.4;pointer-events:none;"' : ''}>${priceByn ? `${priceByn}` : 'Договорная'}</button>
                             <span class="unit">${currencySymbol}</span>
                         </div>
                     </label>
@@ -1247,7 +1236,7 @@ function createAppRenderers(context) {
                     <div class="watchlist-card-body">
                         <strong class="watchlist-card-title">${escapeHtml(item.title)}</strong>
                         <div class="watchlist-card-price-row">
-                            <span class="watchlist-card-price mono">${currentPriceDisplay ? `${currentPriceDisplay} ${currencySymbol}` : "—"}</span>
+                            <span class="watchlist-card-price mono">${currentPriceDisplay ? `${currentPriceDisplay} ${currencySymbol}` : "Договорная"}</span>
                             ${deltaMarkup}
                         </div>
                         ${potentialProfitMarkup}
@@ -1402,17 +1391,13 @@ function createAppRenderers(context) {
                 ${lastCheckedLabel ? `<div class="tracker-last-checked">🕐 ${escapeHtml(lastCheckedLabel)}</div>` : ""}
                 <div class="tracker-card-actions">
                     <button class="ghost-btn small" data-role="${tracker.paused ? "resume" : "pause"}" type="button">
-                        <span class="btn-icon">${tracker.paused ? "▶️" : "⏸️"}</span>
-                        ${tracker.paused ? "Возобновить" : "Пауза"}
+                        ${tracker.paused ? "▶ Возобновить" : "⏸ Пауза"}
                     </button>
                     <button class="ghost-btn small" data-role="edit" type="button">
-                        <span class="btn-icon">✏️</span> Изменить
-                    </button>
-                    <button class="ghost-btn small" data-role="view-events" type="button">
-                        <span class="btn-icon">📋</span> События
+                        ✏️ Изменить
                     </button>
                     <button class="ghost-btn small danger" data-role="delete" type="button">
-                        <span class="btn-icon">🗑️</span> Удалить
+                        🗑 Удалить
                     </button>
                 </div>
             `;
