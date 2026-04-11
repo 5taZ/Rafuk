@@ -28,15 +28,57 @@ function createAppRenderers(context) {
         return _escapeDiv.innerHTML;
     }
 
-    function showToast(message) {
+    function showToast(message, type = "info", duration = 3000) {
         if (!elements.toastContainer) return;
+        
         const toast = document.createElement("div");
-        toast.className = "toast";
-        toast.textContent = message;
+        toast.className = `toast toast-${type}`;
+        toast.setAttribute("role", "status");
+        toast.setAttribute("aria-live", "polite");
+        
+        // Icon based on toast type
+        const iconMap = {
+            success: "✓",
+            error: "✕",
+            info: "ℹ",
+        };
+        
+        toast.innerHTML = `
+            <span class="toast-icon ${type}">${iconMap[type] || iconMap.info}</span>
+            <span class="toast-message">${message}</span>
+            <button class="toast-close" aria-label="Закрыть уведомление">×</button>
+        `;
+        
         elements.toastContainer.appendChild(toast);
+        
+        // Auto-dismiss
+        const dismissTimer = setTimeout(() => dismissToast(toast), duration);
+        
+        // Close button handler
+        const closeBtn = toast.querySelector(".toast-close");
+        closeBtn.addEventListener("click", () => {
+            clearTimeout(dismissTimer);
+            dismissToast(toast);
+        });
+        
+        // Haptic feedback for important notifications
+        if (window.Telegram?.WebApp?.HapticFeedback) {
+            if (type === "success") {
+                Telegram.WebApp.HapticFeedback.notificationOccurred("success");
+            } else if (type === "error") {
+                Telegram.WebApp.HapticFeedback.notificationOccurred("error");
+            }
+        }
+    }
+    
+    function dismissToast(toast) {
+        if (!toast.parentNode) return;
+        toast.classList.add("toast-exit");
         setTimeout(() => {
-            toast.remove();
-        }, 1400);
+            if (toast.parentNode) {
+                toast.remove();
+            }
+        }, 200);
     }
 
     function renderRates() {
@@ -974,26 +1016,20 @@ function createAppRenderers(context) {
                 ? `<span class="market-badge missing">Пропало</span>`
                 : "";
 
-            // Pipeline stage indicator — shows where the lead is in the deal workflow
-            const stageNames = { new: "Новый", bought: "Куплен", sold: "Продан", closed: "Закрыт", cancelled: "Отменён" };
-            const currentStage = stageNames[lead.status] || lead.status;
+            // Simplified pipeline: In Progress → Completed
+            // Only 2 stages since "bought" and "sold" happen simultaneously
+            const isCompleted = lead.status === 'closed' || lead.status === 'cancelled';
             const stageMarkup = `
                 <div class="lead-pipeline">
-                    <div class="lead-pipeline-step ${lead.status === 'new' || lead.status === 'bought' || lead.status === 'sold' ? 'active' : ''}">
+                    <div class="lead-pipeline-step ${!isCompleted ? 'active' : ''}">
                         <span class="lead-pipeline-dot"></span>
-                        <span class="lead-pipeline-label">Новый</span>
+                        <span class="lead-pipeline-label">В процессе</span>
                     </div>
-                    <div class="lead-pipeline-line ${lead.status === 'bought' || lead.status === 'sold' ? 'active' : ''}"></div>
-                    <div class="lead-pipeline-step ${lead.status === 'bought' || lead.status === 'sold' ? 'active' : ''}">
+                    <div class="lead-pipeline-line ${isCompleted ? 'active' : ''}"></div>
+                    <div class="lead-pipeline-step ${isCompleted ? 'active' : ''}">
                         <span class="lead-pipeline-dot"></span>
-                        <span class="lead-pipeline-label">Куплен</span>
+                        <span class="lead-pipeline-label">Завершено</span>
                     </div>
-                    <div class="lead-pipeline-line ${lead.status === 'sold' ? 'active' : ''}"></div>
-                    <div class="lead-pipeline-step ${lead.status === 'sold' ? 'active' : ''}">
-                        <span class="lead-pipeline-dot"></span>
-                        <span class="lead-pipeline-label">Продан</span>
-                    </div>
-                    <span class="lead-stage-badge">${currentStage}</span>
                 </div>
             `;
 
@@ -1749,7 +1785,7 @@ function createAppRenderers(context) {
         const grid = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
         const tooltipBackground = isDark ? "#1A1A1D" : "#FFFFFF";
         const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
-        const amber = isDark ? "#F59E0B" : "#D97706";
+        const accentColor = isDark ? "#3B82F6" : "#2563EB";
         const values = [
             state.stats.min,
             state.stats.q1,
@@ -1759,6 +1795,13 @@ function createAppRenderers(context) {
         ];
         const alphas = [0.22, 0.4, 0.9, 0.4, 0.22];
 
+        // Add aria-label for accessibility
+        canvas.setAttribute("role", "img");
+        canvas.setAttribute("aria-label",
+            `Price distribution chart showing ${state.stats.count} listings. ` +
+            `Median price: ${formatPrice(state.stats.median)}. ` +
+            `Range: ${formatPrice(state.stats.min)} to ${formatPrice(state.stats.max)}`);
+
         state.chart = new Chart(canvas, {
             type: "bar",
             data: {
@@ -1766,8 +1809,8 @@ function createAppRenderers(context) {
                 datasets: [
                     {
                         data: values,
-                        backgroundColor: alphas.map((alpha) => `rgba(245,158,11,${alpha})`),
-                        borderColor: alphas.map((alpha) => `rgba(245,158,11,${Math.min(alpha + 0.3, 1)})`),
+                        backgroundColor: alphas.map((alpha) => `rgba(59,146,246,${alpha})`),
+                        borderColor: alphas.map((alpha) => `rgba(59,146,246,${Math.min(alpha + 0.3, 1)})`),
                         borderWidth: 1.5,
                         borderRadius: 5,
                         borderSkipped: false,
@@ -1782,7 +1825,7 @@ function createAppRenderers(context) {
                     tooltip: {
                         backgroundColor: tooltipBackground,
                         titleColor: tooltipText,
-                        bodyColor: amber,
+                        bodyColor: accentColor,
                         borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
                         borderWidth: 1,
                         padding: 10,
@@ -1881,12 +1924,18 @@ function createAppRenderers(context) {
 
         destroyHistoryChart();
         const isDark = document.documentElement.getAttribute("data-theme") !== "light";
-        const lineColor = isDark ? "#F59E0B" : "#D97706";
-        const fillColor = isDark ? "rgba(245,158,11,0.12)" : "rgba(217,119,6,0.12)";
+        const lineColor = isDark ? "#3B82F6" : "#2563EB";
+        const fillColor = isDark ? "rgba(59,130,246,0.12)" : "rgba(37,99,235,0.12)";
         const muted = isDark ? "rgba(136,128,120,0.75)" : "rgba(114,105,94,0.75)";
         const grid = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.05)";
         const tooltipBackground = isDark ? "#1A1A1D" : "#FFFFFF";
         const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
+
+        // Add aria-label for accessibility
+        canvas.setAttribute("role", "img");
+        canvas.setAttribute("aria-label",
+            `Price history trend over ${state.historyDays} days. ` +
+            `Showing ${state.history.length} data points`);
 
         state.historyChart = new Chart(canvas, {
             type: "line",

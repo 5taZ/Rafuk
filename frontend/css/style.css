@@ -41,6 +41,98 @@
     }
 }
 
+/* Eliminate tap delay on mobile */
+html {
+    touch-action: manipulation;
+}
+
+/* SVG icon styling */
+.view-tab-icon {
+    display: inline-block;
+    flex-shrink: 0;
+    color: currentColor;
+}
+
+/* Touch-action for interactive elements */
+button,
+a,
+.view-tab,
+.quick-chip,
+.listing-btn,
+.wl-btn,
+.lead-btn,
+.primary-btn,
+.ghost-btn,
+.cur-btn,
+.section-toggle,
+.s-tab,
+.deal-range-chip,
+.watchlist-filter-btn {
+    touch-action: manipulation;
+    cursor: pointer;
+}
+
+/* Pressed state feedback for buttons */
+.primary-btn:active {
+    transform: scale(0.98);
+    background-color: var(--accent-dark);
+    transition: transform 80ms ease-out, background-color 80ms;
+}
+
+.ghost-btn:active {
+    background-color: var(--bg-hover);
+    transform: scale(0.98);
+    transition: transform 80ms ease-out, background-color 80ms;
+}
+
+.cur-btn:active {
+    background-color: var(--bg-elevated);
+    transform: scale(0.98);
+    transition: transform 80ms ease-out, background-color 80ms;
+}
+
+/* Pressed state for chips */
+.quick-chip:active {
+    transform: scale(0.97);
+    background-color: var(--bg-elevated);
+    transition: transform 80ms ease-out, background-color 80ms;
+}
+
+/* Pressed state for cards */
+.listing-card:active,
+.tracker-card:active,
+.lead-card:active,
+.watchlist-card:active {
+    transform: scale(0.995);
+    transition: transform 100ms ease-out;
+}
+
+/* View transitions - only animate when explicitly triggered */
+.view-panel {
+    /* No default animation to prevent gray overlay on first interaction */
+}
+
+.view-panel.is-entering {
+    animation: viewEnter 200ms ease-out;
+}
+
+@keyframes viewEnter {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .view-panel.is-entering {
+        animation: none;
+    }
+}
+
 /* Focus-visible for keyboard navigation */
 :focus-visible {
     outline: 2px solid var(--accent);
@@ -2385,27 +2477,128 @@ body {
 }
 
 .toast {
-    padding: 8px 12px;
+    padding: 12px 16px;
     border-radius: var(--r-md);
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     color: var(--text);
-    font-size: 12px;
-    font-weight: 600;
-    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    animation: toast-in 0.15s ease-out, toast-out 0.2s ease-in 1.0s forwards;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: auto;
+    animation: toast-in 200ms ease-out;
+}
+
+.toast-exit {
+    animation: toast-out 200ms ease-in forwards;
+}
+
+.toast-icon {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.toast-icon.success {
+    color: var(--green);
+}
+
+.toast-icon.error {
+    color: var(--red);
+}
+
+.toast-icon.info {
+    color: var(--accent);
+}
+
+.toast-message {
+    flex: 1;
+    line-height: 1.4;
+}
+
+.toast-close {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    padding: 0;
+    border-radius: 4px;
+    transition: background-color 150ms, color 150ms;
+    cursor: pointer;
+}
+
+.toast-close:hover {
+    background-color: var(--bg-hover);
+    color: var(--text);
+}
+
+.toast-close:active {
+    transform: scale(0.95);
 }
 
 @keyframes toast-in {
-    from { opacity: 0; transform: translateY(8px); }
+    from { opacity: 0; transform: translateY(12px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes toast-out {
-    from { opacity: 1; }
-    to { opacity: 0; transform: translateY(-4px); }
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(-8px); }
 }
+
+/* ===== Empty States ===== */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    text-align: center;
+    min-height: 240px;
+}
+
+.empty-state-icon {
+    color: var(--text-dim);
+    opacity: 0.35;
+    margin-bottom: 16px;
+    width: 64px;
+    height: 64px;
+}
+
+.empty-state-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 8px;
+}
+
+.empty-state-description {
+    font-size: 13px;
+    color: var(--text-muted);
+    max-width: 280px;
+    line-height: 1.5;
+    margin-bottom: 20px;
+}
+
+.empty-state .primary-btn {
+    margin-top: 8px;
+}
+
+/* ===== Error State ===== */
 
 /* ===== Pipeline Stepper ===== */
 .pipeline-stepper {
@@ -3283,40 +3476,48 @@ body {
     margin: 0;
 }
 
-/* Deal Pipeline Indicator */
+/* Deal Pipeline Indicator (Simplified: 2 stages) */
 .lead-pipeline {
     display: flex;
     align-items: center;
     gap: 0;
-    margin-top: 6px;
+    margin-top: 8px;
+    padding: 8px 0;
 }
 
 .lead-pipeline-step {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
 }
 
 .lead-pipeline-dot {
     display: block;
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
-    background: var(--border);
-    transition: background 0.15s;
+    background: var(--bg-elevated);
+    border: 2px solid var(--border);
+    transition: all 0.2s ease-out;
+    flex-shrink: 0;
 }
 
 .lead-pipeline-step.active .lead-pipeline-dot {
     background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .lead-pipeline-line {
-    width: 16px;
+    width: 32px;
     height: 2px;
     background: var(--border);
     border-radius: 1px;
-    margin: 0 2px;
-    transition: background 0.15s;
+    margin: 0 6px;
+    margin-bottom: 20px;
+    transition: background 0.2s ease-out;
+    flex-shrink: 0;
 }
 
 .lead-pipeline-line.active {
@@ -3324,28 +3525,30 @@ body {
 }
 
 .lead-pipeline-label {
-    font-size: 10px;
-    font-weight: 600;
+    font-size: 11px;
+    font-weight: 500;
     color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     white-space: nowrap;
+    transition: color 0.2s ease-out;
 }
 
 .lead-pipeline-step.active .lead-pipeline-label {
-    color: var(--text-muted);
+    color: var(--text);
+    font-weight: 600;
 }
 
-.lead-stage-badge {
-    margin-left: auto;
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--accent);
-    background: var(--accent-soft);
-    padding: 2px 7px;
-    border-radius: 999px;
+/* Pipeline responsive adjustments for small screens */
+@media (max-width: 380px) {
+    .lead-pipeline-line {
+        width: 20px;
+        margin: 0 4px;
+        margin-bottom: 18px;
+    }
+    
+    .lead-pipeline-label {
+        font-size: 10px;
+    }
 }
 
 /* Lead Status Badges */

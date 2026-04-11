@@ -227,6 +227,17 @@ function createAppActions(context) {
         }
         state.activeView = view;
         renderViewTabs();
+        
+        // Trigger view transition animation
+        const viewEl = elements.views[view];
+        if (viewEl) {
+            viewEl.classList.add("is-entering");
+            // Remove class after animation completes
+            setTimeout(() => {
+                viewEl.classList.remove("is-entering");
+            }, 200);
+        }
+        
         renderViews();
     }
 
@@ -582,7 +593,7 @@ function createAppActions(context) {
                 config_keyword: state.trackerConfigKeyword || null,
                 exclude_duplicates: state.trackerExcludeDuplicates,
             });
-            showToast("Трекер добавлен");
+            showToast("Трекер добавлен", "success");
             await loadTrackers();
             renderAll();
         } catch (error) {
@@ -617,10 +628,10 @@ function createAppActions(context) {
                 source,
                 thumbnail: item.thumbnail || null,
             });
-            showToast("Добавлено в покупки");
+            showToast("Добавлено в покупки", "success");
             await loadLeads();
         } catch (error) {
-            showToast(error.message || "Не удалось добавить в покупки");
+            showToast(error.message || "Не удалось добавить в покупки", "error");
         }
     }
 
@@ -648,10 +659,10 @@ function createAppActions(context) {
                     ? (state.currency === "USD" ? Number(state.stats.median) * (state.usdRateByn || 1) : Number(state.stats.median))
                     : null,
             });
-            showToast("Добавлено в избранное");
+            showToast("Добавлено в избранное", "success");
             await loadWatchlist();
         } catch (error) {
-            showToast(error.message || "Не удалось добавить в избранное");
+            showToast(error.message || "Не удалось добавить в избранное", "error");
         }
     }
 
@@ -750,7 +761,7 @@ function createAppActions(context) {
             // Show success toast with profit
             const profit = soldPriceNum - buyPriceNum;
             const profitSign = profit >= 0 ? "+" : "";
-            showToast(`✓ Сделка подтверждена! ${profitSign}${Math.round(profit)} BYN`);
+            showToast(`✓ Сделка подтверждена! ${profitSign}${Math.round(profit)} BYN`, "success");
 
             // Scroll to the card after re-render (it moved down)
             setTimeout(() => {
@@ -770,7 +781,7 @@ function createAppActions(context) {
     async function cancelLead(leadId) {
         try {
             await deleteJson(`/api/v1/leads/${leadId}`);
-            showToast("✓ Сделка отменена");
+            showToast("✓ Сделка отменена", "info");
             await loadLeads();
         } catch (error) {
             console.error("Failed to cancel lead:", error);
@@ -1378,20 +1389,48 @@ function createAppActions(context) {
     }
 
     function bindEvents() {
+        let searchDebounceTimer = null;
+        
         elements.searchInput?.addEventListener("input", () => {
             state.query = elements.searchInput.value.trim();
             renderLoading();
+            
+            // Debounce search to avoid excessive API calls
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(() => {
+                if (state.query.length >= 2) {
+                    // Auto-search after 500ms pause
+                    void search("overview");
+                    
+                    // Haptic feedback on search
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                        Telegram.WebApp.HapticFeedback.impactOccurred("light");
+                    }
+                }
+            }, 500);
         });
 
         elements.searchInput?.addEventListener("keydown", (event) => {
             if (event.key === "Enter") {
                 event.preventDefault();
+                clearTimeout(searchDebounceTimer);
                 void search("overview");
+                
+                // Haptic feedback
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                    Telegram.WebApp.HapticFeedback.impactOccurred("medium");
+                }
             }
         });
 
         elements.searchButton?.addEventListener("click", () => {
+            clearTimeout(searchDebounceTimer);
             void search("overview");
+            
+            // Haptic feedback
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred("medium");
+            }
         });
 
         elements.strictSearchToggle?.addEventListener("change", () => {
@@ -1414,7 +1453,13 @@ function createAppActions(context) {
                 elements.searchInput.value = query;
                 state.query = query;
                 renderLoading();
+                clearTimeout(searchDebounceTimer);
                 void search("overview");
+                
+                // Haptic feedback
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                    Telegram.WebApp.HapticFeedback.impactOccurred("medium");
+                }
             });
         }
 
