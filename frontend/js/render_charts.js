@@ -93,11 +93,8 @@ function createRenderCharts(context) {
         ];
         const alphas = [0.22, 0.4, 0.9, 0.4, 0.22];
 
-        canvas.setAttribute("role", "img");
-        canvas.setAttribute("aria-label",
-            `Price distribution chart showing ${state.stats.count} listings. ` +
-            `Median price: ${formatPrice(state.stats.median)}. ` +
-            `Range: ${formatPrice(state.stats.min)} to ${formatPrice(state.stats.max)}`);
+        // Canvas is marked aria-hidden; the wrapper div carries the accessible label
+        canvas.setAttribute("aria-hidden", "true");
 
         state.chart = new Chart(canvas, {
             type: "bar",
@@ -233,10 +230,8 @@ function createRenderCharts(context) {
         const tooltipBackground = isDark ? "#1A1A1D" : "#FFFFFF";
         const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
 
-        canvas.setAttribute("role", "img");
-        canvas.setAttribute("aria-label",
-            `Price history trend over ${state.historyDays} days. ` +
-            `Showing ${state.history.length} data points`);
+        // Canvas is marked aria-hidden; the wrapper div carries the accessible label
+        canvas.setAttribute("aria-hidden", "true");
 
         state.historyChart = new Chart(canvas, {
             type: "line",

@@ -52,6 +52,28 @@ function createAppRenderers(context) {
         // renderRecentSearches will be added after declarations below
     };
 
+    // ── Error boundary pattern ──────────────────────────────────────────
+    /**
+     * Wraps a render function in a try/catch to prevent a single render
+     * error from crashing the entire app. Logs the error and shows a
+     * fallback toast notification instead.
+     *
+     * @param {string} name - Human-readable render function name
+     * @param {Function} fn - The render function to execute
+     * @returns {*} The return value of fn, or null on error
+     */
+    function safeRender(name, fn) {
+        try {
+            return fn();
+        } catch (error) {
+            console.error(`[render-error] ${name}:`, error);
+            if (typeof core.showToast === 'function') {
+                core.showToast(`Ошибка отображения: ${name}`, 'error');
+            }
+            return null;
+        }
+    }
+
     // ── Forwarded functions (all names that app_actions.js destructures) ─
     const {
         escapeHtml,
@@ -133,42 +155,49 @@ function createAppRenderers(context) {
 
     function renderAll() {
         const start = performance.now();
-        renderError();
-        renderLoading();
-        renderCurrencyButtons();
-        renderStrictSearch();
-        renderViewTabs();
-        renderPanels();
-        renderSummary();
-        renderHelper();
-        renderViews();
-        renderTrackingHeroStats();
-        renderCheapHeroStats();
-        renderMonitoringHeroStats();
-        renderDealsHeroStats();
-        renderSortButtons();
-        renderDiscountButtons();
-        renderTrackerEventFilters();
-        renderDealInputs();
-        renderTrackerInputs();
-        renderStats();
-        renderHistory();
-        renderComparison();
-        renderSegments();
-        renderGeography();
-        renderRecentSearches();
-        renderListings();
-        renderDeals();
-        renderRates();
-        renderTrackerStatus();
-        renderTrackers();
-        renderTrackerEvents();
-        renderLeads();
-        renderWatchlist();
-        renderProfitDashboard();
+        try {
+            renderError();
+            renderLoading();
+            renderCurrencyButtons();
+            renderStrictSearch();
+            renderViewTabs();
+            renderPanels();
+            renderSummary();
+            renderHelper();
+            renderViews();
+            renderTrackingHeroStats();
+            renderCheapHeroStats();
+            renderMonitoringHeroStats();
+            renderDealsHeroStats();
+            renderSortButtons();
+            renderDiscountButtons();
+            renderTrackerEventFilters();
+            renderDealInputs();
+            renderTrackerInputs();
+            renderStats();
+            renderHistory();
+            renderComparison();
+            renderSegments();
+            renderGeography();
+            renderRecentSearches();
+            renderListings();
+            renderDeals();
+            renderRates();
+            renderTrackerStatus();
+            renderTrackers();
+            renderTrackerEvents();
+            renderLeads();
+            renderWatchlist();
+            renderProfitDashboard();
+        } catch (error) {
+            console.error('[render-error] renderAll:', error);
+            if (typeof core.showToast === 'function') {
+                core.showToast('Ошибка отображения', 'error');
+            }
+        }
         const duration = performance.now() - start;
-        if (duration > 16) {
-            console.warn(`[perf] renderAll took ${duration.toFixed(1)}ms (>16ms threshold)`);
+        if (duration > 100) {
+            console.warn(`[perf] renderAll took ${duration.toFixed(1)}ms (>100ms threshold)`);
         }
     }
 

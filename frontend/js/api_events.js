@@ -114,7 +114,7 @@ function createApiEvents(context) {
                         Telegram.WebApp.HapticFeedback.impactOccurred("light");
                     }
                 }
-            }, 500);
+            }, 1200); // 1.2s debounce — gives users time to finish typing
         });
 
         elements.searchInput?.addEventListener("keydown", (event) => {
@@ -158,9 +158,24 @@ function createApiEvents(context) {
         // ── Recent searches (chips + clear button) ────────────────────
         elements.recentSection?.addEventListener("click", (event) => {
             if (event.target.closest("#recent-clear-btn")) {
+                // 1. Instant visual feedback — clear state and hide immediately
                 state.recentSearches = [];
-                context.saveRecentSearches();
-                context._hooks.renderRecentSearches();
+
+                // 2. Defer localStorage write to next tick (non-blocking)
+                requestAnimationFrame(() => {
+                    context.saveRecentSearches();
+                });
+
+                // 3. Don't call renderRecentSearches() — we handle it directly
+                // to avoid double-render and ensure instant response
+                if (elements.recentSection) elements.recentSection.hidden = true;
+                if (elements.recentList) elements.recentList.innerHTML = "";
+
+                // 4. Optional haptic feedback
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                    Telegram.WebApp.HapticFeedback.impactOccurred("light");
+                }
+
                 return;
             }
             const chip = event.target.closest("[data-recent-query]");

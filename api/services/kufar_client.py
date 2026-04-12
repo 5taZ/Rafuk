@@ -69,8 +69,8 @@ class KufarClient:
             params["rgn"] = region
         if condition:
             params["cnd"] = condition
-        if seller_type:
-            params["otype"] = seller_type
+        # NOTE: Kufar API no longer accepts the "otype" parameter (422 since 2026).
+        # Seller type filtering is done client-side after fetching results.
 
         headers = {
             "User-Agent": USER_AGENT,
@@ -119,7 +119,6 @@ class KufarClient:
             sort=sort,
             region=region,
             condition=condition,
-            seller_type=seller_type,
         )
         ads = list(response.get("ads", []))
         total = self.extract_total(response) or len(ads)
@@ -136,7 +135,6 @@ class KufarClient:
                 cursor=cursor,
                 region=region,
                 condition=condition,
-                seller_type=seller_type,
             )
             ads.extend(page.get("ads", []))
             cursor = self.extract_next_cursor(page)

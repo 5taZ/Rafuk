@@ -106,8 +106,11 @@ function createVirtualList(container, options) {
         for (let i = start; i < end; i++) {
             const el = renderFn(items[i], i);
             if (el) {
-                el.style.height = `${itemHeight}px`;
-                el.style.marginBottom = "8px";
+                // Don't force height - let CSS handle it naturally
+                // Only add margin if using gap-less container
+                if (itemHeight) {
+                    el.style.minHeight = `${itemHeight}px`;
+                }
                 // Mark as virtualized item for potential debugging
                 el.setAttribute("data-vl-index", String(i));
                 fragment.appendChild(el);

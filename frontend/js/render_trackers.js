@@ -355,9 +355,19 @@ function createRenderTrackers(context) {
             return card;
         }
 
-        // Virtual scrolling disabled — event cards have variable heights
-        for (const event of filteredEvents) {
-            container.appendChild(buildEventNode(event));
+        // Use virtual scrolling for large datasets (>50 items)
+        const VIRTUAL_THRESHOLD = 50;
+        if (filteredEvents.length > VIRTUAL_THRESHOLD) {
+            container._virtualList = createVirtualList(container, {
+                itemHeight: 160,
+                bufferSize: 5,
+                renderFn: (event, index) => buildEventNode(event),
+            });
+            container._virtualList.setItems(filteredEvents);
+        } else {
+            for (const event of filteredEvents) {
+                container.appendChild(buildEventNode(event));
+            }
         }
         });
     }

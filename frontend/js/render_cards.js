@@ -131,7 +131,19 @@ function createRenderCards(context) {
 
     /* ===== Collections ===== */
 
-    function renderListingsCollection(items, container, badge, emptyText, totalOverride = null) {
+    /**
+     * Renders a collection of items into a container, using virtual scrolling
+     * for large datasets (>50 items) to maintain performance.
+     *
+     * @param {Array} items - The data items to render
+     * @param {HTMLElement} container - The DOM container to render into
+     * @param {HTMLElement} badge - Optional badge element for item count
+     * @param {string} emptyText - Text to show when no items
+     * @param {number|null} totalOverride - Override for total count display
+     * @param {number} [itemHeight=180] - Fixed item height for virtual list
+     * @returns {boolean} True if content was rendered, false if empty
+     */
+    function renderListingsCollection(items, container, badge, emptyText, totalOverride = null, itemHeight = 180) {
         return safeRender('renderListingsCollection', () => {
             if (!container) return false;
             // Destroy existing virtual list if present and reset container
@@ -155,7 +167,9 @@ function createRenderCards(context) {
                 return false;
             }
 
-            // Render all items normally — virtual scrolling disabled due to variable card heights
+            // Virtual scrolling disabled for listings — cards have variable heights
+            // due to badges, tags, and dynamic content
+            // Re-enable only when cards have consistent fixed heights
             for (const item of items) {
                 container.appendChild(buildListingNode(item));
             }
@@ -809,7 +823,9 @@ function createRenderCards(context) {
             return card;
         }
 
-        // Virtual scrolling disabled — cards have variable heights
+        // Virtual scrolling disabled for watchlist — cards have variable heights
+        // due to notes, metadata, and dynamic content
+        // Re-enable only when cards have consistent fixed heights
         for (const item of filteredWatchlist) {
             container.appendChild(buildWatchlistNode(item));
         }

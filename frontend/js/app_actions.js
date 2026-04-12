@@ -50,6 +50,12 @@ function createAppActions(context) {
     // These are not part of any module because they bridge multiple modules
     // and the view/scroll lifecycle.
 
+    /**
+     * Switches the active view with a subtle enter animation.
+     * Updates tab states, triggers view transition, and re-renders view content.
+     *
+     * @param {string} view - The view key to activate (e.g., 'overview', 'ads', 'tracking')
+     */
     function setActiveView(view) {
         if (!(view in elements.views)) {
             return;
@@ -68,10 +74,21 @@ function createAppActions(context) {
         renderViews();
     }
 
+    /**
+     * Smoothly scrolls a section into view at the top of the viewport.
+     *
+     * @param {HTMLElement|null} section - The DOM element to scroll to
+     */
     function scrollSectionIntoView(section) {
         section?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
+    /**
+     * Focuses the appropriate view or panel based on the search target.
+     * Routes to overview by default, then scrolls to specific sections if needed.
+     *
+     * @param {string} target - The target context ('ads', 'cheap', 'deals', 'history', 'comparison')
+     */
     function focusTarget(target) {
         if (target === "ads") {
             setActiveView("ads");
@@ -179,6 +196,13 @@ function createAppActions(context) {
     });
 
     // ── Currency switcher (must be defined BEFORE createApiEvents) ───────
+    /**
+     * Switches the display currency and refreshes all loaded data.
+     * Persists the preference to localStorage and re-fetches prices if a query is active.
+     *
+     * @param {'BYN'|'USD'} currency - The target currency code
+     * @returns {Promise<void>}
+     */
     async function setCurrency(currency) {
         if (!currency || state.currency === currency) {
             return;
@@ -210,6 +234,15 @@ function createAppActions(context) {
     const events = createApiEvents(context);
 
     // ── Convenience: addLeadFromListing (cross-cutting: listings → leads) ─
+    /**
+     * Adds a listing as a lead (purchase) with market estimate data.
+     * Prevents duplicate entries and shows appropriate feedback.
+     *
+     * @param {Object} item - The listing data
+     * @param {string} [source='manual'] - How the lead was created
+     * @param {string|null} [queryOverride=null] - Override the current query
+     * @returns {Promise<void>}
+     */
     async function addLeadFromListing(item, source = "manual", queryOverride = null) {
         if (!hasTelegramInitData() || !item?.ad_id) {
             return;
@@ -315,6 +348,12 @@ function createAppActions(context) {
         await listings.openListingDetail(item.listing);
     }
 
+    /**
+     * Parses URL launch parameters (?query=...&view=...) and initializes the app state.
+     * Called on app startup to handle deep linking.
+     *
+     * @returns {Promise<void>}
+     */
     async function applyLaunchParams() {
         const params = new URLSearchParams(window.location.search);
         const query = params.get("query")?.trim() || "";

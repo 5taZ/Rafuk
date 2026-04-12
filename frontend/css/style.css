@@ -1,3 +1,14 @@
+/* Z-Index Scale
+ * 0    - default
+ * 10   - cards, chips
+ * 50   - sticky headers, sections
+ * 100  - dropdowns, tooltips
+ * 200  - header bar
+ * 300  - modals
+ * 400  - toast notifications
+ * 1000 - loading overlay
+ */
+
 :root {
     --bg: #0b0d10;
     --bg-card: #111318;
@@ -300,6 +311,7 @@ body {
 
 .mono {
     font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
 }
 
 .app {
@@ -410,6 +422,25 @@ body {
 
 .rate-meta {
     color: var(--text-muted);
+}
+
+/* Skip link — visible on focus for keyboard users */
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: var(--accent);
+    color: white;
+    padding: 8px 16px;
+    z-index: 1000;
+    border-radius: 0 0 var(--r-md) 0;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.skip-link:focus {
+    top: 0;
 }
 
 /* Screen reader only utility */
@@ -4289,7 +4320,7 @@ body {
     border-radius: var(--r-lg);
     padding: 12px;
     transition: all 0.2s;
-    margin-bottom: 8px;
+    /* margin-bottom removed — container .tracker-events-list uses gap: 8px */
     position: relative;
 }
 
@@ -4730,6 +4761,18 @@ body {
     gap: var(--space-2);
     padding: 0;
     margin: var(--space-2) 0 0;
+    /* Smooth disappear animation when cleared */
+    transition: opacity 0.15s ease-out, max-height 0.2s ease-out;
+    overflow: hidden;
+    max-height: 60px; /* Allow space for content */
+}
+
+/* Override [hidden] to allow transition animation */
+.recent-strip[hidden] {
+    display: flex !important; /* Keep flex for transition */
+    opacity: 0;
+    max-height: 0;
+    pointer-events: none;
 }
 
 .recent-kicker {
@@ -4819,4 +4862,74 @@ body {
 
 .recent-clear:active {
     color: var(--red);
+}
+
+/* ===== Skeleton Loading Animations ===== */
+
+@keyframes skeleton-loading {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--bg-card) 25%,
+        var(--bg-hover) 50%,
+        var(--bg-card) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+    border-radius: var(--r-sm);
+}
+
+.skeleton-card {
+    height: 80px;
+    margin-bottom: 12px;
+    border-radius: var(--r-md);
+}
+
+.skeleton-text {
+    height: 14px;
+    margin-bottom: 8px;
+    width: 100%;
+}
+
+.skeleton-text:last-child {
+    width: 60%;
+}
+
+.skeleton-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+}
+
+/* ===== Button Disabled / Loading States ===== */
+
+.primary-btn:disabled,
+.ghost-btn:disabled,
+.search-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.primary-btn.loading::after,
+.primary-btn.is-loading::after {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-left: 8px;
+}
+
+/* ===== Typography: Letter Spacing for Small Text ===== */
+
+.caption, .metadata, .label, .rate-label, .rate-meta {
+    letter-spacing: 0.01em;
 }

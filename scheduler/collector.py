@@ -85,7 +85,7 @@ def persist_tracker_events(
                 if ad.get(key):
                     region_name = ad.get(key)
                     break
-        
+
         event = TrackerEvent(
             tracker_id=tracker.id,
             user_id=tracker.user_id,
@@ -114,7 +114,7 @@ def persist_tracker_events(
                 if ad.get(key):
                     region_name = ad.get(key)
                     break
-        
+
         event = TrackerEvent(
             tracker_id=tracker.id,
             user_id=tracker.user_id,
@@ -248,92 +248,134 @@ async def check_trackers(
             )
         )
         trackers = list(result.scalars())
+        if not trackers:
+            logger.debug("No active trackers to check")
+            return
+
         trackers_by_query: dict[tuple[str, bool], list[Tracker]] = defaultdict(list)
         for tracker in trackers:
             trackers_by_query[(tracker.query, tracker.strict_mode)].append(tracker)
+
+        logger.info(
+            "Tracker check: %d tracker(s), %d unique query group(s)",
+            len(trackers), len(trackers_by_query),
+        )
 
         client = KufarClient(settings)
         try:
             observed_at = datetime.now(UTC)
             bucket_at = snapshot_bucket(observed_at)
+            total_notified = 0
+            total_errors = 0
 
             for (query, strict_mode), query_trackers in trackers_by_query.items():
-                payload = await client.search(query=query, currency="BYN", size=50)
-                ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
-                search_key = build_query_key(query, strict_mode)
-                await upsert_query_snapshot(
-                    session,
-                    query=search_key,
-                    ads=ads,
-                    total_results=len(ads),
-                    bucket_at=bucket_at,
-                )
-                sync_result = await sync_query_listing_states(
-                    session,
-                    query=search_key,
-                    ads=ads,
-                    observed_at=observed_at,
-                    total_results=len(ads),
-                )
-                ads_by_id = {
-                    int(ad.get("ad_id", 0)): ad
-                    for ad in ads
-                    if int(ad.get("ad_id", 0)) > 0
-                }
-                duplicate_index = duplicate_counts(ads)
+                try:
+                    payload = await client.search(query=query, currency="BYN", size=50)
+                    ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
+                    search_key = build_query_key(query, strict_mode)
+                    await upsert_query_snapshot(
+                        session,
+                        query=search_key,
+                        ads=ads,
+                        total_results=len(ads),
+                        bucket_at=bucket_at,
+                    )
+                    sync_result = await sync_query_listing_states(
+                        session,
+                        query=search_key,
+                        ads=ads,
+                        observed_at=observed_at,
+                        total_results=len(ads),
+                    )
+                    ads_by_id = {
+                        int(ad.get("ad_id", 0)): ad
+                        for ad in ads
+                        if int(ad.get("ad_id", 0)) > 0
+                    }
+                    duplicate_index = duplicate_counts(ads)
 
-                newest_id = int(ads[0].get("ad_id", 0)) if ads else None
-                newest_price_byn = normalize_price_byn(ads[0].get("price_byn")) if ads else None
+                    newest_id = int(ads[0].get("ad_id", 0)) if ads else None
+                    newest_price_byn = (
+                        normalize_price_byn(ads[0].get("price_byn"))
+                        if ads else None
+                    )
 
-                for tracker in query_trackers:
-                    if tracker.last_checked_at is None:
+                    logger.info(
+                        "Query %r [strict=%s]: %d ads, %d new, %d price drops",
+                        query, strict_mode, len(ads),
+                        len(sync_result.new_listings), len(sync_result.price_drops),
+                    )
+
+                    for tracker in query_trackers:
+                        if tracker.last_checked_at is None:
+                            logger.info(
+                                "Tracker %d (user %d): first check, initializing baseline",
+                                tracker.id, tracker.user_id,
+                            )
+                            tracker.last_seen_ad_id = newest_id
+                            tracker.last_seen_price_byn = newest_price_byn
+                            tracker.last_checked_at = observed_at
+                            continue
+
+                        tracker_sync_result = _filter_sync_result_for_tracker(
+                            tracker,
+                            sync_result,
+                            ads_by_id,
+                            duplicate_index,
+                        )
+                        message = _build_tracker_message(query, strict_mode, tracker_sync_result)
+                        if message:
+                            created_events = persist_tracker_events(
+                                session, tracker, tracker_sync_result, ads_by_id
+                            )
+                            await session.flush()
+                            primary_event = created_events[0] if created_events else None
+                            keyboard = (
+                                tracker_alert_keyboard(
+                                    settings.mini_app_url,
+                                    query=primary_event.query,
+                                    listing_url=primary_event.link,
+                                    event_id=primary_event.id,
+                                )
+                                if primary_event is not None
+                                else None
+                            )
+                            can_notify = await notify_user(
+                                bot,
+                                tracker.user_id,
+                                message,
+                                session,
+                                reply_markup=keyboard,
+                            )
+                            if can_notify:
+                                total_notified += 1
+                                logger.info(
+                                    "Tracker %d (user %d): notified (%d events)",
+                                    tracker.id, tracker.user_id, len(created_events),
+                                )
+                            else:
+                                logger.info(
+                                    "Deactivated tracker %d for user %d (Telegram forbidden)",
+                                    tracker.id, tracker.user_id,
+                                )
+
                         tracker.last_seen_ad_id = newest_id
                         tracker.last_seen_price_byn = newest_price_byn
                         tracker.last_checked_at = observed_at
-                        continue
 
-                    tracker_sync_result = _filter_sync_result_for_tracker(
-                        tracker,
-                        sync_result,
-                        ads_by_id,
-                        duplicate_index,
+                except Exception:
+                    total_errors += 1
+                    logger.exception(
+                        "Error processing query %r [strict=%s], skipping",
+                        query, strict_mode,
                     )
-                    message = _build_tracker_message(query, strict_mode, tracker_sync_result)
-                    if message:
-                        created_events = persist_tracker_events(
-                            session, tracker, tracker_sync_result, ads_by_id
-                        )
-                        await session.flush()
-                        primary_event = created_events[0] if created_events else None
-                        keyboard = (
-                            tracker_alert_keyboard(
-                                settings.mini_app_url,
-                                query=primary_event.query,
-                                listing_url=primary_event.link,
-                                event_id=primary_event.id,
-                            )
-                            if primary_event is not None
-                            else None
-                        )
-                        can_notify = await notify_user(
-                            bot,
-                            tracker.user_id,
-                            message,
-                            session,
-                            reply_markup=keyboard,
-                        )
-                        if not can_notify:
-                            logger.info(
-                                "Deactivated tracker %s for user %s (Telegram forbidden error)",
-                                tracker.id,
-                                tracker.user_id,
-                            )
 
-                    tracker.last_seen_ad_id = newest_id
-                    tracker.last_seen_price_byn = newest_price_byn
-                    tracker.last_checked_at = observed_at
-
+            # Commit whatever succeeded — errors are logged but don't block
             await session.commit()
+            logger.info(
+                "Tracker check complete: notified %d, errors %d",
+                total_notified, total_errors,
+            )
         finally:
             await client.aclose()
 

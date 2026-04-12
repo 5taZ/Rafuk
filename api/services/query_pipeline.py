@@ -13,12 +13,19 @@ from api.services.aggregator import (
 from api.services.currency_service import CurrencyService
 
 PRICE_STATS_FIELDS = ("mean", "median", "q1", "q3", "min", "max")
-SEGMENT_TASKS = (
-    ("new_private", {"condition": "new", "seller_type": "search_owner"}),
-    ("new_shop", {"condition": "new", "seller_type": "search_business"}),
-    ("used_private", {"condition": "used", "seller_type": "search_owner"}),
-    ("used_shop", {"condition": "used", "seller_type": "search_business"}),
+
+# Condition-based API tasks — seller_type filtering is done client-side
+# because Kufar API no longer accepts the "otype" parameter.
+_API_CONDITION_TASKS = (
+    ("new", {"condition": "new"}),
+    ("used", {"condition": "used"}),
 )
+
+# Seller type classification: company_ad==True means shop, else private
+def _is_shop_ad(ad: dict[str, Any]) -> bool:
+    return bool(ad.get("company_ad"))
+
+SEGMENT_NAMES = ("new_private", "new_shop", "used_private", "used_shop")
 
 
 class SupportsSearchAllAds(Protocol):
@@ -105,13 +112,14 @@ async def load_segment_datasets(
     parallel_search: SupportsParallelSearch,
 ) -> dict[str, QueryDataset]:
     client = client_factory(settings)
+    # Fetch by condition only (seller type filtered client-side)
     tasks = [
         {
             "query": query,
             "currency": currency,
             **task_params,
         }
-        for _, task_params in SEGMENT_TASKS
+        for _, task_params in _API_CONDITION_TASKS
     ]
 
     try:
@@ -120,15 +128,20 @@ async def load_segment_datasets(
         await client.aclose()
 
     datasets: dict[str, QueryDataset] = {}
-    for (segment_name, _), response in zip(SEGMENT_TASKS, responses, strict=True):
-        ads = apply_search_mode(response.get("ads", []), query, strict_search)
-        datasets[segment_name] = QueryDataset(
-            query=query,
-            currency=currency,
-            strict_search=strict_search,
-            response=response,
-            ads=ads,
-        )
+    for (cond_name, _), response in zip(_API_CONDITION_TASKS, responses, strict=True):
+        all_ads = apply_search_mode(response.get("ads", []), query, strict_search)
+        private_ads = [ad for ad in all_ads if not _is_shop_ad(ad)]
+        shop_ads = [ad for ad in all_ads if _is_shop_ad(ad)]
+
+        for suffix, ads in (("_private", private_ads), ("_shop", shop_ads)):
+            segment_name = f"{cond_name}{suffix}"
+            datasets[segment_name] = QueryDataset(
+                query=query,
+                currency=currency,
+                strict_search=strict_search,
+                response=response,
+                ads=ads,
+            )
     return datasets
 
 

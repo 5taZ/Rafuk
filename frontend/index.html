@@ -33,7 +33,11 @@
     <script defer src="js/app.js"></script>
 </head>
 <body>
+<a href="#main-content" class="skip-link" aria-label="Перейти к основному содержимому">
+    Перейти к содержимому
+</a>
 <div class="app" id="app-root">
+    <span id="main-content" tabindex="-1" aria-hidden="true"></span>
     <h1 class="sr-only">Rafuks — Анализ рынка Kufar</h1>
     <header class="header">
         <div class="header-inner">
@@ -165,7 +169,7 @@
         </div>
     </section>
 
-    <div class="err-bar" id="error-bar" hidden>
+    <div class="err-bar" id="error-bar" hidden role="alert" aria-live="assertive">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <circle cx="12" cy="12" r="10"></circle>
@@ -179,7 +183,7 @@
         Введите запрос или выберите быстрый сценарий выше.
     </div>
 
-    <section class="view-panel" id="overview-view">
+    <section class="view-panel" id="overview-view" role="tabpanel" aria-labelledby="tab-overview">
         <section class="section" id="stats-section" hidden>
             <div class="sec-head">
                 <h2 class="sec-title">Статистика</h2>
@@ -237,8 +241,8 @@
                 <button class="section-toggle" data-panel-toggle="distribution" type="button">Показать</button>
             </div>
             <div class="section-body" id="distribution-body" hidden>
-                <div class="chart-box">
-                    <canvas id="priceChart"></canvas>
+                <div class="chart-box" aria-label="Распределение цен">
+                    <canvas id="priceChart" aria-hidden="true"></canvas>
                 </div>
             </div>
         </section>
@@ -256,8 +260,8 @@
                     <button class="s-tab" data-history-days="90" type="button">90 дней</button>
                 </div>
                 <div class="history-summary" id="history-summary" hidden></div>
-                <div class="chart-box history-chart-box">
-                    <canvas id="historyChart"></canvas>
+                <div class="chart-box history-chart-box" aria-label="Динамика медианы цен">
+                    <canvas id="historyChart" aria-hidden="true"></canvas>
                 </div>
                 <p class="section-note" id="history-empty" hidden>
                     История для этого запроса ещё копится. Данные появляются после поиска и фоновых проверок.
@@ -310,7 +314,7 @@
         </section>
     </section>
 
-    <section class="view-panel" id="ads-view" hidden>
+    <section class="view-panel" id="ads-view" hidden role="tabpanel" aria-labelledby="tab-ads">
         <section class="section" id="listings-section" hidden>
             <div class="sec-head listings-head">
                 <h2 class="sec-title">Объявления</h2>
@@ -327,7 +331,7 @@
         </section>
     </section>
 
-    <section class="view-panel" id="tracking-view" hidden>
+    <section class="view-panel" id="tracking-view" hidden role="tabpanel" aria-labelledby="tab-tracking">
         <div class="view-hero tracking-hero">
             <h2 class="view-hero-title">Автопоиск</h2>
             <p class="view-hero-desc">Создавайте трекеры для автоматического мониторинга новых лотов и падений цен по вашим запросам</p>
@@ -435,7 +439,7 @@
         </section>
     </section>
 
-    <section class="view-panel" id="cheap-view" hidden>
+    <section class="view-panel" id="cheap-view" hidden role="tabpanel" aria-labelledby="tab-cheap">
         <div class="view-hero cheap-hero">
             <h2 class="view-hero-title">Выгодные предложения</h2>
             <p class="view-hero-desc">Объявления ниже текущей рыночной медианы — выбирайте порог скидки</p>
@@ -475,7 +479,7 @@
         </section>
     </section>
 
-    <section class="view-panel" id="monitoring-view" hidden>
+    <section class="view-panel" id="monitoring-view" hidden role="tabpanel" aria-labelledby="tab-monitoring">
         <div class="view-hero monitoring-hero">
             <h2 class="view-hero-title">Избранное</h2>
             <p class="view-hero-desc">Следите за конкретными объявлениями: падение цены, пропажа из выдачи, дубли</p>
@@ -498,7 +502,7 @@
         </section>
     </section>
 
-    <section class="view-panel" id="deals-view" hidden>
+    <section class="view-panel" id="deals-view" hidden role="tabpanel" aria-labelledby="tab-deals">
         <div class="view-hero deals-hero">
             <h2 class="view-hero-title">Покупки</h2>
             <p class="view-hero-desc">Отслеживайте сделки: от поиска до продажи</p>

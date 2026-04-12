@@ -41,6 +41,7 @@ function createAppCore() {
         trackerRegionName: "",
         trackerConfigKeyword: "",
         editingTrackerId: null,
+        creatingTracker: false,
         detail: null,
         detailImageIndex: 0,
         detailFromWatchlist: false,
@@ -411,6 +412,30 @@ function createAppCore() {
         return () => container.removeEventListener("keydown", handleKeydown);
     }
 
+    /**
+     * Performance monitoring utility — logs slow renders (>100ms) to
+     * console.warn so they can be identified and optimized during development.
+     *
+     * Usage:
+     *   const end = measureRender('renderListings');
+     *   // ... render logic ...
+     *   end();
+     *
+     * @param {string} name - Human-readable operation name
+     * @param {number} [thresholdMs=100] - Warn threshold
+     * @returns {Function} Cleanup function that logs if slow
+     */
+    function measureRender(name, thresholdMs = 100) {
+        const start = performance.now();
+        return function () {
+            const duration = performance.now() - start;
+            if (duration > thresholdMs) {
+                console.warn(`[perf] ${name} took ${duration.toFixed(1)}ms (>${thresholdMs}ms threshold)`);
+            }
+            return duration;
+        };
+    }
+
     return {
         state,
         elements,
@@ -431,5 +456,6 @@ function createAppCore() {
         clearRecentSearches,
         loadCurrency,
         saveCurrency,
+        measureRender,
     };
 }

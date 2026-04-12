@@ -125,6 +125,8 @@ function createApiTrackers(context) {
         }
 
         try {
+            state.creatingTracker = true;
+            if (context.renderAll) context.renderAll();
             await postJson("/api/v1/trackers", {
                 query,
                 strict_mode: state.strictSearch,
@@ -144,6 +146,9 @@ function createApiTrackers(context) {
             state.trackerStatus = error.message || "Не удалось создать трекер.";
             state.trackerStatusKind = "error";
             renderTrackerStatus();
+        } finally {
+            state.creatingTracker = false;
+            if (context.renderAll) context.renderAll();
         }
     }
 
