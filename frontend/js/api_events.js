@@ -156,7 +156,7 @@ function createApiEvents(context) {
         }
 
         // ── Recent searches (chips + clear button) ────────────────────
-        elements.recentList?.addEventListener("click", (event) => {
+        elements.recentSection?.addEventListener("click", (event) => {
             if (event.target.closest("#recent-clear-btn")) {
                 state.recentSearches = [];
                 context.saveRecentSearches();
