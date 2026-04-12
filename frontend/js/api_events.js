@@ -155,8 +155,14 @@ function createApiEvents(context) {
             });
         }
 
-        // ── Recent searches ──────────────────────────────────────────
+        // ── Recent searches (chips + clear button) ────────────────────
         elements.recentList?.addEventListener("click", (event) => {
+            if (event.target.closest("#recent-clear-btn")) {
+                state.recentSearches = [];
+                context.saveRecentSearches();
+                context._hooks.renderRecentSearches();
+                return;
+            }
             const chip = event.target.closest("[data-recent-query]");
             if (chip) {
                 const query = chip.dataset.recentQuery || "";
@@ -166,12 +172,6 @@ function createApiEvents(context) {
                 clearTimeout(searchDebounceTimer);
                 void search("overview");
             }
-        });
-
-        elements.recentClearBtn?.addEventListener("click", () => {
-            state.recentSearches = [];
-            context.saveRecentSearches();
-            context._hooks.renderRecentSearches();
         });
 
         // ── View tabs ────────────────────────────────────────────────
