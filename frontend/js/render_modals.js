@@ -15,30 +15,9 @@ function createRenderModals(context) {
         formatDate,
         trapFocus,
         hasTelegramInitData,
+        escapeHtml: escapeHtml,
+        safeRender: safeRender,
     } = context;
-
-    /**
-     * Safe render wrapper — catches and logs errors instead of crashing.
-     */
-    function safeRender(name, fn) {
-        try {
-            return fn();
-        } catch (error) {
-            console.error(`[render-error] ${name}:`, error);
-            return null;
-        }
-    }
-
-    /**
-     * Escape HTML special characters to prevent XSS attacks.
-     */
-    const _escapeDiv = document.createElement("div");
-
-    function escapeHtml(str) {
-        if (str == null) return "";
-        _escapeDiv.textContent = String(str);
-        return _escapeDiv.innerHTML;
-    }
 
     /* ===== Detail Modal ===== */
 
@@ -98,6 +77,14 @@ function createRenderModals(context) {
 
         elements.detailMainImage.hidden = !hasImages;
         elements.detailNoImage.hidden = hasImages;
+
+        // Update gallery aria-label with current image index
+        if (elements.detailMedia) {
+            const total = images.length || 1;
+            const current = images.length ? (state.detailImageIndex + 1) : 1;
+            elements.detailMedia.setAttribute("aria-label", `Фото объявления ${current} из ${total}`);
+        }
+
         if (currentImage) {
             elements.detailMainImage.src = currentImage;
             elements.detailMainImage.alt = detail.title || "Фото объявления";
@@ -194,6 +181,10 @@ function createRenderModals(context) {
     }
 
     function closeDetailModal() {
+        if (state.modalCleanup) {
+            state.modalCleanup();
+            state.modalCleanup = null;
+        }
         state.detail = null;
         state.detailImageIndex = 0;
         state.detailFromWatchlist = false;
@@ -260,13 +251,21 @@ function createRenderModals(context) {
             elements.expensesSubtitle.hidden = false;
         }
         if (elements.expensesModal) {
+            if (state.modalCleanup) {
+                state.modalCleanup();
+                state.modalCleanup = null;
+            }
             elements.expensesModal.hidden = false;
-            trapFocus(elements.expensesModal);
+            state.modalCleanup = trapFocus(elements.expensesModal);
         }
         void actions.loadExpenses(leadId);
     }
 
     function closeExpensesModal() {
+        if (state.modalCleanup) {
+            state.modalCleanup();
+            state.modalCleanup = null;
+        }
         if (elements.expensesModal) {
             elements.expensesModal.hidden = true;
         }

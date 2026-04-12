@@ -53,7 +53,6 @@ function createApiWatchlist(context) {
             renderMonitoringHeroStats();
             showToast(`Удалено ${count} лотов`);
         } catch (error) {
-            console.error("Failed to clear watchlist:", error);
             showToast(error.message || "Не удалось очистить список");
             await loadWatchlist();
         }

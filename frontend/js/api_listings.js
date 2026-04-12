@@ -66,27 +66,34 @@ function createApiListings(context) {
 
     // ── Load parallel search dependencies ────────────────────────────────
     function loadSearchDependencies(requestId) {
+        // Abort previous in-flight search dependencies
+        if (state.searchAbortController) {
+            state.searchAbortController.abort();
+        }
+        state.searchAbortController = new AbortController();
+        const signal = state.searchAbortController.signal;
+
         const dependencies = [
             {
-                request: getJson(`/api/v1/price-history?${buildCommonQuery({ days: state.historyDays })}`),
+                request: getJson(`/api/v1/price-history?${buildCommonQuery({ days: state.historyDays })}`, { signal }),
                 apply(payload) {
                     state.history = payload.points || [];
                 },
             },
             {
-                request: getJson(`/api/v1/segments?${buildCommonQuery()}`),
+                request: getJson(`/api/v1/segments?${buildCommonQuery()}`, { signal }),
                 apply(payload) {
                     state.segments = payload;
                 },
             },
             {
-                request: getJson(`/api/v1/geography?${buildCommonQuery()}`),
+                request: getJson(`/api/v1/geography?${buildCommonQuery()}`, { signal }),
                 apply(payload) {
                     state.geography = payload.regions || [];
                 },
             },
             {
-                request: getJson(`/api/v1/listings?${buildCommonQuery({ sort: state.sort })}`),
+                request: getJson(`/api/v1/listings?${buildCommonQuery({ sort: state.sort })}`, { signal }),
                 apply(payload) {
                     state.listings = payload.listings || [];
                 },
@@ -97,7 +104,8 @@ function createApiListings(context) {
                         sort: "cheap",
                         discount_from_percent: state.discountFromPercent,
                         discount_to_percent: state.discountToPercent,
-                    })}`
+                    })}`,
+                    { signal }
                 ),
                 apply(payload) {
                     state.dealListings = payload.listings || [];
@@ -114,8 +122,8 @@ function createApiListings(context) {
                     dependency.apply(payload);
                     renderAll();
                 })
-                .catch(() => {
-                    if (!isActiveRequest(requestId)) {
+                .catch((err) => {
+                    if (err.name === "AbortError" || !isActiveRequest(requestId)) {
                         return;
                     }
                     renderAll();
@@ -295,7 +303,7 @@ function createApiListings(context) {
         context.focusTarget(target);
         clearSearchData();
         state.loading = true;
-        state.searchRequestId += 1;
+        state.searchRequestId = (state.searchRequestId + 1) % 1_000_000;
         const requestId = state.searchRequestId;
         renderAll();
 
@@ -330,22 +338,6 @@ function createApiListings(context) {
         if (!state.error && state.comparisonQuery.trim()) {
             await loadComparison();
         }
-        if (!state.error) {
-            void loadMarketVelocity();
-        }
-    }
-
-    // ── Market Velocity ──────────────────────────────────────────────────
-    async function loadMarketVelocity() {
-        if (!state.query) {
-            context.renderVelocity(null);
-            return;
-        }
-        try {
-            context.renderVelocity(null);
-        } catch (_) {
-            context.renderVelocity(null);
-        }
     }
 
     // ── Detail Risk Assessment ───────────────────────────────────────────
@@ -377,7 +369,6 @@ function createApiListings(context) {
         loadSearchDependencies,
         clearSearchData,
         loadHistory,
-        loadMarketVelocity,
         loadDetailRisks,
     };
 }

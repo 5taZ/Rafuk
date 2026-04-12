@@ -21,6 +21,7 @@ function createVirtualList(container, options) {
     const {
         itemHeight = 160,
         bufferSize = 5,
+        maxHeight = "70vh",
         renderFn,
     } = options;
 
@@ -33,7 +34,6 @@ function createVirtualList(container, options) {
 
     // Validate required params
     if (!container || typeof renderFn !== "function") {
-        console.error("[virtual-list] container and renderFn are required");
         return {
             setItems: function () {},
             getItems: function () { return []; },
@@ -58,7 +58,7 @@ function createVirtualList(container, options) {
 
     // Configure container scrolling
     container.style.overflowY = "auto";
-    container.style.maxHeight = "70vh";
+    container.style.maxHeight = maxHeight;
     // Preserve existing role if set to "list", otherwise add it
     if (!container.getAttribute("role")) {
         container.setAttribute("role", "list");

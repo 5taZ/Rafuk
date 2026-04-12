@@ -16,30 +16,9 @@ function createRenderCharts(context) {
         formatDate,
         trapFocus,
         hasTelegramInitData,
+        escapeHtml: escapeHtml,
+        safeRender: safeRender,
     } = context;
-
-    /**
-     * Safe render wrapper — catches and logs errors instead of crashing.
-     */
-    function safeRender(name, fn) {
-        try {
-            return fn();
-        } catch (error) {
-            console.error(`[render-error] ${name}:`, error);
-            return null;
-        }
-    }
-
-    /**
-     * Escape HTML special characters to prevent XSS attacks.
-     */
-    const _escapeDiv = document.createElement("div");
-
-    function escapeHtml(str) {
-        if (str == null) return "";
-        _escapeDiv.textContent = String(str);
-        return _escapeDiv.innerHTML;
-    }
 
     /* ===== Chart lifecycle ===== */
 
@@ -204,7 +183,7 @@ function createRenderCharts(context) {
             },
             {
                 label: "Диапазон",
-                value: `${formatPrice(Math.min(...state.history.map((point) => point.median)))} - ${formatPrice(Math.max(...state.history.map((point) => point.median)))}`,
+                value: `${formatPrice(state.history.reduce((min, p) => Math.min(min, p.median), Infinity))} - ${formatPrice(state.history.reduce((max, p) => Math.max(max, p.median), -Infinity))}`,
                 meta: "по медиане",
             },
         ];
@@ -441,12 +420,6 @@ function createRenderCharts(context) {
         });
     }
 
-    /* ===== Velocity (placeholder) ===== */
-
-    function renderVelocity() {
-        // Placeholder — market velocity feature not yet implemented
-    }
-
     return {
         destroyChart,
         destroyHistoryChart,
@@ -455,6 +428,5 @@ function createRenderCharts(context) {
         renderHistoryChart,
         renderProfitDashboard,
         renderHistoryDeals,
-        renderVelocity,
     };
 }

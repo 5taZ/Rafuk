@@ -122,11 +122,27 @@ async def create_tracker(
         )
 
     async with session_factory() as session:
+        # Per-user tracker limit to prevent amplification attacks
         user_id = await ensure_user(
             session,
             telegram_user_id=telegram_user.user_id,
             first_name=telegram_user.first_name,
         )
+
+        # Enforce per-user max tracker limit
+        max_trackers_per_user = 50
+        existing_count = await session.execute(
+            select(func.count(Tracker.id)).where(
+                Tracker.user_id == user_id,
+                Tracker.active.is_(True),
+            )
+        )
+        if (existing_count.scalar() or 0) >= max_trackers_per_user:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Maximum {max_trackers_per_user} trackers per user",
+            )
+
         tracker = Tracker(
             user_id=user_id,
             query=query,

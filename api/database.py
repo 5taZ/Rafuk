@@ -12,11 +12,12 @@ from api.config import get_settings
 
 def get_engine(url: str | None = None) -> AsyncEngine:
     database_url = url or get_settings().database_url
+    settings = get_settings()
     kwargs: dict[str, object] = {"echo": False}
     if not database_url.startswith("sqlite"):
         kwargs.update(
-            pool_size=5,
-            max_overflow=10,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
             pool_pre_ping=True,
             pool_recycle=1800,
             pool_timeout=30,

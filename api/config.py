@@ -20,11 +20,14 @@ class Settings(BaseSettings):
     api_base_url: str = Field(..., description="HTTPS URL for the API base")
     mini_app_url: str = Field(..., description="HTTPS URL for the Telegram Mini App")
     kufar_request_delay: float = 1.0
-    kufar_parallel_semaphore: int = 3
+    kufar_parallel_semaphore: int = 2
     kufar_timeout: float = 15.0
+    kufar_max_ads_per_query: int = 5000
     alert_check_interval: int = 30
     cache_ttl_seconds: int = 300
     auto_remove_missing_days: int = 7
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
 
     @field_validator("api_base_url", "mini_app_url")
     @classmethod
@@ -49,9 +52,4 @@ def get_settings() -> Settings:
     return Settings()
 
 
-class _SettingsProxy:
-    def __getattr__(self, name: str) -> object:
-        return getattr(get_settings(), name)
-
-
-settings = _SettingsProxy()
+settings = Settings()

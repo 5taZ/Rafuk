@@ -25,6 +25,11 @@ function createAppRenderers(context) {
 
     // ── Instantiate sub-modules ──────────────────────────────────────────
     const core = createRenderCore(context);
+
+    // Share escapeHtml and safeRender across sub-modules via context
+    context.escapeHtml = core.escapeHtml;
+    context.safeRender = safeRender;
+
     const cards = createRenderCards(context);
     const views = createRenderViews(context);
     const modals = createRenderModals(context);
@@ -66,9 +71,9 @@ function createAppRenderers(context) {
         try {
             return fn();
         } catch (error) {
-            console.error(`[render-error] ${name}:`, error);
+            console.error("Render error:", error.message);
             if (typeof core.showToast === 'function') {
-                core.showToast(`Ошибка отображения: ${name}`, 'error');
+                core.showToast("Ошибка отображения", 'error');
             }
             return null;
         }
@@ -137,7 +142,6 @@ function createAppRenderers(context) {
         renderHistoryChart,
         renderProfitDashboard,
         renderHistoryDeals,
-        renderVelocity,
     } = charts;
 
     const {
@@ -190,14 +194,13 @@ function createAppRenderers(context) {
             renderWatchlist();
             renderProfitDashboard();
         } catch (error) {
-            console.error('[render-error] renderAll:', error);
             if (typeof core.showToast === 'function') {
                 core.showToast('Ошибка отображения', 'error');
             }
         }
         const duration = performance.now() - start;
-        if (duration > 100) {
-            console.warn(`[perf] renderAll took ${duration.toFixed(1)}ms (>100ms threshold)`);
+        if (duration > 50) {
+            console.warn(`[perf] renderAll took ${duration.toFixed(1)}ms (>50ms threshold)`);
         }
     }
 
@@ -248,7 +251,6 @@ function createAppRenderers(context) {
         openExpensesModal,
         closeExpensesModal,
         renderDetailRisks,
-        renderVelocity,
         destroyChart,
         destroyHistoryChart,
         renderDetailModal,

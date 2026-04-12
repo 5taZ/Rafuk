@@ -26,7 +26,7 @@ function createRenderCore(context) {
         try {
             return fn();
         } catch (error) {
-            console.error(`[render-error] ${name}:`, error);
+            console.error("Render error:", error.message);
             return null;
         }
     }

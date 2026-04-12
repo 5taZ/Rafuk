@@ -16,30 +16,9 @@ function createRenderTrackers(context) {
         formatDate,
         trapFocus,
         hasTelegramInitData,
+        escapeHtml: escapeHtml,
+        safeRender: safeRender,
     } = context;
-
-    /**
-     * Safe render wrapper — catches and logs errors instead of crashing.
-     */
-    function safeRender(name, fn) {
-        try {
-            return fn();
-        } catch (error) {
-            console.error(`[render-error] ${name}:`, error);
-            return null;
-        }
-    }
-
-    /**
-     * Escape HTML special characters to prevent XSS attacks.
-     */
-    const _escapeDiv = document.createElement("div");
-
-    function escapeHtml(str) {
-        if (str == null) return "";
-        _escapeDiv.textContent = String(str);
-        return _escapeDiv.innerHTML;
-    }
 
     /* ===== Tracker Status ===== */
 
@@ -355,9 +334,8 @@ function createRenderTrackers(context) {
             return card;
         }
 
-        // Use virtual scrolling for large datasets (>50 items)
-        const VIRTUAL_THRESHOLD = 50;
-        if (filteredEvents.length > VIRTUAL_THRESHOLD) {
+        const VIRTUAL_LIST_THRESHOLD = 50;
+        if (filteredEvents.length > VIRTUAL_LIST_THRESHOLD) {
             container._virtualList = createVirtualList(container, {
                 itemHeight: 160,
                 bufferSize: 5,

@@ -78,7 +78,6 @@ function createApiEvents(context) {
         createExpense,
         deleteExpense,
         exportLeadsCSV,
-        loadMarketVelocity,
         loadDetailRisks,
         startTrackerRefresh,
         stopTrackerRefresh,

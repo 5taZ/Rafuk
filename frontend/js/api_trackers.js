@@ -65,7 +65,7 @@ function createApiTrackers(context) {
                 renderTrackerEventFilters();
             }
         } catch (err) {
-            console.warn("[tracker-refresh] background refresh failed", err);
+            // Background refresh failed — will retry on next interval
         }
     }
 
@@ -88,6 +88,11 @@ function createApiTrackers(context) {
 
         state.trackers = trackersResult.status === "fulfilled" ? trackersResult.value : [];
         state.trackerEvents = eventsResult.status === "fulfilled" ? eventsResult.value : [];
+
+        const failures = [trackersResult, eventsResult].filter((r) => r.status === "rejected");
+        if (failures.length > 0 && context.showToast) {
+            context.showToast("Не удалось загрузить некоторые данные", "error", 3000);
+        }
 
         if (trackersResult.status === "rejected") {
             state.trackerStatus = trackersResult.reason?.message || "Не удалось загрузить трекеры.";
@@ -222,12 +227,20 @@ function createApiTrackers(context) {
         if (elements.editExcludeDuplicatesToggle) elements.editExcludeDuplicatesToggle.checked = Boolean(tracker.exclude_duplicates);
 
         if (elements.editTrackerModal) {
+            if (state.modalCleanup) {
+                state.modalCleanup();
+                state.modalCleanup = null;
+            }
             elements.editTrackerModal.hidden = false;
-            trapFocus(elements.editTrackerModal);
+            state.modalCleanup = trapFocus(elements.editTrackerModal);
         }
     }
 
     function closeEditTracker() {
+        if (state.modalCleanup) {
+            state.modalCleanup();
+            state.modalCleanup = null;
+        }
         state.editingTrackerId = null;
         if (elements.editTrackerModal) elements.editTrackerModal.hidden = true;
     }

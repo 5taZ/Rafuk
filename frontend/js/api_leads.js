@@ -57,7 +57,6 @@ function createApiLeads(context) {
             renderDealsHeroStats();
             showToast(`Удалено ${count} сделок`);
         } catch (error) {
-            console.error("Failed to clear leads:", error);
             showToast(error.message || "Не удалось очистить список");
             await loadLeads();
         }
@@ -131,7 +130,6 @@ function createApiLeads(context) {
                 }
             }, 100);
         } catch (error) {
-            console.error("Failed to confirm lead:", error);
             showToast(error.message || "Не удалось подтвердить сделку");
         }
     }
@@ -143,7 +141,6 @@ function createApiLeads(context) {
             showToast("✓ Сделка отменена", "info");
             await loadLeads();
         } catch (error) {
-            console.error("Failed to cancel lead:", error);
             showToast(error.message || "Не удалось отменить сделку");
         }
     }
@@ -173,7 +170,6 @@ function createApiLeads(context) {
                 showToast(`✓ Сделка закрыта. Убыль: ${Math.round(profit)} BYN`);
             }
         } catch (error) {
-            console.error("Failed to close deal:", error);
             showToast(error.message || "Не удалось закрыть сделку");
         }
     }
@@ -210,7 +206,6 @@ function createApiLeads(context) {
                 }
             }, 100);
         } catch (error) {
-            console.error("Failed to revert lead stage:", error);
             showToast(error.message || "Не удалось вернуть сделку");
         }
     }
@@ -237,7 +232,6 @@ function createApiLeads(context) {
             await loadLeads();
             return true;
         } catch (error) {
-            console.error("Failed to update lead:", error);
             showToast(error.message || "Не удалось обновить сделку");
             await loadLeads();
             return false;

@@ -36,6 +36,7 @@ function createApiCore(context) {
         const response = await fetch(url, {
             ...options,
             headers,
+            signal: options.signal || undefined,
         });
 
         if (!response.ok) {
@@ -61,8 +62,8 @@ function createApiCore(context) {
     }
 
     // ── Convenience wrappers ─────────────────────────────────────────────
-    function getJson(url) {
-        return requestJson(url);
+    function getJson(url, options) {
+        return requestJson(url, options);
     }
 
     function postJson(url, payload) {

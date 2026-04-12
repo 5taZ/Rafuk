@@ -484,7 +484,7 @@ async def check_db_health(engine) -> bool:
             await conn.execute(text("SELECT 1"))
             return True
     except OperationalError as e:
-        logger.error(f"Database health check failed: {e}")
+        logger.error("Database health check failed: %s", e)
         return False
 
 

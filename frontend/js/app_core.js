@@ -42,6 +42,10 @@ function createAppCore() {
         trackerConfigKeyword: "",
         editingTrackerId: null,
         creatingTracker: false,
+        modalCleanup: null,
+        searchAbortController: null,
+        opportunityBoard: { items: [], top_price_drops: [], rare_opportunities: [], market_signals: [] },
+        dirtyViews: new Set(),
         detail: null,
         detailImageIndex: 0,
         detailFromWatchlist: false,
@@ -161,6 +165,7 @@ function createAppCore() {
         elements.detailOverlay = document.getElementById("detail-overlay");
         elements.detailClose = document.getElementById("detail-close");
         elements.detailMainImage = document.getElementById("detail-main-image");
+        elements.detailMedia = document.getElementById("detail-media");
         elements.detailNoImage = document.getElementById("detail-no-image");
         elements.detailThumbs = document.getElementById("detail-thumbs");
         elements.detailTitle = document.getElementById("detail-title");
@@ -252,15 +257,23 @@ function createAppCore() {
 
         if (state.currency === "BYN") {
             if (numeric >= 10000) {
-                return `${(numeric / 1000).toFixed(1).replace(/\.0$/, "")} тыс. р.`;
+                const formatted = Number(numeric / 1000).toLocaleString("ru-RU", {
+                    maximumFractionDigits: 1,
+                    minimumFractionDigits: 0,
+                });
+                return `${formatted} тыс. р.`;
             }
             if (numeric >= 1000) {
-                return `${(numeric / 1000).toFixed(2).replace(/0+$/, "").replace(/\.$/, "")} тыс. р.`;
+                const formatted = Number(numeric / 1000).toLocaleString("ru-RU", {
+                    maximumFractionDigits: 2,
+                    minimumFractionDigits: 0,
+                });
+                return `${formatted} тыс. р.`;
             }
             return `${Math.round(numeric)} р.`;
         }
 
-        return `$${numeric.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
+        return `$${numeric.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
     }
 
     function formatRate(value) {

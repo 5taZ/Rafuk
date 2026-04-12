@@ -670,20 +670,9 @@ body {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    position: relative;
-    overflow: hidden;
-}
-
-.view-hero::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: -14px;
-    right: -14px;
-    height: 80px;
     background: linear-gradient(180deg, var(--accent-soft) 0%, transparent 100%);
-    opacity: 0.4;
-    pointer-events: none;
+    background-size: 100% 80px;
+    background-repeat: no-repeat;
 }
 
 .view-hero-title {
@@ -1174,41 +1163,23 @@ body {
     margin-bottom: 10px;
 }
 
-/* DUPLICATE .tracker-event-empty removed — merged with polished definition at line 1335 */
-
 .tracker-event-row {
     padding: 14px;
     border-radius: var(--r-md);
     border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
     background: rgba(255, 255, 255, 0.02);
     display: flex;
     flex-direction: column;
     gap: 7px;
-    position: relative;
-    overflow: hidden;
-}
-
-.tracker-event-row::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: var(--accent);
-    opacity: 0.6;
 }
 
 [data-theme="light"] .tracker-event-row {
     background: rgba(0, 0, 0, 0.01);
 }
 
-.tracker-event-row.price-drop::before {
-    background: var(--red);
-    opacity: 0.8;
-}
-
 .tracker-event-row.price-drop {
+    border-left-color: var(--red);
     background: rgba(244, 63, 94, 0.04);
 }
 
@@ -1249,8 +1220,6 @@ body {
     font-size: 12px;
     color: var(--text-muted);
 }
-
-/* DUPLICATE .tracker-empty removed — merged with polished definition at line 1314 */
 
 .tracker-row {
     display: flex;
@@ -1457,8 +1426,6 @@ body {
     line-height: 1.5;
 }
 
-/* DUPLICATE .tracker-form-hint removed — identical to definition at line 1037 */
-
 .tracker-row-group {
     background: var(--bg-elevated);
     border-color: var(--border);
@@ -1657,8 +1624,6 @@ body {
 .history-chart-box {
     min-height: 190px;
 }
-
-/* DUPLICATE .section-note removed — merged with definition at line 1349 */
 
 .history-range-row {
     margin-bottom: 10px;
@@ -2923,6 +2888,13 @@ body {
     font-size: 12px;
 }
 
+/* ===== Responsive: 360px ===== */
+@media (max-width: 360px) {
+    .history-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 /* ===== Responsive: 380px ===== */
 @media (max-width: 380px) {
     html {
@@ -3420,12 +3392,6 @@ body {
     color: var(--text);
 }
 
-/* UNUSED: .watchlist-delete-all-btn not referenced in HTML or JS */
-.watchlist-delete-all-btn {
-    width: auto;
-    flex: 0 0 auto;
-}
-
 /* ===== Lead Card Layout (Pipeline) ===== */
 .lead-card {
     background: var(--bg-card);
@@ -3449,38 +3415,24 @@ body {
     transform: scale(0.995);
 }
 
-.lead-card.status-bought::before,
-.lead-card.status-reselling::before,
-.lead-card.status-sold::before,
-.lead-card.status-in_progress::before,
-.lead-card.status-negotiating::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 12px;
-    right: 12px;
-    height: 2px;
-    border-radius: 0 0 2px 2px;
+.lead-card.status-bought {
+    border-top: 3px solid var(--green);
 }
 
-.lead-card.status-bought::before {
-    background: var(--green);
+.lead-card.status-reselling {
+    border-top: 3px solid var(--cyan);
 }
 
-.lead-card.status-reselling::before {
-    background: var(--cyan);
+.lead-card.status-sold {
+    border-top: 3px solid var(--green-700);
 }
 
-.lead-card.status-sold::before {
-    background: var(--green-700);
+.lead-card.status-in_progress {
+    border-top: 3px solid var(--accent);
 }
 
-.lead-card.status-in_progress::before {
-    background: var(--accent);
-}
-
-.lead-card.status-negotiating::before {
-    background: var(--amber);
+.lead-card.status-negotiating {
+    border-top: 3px solid var(--amber);
 }
 
 .lead-card-top {
@@ -3515,8 +3467,6 @@ body {
     overflow: hidden;
     margin: 0;
 }
-
-/* DUPLICATE .lead-financial-item removed — merged with definition at line 3637 */
 
 .lead-financial-item.profit-positive {
     background: var(--green-soft);
@@ -4742,8 +4692,6 @@ body {
     animation: spin 0.6s linear infinite;
 }
 
-/* DUPLICATE @keyframes spin removed — defined at line 791 */
-
 .render-error {
     padding: 12px 14px;
     color: var(--red);
@@ -4904,6 +4852,9 @@ body {
     height: 40px;
     border-radius: 50%;
 }
+
+/* NOTE: Skeleton CSS kept for future use — implement skeleton cards in JS
+   by adding .skeleton / .skeleton-card / .skeleton-text classes during loading states. */
 
 /* ===== Button Disabled / Loading States ===== */
 

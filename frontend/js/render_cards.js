@@ -16,30 +16,9 @@ function createRenderCards(context) {
         formatDate,
         trapFocus,
         hasTelegramInitData,
+        escapeHtml: escapeHtml,
+        safeRender: safeRender,
     } = context;
-
-    /**
-     * Safe render wrapper — catches and logs errors instead of crashing.
-     */
-    function safeRender(name, fn) {
-        try {
-            return fn();
-        } catch (error) {
-            console.error(`[render-error] ${name}:`, error);
-            return null;
-        }
-    }
-
-    /**
-     * Escape HTML special characters to prevent XSS attacks.
-     */
-    const _escapeDiv = document.createElement("div");
-
-    function escapeHtml(str) {
-        if (str == null) return "";
-        _escapeDiv.textContent = String(str);
-        return _escapeDiv.innerHTML;
-    }
 
     /* ===== Shared helpers (from original file) ===== */
 
