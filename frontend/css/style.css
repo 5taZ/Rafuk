@@ -4775,9 +4775,9 @@ body {
     white-space: nowrap;
     transition: color 0.12s;
     flex-shrink: 0;
-    padding: 4px 0;
-    min-height: auto;
-    min-width: auto;
+    padding: 12px 0;
+    min-height: 44px;
+    min-width: 44px;
     text-decoration: none;
     border-bottom: 1px solid transparent;
 }
@@ -4799,13 +4799,17 @@ body {
     color: var(--text-dim);
     font-size: 13px;
     cursor: pointer;
-    padding: 4px;
+    padding: 8px;
+    margin: -4px 0;
     border-radius: 4px;
     transition: all 0.12s;
     line-height: 1;
     flex-shrink: 0;
-    min-height: auto;
-    min-width: auto;
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .recent-clear:hover {
