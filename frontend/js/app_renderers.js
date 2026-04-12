@@ -21,6 +21,8 @@ function createAppRenderers(context) {
         formatDate,
         trapFocus,
         hasTelegramInitData,
+        isDirty: isDirtyFn,
+        clearDirty: clearDirtyFn,
     } = context;
 
     // ── Instantiate sub-modules ──────────────────────────────────────────
@@ -70,8 +72,7 @@ function createAppRenderers(context) {
     function safeRender(name, fn) {
         try {
             return fn();
-        } catch (error) {
-            console.error("Render error:", error.message);
+        } catch (_) {
             if (typeof core.showToast === 'function') {
                 core.showToast("Ошибка отображения", 'error');
             }
@@ -157,51 +158,65 @@ function createAppRenderers(context) {
 
     // ── renderAll ────────────────────────────────────────────────────────
 
+    /**
+     * Map of render functions keyed by dirty-flag name.
+     * If no dirty flags are set, all renderers run (first-call / full-refresh).
+     */
+    const _renderMap = {
+        error: renderError,
+        loading: renderLoading,
+        currency: renderCurrencyButtons,
+        strict: renderStrictSearch,
+        tabs: renderViewTabs,
+        panels: renderPanels,
+        summary: renderSummary,
+        helper: renderHelper,
+        views: renderViews,
+        trackingHero: renderTrackingHeroStats,
+        cheapHero: renderCheapHeroStats,
+        monitoringHero: renderMonitoringHeroStats,
+        dealsHero: renderDealsHeroStats,
+        sort: renderSortButtons,
+        discount: renderDiscountButtons,
+        eventFilters: renderTrackerEventFilters,
+        dealInputs: renderDealInputs,
+        trackerInputs: renderTrackerInputs,
+        stats: renderStats,
+        history: renderHistory,
+        comparison: renderComparison,
+        segments: renderSegments,
+        geography: renderGeography,
+        recent: renderRecentSearches,
+        listings: renderListings,
+        deals: renderDeals,
+        rates: renderRates,
+        trackerStatus: renderTrackerStatus,
+        trackers: renderTrackers,
+        trackerEvents: renderTrackerEvents,
+        leads: renderLeads,
+        watchlist: renderWatchlist,
+        profit: renderProfitDashboard,
+    };
+
     function renderAll() {
-        const start = performance.now();
+        const hasSelectiveFlags = state.dirtyViews.size > 0 && !state._allDirty;
         try {
-            renderError();
-            renderLoading();
-            renderCurrencyButtons();
-            renderStrictSearch();
-            renderViewTabs();
-            renderPanels();
-            renderSummary();
-            renderHelper();
-            renderViews();
-            renderTrackingHeroStats();
-            renderCheapHeroStats();
-            renderMonitoringHeroStats();
-            renderDealsHeroStats();
-            renderSortButtons();
-            renderDiscountButtons();
-            renderTrackerEventFilters();
-            renderDealInputs();
-            renderTrackerInputs();
-            renderStats();
-            renderHistory();
-            renderComparison();
-            renderSegments();
-            renderGeography();
-            renderRecentSearches();
-            renderListings();
-            renderDeals();
-            renderRates();
-            renderTrackerStatus();
-            renderTrackers();
-            renderTrackerEvents();
-            renderLeads();
-            renderWatchlist();
-            renderProfitDashboard();
-        } catch (error) {
+            if (hasSelectiveFlags) {
+                // Selective render — only flagged views
+                for (const [key, fn] of Object.entries(_renderMap)) {
+                    if (state.dirtyViews.has(key)) fn();
+                }
+            } else {
+                // Full render — no specific flags or _allDirty is set
+                for (const fn of Object.values(_renderMap)) fn();
+            }
+        } catch (_) {
             if (typeof core.showToast === 'function') {
                 core.showToast('Ошибка отображения', 'error');
             }
         }
-        const duration = performance.now() - start;
-        if (duration > 50) {
-            console.warn(`[perf] renderAll took ${duration.toFixed(1)}ms (>50ms threshold)`);
-        }
+        state._allDirty = false;
+        state.dirtyViews.clear();
     }
 
     // ── Public API (every name the original file exported) ───────────────

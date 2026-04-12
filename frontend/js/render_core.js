@@ -25,8 +25,10 @@ function createRenderCore(context) {
     function safeRender(name, fn) {
         try {
             return fn();
-        } catch (error) {
-            console.error("Render error:", error.message);
+        } catch (_) {
+            if (typeof showToast === 'function') {
+                showToast("Ошибка отображения", 'error');
+            }
             return null;
         }
     }
@@ -126,19 +128,44 @@ function createRenderCore(context) {
 
     /* ===== Loading ===== */
 
+    /**
+     * Build a skeleton card element for loading placeholder.
+     */
+    function buildSkeletonCard() {
+        const card = document.createElement("div");
+        card.className = "skeleton-card skeleton";
+        card.setAttribute("aria-hidden", "true");
+        card.innerHTML = '<div class="skeleton-text" style="width:70%"></div><div class="skeleton-text" style="width:45%"></div>';
+        return card;
+    }
+
     function renderLoading() {
         return safeRender('renderLoading', () => {
             elements.searchButton.disabled = state.loading || !state.query.trim();
             elements.searchInput.disabled = state.loading;
             if (state.loading) {
                 elements.searchButtonLabel.innerHTML = '<span class="spin"></span>';
-                // Add aria-busy to sections being loaded
                 elements.listingsSection?.setAttribute('aria-busy', 'true');
                 elements.dealsSection?.setAttribute('aria-busy', 'true');
                 elements.statsSection?.setAttribute('aria-busy', 'true');
+
+                // Show skeleton cards in listing containers during initial load
+                if (!state.listings.length && elements.listingsList) {
+                    elements.listingsList.innerHTML = "";
+                    for (let i = 0; i < 3; i++) {
+                        elements.listingsList.appendChild(buildSkeletonCard());
+                    }
+                    elements.listingsSection.hidden = false;
+                }
+                if (!state.dealListings.length && elements.dealsList) {
+                    elements.dealsList.innerHTML = "";
+                    for (let i = 0; i < 3; i++) {
+                        elements.dealsList.appendChild(buildSkeletonCard());
+                    }
+                    elements.dealsSection.hidden = false;
+                }
             } else {
                 elements.searchButtonLabel.textContent = "Найти";
-                // Remove aria-busy when loading complete
                 elements.listingsSection?.removeAttribute('aria-busy');
                 elements.dealsSection?.removeAttribute('aria-busy');
                 elements.statsSection?.removeAttribute('aria-busy');

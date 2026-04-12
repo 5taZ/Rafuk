@@ -11,6 +11,7 @@ function createApiListings(context) {
         elements,
         hasTelegramInitData,
         renderAll,
+        markDirty,
         renderLoading,
         renderError,
         renderComparison,
@@ -120,12 +121,14 @@ function createApiListings(context) {
                         return;
                     }
                     dependency.apply(payload);
+                    markDirty('stats', 'history', 'comparison', 'segments', 'geography', 'listings', 'deals');
                     renderAll();
                 })
                 .catch((err) => {
                     if (err.name === "AbortError" || !isActiveRequest(requestId)) {
                         return;
                     }
+                    markDirty('stats', 'history', 'comparison', 'segments', 'geography', 'listings', 'deals');
                     renderAll();
                 });
         }
@@ -135,6 +138,7 @@ function createApiListings(context) {
     async function loadListings() {
         if (!state.query) {
             state.listings = [];
+            markDirty('listings');
             renderAll();
             return;
         }
@@ -150,6 +154,7 @@ function createApiListings(context) {
             state.error = error.message || "Не удалось загрузить объявления";
             renderError();
         } finally {
+            markDirty('listings', 'error');
             renderAll();
         }
     }
@@ -158,6 +163,7 @@ function createApiListings(context) {
     async function loadDeals() {
         if (!state.query) {
             state.dealListings = [];
+            markDirty('deals');
             renderAll();
             return;
         }
@@ -177,6 +183,7 @@ function createApiListings(context) {
             state.error = error.message || "Не удалось загрузить дешёвые объявления";
             renderError();
         } finally {
+            markDirty('deals', 'error');
             renderAll();
         }
     }
@@ -305,6 +312,7 @@ function createApiListings(context) {
         state.loading = true;
         state.searchRequestId = (state.searchRequestId + 1) % 1_000_000;
         const requestId = state.searchRequestId;
+        markDirty('loading', 'error', 'summary', 'helper', 'stats');
         renderAll();
 
         try {
@@ -315,6 +323,7 @@ function createApiListings(context) {
 
             state.stats = stats;
             state.loading = false;
+            markDirty('loading', 'stats', 'summary', 'helper');
             renderAll();
             loadSearchDependencies(requestId);
 
@@ -332,6 +341,7 @@ function createApiListings(context) {
             clearSearchData();
             state.error = error.message || "Не удалось загрузить аналитику.";
             state.loading = false;
+            markDirty('loading', 'error', 'summary', 'helper');
             renderAll();
         }
 

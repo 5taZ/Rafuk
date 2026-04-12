@@ -247,9 +247,23 @@ async def check_trackers(
                 Tracker.paused.is_(False)
             )
         )
-        trackers = list(result.scalars())
-        if not trackers:
+        all_trackers = list(result.scalars())
+        if not all_trackers:
             logger.debug("No active trackers to check")
+            return
+
+        # Filter out trackers whose interval_min hasn't elapsed yet
+        now = datetime.now(UTC)
+        trackers = [
+            t for t in all_trackers
+            if t.last_checked_at is None
+            or (now - t.last_checked_at).total_seconds() >= t.interval_min * 60
+        ]
+        if not trackers:
+            logger.debug(
+                "All %d tracker(s) skipped — interval not elapsed yet",
+                len(all_trackers),
+            )
             return
 
         trackers_by_query: dict[tuple[str, bool], list[Tracker]] = defaultdict(list)
@@ -257,8 +271,8 @@ async def check_trackers(
             trackers_by_query[(tracker.query, tracker.strict_mode)].append(tracker)
 
         logger.info(
-            "Tracker check: %d tracker(s), %d unique query group(s)",
-            len(trackers), len(trackers_by_query),
+            "Tracker check: %d due (of %d total), %d unique query group(s)",
+            len(trackers), len(all_trackers), len(trackers_by_query),
         )
 
         client = KufarClient(settings)
@@ -386,10 +400,14 @@ def create_scheduler(
     settings: Settings,
 ) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Minsk")
+    # Base tick interval: run frequently enough to respect the shortest
+    # per-tracker interval_min.  Each tick skips trackers whose interval
+    # hasn't elapsed yet, so a 30-min tracker is only checked every 30 min.
+    tick_minutes = min(settings.alert_check_interval, 5)
     scheduler.add_job(
         check_trackers,
         trigger="interval",
-        minutes=settings.alert_check_interval,
+        minutes=tick_minutes,
         kwargs={"bot": bot, "session_factory": session_factory, "settings": settings},
         id="tracker-check",
         replace_existing=True,

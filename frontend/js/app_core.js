@@ -46,6 +46,7 @@ function createAppCore() {
         searchAbortController: null,
         opportunityBoard: { items: [], top_price_drops: [], rare_opportunities: [], market_signals: [] },
         dirtyViews: new Set(),
+        _allDirty: true,
         detail: null,
         detailImageIndex: 0,
         detailFromWatchlist: false,
@@ -441,12 +442,42 @@ function createAppCore() {
     function measureRender(name, thresholdMs = 100) {
         const start = performance.now();
         return function () {
-            const duration = performance.now() - start;
-            if (duration > thresholdMs) {
-                console.warn(`[perf] ${name} took ${duration.toFixed(1)}ms (>${thresholdMs}ms threshold)`);
-            }
-            return duration;
+            return performance.now() - start;
         };
+    }
+
+    /**
+     * Mark one or more views as needing re-render.
+     * Views: 'error','loading','currency','strict','tabs','panels','summary',
+     * 'helper','views','trackingHero','cheapHero','monitoringHero','dealsHero',
+     * 'sort','discount','eventFilters','dealInputs','trackerInputs','stats',
+     * 'history','comparison','segments','geography','recent','listings','deals',
+     * 'rates','trackerStatus','trackers','trackerEvents','leads','watchlist',
+     * 'profit'.
+     * Call without args or with 'all' to mark everything dirty.
+     */
+    function markDirty() {
+        const args = Array.prototype.slice.call(arguments);
+        if (args.length === 0 || args.includes('all')) {
+            // Mark all known views dirty
+            state._allDirty = true;
+            state.dirtyViews.clear();
+        } else {
+            state._allDirty = false;
+            for (const v of args) {
+                state.dirtyViews.add(v);
+            }
+        }
+    }
+
+    function isDirty(view) {
+        if (state._allDirty) return true;
+        return state.dirtyViews.has(view);
+    }
+
+    function clearDirty() {
+        state._allDirty = false;
+        state.dirtyViews.clear();
     }
 
     return {
@@ -470,5 +501,8 @@ function createAppCore() {
         loadCurrency,
         saveCurrency,
         measureRender,
+        markDirty,
+        isDirty,
+        clearDirty,
     };
 }

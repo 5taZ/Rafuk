@@ -15,6 +15,7 @@ function createAppActions(context) {
         hasTelegramInitData,
         trapFocus,
         renderAll,
+        markDirty,
         renderError,
         renderLoading,
         renderStrictSearch,
@@ -60,7 +61,8 @@ function createAppActions(context) {
             return;
         }
         state.activeView = view;
-        renderViewTabs();
+        markDirty('tabs', 'views');
+        renderAll();
 
         const viewEl = elements.views[view];
         if (viewEl) {
@@ -69,8 +71,6 @@ function createAppActions(context) {
                 viewEl.classList.remove("is-entering");
             }, 200);
         }
-
-        renderViews();
     }
 
     /**
@@ -117,6 +117,7 @@ function createAppActions(context) {
     context.setActiveView = setActiveView;
     context.scrollSectionIntoView = scrollSectionIntoView;
     context.focusTarget = focusTarget;
+    context.markDirty = markDirty;
 
     // ── Instantiate sub-modules ──────────────────────────────────────────
     const core = createApiCore(context);
@@ -216,11 +217,13 @@ function createAppActions(context) {
         if (state.query.trim()) {
             listings.clearSearchData();
             state.loading = true;
+            markDirty('currency', 'loading');
             renderAll();
             await listings.search(state.activeView);
             return;
         }
 
+        markDirty('currency', 'rates');
         renderAll();
         await core.loadRates();
     }
@@ -283,7 +286,6 @@ function createAppActions(context) {
             showToast("✓ Сделка удалена из истории");
             await leads.loadLeads();
         } catch (error) {
-            console.error("Failed to delete history deal:", error);
             showToast(error.message || "Не удалось удалить сделку");
         }
     }
