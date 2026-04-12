@@ -85,14 +85,6 @@
         </label>
     </section>
 
-    <section class="recent-section" id="recent-section" hidden>
-        <div class="recent-header">
-            <span class="recent-title">Недавние</span>
-            <button class="recent-clear" id="recent-clear-btn" type="button" aria-label="Очистить историю">✕</button>
-        </div>
-        <div class="recent-list" id="recent-list"></div>
-    </section>
-
     <nav class="view-nav" role="tablist" aria-label="Разделы Mini App">
         <button class="view-tab active" data-view="overview" type="button" role="tab" aria-selected="true" aria-controls="overview-view" id="tab-overview">
             <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -140,6 +132,12 @@
             <span class="view-tab-label">Покупки</span>
         </button>
     </nav>
+
+    <section class="recent-strip" id="recent-section" hidden>
+        <span class="recent-kicker">Недавние</span>
+        <div class="recent-list" id="recent-list"></div>
+        <button class="recent-clear" id="recent-clear-btn" type="button" aria-label="Очистить историю">✕</button>
+    </section>
 
     <section class="summary-strip" id="summary-strip" hidden>
         <div class="summary-top">

@@ -4723,53 +4723,41 @@ body {
     margin: 8px 0;
 }
 
-/* Recent searches section */
-.recent-section {
-    padding: 8px 12px;
-    margin-top: 4px;
-}
-
-.recent-header {
+/* Recent searches — minimal strip, not a card section */
+.recent-strip {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: 6px;
+    gap: var(--space-2);
+    padding: 0;
+    margin: var(--space-2) 0 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
 }
 
-.recent-title {
-    font-size: 12px;
+.recent-strip::-webkit-scrollbar {
+    display: none;
+}
+
+.recent-kicker {
+    font-size: var(--text-xs);
     font-weight: 700;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-
-.recent-clear {
-    appearance: none;
-    border: none;
-    background: transparent;
     color: var(--text-dim);
-    font-size: 14px;
-    cursor: pointer;
-    padding: 4px 6px;
-    border-radius: 4px;
-    transition: all 0.12s;
-    line-height: 1;
-}
-
-.recent-clear:hover {
-    background: var(--bg-hover);
-    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .recent-list {
     display: flex;
-    gap: 6px;
+    align-items: center;
+    gap: 4px 12px;
+    flex: 1;
+    min-width: 0;
     overflow-x: auto;
-    padding-bottom: 4px;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
-    scroll-snap-type: x proximity;
 }
 
 .recent-list::-webkit-scrollbar {
@@ -4778,25 +4766,48 @@ body {
 
 .recent-chip {
     appearance: none;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    color: var(--text-muted);
-    border-radius: 999px;
-    padding: 9px 14px;
-    min-height: 44px;
-    font: 600 var(--text-sm) var(--font);
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: var(--text-sm);
+    font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
-    transition: all 0.12s;
+    transition: color 0.12s;
     flex-shrink: 0;
+    padding: 4px 0;
+    min-height: auto;
+    min-width: auto;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
 }
 
 .recent-chip:hover {
-    border-color: var(--border-hover);
     color: var(--text);
-    background: var(--bg-elevated);
+    border-bottom-color: var(--text-dim);
 }
 
 .recent-chip:active {
-    transform: scale(0.97);
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.recent-clear {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.12s;
+    line-height: 1;
+    flex-shrink: 0;
+    min-height: auto;
+    min-width: auto;
+}
+
+.recent-clear:hover {
+    color: var(--text);
 }
