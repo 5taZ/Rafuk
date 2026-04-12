@@ -1,3 +1,13 @@
+/**
+ * app_actions.js — Composition entry point for all action / API modules.
+ *
+ * Delegates to focused modules: api_core, api_listings, api_trackers,
+ * api_leads, api_watchlist, api_events.
+ *
+ * Every function that the original monolithic file exported is still available
+ * on the returned object so app.js and renderers continue to work without changes.
+ */
+
 function createAppActions(context) {
     const {
         state,
@@ -36,190 +46,9 @@ function createAppActions(context) {
         renderDealsHeroStats,
     } = context;
 
-    // Auto-refresh tracker events every 30s when on tracking view
-    let trackerRefreshTimer = null;
-    const TRACKER_REFRESH_MS = 30_000;
-
-    function startTrackerRefresh() {
-        stopTrackerRefresh();
-        trackerRefreshTimer = setInterval(() => {
-            void refreshTrackerEvents();
-        }, TRACKER_REFRESH_MS);
-    }
-
-    function stopTrackerRefresh() {
-        if (trackerRefreshTimer) {
-            clearInterval(trackerRefreshTimer);
-            trackerRefreshTimer = null;
-        }
-    }
-
-    async function refreshTrackerEvents() {
-        if (!hasTelegramInitData()) return;
-        if (state.activeView !== "tracking") return;
-        try {
-            const [trackersResult, eventsResult] = await Promise.allSettled([
-                getJson("/api/v1/trackers"),
-                getJson("/api/v1/tracker-events"),
-            ]);
-            if (trackersResult.status === "fulfilled") {
-                state.trackers = trackersResult.value;
-                renderTrackers();
-            }
-            if (eventsResult.status === "fulfilled") {
-                state.trackerEvents = eventsResult.value;
-                renderTrackerEvents();
-                renderTrackerEventFilters();
-            }
-        } catch (err) {
-            console.warn("[tracker-refresh] background refresh failed", err);
-        }
-    }
-
-    function telegramHeaders() {
-        const initData = window.Telegram?.WebApp?.initData;
-        return initData ? { "X-Telegram-Init-Data": initData } : {};
-    }
-
-    async function requestJson(url, options = {}) {
-        const headers = {
-            ...telegramHeaders(),
-            ...(options.headers || {}),
-        };
-        const response = await fetch(url, {
-            ...options,
-            headers,
-        });
-
-        if (!response.ok) {
-            let message = "Не удалось выполнить запрос.";
-            try {
-                const payload = await response.json();
-                if (typeof payload.detail === "string" && payload.detail.trim()) {
-                    message = payload.detail.trim();
-                }
-            } catch (_) {
-                if (response.status >= 500) {
-                    message = "API недоступен. Поднимите uvicorn на 0.0.0.0:8010 и обновите Mini App.";
-                }
-            }
-            throw new Error(message);
-        }
-
-        if (response.status === 204) {
-            return null;
-        }
-
-        return response.json();
-    }
-
-    function getJson(url) {
-        return requestJson(url);
-    }
-
-    function postJson(url, payload) {
-        return requestJson(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-        });
-    }
-
-    function deleteJson(url) {
-        return requestJson(url, { method: "DELETE" });
-    }
-
-    function buildCommonQuery(params = {}) {
-        const query = new URLSearchParams({
-            query: state.query,
-            currency: state.currency,
-            strict_search: String(state.strictSearch),
-        });
-
-        for (const [key, value] of Object.entries(params)) {
-            if (value == null || value === "") {
-                continue;
-            }
-            query.set(key, String(value));
-        }
-
-        return query.toString();
-    }
-
-    function clearSearchData() {
-        state.stats = null;
-        state.history = [];
-        state.segments = null;
-        state.geography = [];
-        state.listings = [];
-        state.dealListings = [];
-        state.comparisonStats = null;
-        state.comparisonItems = [];
-        state.detail = null;
-        state.detailImageIndex = 0;
-    }
-
-    function isActiveRequest(requestId) {
-        return requestId === state.searchRequestId;
-    }
-
-    async function loadSearchDependencies(requestId) {
-        const dependencies = [
-            {
-                request: getJson(`/api/v1/price-history?${buildCommonQuery({ days: state.historyDays })}`),
-                apply(payload) {
-                    state.history = payload.points || [];
-                },
-            },
-            {
-                request: getJson(`/api/v1/segments?${buildCommonQuery()}`),
-                apply(payload) {
-                    state.segments = payload;
-                },
-            },
-            {
-                request: getJson(`/api/v1/geography?${buildCommonQuery()}`),
-                apply(payload) {
-                    state.geography = payload.regions || [];
-                },
-            },
-            {
-                request: getJson(`/api/v1/listings?${buildCommonQuery({ sort: state.sort })}`),
-                apply(payload) {
-                    state.listings = payload.listings || [];
-                },
-            },
-            {
-                request: getJson(
-                    `/api/v1/listings?${buildCommonQuery({
-                        sort: "cheap",
-                        discount_from_percent: state.discountFromPercent,
-                        discount_to_percent: state.discountToPercent,
-                    })}`
-                ),
-                apply(payload) {
-                    state.dealListings = payload.listings || [];
-                },
-            },
-        ];
-
-        for (const dependency of dependencies) {
-            dependency.request
-                .then((payload) => {
-                    if (!isActiveRequest(requestId)) {
-                        return;
-                    }
-                    dependency.apply(payload);
-                    renderAll();
-                })
-                .catch(() => {
-                    if (!isActiveRequest(requestId)) {
-                        return;
-                    }
-                    renderAll();
-                });
-        }
-    }
+    // ── Internal helpers (originally inside the monolithic app_actions) ───
+    // These are not part of any module because they bridge multiple modules
+    // and the view/scroll lifecycle.
 
     function setActiveView(view) {
         if (!(view in elements.views)) {
@@ -227,17 +56,15 @@ function createAppActions(context) {
         }
         state.activeView = view;
         renderViewTabs();
-        
-        // Trigger view transition animation
+
         const viewEl = elements.views[view];
         if (viewEl) {
             viewEl.classList.add("is-entering");
-            // Remove class after animation completes
             setTimeout(() => {
                 viewEl.classList.remove("is-entering");
             }, 200);
         }
-        
+
         renderViews();
     }
 
@@ -270,345 +97,124 @@ function createAppActions(context) {
         }
     }
 
-    function normalizedQuery(value) {
-        return String(value || "").trim().toLocaleLowerCase("ru-RU");
-    }
+    // Inject into context so every module can reach them
+    context.setActiveView = setActiveView;
+    context.scrollSectionIntoView = scrollSectionIntoView;
+    context.focusTarget = focusTarget;
 
-    function parseComparisonQueries(value) {
-        const items = String(value || "")
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean);
-        return Array.from(new Set(items.map((item) => item.toLocaleLowerCase("ru-RU"))))
-            .map((key) => items.find((item) => item.toLocaleLowerCase("ru-RU") === key))
-            .filter(Boolean)
-            .slice(0, 2);
-    }
+    // ── Instantiate sub-modules ──────────────────────────────────────────
+    const core = createApiCore(context);
+    
+    // Add core functions to context BEFORE creating other modules
+    // This prevents "X is not a function" errors when modules destructure context
+    Object.assign(context, {
+        telegramHeaders: core.telegramHeaders,
+        requestJson: core.requestJson,
+        getJson: core.getJson,
+        postJson: core.postJson,
+        deleteJson: core.deleteJson,
+        buildCommonQuery: core.buildCommonQuery,
+    });
+    
+    const listings = createApiListings(context);
+    const trackers = createApiTrackers(context);
+    const leads = createApiLeads(context);
+    const watchlist = createApiWatchlist(context);
 
-    async function loadRates() {
-        try {
-            const payload = await getJson("/api/v1/currency-rates");
-            state.usdRateByn = Number(payload?.rates?.USD || 0) || null;
-        } catch (_) {
-            state.usdRateByn = null;
-        } finally {
+    // ── Cross-module hooks (actions that modules call into each other) ───
+    // These are injected into context so every module can reach them.
+    Object.assign(context, {
+        // From listings
+        search: listings.search,
+        loadListings: listings.loadListings,
+        loadDeals: listings.loadDeals,
+        loadComparison: listings.loadComparison,
+        swapComparisonQueries: listings.swapComparisonQueries,
+        openListingDetail: listings.openListingDetail,
+        loadSearchDependencies: listings.loadSearchDependencies,
+        clearSearchData: listings.clearSearchData,
+        loadHistory: listings.loadHistory,
+        loadMarketVelocity: listings.loadMarketVelocity,
+        loadDetailRisks: listings.loadDetailRisks,
+
+        // From trackers
+        loadTrackers: trackers.loadTrackers,
+        createTracker: trackers.createTracker,
+        pauseTracker: trackers.pauseTracker,
+        resumeTracker: trackers.resumeTracker,
+        deleteTracker: trackers.deleteTracker,
+        openEditTracker: trackers.openEditTracker,
+        closeEditTracker: trackers.closeEditTracker,
+        saveTracker: trackers.saveTracker,
+        refreshTrackerEvents: trackers.refreshTrackerEvents,
+        startTrackerRefresh: trackers.startTrackerRefresh,
+        stopTrackerRefresh: trackers.stopTrackerRefresh,
+
+        // From leads
+        loadLeads: leads.loadLeads,
+        clearAllLeads: leads.clearAllLeads,
+        confirmLead: leads.confirmLead,
+        cancelLead: leads.cancelLead,
+        closeDeal: leads.closeDeal,
+        revertLeadStage: leads.revertLeadStage,
+        deleteLead: leads.deleteLead,
+        updateLeadMeta: leads.updateLeadMeta,
+        updateLeadStatus: leads.updateLeadStatus,
+        markLeadAsSold: leads.markLeadAsSold,
+        openLeadDetail: leads.openLeadDetail,
+
+        // From watchlist
+        loadWatchlist: watchlist.loadWatchlist,
+        clearAllWatchlist: watchlist.clearAllWatchlist,
+        addWatchlistFromListing: watchlist.addWatchlistFromListing,
+        updateWatchlistMeta: watchlist.updateWatchlistMeta,
+        updateWatchlistStatus: watchlist.updateWatchlistStatus,
+        promoteWatchlistToLead: watchlist.promoteWatchlistToLead,
+        openWatchlistDetail: watchlist.openWatchlistDetail,
+        deleteWatchlistItem: watchlist.deleteWatchlistItem,
+        deleteAllWatchlist: watchlist.deleteAllWatchlist,
+        refreshWatchlist: watchlist.refreshWatchlist,
+
+        // View / focus helpers are injected above as context.setActiveView, context.focusTarget
+    });
+
+    // ── Currency switcher (must be defined BEFORE createApiEvents) ───────
+    async function setCurrency(currency) {
+        if (!currency || state.currency === currency) {
+            return;
+        }
+
+        state.currency = currency;
+
+        // Persist currency preference
+        if (context.saveCurrency) {
+            context.saveCurrency();
+        }
+
+        if (state.query.trim()) {
+            listings.clearSearchData();
+            state.loading = true;
             renderAll();
+            await listings.search(state.activeView);
+            return;
         }
+
+        renderAll();
+        await core.loadRates();
     }
 
-    async function loadHistory() {
-        if (!state.query) {
-            state.history = [];
-            renderHistory();
-            return;
-        }
+    // Add to context BEFORE createApiEvents so it can be destructured
+    context.setCurrency = setCurrency;
 
-        try {
-            const payload = await getJson(
-                `/api/v1/price-history?${buildCommonQuery({ days: state.historyDays })}`
-            );
-            state.history = payload.points || [];
-        } catch (_) {
-            state.history = [];
-        } finally {
-            renderHistory();
-        }
-    }
+    // ── Wire events module (needs all action functions on context) ────────
+    const events = createApiEvents(context);
 
-    async function loadListings() {
-        if (!state.query) {
-            state.listings = [];
-            renderAll();
-            return;
-        }
-
-        try {
-            const payload = await getJson(
-                `/api/v1/listings?${buildCommonQuery({ sort: state.sort })}`
-            );
-            state.listings = payload.listings || [];
-            state.error = null;
-        } catch (error) {
-            state.listings = [];
-            state.error = error.message || "Не удалось загрузить объявления";
-            renderError();
-        } finally {
-            renderAll();
-        }
-    }
-
-    async function loadDeals() {
-        if (!state.query) {
-            state.dealListings = [];
-            renderAll();
-            return;
-        }
-
-        try {
-            const payload = await getJson(
-                `/api/v1/listings?${buildCommonQuery({
-                    sort: "cheap",
-                    discount_from_percent: state.discountFromPercent,
-                    discount_to_percent: state.discountToPercent,
-                })}`
-            );
-            state.dealListings = payload.listings || [];
-            state.error = null;
-        } catch (error) {
-            state.dealListings = [];
-            state.error = error.message || "Не удалось загрузить дешёвые объявления";
-            renderError();
-        } finally {
-            renderAll();
-        }
-    }
-
-    async function loadComparison() {
-        const comparisonQuery = state.comparisonQuery.trim();
-        if (!state.query || !comparisonQuery) {
-            state.comparisonStats = null;
-            state.comparisonItems = [];
-            renderComparison();
-            return;
-        }
-
-        state.comparisonLoading = true;
-        state.error = null;
-        setPanelOpen("comparison", true);
-        renderComparison();
-        renderError();
-        try {
-            const compareQueries = parseComparisonQueries(comparisonQuery)
-                .filter((item) => normalizedQuery(item) !== normalizedQuery(state.query));
-            if (!compareQueries.length) {
-                state.comparisonStats = null;
-                state.comparisonItems = [];
-                renderComparison();
-                return;
-            }
-            const params = new URLSearchParams({
-                base_query: state.query,
-                currency: state.currency,
-                strict_search: String(state.strictSearch),
-            });
-            for (const item of compareQueries) {
-                params.append("compare_query", item);
-            }
-            const payload = await getJson(`/api/v1/compare?${params.toString()}`);
-            state.comparisonStats = payload;
-            state.comparisonItems = payload.items || [];
-        } catch (error) {
-            state.comparisonStats = null;
-            state.comparisonItems = [];
-            state.error = error.message || "Не удалось загрузить сравнение";
-            renderError();
-        } finally {
-            state.comparisonLoading = false;
-            renderComparison();
-        }
-    }
-
-    async function swapComparisonQueries() {
-        const comparisonQuery = state.comparisonQuery.trim();
-        if (!state.query || !comparisonQuery) {
-            return;
-        }
-
-        const compareQueries = parseComparisonQueries(comparisonQuery);
-        if (!compareQueries.length) {
-            return;
-        }
-        const previousBase = state.query;
-        const [nextBase, ...rest] = compareQueries;
-        elements.searchInput.value = nextBase;
-        state.query = nextBase;
-        state.comparisonQuery = [previousBase, ...rest].join(", ");
-        elements.compareInput.value = state.comparisonQuery;
-        setPanelOpen("comparison", true);
-        renderComparison();
-        await search("overview");
-    }
-
-    async function openListingDetail(item) {
-        if (!item?.ad_id || !state.query) {
-            return;
-        }
-
-        showToast("Загружаю...");
-        state.error = null;
-        renderError();
-        try {
-            const fullDetail = await getJson(
-                `/api/v1/listing-detail?${buildCommonQuery({ ad_id: item.ad_id })}`
-            );
-            state.detail = fullDetail;
-            state.detailImageIndex = 0;
-            state.detailFromWatchlist = false;
-            renderDetailModal();
-        } catch (error) {
-            state.error = error.message || "Не удалось загрузить детали";
-            renderError();
-        }
-    }
-
-    async function loadTrackers() {
-        if (!hasTelegramInitData()) {
-            state.trackers = [];
-            state.trackerEvents = [];
-            state.trackerStatus = "";
-            renderTrackers();
-            renderTrackerEvents();
-            renderTrackerStatus();
-            return;
-        }
-
-        const [trackersResult, eventsResult] = await Promise.allSettled([
-            getJson("/api/v1/trackers"),
-            getJson("/api/v1/tracker-events"),
-        ]);
-
-        state.trackers = trackersResult.status === "fulfilled" ? trackersResult.value : [];
-        state.trackerEvents = eventsResult.status === "fulfilled" ? eventsResult.value : [];
-
-        if (trackersResult.status === "rejected") {
-            state.trackerStatus = trackersResult.reason?.message || "Не удалось загрузить трекеры.";
-            state.trackerStatusKind = "error";
-        } else {
-            state.trackerStatus = "";
-            state.trackerStatusKind = "info";
-        }
-
-        renderTrackers();
-        renderTrackerEvents();
-        renderTrackerStatus();
-    }
-
-    async function loadLeads() {
-        if (!hasTelegramInitData()) {
-            state.leads = [];
-            renderLeads();
-            renderDealsHeroStats();
-            renderProfitDashboard();
-            return;
-        }
-        try {
-            state.leads = await getJson("/api/v1/leads");
-        } catch (_) {
-            state.leads = [];
-        } finally {
-            renderLeads();
-            renderDealsHeroStats();
-            renderProfitDashboard();
-        }
-    }
-
-    async function clearAllLeads() {
-        // Count only active leads (not closed)
-        const activeLeads = state.leads.filter((l) => l.status !== "closed");
-        if (!activeLeads.length) {
-            showToast("Нет активных сделок для удаления");
-            return;
-        }
-        try {
-            await deleteJson("/api/v1/leads/all");
-            const count = activeLeads.length;
-            // Reload leads to get the updated list (closed deals remain)
-            await loadLeads();
-            renderDealsHeroStats();
-            showToast(`Удалено ${count} сделок`);
-        } catch (error) {
-            console.error("Failed to clear leads:", error);
-            showToast(error.message || "Не удалось очистить список");
-            // Reload to ensure UI is in sync
-            await loadLeads();
-        }
-    }
-
-    async function clearAllWatchlist() {
-        if (!state.watchlist.length) {
-            showToast("Список уже пуст");
-            return;
-        }
-        try {
-            await deleteJson("/api/v1/watchlist/all");
-            const count = state.watchlist.length;
-            state.watchlist = [];
-            await loadWatchlist();
-            renderMonitoringHeroStats();
-            showToast(`Удалено ${count} лотов`);
-        } catch (error) {
-            console.error("Failed to clear watchlist:", error);
-            showToast(error.message || "Не удалось очистить список");
-            // Reload to ensure UI is in sync
-            await loadWatchlist();
-        }
-    }
-
-    async function loadWatchlist() {
-        if (!hasTelegramInitData()) {
-            state.watchlist = [];
-            renderWatchlist();
-            return;
-        }
-        try {
-            state.watchlist = await getJson("/api/v1/watchlist");
-        } catch (_) {
-            state.watchlist = [];
-        } finally {
-            renderWatchlist();
-        }
-    }
-
-    async function createTracker() {
-        if (!hasTelegramInitData()) {
-            showToast("Доступно только в Telegram");
-            return;
-        }
-
-        const query = state.query.trim();
-        if (!query) {
-            showToast("Сначала введите запрос");
-            return;
-        }
-
-        const normalizedQuery = query.toLocaleLowerCase("ru-RU");
-        const duplicate = state.trackers.find(
-            (t) => t.query.trim().toLocaleLowerCase("ru-RU") === normalizedQuery
-        );
-        if (duplicate) {
-            showToast("Такой трекер уже существует");
-            return;
-        }
-
-        try {
-            await postJson("/api/v1/trackers", {
-                query,
-                strict_mode: state.strictSearch,
-                interval_min: 15,
-                min_discount_percent: state.trackerMinDiscountPercent,
-                max_price_byn: state.trackerMaxPriceByn,
-                seller_type: state.trackerSellerType || null,
-                condition: state.trackerCondition || null,
-                region_name: state.trackerRegionName || null,
-                config_keyword: state.trackerConfigKeyword || null,
-                exclude_duplicates: state.trackerExcludeDuplicates,
-            });
-            showToast("Трекер добавлен", "success");
-            await loadTrackers();
-            renderAll();
-        } catch (error) {
-            state.trackerStatus = error.message || "Не удалось создать трекер.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
-        }
-    }
-
+    // ── Convenience: addLeadFromListing (cross-cutting: listings → leads) ─
     async function addLeadFromListing(item, source = "manual", queryOverride = null) {
         if (!hasTelegramInitData() || !item?.ad_id) {
             return;
         }
 
-        // Check if already in leads
         const alreadyInLeads = state.leads.some((l) => l.ad_id === item.ad_id);
         if (alreadyInLeads) {
             showToast("Уже в покупках");
@@ -617,7 +223,7 @@ function createAppActions(context) {
 
         try {
             const marketEstimate = (item.flip_estimates || []).find((entry) => entry.label === "По рынку");
-            await postJson("/api/v1/leads", {
+            await core.postJson("/api/v1/leads", {
                 query: queryOverride || state.query || "",
                 ad_id: item.ad_id,
                 title: item.title,
@@ -629,430 +235,37 @@ function createAppActions(context) {
                 thumbnail: item.thumbnail || null,
             });
             showToast("Добавлено в покупки", "success");
-            await loadLeads();
+            await leads.loadLeads();
         } catch (error) {
             showToast(error.message || "Не удалось добавить в покупки", "error");
         }
     }
 
-    async function addWatchlistFromListing(item, queryOverride = null) {
-        if (!hasTelegramInitData() || !item?.ad_id) {
-            return;
-        }
+    // Make addLeadFromListing available on context for cross-module calls
+    context.addLeadFromListing = addLeadFromListing;
 
-        // Check if already in watchlist
-        const alreadyInWatchlist = state.watchlist.some((w) => w.ad_id === item.ad_id);
-        if (alreadyInWatchlist) {
-            showToast("Уже в избранном");
-            return;
-        }
-
-        try {
-            await postJson("/api/v1/watchlist", {
-                query: queryOverride || state.query || "",
-                ad_id: item.ad_id,
-                title: item.title,
-                link: item.link,
-                price_byn: item.price_byn,
-                thumbnail: item.thumbnail || null,
-                market_median_byn: state.stats?.median
-                    ? (state.currency === "USD" ? Number(state.stats.median) * (state.usdRateByn || 1) : Number(state.stats.median))
-                    : null,
-            });
-            showToast("Добавлено в избранное", "success");
-            await loadWatchlist();
-        } catch (error) {
-            showToast(error.message || "Не удалось добавить в избранное", "error");
-        }
-    }
-
-    async function updateLeadStatus(leadId, nextStatus) {
-        await updateLeadMeta(leadId, { status: nextStatus });
-    }
-
-    async function updateLeadMeta(leadId, payload) {
-        try {
-            await requestJson(`/api/v1/leads/${leadId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-            });
-            // Always reload leads to ensure UI consistency
-            await loadLeads();
-            return true;
-        } catch (error) {
-            console.error("Failed to update lead:", error);
-            showToast(error.message || "Не удалось обновить сделку");
-            // Still reload leads to ensure UI consistency even on error
-            await loadLeads();
-            return false;
-        }
-    }
-
-    async function deleteLead(leadId) {
-        try {
-            await deleteJson(`/api/v1/leads/${leadId}`);
-            showToast("Сделка удалена");
-            await loadLeads();
-        } catch (error) {
-            showToast(error.message || "Не удалось удалить");
-        }
-    }
-
-    async function confirmLead(lead, cardElement) {
-        const buyPriceInput = cardElement.querySelector('[data-role="buy-price"]');
-        const soldPriceInput = cardElement.querySelector('[data-role="sold-price"]');
-
-        const buyPriceRaw = buyPriceInput?.value?.trim();
-        const soldPriceRaw = soldPriceInput?.value?.trim();
-
-        // Validation: both prices must be filled
-        if (!buyPriceRaw || !soldPriceRaw) {
-            showToast("Заполните оба поля: цена покупки и цена продажи");
-            if (!buyPriceRaw) {
-                buyPriceInput?.focus();
-            } else {
-                soldPriceInput?.focus();
-            }
-            return;
-        }
-
-        // Validate: must be positive integers only (no decimals, no text)
-        const buyPriceNum = parseInt(buyPriceRaw, 10);
-        const soldPriceNum = parseInt(soldPriceRaw, 10);
-
-        if (!Number.isInteger(buyPriceNum) || buyPriceNum <= 0) {
-            showToast("Введите целую цену покупки больше 0");
-            buyPriceInput?.focus();
-            return;
-        }
-
-        if (!Number.isInteger(soldPriceNum) || soldPriceNum <= 0) {
-            showToast("Введите целую цену продажи больше 0");
-            soldPriceInput?.focus();
-            return;
-        }
-
-        try {
-            const payload = {
-                buy_price_byn: buyPriceNum,
-                sold_price_byn: soldPriceNum,
-                status: "sold",
-            };
-
-            // Update backend
-            await requestJson(`/api/v1/leads/${lead.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-            });
-
-            // Update local state
-            const leadInState = state.leads.find((l) => l.id === lead.id);
-            if (leadInState) {
-                leadInState.buy_price_byn = buyPriceNum;
-                leadInState.sold_price_byn = soldPriceNum;
-                leadInState.status = "sold";
-            }
-
-            // Re-render leads
-            renderLeads();
-
-            // Show success toast with profit
-            const profit = soldPriceNum - buyPriceNum;
-            const profitSign = profit >= 0 ? "+" : "";
-            showToast(`✓ Сделка подтверждена! ${profitSign}${Math.round(profit)} BYN`, "success");
-
-            // Scroll to the card after re-render (it moved down)
-            setTimeout(() => {
-                const updatedCard = elements.leadInboxList?.querySelector(
-                    `[data-lead-id="${lead.id}"]`
-                );
-                if (updatedCard) {
-                    updatedCard.scrollIntoView({ behavior: "smooth", block: "center" });
-                }
-            }, 100);
-        } catch (error) {
-            console.error("Failed to confirm lead:", error);
-            showToast(error.message || "Не удалось подтвердить сделку");
-        }
-    }
-
-    async function cancelLead(leadId) {
-        try {
-            await deleteJson(`/api/v1/leads/${leadId}`);
-            showToast("✓ Сделка отменена", "info");
-            await loadLeads();
-        } catch (error) {
-            console.error("Failed to cancel lead:", error);
-            showToast(error.message || "Не удалось отменить сделку");
-        }
-    }
-
-    async function closeDeal(leadId) {
-        try {
-            // Find the lead in state to calculate profit
-            const lead = state.leads.find((l) => l.id === leadId);
-            const buyPrice = lead?.buy_price_byn || 0;
-            const soldPrice = lead?.sold_price_byn || 0;
-            const profit = soldPrice - buyPrice;
-
-            // Update status to "closed" - now it will count in finances
-            await requestJson(`/api/v1/leads/${leadId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "closed" }),
-            });
-
-            // Update local state
-            if (lead) {
-                lead.status = "closed";
-            }
-            renderLeads();
-
-            if (profit >= 0) {
-                showToast(`✓ Сделка закрыта. Прибыль: +${Math.round(profit)} BYN`);
-            } else {
-                showToast(`✓ Сделка закрыта. Убыль: ${Math.round(profit)} BYN`);
-            }
-        } catch (error) {
-            console.error("Failed to close deal:", error);
-            showToast(error.message || "Не удалось закрыть сделку");
-        }
-    }
+    // ── Additional actions not in any module ──────────────────────────────
 
     async function deleteHistoryDeal(leadId) {
         try {
-            await deleteJson(`/api/v1/leads/${leadId}`);
+            await core.deleteJson(`/api/v1/leads/${leadId}`);
             showToast("✓ Сделка удалена из истории");
-            await loadLeads();
+            await leads.loadLeads();
         } catch (error) {
             console.error("Failed to delete history deal:", error);
             showToast(error.message || "Не удалось удалить сделку");
         }
     }
 
-    async function revertLeadStage(leadId, currentStatus) {
-        try {
-            // Always revert to "new" stage, clearing all prices
-            await requestJson(`/api/v1/leads/${leadId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    status: "new",
-                    buy_price_byn: null,
-                    sold_price_byn: null,
-                }),
-            });
-            
-            // Update local state
-            const leadInState = state.leads.find((l) => l.id === leadId);
-            if (leadInState) {
-                leadInState.status = "new";
-                leadInState.buy_price_byn = null;
-                leadInState.sold_price_byn = null;
-            }
-            renderLeads();
-            
-            showToast("↩ Сделка возвращена на этап «Новая»");
-            
-            // Scroll to the card after re-render (it moved up)
-            setTimeout(() => {
-                const updatedCard = elements.leadInboxList?.querySelector(
-                    `[data-lead-id="${leadId}"]`
-                );
-                if (updatedCard) {
-                    updatedCard.scrollIntoView({ behavior: "smooth", block: "center" });
-                }
-            }, 100);
-        } catch (error) {
-            console.error("Failed to revert lead stage:", error);
-            showToast(error.message || "Не удалось вернуть сделку");
-        }
-    }
-
-    async function markLeadAsSold(lead, priceNum) {
-        if (!priceNum || !Number.isFinite(priceNum) || priceNum <= 0) {
-            showToast("Введите корректную цену");
-            return;
-        }
-        
-        await requestJson(`/api/v1/leads/${lead.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                status: "sold",
-                sold_price_byn: priceNum,
-            }),
-        });
-        
-        // Update local state
-        const leadInState = state.leads.find((l) => l.id === lead.id);
-        if (leadInState) {
-            leadInState.status = "sold";
-            leadInState.sold_price_byn = priceNum;
-        }
-        renderLeads();
-        
-        const profit = priceNum - (lead.price_byn || 0);
-        const profitSign = profit >= 0 ? "+" : "";
-        showToast(`✓ Сделка продана! Прибыль: ${profitSign}${Math.round(profit)} BYN`);
-    }
-
-    async function openLeadDetail(lead) {
-        if (!lead?.ad_id) {
-            showToast("Не удалось открыть: нет ID объявления");
-            return;
-        }
-        const queryToUse = lead.query || state.query || "";
-        if (!queryToUse) {
-            showToast("Не удалось открыть: нет привязки к запросу");
-            return;
-        }
-
-        showToast("Загружаю...");
-        state.error = null;
-        renderError();
-        try {
-            const fullDetail = await getJson(
-                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${lead.ad_id}`
-            );
-            state.detail = fullDetail;
-            state.detailImageIndex = 0;
-            state.detailFromWatchlist = false;
-            renderDetailModal();
-        } catch (error) {
-            state.error = error.message || "Не удалось загрузить детали";
-            renderError();
-        }
-    }
-
-    async function updateWatchlistStatus(watchlistId, workflowStatus) {
-        await updateWatchlistMeta(watchlistId, { workflow_status: workflowStatus });
-    }
-
-    async function updateWatchlistMeta(watchlistId, payload) {
-        try {
-            await requestJson(`/api/v1/watchlist/${watchlistId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-            });
-            await loadWatchlist();
-        } catch (error) {
-            showToast(error.message || "Не удалось обновить");
-        }
-    }
-
-    async function promoteWatchlistToLead(item) {
-        if (!item?.ad_id) {
-            return;
-        }
-
-        // Check if already in leads
-        const alreadyInLeads = state.leads.some((l) => l.ad_id === item.ad_id);
-        if (alreadyInLeads) {
-            showToast("Уже в покупках");
-            return;
-        }
-
-        // Add to leads, then remove from watchlist entirely
-        await addLeadFromListing(
-            {
-                ad_id: item.ad_id,
-                title: item.title,
-                link: item.link,
-                price_byn: item.current_price_byn || item.initial_price_byn,
-                thumbnail: item.thumbnail || null,
-                flip_estimates: [],
-            },
-            "watchlist",
-            item.query
-        );
-        await deleteWatchlistItem(item.id);
-    }
-
-    async function openWatchlistDetail(item) {
-        if (!item?.ad_id) {
-            return;
-        }
-        const queryToUse = item.query || state.query || "";
-        if (!queryToUse) {
-            showToast("Не удалось открыть: нет привязки к запросу");
-            return;
-        }
-
-        showToast("Загружаю...");
-        state.error = null;
-        renderError();
-        try {
-            const fullDetail = await getJson(
-                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${item.ad_id}`
-            );
-            state.detail = fullDetail;
-            state.detailImageIndex = 0;
-            state.detailFromWatchlist = true;
-            renderDetailModal();
-        } catch (error) {
-            state.error = error.message || "Не удалось загрузить детали";
-            renderError();
-        }
-    }
-
-    async function deleteWatchlistItem(watchlistId) {
-        try {
-            await deleteJson(`/api/v1/watchlist/${watchlistId}`);
-            await loadWatchlist();
-            renderMonitoringHeroStats();
-        } catch (error) {
-            showToast(error.message || "Не удалось удалить");
-        }
-    }
-
-    async function deleteAllWatchlist() {
-        if (!state.watchlist.length) {
-            showToast("Список уже пуст");
-            return;
-        }
-        const count = state.watchlist.length;
-        try {
-            await deleteJson("/api/v1/watchlist/all");
-            state.watchlist = [];
-            await loadWatchlist();
-            renderMonitoringHeroStats();
-            showToast(`Удалено ${count} лотов`);
-        } catch (error) {
-            showToast(error.message || "Не удалось очистить");
-            await loadWatchlist();
-        }
-    }
-
-    async function refreshWatchlist() {
-        try {
-            const payload = await postJson("/api/v1/watchlist/refresh", {});
-            const parts = [`${payload.updated} проверено`, `${payload.price_drops} падений цены`];
-            if (payload.missing > 0) {
-                parts.push(`${payload.missing} пропало`);
-            }
-            if (payload.auto_removed > 0) {
-                parts.push(`${payload.auto_removed} удалено (устарело)`);
-            }
-            showToast(`Обновлено: ${parts.join(", ")}`);
-            await loadWatchlist();
-        } catch (error) {
-            showToast(error.message || "Не удалось обновить цены");
-        }
-    }
-
     async function refreshLeads() {
         try {
-            const payload = await postJson("/api/v1/leads/refresh", {});
+            const payload = await core.postJson("/api/v1/leads/refresh", {});
             const parts = [`${payload.checked} проверено`, `${payload.active} активно`];
             if (payload.missing > 0) {
                 parts.push(`${payload.missing} пропало`);
             }
             showToast(`Покупки: ${parts.join(", ")}`);
-            await loadLeads();
+            await leads.loadLeads();
         } catch (error) {
             showToast(error.message || "Не удалось проверить покупки");
         }
@@ -1077,7 +290,7 @@ function createAppActions(context) {
         renderStrictSearch();
         renderDealInputs();
         renderTrackerInputs();
-        await search("overview");
+        await listings.search("overview");
     }
 
     async function openOpportunityDetail(item) {
@@ -1099,142 +312,7 @@ function createAppActions(context) {
         renderStrictSearch();
         renderDealInputs();
         renderTrackerInputs();
-        await openListingDetail(item.listing);
-    }
-
-    async function deleteTracker(trackerId) {
-        if (!trackerId) {
-            return;
-        }
-
-        try {
-            await deleteJson(`/api/v1/trackers/${trackerId}`);
-            showToast("Трекер удалён");
-            await loadTrackers();
-            renderAll();
-        } catch (error) {
-            state.trackerStatus = error.message || "Не удалось удалить трекер.";
-            state.trackerStatusKind = "error";
-            renderTrackerStatus();
-        }
-    }
-
-    // Pause a tracker
-    async function pauseTracker(trackerId) {
-        if (!hasTelegramInitData()) {
-            showToast("Доступно только в Telegram");
-            return;
-        }
-        try {
-            await postJson(`/api/v1/trackers/${trackerId}/pause`);
-            showToast("Трекер приостановлен");
-            await loadTrackers();
-            renderAll();
-        } catch (error) {
-            showToast(error.message || "Не удалось приостановить трекер");
-        }
-    }
-
-    // Resume a paused tracker
-    async function resumeTracker(trackerId) {
-        if (!hasTelegramInitData()) {
-            showToast("Доступно только в Telegram");
-            return;
-        }
-        try {
-            await postJson(`/api/v1/trackers/${trackerId}/resume`);
-            showToast("Трекер возобновлен");
-            await loadTrackers();
-            renderAll();
-        } catch (error) {
-            showToast(error.message || "Не удалось возобновить трекер");
-        }
-    }
-
-    // Open edit tracker modal
-    function openEditTracker(trackerId) {
-        const tracker = state.trackers.find((t) => t.id === trackerId);
-        if (!tracker) {
-            showToast("Трекер не найден");
-            return;
-        }
-
-        // Store current editing tracker ID
-        state.editingTrackerId = trackerId;
-
-        // Populate modal fields
-        if (elements.editTrackerQuery) elements.editTrackerQuery.value = tracker.query;
-        if (elements.editStrictModeToggle) elements.editStrictModeToggle.checked = Boolean(tracker.strict_mode);
-        if (elements.editMinDiscountInput) elements.editMinDiscountInput.value = tracker.min_discount_percent ?? 10;
-        if (elements.editMaxPriceInput) elements.editMaxPriceInput.value = tracker.max_price_byn ?? "";
-        if (elements.editSellerSelect) elements.editSellerSelect.value = tracker.seller_type || "";
-        if (elements.editConditionSelect) elements.editConditionSelect.value = tracker.condition || "";
-        if (elements.editRegionInput) elements.editRegionInput.value = tracker.region_name || "";
-        if (elements.editConfigInput) elements.editConfigInput.value = tracker.config_keyword || "";
-        if (elements.editExcludeDuplicatesToggle) elements.editExcludeDuplicatesToggle.checked = Boolean(tracker.exclude_duplicates);
-
-        // Show modal and trap focus
-        if (elements.editTrackerModal) {
-            elements.editTrackerModal.hidden = false;
-            trapFocus(elements.editTrackerModal);
-        }
-    }
-
-    // Close edit tracker modal
-    function closeEditTracker() {
-        state.editingTrackerId = null;
-        if (elements.editTrackerModal) elements.editTrackerModal.hidden = true;
-    }
-
-    // Save edited tracker
-    async function saveTracker() {
-        if (!hasTelegramInitData() || !state.editingTrackerId) {
-            showToast("Ошибка");
-            return;
-        }
-
-        try {
-            await requestJson(`/api/v1/trackers/${state.editingTrackerId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    strict_mode: elements.editStrictModeToggle?.checked,
-                    min_discount_percent: Number(elements.editMinDiscountInput?.value) || null,
-                    max_price_byn: elements.editMaxPriceInput?.value ? Number(elements.editMaxPriceInput.value) : null,
-                    seller_type: elements.editSellerSelect?.value || null,
-                    condition: elements.editConditionSelect?.value || null,
-                    region_name: elements.editRegionInput?.value || null,
-                    config_keyword: elements.editConfigInput?.value || null,
-                    exclude_duplicates: elements.editExcludeDuplicatesToggle?.checked,
-                }),
-            });
-
-            showToast("Трекер обновлен");
-            closeEditTracker();
-            await loadTrackers();
-            renderAll();
-        } catch (error) {
-            showToast(error.message || "Не удалось обновить трекер");
-        }
-    }
-
-    async function setCurrency(currency) {
-        if (!currency || state.currency === currency) {
-            return;
-        }
-
-        state.currency = currency;
-
-        if (state.query.trim()) {
-            clearSearchData();
-            state.loading = true;
-            renderAll();
-            await search(state.activeView);
-            return;
-        }
-
-        renderAll();
-        await loadRates();
+        await listings.openListingDetail(item.listing);
     }
 
     async function applyLaunchParams() {
@@ -1242,7 +320,7 @@ function createAppActions(context) {
         const query = params.get("query")?.trim() || "";
         const view = params.get("view") || "overview";
         if (view && elements.views[view]) {
-            setActiveView(view);
+            context.setActiveView(view);
         }
         if (!query) {
             renderAll();
@@ -1250,61 +328,13 @@ function createAppActions(context) {
         }
         elements.searchInput.value = query;
         state.query = query;
-        await search(view);
+        await listings.search(view);
     }
 
-    async function search(target = "overview") {
-        const query = elements.searchInput.value.trim();
-        state.query = query;
-        state.error = null;
-        state.comparisonStats = null;
-
-        if (!query) {
-            clearSearchData();
-            focusTarget("overview");
-            renderAll();
-            return;
-        }
-
-        focusTarget(target);
-        clearSearchData();
-        state.loading = true;
-        state.searchRequestId += 1;
-        const requestId = state.searchRequestId;
-        renderAll();
-
-        try {
-            const stats = await getJson(`/api/v1/price-stats?${buildCommonQuery()}`);
-            if (!isActiveRequest(requestId)) {
-                return;
-            }
-
-            state.stats = stats;
-            state.loading = false;
-            renderAll();
-            void loadSearchDependencies(requestId);
-        } catch (error) {
-            if (!isActiveRequest(requestId)) {
-                return;
-            }
-            clearSearchData();
-            state.error = error.message || "Не удалось загрузить аналитику.";
-            state.loading = false;
-            renderAll();
-        }
-
-        if (!state.error && state.comparisonQuery.trim()) {
-            await loadComparison();
-        }
-        if (!state.error) {
-            void loadMarketVelocity();
-        }
-    }
-
-    // ===== Expenses Actions =====
+    // ── Expenses ──────────────────────────────────────────────────────────
     async function loadExpenses(leadId) {
         try {
-            state.expenses = await getJson(`/api/v1/leads/${leadId}/expenses`);
+            state.expenses = await core.getJson(`/api/v1/leads/${leadId}/expenses`);
             renderExpensesModal();
         } catch (_) {
             state.expenses = [];
@@ -1314,7 +344,7 @@ function createAppActions(context) {
 
     async function createExpense(leadId, payload) {
         try {
-            await postJson(`/api/v1/leads/${leadId}/expenses`, payload);
+            await core.postJson(`/api/v1/leads/${leadId}/expenses`, payload);
             showToast("Расход добавлен");
             await loadExpenses(leadId);
         } catch (error) {
@@ -1324,7 +354,7 @@ function createAppActions(context) {
 
     async function deleteExpense(leadId, expenseId) {
         try {
-            await deleteJson(`/api/v1/leads/${leadId}/expenses/${expenseId}`);
+            await core.deleteJson(`/api/v1/leads/${leadId}/expenses/${expenseId}`);
             showToast("Расход удалён");
             await loadExpenses(leadId);
         } catch (error) {
@@ -1332,7 +362,7 @@ function createAppActions(context) {
         }
     }
 
-    // ===== CSV Export =====
+    // ── CSV Export ────────────────────────────────────────────────────────
     async function exportLeadsCSV() {
         try {
             const initData = window.Telegram?.WebApp?.initData;
@@ -1356,618 +386,58 @@ function createAppActions(context) {
         }
     }
 
-    // ===== Market Velocity =====
-    async function loadMarketVelocity() {
-        if (!state.query) {
-            renderVelocity(null);
-            return;
-        }
-        try {
-            renderVelocity(null);
-        } catch (_) {
-            renderVelocity(null);
-        }
-    }
-
-    // ===== Detail Risk Assessment =====
-    async function loadDetailRisks(item) {
-        if (!item || !item.price) {
-            renderDetailRisks(null);
-            return;
-        }
-        try {
-            const data = await postJson("/api/v1/risk-assessment", {
-                price_byn: item.price_byn || item.price || null,
-                description: item.description || "",
-                photo_count: item.photo_count || 0,
-                market_median: state.stats?.median || null,
-            });
-            renderDetailRisks(data);
-        } catch (_) {
-            renderDetailRisks(null);
-        }
-    }
-
-    function bindEvents() {
-        let searchDebounceTimer = null;
-        
-        elements.searchInput?.addEventListener("input", () => {
-            state.query = elements.searchInput.value.trim();
-            renderLoading();
-            
-            // Debounce search to avoid excessive API calls
-            clearTimeout(searchDebounceTimer);
-            searchDebounceTimer = setTimeout(() => {
-                if (state.query.length >= 2) {
-                    // Auto-search after 500ms pause
-                    void search("overview");
-                    
-                    // Haptic feedback on search
-                    if (window.Telegram?.WebApp?.HapticFeedback) {
-                        Telegram.WebApp.HapticFeedback.impactOccurred("light");
-                    }
-                }
-            }, 500);
-        });
-
-        elements.searchInput?.addEventListener("keydown", (event) => {
-            if (event.key === "Enter") {
-                event.preventDefault();
-                clearTimeout(searchDebounceTimer);
-                void search("overview");
-                
-                // Haptic feedback
-                if (window.Telegram?.WebApp?.HapticFeedback) {
-                    Telegram.WebApp.HapticFeedback.impactOccurred("medium");
-                }
-            }
-        });
-
-        elements.searchButton?.addEventListener("click", () => {
-            clearTimeout(searchDebounceTimer);
-            void search("overview");
-            
-            // Haptic feedback
-            if (window.Telegram?.WebApp?.HapticFeedback) {
-                Telegram.WebApp.HapticFeedback.impactOccurred("medium");
-            }
-        });
-
-        elements.strictSearchToggle?.addEventListener("change", () => {
-            state.strictSearch = Boolean(elements.strictSearchToggle.checked);
-            renderStrictSearch();
-            if (state.query.trim()) {
-                void search(state.activeView);
-            }
-        });
-
-        for (const button of Object.values(elements.currencyButtons || {})) {
-            button.addEventListener("click", () => {
-                void setCurrency(button.id === "btn-usd" ? "USD" : "BYN");
-            });
-        }
-
-        for (const chip of elements.quickChips || []) {
-            chip.addEventListener("click", () => {
-                const query = chip.dataset.query || "";
-                elements.searchInput.value = query;
-                state.query = query;
-                renderLoading();
-                clearTimeout(searchDebounceTimer);
-                void search("overview");
-                
-                // Haptic feedback
-                if (window.Telegram?.WebApp?.HapticFeedback) {
-                    Telegram.WebApp.HapticFeedback.impactOccurred("medium");
-                }
-            });
-        }
-
-        for (const button of elements.viewTabs || []) {
-            button.addEventListener("click", () => {
-                const view = button.dataset.view;
-                if (!view) {
-                    return;
-                }
-                setActiveView(view);
-                renderAll();
-                if (view === "tracking") {
-                    void loadTrackers();
-                    startTrackerRefresh();
-                } else {
-                    stopTrackerRefresh();
-                }
-                if (view === "monitoring") {
-                    void loadWatchlist();
-                }
-                if (view === "deals") {
-                    void loadLeads();
-                }
-                if (view === "cheap") {
-                    if (state.query.trim()) {
-                        void loadDeals();
-                    }
-                }
-            });
-        }
-
-        for (const button of elements.panelToggles || []) {
-            button.addEventListener("click", () => {
-                const panelName = button.dataset.panelToggle;
-                if (!panelName) {
-                    return;
-                }
-                setPanelOpen(panelName, !state.panels[panelName]);
-            });
-        }
-
-        for (const button of elements.historyRangeButtons || []) {
-            button.addEventListener("click", () => {
-                const nextDays = Number(button.dataset.historyDays);
-                if (!nextDays || nextDays === state.historyDays) {
-                    return;
-                }
-                state.historyDays = nextDays;
-                renderHistory();
-                void loadHistory();
-            });
-        }
-
-        elements.compareInput?.addEventListener("input", () => {
-            state.comparisonQuery = elements.compareInput.value;
-            renderComparison();
-        });
-
-        elements.compareInput?.addEventListener("keydown", (event) => {
-            if (event.key === "Enter") {
-                event.preventDefault();
-                state.comparisonQuery = elements.compareInput.value;
-                void loadComparison();
-            }
-        });
-
-        elements.compareButton?.addEventListener("click", () => {
-            state.comparisonQuery = elements.compareInput.value;
-            void loadComparison();
-        });
-
-        elements.compareSwapButton?.addEventListener("click", () => {
-            void swapComparisonQueries();
-        });
-
-        for (const chip of elements.compareQuickChips || []) {
-            chip.addEventListener("click", () => {
-                const query = chip.dataset.compareQuery || "";
-                const existing = parseComparisonQueries(state.comparisonQuery);
-                const nextValues = Array.from(new Set([...existing, query])).slice(0, 2);
-                state.comparisonQuery = nextValues.join(", ");
-                elements.compareInput.value = query;
-                elements.compareInput.value = state.comparisonQuery;
-                setPanelOpen("comparison", true);
-                renderComparison();
-                void loadComparison();
-            });
-        }
-
-        for (const button of elements.sortButtons || []) {
-            button.addEventListener("click", () => {
-                const sort = button.dataset.sort || "newest";
-                if (sort === state.sort) {
-                    return;
-                }
-                state.sort = sort;
-                renderSortButtons();
-                setActiveView("ads");
-                if (state.query.trim()) {
-                    void loadListings();
-                }
-            });
-        }
-
-        for (const button of elements.discountButtons || []) {
-            button.addEventListener("click", () => {
-                const from = Number(button.dataset.discountFrom);
-                const to = Number(button.dataset.discountTo);
-                if (!Number.isFinite(from) || !Number.isFinite(to)) {
-                    return;
-                }
-                state.discountFromPercent = Math.min(from, to);
-                state.discountToPercent = Math.max(from, to);
-                renderDiscountButtons();
-                renderDealInputs();
-                setActiveView("cheap");
-                if (state.query.trim()) {
-                    void loadDeals();
-                }
-            });
-        }
-
-        elements.dealApplyButton?.addEventListener("click", () => {
-            const from = Math.abs(Number(elements.dealFromInput?.value || state.discountFromPercent));
-            const to = Math.abs(Number(elements.dealToInput?.value || state.discountToPercent));
-            state.discountFromPercent = Math.min(from, to);
-            state.discountToPercent = Math.max(from, to);
-            renderDiscountButtons();
-            renderDealInputs();
-            setActiveView("cheap");
-            if (state.query.trim()) {
-                void loadDeals();
-            }
-        });
-
-        elements.trackQueryButton?.addEventListener("click", () => {
-            void createTracker();
-        });
-
-        let clearEventsConfirmed = false;
-        elements.clearEventsButton?.addEventListener("click", () => {
-            void (async () => {
-                // Check if there are any events to clear BEFORE asking for confirmation
-                if (state.trackerEvents.length === 0) {
-                    showToast("Нет событий для удаления");
-                    return;
-                }
-                
-                if (!clearEventsConfirmed) {
-                    clearEventsConfirmed = true;
-                    elements.clearEventsButton.textContent = "Удалить все?";
-                    setTimeout(() => {
-                        clearEventsConfirmed = false;
-                        if (elements.clearEventsButton) {
-                            elements.clearEventsButton.textContent = "Очистить";
-                        }
-                    }, 3000);
-                    showToast("Нажмите ещё раз для подтверждения");
-                    return;
-                }
-                clearEventsConfirmed = false;
-                if (elements.clearEventsButton) {
-                    elements.clearEventsButton.textContent = "Очистить";
-                }
-                try {
-                    await deleteJson("/api/v1/tracker-events");
-                } catch (_) {
-                    // ignore — clear locally anyway
-                }
-                state.trackerEvents = [];
-                showToast("События очищены");
-                renderTrackerEvents();
-            })();
-        });
-
-        let clearLeadsConfirmed = false;
-        elements.clearAllLeadsButton?.addEventListener("click", () => {
-            void (async () => {
-                const activeLeads = state.leads.filter((l) => l.status !== "closed");
-                if (activeLeads.length === 0) {
-                    showToast("Нет активных сделок для удаления");
-                    return;
-                }
-                if (!clearLeadsConfirmed) {
-                    clearLeadsConfirmed = true;
-                    elements.clearAllLeadsButton.textContent = "Удалить все?";
-                    showToast("Нажмите ещё раз для подтверждения");
-                    setTimeout(() => {
-                        clearLeadsConfirmed = false;
-                        if (elements.clearAllLeadsButton) {
-                            elements.clearAllLeadsButton.textContent = "Очистить";
-                        }
-                    }, 3000);
-                    return;
-                }
-                clearLeadsConfirmed = false;
-                if (elements.clearAllLeadsButton) {
-                    elements.clearAllLeadsButton.textContent = "Очистить";
-                }
-                await clearAllLeads();
-            })();
-        });
-
-        let clearWatchlistConfirmed = false;
-        elements.deleteAllWatchlistButton?.addEventListener("click", () => {
-            void (async () => {
-                if (state.watchlist.length === 0) {
-                    showToast("Список уже пуст");
-                    return;
-                }
-                if (!clearWatchlistConfirmed) {
-                    clearWatchlistConfirmed = true;
-                    elements.deleteAllWatchlistButton.textContent = "Удалить все?";
-                    showToast("Нажмите ещё раз для подтверждения");
-                    setTimeout(() => {
-                        clearWatchlistConfirmed = false;
-                        if (elements.deleteAllWatchlistButton) {
-                            elements.deleteAllWatchlistButton.textContent = "Очистить";
-                        }
-                    }, 3000);
-                    return;
-                }
-                clearWatchlistConfirmed = false;
-                if (elements.deleteAllWatchlistButton) {
-                    elements.deleteAllWatchlistButton.textContent = "Очистить";
-                }
-                await clearAllWatchlist();
-            })();
-        });
-
-        elements.trackerMinDiscountInput?.addEventListener("input", () => {
-            const nextValue = Number(elements.trackerMinDiscountInput.value);
-            state.trackerMinDiscountPercent = Number.isFinite(nextValue) ? Math.abs(nextValue) : 10;
-        });
-
-        elements.trackerMaxPriceInput?.addEventListener("input", () => {
-            const rawValue = elements.trackerMaxPriceInput.value.trim();
-            if (!rawValue) {
-                state.trackerMaxPriceByn = null;
-                return;
-            }
-            const nextValue = Number(rawValue);
-            state.trackerMaxPriceByn = Number.isFinite(nextValue) ? Math.abs(nextValue) : null;
-        });
-
-        elements.trackerExcludeDuplicatesToggle?.addEventListener("change", () => {
-            state.trackerExcludeDuplicates = Boolean(elements.trackerExcludeDuplicatesToggle.checked);
-        });
-
-        elements.trackerSellerSelect?.addEventListener("change", () => {
-            state.trackerSellerType = elements.trackerSellerSelect.value;
-        });
-
-        elements.trackerConditionSelect?.addEventListener("change", () => {
-            state.trackerCondition = elements.trackerConditionSelect.value;
-        });
-
-        elements.trackerRegionInput?.addEventListener("input", () => {
-            state.trackerRegionName = elements.trackerRegionInput.value.trim();
-        });
-
-        elements.trackerConfigInput?.addEventListener("input", () => {
-            state.trackerConfigKeyword = elements.trackerConfigInput.value.trim();
-        });
-
-        // Edit tracker modal event listeners
-        elements.closeEditModal?.addEventListener("click", () => {
-            closeEditTracker();
-        });
-        elements.cancelEditBtn?.addEventListener("click", () => {
-            closeEditTracker();
-        });
-        elements.saveTrackerBtn?.addEventListener("click", () => {
-            void saveTracker();
-        });
-
-        // Also close edit modal on overlay click / Escape key
-        elements.editTrackerModal?.addEventListener("click", (event) => {
-            // Close when clicking on the overlay background (not the modal content)
-            if (event.target === elements.editTrackerModal) {
-                closeEditTracker();
-            }
-        });
-
-        for (const button of elements.trackerEventFilterButtons || []) {
-            button.addEventListener("click", () => {
-                state.trackerEventFilter = button.dataset.eventFilter || "all";
-                state.trackerEventFilterTrackerId = null; // Clear tracker-specific filter
-                renderTrackerEventFilters();
-                renderTrackerEvents();
-            });
-        }
-
-        for (const button of elements.watchlistFilterButtons || []) {
-            button.addEventListener("click", () => {
-                state.watchlistFilter = button.dataset.watchFilter || "all";
-                renderWatchlist();
-            });
-        }
-
-        elements.detailClose?.addEventListener("click", () => {
-            closeDetailModal();
-        });
-
-        elements.detailOverlay?.addEventListener("click", () => {
-            closeDetailModal();
-        });
-
-        elements.detailAddLeadButton?.addEventListener("click", () => {
-            if (state.detail) {
-                void addLeadFromListing(state.detail, "detail_modal", state.detail.query || state.query);
-            }
-        });
-
-        elements.detailAddWatchlistButton?.addEventListener("click", () => {
-            if (state.detail) {
-                void addWatchlistFromListing(state.detail, state.detail.query || state.query);
-            }
-        });
-
-        document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape") {
-                // Close any open modal — check in order of z-index priority
-                if (!state.detail && !elements.editTrackerModal?.hidden) {
-                    closeEditTracker();
-                } else if (!elements.expensesModal?.hidden) {
-                    closeExpensesModal();
-                } else if (state.detail) {
-                    closeDetailModal();
-                }
-            }
-        });
-
-        // Swipe support for detail modal photos
-        let touchStartX = 0;
-        let touchEndX = 0;
-        let isSwiping = false;
-        elements.detailModal?.addEventListener("touchstart", (e) => {
-            touchStartX = e.changedTouches[0].screenX;
-            isSwiping = false;
-        }, { passive: true });
-        elements.detailModal?.addEventListener("touchend", (e) => {
-            if (isSwiping) return;
-            touchEndX = e.changedTouches[0].screenX;
-            const swipeDistance = touchStartX - touchEndX;
-            if (Math.abs(swipeDistance) > 50 && state.detail?.images?.length > 1) {
-                isSwiping = true;
-                const mediaEl = elements.detailModal?.querySelector(".detail-media");
-                if (mediaEl) {
-                    mediaEl.classList.add("swipe-anim");
-                    setTimeout(() => {
-                        if (swipeDistance > 0) {
-                            state.detailImageIndex = Math.min(state.detail.images.length - 1, state.detailImageIndex + 1);
-                        } else {
-                            state.detailImageIndex = Math.max(0, state.detailImageIndex - 1);
-                        }
-                        renderDetailModal();
-                        requestAnimationFrame(() => {
-                            setTimeout(() => {
-                                mediaEl.classList.remove("swipe-anim");
-                                isSwiping = false;
-                            }, 50);
-                        });
-                    }, 150);
-                }
-            }
-        }, { passive: true });
-
-        // Keyboard arrow navigation for photos
-        document.addEventListener("keydown", (event) => {
-            if (!state.detail || !(state.detail?.images?.length > 1)) return;
-            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                const mediaEl = elements.detailModal?.querySelector(".detail-media");
-                if (mediaEl) {
-                    mediaEl.classList.add("swipe-anim");
-                    setTimeout(() => {
-                        if (event.key === "ArrowLeft") {
-                            state.detailImageIndex = Math.max(0, state.detailImageIndex - 1);
-                        } else {
-                            state.detailImageIndex = Math.min(state.detail.images.length - 1, state.detailImageIndex + 1);
-                        }
-                        renderDetailModal();
-                        requestAnimationFrame(() => {
-                            setTimeout(() => mediaEl.classList.remove("swipe-anim"), 50);
-                        });
-                    }, 150);
-                }
-            }
-        });
-
-        // Fix for Telegram Mini App mobile: intercept external links and open them properly
-        // On mobile, target="_blank" doesn't work correctly in the webview
-        document.addEventListener("click", (event) => {
-            const link = event.target.closest("a[target='_blank']");
-            if (link && link.href && !link.href.startsWith("#") && !link.href.startsWith("javascript:")) {
-                event.preventDefault();
-                event.stopPropagation();
-
-                // Use Telegram WebApp API for mobile, fallback to window.open for desktop
-                if (window.Telegram?.WebApp?.openLink) {
-                    window.Telegram.WebApp.openLink(link.href);
-                } else {
-                    window.open(link.href, "_blank", "noopener,noreferrer");
-                }
-            }
-        });
-
-        // ===== Expenses Modal Events =====
-        elements.expensesClose?.addEventListener("click", () => {
-            closeExpensesModal();
-        });
-
-        elements.expensesOverlay?.addEventListener("click", () => {
-            closeExpensesModal();
-        });
-
-        elements.saveExpenseButton?.addEventListener("click", () => {
-            const leadId = state.currentExpenseLeadId;
-            if (!leadId) return;
-            const type = elements.expenseTypeSelect?.value || "other";
-            const rawAmount = elements.expenseAmountInput?.value?.trim();
-            const amount = rawAmount ? Number(rawAmount) : null;
-            const notes = elements.expenseNotesInput?.value?.trim() || "";
-            if (!amount || amount <= 0) {
-                showToast("Введите корректную сумму");
-                return;
-            }
-            void actions.createExpense(leadId, { expense_type: type, amount_byn: amount, notes });
-            if (elements.expenseAmountInput) elements.expenseAmountInput.value = "";
-            if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";
-        });
-
-        elements.cancelExpenseButton?.addEventListener("click", () => {
-            closeExpensesModal();
-        });
-
-        document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape") {
-                if (!elements.expensesModal?.hidden) {
-                    closeExpensesModal();
-                } else if (!elements.editTrackerModal?.hidden) {
-                    closeEditTracker();
-                }
-            }
-        });
-
-        // Export button removed - functionality deprecated
-
-        // Pause auto-refresh when the app is backgrounded
-        document.addEventListener("visibilitychange", () => {
-            if (document.hidden) {
-                stopTrackerRefresh();
-            } else if (state.activeView === "tracking") {
-                startTrackerRefresh();
-            }
-        });
-    }
+    // ── Public API (every name the original file exported) ───────────────
 
     return {
-        bindEvents,
-        search,
-        loadListings,
-        loadDeals,
-        loadRates,
-        loadHistory,
-        loadComparison,
-        swapComparisonQueries,
-        loadTrackers,
-        loadLeads,
-        clearAllLeads,
-        deleteLead,
-        confirmLead,
-        cancelLead,
-        closeDeal,
+        bindEvents: events.bindEvents,
+        search: listings.search,
+        loadListings: listings.loadListings,
+        loadDeals: listings.loadDeals,
+        loadRates: core.loadRates,
+        loadHistory: listings.loadHistory,
+        loadComparison: listings.loadComparison,
+        swapComparisonQueries: listings.swapComparisonQueries,
+        loadTrackers: trackers.loadTrackers,
+        loadLeads: leads.loadLeads,
+        clearAllLeads: leads.clearAllLeads,
+        deleteLead: leads.deleteLead,
+        confirmLead: leads.confirmLead,
+        cancelLead: leads.cancelLead,
+        closeDeal: leads.closeDeal,
         deleteHistoryDeal,
-        revertLeadStage,
-        markLeadAsSold,
-        openLeadDetail,
-        loadWatchlist,
-        createTracker,
+        revertLeadStage: leads.revertLeadStage,
+        markLeadAsSold: leads.markLeadAsSold,
+        openLeadDetail: leads.openLeadDetail,
+        loadWatchlist: watchlist.loadWatchlist,
+        createTracker: trackers.createTracker,
         addLeadFromListing,
-        addWatchlistFromListing,
-        updateLeadStatus,
-        updateLeadMeta,
-        updateWatchlistStatus,
-        updateWatchlistMeta,
-        promoteWatchlistToLead,
-        deleteWatchlistItem,
-        deleteAllWatchlist,
-        refreshWatchlist,
+        addWatchlistFromListing: watchlist.addWatchlistFromListing,
+        updateLeadStatus: leads.updateLeadStatus,
+        updateLeadMeta: leads.updateLeadMeta,
+        updateWatchlistStatus: watchlist.updateWatchlistStatus,
+        updateWatchlistMeta: watchlist.updateWatchlistMeta,
+        promoteWatchlistToLead: watchlist.promoteWatchlistToLead,
+        deleteWatchlistItem: watchlist.deleteWatchlistItem,
+        deleteAllWatchlist: watchlist.deleteAllWatchlist,
+        refreshWatchlist: watchlist.refreshWatchlist,
         refreshLeads,
-        openWatchlistDetail,
-        deleteTracker,
-        pauseTracker,
-        resumeTracker,
-        openEditTracker,
-        closeEditTracker,
-        saveTracker,
+        openWatchlistDetail: watchlist.openWatchlistDetail,
+        deleteTracker: trackers.deleteTracker,
+        pauseTracker: trackers.pauseTracker,
+        resumeTracker: trackers.resumeTracker,
+        openEditTracker: trackers.openEditTracker,
+        closeEditTracker: trackers.closeEditTracker,
+        saveTracker: trackers.saveTracker,
         openOpportunityQuery,
         openOpportunityDetail,
-        openListingDetail,
+        openListingDetail: listings.openListingDetail,
         setCurrency,
         applyLaunchParams,
         loadExpenses,
         createExpense,
         deleteExpense,
         exportLeadsCSV,
-        loadMarketVelocity,
-        loadDetailRisks,
+        loadMarketVelocity: listings.loadMarketVelocity,
+        loadDetailRisks: listings.loadDetailRisks,
     };
 }

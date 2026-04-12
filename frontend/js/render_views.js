@@ -1,0 +1,466 @@
+/**
+ * render_views.js — Hero stats, Stats, segments, geography, comparison,
+ * sort/discount buttons, tracker event filters, history range, deal/tracker inputs.
+ */
+
+function createRenderViews(context) {
+    const {
+        state,
+        elements,
+        actions,
+        formatPrice,
+        formatCondition,
+        formatSeller,
+        formatDelta,
+        deltaClass,
+        formatDate,
+        trapFocus,
+        hasTelegramInitData,
+    } = context;
+
+    /**
+     * Safe render wrapper — catches and logs errors instead of crashing.
+     */
+    function safeRender(name, fn) {
+        try {
+            return fn();
+        } catch (error) {
+            console.error(`[render-error] ${name}:`, error);
+            return null;
+        }
+    }
+
+    /**
+     * Escape HTML special characters to prevent XSS attacks.
+     */
+    const _escapeDiv = document.createElement("div");
+
+    function escapeHtml(str) {
+        if (str == null) return "";
+        _escapeDiv.textContent = String(str);
+        return _escapeDiv.innerHTML;
+    }
+
+    /* ===== Hero Stats ===== */
+
+    function renderTrackingHeroStats() {
+        if (!elements.trackingHeroStats) return;
+        const trackerCount = state.trackers.length;
+        const eventCount = state.trackerEvents.length;
+        elements.trackingHeroStats.innerHTML = [
+            `<span class="hero-stat"><span class="hero-stat-val mono">${trackerCount}</span> трекеров</span>`,
+            `<span class="hero-stat"><span class="hero-stat-val mono">${eventCount}</span> событий</span>`,
+        ].join("");
+    }
+
+    function renderCheapHeroStats() {
+        if (!elements.cheapHeroStats) return;
+        const cheapCount = state.dealListings.length;
+        const range = state.discountFromPercent === state.discountToPercent
+            ? `${state.discountFromPercent}%`
+            : `${state.discountFromPercent}-${state.discountToPercent}%`;
+        elements.cheapHeroStats.innerHTML = [
+            `<span class="hero-stat"><span class="hero-stat-val mono">${cheapCount}</span> лотов дешевле рынка</span>`,
+            `<span class="hero-stat">диапазон <span class="hero-stat-val mono">${range}</span></span>`,
+        ].join("");
+    }
+
+    function renderMonitoringHeroStats() {
+        if (!elements.monitoringHeroStats) return;
+        const watchCount = state.watchlist.length;
+        elements.monitoringHeroStats.innerHTML = [
+            `<span class="hero-stat"><span class="hero-stat-val mono">${watchCount}</span> объявлений</span>`,
+        ].join("");
+    }
+
+    function renderDealsHeroStats() {
+        if (!elements.dealsHeroStats) return;
+        const activeLeads = state.leads.filter((l) => l.status !== "closed");
+        elements.dealsHeroStats.innerHTML = [
+            `<span class="hero-stat"><span class="hero-stat-val mono">${activeLeads.length}</span> сделок</span>`,
+        ].join("");
+    }
+
+    /* ===== Sort / Discount / Filter buttons ===== */
+
+    function renderSortButtons() {
+        for (const button of elements.sortButtons) {
+            button.classList.toggle("active", button.dataset.sort === state.sort);
+        }
+    }
+
+    function renderDiscountButtons() {
+        for (const button of elements.discountButtons) {
+            const from = Number(button.dataset.discountFrom);
+            const to = Number(button.dataset.discountTo);
+            button.classList.toggle(
+                "active",
+                from === state.discountFromPercent && to === state.discountToPercent
+            );
+        }
+    }
+
+    function renderTrackerEventFilters() {
+        for (const button of elements.trackerEventFilterButtons) {
+            button.classList.toggle("active", button.dataset.eventFilter === state.trackerEventFilter);
+        }
+    }
+
+    function renderHistoryRangeButtons() {
+        if (elements.historyBadge) {
+            elements.historyBadge.textContent = `${state.historyDays} дней`;
+        }
+        for (const button of elements.historyRangeButtons) {
+            button.classList.toggle(
+                "active",
+                Number(button.dataset.historyDays) === state.historyDays
+            );
+        }
+    }
+
+    /* ===== Inputs ===== */
+
+    function renderDealInputs() {
+        if (elements.dealFromInput) {
+            elements.dealFromInput.value = String(state.discountFromPercent);
+        }
+        if (elements.dealToInput) {
+            elements.dealToInput.value = String(state.discountToPercent);
+        }
+    }
+
+    function renderTrackerInputs() {
+        if (elements.trackerMinDiscountInput) {
+            elements.trackerMinDiscountInput.value = String(state.trackerMinDiscountPercent ?? 10);
+        }
+        if (elements.trackerMaxPriceInput) {
+            elements.trackerMaxPriceInput.value = state.trackerMaxPriceByn ?? "";
+        }
+        if (elements.trackerExcludeDuplicatesToggle) {
+            elements.trackerExcludeDuplicatesToggle.checked = Boolean(state.trackerExcludeDuplicates);
+        }
+        if (elements.trackerSellerSelect) {
+            elements.trackerSellerSelect.value = state.trackerSellerType || "";
+        }
+        if (elements.trackerConditionSelect) {
+            elements.trackerConditionSelect.value = state.trackerCondition || "";
+        }
+        if (elements.trackerRegionInput) {
+            elements.trackerRegionInput.value = state.trackerRegionName || "";
+        }
+        if (elements.trackerConfigInput) {
+            elements.trackerConfigInput.value = state.trackerConfigKeyword || "";
+        }
+    }
+
+    /* ===== Comparison ===== */
+
+    function comparisonDelta(current, base) {
+        if (!base || !current) {
+            return null;
+        }
+        const delta = ((current - base) / base) * 100;
+        if (Math.abs(delta) < 0.5) {
+            return { text: "≈ рынок", className: "" };
+        }
+        return {
+            text: `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%`,
+            className: delta > 0 ? "positive" : "negative",
+        };
+    }
+
+    function renderComparison() {
+        return safeRender('renderComparison', () => {
+            if (!state.query) {
+            elements.comparisonSection.hidden = true;
+            elements.comparisonGrid.innerHTML = "";
+            elements.comparisonSummary.hidden = true;
+            elements.comparisonSummary.innerHTML = "";
+            return;
+        }
+
+        elements.comparisonSection.hidden = false;
+        elements.compareInput.value = state.comparisonQuery;
+        elements.compareButton.disabled =
+            state.comparisonLoading || !state.comparisonQuery.trim() || !state.query.trim();
+
+        if (state.comparisonLoading) {
+            elements.comparisonNote.textContent = "Сравниваю запросы...";
+            elements.comparisonSummary.hidden = true;
+            elements.comparisonSummary.innerHTML = "";
+            elements.comparisonGrid.innerHTML = "";
+            return;
+        }
+
+        if (!state.comparisonQuery.trim()) {
+            elements.comparisonNote.textContent =
+                "Сравните текущий запрос с другим товаром или другой конфигурацией.";
+            elements.comparisonSummary.hidden = true;
+            elements.comparisonSummary.innerHTML = "";
+            elements.comparisonGrid.innerHTML = "";
+            return;
+        }
+
+        if (!state.comparisonItems.length) {
+            elements.comparisonNote.textContent =
+                "Введите до двух дополнительных запросов через запятую и нажмите «Сравнить».";
+            elements.comparisonSummary.hidden = true;
+            elements.comparisonSummary.innerHTML = "";
+            elements.comparisonGrid.innerHTML = "";
+            return;
+        }
+
+        const [baseItem, ...otherItems] = state.comparisonItems;
+        const baseMedian = Number(baseItem?.median || 0);
+        let summary = "Сравнение собрано по медиане, дешёвым лотам, размеру рынка и лучшему текущему офферу.";
+        const deltas = otherItems
+            .map((item) => {
+                const median = Number(item.median || 0);
+                if (!baseMedian || !median) {
+                    return null;
+                }
+                const delta = ((median - baseMedian) / baseMedian) * 100;
+                const direction = delta > 0 ? "дороже" : "дешевле";
+                return `${item.query} ${direction} на ${Math.abs(delta).toFixed(1)}%`;
+            })
+            .filter(Boolean);
+        if (deltas.length) {
+            summary = deltas.join(" · ");
+        }
+        elements.comparisonNote.textContent = summary;
+        const compareSummaryItems = [
+            `${state.comparisonItems.length} запроса в работе`,
+            `${otherItems.reduce((sum, item) => sum + Number(item.cheap_count || 0), 0)} дешёвых лотов в сравнении`,
+            `рынок ${state.comparisonItems.map((item) => item.total_results || 0).join(" / ")}`,
+        ];
+        elements.comparisonSummary.innerHTML = compareSummaryItems
+            .map((item) => `<span class="compare-summary-chip">${item}</span>`)
+            .join("");
+        elements.comparisonSummary.hidden = false;
+
+        elements.comparisonGrid.innerHTML = state.comparisonItems
+            .map((item, index) => {
+                const isBase = index === 0;
+                const bestListing = item.best_listing || null;
+                const medianDelta = isBase
+                    ? { text: "база", className: "" }
+                    : comparisonDelta(Number(item.median || 0), Number(baseItem?.median || 0));
+                const trend = item.trend_percent == null
+                    ? "нет истории"
+                    : `${item.trend_percent > 0 ? "+" : ""}${item.trend_percent.toFixed(1)}%`;
+                return `
+                    <article class="compare-card">
+                        <span class="compare-kicker">${isBase ? "База" : "Сравнение"}</span>
+                        <strong class="compare-query">${escapeHtml(item.query)}</strong>
+                        <div class="compare-deltas">
+                            <span class="compare-delta-chip ${medianDelta?.className || ""}">
+                                медиана ${medianDelta?.text || "—"}
+                            </span>
+                            <span class="compare-delta-chip">
+                                тренд ${trend}
+                            </span>
+                        </div>
+                        <div class="compare-metrics">
+                            <div class="compare-metric">
+                                <span class="compare-label">Медиана</span>
+                                <strong class="compare-value mono">${formatPrice(item.median)}</strong>
+                            </div>
+                            <div class="compare-metric">
+                                <span class="compare-label">Дешёвые лоты</span>
+                                <strong class="compare-value mono">${item.cheap_count || 0}</strong>
+                            </div>
+                            <div class="compare-metric wide">
+                                <span class="compare-label">Размер рынка</span>
+                                <strong class="compare-value mono">${item.total_results || 0}</strong>
+                                <span class="compare-meta">${bestListing ? `${escapeHtml(bestListing.title)} · ${formatPrice(bestListing.price)}` : "Лучший оффер пока не найден"}</span>
+                            </div>
+                        </div>
+                    </article>
+                `;
+            })
+            .join("");
+        });
+    }
+
+    /* ===== Stats ===== */
+
+    function renderStats() {
+        return safeRender('renderStats', () => {
+            if (!state.stats) {
+            elements.statsSection.hidden = true;
+            elements.chartSection.hidden = true;
+            if (context._hooks?.destroyChart) context._hooks.destroyChart();
+            return;
+        }
+
+        elements.stats.median.textContent = formatPrice(state.stats.median);
+        elements.stats.mean.textContent = formatPrice(state.stats.mean);
+        elements.stats.min.textContent = formatPrice(state.stats.min);
+        elements.stats.max.textContent = formatPrice(state.stats.max);
+        if (state.stats.fair_price_from != null && state.stats.fair_price_to != null) {
+            elements.stats.fairRange.innerHTML = `
+                <span class="stat-range-item">${formatPrice(state.stats.fair_price_from)}</span>
+                <span class="stat-range-sep">-</span>
+                <span class="stat-range-item">${formatPrice(state.stats.fair_price_to)}</span>
+            `;
+        } else {
+            elements.stats.fairRange.textContent = "—";
+        }
+        elements.stats.coverage.textContent =
+            `${state.stats.analyzed_count || state.stats.count || 0} / ${state.stats.total_results || 0}`;
+        elements.marketTotalBadge.textContent = `${state.stats.total_results || 0} на рынке`;
+        elements.statsSection.hidden = false;
+        elements.chartSection.hidden = state.stats.count <= 0;
+        if (elements.chartSection.hidden || !state.panels.distribution) {
+            if (context._hooks?.destroyChart) context._hooks.destroyChart();
+        }
+        });
+    }
+
+    /* ===== Segments ===== */
+
+    function renderSegments() {
+        return safeRender('renderSegments', () => {
+        elements.segmentsGrid.innerHTML = "";
+        if (!state.segments) {
+            elements.segmentsSection.hidden = true;
+            return;
+        }
+
+        const segments = [
+            {
+                type: "new",
+                typeLabel: "Новый",
+                sellerLabel: "Частное лицо",
+                data: state.segments.new_private,
+            },
+            {
+                type: "new",
+                typeLabel: "Новый",
+                sellerLabel: "Магазин",
+                data: state.segments.new_shop,
+            },
+            {
+                type: "used",
+                typeLabel: "Б/у",
+                sellerLabel: "Частное лицо",
+                data: state.segments.used_private,
+            },
+            {
+                type: "used",
+                typeLabel: "Б/у",
+                sellerLabel: "Магазин",
+                data: state.segments.used_shop,
+            },
+        ].filter((segment) => segment.data && segment.data.count > 0);
+
+        if (segments.length === 0) {
+            elements.segmentsSection.hidden = true;
+            return;
+        }
+
+        for (const segment of segments) {
+            const totalAnalyzed = Number(state.stats?.analyzed_count || state.stats?.count || 0);
+            const share = totalAnalyzed
+                ? Math.round((Number(segment.data.count || 0) / totalAnalyzed) * 100)
+                : 0;
+            const marketMedian = Number(state.stats?.median || 0);
+            const segmentMedian = Number(segment.data.median || 0);
+            const delta = marketMedian && segmentMedian
+                ? ((segmentMedian - marketMedian) / marketMedian) * 100
+                : 0;
+            const deltaClassName = Math.abs(delta) < 0.5 ? "neutral" : (delta >= 0 ? "over" : "under");
+            const deltaText = Math.abs(delta) < 0.5
+                ? "≈ рынок"
+                : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}% к рынку`;
+            const card = document.createElement("div");
+            card.className = "seg-card";
+            card.innerHTML = `
+                <div class="seg-head">
+                    <span class="seg-pill ${segment.type}">${segment.typeLabel}</span>
+                    <span class="seg-seller">${segment.sellerLabel}</span>
+                </div>
+                <span class="seg-price mono">${formatPrice(segment.data.median)}</span>
+                <div class="seg-meta-row">
+                    <span class="seg-count">${segment.data.count} с ценой</span>
+                    <span class="seg-share">${share}% выборки</span>
+                </div>
+                <span class="seg-delta ${deltaClassName}">${deltaText}</span>
+            `;
+            elements.segmentsGrid.appendChild(card);
+        }
+
+        elements.segmentsSection.hidden = false;
+        });
+    }
+
+    /* ===== Geography ===== */
+
+    function renderGeography() {
+        return safeRender('renderGeography', () => {
+        elements.geographyGrid.innerHTML = "";
+        if (!state.geography.length) {
+            elements.geographySection.hidden = true;
+            return;
+        }
+
+        for (const region of state.geography) {
+            const card = document.createElement("div");
+            card.className = "geo-card";
+            card.innerHTML = `
+                <div class="geo-head">
+                    <strong class="geo-name">${escapeHtml(region.region_name)}</strong>
+                    <span class="geo-share">${escapeHtml(region.share_percent)}% выборки</span>
+                </div>
+                <span class="geo-price mono">${formatPrice(region.median)}</span>
+                <div class="geo-meta">
+                    <span>${region.count} с ценой</span>
+                    <span>ср. ${formatPrice(region.mean)}</span>
+                </div>
+            `;
+            elements.geographyGrid.appendChild(card);
+        }
+
+        elements.geographySection.hidden = false;
+        });
+    }
+
+    /* ===== Recent Searches ===== */
+
+    function renderRecentSearches() {
+        return safeRender('renderRecentSearches', () => {
+            if (!elements.recentSection || !elements.recentList) return;
+            const searches = state.recentSearches || [];
+            if (!searches.length) {
+                elements.recentSection.hidden = true;
+                elements.recentList.innerHTML = "";
+                return;
+            }
+            elements.recentSection.hidden = false;
+            elements.recentList.innerHTML = searches
+                .map(
+                    (query) =>
+                        `<button class="recent-chip" type="button" data-recent-query="${escapeHtml(query)}">${escapeHtml(query)}</button>`
+                )
+                .join("");
+        });
+    }
+
+    return {
+        renderTrackingHeroStats,
+        renderCheapHeroStats,
+        renderMonitoringHeroStats,
+        renderDealsHeroStats,
+        renderSortButtons,
+        renderDiscountButtons,
+        renderTrackerEventFilters,
+        renderHistoryRangeButtons,
+        renderDealInputs,
+        renderTrackerInputs,
+        renderComparison,
+        renderStats,
+        renderSegments,
+        renderGeography,
+        renderRecentSearches,
+    };
+}

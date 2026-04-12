@@ -15,12 +15,26 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script defer src="js/app_core.js"></script>
+    <script defer src="js/render_core.js"></script>
+    <script defer src="js/render_cards.js"></script>
+    <script defer src="js/render_views.js"></script>
+    <script defer src="js/render_modals.js"></script>
+    <script defer src="js/render_charts.js"></script>
+    <script defer src="js/render_trackers.js"></script>
+    <script defer src="js/virtual_list.js"></script>
     <script defer src="js/app_renderers.js"></script>
+    <script defer src="js/api_core.js"></script>
+    <script defer src="js/api_listings.js"></script>
+    <script defer src="js/api_trackers.js"></script>
+    <script defer src="js/api_leads.js"></script>
+    <script defer src="js/api_watchlist.js"></script>
+    <script defer src="js/api_events.js"></script>
     <script defer src="js/app_actions.js"></script>
     <script defer src="js/app.js"></script>
 </head>
 <body>
 <div class="app" id="app-root">
+    <h1 class="sr-only">Rafuks — Анализ рынка Kufar</h1>
     <header class="header">
         <div class="header-inner">
             <div class="logo">
@@ -28,8 +42,8 @@
                 <span class="logo-name">Rafuks</span>
             </div>
             <div class="currency-toggle">
-                <button class="cur-btn active" id="btn-byn" type="button">BYN</button>
-                <button class="cur-btn" id="btn-usd" type="button">USD</button>
+                <button class="cur-btn active" id="btn-byn" type="button" aria-label="Переключить валюту на BYN">BYN</button>
+                <button class="cur-btn" id="btn-usd" type="button" aria-label="Переключить валюту на USD">USD</button>
             </div>
         </div>
         <div class="rate-strip" id="rate-strip" hidden>
@@ -58,6 +72,7 @@
                 spellcheck="false"
                 inputmode="text"
                 enterkeyhint="search"
+                aria-label="Поиск по запросу"
             >
             <button class="search-btn" id="search-btn" type="button">
                 <span id="search-btn-label">Найти</span>
@@ -70,11 +85,12 @@
         </label>
     </section>
 
-    <section class="quick-section" aria-label="Быстрые запросы">
-        <button class="quick-chip" data-query="iphone 15" type="button">iPhone 15</button>
-        <button class="quick-chip" data-query="iphone 16" type="button">iPhone 16</button>
-        <button class="quick-chip" data-query="macbook air m1" type="button">MacBook Air M1</button>
-        <button class="quick-chip" data-query="playstation 5" type="button">PlayStation 5</button>
+    <section class="recent-section" id="recent-section" hidden>
+        <div class="recent-header">
+            <span class="recent-title">Недавние</span>
+            <button class="recent-clear" id="recent-clear-btn" type="button" aria-label="Очистить историю">✕</button>
+        </div>
+        <div class="recent-list" id="recent-list"></div>
     </section>
 
     <nav class="view-nav" role="tablist" aria-label="Разделы Mini App">
@@ -404,7 +420,7 @@
             <div class="sec-head events-head listings-head">
                 <h3 class="sec-title">📡 Лента событий</h3>
                 <div class="lead-actions-wrap">
-                    <button class="ghost-btn small danger" id="clear-events-btn" type="button">Очистить</button>
+                    <button class="ghost-btn small danger" id="clear-events-btn" type="button" aria-label="Очистить ленту событий">Очистить</button>
                 </div>
             </div>
             

@@ -16,6 +16,8 @@ function analyticsApp() {
     function init() {
         core.cacheElements();
         core.initTelegramTheme();
+        core.loadRecentSearches();
+        core.loadCurrency();
         actions.bindEvents();
         core.state.query = core.elements.searchInput.value.trim();
         renderers.renderAll();

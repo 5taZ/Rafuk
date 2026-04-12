@@ -50,6 +50,7 @@ function createAppCore() {
         profitData: null,
         profitChart: null,
         pipelineStep: "active",
+        recentSearches: [],
         panels: {
             distribution: false,
             history: true,
@@ -130,7 +131,6 @@ function createAppCore() {
         elements.dealFromInput = document.getElementById("deal-from-input");
         elements.dealToInput = document.getElementById("deal-to-input");
         elements.dealApplyButton = document.getElementById("deal-apply-btn");
-        elements.quickChips = Array.from(document.querySelectorAll("[data-query]"));
         elements.trackerPanel = document.getElementById("tracker-panel");
         elements.trackQueryButton = document.getElementById("track-query-btn");
         elements.trackerMinDiscountInput = document.getElementById("tracker-min-discount-input");
@@ -199,6 +199,9 @@ function createAppCore() {
         elements.historyDealsCount = document.getElementById("history-deals-count");
         elements.historyDealsList = document.getElementById("history-deals-list");
         elements.toastContainer = document.getElementById("toast-container");
+        elements.recentSection = document.getElementById("recent-section");
+        elements.recentList = document.getElementById("recent-list");
+        elements.recentClearBtn = document.getElementById("recent-clear-btn");
         elements.currencyButtons = {
             BYN: document.getElementById("btn-byn"),
             USD: document.getElementById("btn-usd"),
@@ -317,6 +320,61 @@ function createAppCore() {
         );
     }
 
+    function loadRecentSearches() {
+        try {
+            const stored = localStorage.getItem("recentSearches");
+            if (stored) {
+                state.recentSearches = JSON.parse(stored).slice(0, 10);
+            }
+        } catch (_) {
+            state.recentSearches = [];
+        }
+    }
+
+    function loadCurrency() {
+        try {
+            const stored = localStorage.getItem("currency");
+            if (stored && (stored === "BYN" || stored === "USD")) {
+                state.currency = stored;
+            }
+        } catch (_) {
+            // ignore
+        }
+    }
+
+    function saveCurrency() {
+        try {
+            localStorage.setItem("currency", state.currency);
+        } catch (_) {
+            // ignore
+        }
+    }
+
+    function saveRecentSearches() {
+        try {
+            localStorage.setItem("recentSearches", JSON.stringify(state.recentSearches));
+        } catch (_) {
+            // ignore
+        }
+    }
+
+    function addRecentSearch(query) {
+        if (!query || query.trim().length < 2) return;
+        const trimmed = query.trim();
+        // Remove if already exists
+        state.recentSearches = state.recentSearches.filter((q) => q !== trimmed);
+        // Add to front
+        state.recentSearches.unshift(trimmed);
+        // Keep only last 10
+        state.recentSearches = state.recentSearches.slice(0, 10);
+        saveRecentSearches();
+    }
+
+    function clearRecentSearches() {
+        state.recentSearches = [];
+        saveRecentSearches();
+    }
+
     // Focus trap for modals — prevents Tab from escaping modal boundaries
     function trapFocus(container) {
         const focusableSelectors = [
@@ -367,5 +425,11 @@ function createAppCore() {
         formatDate,
         trapFocus,
         hasTelegramInitData,
+        loadRecentSearches,
+        saveRecentSearches,
+        addRecentSearch,
+        clearRecentSearches,
+        loadCurrency,
+        saveCurrency,
     };
 }

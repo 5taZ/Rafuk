@@ -72,7 +72,6 @@ a,
 .cur-btn,
 .section-toggle,
 .s-tab,
-.deal-range-chip,
 .watchlist-filter-btn {
     touch-action: manipulation;
     cursor: pointer;
@@ -113,19 +112,27 @@ a,
     transition: transform 100ms ease-out;
 }
 
-/* View transitions - only animate when explicitly triggered */
-.view-panel {
-    /* No default animation to prevent gray overlay on first interaction */
+/* Smooth focus transitions for inputs */
+.search-input:focus,
+.compare-input:focus,
+.deal-range-field input:focus,
+.tracker-card input:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+/* View transitions - only animate when explicitly triggered */
+/* EMPTY RULE REMOVED: .view-panel {} — no-op */
+
 .view-panel.is-entering {
-    animation: viewEnter 200ms ease-out;
+    animation: viewEnter 200ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 @keyframes viewEnter {
     from {
         opacity: 0;
-        transform: translateY(8px);
+        transform: translateY(6px);
     }
     to {
         opacity: 1;
@@ -164,7 +171,6 @@ button:focus-visible,
 .primary-btn:focus-visible,
 .ghost-btn:focus-visible,
 .cur-btn:focus-visible,
-.deal-range-chip:focus-visible,
 .watchlist-filter-btn:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
@@ -253,6 +259,7 @@ body {
     margin: 0 auto;
     padding: 0 14px;
     padding-bottom: env(safe-area-inset-bottom, 24px);
+    scroll-behavior: smooth;
 }
 
 .header {
@@ -306,7 +313,9 @@ body {
 }
 
 .cur-btn {
-    padding: 5px 12px;
+    padding: 12px 14px;
+    min-height: 44px;
+    min-width: 44px;
     border: none;
     background: transparent;
     color: var(--text-muted);
@@ -317,6 +326,9 @@ body {
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
     letter-spacing: 0.02em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .cur-btn.active {
@@ -351,6 +363,50 @@ body {
 .rate-meta {
     color: var(--text-muted);
 }
+
+/* Screen reader only utility */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Minimum touch targets for mobile accessibility */
+.quick-chip,
+.primary-btn,
+.ghost-btn,
+.section-toggle,
+.strict-toggle {
+    min-height: 44px;
+    min-width: 44px;
+}
+
+/* Small buttons in tight spaces — 36px minimum */
+.listing-btn,
+.wl-btn,
+.lead-btn {
+    min-height: 36px;
+    min-width: 36px;
+}
+
+/* Toggle pill within 44px label target */
+.strict-toggle {
+    padding: 10px 0;
+}
+
+/* View transition base — no default animation */
+.view-panel {
+    opacity: 1;
+    transform: none;
+}
+
+/* DUPLICATE REMOVED: .view-panel at line 117 (empty rule) and line 773 (duplicate) */
 
 [x-cloak] {
     display: none !important;
@@ -495,6 +551,8 @@ body {
     padding: 6px 0 10px;
     margin: 0 -2px;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
 }
 
 .quick-section::-webkit-scrollbar {
@@ -511,6 +569,9 @@ body {
     white-space: nowrap;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, transform 0.1s, color 0.15s;
+    flex-shrink: 0;
+    scroll-snap-align: start;
+    max-width: fit-content;
 }
 
 .quick-chip:hover,
@@ -732,13 +793,13 @@ body {
 }
 
 .spin {
-    width: 15px;
-    height: 15px;
-    border: 2px solid rgba(0, 0, 0, 0.15);
-    border-top-color: #fff;
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
     border-radius: 50%;
-    display: block;
-    animation: spin 0.55s linear infinite;
+    animation: spin 0.6s linear infinite;
 }
 
 @keyframes spin {
@@ -1019,12 +1080,7 @@ body {
     margin-bottom: 10px;
 }
 
-.tracker-event-empty {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.6;
-}
+/* DUPLICATE .tracker-event-empty removed — merged with polished definition at line 1335 */
 
 .tracker-event-row {
     padding: 14px;
@@ -1100,12 +1156,7 @@ body {
     color: var(--text-muted);
 }
 
-.tracker-empty {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.6;
-}
+/* DUPLICATE .tracker-empty removed — merged with polished definition at line 1314 */
 
 .tracker-row {
     display: flex;
@@ -1312,12 +1363,7 @@ body {
     line-height: 1.5;
 }
 
-.tracker-form-hint {
-    margin: 8px 0 0;
-    color: var(--text-dim);
-    font-size: 12px;
-    line-height: 1.5;
-}
+/* DUPLICATE .tracker-form-hint removed — identical to definition at line 1037 */
 
 .tracker-row-group {
     background: var(--bg-elevated);
@@ -1518,12 +1564,7 @@ body {
     min-height: 190px;
 }
 
-.section-note {
-    margin: 6px 0 2px;
-    color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.55;
-}
+/* DUPLICATE .section-note removed — merged with definition at line 1349 */
 
 .history-range-row {
     margin-bottom: 10px;
@@ -1931,7 +1972,9 @@ body {
 }
 
 .s-tab {
-    padding: 7px 13px;
+    padding: 9px 15px;
+    min-height: 36px;
+    min-width: 36px;
     border: 1px solid var(--border);
     background: transparent;
     color: var(--text-muted);
@@ -1943,6 +1986,9 @@ body {
     white-space: nowrap;
     transition: all 0.15s;
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .s-tab.active {
@@ -1978,6 +2024,9 @@ body {
 
 .listing:hover {
     background: var(--bg-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--border-hover);
+    transition: transform 150ms ease, box-shadow 150ms ease, background 0.12s;
 }
 
 .listing:active {
@@ -2574,6 +2623,7 @@ body {
 }
 
 /* ===== Empty States ===== */
+/* UNUSED: .empty-state* classes not referenced in HTML or JS */
 .empty-state {
     display: flex;
     flex-direction: column;
@@ -2614,6 +2664,7 @@ body {
 /* ===== Error State ===== */
 
 /* ===== Pipeline Stepper ===== */
+/* UNUSED: .pipeline-stepper* classes not referenced in HTML or JS */
 .pipeline-stepper {
     display: flex;
     align-items: center;
@@ -3246,6 +3297,7 @@ body {
 }
 
 /* Workflow Status Badge for Watchlist */
+/* UNUSED: .workflow-chip not referenced in HTML or JS */
 .workflow-chip {
     display: inline-flex;
     align-items: center;
@@ -3393,7 +3445,7 @@ body {
     color: var(--text);
 }
 
-/* Watchlist delete-all button */
+/* UNUSED: .watchlist-delete-all-btn not referenced in HTML or JS */
 .watchlist-delete-all-btn {
     width: auto;
     flex: 0 0 auto;
@@ -3489,15 +3541,7 @@ body {
     margin: 0;
 }
 
-/* Lead Financial Item (Potential/Actual Profit) */
-.lead-financial-item {
-    margin-top: 8px;
-    padding: 8px 12px;
-    border-radius: var(--r-sm);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.4;
-}
+/* DUPLICATE .lead-financial-item removed — merged with definition at line 3637 */
 
 .lead-financial-item.profit-positive {
     background: var(--green-soft);
@@ -3600,6 +3644,12 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 3px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
 }
 
 .lead-financial-item .mono {
@@ -3893,6 +3943,7 @@ body {
     border-color: var(--red);
 }
 
+/* UNUSED: .lead-field-readonly not referenced in HTML or JS */
 .lead-field-readonly {
     display: flex;
     flex-direction: column;
@@ -3909,6 +3960,7 @@ body {
 }
 
 /* Lead status select for edit mode */
+/* UNUSED: .lead-status-select not referenced in HTML or JS */
 .lead-status-select {
     border: 1px solid var(--border);
     background: var(--bg-input);
@@ -4723,4 +4775,135 @@ body {
         min-height: 180px;
         height: auto;
     }
+}
+
+/* ===== Loading / Error / Skeleton States ===== */
+.is-loading {
+    opacity: 0.6;
+    cursor: not-allowed;
+    pointer-events: none;
+    position: relative;
+}
+
+.is-loading::after {
+    content: '';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    margin-top: -7px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
+/* DUPLICATE @keyframes spin removed — defined at line 791 */
+
+.render-error {
+    padding: 12px 14px;
+    color: var(--red);
+    font-size: 12px;
+    text-align: center;
+    background: var(--red-soft);
+    border-radius: var(--r-md);
+    margin: 8px 0;
+}
+
+/* Skeleton loading states */
+/* UNUSED: .skeleton* classes not referenced in HTML or JS */
+.skeleton {
+    background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-hover) 50%, var(--bg-card) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s ease-in-out infinite;
+    border-radius: var(--r-sm);
+}
+
+@keyframes skeleton-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.skeleton-text { height: 14px; margin-bottom: 8px; }
+.skeleton-card { height: 80px; margin-bottom: 8px; border-radius: var(--r-md); }
+.skeleton-title { width: 70%; height: 16px; }
+.skeleton-price { width: 40%; height: 18px; }
+
+/* Recent searches section */
+.recent-section {
+    padding: 8px 12px;
+    margin-top: 4px;
+}
+
+.recent-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.recent-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.recent-clear {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: all 0.12s;
+    line-height: 1;
+}
+
+.recent-clear:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+}
+
+.recent-list {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+}
+
+.recent-list::-webkit-scrollbar {
+    display: none;
+}
+
+.recent-chip {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 9px 14px;
+    min-height: 36px;
+    font: 600 12px var(--font);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.12s;
+    flex-shrink: 0;
+}
+
+.recent-chip:hover {
+    border-color: var(--border-hover);
+    color: var(--text);
+    background: var(--bg-elevated);
+}
+
+.recent-chip:active {
+    transform: scale(0.97);
 }
