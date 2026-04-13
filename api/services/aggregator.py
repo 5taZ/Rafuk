@@ -287,6 +287,25 @@ def get_param(ad: dict[str, Any], name: str) -> str | None:
     return None
 
 
+def extract_category_distribution(ads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cat_map: dict[int, dict[str, Any]] = {}
+    for ad in ads:
+        raw_cat = ad.get("category")
+        try:
+            cat_id = int(raw_cat)
+        except (TypeError, ValueError):
+            continue
+        if cat_id not in cat_map:
+            label = None
+            for param in ad.get("ad_parameters", []):
+                if param.get("p") == "category":
+                    label = param.get("vl") or str(param.get("v", ""))
+                    break
+            cat_map[cat_id] = {"id": cat_id, "label": label or f"Категория {cat_id}", "count": 0}
+        cat_map[cat_id]["count"] += 1
+    return sorted(cat_map.values(), key=lambda x: x["count"], reverse=True)
+
+
 def compute_segments(ads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     condition_map = {"Новый": "new", "Б/у": "used"}
     seller_map = {"Частное лицо": "private", "Магазин": "shop"}

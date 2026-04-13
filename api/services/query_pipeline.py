@@ -81,13 +81,17 @@ async def load_query_dataset(
     settings: Settings,
     client_factory: type[SupportsSearchAllAds],
     search_kwargs: dict[str, Any] | None = None,
+    category: int | None = None,
 ) -> QueryDataset:
     client = client_factory(settings)
     try:
+        effective_kwargs = dict(search_kwargs or {})
+        if category is not None:
+            effective_kwargs["category"] = category
         response = await client.search_all_ads(
             query=query,
             currency=currency,
-            **(search_kwargs or {}),
+            **effective_kwargs,
         )
     finally:
         await client.aclose()
@@ -110,6 +114,7 @@ async def load_segment_datasets(
     settings: Settings,
     client_factory: type[SupportsSearchAllAds],
     parallel_search: SupportsParallelSearch,
+    category: int | None = None,
 ) -> dict[str, QueryDataset]:
     client = client_factory(settings)
     # Fetch by condition only (seller type filtered client-side)
@@ -121,6 +126,9 @@ async def load_segment_datasets(
         }
         for _, task_params in _API_CONDITION_TASKS
     ]
+    if category is not None:
+        for task in tasks:
+            task["category"] = category
 
     try:
         responses = await parallel_search(client, tasks, settings)

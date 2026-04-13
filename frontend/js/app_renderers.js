@@ -124,6 +124,7 @@ function createAppRenderers(context) {
         renderSegments,
         renderGeography,
         renderRecentSearches,
+        renderCategoryTabs,
     } = views;
 
     const {
@@ -187,6 +188,7 @@ function createAppRenderers(context) {
         segments: renderSegments,
         geography: renderGeography,
         recent: renderRecentSearches,
+        categories: renderCategoryTabs,
         listings: renderListings,
         deals: renderDeals,
         rates: renderRates,

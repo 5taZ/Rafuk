@@ -16,6 +16,7 @@ from api.limiter import limiter
 from api.schemas import PriceStatsResponse
 from api.services.aggregator import (
     build_query_key,
+    extract_category_distribution,
 )
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
@@ -35,12 +36,13 @@ async def get_price_stats(
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: str = "USD",
     strict_search: bool = False,
+    category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> PriceStatsResponse:
-    cache_key = f"price-stats:{query}:{currency}:{strict_search}"
+    cache_key = f"price-stats:{query}:{currency}:{strict_search}:{category}"
     cached = await cache.get_json(cache_key)
     if cached:
         return PriceStatsResponse(**cached)
@@ -51,6 +53,7 @@ async def get_price_stats(
         strict_search=strict_search,
         settings=settings,
         client_factory=KufarClient,
+        category=category,
     )
     stats = dataset.price_stats
     rates_payload = await currency_service.get_rates()
@@ -62,6 +65,7 @@ async def get_price_stats(
     )
     converted.pop("count", None)
     insights = analyze_query_text(query)
+    category_distribution = extract_category_distribution(dataset.ads)
     payload = PriceStatsResponse(
         query=query,
         currency=currency,
@@ -74,6 +78,7 @@ async def get_price_stats(
         analyzed_count=stats.count,
         fair_price_from=converted.get("q1"),
         fair_price_to=converted.get("q3"),
+        categories=category_distribution,
         **converted,
     )
     async with session_factory() as session:

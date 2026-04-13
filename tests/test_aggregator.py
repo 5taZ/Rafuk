@@ -9,6 +9,7 @@ from api.services.aggregator import (
     compute_price_stats,
     compute_price_vs_median,
     compute_segments,
+    extract_category_distribution,
     extract_prices,
     filter_deal_ads,
     is_strict_match,
@@ -97,3 +98,40 @@ def test_build_query_key_separates_modes() -> None:
 def test_normalize_search_text_supports_reseller_aliases() -> None:
     assert normalize_search_text("айфон 15 про макс 256гб") == "iphone 15 pro max 256"
     assert normalize_search_text("пс5 слим 1 тб") == "ps5 slim 1024"
+
+
+def test_extract_category_distribution_single_category() -> None:
+    ads = [
+        {"category": "2010", "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}]},
+        {"category": "2010", "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}]},
+    ]
+    result = extract_category_distribution(ads)
+    assert len(result) == 1
+    assert result[0]["id"] == 2010
+    assert result[0]["label"] == "Легковые авто"
+    assert result[0]["count"] == 2
+
+
+def test_extract_category_distribution_multiple_categories() -> None:
+    ads = [
+        {"category": "2010", "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}]},
+        {"category": "2040", "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}]},
+        {"category": "2040", "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}]},
+        {"category": "2040", "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}]},
+    ]
+    result = extract_category_distribution(ads)
+    assert len(result) == 2
+    assert result[0]["id"] == 2040  # sorted by count desc
+    assert result[0]["count"] == 3
+    assert result[1]["id"] == 2010
+    assert result[1]["count"] == 1
+
+
+def test_extract_category_distribution_no_category_field() -> None:
+    ads = [
+        {"ad_id": 1, "ad_parameters": []},
+        {"category": "2010", "ad_parameters": [{"p": "category", "v": "2010", "vl": "Cars"}]},
+    ]
+    result = extract_category_distribution(ads)
+    assert len(result) == 1
+    assert result[0]["count"] == 1

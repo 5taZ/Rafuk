@@ -85,6 +85,9 @@ function createApiCore(context) {
             currency: state.currency,
             strict_search: String(state.strictSearch),
         });
+        if (state.category != null) {
+            query.set("category", String(state.category));
+        }
 
         for (const [key, value] of Object.entries(params)) {
             if (value == null || value === "") {

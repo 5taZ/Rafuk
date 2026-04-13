@@ -23,11 +23,12 @@ async def get_geography(
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: str = "BYN",
     strict_search: bool = False,
+    category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
 ) -> GeographyResponse:
-    cache_key = f"geography:{query}:{currency}:{strict_search}"
+    cache_key = f"geography:{query}:{currency}:{strict_search}:{category}"
     cached = await cache.get_json(cache_key)
     if cached:
         return GeographyResponse(**cached)
@@ -38,6 +39,7 @@ async def get_geography(
         strict_search=strict_search,
         settings=settings,
         client_factory=KufarClient,
+        category=category,
     )
     grouped: dict[int, list[dict]] = defaultdict(list)
     for ad in dataset.ads:

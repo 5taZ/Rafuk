@@ -62,6 +62,29 @@ function createRenderViews(context) {
 
     /* ===== Sort / Discount / Filter buttons ===== */
 
+    function renderCategoryTabs() {
+        return safeRender('renderCategoryTabs', () => {
+            const container = elements.categoryRow;
+            if (!container) return;
+
+            if (!state.categories.length || state.categories.length <= 1) {
+                container.hidden = true;
+                container.innerHTML = "";
+                return;
+            }
+
+            container.hidden = false;
+            const totalCount = state.categories.reduce((sum, cat) => sum + cat.count, 0);
+
+            let html = `<button class="s-tab ${state.category == null ? 'active' : ''}" data-category="" type="button">Все (${totalCount})</button>`;
+            for (const cat of state.categories) {
+                const isActive = state.category === cat.id;
+                html += `<button class="s-tab ${isActive ? 'active' : ''}" data-category="${cat.id}" type="button">${escapeHtml(cat.label)} (${cat.count})</button>`;
+            }
+            container.innerHTML = html;
+        });
+    }
+
     function renderSortButtons() {
         for (const button of elements.sortButtons) {
             button.classList.toggle("active", button.dataset.sort === state.sort);
@@ -441,5 +464,6 @@ function createRenderViews(context) {
         renderSegments,
         renderGeography,
         renderRecentSearches,
+        renderCategoryTabs,
     };
 }

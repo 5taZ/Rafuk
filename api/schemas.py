@@ -14,6 +14,12 @@ class ExpenseTypeEnum(StrEnum):
     other = "other"
 
 
+class CategoryBucket(BaseModel):
+    id: int
+    label: str
+    count: int
+
+
 class PriceStatsResponse(BaseModel):
     query: str
     currency: str
@@ -32,6 +38,7 @@ class PriceStatsResponse(BaseModel):
     analyzed_count: int = 0
     fair_price_from: float | None = None
     fair_price_to: float | None = None
+    categories: list[CategoryBucket] = Field(default_factory=list)
 
 
 class FlipEstimate(BaseModel):

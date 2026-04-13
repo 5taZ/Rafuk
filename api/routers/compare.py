@@ -48,6 +48,7 @@ async def _build_compare_item(
     *,
     currency: str,
     strict_search: bool,
+    category: int | None,
     settings: Settings,
     currency_service: CurrencyService,
     session_factory: async_sessionmaker[AsyncSession],
@@ -58,6 +59,7 @@ async def _build_compare_item(
         strict_search=strict_search,
         settings=settings,
         client_factory=KufarClient,
+        category=category,
     )
     duplicate_index = duplicate_counts(dataset.ads)
     rates_payload = await currency_service.get_rates()
@@ -117,6 +119,7 @@ async def compare_queries(
     compare_query: list[str] | None = Query(default=None, description="Queries to compare"),
     currency: str = "BYN",
     strict_search: bool = False,
+    category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
     currency_service: CurrencyService = Depends(get_currency_service),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
@@ -129,6 +132,7 @@ async def compare_queries(
                 query,
                 currency=currency,
                 strict_search=strict_search,
+                category=category,
                 settings=settings,
                 currency_service=currency_service,
                 session_factory=session_factory,

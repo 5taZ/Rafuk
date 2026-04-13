@@ -298,6 +298,28 @@ function createApiEvents(context) {
             });
         }
 
+        // ── Category filter tabs (event delegation) ───────────────────
+        elements.categoryRow?.addEventListener("click", (event) => {
+            const button = event.target.closest("[data-category]");
+            if (!button) return;
+
+            const rawValue = button.dataset.category;
+            const newCategory = rawValue === "" ? null : Number(rawValue);
+
+            if (newCategory === state.category) return;
+
+            state.category = newCategory;
+            renderAll();
+
+            if (state.query.trim()) {
+                void search(state.activeView);
+            }
+
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred("light");
+            }
+        });
+
         // ── Discount buttons ─────────────────────────────────────────
         for (const button of elements.discountButtons || []) {
             button.addEventListener("click", () => {

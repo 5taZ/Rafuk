@@ -23,11 +23,12 @@ async def get_listing_detail(
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: str = "BYN",
     strict_search: bool = False,
+    category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
 ) -> ListingDetailResponse:
-    cache_key = f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}"
+    cache_key = f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}:{category}"
     cached = await cache.get_json(cache_key)
     if cached:
         return ListingDetailResponse(**cached)
@@ -38,6 +39,7 @@ async def get_listing_detail(
         strict_search=strict_search,
         settings=settings,
         client_factory=KufarClient,
+        category=category,
     )
     ad = next((item for item in dataset.ads if int(item.get("ad_id", 0)) == ad_id), None)
     if ad is None:

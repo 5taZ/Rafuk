@@ -47,6 +47,11 @@ function createApiListings(context) {
         state.detailImageIndex = 0;
     }
 
+    function resetCategoryFilter() {
+        state.category = null;
+        state.categories = [];
+    }
+
     // ── Load price history (standalone) ──────────────────────────────────
     async function loadHistory() {
         if (!state.query) {
@@ -311,16 +316,23 @@ function createApiListings(context) {
     // ── Search orchestration ─────────────────────────────────────────────
     async function search(target = "overview") {
         const query = elements.searchInput.value.trim();
+        const queryChanged = query !== state.query;
         state.query = query;
         state.error = null;
         state.comparisonStats = null;
 
         if (!query) {
             clearSearchData();
+            resetCategoryFilter();
             state.loading = false;
             context.focusTarget("overview");
             renderAll();
             return;
+        }
+
+        // Reset category filter when query text changes
+        if (queryChanged) {
+            resetCategoryFilter();
         }
 
         context.focusTarget(target);
@@ -339,7 +351,11 @@ function createApiListings(context) {
 
             state.stats = stats;
             state.loading = false;
-            markDirty('loading', 'stats', 'summary', 'helper');
+            // Cache categories: use unfiltered list when available, keep existing when filtered
+            if (stats.categories && stats.categories.length > 1) {
+                state.categories = stats.categories;
+            }
+            markDirty('loading', 'stats', 'summary', 'helper', 'categories');
             renderAll();
             loadSearchDependencies(requestId);
 
@@ -394,6 +410,7 @@ function createApiListings(context) {
         openListingDetail,
         loadSearchDependencies,
         clearSearchData,
+        resetCategoryFilter,
         loadHistory,
         loadDetailRisks,
     };

@@ -8,6 +8,8 @@ function createAppCore() {
         comparisonLoading: false,
         historyDays: 7,
         currency: "BYN", // always BYN — USD toggle removed
+        category: null, // selected category id (int or null)
+        categories: [], // category distribution from last search [{id, label, count}]
         searchRequestId: 0,
         sort: "newest",
         discountFromPercent: 10,
@@ -211,6 +213,7 @@ function createAppCore() {
         elements.recentSection = document.getElementById("recent-section");
         elements.recentList = document.getElementById("recent-list");
         elements.recentClearBtn = document.getElementById("recent-clear-btn");
+        elements.categoryRow = document.getElementById("category-row");
         elements.currencyButtons = {}; // removed USD toggle
         elements.editTrackerModal = document.getElementById("edit-tracker-modal");
         elements.editTrackerQuery = document.getElementById("edit-tracker-query");

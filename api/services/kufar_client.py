@@ -54,6 +54,7 @@ class KufarClient:
         region: int | None = None,
         condition: str | None = None,
         seller_type: str | None = None,
+        category: int | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "query": query,
@@ -67,6 +68,8 @@ class KufarClient:
             params["rgn"] = region
         if condition:
             params["cnd"] = condition
+        if category is not None:
+            params["cat"] = category
         # NOTE: Kufar API no longer accepts the "otype" parameter (422 since 2026).
         # Seller type filtering is done client-side after fetching results.
 
@@ -109,6 +112,7 @@ class KufarClient:
         region: int | None = None,
         condition: str | None = None,
         seller_type: str | None = None,
+        category: int | None = None,
     ) -> dict[str, Any]:
         response = await self.search(
             query=query,
@@ -117,6 +121,7 @@ class KufarClient:
             sort=sort,
             region=region,
             condition=condition,
+            category=category,
         )
         ads = list(response.get("ads", []))
         total = self.extract_total(response) or len(ads)
@@ -134,6 +139,7 @@ class KufarClient:
                 cursor=cursor,
                 region=region,
                 condition=condition,
+                category=category,
             )
             ads.extend(page.get("ads", []))
             cursor = self.extract_next_cursor(page)

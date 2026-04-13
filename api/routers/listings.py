@@ -31,6 +31,7 @@ async def get_listings(
     discount_percent: float = 10.0,
     discount_from_percent: float | None = None,
     discount_to_percent: float | None = None,
+    category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
@@ -45,7 +46,7 @@ async def get_listings(
 
     cache_key = (
         f"listings:{query}:{sort}:{currency}:{discount_percent}:"
-        f"{effective_from}:{effective_to}:{strict_search}"
+        f"{effective_from}:{effective_to}:{strict_search}:{category}"
     )
     cached = await cache.get_json(cache_key)
     if cached:
@@ -57,6 +58,7 @@ async def get_listings(
         strict_search=strict_search,
         settings=settings,
         client_factory=KufarClient,
+        category=category,
     )
     median_byn = dataset.price_stats.median
     duplicate_index = duplicate_counts(dataset.ads)
