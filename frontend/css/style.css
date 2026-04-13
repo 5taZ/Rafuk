@@ -2079,6 +2079,8 @@ body {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    content-visibility: auto;
+    contain-intrinsic-height: 140px;
 }
 
 .listing:hover {
@@ -4270,8 +4272,9 @@ body {
     border-radius: var(--r-lg);
     padding: 12px;
     transition: all 0.2s;
-    /* margin-bottom removed — container .tracker-events-list uses gap: 8px */
     position: relative;
+    content-visibility: auto;
+    contain-intrinsic-height: 160px;
 }
 
 .tracker-event-card:hover {

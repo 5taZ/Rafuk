@@ -6,7 +6,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
-    Float,
+    JSON,    Float,
     ForeignKey,
     Index,
     Integer,
@@ -15,7 +15,6 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -294,7 +293,7 @@ class TrackerEvent(Base, UserIDMixin):
     delta_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Enriched metadata
     thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    parameters: Mapped[dict | None] = mapped_column(postgresql.JSONB, nullable=True)
+    parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

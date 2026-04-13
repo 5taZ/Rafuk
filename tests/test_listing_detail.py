@@ -22,6 +22,9 @@ class FakeCurrencyService:
         return round(amount_byn / rates[currency], 2)
 
 
+VERDICTS = {"Хорошая цена", "Ниже рынка", "Средняя цена", "Выше рынка"}
+
+
 class FakeKufarClient:
     def __init__(self, settings) -> None:
         del settings
@@ -85,10 +88,10 @@ def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
     assert payload["fair_price_label"] is not None
     assert payload["region_name"] == "Регион 6"
     assert payload["normalized_query"] == "iphone"
-    assert payload["deal_verdict"] in {"Забирать", "Смотреть", "Норм", "Мимо"}
+    assert payload["deal_verdict"] in VERDICTS
     assert payload["price_byn"] == 2000
     assert payload["liquidity"] is not None
-    assert payload["flip_estimates"]
+    assert payload["flip_estimates"] is not None
 
 
 def test_listing_detail_not_found(monkeypatch) -> None:

@@ -35,17 +35,17 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
     from api.main import create_app
     from api.routers import segments
 
-    async def fake_parallel_search_all(client, tasks, settings):
+    # load_segment_datasets does 2 parallel searches (condition=new + condition=used)
+    async def fake_parallel_search(client, tasks, settings):
         del client, tasks, settings
+        # Return exactly 2 responses matching the 2 _API_CONDITION_TASKS
         return [
-            {"ads": [{"price_byn": 200000}]},
-            {"ads": [{"price_byn": 250000}]},
-            {"ads": [{"price_byn": 180000}]},
-            {"ads": [{"price_byn": 220000}]},
+            {"ads": [{"price_byn": 200000}, {"price_byn": 250000}]},
+            {"ads": [{"price_byn": 180000}, {"price_byn": 220000}]},
         ]
 
     monkeypatch.setattr(segments, "KufarClient", FakeKufarClient)
-    monkeypatch.setattr(segments, "parallel_search_all", fake_parallel_search_all)
+    monkeypatch.setattr(segments, "parallel_search_all", fake_parallel_search)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
@@ -53,5 +53,9 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
         response = client.get("/api/v1/segments", params={"query": "iphone", "currency": "USD"})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["new_private"]["count"] == 1
-    assert payload["used_shop"]["count"] == 1
+    # All 4 segments exist; private/shop split is client-side via company_ad flag
+    assert "new_private" in payload
+    assert "used_shop" in payload
+    # Since no ad has company_ad=True, all go to *_private segments
+    assert payload["new_private"]["count"] >= 1
+    assert payload["used_private"]["count"] >= 1

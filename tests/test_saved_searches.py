@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
 
+VERDICTS = {"Хорошая цена", "Ниже рынка", "Средняя цена", "Выше рынка"}
+
 
 def fake_telegram_user() -> TelegramInitData:
     return TelegramInitData(user_id=123456, first_name="Test", raw={})
@@ -108,7 +110,7 @@ def test_saved_searches_crud_and_board(monkeypatch) -> None:
         board = board_response.json()
         assert board["items"]
         assert board["items"][0]["saved_search_id"] == created["id"]
-        assert board["items"][0]["listing"]["deal_verdict"] in {"Забирать", "Смотреть", "Норм", "Мимо"}
+        assert board["items"][0]["listing"]["deal_verdict"] in VERDICTS
         assert "top_price_drops" in board
         assert "market_signals" in board
 

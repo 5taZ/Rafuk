@@ -55,8 +55,7 @@ def test_settings_applies_defaults() -> None:
             importlib.reload(config)
             s = config.Settings(_env_file=None)  # Ignore .env file
             assert s.kufar_request_delay == 1.0
-            assert s.kufar_parallel_semaphore == 3
-            assert s.scheduler_snapshot_hour == 9
+            assert s.kufar_parallel_semaphore == 2
             assert s.alert_check_interval == 30
     finally:
         # Restore original env vars

@@ -146,9 +146,7 @@ function createRenderCards(context) {
                 return false;
             }
 
-            // Virtual scrolling disabled for listings — cards have variable heights
-            // due to badges, tags, and dynamic content
-            // Re-enable only when cards have consistent fixed heights
+            // Cards use CSS content-visibility: auto for off-screen rendering skip
             for (const item of items) {
                 container.appendChild(buildListingNode(item));
             }

@@ -34,6 +34,7 @@ def mock_settings() -> MagicMock:
     settings.kufar_request_delay = 0.0
     settings.kufar_parallel_semaphore = 3
     settings.kufar_timeout = 15.0
+    settings.kufar_max_ads_per_query = 5000
     return settings
 
 

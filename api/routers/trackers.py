@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, func, select
@@ -70,7 +70,7 @@ async def get_trackers(
             .order_by(Tracker.created_at.desc(), Tracker.id.desc())
         )
         trackers = list(result.scalars())
-        
+
         # Enrich trackers with event statistics
         enriched_trackers = []
         for tracker in trackers:
@@ -78,22 +78,33 @@ async def get_trackers(
             stats_result = await session.execute(
                 select(
                     func.count(TrackerEvent.id).label('total_events'),
-                    func.count(TrackerEvent.id).filter(TrackerEvent.event_type == 'new_listing').label('new_listings'),
-                    func.count(TrackerEvent.id).filter(TrackerEvent.event_type == 'price_drop').label('price_drops'),
+                    func.count(TrackerEvent.id)
+                    .filter(TrackerEvent.event_type == 'new_listing')
+                    .label('new_listings'),
+                    func.count(TrackerEvent.id)
+                    .filter(TrackerEvent.event_type == 'price_drop')
+                    .label('price_drops'),
                     func.max(TrackerEvent.created_at).label('last_event_at')
                 ).where(TrackerEvent.tracker_id == tracker.id)
             )
             stats = stats_result.one()
-            
+
             # Calculate average events per day
             now = datetime.now(UTC)
             days_active = 1
             if tracker.created_at:
-                delta = now - tracker.created_at.replace(tzinfo=UTC) if tracker.created_at.tzinfo is None else now - tracker.created_at
+                if tracker.created_at.tzinfo is None:
+                    delta = now - tracker.created_at.replace(tzinfo=UTC)
+                else:
+                    delta = now - tracker.created_at
                 days_active = max(1, delta.total_seconds() / 86400)
-            
-            avg_events_per_day = round(stats.total_events / days_active, 2) if stats.total_events > 0 else 0.0
-            
+
+            avg_events_per_day = (
+                round(stats.total_events / days_active, 2)
+                if stats.total_events > 0
+                else 0.0
+            )
+
             # Create enriched response
             tracker_dict = TrackerRead.model_validate(tracker)
             tracker_dict.event_count = stats.total_events
@@ -102,7 +113,7 @@ async def get_trackers(
             tracker_dict.last_event_at = stats.last_event_at
             tracker_dict.avg_events_per_day = avg_events_per_day
             enriched_trackers.append(tracker_dict)
-        
+
         return enriched_trackers
 
 
@@ -215,12 +226,12 @@ async def update_tracker(
         tracker = result.scalar_one_or_none()
         if tracker is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
-        
+
         # Update only provided fields
         update_data = payload.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(tracker, field, value)
-        
+
         await session.commit()
         await session.refresh(tracker)
         return TrackerRead.model_validate(tracker)
@@ -246,7 +257,7 @@ async def pause_tracker(
         tracker = result.scalar_one_or_none()
         if tracker is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
-        
+
         tracker.paused = True
         tracker.paused_at = datetime.now(UTC)
         await session.commit()
@@ -274,7 +285,7 @@ async def resume_tracker(
         tracker = result.scalar_one_or_none()
         if tracker is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
-        
+
         tracker.paused = False
         tracker.paused_at = None
         tracker.pause_reason = None

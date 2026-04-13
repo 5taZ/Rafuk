@@ -38,7 +38,9 @@ function createApiListings(context) {
         state.segments = null;
         state.geography = [];
         state.listings = [];
+        state._listingsLoadedAt = 0;
         state.dealListings = [];
+        state._dealsLoadedAt = 0;
         state.comparisonStats = null;
         state.comparisonItems = [];
         state.detail = null;
@@ -134,12 +136,19 @@ function createApiListings(context) {
         }
     }
 
+    // Cache TTL: skip reload if data was fetched within this window (ms)
+    const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
     // ── Load listings (ads view) ─────────────────────────────────────────
-    async function loadListings() {
+    async function loadListings(force) {
         if (!state.query) {
             state.listings = [];
             markDirty('listings');
             renderAll();
+            return;
+        }
+        // Skip reload if data is fresh and same sort
+        if (!force && state.listings.length && Date.now() - state._listingsLoadedAt < CACHE_TTL) {
             return;
         }
 
@@ -148,6 +157,7 @@ function createApiListings(context) {
                 `/api/v1/listings?${buildCommonQuery({ sort: state.sort })}`
             );
             state.listings = payload.listings || [];
+            state._listingsLoadedAt = Date.now();
             state.error = null;
         } catch (error) {
             state.listings = [];
@@ -160,11 +170,15 @@ function createApiListings(context) {
     }
 
     // ── Load deals (cheap view) ──────────────────────────────────────────
-    async function loadDeals() {
+    async function loadDeals(force) {
         if (!state.query) {
             state.dealListings = [];
             markDirty('deals');
             renderAll();
+            return;
+        }
+        // Skip reload if data is fresh and same discount range
+        if (!force && state.dealListings.length && Date.now() - state._dealsLoadedAt < CACHE_TTL) {
             return;
         }
 
@@ -177,6 +191,7 @@ function createApiListings(context) {
                 })}`
             );
             state.dealListings = payload.listings || [];
+            state._dealsLoadedAt = Date.now();
             state.error = null;
         } catch (error) {
             state.dealListings = [];

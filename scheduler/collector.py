@@ -2,16 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-
-# Configure logging for the scheduler process
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
@@ -41,6 +33,13 @@ from api.services.kufar_client import KufarClient
 from api.services.market_signals import duplicate_counts
 from api.services.reseller_tools import matches_tracker_filters
 from bot.keyboards import tracker_alert_keyboard
+
+# Configure logging for the scheduler process (after imports, before usage)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 logger = logging.getLogger(__name__)
 

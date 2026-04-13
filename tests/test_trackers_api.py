@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import TrackerEvent
+from api.models import TrackerEvent, User
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -62,10 +62,18 @@ def test_trackers_crud() -> None:
 
 async def seed_tracker_event(session_factory) -> None:
     async with session_factory() as session:
+        # Create user with telegram_user_id matching the fake auth
+        from api.services.workflow_store import ensure_user
+
+        user_id = await ensure_user(
+            session, telegram_user_id=123456, first_name="Test"
+        )
+        await session.commit()
+
         session.add(
             TrackerEvent(
                 tracker_id=1,
-                user_id=123456,
+                user_id=user_id,
                 ad_id=1,
                 query="iphone 15",
                 strict_mode=True,
