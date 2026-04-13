@@ -37,14 +37,14 @@ class FakeKufarClient:
                 {
                     "ad_id": 1,
                     "subject": "iPhone 16",
-                    "price_byn": 240000,
+                    "price_byn": 2400,
                     "ad_link": "https://www.kufar.by/item/1",
                     "list_time": "2026-04-01T10:00:00",
                 },
                 {
                     "ad_id": 2,
                     "subject": "iPhone 16 Pro",
-                    "price_byn": 260000,
+                    "price_byn": 2600,
                     "ad_link": "https://www.kufar.by/item/2",
                     "list_time": "2026-04-01T11:00:00",
                 },

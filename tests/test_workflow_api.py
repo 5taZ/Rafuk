@@ -21,7 +21,7 @@ class FakeKufarClient:
                 {
                     "ad_id": 101,
                     "subject": "iPhone 15 128GB",
-                    "price_byn": 180000,
+                    "price_byn": 1800,
                     "ad_link": "https://www.kufar.by/item/101",
                     "list_time": "2026-04-06T10:00:00",
                     "region_id": 6,
@@ -30,7 +30,7 @@ class FakeKufarClient:
                 {
                     "ad_id": 102,
                     "subject": "iPhone 15 128GB",
-                    "price_byn": 195000,
+                    "price_byn": 1950,
                     "ad_link": "https://www.kufar.by/item/102",
                     "list_time": "2026-04-05T10:00:00",
                     "region_id": 6,

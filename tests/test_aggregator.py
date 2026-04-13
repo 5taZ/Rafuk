@@ -20,7 +20,7 @@ from api.services.aggregator import (
 def test_extract_prices_filters_zero_and_anomalies(sample_ads: list[dict[str, object]]) -> None:
     prices = extract_prices(sample_ads)
     assert 0.0 not in prices
-    assert 150000.0 not in prices
+    assert 150000.0 not in prices  # anomaly filtered
     assert len(prices) == 4
 
 
@@ -41,27 +41,27 @@ def test_compute_price_stats_empty_returns_zeros() -> None:
 
 
 def test_compute_price_vs_median_above() -> None:
-    result = compute_price_vs_median({"price_byn": 250000}, 2000.0)
+    result = compute_price_vs_median({"price_byn": 2500}, 20.0)
     assert result == pytest.approx(25.0)
 
 
 def test_sort_listings_newest_first(sample_ads: list[dict[str, object]]) -> None:
-    result = sort_listings(sample_ads[:4], "newest", 2000.0)
+    result = sort_listings(sample_ads[:4], "newest", 20.0)
     assert result[0]["ad_id"] == 2
 
 
 def test_sort_listings_near_median(sample_ads: list[dict[str, object]]) -> None:
-    result = sort_listings(sample_ads[:4], "near_median", 2100.0)
+    result = sort_listings(sample_ads[:4], "near_median", 21.0)
     assert result[0]["ad_id"] in (1, 2)
 
 
 def test_filter_deal_ads_respects_discount_threshold(sample_ads: list[dict[str, object]]) -> None:
-    result = filter_deal_ads(sample_ads[:4], 2200.0, 10.0)
+    result = filter_deal_ads(sample_ads[:4], 22.0, 10.0)
     assert [item["ad_id"] for item in result] == [4]
 
 
 def test_filter_deal_ads_supports_discount_range(sample_ads: list[dict[str, object]]) -> None:
-    result = filter_deal_ads(sample_ads[:4], 2200.0, 5.0, 10.0)
+    result = filter_deal_ads(sample_ads[:4], 22.0, 5.0, 10.0)
     assert [item["ad_id"] for item in result] == [1]
 
 

@@ -194,43 +194,6 @@ function createAppActions(context) {
         // View / focus helpers are injected above as context.setActiveView, context.focusTarget
     });
 
-    // ── Currency switcher (must be defined BEFORE createApiEvents) ───────
-    /**
-     * Switches the display currency and refreshes all loaded data.
-     * Persists the preference to localStorage and re-fetches prices if a query is active.
-     *
-     * @param {'BYN'|'USD'} currency - The target currency code
-     * @returns {Promise<void>}
-     */
-    async function setCurrency(currency) {
-        if (!currency || state.currency === currency) {
-            return;
-        }
-
-        state.currency = currency;
-
-        // Persist currency preference
-        if (context.saveCurrency) {
-            context.saveCurrency();
-        }
-
-        if (state.query.trim()) {
-            listings.clearSearchData();
-            state.loading = true;
-            markDirty('currency', 'loading');
-            renderAll();
-            await listings.search(state.activeView);
-            return;
-        }
-
-        markDirty('currency', 'rates');
-        renderAll();
-        await core.loadRates();
-    }
-
-    // Add to context BEFORE createApiEvents so it can be destructured
-    context.setCurrency = setCurrency;
-
     // ── Wire events module (needs all action functions on context) ────────
     const events = createApiEvents(context);
 
@@ -470,7 +433,6 @@ function createAppActions(context) {
         openOpportunityQuery,
         openOpportunityDetail,
         openListingDetail: listings.openListingDetail,
-        setCurrency,
         applyLaunchParams,
         loadExpenses,
         createExpense,

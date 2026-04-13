@@ -151,7 +151,8 @@ def normalize_price_byn(raw_price: Any) -> float | None:
         return None
     if numeric <= 0:
         return None
-    price_byn = numeric / KOPECKS
+    # Kufar API returns prices in kopecks — convert to BYN
+    price_byn = round(numeric / 100, 2)
     if price_byn > MAX_PRICE_BYN:
         return None
     if price_byn < MIN_PRICE_BYN:

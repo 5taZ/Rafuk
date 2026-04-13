@@ -40,7 +40,7 @@ class FakeKufarClient:
                 {
                     "ad_id": 1,
                     "subject": "iPhone 15 256GB",
-                    "price_byn": 180000,
+                    "price_byn": 1800,
                     "ad_link": "https://www.kufar.by/item/1",
                     "list_time": "2026-04-06T10:00:00",
                     "region_id": 6,
@@ -49,7 +49,7 @@ class FakeKufarClient:
                 {
                     "ad_id": 2,
                     "subject": "iPhone 15 256GB",
-                    "price_byn": 198000,
+                    "price_byn": 1980,
                     "ad_link": "https://www.kufar.by/item/2",
                     "list_time": "2026-04-06T09:00:00",
                     "region_id": 6,
@@ -58,7 +58,7 @@ class FakeKufarClient:
                 {
                     "ad_id": 3,
                     "subject": "iPhone 15 256GB",
-                    "price_byn": 225000,
+                    "price_byn": 2250,
                     "ad_link": "https://www.kufar.by/item/3",
                     "list_time": "2026-04-05T09:00:00",
                     "region_id": 6,

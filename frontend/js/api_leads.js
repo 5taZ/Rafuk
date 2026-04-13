@@ -95,10 +95,15 @@ function createApiLeads(context) {
             return;
         }
 
+        // Convert USD input to BYN for storage
+        const rate = state.usdRateByn || 1;
+        const buyPriceByn = state.currency === "USD" ? Math.round(buyPriceNum * rate) : buyPriceNum;
+        const soldPriceByn = state.currency === "USD" ? Math.round(soldPriceNum * rate) : soldPriceNum;
+
         try {
             const payload = {
-                buy_price_byn: buyPriceNum,
-                sold_price_byn: soldPriceNum,
+                buy_price_byn: buyPriceByn,
+                sold_price_byn: soldPriceByn,
                 status: "sold",
             };
 
@@ -110,16 +115,18 @@ function createApiLeads(context) {
 
             const leadInState = state.leads.find((l) => l.id === lead.id);
             if (leadInState) {
-                leadInState.buy_price_byn = buyPriceNum;
-                leadInState.sold_price_byn = soldPriceNum;
+                leadInState.buy_price_byn = buyPriceByn;
+                leadInState.sold_price_byn = soldPriceByn;
                 leadInState.status = "sold";
             }
 
             renderLeads();
 
-            const profit = soldPriceNum - buyPriceNum;
-            const profitSign = profit >= 0 ? "+" : "";
-            showToast(`✓ Сделка подтверждена! ${profitSign}${Math.round(profit)} BYN`, "success");
+            // Calculate profit in display currency
+            const profitDisplay = state.currency === "USD" ? soldPriceNum - buyPriceNum : soldPriceByn - buyPriceByn;
+            const profitSign = profitDisplay >= 0 ? "+" : "";
+            const currencySymbol = state.currency === "USD" ? "$" : "BYN";
+            showToast(`✓ Сделка подтверждена! ${profitSign}${Math.round(profitDisplay)} ${currencySymbol}`, "success");
 
             setTimeout(() => {
                 const updatedCard = elements.leadInboxList?.querySelector(
@@ -149,9 +156,15 @@ function createApiLeads(context) {
     async function closeDeal(leadId) {
         try {
             const lead = state.leads.find((l) => l.id === leadId);
-            const buyPrice = lead?.buy_price_byn || 0;
-            const soldPrice = lead?.sold_price_byn || 0;
-            const profit = soldPrice - buyPrice;
+            const buyPriceByn = lead?.buy_price_byn || 0;
+            const soldPriceByn = lead?.sold_price_byn || 0;
+            
+            // Calculate profit in display currency
+            const rate = state.usdRateByn || 1;
+            const currencySymbol = state.currency === "USD" ? "$" : "BYN";
+            const buyPriceDisplay = state.currency === "USD" ? buyPriceByn / rate : buyPriceByn;
+            const soldPriceDisplay = state.currency === "USD" ? soldPriceByn / rate : soldPriceByn;
+            const profit = soldPriceDisplay - buyPriceDisplay;
 
             await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
@@ -164,10 +177,11 @@ function createApiLeads(context) {
             }
             renderLeads();
 
+            const profitSign = profit >= 0 ? "+" : "";
             if (profit >= 0) {
-                showToast(`✓ Сделка закрыта. Прибыль: +${Math.round(profit)} BYN`);
+                showToast(`✓ Сделка закрыта. Прибыль: ${profitSign}${Math.round(profit)} ${currencySymbol}`);
             } else {
-                showToast(`✓ Сделка закрыта. Убыль: ${Math.round(profit)} BYN`);
+                showToast(`✓ Сделка закрыта. Убыль: ${Math.round(profit)} ${currencySymbol}`);
             }
         } catch (error) {
             showToast(error.message || "Не удалось закрыть сделку");
@@ -249,25 +263,34 @@ function createApiLeads(context) {
             return;
         }
 
+        // Convert USD input to BYN for storage
+        const rate = state.usdRateByn || 1;
+        const soldPriceByn = state.currency === "USD" ? Math.round(priceNum * rate) : priceNum;
+
         await requestJson(`/api/v1/leads/${lead.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 status: "sold",
-                sold_price_byn: priceNum,
+                sold_price_byn: soldPriceByn,
             }),
         });
 
         const leadInState = state.leads.find((l) => l.id === lead.id);
         if (leadInState) {
             leadInState.status = "sold";
-            leadInState.sold_price_byn = priceNum;
+            leadInState.sold_price_byn = soldPriceByn;
         }
         renderLeads();
 
-        const profit = priceNum - (lead.price_byn || 0);
+        // Calculate profit in display currency
+        const priceDisplay = state.currency === "USD" ? priceNum : soldPriceByn;
+        const priceBynRaw = lead.price_byn || 0;
+        const priceDisplayBase = state.currency === "USD" ? priceBynRaw / rate : priceBynRaw;
+        const profit = priceDisplay - priceDisplayBase;
         const profitSign = profit >= 0 ? "+" : "";
-        showToast(`✓ Сделка продана! Прибыль: ${profitSign}${Math.round(profit)} BYN`);
+        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
+        showToast(`✓ Сделка продана! Прибыль: ${profitSign}${Math.round(profit)} ${currencySymbol}`);
     }
 
     // ── Open lead detail modal ───────────────────────────────────────────

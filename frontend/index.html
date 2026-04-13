@@ -45,15 +45,6 @@
                 <img class="logo-mark" src="/assets/logo.jpg" alt="Rafuks logo">
                 <span class="logo-name">Rafuks</span>
             </div>
-            <div class="currency-toggle">
-                <button class="cur-btn active" id="btn-byn" type="button" aria-label="Переключить валюту на BYN">BYN</button>
-                <button class="cur-btn" id="btn-usd" type="button" aria-label="Переключить валюту на USD">USD</button>
-            </div>
-        </div>
-        <div class="rate-strip" id="rate-strip" hidden>
-            <span class="rate-label">Курс НБРБ</span>
-            <span class="rate-meta">1 USD =</span>
-            <span class="rate-value mono" id="usd-rate-value">—</span>
         </div>
     </header>
 
@@ -365,7 +356,7 @@
                         <span>Макс. цена</span>
                         <div class="deal-range-input-wrap">
                             <input id="tracker-max-price-input" type="number" min="0" step="1" inputmode="numeric" placeholder="необязательно">
-                            <span>BYN</span>
+                            <span id="tracker-max-price-currency">BYN</span>
                         </div>
                     </label>
                 </div>
@@ -610,7 +601,7 @@
                         <span class="workflow-field-label">Сумма</span>
                         <div class="deal-range-input-wrap workflow-input-wrap">
                             <input id="expense-amount-input" type="number" min="0" step="1" inputmode="numeric" placeholder="50">
-                            <span>BYN</span>
+                            <span id="expense-currency-label">BYN</span>
                         </div>
                     </label>
                     <label class="workflow-field workflow-field-wide">
@@ -662,7 +653,7 @@
                             <span class="form-field-label">Макс. цена</span>
                             <div class="deal-range-input-wrap">
                                 <input id="edit-max-price-input" type="number" min="0" step="1" inputmode="numeric" placeholder="необязательно">
-                                <span>BYN</span>
+                                <span id="edit-max-price-currency">BYN</span>
                             </div>
                         </label>
                     </div>

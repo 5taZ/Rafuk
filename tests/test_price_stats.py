@@ -31,7 +31,7 @@ class FakeKufarClient:
     async def search_all_ads(self, **kwargs) -> dict:
         del kwargs
         return {
-            "ads": [{"price_byn": 200000}, {"price_byn": 220000}, {"price_byn": 180000}],
+            "ads": [{"price_byn": 2000}, {"price_byn": 2200}, {"price_byn": 1800}],
             "total": 3,
         }
 

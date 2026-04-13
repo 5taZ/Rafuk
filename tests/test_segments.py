@@ -40,8 +40,8 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
         del client, tasks, settings
         # Return exactly 2 responses matching the 2 _API_CONDITION_TASKS
         return [
-            {"ads": [{"price_byn": 200000}, {"price_byn": 250000}]},
-            {"ads": [{"price_byn": 180000}, {"price_byn": 220000}]},
+            {"ads": [{"price_byn": 2000}, {"price_byn": 2500}]},
+            {"ads": [{"price_byn": 1800}, {"price_byn": 2200}]},
         ]
 
     monkeypatch.setattr(segments, "KufarClient", FakeKufarClient)

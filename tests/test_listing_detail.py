@@ -37,7 +37,7 @@ class FakeKufarClient:
                 {
                     "ad_id": 1,
                     "subject": "iPhone 15",
-                    "price_byn": 200000,
+                    "price_byn": 2000,
                     "ad_link": "https://www.kufar.by/item/1",
                     "list_time": "2026-04-01T10:00:00",
                     "region_id": 6,

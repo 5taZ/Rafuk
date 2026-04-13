@@ -17,7 +17,6 @@ function analyticsApp() {
         core.cacheElements();
         core.initTelegramTheme();
         core.loadRecentSearches();
-        core.loadCurrency();
         actions.bindEvents();
         core.state.query = core.elements.searchInput.value.trim();
         renderers.renderAll();
@@ -44,10 +43,6 @@ function analyticsApp() {
         return renderers.renderChart(...args);
     }
 
-    function setCurrency(...args) {
-        return actions.setCurrency(...args);
-    }
-
     return {
         init,
         search,
@@ -55,7 +50,6 @@ function analyticsApp() {
         loadDeals,
         renderChart,
         renderBoxPlot: renderChart,
-        setCurrency,
         formatPrice: core.formatPrice,
     };
 }

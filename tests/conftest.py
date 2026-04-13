@@ -57,7 +57,7 @@ def sample_ads() -> list[dict[str, object]]:
         {
             "ad_id": 1,
             "subject": "iPhone 15",
-            "price_byn": 200000,
+            "price_byn": 2000,
             "currency": "BYN",
             "ad_link": "https://www.kufar.by/item/1",
             "list_time": "2026-04-01T10:00:00",
@@ -70,7 +70,7 @@ def sample_ads() -> list[dict[str, object]]:
         {
             "ad_id": 2,
             "subject": "iPhone 15 Pro",
-            "price_byn": 220000,
+            "price_byn": 2200,
             "currency": "BYN",
             "ad_link": "https://www.kufar.by/item/2",
             "list_time": "2026-04-01T12:00:00",
@@ -83,7 +83,7 @@ def sample_ads() -> list[dict[str, object]]:
         {
             "ad_id": 3,
             "subject": "iPhone 15 Pro Max",
-            "price_byn": 250000,
+            "price_byn": 2500,
             "currency": "BYN",
             "ad_link": "https://www.kufar.by/item/3",
             "list_time": "2026-04-01T09:00:00",
@@ -96,7 +96,7 @@ def sample_ads() -> list[dict[str, object]]:
         {
             "ad_id": 4,
             "subject": "iPhone 15 Used",
-            "price_byn": 180000,
+            "price_byn": 1800,
             "currency": "BYN",
             "ad_link": "https://www.kufar.by/item/4",
             "list_time": "2026-03-31T18:00:00",

@@ -7,7 +7,7 @@ function createAppCore() {
         comparisonItems: [],
         comparisonLoading: false,
         historyDays: 7,
-        currency: "BYN",
+        currency: "BYN", // always BYN — USD toggle removed
         searchRequestId: 0,
         sort: "newest",
         discountFromPercent: 10,
@@ -126,8 +126,8 @@ function createAppCore() {
             coverage: document.getElementById("stat-coverage"),
             fairRange: document.getElementById("stat-fair-range"),
         };
-        elements.rateStrip = document.getElementById("rate-strip");
-        elements.usdRateValue = document.getElementById("usd-rate-value");
+        elements.rateStrip = null; // removed
+        elements.usdRateValue = null; // removed
         elements.segmentsGrid = document.getElementById("segments-grid");
         elements.listingsList = document.getElementById("listings-list");
         elements.dealsList = document.getElementById("deals-list");
@@ -211,10 +211,7 @@ function createAppCore() {
         elements.recentSection = document.getElementById("recent-section");
         elements.recentList = document.getElementById("recent-list");
         elements.recentClearBtn = document.getElementById("recent-clear-btn");
-        elements.currencyButtons = {
-            BYN: document.getElementById("btn-byn"),
-            USD: document.getElementById("btn-usd"),
-        };
+        elements.currencyButtons = {}; // removed USD toggle
         elements.editTrackerModal = document.getElementById("edit-tracker-modal");
         elements.editTrackerQuery = document.getElementById("edit-tracker-query");
         elements.editStrictModeToggle = document.getElementById("edit-strict-mode-toggle");
@@ -258,25 +255,25 @@ function createAppCore() {
         const numeric = Number(value);
         if (Number.isNaN(numeric)) return "Договорная";
 
-        if (state.currency === "BYN") {
-            if (numeric >= 10000) {
-                const formatted = Number(numeric / 1000).toLocaleString("ru-RU", {
-                    maximumFractionDigits: 1,
-                    minimumFractionDigits: 0,
-                });
-                return `${formatted} тыс. р.`;
-            }
-            if (numeric >= 1000) {
-                const formatted = Number(numeric / 1000).toLocaleString("ru-RU", {
-                    maximumFractionDigits: 2,
-                    minimumFractionDigits: 0,
-                });
-                return `${formatted} тыс. р.`;
-            }
+        if (numeric >= 10000) {
+            const formatted = Number(numeric / 1000).toLocaleString("ru-RU", {
+                maximumFractionDigits: 1,
+                minimumFractionDigits: 0,
+            });
+            return `${formatted} тыс. р.`;
+        }
+        if (numeric >= 1000) {
+            const formatted = Number(numeric / 1000).toLocaleString("ru-RU", {
+                maximumFractionDigits: 2,
+                minimumFractionDigits: 0,
+            });
+            return `${formatted} тыс. р.`;
+        }
+        if (numeric >= 100) {
             return `${Math.round(numeric)} р.`;
         }
-
-        return `$${numeric.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+        // Small amounts — show up to 2 decimals (e.g. 6.5 р., 0.99 р.)
+        return `${numeric.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} р.`;
     }
 
     function formatRate(value) {
@@ -345,25 +342,6 @@ function createAppCore() {
             }
         } catch (_) {
             state.recentSearches = [];
-        }
-    }
-
-    function loadCurrency() {
-        try {
-            const stored = localStorage.getItem("currency");
-            if (stored && (stored === "BYN" || stored === "USD")) {
-                state.currency = stored;
-            }
-        } catch (_) {
-            // ignore
-        }
-    }
-
-    function saveCurrency() {
-        try {
-            localStorage.setItem("currency", state.currency);
-        } catch (_) {
-            // ignore
         }
     }
 
@@ -500,8 +478,8 @@ function createAppCore() {
         saveRecentSearches,
         addRecentSearch,
         clearRecentSearches,
-        loadCurrency,
-        saveCurrency,
+        loadCurrency: () => {}, // noop — currency always BYN
+        saveCurrency: () => {},
         measureRender,
         markDirty,
         isDirty,

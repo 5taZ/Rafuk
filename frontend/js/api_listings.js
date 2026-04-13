@@ -317,6 +317,7 @@ function createApiListings(context) {
 
         if (!query) {
             clearSearchData();
+            state.loading = false;
             context.focusTarget("overview");
             renderAll();
             return;

@@ -72,7 +72,6 @@ function createApiEvents(context) {
         refreshLeads,
         openOpportunityQuery,
         openOpportunityDetail,
-        setCurrency,
         applyLaunchParams,
         loadExpenses,
         createExpense,
@@ -145,14 +144,6 @@ function createApiEvents(context) {
                 void search(state.activeView);
             }
         });
-
-        // ── Currency buttons ─────────────────────────────────────────
-        for (const button of Object.values(elements.currencyButtons || {})) {
-            if (!button) continue;
-            button.addEventListener("click", () => {
-                void setCurrency(button.id === "btn-usd" ? "USD" : "BYN");
-            });
-        }
 
         // ── Recent searches (chips + clear button) ────────────────────
         elements.recentSection?.addEventListener("click", (event) => {
@@ -655,12 +646,17 @@ function createApiEvents(context) {
             if (!leadId) return;
             const type = elements.expenseTypeSelect?.value || "other";
             const rawAmount = elements.expenseAmountInput?.value?.trim();
-            const amount = rawAmount ? Number(rawAmount) : null;
+            const displayAmount = rawAmount ? Number(rawAmount) : null;
             const notes = elements.expenseNotesInput?.value?.trim() || "";
-            if (!amount || amount <= 0) {
+            if (!displayAmount || displayAmount <= 0) {
                 showToast("Введите корректную сумму");
                 return;
             }
+            
+            // Convert USD input to BYN for storage
+            const rate = state.usdRateByn || 1;
+            const amountByn = state.currency === "USD" ? Math.round(displayAmount * rate) : displayAmount;
+            
             const button = elements.saveExpenseButton;
             button.disabled = true;
             button.classList.add('is-loading');
@@ -668,7 +664,7 @@ function createApiEvents(context) {
             button.textContent = 'Сохраняю...';
             void (async () => {
                 try {
-                    await createExpense(leadId, { expense_type: type, amount_byn: amount, notes });
+                    await createExpense(leadId, { expense_type: type, amount_byn: amountByn, notes });
                     if (elements.expenseAmountInput) elements.expenseAmountInput.value = "";
                     if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";
                 } finally {

@@ -304,7 +304,6 @@ function createRenderTrackers(context) {
             `;
 
             card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
-                if (context._hooks?.showToast) context._hooks.showToast("Открываю...");
                 if (event.query) {
                     elements.searchInput.value = event.query;
                     state.query = event.query;

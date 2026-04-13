@@ -29,7 +29,7 @@ FAKE_ADS = [
     {
         "ad_id": 1,
         "subject": "iPhone 15 256GB",
-        "price_byn": 200000,
+        "price_byn": 2000,
         "ad_link": "https://www.kufar.by/item/1",
         "list_time": "2026-04-01T10:00:00",
         "region_id": 6,
@@ -38,7 +38,7 @@ FAKE_ADS = [
     {
         "ad_id": 2,
         "subject": "iPhone 15 Pro 256GB",
-        "price_byn": 260000,
+        "price_byn": 2600,
         "ad_link": "https://www.kufar.by/item/2",
         "list_time": "2026-04-01T11:00:00",
         "region_id": 6,
@@ -47,7 +47,7 @@ FAKE_ADS = [
     {
         "ad_id": 3,
         "subject": "iPhone 15 mini 128GB",
-        "price_byn": 150000,
+        "price_byn": 1500,
         "ad_link": "https://www.kufar.by/item/3",
         "list_time": "2026-04-01T09:00:00",
         "region_id": 6,
@@ -180,7 +180,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
                     {
                         "ad_id": 1,
                         "subject": "iPhone 15 256GB",
-                        "price_byn": 200000,
+                        "price_byn": 2000,
                         "ad_link": "https://www.kufar.by/item/1",
                         "list_time": "2026-04-01T10:00:00",
                         "region_id": 6,
@@ -189,7 +189,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
                     {
                         "ad_id": 2,
                         "subject": "iPhone 15 256GB",
-                        "price_byn": 202000,
+                        "price_byn": 2020,
                         "ad_link": "https://www.kufar.by/item/2",
                         "list_time": "2026-04-01T11:00:00",
                         "region_id": 6,
@@ -198,7 +198,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
                     {
                         "ad_id": 3,
                         "subject": "iPhone 15 256GB",
-                        "price_byn": 198000,
+                        "price_byn": 1980,
                         "ad_link": "https://www.kufar.by/item/3",
                         "list_time": "2026-04-01T12:00:00",
                         "region_id": 6,
@@ -207,7 +207,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
                     {
                         "ad_id": 4,
                         "subject": "iPhone 15 Pro 256GB",
-                        "price_byn": 240000,
+                        "price_byn": 2400,
                         "ad_link": "https://www.kufar.by/item/4",
                         "list_time": "2026-04-01T09:00:00",
                         "region_id": 6,
@@ -216,7 +216,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
                     {
                         "ad_id": 5,
                         "subject": "iPhone 15 Ultra 1TB",
-                        "price_byn": 420000,
+                        "price_byn": 4200,
                         "ad_link": "https://www.kufar.by/item/5",
                         "list_time": "2026-04-01T08:00:00",
                         "region_id": 6,

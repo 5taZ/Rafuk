@@ -12,7 +12,7 @@ SAMPLE_RESPONSE = {
         {
             "ad_id": 12345,
             "subject": "iPhone 15 Pro 256GB",
-            "price_byn": 399900,
+            "price_byn": 3999,
             "currency": "BYN",
             "ad_link": "https://www.kufar.by/item/12345",
             "list_time": "2025-04-01T10:00:00",

@@ -99,14 +99,7 @@ function createRenderCore(context) {
     /* ===== Rates ===== */
 
     function renderRates() {
-        return safeRender('renderRates', () => {
-            if (!state.usdRateByn) {
-                elements.rateStrip.hidden = true;
-                return;
-            }
-            elements.usdRateValue.textContent = formatRate(state.usdRateByn);
-            elements.rateStrip.hidden = false;
-        });
+        return; // removed — currency always BYN
     }
 
     /* ===== Error ===== */
@@ -176,13 +169,7 @@ function createRenderCore(context) {
     /* ===== Currency ===== */
 
     function renderCurrencyButtons() {
-        return safeRender('renderCurrencyButtons', () => {
-            for (const [currency, button] of Object.entries(elements.currencyButtons)) {
-                if (!button) continue;
-                button.classList.toggle("active", state.currency === currency);
-                button.disabled = state.loading;
-            }
-        });
+        return; // removed — currency always BYN
     }
 
     /* ===== Strict Search ===== */
