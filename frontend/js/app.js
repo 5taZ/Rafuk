@@ -15,6 +15,9 @@ function analyticsApp() {
 
     function init() {
         core.cacheElements();
+        core.populateRegionSelect(core.elements.trackerRegionSelect);
+        core.populateRegionSelect(core.elements.editRegionSelect);
+        core.populateRegionSelect(core.elements.filterRegion);
         core.initTelegramTheme();
         core.loadRecentSearches();
         actions.bindEvents();

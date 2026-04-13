@@ -39,8 +39,10 @@ function createApiListings(context) {
         state.geography = [];
         state.listings = [];
         state._listingsLoadedAt = 0;
+        state.listingsTotal = 0;
         state.dealListings = [];
         state._dealsLoadedAt = 0;
+        state.dealsTotal = 0;
         state.comparisonStats = null;
         state.comparisonItems = [];
         state.detail = null;
@@ -50,6 +52,19 @@ function createApiListings(context) {
     function resetCategoryFilter() {
         state.category = null;
         state.categories = [];
+        // Reset all filter state when query changes
+        state.condition = "";
+        state.sellerType = "";
+        state.minPrice = null;
+        state.maxPrice = null;
+        state.regionName = "";
+        // Also reset pending values
+        state.pendingCategory = null;
+        state.pendingCondition = "";
+        state.pendingSellerType = "";
+        state.pendingMinPrice = null;
+        state.pendingMaxPrice = null;
+        state.pendingRegionName = "";
     }
 
     // ── Load price history (standalone) ──────────────────────────────────
@@ -104,6 +119,7 @@ function createApiListings(context) {
                 request: getJson(`/api/v1/listings?${buildCommonQuery({ sort: state.sort })}`, { signal }),
                 apply(payload) {
                     state.listings = payload.listings || [];
+                    state.listingsTotal = payload.total || 0;
                 },
             },
             {
@@ -117,6 +133,7 @@ function createApiListings(context) {
                 ),
                 apply(payload) {
                     state.dealListings = payload.listings || [];
+                    state.dealsTotal = payload.total || 0;
                 },
             },
         ];
@@ -162,6 +179,7 @@ function createApiListings(context) {
                 `/api/v1/listings?${buildCommonQuery({ sort: state.sort })}`
             );
             state.listings = payload.listings || [];
+            state.listingsTotal = payload.total || 0;
             state._listingsLoadedAt = Date.now();
             state.error = null;
         } catch (error) {
@@ -196,6 +214,7 @@ function createApiListings(context) {
                 })}`
             );
             state.dealListings = payload.listings || [];
+            state.dealsTotal = payload.total || 0;
             state._dealsLoadedAt = Date.now();
             state.error = null;
         } catch (error) {

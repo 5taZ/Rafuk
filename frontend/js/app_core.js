@@ -10,6 +10,19 @@ function createAppCore() {
         currency: "BYN", // always BYN — USD toggle removed
         category: null, // selected category id (int or null)
         categories: [], // category distribution from last search [{id, label, count}]
+        condition: "", // filter by condition: "", "new", "used"
+        sellerType: "", // filter by seller: "", "private", "shop"
+        minPrice: null, // filter by min price (number or null)
+        maxPrice: null, // filter by max price (number or null)
+        regionName: "", // filter by region name
+        // Pending filter values (before Apply is clicked)
+        pendingCategory: null,
+        pendingCondition: "",
+        pendingSellerType: "",
+        pendingMinPrice: null,
+        pendingMaxPrice: null,
+        pendingRegionName: "",
+        filterDropdownOpen: false,
         searchRequestId: 0,
         sort: "newest",
         discountFromPercent: 10,
@@ -19,8 +32,10 @@ function createAppCore() {
         stats: null,
         listings: [],
         _listingsLoadedAt: 0,
+        listingsTotal: 0,
         dealListings: [],
         _dealsLoadedAt: 0,
+        dealsTotal: 0,
         segments: null,
         geography: [],
         chart: null,
@@ -85,7 +100,8 @@ function createAppCore() {
         elements.summaryQuery = document.getElementById("summary-query");
         elements.summarySignal = document.getElementById("summary-signal");
         elements.summaryMedian = document.getElementById("summary-median");
-        elements.summaryMarketTotal = document.getElementById("summary-market-total");
+        elements.summaryRange = document.getElementById("summary-range");
+        elements.summaryFair = document.getElementById("summary-fair");
         elements.summaryCoverage = document.getElementById("summary-coverage");
         elements.viewTabs = Array.from(document.querySelectorAll("[data-view]"));
         elements.views = {
@@ -148,7 +164,7 @@ function createAppCore() {
         elements.trackerExcludeDuplicatesToggle = document.getElementById("tracker-exclude-duplicates-toggle");
         elements.trackerSellerSelect = document.getElementById("tracker-seller-select");
         elements.trackerConditionSelect = document.getElementById("tracker-condition-select");
-        elements.trackerRegionInput = document.getElementById("tracker-region-input");
+        elements.trackerRegionSelect = document.getElementById("tracker-region-select");
         elements.trackerConfigInput = document.getElementById("tracker-config-input");
         elements.trackerStatus = document.getElementById("tracker-status");
         elements.trackersList = document.getElementById("trackers-list");
@@ -213,7 +229,16 @@ function createAppCore() {
         elements.recentSection = document.getElementById("recent-section");
         elements.recentList = document.getElementById("recent-list");
         elements.recentClearBtn = document.getElementById("recent-clear-btn");
-        elements.categoryRow = document.getElementById("category-row");
+        elements.filterBtn = document.getElementById("filter-btn");
+        elements.filterDropdown = document.getElementById("filter-dropdown");
+        elements.filterCategories = document.getElementById("filter-categories");
+        elements.filterConditions = document.getElementById("filter-conditions");
+        elements.filterSellers = document.getElementById("filter-sellers");
+        elements.filterMinPrice = document.getElementById("filter-min-price");
+        elements.filterMaxPrice = document.getElementById("filter-max-price");
+        elements.filterRegion = document.getElementById("filter-region");
+        elements.filterApplyBtn = document.querySelector(".filter-btn--apply");
+        elements.filterCancelBtn = document.querySelector(".filter-btn--cancel");
         elements.currencyButtons = {}; // removed USD toggle
         elements.editTrackerModal = document.getElementById("edit-tracker-modal");
         elements.editTrackerQuery = document.getElementById("edit-tracker-query");
@@ -222,7 +247,7 @@ function createAppCore() {
         elements.editMaxPriceInput = document.getElementById("edit-max-price-input");
         elements.editSellerSelect = document.getElementById("edit-seller-select");
         elements.editConditionSelect = document.getElementById("edit-condition-select");
-        elements.editRegionInput = document.getElementById("edit-region-input");
+        elements.editRegionSelect = document.getElementById("edit-region-select");
         elements.editConfigInput = document.getElementById("edit-config-input");
         elements.editExcludeDuplicatesToggle = document.getElementById("edit-exclude-duplicates-toggle");
         elements.closeEditModal = document.getElementById("close-edit-modal");
@@ -463,10 +488,37 @@ function createAppCore() {
         state.dirtyViews.clear();
     }
 
+    function populateRegionSelect(selectEl, currentValue) {
+        if (!selectEl) return;
+        const prev = currentValue || "";
+        let html = '<option value="">Любой</option>';
+        for (const [region, cities] of Object.entries(REGIONS)) {
+            html += `<optgroup label="${region}">`;
+            html += `<option value="${region}">${region} (все)</option>`;
+            for (const city of cities) {
+                html += `<option value="${city}">${city}</option>`;
+            }
+            html += '</optgroup>';
+        }
+        selectEl.innerHTML = html;
+        selectEl.value = prev;
+    }
+
+    const REGIONS = {
+        "Минск": ["Заводской","Ленинский","Московский","Октябрьский","Партизанский","Первомайский","Советский","Фрунзенский","Центральный"],
+        "Брестская область": ["Брест","Барановичи","Береза","Ганцевичи","Дрогичин","Жабинка","Иваново","Ивацевичи","Каменец","Кобрин","Лунинец","Ляховичи","Малорита","Пинск","Пружаны","Столин"],
+        "Витебская область": ["Витебск","Бешенковичи","Браслав","Верхнедвинск","Глубокое","Городок","Докшицы","Дубровно","Лепель","Лиозно","Миоры","Новополоцк","Орша","Полоцк","Поставы","Россоны","Сенно","Толочин","Ушачи","Чашники","Шарковщина","Шумилино"],
+        "Гомельская область": ["Гомель","Брагин","Буда-Кошелево","Ветка","Добруш","Ельск","Житковичи","Жлобин","Калинковичи","Корма","Лельчицы","Лоев","Мозырь","Наровля","Октябрьский","Петриков","Речица","Рогачев","Светлогорск","Хойники","Чечерск"],
+        "Гродненская область": ["Гродно","Берестовица","Волковыск","Вороново","Дятлово","Зельва","Ивье","Кореличи","Лида","Мосты","Новогрудок","Островец","Ошмяны","Свислочь","Слоним","Сморгонь","Щучин"],
+        "Минская область": ["Минский","Березино","Борисов","Вилейка","Воложин","Дзержинск","Жодино","Клецк","Копыль","Крупки","Логойск","Любань","Марьина Горка","Молодечно","Мядель","Несвиж","Слуцк","Смолевичи","Солигорск","Старые Дороги","Столбцы","Узда","Червень"],
+        "Могилевская область": ["Могилев","Белыничи","Бобруйск","Быхов","Глуск","Горки","Дрибин","Кировск","Климовичи","Кличев","Костюковичи","Краснополье","Кричев","Круглое","Мстиславль","Осиповичи","Славгород","Хотимск","Чаусы","Чериков","Шклов"],
+    };
+
     return {
         state,
         elements,
         cacheElements,
+        REGIONS,
         initTelegramTheme,
         formatPrice,
         formatRate,
@@ -487,5 +539,6 @@ function createAppCore() {
         markDirty,
         isDirty,
         clearDirty,
+        populateRegionSelect,
     };
 }

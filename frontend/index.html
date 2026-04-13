@@ -149,18 +149,16 @@
                     <strong class="summary-pill-value mono" id="summary-median">—</strong>
                 </div>
                 <div class="summary-pill">
-                    <span class="summary-pill-label">На рынке</span>
-                    <strong class="summary-pill-value mono" id="summary-market-total">—</strong>
+                    <span class="summary-pill-label">Диапазон</span>
+                    <strong class="summary-pill-value mono" id="summary-range">—</strong>
                 </div>
                 <div class="summary-pill">
-                    <span class="summary-pill-label">Охват</span>
-                    <strong class="summary-pill-value mono" id="summary-coverage">—</strong>
+                    <span class="summary-pill-label">Справедливо</span>
+                    <strong class="summary-pill-value mono" id="summary-fair">—</strong>
                 </div>
             </div>
         </div>
     </section>
-
-    <div class="sort-row category-row" id="category-row" hidden></div>
 
     <div class="err-bar" id="error-bar" hidden role="alert" aria-live="assertive">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
@@ -311,8 +309,60 @@
         <section class="section" id="listings-section" hidden>
             <div class="sec-head listings-head">
                 <h2 class="sec-title">Объявления</h2>
+                <button class="ghost-btn small" id="filter-btn" type="button" aria-label="Фильтры">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                </button>
                 <span class="badge" id="listings-total-badge"></span>
             </div>
+
+            <div class="filter-dropdown" id="filter-dropdown" hidden>
+                <div class="filter-group">
+                    <span class="filter-group-label">Категории</span>
+                    <div class="filter-chips" id="filter-categories"></div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-group-label">Цена, BYN</span>
+                    <div class="filter-price-range">
+                        <label class="filter-price-field">
+                            <span>От</span>
+                            <input id="filter-min-price" type="number" min="0" step="1" placeholder="0" inputmode="numeric">
+                        </label>
+                        <label class="filter-price-field">
+                            <span>До</span>
+                            <input id="filter-max-price" type="number" min="0" step="1" placeholder="∞" inputmode="numeric">
+                        </label>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-group-label">Состояние</span>
+                    <div class="filter-chips" id="filter-conditions">
+                        <button class="filter-chip active" data-condition="" type="button">Все</button>
+                        <button class="filter-chip" data-condition="new" type="button">Новое</button>
+                        <button class="filter-chip" data-condition="used" type="button">Б/у</button>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-group-label">Продавец</span>
+                    <div class="filter-chips" id="filter-sellers">
+                        <button class="filter-chip active" data-seller="" type="button">Все</button>
+                        <button class="filter-chip" data-seller="private" type="button">Частное</button>
+                        <button class="filter-chip" data-seller="shop" type="button">Магазин</button>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-group-label">Регион и город</span>
+                    <div class="filter-region-select">
+                        <select id="filter-region" class="filter-select">
+                            <option value="">Все регионы</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="filter-actions">
+                    <button class="filter-btn filter-btn--cancel" type="button">Отменить</button>
+                    <button class="filter-btn filter-btn--apply" type="button">Применить</button>
+                </div>
+            </div>
+
             <div class="sort-row">
                 <button class="s-tab active" data-sort="newest" type="button">Новые</button>
                 <button class="s-tab" data-sort="deal_score" type="button">Выгодные</button>
@@ -383,10 +433,12 @@
                             </select>
                         </div>
                     </label>
-                    <label class="deal-range-field" for="tracker-region-input">
-                        <span>Регион</span>
+                    <label class="deal-range-field" for="tracker-region-select">
+                        <span>Регион и город</span>
                         <div class="deal-range-input-wrap">
-                            <input id="tracker-region-input" type="text" placeholder="Минск, Регион 6">
+                            <select id="tracker-region-select" class="deal-select">
+                                <option value="">Любой</option>
+                            </select>
                         </div>
                     </label>
                     <label class="deal-range-field" for="tracker-config-input">
@@ -679,8 +731,10 @@
                     </div>
                     <div class="form-row">
                         <label class="form-field">
-                            <span class="form-field-label">Регион</span>
-                            <input id="edit-region-input" type="text" class="form-text-input" placeholder="Минск, Регион 6">
+                            <span class="form-field-label">Регион и город</span>
+                            <select id="edit-region-select" class="deal-select">
+                                <option value="">Любой</option>
+                            </select>
                         </label>
                         <label class="form-field">
                             <span class="form-field-label">Конфиг</span>

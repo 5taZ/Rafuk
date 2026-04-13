@@ -31,6 +31,51 @@ function createRenderCards(context) {
         return "neutral";
     }
 
+    function matchesFilters(item) {
+        // Price range filter
+        const itemPrice = item.price ? Number(item.price) : null;
+        if (state.minPrice != null && itemPrice != null && itemPrice < state.minPrice) return false;
+        if (state.maxPrice != null && itemPrice != null && itemPrice > state.maxPrice) return false;
+
+        // Condition filter - handle various formats from API
+        if (state.condition) {
+            const itemCondition = item.condition || "";
+            // Normalize condition values for comparison
+            const normalizedItemCondition = itemCondition.toLowerCase();
+            const normalizedStateCondition = state.condition.toLowerCase();
+            
+            // Map state condition to possible API values
+            const conditionMap = {
+                "new": ["new", "новый", "2"],
+                "used": ["used", "б/у", "1"],
+            };
+            
+            const validValues = conditionMap[normalizedStateCondition] || [normalizedStateCondition];
+            if (!validValues.includes(normalizedItemCondition)) return false;
+        }
+        
+        // Seller type filter
+        if (state.sellerType) {
+            const isShop = item.seller_type === "Магазин" || item.seller_type === "shop" || item.seller_type?.toLowerCase() === "shop";
+            if (state.sellerType === "private" && isShop) return false;
+            if (state.sellerType === "shop" && !isShop) return false;
+        }
+        
+        // Region filter
+        if (state.regionName) {
+            const itemRegion = (item.region_name || "").toLowerCase().trim();
+            const filterRegion = state.regionName.toLowerCase().trim();
+            if (itemRegion !== filterRegion) return false;
+        }
+        
+        return true;
+    }
+
+    function applyFilters(items) {
+        if (!state.condition && !state.sellerType && state.minPrice == null && state.maxPrice == null && !state.regionName) return items;
+        return items.filter(matchesFilters);
+    }
+
     /* ===== Listing card builder ===== */
 
     function buildListingNode(item) {
@@ -135,7 +180,9 @@ function createRenderCards(context) {
             container.style.maxHeight = "";
 
             container.innerHTML = "";
-            if (!items.length) {
+
+            const filtered = applyFilters(items);
+            if (!filtered.length) {
                 const note = document.createElement("p");
                 note.className = "tracker-empty";
                 note.textContent = emptyText;
@@ -147,13 +194,17 @@ function createRenderCards(context) {
             }
 
             // Cards use CSS content-visibility: auto for off-screen rendering skip
-            for (const item of items) {
+            for (const item of filtered) {
                 container.appendChild(buildListingNode(item));
             }
 
             if (badge) {
-                const total = totalOverride ?? state.stats?.total_results ?? items.length;
-                badge.textContent = `${items.length} из ${total}`;
+                const apiTotal = totalOverride != null ? totalOverride : filtered.length;
+                if (filtered.length < apiTotal) {
+                    badge.textContent = `${filtered.length} из ${apiTotal}`;
+                } else {
+                    badge.textContent = String(apiTotal);
+                }
             }
             return true;
         });
@@ -161,11 +212,13 @@ function createRenderCards(context) {
 
     function renderListings() {
         return safeRender('renderListings', () => {
+            if (state.loading) return;
             const hasContent = renderListingsCollection(
                 state.listings,
                 elements.listingsList,
                 elements.listingsTotalBadge,
-                "По этому запросу пока нечего показать."
+                "По этому запросу пока нечего показать.",
+                state.listingsTotal || null
             );
             elements.listingsSection.hidden = !hasContent;
         });
@@ -173,6 +226,7 @@ function createRenderCards(context) {
 
     function renderDeals() {
         return safeRender('renderDeals', () => {
+            if (state.loading) return;
             const rangeLabel = `${state.discountFromPercent}-${state.discountToPercent}`;
             const container = elements.dealsList;
 
@@ -201,13 +255,18 @@ function createRenderCards(context) {
 
             const hasContent = true;
             // Virtual scrolling disabled — cards have variable heights
-            for (const item of state.dealListings) {
+            const filtered = applyFilters(state.dealListings);
+            for (const item of filtered) {
                 container.appendChild(buildListingNode(item));
             }
 
             if (elements.dealsTotalBadge) {
-                const total = state.stats?.total_results || state.listings.length || state.dealListings.length;
-                elements.dealsTotalBadge.textContent = `${state.dealListings.length} из ${total}`;
+                const apiTotal = state.dealsTotal || filtered.length;
+                if (filtered.length < apiTotal) {
+                    elements.dealsTotalBadge.textContent = `${filtered.length} из ${apiTotal}`;
+                } else {
+                    elements.dealsTotalBadge.textContent = String(apiTotal);
+                }
             }
             elements.dealsSection.hidden = !state.query;
             if (!hasContent && state.query) {

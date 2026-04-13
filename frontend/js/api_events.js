@@ -298,22 +298,153 @@ function createApiEvents(context) {
             });
         }
 
-        // ── Category filter tabs (event delegation) ───────────────────
-        elements.categoryRow?.addEventListener("click", (event) => {
+        // ── Filter button (toggle dropdown) ───────────────────────────
+        elements.filterBtn?.addEventListener("click", () => {
+            if (!state.filterDropdownOpen) {
+                // Opening — initialize pending values with current applied values
+                state.pendingCategory = state.category;
+                state.pendingCondition = state.condition;
+                state.pendingSellerType = state.sellerType;
+                state.pendingMinPrice = state.minPrice;
+                state.pendingMaxPrice = state.maxPrice;
+                state.pendingRegionName = state.regionName;
+            }
+            state.filterDropdownOpen = !state.filterDropdownOpen;
+            renderAll();
+
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred("light");
+            }
+        });
+
+        // Close filter dropdown when clicking outside
+        document.addEventListener("click", (event) => {
+            if (!state.filterDropdownOpen) return;
+            const dropdown = elements.filterDropdown;
+            const btn = elements.filterBtn;
+            if (dropdown && !dropdown.hidden && !dropdown.contains(event.target) && btn && !btn.contains(event.target)) {
+                state.filterDropdownOpen = false;
+                renderAll();
+            }
+        });
+
+        // Prevent clicks inside dropdown from closing it
+        elements.filterDropdown?.addEventListener("click", (event) => {
+            event.stopPropagation();
+        });
+
+        // ── Filter dropdown: category chips (event delegation) ────────
+        elements.filterCategories?.addEventListener("click", (event) => {
             const button = event.target.closest("[data-category]");
             if (!button) return;
 
+            event.stopPropagation(); // Prevent dropdown from closing
             const rawValue = button.dataset.category;
             const newCategory = rawValue === "" ? null : Number(rawValue);
 
-            if (newCategory === state.category) return;
-
-            state.category = newCategory;
+            // Update pending value and re-render to show selection
+            state.pendingCategory = newCategory;
             renderAll();
 
-            if (state.query.trim()) {
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred("light");
+            }
+        });
+
+        // ── Filter dropdown: condition chips (event delegation) ───────
+        elements.filterConditions?.addEventListener("click", (event) => {
+            const button = event.target.closest("[data-condition]");
+            if (!button) return;
+
+            event.stopPropagation(); // Prevent dropdown from closing
+            // Update pending value and re-render to show selection
+            state.pendingCondition = button.dataset.condition;
+            renderAll();
+
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred("light");
+            }
+        });
+
+        // ── Filter dropdown: seller chips (event delegation) ──────────
+        elements.filterSellers?.addEventListener("click", (event) => {
+            const button = event.target.closest("[data-seller]");
+            if (!button) return;
+
+            event.stopPropagation(); // Prevent dropdown from closing
+            // Update pending value and re-render to show selection
+            state.pendingSellerType = button.dataset.seller;
+            renderAll();
+
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred("light");
+            }
+        });
+
+        // ── Filter dropdown: price range inputs ──────────────────────
+        elements.filterMinPrice?.addEventListener("input", () => {
+            const value = elements.filterMinPrice.value.trim();
+            state.pendingMinPrice = value === "" ? null : Math.max(0, Number(value));
+        });
+
+        elements.filterMinPrice?.addEventListener("click", (event) => {
+            event.stopPropagation();
+        });
+
+        elements.filterMaxPrice?.addEventListener("input", () => {
+            const value = elements.filterMaxPrice.value.trim();
+            state.pendingMaxPrice = value === "" ? null : Math.max(0, Number(value));
+        });
+
+        elements.filterMaxPrice?.addEventListener("click", (event) => {
+            event.stopPropagation();
+        });
+
+        // ── Filter dropdown: region select ─────────────────────────────
+        elements.filterRegion?.addEventListener("change", () => {
+            state.pendingRegionName = elements.filterRegion.value;
+        });
+
+        elements.filterRegion?.addEventListener("click", (event) => {
+            event.stopPropagation();
+        });
+
+        // ── Filter dropdown: Apply button ─────────────────────────────
+        elements.filterApplyBtn?.addEventListener("click", () => {
+            // Check if category changed to trigger search
+            const categoryChanged = state.pendingCategory !== state.category;
+            
+            // Apply pending filter values
+            state.category = state.pendingCategory;
+            state.condition = state.pendingCondition;
+            state.sellerType = state.pendingSellerType;
+            state.minPrice = state.pendingMinPrice;
+            state.maxPrice = state.pendingMaxPrice;
+            state.regionName = state.pendingRegionName;
+            state.filterDropdownOpen = false;
+            renderAll();
+
+            // If category changed, trigger new search (server-side filter)
+            if (categoryChanged && state.query.trim()) {
                 void search(state.activeView);
             }
+
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred("medium");
+            }
+        });
+
+        // ── Filter dropdown: Cancel button ────────────────────────────
+        elements.filterCancelBtn?.addEventListener("click", () => {
+            // Reset pending values to current applied values
+            state.pendingCategory = state.category;
+            state.pendingCondition = state.condition;
+            state.pendingSellerType = state.sellerType;
+            state.pendingMinPrice = state.minPrice;
+            state.pendingMaxPrice = state.maxPrice;
+            state.pendingRegionName = state.regionName;
+            state.filterDropdownOpen = false;
+            renderAll();
 
             if (window.Telegram?.WebApp?.HapticFeedback) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
@@ -492,8 +623,8 @@ function createApiEvents(context) {
             state.trackerCondition = elements.trackerConditionSelect.value;
         });
 
-        elements.trackerRegionInput?.addEventListener("input", () => {
-            state.trackerRegionName = elements.trackerRegionInput.value.trim();
+        elements.trackerRegionSelect?.addEventListener("change", () => {
+            state.trackerRegionName = elements.trackerRegionSelect.value;
         });
 
         elements.trackerConfigInput?.addEventListener("input", () => {

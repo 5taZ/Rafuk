@@ -222,7 +222,7 @@ function createApiTrackers(context) {
         if (elements.editMaxPriceInput) elements.editMaxPriceInput.value = tracker.max_price_byn ?? "";
         if (elements.editSellerSelect) elements.editSellerSelect.value = tracker.seller_type || "";
         if (elements.editConditionSelect) elements.editConditionSelect.value = tracker.condition || "";
-        if (elements.editRegionInput) elements.editRegionInput.value = tracker.region_name || "";
+        if (elements.editRegionSelect) elements.editRegionSelect.value = tracker.region_name || "";
         if (elements.editConfigInput) elements.editConfigInput.value = tracker.config_keyword || "";
         if (elements.editExcludeDuplicatesToggle) elements.editExcludeDuplicatesToggle.checked = Boolean(tracker.exclude_duplicates);
 
@@ -261,7 +261,7 @@ function createApiTrackers(context) {
                     max_price_byn: elements.editMaxPriceInput?.value ? Number(elements.editMaxPriceInput.value) : null,
                     seller_type: elements.editSellerSelect?.value || null,
                     condition: elements.editConditionSelect?.value || null,
-                    region_name: elements.editRegionInput?.value || null,
+                    region_name: elements.editRegionSelect?.value || null,
                     config_keyword: elements.editConfigInput?.value || null,
                     exclude_duplicates: elements.editExcludeDuplicatesToggle?.checked,
                 }),

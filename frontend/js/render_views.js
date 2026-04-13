@@ -62,26 +62,59 @@ function createRenderViews(context) {
 
     /* ===== Sort / Discount / Filter buttons ===== */
 
-    function renderCategoryTabs() {
-        return safeRender('renderCategoryTabs', () => {
-            const container = elements.categoryRow;
-            if (!container) return;
+    function renderFilterDropdown() {
+        return safeRender('renderFilterDropdown', () => {
+            if (!elements.filterDropdown || !elements.filterCategories) return;
 
+            // Toggle visibility
+            elements.filterDropdown.hidden = !state.filterDropdownOpen;
+
+            // Render category chips
             if (!state.categories.length || state.categories.length <= 1) {
-                container.hidden = true;
-                container.innerHTML = "";
-                return;
+                elements.filterCategories.innerHTML = "<span class=\"filter-empty\">Нет категорий</span>";
+            } else {
+                // Use total_results from stats instead of sum of categories
+                // because not all ads have category data
+                const totalResults = Number(state.stats?.total_results || 0);
+                const totalCount = state.categories.reduce((sum, cat) => sum + cat.count, 0);
+                // Show the larger of: total results from Kufar, or sum of categories
+                const displayTotal = Math.max(totalResults, totalCount);
+                
+                // Use pendingCategory for display, fall back to applied category
+                const displayCategory = state.pendingCategory !== undefined ? state.pendingCategory : state.category;
+                
+                let html = `<button class="filter-chip ${displayCategory == null ? 'active' : ''}" data-category="" type="button">Все (${displayTotal})</button>`;
+                for (const cat of state.categories) {
+                    const isActive = displayCategory === cat.id;
+                    html += `<button class="filter-chip ${isActive ? 'active' : ''}" data-category="${cat.id}" type="button">${escapeHtml(cat.label)} (${cat.count})</button>`;
+                }
+                elements.filterCategories.innerHTML = html;
             }
 
-            container.hidden = false;
-            const totalCount = state.categories.reduce((sum, cat) => sum + cat.count, 0);
-
-            let html = `<button class="s-tab ${state.category == null ? 'active' : ''}" data-category="" type="button">Все (${totalCount})</button>`;
-            for (const cat of state.categories) {
-                const isActive = state.category === cat.id;
-                html += `<button class="s-tab ${isActive ? 'active' : ''}" data-category="${cat.id}" type="button">${escapeHtml(cat.label)} (${cat.count})</button>`;
+            // Update price range inputs with PENDING values
+            if (elements.filterMinPrice) {
+                elements.filterMinPrice.value = state.pendingMinPrice != null ? state.pendingMinPrice : "";
             }
-            container.innerHTML = html;
+            if (elements.filterMaxPrice) {
+                elements.filterMaxPrice.value = state.pendingMaxPrice != null ? state.pendingMaxPrice : "";
+            }
+
+            // Update region dropdown with PENDING value
+            if (elements.filterRegion) {
+                elements.filterRegion.value = state.pendingRegionName || "";
+            }
+
+            // Update condition/seller chip states with PENDING values
+            if (elements.filterConditions) {
+                for (const chip of elements.filterConditions.querySelectorAll("[data-condition]")) {
+                    chip.classList.toggle("active", chip.dataset.condition === state.pendingCondition);
+                }
+            }
+            if (elements.filterSellers) {
+                for (const chip of elements.filterSellers.querySelectorAll("[data-seller]")) {
+                    chip.classList.toggle("active", chip.dataset.seller === state.pendingSellerType);
+                }
+            }
         });
     }
 
@@ -147,8 +180,8 @@ function createRenderViews(context) {
         if (elements.trackerConditionSelect) {
             elements.trackerConditionSelect.value = state.trackerCondition || "";
         }
-        if (elements.trackerRegionInput) {
-            elements.trackerRegionInput.value = state.trackerRegionName || "";
+        if (elements.trackerRegionSelect) {
+            elements.trackerRegionSelect.value = state.trackerRegionName || "";
         }
         if (elements.trackerConfigInput) {
             elements.trackerConfigInput.value = state.trackerConfigKeyword || "";
@@ -308,9 +341,12 @@ function createRenderViews(context) {
         } else {
             elements.stats.fairRange.textContent = "—";
         }
+        const totalResults = Number(state.stats.total_results || 0);
+        const analyzedCount = Number(state.stats.analyzed_count || state.stats.count || 0);
         elements.stats.coverage.textContent =
-            `${state.stats.analyzed_count || state.stats.count || 0} / ${state.stats.total_results || 0}`;
-        elements.marketTotalBadge.textContent = `${state.stats.total_results || 0} на рынке`;
+            `${analyzedCount} с ценой / ${totalResults}`;
+        // Show total with priced count in badge for better clarity
+        elements.marketTotalBadge.textContent = `${totalResults} (${analyzedCount} с ценой)`;
         elements.statsSection.hidden = false;
         elements.chartSection.hidden = state.stats.count <= 0;
         if (elements.chartSection.hidden || !state.panels.distribution) {
@@ -464,6 +500,6 @@ function createRenderViews(context) {
         renderSegments,
         renderGeography,
         renderRecentSearches,
-        renderCategoryTabs,
+        renderFilterDropdown,
     };
 }

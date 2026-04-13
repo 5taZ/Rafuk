@@ -126,9 +126,16 @@ function createRenderCore(context) {
      */
     function buildSkeletonCard() {
         const card = document.createElement("div");
-        card.className = "skeleton-card skeleton";
+        card.className = "skeleton-card";
         card.setAttribute("aria-hidden", "true");
-        card.innerHTML = '<div class="skeleton-text" style="width:70%"></div><div class="skeleton-text" style="width:45%"></div>';
+        card.innerHTML = `
+            <div class="skeleton-image"></div>
+            <div class="skeleton-content">
+                <div class="skeleton-text skeleton-title"></div>
+                <div class="skeleton-text skeleton-subtitle"></div>
+                <div class="skeleton-text skeleton-price"></div>
+            </div>
+        `;
         return card;
     }
 
@@ -247,8 +254,8 @@ function createRenderCore(context) {
                 elements.summaryQuery.textContent = "—";
                 elements.summarySignal.textContent = "—";
                 elements.summaryMedian.textContent = "—";
-                elements.summaryMarketTotal.textContent = "—";
-                elements.summaryCoverage.textContent = "—";
+                elements.summaryRange.textContent = "—";
+                elements.summaryFair.textContent = "—";
                 return;
             }
 
@@ -258,6 +265,8 @@ function createRenderCore(context) {
             const marketMean = Number(state.stats.mean || 0);
             const marketMin = Number(state.stats.min || 0);
             const marketMax = Number(state.stats.max || 0);
+            const fairFrom = state.stats.fair_price_from != null ? Number(state.stats.fair_price_from) : null;
+            const fairTo = state.stats.fair_price_to != null ? Number(state.stats.fair_price_to) : null;
             const spreadRatio = marketMedian > 0 ? (marketMax - marketMin) / marketMedian : 0;
             const meanDeltaRatio = marketMedian > 0 ? Math.abs(marketMean - marketMedian) / marketMedian : 0;
             let signal = "Рынок читается ровно, медиана подходит как главный ориентир.";
@@ -271,10 +280,24 @@ function createRenderCore(context) {
 
             elements.summaryQuery.textContent = state.query;
             elements.summarySignal.textContent = signal;
-            elements.summaryMedian.textContent = formatPrice(state.stats.median);
-            elements.summaryMarketTotal.textContent = String(totalResults || 0);
-            elements.summaryCoverage.textContent =
-                `${analyzedCount} / ${totalResults}`;
+            function shortPrice(v) {
+                if (v == null || v === 0) return "—";
+                const n = Number(v);
+                if (Number.isNaN(n)) return "—";
+                if (n >= 1000) {
+                    const k = n / 1000;
+                    return `${k % 1 === 0 ? k : k.toFixed(1)}к`;
+                }
+                return `${Math.round(n)} р.`;
+            }
+
+            elements.summaryMedian.textContent = shortPrice(state.stats.median);
+            elements.summaryRange.textContent = marketMin > 0 && marketMax > 0
+                ? `${shortPrice(marketMin)} — ${shortPrice(marketMax)}`
+                : "—";
+            elements.summaryFair.textContent = fairFrom != null && fairTo != null
+                ? `${shortPrice(fairFrom)} — ${shortPrice(fairTo)}`
+                : "—";
             elements.summaryStrip.hidden = false;
         });
     }
