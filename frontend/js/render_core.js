@@ -45,7 +45,7 @@ function createRenderCore(context) {
         if (!elements.toastContainer) return;
 
         const toast = document.createElement("div");
-        toast.className = `toast toast-${type}`;
+        toast.className = `toast toast-${type} entering`;
         toast.setAttribute("role", "status");
         toast.setAttribute("aria-live", "polite");
 
@@ -57,11 +57,18 @@ function createRenderCore(context) {
 
         toast.innerHTML = `
             <span class="toast-icon ${type}">${iconMap[type] || iconMap.info}</span>
-            <span class="toast-message">${message}</span>
+            <span class="toast-message">${escapeHtml(message)}</span>
             <button class="toast-close" aria-label="Закрыть уведомление">×</button>
         `;
 
         elements.toastContainer.appendChild(toast);
+
+        // Remove entering class after animation completes
+        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const animationDuration = prefersReducedMotion ? 10 : 200;
+        setTimeout(() => {
+            toast.classList.remove("entering");
+        }, animationDuration);
 
         const dismissTimer = setTimeout(() => dismissToast(toast), duration);
 
@@ -82,12 +89,14 @@ function createRenderCore(context) {
 
     function dismissToast(toast) {
         if (!toast.parentNode) return;
+        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const exitDuration = prefersReducedMotion ? 10 : 200;
         toast.classList.add("toast-exit");
         setTimeout(() => {
             if (toast.parentNode) {
                 toast.remove();
             }
-        }, 200);
+        }, exitDuration);
     }
 
     /* ===== Rates ===== */

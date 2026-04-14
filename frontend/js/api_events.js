@@ -280,15 +280,15 @@ function createApiEvents(context) {
                 }
                 state.sort = sort;
                 renderSortButtons();
-                setActiveView("ads");
                 if (state.query.trim()) {
-                    void loadListings();
+                    void loadListings(true);
                 }
             });
         }
 
         // ── Filter button (toggle dropdown) ───────────────────────────
         elements.filterBtn?.addEventListener("click", () => {
+            const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             if (!state.filterDropdownOpen) {
                 // Opening — initialize pending values with current applied values
                 state.pendingCategory = state.category;
@@ -297,9 +297,21 @@ function createApiEvents(context) {
                 state.pendingMinPrice = state.minPrice;
                 state.pendingMaxPrice = state.maxPrice;
                 state.pendingRegionName = state.regionName;
+                state.filterDropdownOpen = true;
+                renderAll();
+            } else if (prefersReducedMotion) {
+                // Closing without animation for users who prefer reduced motion
+                state.filterDropdownOpen = false;
+                renderAll();
+            } else {
+                // Closing — add closing class for animation, then hide
+                elements.filterDropdown?.classList.add("closing");
+                setTimeout(() => {
+                    elements.filterDropdown?.classList.remove("closing");
+                    state.filterDropdownOpen = false;
+                    renderAll();
+                }, 150);
             }
-            state.filterDropdownOpen = !state.filterDropdownOpen;
-            renderAll();
 
             if (window.Telegram?.WebApp?.HapticFeedback) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
@@ -311,9 +323,20 @@ function createApiEvents(context) {
             if (!state.filterDropdownOpen) return;
             const dropdown = elements.filterDropdown;
             const btn = elements.filterBtn;
+            const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             if (dropdown && !dropdown.hidden && !dropdown.contains(event.target) && btn && !btn.contains(event.target)) {
-                state.filterDropdownOpen = false;
-                renderAll();
+                if (prefersReducedMotion) {
+                    state.filterDropdownOpen = false;
+                    renderAll();
+                } else {
+                    // Add closing class for animation
+                    dropdown.classList.add("closing");
+                    setTimeout(() => {
+                        dropdown.classList.remove("closing");
+                        state.filterDropdownOpen = false;
+                        renderAll();
+                    }, 150);
+                }
             }
         });
 

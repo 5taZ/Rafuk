@@ -53,6 +53,7 @@ function createAppActions(context) {
     /**
      * Switches the active view with a subtle enter animation.
      * Updates tab states, triggers view transition, and re-renders view content.
+     * Respects prefers-reduced-motion for accessibility.
      *
      * @param {string} view - The view key to activate (e.g., 'overview', 'ads', 'tracking')
      */
@@ -66,10 +67,13 @@ function createAppActions(context) {
 
         const viewEl = elements.views[view];
         if (viewEl) {
-            viewEl.classList.add("is-entering");
-            setTimeout(() => {
-                viewEl.classList.remove("is-entering");
-            }, 200);
+            const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            if (!prefersReducedMotion) {
+                viewEl.classList.add("is-entering");
+                setTimeout(() => {
+                    viewEl.classList.remove("is-entering");
+                }, 200);
+            }
         }
     }
 
@@ -336,13 +340,16 @@ function createAppActions(context) {
 
     // ── Expenses ──────────────────────────────────────────────────────────
     async function loadExpenses(leadId) {
+        state.expensesLoading = true;
+        renderExpensesModal();
         try {
             state.expenses = await core.getJson(`/api/v1/leads/${leadId}/expenses`);
-            renderExpensesModal();
         } catch (_) {
             state.expenses = [];
-            renderExpensesModal();
+        } finally {
+            state.expensesLoading = false;
         }
+        renderExpensesModal();
     }
 
     async function createExpense(leadId, payload) {

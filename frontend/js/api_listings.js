@@ -120,6 +120,8 @@ function createApiListings(context) {
                 apply(payload) {
                     state.listings = payload.listings || [];
                     state.listingsTotal = payload.total || 0;
+                    state._listingsLoadedAt = Date.now();
+                    state._listingsLoadedSort = state.sort;
                 },
             },
             {
@@ -169,8 +171,8 @@ function createApiListings(context) {
             renderAll();
             return;
         }
-        // Skip reload if data is fresh and same sort
-        if (!force && state.listings.length && Date.now() - state._listingsLoadedAt < CACHE_TTL) {
+        // Skip reload if data is fresh AND sort hasn't changed
+        if (!force && state.listings.length && state._listingsLoadedSort === state.sort && Date.now() - state._listingsLoadedAt < CACHE_TTL) {
             return;
         }
 
@@ -181,6 +183,7 @@ function createApiListings(context) {
             state.listings = payload.listings || [];
             state.listingsTotal = payload.total || 0;
             state._listingsLoadedAt = Date.now();
+            state._listingsLoadedSort = state.sort;
             state.error = null;
         } catch (error) {
             state.listings = [];

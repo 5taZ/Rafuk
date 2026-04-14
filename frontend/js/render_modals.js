@@ -138,6 +138,13 @@ function createRenderModals(context) {
             elements.detailAddWatchlistButton.hidden = state.detailFromWatchlist || false;
         }
 
+        // Reset scroll position to top when modal opens
+        if (elements.detailModalContent) {
+            elements.detailModalContent.scrollTop = 0;
+        } else if (elements.detailModal) {
+            elements.detailModal.scrollTop = 0;
+        }
+
         elements.detailModal.hidden = false;
         });
     }
@@ -197,6 +204,19 @@ function createRenderModals(context) {
         return safeRender('renderExpensesModal', () => {
             if (!elements.expensesModal) return;
             elements.expensesList.innerHTML = "";
+
+        // Show loading state
+        if (state.expensesLoading) {
+            const loader = document.createElement("div");
+            loader.className = "expenses-loading";
+            loader.innerHTML = `
+                <div class="skeleton-expense-row"></div>
+                <div class="skeleton-expense-row"></div>
+                <div class="skeleton-expense-row"></div>
+            `;
+            elements.expensesList.appendChild(loader);
+            return;
+        }
 
         if (!state.expenses.length) {
             const note = document.createElement("p");

@@ -204,10 +204,11 @@ function createRenderCards(context) {
 
             if (badge) {
                 const apiTotal = totalOverride != null ? totalOverride : filtered.length;
+                // Always show consistent format: "X объявлений" or just the count
                 if (filtered.length < apiTotal) {
-                    badge.textContent = `${filtered.length} из ${apiTotal}`;
+                    badge.textContent = `${filtered.length} объявлений`;
                 } else {
-                    badge.textContent = String(apiTotal);
+                    badge.textContent = `${apiTotal} объявлений`;
                 }
             }
             return true;
@@ -284,10 +285,11 @@ function createRenderCards(context) {
 
             if (elements.dealsTotalBadge) {
                 const apiTotal = state.dealsTotal || filtered.length;
+                // Always show consistent format: "X объявлений"
                 if (filtered.length < apiTotal) {
-                    elements.dealsTotalBadge.textContent = `${filtered.length} из ${apiTotal}`;
+                    elements.dealsTotalBadge.textContent = `${filtered.length} объявлений`;
                 } else {
-                    elements.dealsTotalBadge.textContent = String(apiTotal);
+                    elements.dealsTotalBadge.textContent = `${apiTotal} объявлений`;
                 }
             }
             elements.dealsSection.hidden = !state.query;

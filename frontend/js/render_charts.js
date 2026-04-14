@@ -283,8 +283,28 @@ function createRenderCharts(context) {
         if (!elements.profitCards) return;
         elements.profitCards.innerHTML = "";
 
-        if (!hasTelegramInitData() || !state.leads.length) {
+        if (!hasTelegramInitData()) {
             elements.profitDashboardSection.hidden = true;
+            return;
+        }
+
+        // Show loading skeleton while leads are loading
+        if (!state.leads.length) {
+            elements.profitDashboardSection.hidden = false;
+            elements.profitCards.innerHTML = `
+                <div class="profit-card skeleton">
+                    <div class="skeleton-profit-row"></div>
+                    <div class="skeleton-profit-row short"></div>
+                </div>
+                <div class="profit-card skeleton">
+                    <div class="skeleton-profit-row"></div>
+                    <div class="skeleton-profit-row short"></div>
+                </div>
+                <div class="profit-card skeleton">
+                    <div class="skeleton-profit-row"></div>
+                    <div class="skeleton-profit-row short"></div>
+                </div>
+            `;
             return;
         }
 
