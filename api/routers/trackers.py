@@ -21,6 +21,8 @@ router = APIRouter(tags=["trackers"])
 @router.get("/tracker-events", response_model=list[TrackerEventRead])
 async def get_tracker_events(
     limit: int = 20,
+    tracker_id: int | None = None,
+    event_type: str | None = None,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[TrackerEventRead]:
@@ -29,12 +31,17 @@ async def get_tracker_events(
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is None:
             return []
-        result = await session.execute(
+        stmt = (
             select(TrackerEvent)
             .where(TrackerEvent.user_id == user_id)
             .order_by(TrackerEvent.created_at.desc(), TrackerEvent.id.desc())
             .limit(bounded_limit)
         )
+        if tracker_id is not None:
+            stmt = stmt.where(TrackerEvent.tracker_id == tracker_id)
+        if event_type is not None:
+            stmt = stmt.where(TrackerEvent.event_type == event_type)
+        result = await session.execute(stmt)
         return list(result.scalars())
 
 

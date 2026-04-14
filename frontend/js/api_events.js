@@ -654,8 +654,16 @@ function createApiEvents(context) {
         for (const button of elements.trackerEventFilterButtons || []) {
             button.addEventListener("click", () => {
                 state.trackerEventFilter = button.dataset.eventFilter || "all";
-                state.trackerEventFilterTrackerId = null;
                 renderTrackerEventFilters();
+                renderTrackerEvents();
+            });
+        }
+
+        // ── Tracker event tracker dropdown ──────────────────────────
+        if (elements.trackerEventTrackerSelect) {
+            elements.trackerEventTrackerSelect.addEventListener("change", () => {
+                const val = elements.trackerEventTrackerSelect.value;
+                state.trackerEventFilterTrackerId = val ? Number(val) : null;
                 renderTrackerEvents();
             });
         }

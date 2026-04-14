@@ -169,6 +169,7 @@ function createAppCore() {
         elements.trackersList = document.getElementById("trackers-list");
         elements.trackerEventsList = document.getElementById("tracker-events-list");
         elements.clearEventsButton = document.getElementById("clear-events-btn");
+        elements.trackerEventTrackerSelect = document.getElementById("tracker-event-tracker-select");
         elements.leadInboxSection = document.getElementById("lead-inbox-section");
         elements.leadFilterButtons = Array.from(document.querySelectorAll("[data-lead-filter]"));
         elements.leadInboxList = document.getElementById("lead-inbox-list");

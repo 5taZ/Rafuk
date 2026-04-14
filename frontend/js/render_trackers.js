@@ -231,6 +231,26 @@ function createRenderTrackers(context) {
             button.classList.toggle("active", filter === state.trackerEventFilter);
         }
 
+        // Populate tracker dropdown filter
+        if (elements.trackerEventTrackerSelect) {
+            const select = elements.trackerEventTrackerSelect;
+            const prevValue = select.value;
+            const uniqueTrackers = new Map();
+            for (const evt of state.trackerEvents) {
+                if (!uniqueTrackers.has(evt.tracker_id)) {
+                    uniqueTrackers.set(evt.tracker_id, evt.query);
+                }
+            }
+            let html = '<option value="">Все трекеры</option>';
+            for (const [id, query] of uniqueTrackers) {
+                const selected = String(id) === prevValue ? " selected" : "";
+                html += `<option value="${id}"${selected}>${escapeHtml(query)}</option>`;
+            }
+            select.innerHTML = html;
+            // Restore selection from state
+            select.value = state.trackerEventFilterTrackerId || "";
+        }
+
         // Filter events by type and optionally by tracker
         let filteredEvents = state.trackerEvents.filter((event) => {
             if (state.trackerEventFilter === "all") {
@@ -240,13 +260,8 @@ function createRenderTrackers(context) {
         });
 
         if (state.trackerEventFilterTrackerId) {
-            const tracker = state.trackers.find((t) => t.id === state.trackerEventFilterTrackerId);
-            if (tracker) {
-                const trackerQuery = tracker.query.trim().toLocaleLowerCase("ru-RU");
-                filteredEvents = filteredEvents.filter((e) => {
-                    return (e.query || "").trim().toLocaleLowerCase("ru-RU") === trackerQuery;
-                });
-            }
+            const tid = state.trackerEventFilterTrackerId;
+            filteredEvents = filteredEvents.filter((e) => e.tracker_id === tid);
         }
 
         if (!filteredEvents.length) {

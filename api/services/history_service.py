@@ -136,6 +136,7 @@ async def sync_query_listing_states(
             existing.last_price_byn is not None
             and price_byn is not None
             and price_byn < existing.last_price_byn
+            and (existing.last_price_byn - price_byn) >= 0.5
         ):
             price_drops.append((existing, existing.last_price_byn - price_byn))
 

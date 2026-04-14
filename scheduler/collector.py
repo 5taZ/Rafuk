@@ -73,14 +73,36 @@ async def notify_user(
         return False
 
 
-def persist_tracker_events(
+async def _recent_event_keys(
+    session: AsyncSession,
+    tracker_id: int,
+    hours: int = 24,
+) -> set[tuple[int, str]]:
+    """Return (ad_id, event_type) pairs that already have events within *hours*."""
+    cutoff = datetime.now(UTC) - timedelta(hours=hours)
+    result = await session.execute(
+        select(TrackerEvent.ad_id, TrackerEvent.event_type)
+        .where(
+            TrackerEvent.tracker_id == tracker_id,
+            TrackerEvent.created_at >= cutoff,
+        )
+    )
+    return {(row.ad_id, row.event_type) for row in result if row.ad_id is not None}
+
+
+async def persist_tracker_events(
     session: AsyncSession,
     tracker: Tracker,
     sync_result: QuerySyncResult,
     ads_by_id: dict[int, dict[str, object]] | None = None,
 ) -> list[TrackerEvent]:
+    # Skip events that were already recorded recently for this tracker + ad
+    seen = await _recent_event_keys(session, tracker.id)
+
     created: list[TrackerEvent] = []
     for state in sync_result.new_listings[:10]:
+        if (state.ad_id, "new_listing") in seen:
+            continue
         # Get enriched data from ad if available
         ad = ads_by_id.get(state.ad_id) if ads_by_id else None
         thumbnail = ad.get("thumbnail") if ad else None
@@ -105,6 +127,8 @@ def persist_tracker_events(
         created.append(event)
 
     for state, delta in sync_result.price_drops[:10]:
+        if (state.ad_id, "price_drop") in seen:
+            continue
         # Get enriched data from ad if available
         ad = ads_by_id.get(state.ad_id) if ads_by_id else None
         thumbnail = ad.get("thumbnail") if ad else None
@@ -216,9 +240,10 @@ def _build_tracker_message(
             lines.append(f'Запрос "{label}"')
         lines.append(f"Снижение цены: {len(sync_result.price_drops)}")
         for state, delta in sync_result.price_drops[:3]:
+            delta_str = f"(-{round(delta)} р.)" if round(delta) > 0 else ""
             lines.append(
                 f"• {state.title} - {_format_price_byn(state.last_price_byn)} "
-                f"(-{round(delta)} р.)"
+                f"{delta_str}".rstrip()
             )
             if state.link:
                 lines.append(state.link)
@@ -334,7 +359,7 @@ async def check_trackers(
                         )
                         message = _build_tracker_message(query, strict_mode, tracker_sync_result)
                         if message:
-                            created_events = persist_tracker_events(
+                            created_events = await persist_tracker_events(
                                 session, tracker, tracker_sync_result, ads_by_id
                             )
                             await session.flush()
