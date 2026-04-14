@@ -31,23 +31,33 @@ class FakeKufarClient:
 
     async def search_all_ads(self, **kwargs) -> dict:
         query = str(kwargs.get("query", "")).casefold()
+        link = "https://kufar/item/"
         if "iphone 16" in query:
             ads = [
-                {"ad_id": 11, "subject": "iPhone 16 128GB", "price_byn": 2500, "ad_link": "https://kufar/item/11", "list_time": "2026-04-06T10:00:00"},
-                {"ad_id": 12, "subject": "iPhone 16 128GB", "price_byn": 2350, "ad_link": "https://kufar/item/12", "list_time": "2026-04-06T09:00:00"},
-                {"ad_id": 13, "subject": "iPhone 16 128GB", "price_byn": 2700, "ad_link": "https://kufar/item/13", "list_time": "2026-04-05T09:00:00"},
+                {"ad_id": 11, "subject": "iPhone 16 128GB", "price_byn": 2500,
+                 "ad_link": f"{link}11", "list_time": "2026-04-06T10:00:00"},
+                {"ad_id": 12, "subject": "iPhone 16 128GB", "price_byn": 2350,
+                 "ad_link": f"{link}12", "list_time": "2026-04-06T09:00:00"},
+                {"ad_id": 13, "subject": "iPhone 16 128GB", "price_byn": 2700,
+                 "ad_link": f"{link}13", "list_time": "2026-04-05T09:00:00"},
             ]
         elif "iphone 15 pro" in query:
             ads = [
-                {"ad_id": 21, "subject": "iPhone 15 Pro 256GB", "price_byn": 2200, "ad_link": "https://kufar/item/21", "list_time": "2026-04-06T10:00:00"},
-                {"ad_id": 22, "subject": "iPhone 15 Pro 256GB", "price_byn": 2450, "ad_link": "https://kufar/item/22", "list_time": "2026-04-05T10:00:00"},
-                {"ad_id": 23, "subject": "iPhone 15 Pro 256GB", "price_byn": 2550, "ad_link": "https://kufar/item/23", "list_time": "2026-04-04T10:00:00"},
+                {"ad_id": 21, "subject": "iPhone 15 Pro 256GB", "price_byn": 2200,
+                 "ad_link": f"{link}21", "list_time": "2026-04-06T10:00:00"},
+                {"ad_id": 22, "subject": "iPhone 15 Pro 256GB", "price_byn": 2450,
+                 "ad_link": f"{link}22", "list_time": "2026-04-05T10:00:00"},
+                {"ad_id": 23, "subject": "iPhone 15 Pro 256GB", "price_byn": 2550,
+                 "ad_link": f"{link}23", "list_time": "2026-04-04T10:00:00"},
             ]
         else:
             ads = [
-                {"ad_id": 1, "subject": "iPhone 15 128GB", "price_byn": 1800, "ad_link": "https://kufar/item/1", "list_time": "2026-04-06T10:00:00"},
-                {"ad_id": 2, "subject": "iPhone 15 128GB", "price_byn": 1900, "ad_link": "https://kufar/item/2", "list_time": "2026-04-06T09:00:00"},
-                {"ad_id": 3, "subject": "iPhone 15 128GB", "price_byn": 2100, "ad_link": "https://kufar/item/3", "list_time": "2026-04-05T09:00:00"},
+                {"ad_id": 1, "subject": "iPhone 15 128GB", "price_byn": 1800,
+                 "ad_link": f"{link}1", "list_time": "2026-04-06T10:00:00"},
+                {"ad_id": 2, "subject": "iPhone 15 128GB", "price_byn": 1900,
+                 "ad_link": f"{link}2", "list_time": "2026-04-06T09:00:00"},
+                {"ad_id": 3, "subject": "iPhone 15 128GB", "price_byn": 2100,
+                 "ad_link": f"{link}3", "list_time": "2026-04-05T09:00:00"},
             ]
         return {"total": len(ads), "ads": ads}
 

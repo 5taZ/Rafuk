@@ -48,6 +48,7 @@ def test_html_has_stats_and_listings(soup: BeautifulSoup) -> None:
 
 def test_css_has_required_building_blocks(css_text: str) -> None:
     assert ":root" in css_text
-    assert "[data-theme=\"dark\"]" in css_text
+    # Dark defaults are in :root; light theme overrides in [data-theme="light"]
+    assert "[data-theme=\"light\"]" in css_text
     assert "@keyframes skeleton-loading" in css_text
     assert "@media" in css_text

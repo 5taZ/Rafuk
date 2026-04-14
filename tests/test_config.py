@@ -33,8 +33,12 @@ def test_settings_applies_defaults() -> None:
     # Save original env vars
     import os
 
+    _config_keys = [
+        "KUFAR_REQUEST_DELAY", "KUFAR_PARALLEL_SEMAPHORE",
+        "SCHEDULER_SNAPSHOT_HOUR", "ALERT_CHECK_INTERVAL",
+    ]
     original_env = {}
-    for key in ["KUFAR_REQUEST_DELAY", "KUFAR_PARALLEL_SEMAPHORE", "SCHEDULER_SNAPSHOT_HOUR", "ALERT_CHECK_INTERVAL"]:
+    for key in _config_keys:
         if key in os.environ:
             original_env[key] = os.environ[key]
             del os.environ[key]

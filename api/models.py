@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
-    JSON,    Float,
+    Float,
     ForeignKey,
     Index,
     Integer,

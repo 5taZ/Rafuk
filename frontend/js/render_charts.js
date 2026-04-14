@@ -52,7 +52,7 @@ function createRenderCharts(context) {
             return;
         }
 
-        const canvas = document.getElementById("priceChart");
+        const canvas = elements.priceChartCanvas;
         if (!canvas) return;
 
         destroyChart();
@@ -159,7 +159,7 @@ function createRenderCharts(context) {
 
     function renderHistoryChart() {
         return safeRender('renderHistoryChart', () => {
-        const canvas = document.getElementById("historyChart");
+        const canvas = elements.historyChartCanvas;
         if (!canvas || !state.history.length) {
             destroyHistoryChart();
             return;

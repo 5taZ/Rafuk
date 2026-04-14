@@ -72,7 +72,8 @@ function createAppRenderers(context) {
     function safeRender(name, fn) {
         try {
             return fn();
-        } catch (_) {
+        } catch (err) {
+            console.error('safeRender error:', name, err);
             if (typeof core.showToast === 'function') {
                 core.showToast("Ошибка отображения", 'error');
             }
@@ -212,7 +213,8 @@ function createAppRenderers(context) {
                 // Full render — no specific flags or _allDirty is set
                 for (const fn of Object.values(_renderMap)) fn();
             }
-        } catch (_) {
+        } catch (err) {
+            console.error('renderAll error:', err);
             if (typeof core.showToast === 'function') {
                 core.showToast('Ошибка отображения', 'error');
             }

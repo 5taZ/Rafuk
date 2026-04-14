@@ -114,6 +114,8 @@ function createAppCore() {
         };
         elements.statsSection = document.getElementById("stats-section");
         elements.chartSection = document.getElementById("chart-section");
+        elements.priceChartCanvas = document.getElementById("priceChart");
+        elements.historyChartCanvas = document.getElementById("historyChart");
         elements.historySection = document.getElementById("history-section");
         elements.historyEmpty = document.getElementById("history-empty");
         elements.historyBadge = document.getElementById("history-badge");

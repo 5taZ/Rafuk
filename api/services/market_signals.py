@@ -12,14 +12,37 @@ from api.services.aggregator import (
 
 
 def region_label(ad: dict[str, Any]) -> str | None:
+    # Top-level fields first
     for key in ("region_name", "location_name", "area_name", "locality_name"):
         value = ad.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    # Fallback: extract from ad_parameters where p="region" (use vl for text label)
+    for param in ad.get("ad_parameters", []):
+        if param.get("p") == "region":
+            vl = param.get("vl")
+            if isinstance(vl, str) and vl.strip():
+                return vl.strip()
     region_id = ad.get("region_id")
     if region_id in (None, "", 0):
         return None
     return f"Регион {region_id}"
+
+
+def area_label(ad: dict[str, Any]) -> str | None:
+    """Return city/district-level location, distinct from region."""
+    # Top-level fields first
+    for key in ("area_name", "locality_name", "location_name"):
+        value = ad.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    # Fallback: extract from ad_parameters where p="area" (use vl for text label)
+    for param in ad.get("ad_parameters", []):
+        if param.get("p") == "area":
+            vl = param.get("vl")
+            if isinstance(vl, str) and vl.strip():
+                return vl.strip()
+    return None
 
 
 def fair_price_band(price_vs_median: float | None) -> str | None:

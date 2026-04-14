@@ -66,8 +66,10 @@ class ListingItem(BaseModel):
     region_id: int | None = None
     condition: str | None = None
     seller_type: str | None = None
+    company_ad: bool = False
     price_vs_median: float | None = None
     region_name: str | None = None
+    area_name: str | None = None
     config_summary: str | None = None
     fair_price_band: str | None = None
     fair_price_label: str | None = None
@@ -108,6 +110,7 @@ class ListingDetailResponse(BaseModel):
     seller_type: str | None = None
     price_vs_median: float | None = None
     region_name: str | None = None
+    area_name: str | None = None
     fair_price_band: str | None = None
     fair_price_label: str | None = None
     anomaly_flags: list[str] = Field(default_factory=list)

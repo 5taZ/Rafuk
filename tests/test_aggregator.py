@@ -101,9 +101,10 @@ def test_normalize_search_text_supports_reseller_aliases() -> None:
 
 
 def test_extract_category_distribution_single_category() -> None:
+    param = {"p": "category", "v": "2010", "vl": "Легковые авто"}
     ads = [
-        {"category": "2010", "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}]},
-        {"category": "2010", "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}]},
+        {"category": "2010", "ad_parameters": [param]},
+        {"category": "2010", "ad_parameters": [param]},
     ]
     result = extract_category_distribution(ads)
     assert len(result) == 1
@@ -113,11 +114,13 @@ def test_extract_category_distribution_single_category() -> None:
 
 
 def test_extract_category_distribution_multiple_categories() -> None:
+    p_auto = {"p": "category", "v": "2010", "vl": "Легковые авто"}
+    p_parts = {"p": "category", "v": "2040", "vl": "Запчасти"}
     ads = [
-        {"category": "2010", "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}]},
-        {"category": "2040", "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}]},
-        {"category": "2040", "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}]},
-        {"category": "2040", "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}]},
+        {"category": "2010", "ad_parameters": [p_auto]},
+        {"category": "2040", "ad_parameters": [p_parts]},
+        {"category": "2040", "ad_parameters": [p_parts]},
+        {"category": "2040", "ad_parameters": [p_parts]},
     ]
     result = extract_category_distribution(ads)
     assert len(result) == 2

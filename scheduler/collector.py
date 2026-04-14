@@ -30,7 +30,7 @@ from api.services.history_service import (
     upsert_query_snapshot,
 )
 from api.services.kufar_client import KufarClient
-from api.services.market_signals import duplicate_counts
+from api.services.market_signals import duplicate_counts, region_label
 from api.services.reseller_tools import matches_tracker_filters
 from bot.keyboards import tracker_alert_keyboard
 
@@ -78,12 +78,7 @@ def persist_tracker_events(
         ad = ads_by_id.get(state.ad_id) if ads_by_id else None
         thumbnail = ad.get("thumbnail") if ad else None
         seller_type = ad.get("seller_type") if ad else None
-        region_name = None
-        if ad:
-            for key in ("region_name", "location_name", "area_name"):
-                if ad.get(key):
-                    region_name = ad.get(key)
-                    break
+        region_name = region_label(ad) if ad else None
 
         event = TrackerEvent(
             tracker_id=tracker.id,
@@ -107,12 +102,7 @@ def persist_tracker_events(
         ad = ads_by_id.get(state.ad_id) if ads_by_id else None
         thumbnail = ad.get("thumbnail") if ad else None
         seller_type = ad.get("seller_type") if ad else None
-        region_name = None
-        if ad:
-            for key in ("region_name", "location_name", "area_name"):
-                if ad.get(key):
-                    region_name = ad.get(key)
-                    break
+        region_name = region_label(ad) if ad else None
 
         event = TrackerEvent(
             tracker_id=tracker.id,

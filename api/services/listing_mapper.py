@@ -17,6 +17,7 @@ from api.services.market_signals import (
     fair_price_band,
     fair_price_label,
     region_label,
+    area_label,
 )
 from api.services.reseller_tools import analyze_query_text, compute_deal_score
 
@@ -140,6 +141,7 @@ def build_listing_detail(
         list_time=ad.get("list_time"),
         region_id=ad.get("region_id"),
         region_name=region_label(ad),
+        area_name=area_label(ad),
         category=category_label(ad),
         condition=get_param(ad, "condition"),
         seller_type=get_param(ad, "seller_type"),
@@ -198,8 +200,10 @@ def build_listing_item(
         list_time=ad.get("list_time"),
         region_id=ad.get("region_id"),
         region_name=region_label(ad),
+        area_name=area_label(ad),
         condition=get_param(ad, "condition"),
         seller_type=get_param(ad, "seller_type"),
+        company_ad=bool(ad.get("company_ad")),
         price_vs_median=price_delta,
         config_summary=deal_score.config_summary,
         fair_price_band=fair_band,

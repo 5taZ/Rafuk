@@ -43,13 +43,27 @@ def upgrade() -> None:
         op.create_table(
             "deal_expenses",
             sa.Column("id", Integer, primary_key=True, autoincrement=True),
-            sa.Column("lead_id", Integer, sa.ForeignKey("lead_items.id", ondelete="CASCADE"), nullable=False, index=True),
-            sa.Column("user_id", BigInteger, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True),
+            sa.Column(
+                "lead_id", Integer,
+                sa.ForeignKey("lead_items.id", ondelete="CASCADE"),
+                nullable=False, index=True,
+            ),
+            sa.Column(
+                "user_id", BigInteger,
+                sa.ForeignKey("users.id", ondelete="CASCADE"),
+                nullable=False, index=True,
+            ),
             sa.Column("expense_type", String(32), nullable=False),
             sa.Column("amount_byn", Numeric(10, 2), nullable=False),
             sa.Column("notes", String(255), nullable=True),
-            sa.Column("expense_date", DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.Column("created_at", DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column(
+                "expense_date", DateTime(timezone=True),
+                nullable=False, server_default=sa.func.now(),
+            ),
+            sa.Column(
+                "created_at", DateTime(timezone=True),
+                nullable=False, server_default=sa.func.now(),
+            ),
         )
         op.create_index("idx_deal_expenses_lead", "deal_expenses", ["lead_id"])
         op.create_index("idx_deal_expenses_user", "deal_expenses", ["user_id"])
@@ -59,11 +73,18 @@ def upgrade() -> None:
         op.create_table(
             "contacts",
             sa.Column("id", Integer, primary_key=True, autoincrement=True),
-            sa.Column("user_id", BigInteger, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True),
+            sa.Column(
+                "user_id", BigInteger,
+                sa.ForeignKey("users.id", ondelete="CASCADE"),
+                nullable=False, index=True,
+            ),
             sa.Column("phone", String(32), nullable=False),
             sa.Column("seller_name", String(128), nullable=True),
             sa.Column("kufar_profile", String(512), nullable=True),
-            sa.Column("saved_at", DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column(
+                "saved_at", DateTime(timezone=True),
+                nullable=False, server_default=sa.func.now(),
+            ),
             sa.UniqueConstraint("user_id", "phone", name="uq_contacts_user_phone"),
         )
         op.create_index("idx_contacts_user", "contacts", ["user_id"])

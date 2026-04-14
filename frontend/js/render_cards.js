@@ -56,16 +56,20 @@ function createRenderCards(context) {
         
         // Seller type filter
         if (state.sellerType) {
-            const isShop = item.seller_type === "Магазин" || item.seller_type === "shop" || item.seller_type?.toLowerCase() === "shop";
+            const isShop = item.company_ad || item.seller_type === "Магазин" || item.seller_type === "shop" || item.seller_type?.toLowerCase() === "shop";
             if (state.sellerType === "private" && isShop) return false;
             if (state.sellerType === "shop" && !isShop) return false;
         }
         
-        // Region filter
+        // Region filter — matches region_name or area_name exactly
         if (state.regionName) {
-            const itemRegion = (item.region_name || "").toLowerCase().trim();
             const filterRegion = state.regionName.toLowerCase().trim();
-            if (itemRegion !== filterRegion) return false;
+            if (!filterRegion) return true;
+            const itemRegion = (item.region_name || "").toLowerCase().trim();
+            const itemArea = (item.area_name || "").toLowerCase().trim();
+            if (!itemRegion && !itemArea) return false;
+            if (itemRegion === filterRegion || itemArea === filterRegion) return true;
+            return false;
         }
         
         return true;
@@ -213,6 +217,7 @@ function createRenderCards(context) {
     function renderListings() {
         return safeRender('renderListings', () => {
             if (state.loading) return;
+            const hasData = state.listings.length > 0 || state.listingsTotal > 0;
             const hasContent = renderListingsCollection(
                 state.listings,
                 elements.listingsList,
@@ -220,7 +225,9 @@ function createRenderCards(context) {
                 "По этому запросу пока нечего показать.",
                 state.listingsTotal || null
             );
-            elements.listingsSection.hidden = !hasContent;
+            // Keep section visible if data exists but was filtered out —
+            // the empty message inside the container tells the user why.
+            elements.listingsSection.hidden = !hasContent && !hasData;
         });
     }
 
@@ -253,9 +260,24 @@ function createRenderCards(context) {
                 return;
             }
 
-            const hasContent = true;
+            const hasData = state.dealListings.length > 0 || state.dealsTotal > 0;
             // Virtual scrolling disabled — cards have variable heights
             const filtered = applyFilters(state.dealListings);
+            if (!filtered.length) {
+                const note = document.createElement("p");
+                note.className = "tracker-empty";
+                if (!hasData) {
+                    note.textContent = `Нет лотов в диапазоне ${rangeLabel}% ниже медианы. Попробуйте расширить диапазон или другой запрос.`;
+                } else {
+                    note.textContent = `Фильтры скрыли все лоты. Попробуйте изменить фильтр.`;
+                }
+                container.appendChild(note);
+                if (elements.dealsTotalBadge) {
+                    elements.dealsTotalBadge.textContent = "0";
+                }
+                elements.dealsSection.hidden = !state.query;
+                return;
+            }
             for (const item of filtered) {
                 container.appendChild(buildListingNode(item));
             }
@@ -269,9 +291,6 @@ function createRenderCards(context) {
                 }
             }
             elements.dealsSection.hidden = !state.query;
-            if (!hasContent && state.query) {
-                elements.dealsSection.hidden = false;
-            }
         });
     }
 

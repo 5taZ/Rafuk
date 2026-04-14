@@ -13,7 +13,7 @@ from api.services.aggregator import (
     normalize_search_text,
     tokenize_search_text,
 )
-from api.services.market_signals import detect_anomaly_flags, region_label
+from api.services.market_signals import area_label, detect_anomaly_flags, region_label
 
 
 # =============================================================================
@@ -369,12 +369,20 @@ def matches_tracker_filters(
     price_byn = normalize_price_byn(ad.get("price_byn"))
     if max_price_byn is not None and price_byn is not None and price_byn > max_price_byn:
         return False
-    if seller_type and get_param(ad, "seller_type") != seller_type:
-        return False
+    if seller_type:
+        ad_seller = get_param(ad, "seller_type")
+        is_shop = bool(ad.get("company_ad")) or (ad_seller and ad_seller.lower() in ("shop", "магазин"))
+        if seller_type == "shop" and not is_shop:
+            return False
+        if seller_type == "private" and is_shop:
+            return False
     if condition and get_param(ad, "condition") != condition:
         return False
-    if region_name and region_label(ad) != region_name:
-        return False
+    if region_name:
+        ad_region = region_label(ad)
+        ad_area = area_label(ad)
+        if ad_region != region_name and ad_area != region_name:
+            return False
     if config_keyword and not config_keyword_matches(str(ad.get("subject", "")), config_keyword):
         return False
     if exclude_duplicates and duplicate_count > 0:

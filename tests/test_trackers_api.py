@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import TrackerEvent, User
+from api.models import TrackerEvent
 
 
 def fake_telegram_user() -> TelegramInitData:
