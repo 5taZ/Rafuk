@@ -371,7 +371,9 @@ def matches_tracker_filters(
         return False
     if seller_type:
         ad_seller = get_param(ad, "seller_type")
-        is_shop = bool(ad.get("company_ad")) or (ad_seller and ad_seller.lower() in ("shop", "магазин"))
+        is_shop = bool(ad.get("company_ad")) or (
+            ad_seller and ad_seller.lower() in ("shop", "магазин")
+        )
         if seller_type == "shop" and not is_shop:
             return False
         if seller_type == "private" and is_shop:

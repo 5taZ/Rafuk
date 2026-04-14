@@ -7,7 +7,7 @@ function createAppCore() {
         comparisonItems: [],
         comparisonLoading: false,
         historyDays: 7,
-        currency: "BYN", // always BYN — USD toggle removed
+        currency: "BYN",
         category: null, // selected category id (int or null)
         categories: [], // category distribution from last search [{id, label, count}]
         condition: "", // filter by condition: "", "new", "used"
@@ -41,7 +41,6 @@ function createAppCore() {
         chart: null,
         history: [],
         historyChart: null,
-        usdRateByn: null,
         leads: [],
         leadFilter: "all",
         watchlist: [],
@@ -146,8 +145,6 @@ function createAppCore() {
             coverage: document.getElementById("stat-coverage"),
             fairRange: document.getElementById("stat-fair-range"),
         };
-        elements.rateStrip = null; // removed
-        elements.usdRateValue = null; // removed
         elements.segmentsGrid = document.getElementById("segments-grid");
         elements.listingsList = document.getElementById("listings-list");
         elements.dealsList = document.getElementById("deals-list");
@@ -241,7 +238,7 @@ function createAppCore() {
         elements.filterRegion = document.getElementById("filter-region");
         elements.filterApplyBtn = document.querySelector(".filter-btn--apply");
         elements.filterCancelBtn = document.querySelector(".filter-btn--cancel");
-        elements.currencyButtons = {}; // removed USD toggle
+        // currency toggle removed — always BYN
         elements.editTrackerModal = document.getElementById("edit-tracker-modal");
         elements.editTrackerQuery = document.getElementById("edit-tracker-query");
         elements.editStrictModeToggle = document.getElementById("edit-strict-mode-toggle");
@@ -304,11 +301,6 @@ function createAppCore() {
         }
         // Small amounts — show up to 2 decimals (e.g. 6.5 р., 0.99 р.)
         return `${numeric.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} р.`;
-    }
-
-    function formatRate(value) {
-        if (!value) return "—";
-        return `${Number(value).toFixed(4)} BYN`;
     }
 
     function formatCondition(condition) {
@@ -437,22 +429,21 @@ function createAppCore() {
     }
 
     /**
-     * Performance monitoring utility — logs slow renders (>100ms) to
-     * console.warn so they can be identified and optimized during development.
-     *
-     * Usage:
-     *   const end = measureRender('renderListings');
-     *   // ... render logic ...
-     *   end();
+     * Performance monitoring utility — measures render time in development.
+     * Returns elapsed ms when the cleanup function is called.
      *
      * @param {string} name - Human-readable operation name
-     * @param {number} [thresholdMs=100] - Warn threshold
-     * @returns {Function} Cleanup function that logs if slow
+     * @param {number} [thresholdMs=100] - Warn threshold for console.warn
+     * @returns {Function} Cleanup function that returns elapsed ms
      */
     function measureRender(name, thresholdMs = 100) {
         const start = performance.now();
         return function () {
-            return performance.now() - start;
+            const elapsed = performance.now() - start;
+            if (elapsed > thresholdMs) {
+                console.warn(`[perf] ${name} took ${elapsed.toFixed(1)}ms`);
+            }
+            return elapsed;
         };
     }
 
@@ -523,7 +514,6 @@ function createAppCore() {
         REGIONS,
         initTelegramTheme,
         formatPrice,
-        formatRate,
         formatCondition,
         formatSeller,
         formatDelta,
@@ -535,8 +525,6 @@ function createAppCore() {
         saveRecentSearches,
         addRecentSearch,
         clearRecentSearches,
-        loadCurrency: () => {}, // noop — currency always BYN
-        saveCurrency: () => {},
         measureRender,
         markDirty,
         isDirty,

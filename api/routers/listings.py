@@ -26,7 +26,7 @@ router = APIRouter(tags=["analytics"])
 async def get_listings(
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     sort: str = "newest",
-    currency: str = "USD",
+    currency: str = "BYN",
     strict_search: bool = False,
     discount_percent: float = 10.0,
     discount_from_percent: float | None = None,

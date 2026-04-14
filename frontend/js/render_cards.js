@@ -495,9 +495,6 @@ function createRenderCards(context) {
             return;
         }
 
-        const rate = state.usdRateByn || 1;
-        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
-
         const filteredLeads = [...state.leads]
             .filter((l) => l.status !== "closed")
             .sort((left, right) => {
@@ -528,9 +525,7 @@ function createRenderCards(context) {
             const buyPriceBynRaw = lead.buy_price_byn ? Number(lead.buy_price_byn) : null;
             const soldPriceBynRaw = lead.sold_price_byn ? Number(lead.sold_price_byn) : null;
 
-            const priceByn = priceBynRaw ? (state.currency === "USD" ? Math.round(priceBynRaw / rate) : Math.round(priceBynRaw)) : null;
-            const buyPrice = buyPriceBynRaw ? (state.currency === "USD" ? Math.round(buyPriceBynRaw / rate) : Math.round(buyPriceBynRaw)) : null;
-            const soldPrice = soldPriceBynRaw ? (state.currency === "USD" ? Math.round(soldPriceBynRaw / rate) : Math.round(soldPriceBynRaw)) : null;
+            const priceByn = priceBynRaw ? Math.round(priceBynRaw) : null;
 
             const thumbMarkup = lead.thumbnail
                 ? `<img class="watchlist-thumb" src="${escapeHtml(lead.thumbnail)}" alt="" loading="lazy">`
@@ -548,15 +543,14 @@ function createRenderCards(context) {
 
             if (hasBothPrices) {
                 const profitRaw = soldPriceBynRaw - buyPriceBynRaw;
-                const profit = state.currency === "USD" ? profitRaw / rate : profitRaw;
                 const profitPercent = buyPriceBynRaw > 0 ? ((profitRaw / buyPriceBynRaw) * 100).toFixed(0) : "0";
-                const profitSign = profit >= 0 ? "+" : "";
-                const profitClass = profit >= 0 ? "profit-positive" : "profit-negative";
+                const profitSign = profitRaw >= 0 ? "+" : "";
+                const profitClass = profitRaw >= 0 ? "profit-positive" : "profit-negative";
 
                 if (isSold) {
-                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Прибыль: <span class="mono">${profitSign}${Math.round(profit)} ${currencySymbol} (${profitSign}${profitPercent}%)</span></div>`;
+                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Прибыль: <span class="mono">${profitSign}${Math.round(profitRaw)} BYN (${profitSign}${profitPercent}%)</span></div>`;
                 } else if (lead.status === 'new' || lead.status === 'bought') {
-                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Потенциальная прибыль: <span class="mono">${profitSign}${Math.round(profit)} ${currencySymbol} (${profitSign}${profitPercent}%)</span></div>`;
+                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Потенциальная прибыль: <span class="mono">${profitSign}${Math.round(profitRaw)} BYN (${profitSign}${profitPercent}%)</span></div>`;
                 }
             }
 
@@ -568,7 +562,7 @@ function createRenderCards(context) {
                         <div class="lead-card-title-row">
                             <strong class="lead-card-title">${escapeHtml(lead.title)}</strong>
                         </div>
-                        <span class="lead-card-price mono">${priceByn ? `${priceByn} ${currencySymbol}` : "без цены"}</span>
+                        <span class="lead-card-price mono">${priceByn ? `${priceByn} BYN` : "без цены"}</span>
                         ${missingBadge}
                         ${profitMarkup}
                     </div>
@@ -579,14 +573,14 @@ function createRenderCards(context) {
                         <div class="lead-field-wrap">
                             <input data-role="buy-price" type="text" min="0" placeholder="цена покупки">
                             <button class="lead-field-chip" data-role="fill-buy-price" type="button" ${!priceByn ? 'disabled style="opacity:0.4;pointer-events:none;"' : ''}>${priceByn ? `${priceByn}` : 'Договорная'}</button>
-                            <span class="unit">${currencySymbol}</span>
+                            <span class="unit">BYN</span>
                         </div>
                     </label>
                     <label class="lead-field">
                         <span class="lead-field-label">Продал за</span>
                         <div class="lead-field-wrap">
                             <input data-role="sold-price" type="text" min="0" placeholder="цена продажи">
-                            <span class="unit">${currencySymbol}</span>
+                            <span class="unit">BYN</span>
                         </div>
                     </label>
                 </div>
@@ -741,9 +735,6 @@ function createRenderCards(context) {
             return;
         }
 
-        const rate = state.usdRateByn || 1;
-        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
-
         // Build watchlist card element — extracted for virtual scrolling
         function buildWatchlistNode(item) {
             const card = document.createElement("article");
@@ -751,15 +742,11 @@ function createRenderCards(context) {
 
             const currentPriceByn = item.current_price_byn || item.initial_price_byn;
             const hasValidPrice = currentPriceByn && Number(currentPriceByn) > 0;
-            const currentPriceDisplay = hasValidPrice
-                ? (state.currency === "USD" ? Math.round(currentPriceByn / rate) : Math.round(currentPriceByn))
-                : null;
+            const currentPriceDisplay = hasValidPrice ? Math.round(currentPriceByn) : null;
 
             const deltaBynRaw = item.price_delta_byn;
             const deltaPercent = item.price_delta_percent;
-            const deltaDisplay = deltaBynRaw != null
-                ? (state.currency === "USD" ? deltaBynRaw / rate : deltaBynRaw)
-                : null;
+            const deltaDisplay = deltaBynRaw != null ? deltaBynRaw : null;
 
             let deltaMarkup = "";
             if (deltaDisplay != null && Math.abs(deltaDisplay) > 0.5) {
@@ -768,7 +755,7 @@ function createRenderCards(context) {
                 const deltaSign = deltaNum > 0 ? "+" : "";
                 const arrow = deltaNum < 0 ? "📉" : deltaNum > 0 ? "📈" : "≈";
                 const percentText = deltaPercent != null ? ` (${deltaSign}${deltaPercent}%)` : "";
-                deltaMarkup = `<span class="watchlist-price-delta ${deltaClass}">${arrow} ${deltaSign}${deltaNum} ${currencySymbol}${percentText}</span>`;
+                deltaMarkup = `<span class="watchlist-price-delta ${deltaClass}">${arrow} ${deltaSign}${deltaNum} BYN${percentText}</span>`;
             }
 
             const itemMedianByn = item.market_median_byn
@@ -777,11 +764,10 @@ function createRenderCards(context) {
             let potentialProfitMarkup = "";
             if (itemMedianByn && currentPriceByn && itemMedianByn > 0) {
                 const profitByn = itemMedianByn - Number(currentPriceByn);
-                const profitDisplay = state.currency === "USD" ? profitByn / rate : profitByn;
                 const profitPercent = currentPriceByn > 0 ? Math.round((profitByn / Number(currentPriceByn)) * 100) : 0;
                 const profitClass = profitByn >= 0 ? "profit-positive" : "profit-negative";
                 const profitSign = profitByn >= 0 ? "+" : "";
-                potentialProfitMarkup = `<span class="watchlist-profit ${profitClass}">Потенциал: ${profitSign}${Math.round(profitDisplay)} ${currencySymbol} (${profitSign}${profitPercent}%)</span>`;
+                potentialProfitMarkup = `<span class="watchlist-profit ${profitClass}">Потенциал: ${profitSign}${Math.round(profitByn)} BYN (${profitSign}${profitPercent}%)</span>`;
             }
 
             const isMarketSignal = item.market_status && ["price_drop", "missing", "duplicate"].includes(item.market_status);
@@ -815,7 +801,7 @@ function createRenderCards(context) {
                     <div class="watchlist-card-body">
                         <strong class="watchlist-card-title">${escapeHtml(item.title)}</strong>
                         <div class="watchlist-card-price-row">
-                            <span class="watchlist-card-price mono">${currentPriceDisplay ? `${currentPriceDisplay} ${currencySymbol}` : "Договорная"}</span>
+                            <span class="watchlist-card-price mono">${currentPriceDisplay ? `${currentPriceDisplay} BYN` : "Договорная"}</span>
                             ${deltaMarkup}
                         </div>
                         ${potentialProfitMarkup}

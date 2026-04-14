@@ -80,19 +80,8 @@ function createApiEvents(context) {
         loadDetailRisks,
         startTrackerRefresh,
         stopTrackerRefresh,
+        parseComparisonQueries,
     } = context;
-
-    // ── Comparison query parser (used by quick-compare chips) ────────────
-    function parseComparisonQueries(value) {
-        const items = String(value || "")
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean);
-        return Array.from(new Set(items.map((item) => item.toLocaleLowerCase("ru-RU"))))
-            .map((key) => items.find((item) => item.toLocaleLowerCase("ru-RU") === key))
-            .filter(Boolean)
-            .slice(0, 2);
-    }
 
     // ── Event binding ────────────────────────────────────────────────────
     function bindEvents() {
@@ -806,10 +795,6 @@ function createApiEvents(context) {
                 return;
             }
             
-            // Convert USD input to BYN for storage
-            const rate = state.usdRateByn || 1;
-            const amountByn = state.currency === "USD" ? Math.round(displayAmount * rate) : displayAmount;
-            
             const button = elements.saveExpenseButton;
             button.disabled = true;
             button.classList.add('is-loading');
@@ -817,7 +802,7 @@ function createApiEvents(context) {
             button.textContent = 'Сохраняю...';
             void (async () => {
                 try {
-                    await createExpense(leadId, { expense_type: type, amount_byn: amountByn, notes });
+                    await createExpense(leadId, { expense_type: type, amount_byn: displayAmount, notes });
                     if (elements.expenseAmountInput) elements.expenseAmountInput.value = "";
                     if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";
                 } finally {

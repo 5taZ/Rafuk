@@ -71,46 +71,53 @@ async def get_trackers(
         )
         trackers = list(result.scalars())
 
-        # Enrich trackers with event statistics
-        enriched_trackers = []
-        for tracker in trackers:
-            # Get event counts and last event time
-            stats_result = await session.execute(
-                select(
-                    func.count(TrackerEvent.id).label('total_events'),
-                    func.count(TrackerEvent.id)
-                    .filter(TrackerEvent.event_type == 'new_listing')
-                    .label('new_listings'),
-                    func.count(TrackerEvent.id)
-                    .filter(TrackerEvent.event_type == 'price_drop')
-                    .label('price_drops'),
-                    func.max(TrackerEvent.created_at).label('last_event_at')
-                ).where(TrackerEvent.tracker_id == tracker.id)
-            )
-            stats = stats_result.one()
+        if not trackers:
+            return []
 
-            # Calculate average events per day
-            now = datetime.now(UTC)
+        # Single GROUP BY query for all tracker event stats (fixes N+1)
+        tracker_ids = [t.id for t in trackers]
+        stats_rows = await session.execute(
+            select(
+                TrackerEvent.tracker_id,
+                func.count(TrackerEvent.id).label('total_events'),
+                func.count(TrackerEvent.id)
+                .filter(TrackerEvent.event_type == 'new_listing')
+                .label('new_listings'),
+                func.count(TrackerEvent.id)
+                .filter(TrackerEvent.event_type == 'price_drop')
+                .label('price_drops'),
+                func.max(TrackerEvent.created_at).label('last_event_at'),
+            )
+            .where(TrackerEvent.tracker_id.in_(tracker_ids))
+            .group_by(TrackerEvent.tracker_id)
+        )
+        stats_by_tracker: dict[int, object] = {row.tracker_id: row for row in stats_rows}
+
+        enriched_trackers = []
+        now = datetime.now(UTC)
+        for tracker in trackers:
+            stats = stats_by_tracker.get(tracker.id)
+            total_events = stats.total_events if stats else 0
+            new_listings = stats.new_listings if stats else 0
+            price_drops = stats.price_drops if stats else 0
+            last_event_at = stats.last_event_at if stats else None
+
             days_active = 1
             if tracker.created_at:
-                if tracker.created_at.tzinfo is None:
-                    delta = now - tracker.created_at.replace(tzinfo=UTC)
-                else:
-                    delta = now - tracker.created_at
-                days_active = max(1, delta.total_seconds() / 86400)
+                created = (
+                    tracker.created_at.replace(tzinfo=UTC)
+                    if tracker.created_at.tzinfo is None
+                    else tracker.created_at
+                )
+                days_active = max(1, (now - created).total_seconds() / 86400)
 
-            avg_events_per_day = (
-                round(stats.total_events / days_active, 2)
-                if stats.total_events > 0
-                else 0.0
-            )
+            avg_events_per_day = round(total_events / days_active, 2) if total_events > 0 else 0.0
 
-            # Create enriched response
             tracker_dict = TrackerRead.model_validate(tracker)
-            tracker_dict.event_count = stats.total_events
-            tracker_dict.new_listings_count = stats.new_listings
-            tracker_dict.price_drops_count = stats.price_drops
-            tracker_dict.last_event_at = stats.last_event_at
+            tracker_dict.event_count = total_events
+            tracker_dict.new_listings_count = new_listings
+            tracker_dict.price_drops_count = price_drops
+            tracker_dict.last_event_at = last_event_at
             tracker_dict.avg_events_per_day = avg_events_per_day
             enriched_trackers.append(tracker_dict)
 

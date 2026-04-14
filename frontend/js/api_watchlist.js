@@ -78,9 +78,7 @@ function createApiWatchlist(context) {
                 link: item.link,
                 price_byn: item.price_byn,
                 thumbnail: item.thumbnail || null,
-                market_median_byn: state.stats?.median
-                    ? (state.currency === "USD" ? Number(state.stats.median) * (state.usdRateByn || 1) : Number(state.stats.median))
-                    : null,
+                market_median_byn: state.stats?.median ? Number(state.stats.median) : null,
             });
             showToast("Добавлено в избранное", "success");
             await loadWatchlist();
@@ -196,10 +194,11 @@ function createApiWatchlist(context) {
     // ── Refresh watchlist (server-side price check) ──────────────────────
     async function refreshWatchlist() {
         const button = elements.watchlistSection?.querySelector('[data-role="refresh-watchlist"]');
+        let originalText = "";
         if (button) {
+            originalText = button.textContent;
             button.disabled = true;
             button.classList.add('is-loading');
-            const originalText = button.textContent;
             button.textContent = 'Обновляю...';
         }
         try {

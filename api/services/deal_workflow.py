@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from api.schemas import FlipEstimate, LiquidityInsight
-from api.services.aggregator import PriceStats, filter_deal_ads, normalize_price_byn
+from api.services.aggregator import PriceStats, filter_deal_ads, get_param, normalize_price_byn
 
 
 def _age_hours(list_time: str | None) -> float | None:
@@ -130,12 +130,12 @@ def compute_liquidity_insight(
             reasons.append("нет фото")
 
         # Condition bonus (0-10 points)
-        condition = str(ad.get("condition", "")).lower()
-        if condition in ("новый", "2", "new"):
+        condition = (get_param(ad, "condition") or "").lower()
+        if condition in ("новый", "new"):
             item_score += 10
             if "новый" not in " ".join(reasons).lower():
                 reasons.append("новый товар")
-        elif condition in ("б/у", "1", "used"):
+        elif condition in ("б/у", "used"):
             item_score += 3
 
         score = round(max(0.0, min(100.0, 25.0 + market_score + item_score)), 1)

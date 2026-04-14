@@ -23,13 +23,8 @@ router = APIRouter(prefix="/contacts", tags=["contacts"])
     description=(
         "Create a new contact for the authenticated user. "
         "If a contact with the same phone number already exists, the existing "
-        "contact is updated (upsert by phone).  Returns **201 Created** for a "
-        "brand-new contact or **200 OK** when an existing record was updated."
+        "contact is updated (upsert by phone)."
     ),
-    responses={
-        201: {"description": "New contact created successfully"},
-        200: {"description": "Existing contact updated (upsert)"},
-    },
 )
 @limiter.limit("20/minute")
 async def create_contact(
@@ -37,7 +32,7 @@ async def create_contact(
     payload: ContactCreate,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
-) -> Response:
+) -> ContactRead:
     """Create a new contact (upsert by phone or name)."""
     if not payload.phone and not payload.seller_name:
         raise HTTPException(status_code=400, detail="Phone or name is required")
@@ -74,11 +69,7 @@ async def create_contact(
                 existing.phone = payload.phone
             await session.commit()
             await session.refresh(existing)
-            return Response(
-                content=ContactRead.model_validate(existing).model_dump_json(),
-                status_code=status.HTTP_200_OK,
-                media_type="application/json",
-            )
+            return ContactRead.model_validate(existing)
 
         contact = Contact(
             user_id=user_id,
@@ -91,30 +82,23 @@ async def create_contact(
             await session.commit()
         except IntegrityError:
             await session.rollback()
-            await session.flush()
-
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Contact already exists",
+            ) from None
         await session.refresh(contact)
-        return Response(
-            content=ContactRead.model_validate(contact).model_dump_json(),
-            status_code=status.HTTP_201_CREATED,
-            media_type="application/json",
-        )
+        return ContactRead.model_validate(contact)
 
 
 @router.get(
     "",
     response_model=list[ContactRead],
     summary="List all contacts for the authenticated user",
-    description=(
-        "Returns every contact owned by the current Telegram user, "
-        "ordered by most recently saved first."
-    ),
 )
 async def list_contacts(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[ContactRead]:
-    """Return all contacts scoped to the authenticated user."""
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user.user_id)
         if user_id is None:
@@ -131,14 +115,6 @@ async def list_contacts(
     "/{contact_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a contact",
-    description=(
-        "Permanently delete a contact by ID. "
-        "Returns 404 if the contact does not belong to the user."
-    ),
-    responses={
-        204: {"description": "Contact deleted successfully"},
-        404: {"description": "Contact not found"},
-    },
 )
 @limiter.limit("20/minute")
 async def delete_contact(
@@ -147,11 +123,6 @@ async def delete_contact(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
-    """Delete a contact owned by the authenticated user.
-
-    Raises **404 Not Found** if the contact does not exist or does not belong
-    to the current user.
-    """
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user.user_id)
         if user_id is None:

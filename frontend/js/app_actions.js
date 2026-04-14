@@ -131,6 +131,7 @@ function createAppActions(context) {
         postJson: core.postJson,
         deleteJson: core.deleteJson,
         buildCommonQuery: core.buildCommonQuery,
+        parseComparisonQueries: core.parseComparisonQueries,
     });
     
     const listings = createApiListings(context);
@@ -395,7 +396,6 @@ function createAppActions(context) {
         search: listings.search,
         loadListings: listings.loadListings,
         loadDeals: listings.loadDeals,
-        loadRates: core.loadRates,
         loadHistory: listings.loadHistory,
         loadComparison: listings.loadComparison,
         swapComparisonQueries: listings.swapComparisonQueries,

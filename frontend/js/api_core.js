@@ -12,7 +12,6 @@ function createApiCore(context) {
         renderAll,
         renderLoading,
         renderError,
-        renderRates,
         renderStrictSearch,
         renderDealInputs,
         renderTrackerInputs,
@@ -48,7 +47,7 @@ function createApiCore(context) {
                 }
             } catch (_) {
                 if (response.status >= 500) {
-                    message = "API недоступен. Поднимите uvicorn на 0.0.0.0:8010 и обновите Mini App.";
+                    message = "Сервер временно недоступен. Попробуйте позже.";
                 }
             }
             throw new Error(message);
@@ -99,16 +98,16 @@ function createApiCore(context) {
         return query.toString();
     }
 
-    // ── Currency rates ───────────────────────────────────────────────────
-    async function loadRates() {
-        try {
-            const payload = await getJson("/api/v1/currency-rates");
-            state.usdRateByn = Number(payload?.rates?.USD || 0) || null;
-        } catch (_) {
-            state.usdRateByn = null;
-        } finally {
-            renderAll();
-        }
+    // ── Comparison query parser ─────────────────────────────────────────
+    function parseComparisonQueries(value) {
+        const items = String(value || "")
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        return Array.from(new Set(items.map((item) => item.toLocaleLowerCase("ru-RU"))))
+            .map((key) => items.find((item) => item.toLocaleLowerCase("ru-RU") === key))
+            .filter(Boolean)
+            .slice(0, 2);
     }
 
     return {
@@ -118,6 +117,6 @@ function createApiCore(context) {
         postJson,
         deleteJson,
         buildCommonQuery,
-        loadRates,
+        parseComparisonQueries,
     };
 }

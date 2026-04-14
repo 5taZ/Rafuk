@@ -15,6 +15,24 @@ from api.services.workflow_store import resolve_user_id
 
 router = APIRouter(tags=["export"])
 
+CSV_HEADERS = [
+    "id", "query", "title", "link", "price_byn", "target_resale_byn",
+    "status", "source", "notes", "sold_price_byn", "sold_at",
+    "total_expenses", "actual_profit", "roi_percent", "created_at", "updated_at",
+]
+
+
+def _empty_csv_response() -> Response:
+    output = io.StringIO()
+    csv.writer(output).writerow(CSV_HEADERS)
+    content = output.getvalue()
+    output.close()
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="leads_export.csv"'},
+    )
+
 
 @router.get("/leads/export")
 async def export_leads_csv(
@@ -25,50 +43,18 @@ async def export_leads_csv(
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user.user_id)
         if user_id is None:
-            # Return empty CSV with headers only
-            output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerow([
-                "id", "query", "title", "link", "price_byn", "target_resale_byn",
-                "status", "source", "notes", "sold_price_byn", "sold_at",
-                "total_expenses", "actual_profit", "roi_percent", "created_at", "updated_at"
-            ])
-            csv_content = output.getvalue()
-            output.close()
-            return Response(
-                content=csv_content,
-                media_type="text/csv",
-                headers={
-                    "Content-Disposition": 'attachment; filename="leads_export.csv"',
-                },
-            )
+            return _empty_csv_response()
+
         result = await session.execute(
             select(LeadItem)
             .where(LeadItem.user_id == user_id)
             .order_by(LeadItem.created_at.desc())
         )
         leads = list(result.scalars())
-
         if not leads:
-            # Return empty CSV with headers only
-            output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerow([
-                "id", "query", "title", "link", "price_byn", "target_resale_byn",
-                "status", "source", "notes", "sold_price_byn", "sold_at",
-                "total_expenses", "actual_profit", "roi_percent", "created_at", "updated_at"
-            ])
-            csv_content = output.getvalue()
-            output.close()
-            return Response(
-                content=csv_content,
-                media_type="text/csv",
-                headers={
-                    "Content-Disposition": 'attachment; filename="leads_export.csv"',
-                },
-            )
+            return _empty_csv_response()
 
-        # Single query to fetch all expenses for all leads (fixes N+1)
+        # Single query to fetch all expenses for all leads
         lead_ids = [lead.id for lead in leads]
         expenses_result = await session.execute(
             select(DealExpense.lead_id, DealExpense.amount_byn).where(
@@ -82,27 +68,20 @@ async def export_leads_csv(
     # Generate CSV
     output = io.StringIO()
     writer = csv.writer(output)
+    writer.writerow(CSV_HEADERS)
 
-    # Header
-    writer.writerow([
-        "id", "query", "title", "link", "price_byn", "target_resale_byn",
-        "status", "source", "notes", "sold_price_byn", "sold_at",
-        "total_expenses", "actual_profit", "roi_percent", "created_at", "updated_at"
-    ])
-
-    # Data rows
     for lead in leads:
         buy_price = float(lead.price_byn or 0)
         sold_price = float(lead.sold_price_byn or 0)
         total_expenses = lead_expenses.get(lead.id, 0.0)
         total_cost = buy_price + total_expenses
 
-        # Calculate profit and ROI
         actual_profit = (sold_price - total_cost) if sold_price > 0 else None
-        if actual_profit is not None and total_cost > 0:
-            roi_percent = (actual_profit / total_cost) * 100
-        else:
-            roi_percent = None
+        roi_percent = (
+            (actual_profit / total_cost * 100)
+            if actual_profit is not None and total_cost > 0
+            else None
+        )
 
         writer.writerow([
             lead.id,
@@ -113,7 +92,7 @@ async def export_leads_csv(
             lead.target_resale_byn or "",
             lead.status,
             lead.source,
-            lead.notes or "",
+            getattr(lead, "notes", "") or "",
             lead.sold_price_byn or "",
             lead.sold_at.isoformat() if lead.sold_at else "",
             f"{total_expenses:.2f}",
@@ -123,13 +102,10 @@ async def export_leads_csv(
             lead.updated_at.isoformat(),
         ])
 
-    csv_content = output.getvalue()
+    content = output.getvalue()
     output.close()
-
     return Response(
-        content=csv_content,
+        content=content,
         media_type="text/csv",
-        headers={
-            "Content-Disposition": 'attachment; filename="leads_export.csv"',
-        },
+        headers={"Content-Disposition": 'attachment; filename="leads_export.csv"'},
     )

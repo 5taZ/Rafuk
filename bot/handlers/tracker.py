@@ -15,7 +15,7 @@ from aiogram.types import CallbackQuery
 from sqlalchemy import select
 
 from api.models import TrackerEvent
-from api.services.workflow_store import upsert_lead
+from api.services.workflow_store import ensure_user, upsert_lead
 from bot.database import get_bot_engine, get_bot_session_factory
 
 router = Router(name="tracker_callbacks")
@@ -35,10 +35,18 @@ async def handle_tracker_action(callback: CallbackQuery) -> None:
     engine = get_bot_engine()
     session_factory = get_bot_session_factory(engine)
     async with session_factory() as session:
+        # Resolve internal user_id from telegram user_id
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=callback.from_user.id,
+            first_name=callback.from_user.first_name or "",
+            username=callback.from_user.username,
+        )
+
         event = await session.scalar(
             select(TrackerEvent).where(
                 TrackerEvent.id == int(raw_event_id),
-                TrackerEvent.user_id == callback.from_user.id,
+                TrackerEvent.user_id == user_id,
             )
         )
         if event is None:
@@ -48,7 +56,7 @@ async def handle_tracker_action(callback: CallbackQuery) -> None:
         status = "in_progress" if action == "lead" else "deferred"
         await upsert_lead(
             session,
-            user_id=callback.from_user.id,
+            user_id=user_id,
             ad_id=int(event.ad_id or event.id),
             query=event.query,
             title=event.title,

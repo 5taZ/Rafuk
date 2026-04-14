@@ -12,6 +12,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import joinedload
 
 from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
@@ -46,23 +47,29 @@ logger = logging.getLogger(__name__)
 
 async def notify_user(
     bot: Bot,
-    user_id: int,
+    telegram_user_id: int,
     message: str,
     session: AsyncSession,
+    *,
+    internal_user_id: int | None = None,
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> bool:
-    """Send message to user. Returns False if tracker should be deactivated."""
+    """Send message to user via telegram_user_id.
+
+    Returns False if tracker should be deactivated.
+    """
     try:
-        await bot.send_message(user_id, message, reply_markup=reply_markup)
+        await bot.send_message(telegram_user_id, message, reply_markup=reply_markup)
         return True
     except TelegramForbiddenError:
-        # Mark tracker as inactive - caller will commit
-        await session.execute(
-            update(Tracker).where(
-                Tracker.user_id == user_id,
-                Tracker.active.is_(True),
-            ).values(active=False)
-        )
+        if internal_user_id is not None:
+            # Mark tracker as inactive - caller will commit
+            await session.execute(
+                update(Tracker).where(
+                    Tracker.user_id == internal_user_id,
+                    Tracker.active.is_(True),
+                ).values(active=False)
+            )
         return False
 
 
@@ -229,12 +236,11 @@ async def check_trackers(
     settings: Settings,
 ) -> None:
     async with session_factory() as session:
-        # Only check active AND non-paused trackers
+        # Only check active AND non-paused trackers, eager-load user for telegram_user_id
         result = await session.execute(
-            select(Tracker).where(
-                Tracker.active.is_(True),
-                Tracker.paused.is_(False)
-            )
+            select(Tracker)
+            .where(Tracker.active.is_(True), Tracker.paused.is_(False))
+            .options(joinedload(Tracker.user))
         )
         all_trackers = list(result.scalars())
         if not all_trackers:
@@ -345,9 +351,10 @@ async def check_trackers(
                             )
                             can_notify = await notify_user(
                                 bot,
-                                tracker.user_id,
+                                tracker.user.telegram_user_id,
                                 message,
                                 session,
+                                internal_user_id=tracker.user_id,
                                 reply_markup=keyboard,
                             )
                             if can_notify:

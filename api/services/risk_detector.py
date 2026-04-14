@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 
@@ -7,13 +8,17 @@ def assess_listing_risks(ad: dict[str, Any], market_median: float | None = None)
     """Analyze a listing for potential risks (scams, too-good-to-be-true deals)."""
     risks: list[dict[str, str]] = []
 
-    price = ad.get("price_byn")
+    raw_price = ad.get("price_byn")
+    price_byn = None
+    if raw_price is not None:
+        with contextlib.suppress(TypeError, ValueError):
+            price_byn = float(raw_price)
     description = (ad.get("description") or ad.get("subject") or "").lower()
-    photo_count = ad.get("photo_count", 0)
+    photo_count = len(ad.get("images") or ad.get("photos") or [])
 
     # Check price risks
-    if price and market_median and market_median > 0:
-        ratio = price / market_median
+    if price_byn and market_median and market_median > 0:
+        ratio = price_byn / market_median
         if ratio < 0.5:
             risks.append({
                 "type": "too_cheap",

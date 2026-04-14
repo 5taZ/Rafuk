@@ -290,9 +290,6 @@ function createRenderCharts(context) {
 
         elements.profitDashboardSection.hidden = false;
 
-        const rate = state.usdRateByn || 1;
-        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
-
         const closedLeads = state.leads.filter(
             (l) => l.status === "closed" && l.buy_price_byn && l.sold_price_byn
         );
@@ -305,21 +302,19 @@ function createRenderCharts(context) {
             totalSoldRevenue += Number(l.sold_price_byn || 0);
         });
 
-        const displayInvested = state.currency === "USD" ? totalInvested / rate : totalInvested;
-        const displaySoldRevenue = state.currency === "USD" ? totalSoldRevenue / rate : totalSoldRevenue;
-        const displayProfit = displaySoldRevenue - displayInvested;
+        const displayProfit = totalSoldRevenue - totalInvested;
         const roi = totalInvested > 0 ? (((totalSoldRevenue - totalInvested) / totalInvested) * 100).toFixed(1) : "0";
 
         const cards = [
             {
                 label: "Вложено",
-                value: `${Math.round(displayInvested)} ${currencySymbol}`,
+                value: `${Math.round(totalInvested)} BYN`,
                 sub: `${closedLeads.length} закрытых сделок`,
                 className: "",
             },
             {
                 label: "Прибыль",
-                value: `${displayProfit >= 0 ? "+" : ""}${Math.round(displayProfit)} ${currencySymbol}`,
+                value: `${displayProfit >= 0 ? "+" : ""}${Math.round(displayProfit)} BYN`,
                 sub: `${closedLeads.length} закрытых`,
                 className: displayProfit >= 0 ? "is-accent" : "is-warning",
             },
@@ -351,9 +346,6 @@ function createRenderCharts(context) {
         if (!elements.historyDealsList) return;
         elements.historyDealsList.innerHTML = "";
 
-        const rate = state.usdRateByn || 1;
-        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
-
         const closedLeads = state.leads.filter((l) => l.status === "closed");
 
         if (elements.historyDealsCount) {
@@ -380,10 +372,9 @@ function createRenderCharts(context) {
             const buyPriceBynRaw = lead.buy_price_byn ? Number(lead.buy_price_byn) : null;
             const soldPriceBynRaw = lead.sold_price_byn ? Number(lead.sold_price_byn) : null;
 
-            const buyPrice = buyPriceBynRaw ? (state.currency === "USD" ? Math.round(buyPriceBynRaw / rate) : Math.round(buyPriceBynRaw)) : "?";
-            const soldPrice = soldPriceBynRaw ? (state.currency === "USD" ? Math.round(soldPriceBynRaw / rate) : Math.round(soldPriceBynRaw)) : "?";
-            const profitRaw = soldPriceBynRaw && buyPriceBynRaw ? soldPriceBynRaw - buyPriceBynRaw : null;
-            const profit = profitRaw !== null ? (state.currency === "USD" ? profitRaw / rate : profitRaw) : null;
+            const buyPrice = buyPriceBynRaw ? Math.round(buyPriceBynRaw) : "?";
+            const soldPrice = soldPriceBynRaw ? Math.round(soldPriceBynRaw) : "?";
+            const profit = soldPriceBynRaw && buyPriceBynRaw ? soldPriceBynRaw - buyPriceBynRaw : null;
             const profitSign = profit && profit >= 0 ? "+" : "";
             const profitClass = profit && profit >= 0 ? "history-profit-positive" : "history-profit-negative";
 
@@ -398,7 +389,7 @@ function createRenderCharts(context) {
                 <div class="history-deal-info">
                     <strong class="history-deal-title">${escapeHtml(lead.title)}</strong>
                     <div class="history-deal-meta">
-                        <span class="history-deal-price">${buyPrice} → ${soldPrice} ${currencySymbol}</span>
+                        <span class="history-deal-price">${buyPrice} → ${soldPrice} BYN</span>
                         <span class="history-deal-date">${dateStr}</span>
                     </div>
                 </div>
@@ -406,7 +397,7 @@ function createRenderCharts(context) {
                     <div class="history-deal-profit ${profitClass}">
                         ${profit !== null ? `${profitSign}${Math.round(profit)}` : "—"}
                     </div>
-                    <span class="history-deal-profit-currency">${currencySymbol}</span>
+                    <span class="history-deal-profit-currency">BYN</span>
                 </div>
                 <button class="history-deal-delete" data-role="delete-history-deal" type="button" aria-label="Удалить из истории">✕</button>
             `;

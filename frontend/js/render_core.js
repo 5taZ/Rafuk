@@ -1,6 +1,6 @@
 /**
- * render_core.js — Infrastructure renders: toast, error bar, loading, currency,
- * view tabs, panels, summary, helper, rates.
+ * render_core.js — Infrastructure renders: toast, error bar, loading,
+ * view tabs, panels, summary, helper.
  */
 
 function createRenderCore(context) {
@@ -9,7 +9,6 @@ function createRenderCore(context) {
         elements,
         actions,
         formatPrice,
-        formatRate,
         formatCondition,
         formatSeller,
         formatDelta,
@@ -18,20 +17,6 @@ function createRenderCore(context) {
         trapFocus,
         hasTelegramInitData,
     } = context;
-
-    /**
-     * Safe render wrapper — catches and logs errors instead of crashing.
-     */
-    function safeRender(name, fn) {
-        try {
-            return fn();
-        } catch (_) {
-            if (typeof showToast === 'function') {
-                showToast("Ошибка отображения", 'error');
-            }
-            return null;
-        }
-    }
 
     /**
      * Escape HTML special characters to prevent XSS attacks.
@@ -43,6 +28,15 @@ function createRenderCore(context) {
         if (str == null) return "";
         _escapeDiv.textContent = String(str);
         return _escapeDiv.innerHTML;
+    }
+
+    function safeRender(name, fn) {
+        try {
+            return fn();
+        } catch (err) {
+            console.error(`[render] ${name} failed:`, err);
+            return null;
+        }
     }
 
     /* ===== Toast ===== */
@@ -97,10 +91,7 @@ function createRenderCore(context) {
     }
 
     /* ===== Rates ===== */
-
-    function renderRates() {
-        return; // removed — currency always BYN
-    }
+    // Removed — currency is always BYN
 
     /* ===== Error ===== */
 
@@ -174,10 +165,7 @@ function createRenderCore(context) {
     }
 
     /* ===== Currency ===== */
-
-    function renderCurrencyButtons() {
-        return; // removed — currency always BYN
-    }
+    // Removed — currency is always BYN
 
     /* ===== Strict Search ===== */
 
@@ -331,10 +319,8 @@ function createRenderCore(context) {
         escapeHtml,
         showToast,
         dismissToast,
-        renderRates,
         renderError,
         renderLoading,
-        renderCurrencyButtons,
         renderStrictSearch,
         renderViewTabs,
         renderPanels,

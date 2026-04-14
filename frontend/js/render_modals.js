@@ -206,14 +206,10 @@ function createRenderModals(context) {
             return;
         }
 
-        const rate = state.usdRateByn || 1;
-        const currencySymbol = state.currency === "USD" ? "$" : "BYN";
-
         let totalExpenses = 0;
         for (const expense of state.expenses) {
             const amount = Number(expense.amount_byn || 0);
             totalExpenses += amount;
-            const displayAmount = state.currency === "USD" ? Math.round(amount / rate) : Math.round(amount);
             const row = document.createElement("div");
             row.className = "expense-row";
             const typeLabels = { delivery: "🚚 Доставка", repair: "🔧 Ремонт", other: "📦 Другое" };
@@ -222,7 +218,7 @@ function createRenderModals(context) {
                     <span class="expense-type">${typeLabels[expense.expense_type] || expense.expense_type}</span>
                     <span class="expense-meta">${expense.notes || ""}</span>
                 </div>
-                <span class="expense-amount mono">-${displayAmount} ${currencySymbol}</span>
+                <span class="expense-amount mono">-${Math.round(amount)} BYN</span>
                 <button class="expense-delete-btn" data-expense-id="${expense.id}" type="button" aria-label="Удалить расход">✕</button>
             `;
             row.querySelector('[data-expense-id]')?.addEventListener("click", () => {
@@ -232,12 +228,11 @@ function createRenderModals(context) {
         }
 
         // Show total
-        const displayTotal = state.currency === "USD" ? Math.round(totalExpenses / rate) : Math.round(totalExpenses);
         const totalRow = document.createElement("div");
         totalRow.className = "expense-total";
         totalRow.innerHTML = `
             <span class="expense-total-label">Итого расходов</span>
-            <span class="expense-total-value mono">-${displayTotal} ${currencySymbol}</span>
+            <span class="expense-total-value mono">-${Math.round(totalExpenses)} BYN</span>
         `;
         elements.expensesList.prepend(totalRow);
         });

@@ -959,7 +959,7 @@ body {
     padding: 10px 16px;
     font: 600 12px var(--font);
     text-decoration: none;
-    transition: all 0.15s ease-out;
+    transition: background 0.15s ease-out, color 0.15s ease-out, border-color 0.15s ease-out, transform 0.1s ease-out;
     cursor: pointer;
     letter-spacing: 0;
 }
@@ -1969,7 +1969,7 @@ body {
     border-radius: 999px;
     cursor: pointer;
     white-space: nowrap;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
@@ -2211,7 +2211,7 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: all 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
     text-align: center;
     text-decoration: none;
     display: flex;
@@ -2770,7 +2770,7 @@ body {
     cursor: pointer;
     padding: 4px 6px;
     border-radius: 6px;
-    transition: all 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
     flex-shrink: 0;
 }
 
@@ -3215,7 +3215,7 @@ body {
     font: 600 12px var(--font);
     cursor: pointer;
     white-space: nowrap;
-    transition: all 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
     flex: 1;
     text-align: center;
     text-decoration: none;
@@ -3678,7 +3678,7 @@ body {
     font: 600 12px var(--font);
     cursor: pointer;
     white-space: nowrap;
-    transition: all 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
     flex: 1;
     text-align: center;
     text-decoration: none;
@@ -3829,7 +3829,7 @@ body {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
-    transition: all 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
     opacity: 0.85;
 }
 
@@ -3935,7 +3935,7 @@ body {
     cursor: pointer;
     padding: 4px 8px;
     border-radius: var(--r-sm);
-    transition: all 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
 }
 
 .history-deal-delete:hover {
@@ -4066,7 +4066,7 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
     padding: 14px;
-    transition: all 0.2s;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
     position: relative;
 }
 
@@ -4212,7 +4212,7 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
     padding: 12px;
-    transition: all 0.2s;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
     position: relative;
     content-visibility: auto;
     contain-intrinsic-height: 160px;
@@ -4731,7 +4731,7 @@ body {
     cursor: pointer;
     padding: 8px 12px;
     border-radius: 4px;
-    transition: all 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
     line-height: 1;
     flex-shrink: 0;
     min-height: 44px;
@@ -4902,7 +4902,7 @@ body {
     padding: 6px 12px;
     border-radius: var(--radius-full);
     cursor: pointer;
-    transition: all 0.12s ease;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
     white-space: nowrap;
     min-height: 32px;
 }
@@ -4949,7 +4949,7 @@ body {
     font-size: var(--text-sm);
     font-weight: 500;
     font-family: inherit;
-    transition: all 0.12s ease;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
     min-height: 40px;
 }
 
@@ -4990,7 +4990,7 @@ body {
     font-size: var(--text-sm);
     font-weight: 500;
     font-family: inherit;
-    transition: all 0.12s ease;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
     min-height: 40px;
     cursor: pointer;
     appearance: none;
@@ -5064,7 +5064,7 @@ body {
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     min-height: 44px;
 }
 

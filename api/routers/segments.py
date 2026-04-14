@@ -16,7 +16,7 @@ router = APIRouter(tags=["analytics"])
 @router.get("/segments", response_model=SegmentsResponse)
 async def get_segments(
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
-    currency: str = "USD",
+    currency: str = "BYN",
     strict_search: bool = False,
     category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),

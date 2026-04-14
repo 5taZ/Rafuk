@@ -232,17 +232,6 @@ function createApiListings(context) {
         return String(value || "").trim().toLocaleLowerCase("ru-RU");
     }
 
-    function parseComparisonQueries(value) {
-        const items = String(value || "")
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean);
-        return Array.from(new Set(items.map((item) => item.toLocaleLowerCase("ru-RU"))))
-            .map((key) => items.find((item) => item.toLocaleLowerCase("ru-RU") === key))
-            .filter(Boolean)
-            .slice(0, 2);
-    }
-
     async function loadComparison() {
         const comparisonQuery = state.comparisonQuery.trim();
         if (!state.query || !comparisonQuery) {

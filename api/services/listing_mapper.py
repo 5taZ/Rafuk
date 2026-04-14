@@ -10,14 +10,14 @@ from api.services.aggregator import (
     normalize_price_byn,
 )
 from api.services.currency_service import CurrencyService
-from api.services.deal_workflow import compute_flip_estimates
+from api.services.deal_workflow import LiquidityInsight, compute_flip_estimates
 from api.services.market_signals import (
     anomaly_labels,
+    area_label,
     detect_anomaly_flags,
     fair_price_band,
     fair_price_label,
     region_label,
-    area_label,
 )
 from api.services.reseller_tools import analyze_query_text, compute_deal_score
 
@@ -111,7 +111,7 @@ def build_listing_detail(
     currency_service: CurrencyService,
     median_byn: float,
     market_stats: PriceStats,
-    liquidity=None,
+    liquidity: LiquidityInsight | None = None,
     duplicate_count: int = 0,
 ) -> ListingDetailResponse:
     price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
@@ -177,7 +177,7 @@ def build_listing_item(
     currency_service: CurrencyService,
     median_byn: float,
     market_stats: PriceStats,
-    liquidity=None,
+    liquidity: LiquidityInsight | None = None,
     duplicate_count: int = 0,
 ) -> ListingItem:
     price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
