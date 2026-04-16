@@ -34,6 +34,9 @@ function createRenderCards(context) {
     function matchesFilters(item) {
         // Price range filter
         const itemPrice = item.price ? Number(item.price) : null;
+        const hasPriceRange = state.minPrice != null || state.maxPrice != null;
+        // Exclude "Договорная" (price 0/null) when a price range is set
+        if (hasPriceRange && (!itemPrice || itemPrice <= 0)) return false;
         if (state.minPrice != null && itemPrice != null && itemPrice < state.minPrice) return false;
         if (state.maxPrice != null && itemPrice != null && itemPrice > state.maxPrice) return false;
 
@@ -199,7 +202,8 @@ function createRenderCards(context) {
 
             // Cards use CSS content-visibility: auto for off-screen rendering skip
             for (const item of filtered) {
-                container.appendChild(buildListingNode(item));
+                const node = buildListingNode(item);
+                container.appendChild(node);
             }
 
             if (badge) {
@@ -218,6 +222,8 @@ function createRenderCards(context) {
     function renderListings() {
         return safeRender('renderListings', () => {
             if (state.loading) return;
+            // Keep skeletons while listings request is in flight
+            if (state._listingsPending) return;
             const hasData = state.listings.length > 0 || state.listingsTotal > 0;
             const hasContent = renderListingsCollection(
                 state.listings,

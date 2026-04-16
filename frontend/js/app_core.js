@@ -267,7 +267,10 @@ function createAppCore() {
     }
 
     function initTelegramTheme() {
-        if (window.Telegram && window.Telegram.WebApp) {
+        const saved = localStorage.getItem("theme");
+        if (saved === "light" || saved === "dark") {
+            document.documentElement.setAttribute("data-theme", saved);
+        } else if (window.Telegram && window.Telegram.WebApp) {
             window.Telegram.WebApp.expand();
             window.Telegram.WebApp.ready();
             const scheme = window.Telegram.WebApp.colorScheme;
@@ -278,6 +281,13 @@ function createAppCore() {
         } else {
             document.documentElement.setAttribute("data-theme", "dark");
         }
+    }
+
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute("data-theme");
+        const next = current === "light" ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", next);
+        localStorage.setItem("theme", next);
     }
 
     function formatPrice(value) {
@@ -516,6 +526,7 @@ function createAppCore() {
         cacheElements,
         REGIONS,
         initTelegramTheme,
+        toggleTheme,
         formatPrice,
         formatCondition,
         formatSeller,

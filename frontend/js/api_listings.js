@@ -47,6 +47,7 @@ function createApiListings(context) {
         state.comparisonItems = [];
         state.detail = null;
         state.detailImageIndex = 0;
+        state._listingsPending = true;
     }
 
     function resetCategoryFilter() {
@@ -122,6 +123,7 @@ function createApiListings(context) {
                     state.listingsTotal = payload.total || 0;
                     state._listingsLoadedAt = Date.now();
                     state._listingsLoadedSort = state.sort;
+                    state._listingsPending = false;
                 },
             },
             {
@@ -154,6 +156,7 @@ function createApiListings(context) {
                     if (err.name === "AbortError" || !isActiveRequest(requestId)) {
                         return;
                     }
+                    state._listingsPending = false;
                     markDirty('stats', 'history', 'comparison', 'segments', 'geography', 'listings', 'deals');
                     renderAll();
                 });
@@ -204,7 +207,8 @@ function createApiListings(context) {
             return;
         }
         // Skip reload if data is fresh and same discount range
-        if (!force && state.dealListings.length && Date.now() - state._dealsLoadedAt < CACHE_TTL) {
+        const sameRange = state._dealsLoadedFrom === state.discountFromPercent && state._dealsLoadedTo === state.discountToPercent;
+        if (!force && state.dealListings.length && sameRange && Date.now() - state._dealsLoadedAt < CACHE_TTL) {
             return;
         }
 
@@ -219,6 +223,8 @@ function createApiListings(context) {
             state.dealListings = payload.listings || [];
             state.dealsTotal = payload.total || 0;
             state._dealsLoadedAt = Date.now();
+            state._dealsLoadedFrom = state.discountFromPercent;
+            state._dealsLoadedTo = state.discountToPercent;
             state.error = null;
         } catch (error) {
             state.dealListings = [];

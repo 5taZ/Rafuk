@@ -12,6 +12,10 @@ function analyticsApp() {
         core.initTelegramTheme();
         core.loadRecentSearches();
         actions.bindEvents();
+
+        const themeBtn = document.getElementById("theme-toggle");
+        if (themeBtn) themeBtn.addEventListener("click", () => core.toggleTheme());
+
         core.state.query = core.elements.searchInput.value.trim();
         renderers.renderAll();
         void actions.loadTrackers();

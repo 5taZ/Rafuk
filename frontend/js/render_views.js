@@ -69,6 +69,12 @@ function createRenderViews(context) {
             // Toggle visibility
             elements.filterDropdown.hidden = !state.filterDropdownOpen;
 
+            // Hide category group when strict search is on
+            const categoryGroup = elements.filterCategories?.closest(".filter-group");
+            if (categoryGroup) {
+                categoryGroup.hidden = !!state.strictSearch;
+            }
+
             // Render category chips
             if (!state.categories.length || state.categories.length <= 1) {
                 elements.filterCategories.innerHTML = "<span class=\"filter-empty\">Нет категорий</span>";
