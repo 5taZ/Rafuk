@@ -120,14 +120,10 @@ function createRenderCards(context) {
             }
         }
 
-        const duplicateMarkup = item.is_duplicate
-            ? `<span class="listing-badge warn">Дубль${item.duplicate_count > 1 ? ` ×${item.duplicate_count + 1}` : ""}</span>`
-            : "";
-
         const thumbMarkup = item.thumbnail
             ? `<img class="listing-thumb" src="${escapeHtml(item.thumbnail)}" alt="" loading="lazy">`
             : `<div class="listing-thumb placeholder">Нет фото</div>`;
-        const badgesMarkup = [freshnessMarkup, verdictMarkup, deltaMarkup, duplicateMarkup].filter(Boolean).join("");
+        const badgesMarkup = [freshnessMarkup, verdictMarkup, deltaMarkup].filter(Boolean).join("");
 
         listing.innerHTML = `
             <div class="listing-top">
@@ -556,9 +552,9 @@ function createRenderCards(context) {
                 const profitClass = profitRaw >= 0 ? "profit-positive" : "profit-negative";
 
                 if (isSold) {
-                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Прибыль: <span class="mono">${profitSign}${Math.round(profitRaw)} BYN (${profitSign}${profitPercent}%)</span></div>`;
+                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Результат: <span class="mono">${profitSign}${Math.round(profitRaw)} BYN (${profitSign}${profitPercent}%)</span></div>`;
                 } else if (lead.status === 'new' || lead.status === 'bought') {
-                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Потенциальная прибыль: <span class="mono">${profitSign}${Math.round(profitRaw)} BYN (${profitSign}${profitPercent}%)</span></div>`;
+                    profitMarkup = `<div class="lead-financial-item ${profitClass}">Потенциал: <span class="mono">${profitSign}${Math.round(profitRaw)} BYN (${profitSign}${profitPercent}%)</span></div>`;
                 }
             }
 
@@ -668,7 +664,6 @@ function createRenderCards(context) {
         const labels = {
             active: "На рынке",
             price_drop: "Падение цены",
-            duplicate: "Есть дубли",
             missing: "Пропало",
         };
         return labels[value] || value || "Без сигнала";
@@ -685,8 +680,7 @@ function createRenderCards(context) {
         const marketOrder = {
             price_drop: 0,
             missing: 1,
-            duplicate: 2,
-            active: 3,
+            active: 2,
         };
         const workflowOrder = {
             in_progress: 0,
@@ -778,7 +772,7 @@ function createRenderCards(context) {
                 potentialProfitMarkup = `<span class="watchlist-profit ${profitClass}">Потенциал: ${profitSign}${Math.round(profitByn)} BYN (${profitSign}${profitPercent}%)</span>`;
             }
 
-            const isMarketSignal = item.market_status && ["price_drop", "missing", "duplicate"].includes(item.market_status);
+            const isMarketSignal = item.market_status && ["price_drop", "missing"].includes(item.market_status);
             let marketBadgeMarkup = "";
             if (isMarketSignal) {
                 let missingAgeText = "";

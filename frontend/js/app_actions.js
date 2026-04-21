@@ -142,6 +142,7 @@ function createAppActions(context) {
     const trackers = createApiTrackers(context);
     const leads = createApiLeads(context);
     const watchlist = createApiWatchlist(context);
+    const ai = createApiAi(context);
 
     // ── Cross-module hooks (actions that modules call into each other) ───
     // These are injected into context so every module can reach them.
@@ -197,8 +198,11 @@ function createAppActions(context) {
         refreshWatchlist: watchlist.refreshWatchlist,
 
         // View / focus helpers are injected above as context.setActiveView, context.focusTarget
-    });
 
+        // From AI
+        loadAIAnalysis: ai.loadAIAnalysis,
+        searchByPhoto: ai.searchByPhoto,
+    });
     // ── Wire events module (needs all action functions on context) ────────
     const events = createApiEvents(context);
 
@@ -446,5 +450,7 @@ function createAppActions(context) {
         deleteExpense,
         exportLeadsCSV,
         loadDetailRisks: listings.loadDetailRisks,
+        loadAIAnalysis: ai.loadAIAnalysis,
+        searchByPhoto: ai.searchByPhoto,
     };
 }

@@ -333,7 +333,7 @@ function createRenderCharts(context) {
                 className: "",
             },
             {
-                label: "Прибыль",
+                label: "Результат",
                 value: `${displayProfit >= 0 ? "+" : ""}${Math.round(displayProfit)} BYN`,
                 sub: `${closedLeads.length} закрытых`,
                 className: displayProfit >= 0 ? "is-accent" : "is-warning",

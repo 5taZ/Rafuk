@@ -154,6 +154,13 @@ function createApiWatchlist(context) {
             state.detail = fullDetail;
             state.detailImageIndex = 0;
             state.detailFromWatchlist = true;
+            state.detailAi = {
+                adId: fullDetail.ad_id || item.ad_id,
+                loading: false,
+                result: null,
+                error: "",
+                source: "",
+            };
             renderDetailModal();
         } catch (error) {
             state.error = error.message || "Не удалось загрузить детали";

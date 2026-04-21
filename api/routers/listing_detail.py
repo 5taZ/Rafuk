@@ -10,7 +10,6 @@ from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_detail
-from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
 from api.validators import MAX_QUERY_LENGTH
 
@@ -49,7 +48,6 @@ async def get_listing_detail(
         )
 
     median_byn = dataset.price_stats.median
-    duplicate_index = duplicate_counts(dataset.ads)
     liquidity = compute_liquidity_insight(dataset.ads, dataset.price_stats, ad=ad)
     rates_payload = await currency_service.get_rates()
     payload = build_listing_detail(
@@ -61,7 +59,6 @@ async def get_listing_detail(
         median_byn=median_byn,
         market_stats=dataset.price_stats,
         liquidity=liquidity,
-        duplicate_count=duplicate_index.get(ad_id, 0),
     )
     await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
     return payload

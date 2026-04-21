@@ -78,6 +78,8 @@ function createApiEvents(context) {
         deleteExpense,
         exportLeadsCSV,
         loadDetailRisks,
+        loadAIAnalysis,
+        searchByPhoto,
         startTrackerRefresh,
         stopTrackerRefresh,
         parseComparisonQueries,
@@ -623,10 +625,6 @@ function createApiEvents(context) {
             state.trackerMaxPriceByn = Number.isFinite(nextValue) ? Math.abs(nextValue) : null;
         });
 
-        elements.trackerExcludeDuplicatesToggle?.addEventListener("change", () => {
-            state.trackerExcludeDuplicates = Boolean(elements.trackerExcludeDuplicatesToggle.checked);
-        });
-
         elements.trackerSellerSelect?.addEventListener("change", () => {
             state.trackerSellerType = elements.trackerSellerSelect.value;
         });
@@ -718,6 +716,31 @@ function createApiEvents(context) {
             if (state.detail) {
                 void context.addWatchlistFromListing(state.detail, state.detail.query || state.query);
             }
+        });
+
+        elements.detailAiBtn?.addEventListener("click", () => {
+            if (state.detail?.ad_id) {
+                void loadAIAnalysis(state.detail.ad_id);
+            }
+        });
+
+        // ── Photo search ────────────────────────────────────────────
+        elements.photoSearchBtn?.addEventListener("click", () => {
+            elements.photoFileInput?.click();
+        });
+
+        elements.photoFileInput?.addEventListener("change", () => {
+            const file = elements.photoFileInput?.files?.[0];
+            if (file) {
+                void searchByPhoto(file);
+                elements.photoFileInput.value = "";
+            }
+        });
+
+        elements.photoResultsClose?.addEventListener("click", () => {
+            if (elements.photoResultsSection) elements.photoResultsSection.hidden = true;
+            const listingsSection = document.getElementById("listings-section");
+            if (listingsSection && state.listings?.length) listingsSection.hidden = false;
         });
 
         // ── Escape key (modal close) ─────────────────────────────────

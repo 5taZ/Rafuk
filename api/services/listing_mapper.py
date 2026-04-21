@@ -24,6 +24,12 @@ from api.services.reseller_tools import analyze_query_text, compute_deal_score
 IMAGE_BASE_URL = "https://rms.kufar.by/v1/gallery/"
 IGNORED_AD_PARAMETER_KEYS = {"users_synonyms"}
 
+PII_PARAMETER_KEYS = frozenset({
+    "phone", "phone_hidden", "contact_person", "email",
+    "company_name", "company_address", "vat_number", "user_id",
+    "username", "address", "legal_name",
+})
+
 
 def _stringify_value(value: Any) -> str | None:
     if value in (None, "", [], {}):
@@ -112,7 +118,6 @@ def build_listing_detail(
     median_byn: float,
     market_stats: PriceStats,
     liquidity: LiquidityInsight | None = None,
-    duplicate_count: int = 0,
 ) -> ListingDetailResponse:
     price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
     description = _stringify_value(ad.get("body")) or _stringify_value(ad.get("body_short"))
@@ -124,7 +129,6 @@ def build_listing_detail(
         ad,
         query=query,
         market_stats=market_stats,
-        duplicate_count=duplicate_count,
     )
 
     return ListingDetailResponse(
@@ -150,8 +154,6 @@ def build_listing_detail(
         fair_price_label=fair_price_label(fair_band),
         anomaly_flags=flags,
         anomaly_labels=anomaly_labels(flags),
-        is_duplicate=duplicate_count > 0,
-        duplicate_count=duplicate_count,
         deal_score=deal_score.score,
         deal_verdict=deal_score.verdict,
         deal_reasons=deal_score.reasons,
@@ -163,7 +165,7 @@ def build_listing_detail(
         description=description,
         images=[url for image in ad.get("images", []) if (url := image_url(image))],
         parameters=collect_fields(ad.get("ad_parameters", []), ignored=IGNORED_AD_PARAMETER_KEYS),
-        seller_fields=collect_fields(ad.get("account_parameters", [])),
+        seller_fields=collect_fields(ad.get("account_parameters", []), ignored=PII_PARAMETER_KEYS),
         seller_rating=extract_seller_rating(ad),
     )
 
@@ -178,7 +180,6 @@ def build_listing_item(
     median_byn: float,
     market_stats: PriceStats,
     liquidity: LiquidityInsight | None = None,
-    duplicate_count: int = 0,
 ) -> ListingItem:
     price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
     price_delta = compute_price_vs_median(ad, median_byn)
@@ -188,7 +189,6 @@ def build_listing_item(
         ad,
         query=query,
         market_stats=market_stats,
-        duplicate_count=duplicate_count,
     )
 
     return ListingItem(
@@ -210,8 +210,6 @@ def build_listing_item(
         fair_price_label=fair_price_label(fair_band),
         anomaly_flags=flags,
         anomaly_labels=anomaly_labels(flags),
-        is_duplicate=duplicate_count > 0,
-        duplicate_count=duplicate_count,
         deal_score=deal_score.score,
         deal_verdict=deal_score.verdict,
         deal_reasons=deal_score.reasons,

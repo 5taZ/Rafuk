@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -75,8 +75,6 @@ class ListingItem(BaseModel):
     fair_price_label: str | None = None
     anomaly_flags: list[str] = Field(default_factory=list)
     anomaly_labels: list[str] = Field(default_factory=list)
-    is_duplicate: bool = False
-    duplicate_count: int = 0
     deal_score: float = 0.0
     deal_verdict: str | None = None
     deal_reasons: list[str] = Field(default_factory=list)
@@ -115,8 +113,6 @@ class ListingDetailResponse(BaseModel):
     fair_price_label: str | None = None
     anomaly_flags: list[str] = Field(default_factory=list)
     anomaly_labels: list[str] = Field(default_factory=list)
-    is_duplicate: bool = False
-    duplicate_count: int = 0
     deal_score: float = 0.0
     deal_verdict: str | None = None
     deal_reasons: list[str] = Field(default_factory=list)
@@ -219,7 +215,6 @@ class TrackerCreate(BaseModel):
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
-    exclude_duplicates: bool = False
 
 
 class TrackerUpdate(BaseModel):
@@ -232,7 +227,6 @@ class TrackerUpdate(BaseModel):
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
-    exclude_duplicates: bool | None = None
 
 
 class TrackerRead(BaseModel):
@@ -249,7 +243,6 @@ class TrackerRead(BaseModel):
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
-    exclude_duplicates: bool = False
     last_seen_ad_id: int | None = None
     last_seen_price_byn: float | None = None
     last_checked_at: datetime | None = None
@@ -366,7 +359,6 @@ class WatchlistRead(BaseModel):
     price_delta_percent: float | None = None
     workflow_status: str
     market_status: str
-    duplicate_count: int = 0
     market_median_byn: float | None = None
     notes: str | None = None
     created_at: datetime
@@ -533,3 +525,75 @@ class RiskAssessmentResponse(BaseModel):
     risks: list[RiskItem] = Field(default_factory=list)
     overall_risk: str  # low, medium, high
     overall_emoji: str  # 🟢, 🟡, 🔴
+
+
+# ── AI Analysis ──────────────────────────────────────────────────────────
+
+
+class AIAnalysisRequest(BaseModel):
+    ad_id: int
+    query: str = Field(min_length=1, max_length=200)
+
+
+class AIQuickConditionRequest(BaseModel):
+    ad_id: int
+    query: str = Field(min_length=1, max_length=200)
+
+
+class AIConditionAssessment(BaseModel):
+    label: str = ""
+    confidence: float = 0.0
+    notes: list[str] = Field(default_factory=list)
+
+
+class AIFairPrice(BaseModel):
+    from_price: float | None = Field(None, alias="from")
+    to_price: float | None = Field(None, alias="to")
+    reasoning: str = ""
+
+
+class AIWatchOutItem(BaseModel):
+    point: str = ""
+    why: str = ""
+
+
+class AIRecommendation(BaseModel):
+    verdict: str = ""  # worth_it, think_twice, overpriced
+    text: str = ""
+
+
+class AISimilarListing(BaseModel):
+    ad_id: int
+    title: str
+    price_byn: float
+    image_url: str | None = None
+    link: str = ""
+    deal_score: float = 0.0
+
+
+class AIAnalysisResponse(BaseModel):
+    ad_id: int
+    condition: AIConditionAssessment | None = None
+    fair_price: AIFairPrice | None = None
+    watch_out: list[AIWatchOutItem] = Field(default_factory=list)
+    recommendation: AIRecommendation | None = None
+    similar_listings: list[AISimilarListing] = Field(default_factory=list)
+    best_alternative: AISimilarListing | None = None
+    summary: str = ""
+    disclaimer: str = "Анализ носит информационный характер. Результаты не являются гарантией."
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AIQuickConditionResponse(BaseModel):
+    ad_id: int
+    condition: str = ""
+    notes: list[str] = Field(default_factory=list)
+
+
+class AISearchByPhotoResponse(BaseModel):
+    query: str = ""
+    description: str = ""
+    listings: list[dict] = Field(default_factory=list)
+    total: int = 0
+    source: str = "ai"
+    recognized_text: list[str] = Field(default_factory=list)

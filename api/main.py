@@ -10,6 +10,7 @@ from api.config import get_settings
 from api.database import get_engine, get_session_factory
 from api.limiter import limiter
 from api.routers import (
+    ai_analysis,
     compare,
     contacts,
     currency,
@@ -58,6 +59,7 @@ async def lifespan(app: FastAPI):
     app.state.session_factory = session_factory
     app.state.cache = cache
     app.state.currency_service = currency_service
+    app.state.settings = settings
 
     try:
         yield
@@ -99,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api/v1")
     app.include_router(risks.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
+    app.include_router(ai_analysis.router, prefix="/api/v1")
     return app
 
 

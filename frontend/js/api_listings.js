@@ -309,7 +309,8 @@ function createApiListings(context) {
 
     // ── Open listing detail modal ────────────────────────────────────────
     async function openListingDetail(item) {
-        if (!item?.ad_id || !state.query) {
+        const queryToUse = (item?.query || state.query || "").trim();
+        if (!item?.ad_id || !queryToUse) {
             return;
         }
 
@@ -318,11 +319,18 @@ function createApiListings(context) {
         renderError();
         try {
             const fullDetail = await getJson(
-                `/api/v1/listing-detail?${buildCommonQuery({ ad_id: item.ad_id })}`
+                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${item.ad_id}`
             );
             state.detail = fullDetail;
             state.detailImageIndex = 0;
             state.detailFromWatchlist = false;
+            state.detailAi = {
+                adId: fullDetail.ad_id || item.ad_id,
+                loading: false,
+                result: null,
+                error: "",
+                source: "",
+            };
             renderDetailModal();
         } catch (error) {
             state.error = error.message || "Не удалось загрузить детали";

@@ -117,7 +117,6 @@ function createRenderTrackers(context) {
                     ${tracker.strict_mode ? '<span class="tracker-filter-tag">строгий</span>' : ""}
                     ${tracker.min_discount_percent ? `<span class="tracker-filter-tag">от -${Math.round(tracker.min_discount_percent)}%</span>` : ""}
                     ${tracker.max_price_byn ? `<span class="tracker-filter-tag">до ${Math.round(tracker.max_price_byn)} BYN</span>` : ""}
-                    ${tracker.exclude_duplicates ? '<span class="tracker-filter-tag">без дублей</span>' : ""}
                     ${tracker.seller_type === "Частное лицо" ? '<span class="tracker-filter-tag">частники</span>' : ""}
                     ${tracker.condition ? `<span class="tracker-filter-tag">${escapeHtml(tracker.condition)}</span>` : ""}
                     ${tracker.region_name ? `<span class="tracker-filter-tag">${escapeHtml(tracker.region_name)}</span>` : ""}
@@ -174,7 +173,6 @@ function createRenderTrackers(context) {
                 state.strictSearch = Boolean(tracker.strict_mode);
                 state.trackerMinDiscountPercent = Math.round(tracker.min_discount_percent || 10);
                 state.trackerMaxPriceByn = tracker.max_price_byn ?? null;
-                state.trackerExcludeDuplicates = Boolean(tracker.exclude_duplicates);
                 state.trackerSellerType = tracker.seller_type || "";
                 state.trackerCondition = tracker.condition || "";
                 state.trackerRegionName = tracker.region_name || "";
@@ -214,9 +212,13 @@ function createRenderTrackers(context) {
             return;
         }
 
-        const dropCount = state.trackerEvents.filter((e) => e.event_type === "price_drop").length;
-        const newCount = state.trackerEvents.filter((e) => e.event_type === "new_listing").length;
-        const totalCount = state.trackerEvents.length;
+        const trackerScopedEvents = state.trackerEventFilterTrackerId
+            ? state.trackerEvents.filter((event) => event.tracker_id === state.trackerEventFilterTrackerId)
+            : state.trackerEvents.slice();
+
+        const dropCount = trackerScopedEvents.filter((e) => e.event_type === "price_drop").length;
+        const newCount = trackerScopedEvents.filter((e) => e.event_type === "new_listing").length;
+        const totalCount = trackerScopedEvents.length;
 
         if (elements.trackerEventsBadge) {
             elements.trackerEventsBadge.textContent = totalCount > 0 ? `${totalCount} событий` : "чат + Mini App";
@@ -251,18 +253,13 @@ function createRenderTrackers(context) {
             select.value = state.trackerEventFilterTrackerId || "";
         }
 
-        // Filter events by type and optionally by tracker
-        let filteredEvents = state.trackerEvents.filter((event) => {
+        // Filter events by selected tracker first, then by event type
+        let filteredEvents = trackerScopedEvents.filter((event) => {
             if (state.trackerEventFilter === "all") {
                 return true;
             }
             return event.event_type === state.trackerEventFilter;
         });
-
-        if (state.trackerEventFilterTrackerId) {
-            const tid = state.trackerEventFilterTrackerId;
-            filteredEvents = filteredEvents.filter((e) => e.tracker_id === tid);
-        }
 
         if (!filteredEvents.length) {
             const note = document.createElement("p");

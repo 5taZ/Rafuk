@@ -113,7 +113,6 @@ function createAppRenderers(context) {
         renderDealsHeroStats,
         renderSortButtons,
         renderDiscountButtons,
-        renderTrackerEventFilters,
         renderHistoryRangeButtons,
         renderDealInputs,
         renderTrackerInputs,
@@ -149,7 +148,7 @@ function createAppRenderers(context) {
         renderWatchlistFilters,
         renderTrackers,
         renderTrackerEvents,
-        renderTrackerEventFilters: renderTrackerEventFiltersFromTrackers,
+        renderTrackerEventFilters,
     } = trackers;
 
     // Add renderRecentSearches to hooks now that it's declared

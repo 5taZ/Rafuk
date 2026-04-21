@@ -237,13 +237,11 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    duplicate_item = next(item for item in payload["listings"] if item["ad_id"] == 2)
+    first_item = next(item for item in payload["listings"] if item["ad_id"] == 2)
     anomaly_item = next(item for item in payload["listings"] if item["ad_id"] == 5)
-    assert duplicate_item["is_duplicate"] is True
-    assert duplicate_item["duplicate_count"] >= 1
-    assert duplicate_item["fair_price_label"] is not None
-    assert duplicate_item["deal_score"] >= 0
-    assert duplicate_item["deal_verdict"] in VERDICTS
-    assert duplicate_item["liquidity"] is not None
+    assert first_item["fair_price_label"] is not None
+    assert first_item["deal_score"] >= 0
+    assert first_item["deal_verdict"] in VERDICTS
+    assert first_item["liquidity"] is not None
     assert anomaly_item["anomaly_flags"] == ["too_expensive"]
     assert anomaly_item["region_name"] == "Регион 6"

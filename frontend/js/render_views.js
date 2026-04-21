@@ -141,12 +141,6 @@ function createRenderViews(context) {
         }
     }
 
-    function renderTrackerEventFilters() {
-        for (const button of elements.trackerEventFilterButtons) {
-            button.classList.toggle("active", button.dataset.eventFilter === state.trackerEventFilter);
-        }
-    }
-
     function renderHistoryRangeButtons() {
         if (elements.historyBadge) {
             elements.historyBadge.textContent = `${state.historyDays} дней`;
@@ -497,7 +491,6 @@ function createRenderViews(context) {
         renderDealsHeroStats,
         renderSortButtons,
         renderDiscountButtons,
-        renderTrackerEventFilters,
         renderHistoryRangeButtons,
         renderDealInputs,
         renderTrackerInputs,

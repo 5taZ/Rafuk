@@ -17,7 +17,6 @@ from api.services.currency_service import CurrencyService
 from api.services.history_service import load_query_snapshots
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_item
-from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
@@ -61,7 +60,6 @@ async def _build_compare_item(
         client_factory=KufarClient,
         category=category,
     )
-    duplicate_index = duplicate_counts(dataset.ads)
     rates_payload = await currency_service.get_rates()
     deal_ads = filter_deal_ads(dataset.ads, dataset.price_stats.median, 5.0)
     source_ads = deal_ads or dataset.ads[:20]
@@ -74,7 +72,6 @@ async def _build_compare_item(
             currency_service=currency_service,
             median_byn=dataset.price_stats.median,
             market_stats=dataset.price_stats,
-            duplicate_count=duplicate_index.get(int(ad.get("ad_id", 0)), 0),
         )
         for ad in source_ads
     ]

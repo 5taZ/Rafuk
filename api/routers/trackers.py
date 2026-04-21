@@ -179,7 +179,6 @@ async def create_tracker(
             condition=payload.condition,
             region_name=payload.region_name,
             config_keyword=payload.config_keyword or default_config_keyword(query),
-            exclude_duplicates=payload.exclude_duplicates,
         )
         session.add(tracker)
         try:

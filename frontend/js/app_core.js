@@ -54,7 +54,6 @@ function createAppCore() {
         trackerStatusKind: "info",
         trackerMinDiscountPercent: 10,
         trackerMaxPriceByn: null,
-        trackerExcludeDuplicates: false,
         trackerSellerType: "",
         trackerCondition: "",
         trackerRegionName: "",
@@ -69,6 +68,13 @@ function createAppCore() {
         detail: null,
         detailImageIndex: 0,
         detailFromWatchlist: false,
+        detailAi: {
+            adId: null,
+            loading: false,
+            result: null,
+            error: "",
+            source: "",
+        },
         activeView: "overview",
         expenses: [],
         expensesLoading: false,
@@ -162,7 +168,6 @@ function createAppCore() {
         elements.trackQueryButton = document.getElementById("track-query-btn");
         elements.trackerMinDiscountInput = document.getElementById("tracker-min-discount-input");
         elements.trackerMaxPriceInput = document.getElementById("tracker-max-price-input");
-        elements.trackerExcludeDuplicatesToggle = document.getElementById("tracker-exclude-duplicates-toggle");
         elements.trackerSellerSelect = document.getElementById("tracker-seller-select");
         elements.trackerConditionSelect = document.getElementById("tracker-condition-select");
         elements.trackerRegionSelect = document.getElementById("tracker-region-select");
@@ -208,6 +213,9 @@ function createAppCore() {
         elements.detailSeller = document.getElementById("detail-seller");
         elements.detailRiskBlock = document.getElementById("detail-risk-block");
         elements.detailRisks = document.getElementById("detail-risks");
+        elements.detailAiBlock = document.getElementById("detail-ai-block");
+        elements.detailAiContent = document.getElementById("detail-ai-content");
+        elements.detailAiBtn = document.getElementById("detail-ai-btn");
         elements.expensesModal = document.getElementById("expenses-modal");
         elements.expensesOverlay = document.getElementById("expenses-overlay");
         elements.expensesClose = document.getElementById("expenses-close");
@@ -231,6 +239,13 @@ function createAppCore() {
         elements.recentSection = document.getElementById("recent-section");
         elements.recentList = document.getElementById("recent-list");
         elements.recentClearBtn = document.getElementById("recent-clear-btn");
+        elements.photoSearchBtn = document.getElementById("photo-search-btn");
+        elements.photoFileInput = document.getElementById("photo-file-input");
+        elements.photoResultsSection = document.getElementById("photo-results-section");
+        elements.photoResultsClose = document.getElementById("photo-results-close");
+        elements.photoResultsDesc = document.getElementById("photo-results-desc");
+        elements.photoResultsQuery = document.getElementById("photo-results-query");
+        elements.photoResultsList = document.getElementById("photo-results-list");
         elements.filterBtn = document.getElementById("filter-btn");
         elements.filterDropdown = document.getElementById("filter-dropdown");
         elements.filterCategories = document.getElementById("filter-categories");
@@ -251,7 +266,6 @@ function createAppCore() {
         elements.editConditionSelect = document.getElementById("edit-condition-select");
         elements.editRegionSelect = document.getElementById("edit-region-select");
         elements.editConfigInput = document.getElementById("edit-config-input");
-        elements.editExcludeDuplicatesToggle = document.getElementById("edit-exclude-duplicates-toggle");
         elements.closeEditModal = document.getElementById("close-edit-modal");
         elements.saveTrackerBtn = document.getElementById("save-tracker-btn");
         elements.cancelEditBtn = document.getElementById("cancel-edit-btn");

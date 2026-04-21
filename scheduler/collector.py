@@ -31,7 +31,7 @@ from api.services.history_service import (
     upsert_query_snapshot,
 )
 from api.services.kufar_client import KufarClient
-from api.services.market_signals import duplicate_counts, region_label
+from api.services.market_signals import region_label
 from api.services.reseller_tools import matches_tracker_filters
 from bot.keyboards import tracker_alert_keyboard
 
@@ -159,7 +159,6 @@ def _filter_sync_result_for_tracker(
     tracker: Tracker,
     sync_result: QuerySyncResult,
     ads_by_id: dict[int, dict[str, object]],
-    duplicate_index: dict[int, int],
 ) -> QuerySyncResult:
     market_stats = compute_price_stats(extract_prices(list(ads_by_id.values())))
     new_listings = [
@@ -170,14 +169,12 @@ def _filter_sync_result_for_tracker(
         ) and matches_tracker_filters(
             ad,
             market_stats=market_stats,
-            duplicate_count=duplicate_index.get(state.ad_id, 0),
             min_discount_percent=tracker.min_discount_percent,
             max_price_byn=tracker.max_price_byn,
             seller_type=tracker.seller_type,
             condition=tracker.condition,
             region_name=tracker.region_name,
             config_keyword=tracker.config_keyword,
-            exclude_duplicates=tracker.exclude_duplicates,
         )
     ]
     price_drops = [
@@ -188,14 +185,12 @@ def _filter_sync_result_for_tracker(
         ) and matches_tracker_filters(
             ad,
             market_stats=market_stats,
-            duplicate_count=duplicate_index.get(state.ad_id, 0),
             min_discount_percent=tracker.min_discount_percent,
             max_price_byn=tracker.max_price_byn,
             seller_type=tracker.seller_type,
             condition=tracker.condition,
             region_name=tracker.region_name,
             config_keyword=tracker.config_keyword,
-            exclude_duplicates=tracker.exclude_duplicates,
         )
     ]
     return QuerySyncResult(
@@ -326,7 +321,6 @@ async def check_trackers(
                         for ad in ads
                         if int(ad.get("ad_id", 0)) > 0
                     }
-                    duplicate_index = duplicate_counts(ads)
 
                     newest_id = int(ads[0].get("ad_id", 0)) if ads else None
                     newest_price_byn = (
@@ -355,7 +349,6 @@ async def check_trackers(
                             tracker,
                             sync_result,
                             ads_by_id,
-                            duplicate_index,
                         )
                         message = _build_tracker_message(query, strict_mode, tracker_sync_result)
                         if message:

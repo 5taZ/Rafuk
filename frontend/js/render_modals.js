@@ -37,6 +37,24 @@ function createRenderModals(context) {
         elements.detailPrice.textContent = formatPrice(detail.price);
         elements.detailLink.href = detail.link || "#";
 
+        const aiState = state.detailAi || {};
+        if (elements.detailAiBlock && elements.detailAiContent) {
+            const hasAiContext = aiState.adId === detail.ad_id;
+            elements.detailAiBlock.hidden = !(
+                (hasAiContext && (aiState.loading || aiState.error || aiState.result))
+            );
+            if (hasAiContext) {
+                if (aiState.loading) {
+                    elements.detailAiContent.innerHTML = '<div class="ai-loading">Анализирую объявление…</div>';
+                } else if (aiState.error) {
+                    elements.detailAiContent.innerHTML = `<div class="ai-error">${escapeHtml(aiState.error)}</div>`;
+                }
+            } else {
+                elements.detailAiBlock.hidden = true;
+                elements.detailAiContent.innerHTML = "";
+            }
+        }
+
         elements.detailDescription.textContent = detail.description || "";
         elements.detailDescription.hidden = !detail.description;
 
@@ -47,10 +65,22 @@ function createRenderModals(context) {
             item.innerHTML = `
                 <span class="detail-field-label">${escapeHtml(estimate.label)}</span>
                 <span class="detail-field-value">${formatPrice(estimate.target_price)} • ${Math.round(estimate.profit_byn)} BYN (${estimate.profit_percent > 0 ? "+" : ""}${escapeHtml(estimate.profit_percent)}%)</span>
+                <span class="detail-field-note">оценка</span>
             `;
             elements.detailProfit.appendChild(item);
         }
         elements.detailProfitBlock.hidden = (detail.flip_estimates || []).length === 0;
+        // Add disclaimer to resale block
+        if (elements.detailProfitBlock && !elements.detailProfitBlock.hidden) {
+            const title = elements.detailProfitBlock.querySelector(".detail-block-title");
+            if (title && !title.dataset.disclaimerAdded) {
+                title.dataset.disclaimerAdded = "true";
+                const note = document.createElement("span");
+                note.className = "detail-disclaimer";
+                note.textContent = " — оценка, не гарантия";
+                title.appendChild(note);
+            }
+        }
 
         elements.detailLiquidity.innerHTML = "";
         if (detail.liquidity) {
@@ -70,7 +100,6 @@ function createRenderModals(context) {
             detail.seller_type ? formatSeller(detail.seller_type) : "",
             detail.list_time ? formatDate(detail.list_time) : "",
             detail.fair_price_label || "",
-            detail.is_duplicate ? "Похоже на дубль" : "",
             formatDelta(detail.price_vs_median),
         ].filter(Boolean);
         elements.detailMeta.innerHTML = metaItems.map((item) => `<span class="detail-pill">${escapeHtml(item)}</span>`).join("");
@@ -195,6 +224,13 @@ function createRenderModals(context) {
         state.detail = null;
         state.detailImageIndex = 0;
         state.detailFromWatchlist = false;
+        state.detailAi = {
+            adId: null,
+            loading: false,
+            result: null,
+            error: "",
+            source: "",
+        };
         renderDetailModal();
     }
 

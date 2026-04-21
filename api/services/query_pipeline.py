@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from api.config import Settings
 from api.services.aggregator import (
+    MAX_PRICE_BYN,
     PriceStats,
     apply_search_mode,
     compute_price_stats,
@@ -40,6 +42,47 @@ class SupportsParallelSearch(Protocol):
         tasks: list[dict[str, Any]],
         settings: Settings,
     ) -> list[dict[str, Any]]: ...
+
+
+def _normalize_response_ads(response: dict[str, Any]) -> dict[str, Any]:
+    ads = response.get("ads")
+    if not isinstance(ads, list) or not ads:
+        return response
+
+    raw_prices: list[float] = []
+    for ad in ads:
+        try:
+            raw_price = float(ad.get("price_byn"))
+        except (TypeError, ValueError):
+            continue
+        if raw_price > 0:
+            raw_prices.append(raw_price)
+
+    if not raw_prices:
+        return response
+
+    raw_median = statistics.median(raw_prices)
+    likely_direct_byn = (
+        100 <= raw_median <= MAX_PRICE_BYN
+        and raw_median / 100 < 100
+        and max(raw_prices) < 10_000
+    )
+    if not likely_direct_byn:
+        return response
+
+    normalized_ads: list[dict[str, Any]] = []
+    for ad in ads:
+        cloned = dict(ad)
+        try:
+            raw_price = float(cloned.get("price_byn"))
+        except (TypeError, ValueError):
+            normalized_ads.append(cloned)
+            continue
+        if raw_price > 0:
+            cloned["price_byn"] = int(round(raw_price * 100))
+        normalized_ads.append(cloned)
+
+    return {**response, "ads": normalized_ads}
 
 
 @dataclass(slots=True)
@@ -93,6 +136,7 @@ async def load_query_dataset(
             currency=currency,
             **effective_kwargs,
         )
+        response = _normalize_response_ads(response)
     finally:
         await client.aclose()
 
@@ -132,6 +176,7 @@ async def load_segment_datasets(
 
     try:
         responses = await parallel_search(client, tasks, settings)
+        responses = [_normalize_response_ads(response) for response in responses]
     finally:
         await client.aclose()
 

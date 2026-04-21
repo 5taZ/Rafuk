@@ -167,9 +167,9 @@ function createApiLeads(context) {
 
             const profitSign = profit >= 0 ? "+" : "";
             if (profit >= 0) {
-                showToast(`✓ Сделка закрыта. Прибыль: ${profitSign}${Math.round(profit)} BYN`);
+                showToast(`✓ Сделка закрыта. Результат: ${profitSign}${Math.round(profit)} BYN`);
             } else {
-                showToast(`✓ Сделка закрыта. Убыль: ${Math.round(profit)} BYN`);
+                showToast(`✓ Сделка закрыта. Результат: ${Math.round(profit)} BYN`);
             }
         } catch (error) {
             showToast(error.message || "Не удалось закрыть сделку");
@@ -270,7 +270,7 @@ function createApiLeads(context) {
         const priceBynRaw = lead.price_byn || 0;
         const profit = priceNum - priceBynRaw;
         const profitSign = profit >= 0 ? "+" : "";
-        showToast(`✓ Сделка продана! Прибыль: ${profitSign}${Math.round(profit)} BYN`);
+        showToast(`✓ Сделка продана! Результат: ${profitSign}${Math.round(profit)} BYN`);
     }
 
     // ── Open lead detail modal ───────────────────────────────────────────
@@ -295,6 +295,13 @@ function createApiLeads(context) {
             state.detail = fullDetail;
             state.detailImageIndex = 0;
             state.detailFromWatchlist = false;
+            state.detailAi = {
+                adId: fullDetail.ad_id || lead.ad_id,
+                loading: false,
+                result: null,
+                error: "",
+                source: "",
+            };
             renderDetailModal();
         } catch (error) {
             state.error = error.message || "Не удалось загрузить детали";

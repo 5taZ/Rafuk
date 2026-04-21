@@ -28,7 +28,6 @@ from api.schemas import (
 )
 from api.services.aggregator import normalize_price_byn
 from api.services.kufar_client import KufarClient
-from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
 from api.services.workflow_store import ensure_user, resolve_user_id, upsert_lead, upsert_watchlist
 
@@ -58,7 +57,6 @@ def _serialize_watchlist(item: WatchlistItem) -> WatchlistRead:
         price_delta_percent=delta_percent,
         workflow_status=item.workflow_status,
         market_status=item.market_status,
-        duplicate_count=item.duplicate_count,
         market_median_byn=item.market_median_byn,
         notes=item.notes,
         created_at=item.created_at,
@@ -423,8 +421,6 @@ async def refresh_watchlist(
                 for ad in dataset.ads
                 if int(ad.get("ad_id", 0)) > 0
             }
-            duplicate_index = duplicate_counts(dataset.ads)
-
             for item in query_items:
                 ad = ads_by_id.get(item.ad_id)
                 if ad is None:
@@ -439,8 +435,7 @@ async def refresh_watchlist(
                 item.link = str(ad.get("ad_link", item.link))
                 item.current_price_byn = price
                 item.last_seen_at = datetime.now(UTC)
-                item.duplicate_count = duplicate_index.get(item.ad_id, 0)
-                item.market_status = "duplicate" if item.duplicate_count > 0 else "active"
+                item.market_status = "active"
                 item.missing_since_at = None
                 updated += 1
                 if previous is not None and price is not None and price < previous:

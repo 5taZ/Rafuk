@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_max_overflow: int = 20
 
+    # AI Analysis (OpenAI-compatible API)
+    ai_api_key: SecretStr | None = None
+    ai_base_url: str = "https://api.deepseek.com"
+    ai_model: str = "deepseek-chat"
+    ai_max_images: int = 3
+    ai_cache_hours: int = 1
+    ai_hourly_limit: int = 10
+    ai_proxy_url: str | None = None
+
     @field_validator("api_base_url", "mini_app_url")
     @classmethod
     def validate_https_url(cls, v: str) -> str:

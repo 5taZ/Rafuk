@@ -56,8 +56,6 @@ class _ScoringConfig:
     # =============================================================================
 
     # Penalties
-    duplicate_penalty_per_ad: int = 10
-    duplicate_penalty_cap: int = 20
     anomaly_penalty_per_flag: int = 12
     anomaly_penalty_cap: int = 24
 
@@ -283,7 +281,6 @@ def compute_deal_score(
     *,
     query: str,
     market_stats: PriceStats,
-    duplicate_count: int = 0,
 ) -> DealScore:
     reasons: list[str] = []
     delta = compute_price_vs_median(ad, market_stats.median)
@@ -327,13 +324,6 @@ def compute_deal_score(
     if config_reason:
         reasons.append(config_reason)
 
-    if duplicate_count > 0:
-        score -= min(
-            duplicate_count * SCORING.duplicate_penalty_per_ad,
-            SCORING.duplicate_penalty_cap,
-        )
-        reasons.append("есть дубли")
-
     anomaly_flags = detect_anomaly_flags(ad, market_stats)
     if anomaly_flags:
         score -= min(
@@ -357,14 +347,12 @@ def matches_tracker_filters(
     ad: dict[str, Any],
     *,
     market_stats: PriceStats,
-    duplicate_count: int = 0,
     min_discount_percent: float | None = None,
     max_price_byn: float | None = None,
     seller_type: str | None = None,
     condition: str | None = None,
     region_name: str | None = None,
     config_keyword: str | None = None,
-    exclude_duplicates: bool = False,
 ) -> bool:
     price_byn = normalize_price_byn(ad.get("price_byn"))
     if max_price_byn is not None and price_byn is not None and price_byn > max_price_byn:
@@ -386,8 +374,6 @@ def matches_tracker_filters(
         if ad_region != region_name and ad_area != region_name:
             return False
     if config_keyword and not config_keyword_matches(str(ad.get("subject", "")), config_keyword):
-        return False
-    if exclude_duplicates and duplicate_count > 0:
         return False
     if min_discount_percent is not None:
         delta = compute_price_vs_median(ad, market_stats.median)

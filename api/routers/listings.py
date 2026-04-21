@@ -14,7 +14,6 @@ from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_item
-from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
@@ -61,7 +60,6 @@ async def get_listings(
         category=category,
     )
     median_byn = dataset.price_stats.median
-    duplicate_index = duplicate_counts(dataset.ads)
     liquidity = compute_liquidity_insight(dataset.ads, dataset.price_stats)
     rates_payload = await currency_service.get_rates()
     rates = rates_payload["rates"]
@@ -76,7 +74,6 @@ async def get_listings(
     sorted_ads = sort_listings(deal_ads, effective_sort, median_byn)
     listings = []
     for ad in sorted_ads[:200]:
-        duplicate_count = duplicate_index.get(int(ad.get("ad_id", 0)), 0)
         listings.append(
             build_listing_item(
                 ad,
@@ -87,7 +84,6 @@ async def get_listings(
                 median_byn=median_byn,
                 market_stats=dataset.price_stats,
                 liquidity=liquidity,
-                duplicate_count=duplicate_count,
             )
         )
     if sort in {"cheap", "deal_score"}:

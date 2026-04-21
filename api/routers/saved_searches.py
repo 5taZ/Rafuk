@@ -27,7 +27,6 @@ from api.services.aggregator import filter_deal_ads
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_item
-from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import (
     analyze_query_text,
@@ -174,7 +173,6 @@ async def _load_saved_search_opportunities(
         settings=settings,
         client_factory=KufarClient,
     )
-    duplicate_index = duplicate_counts(dataset.ads)
     candidate_ads = filter_deal_ads(
         dataset.ads,
         dataset.price_stats.median,
@@ -186,14 +184,12 @@ async def _load_saved_search_opportunities(
         if matches_tracker_filters(
             ad,
             market_stats=dataset.price_stats,
-            duplicate_count=duplicate_index.get(int(ad.get("ad_id", 0)), 0),
             min_discount_percent=saved_search.target_discount_percent,
             max_price_byn=saved_search.max_price_byn,
             seller_type=saved_search.seller_type,
             condition=saved_search.condition,
             region_name=saved_search.region_name,
             config_keyword=saved_search.config_keyword,
-            exclude_duplicates=saved_search.exclude_duplicates,
         )
     ]
     if not candidate_ads:
@@ -209,7 +205,6 @@ async def _load_saved_search_opportunities(
             currency_service=currency_service,
             median_byn=dataset.price_stats.median,
             market_stats=dataset.price_stats,
-            duplicate_count=duplicate_index.get(int(ad.get("ad_id", 0)), 0),
         )
         for ad in candidate_ads[:20]
     ]

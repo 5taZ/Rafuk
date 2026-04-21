@@ -30,7 +30,6 @@ def test_trackers_crud() -> None:
                 "min_discount_percent": 12,
                 "max_price_byn": 2200,
                 "seller_type": "Частное лицо",
-                "exclude_duplicates": True,
             },
         )
         assert create_response.status_code == 201
@@ -41,7 +40,6 @@ def test_trackers_crud() -> None:
         assert created["min_discount_percent"] == 12
         assert created["max_price_byn"] == 2200
         assert created["seller_type"] == "Частное лицо"
-        assert created["exclude_duplicates"] is True
         assert created["config_keyword"] is not None
 
         list_response = client.get("/api/v1/trackers")

@@ -142,7 +142,6 @@ function createApiTrackers(context) {
                 condition: state.trackerCondition || null,
                 region_name: state.trackerRegionName || null,
                 config_keyword: state.trackerConfigKeyword || null,
-                exclude_duplicates: state.trackerExcludeDuplicates,
             });
             showToast("Трекер добавлен", "success");
             await loadTrackers();
@@ -224,7 +223,6 @@ function createApiTrackers(context) {
         if (elements.editConditionSelect) elements.editConditionSelect.value = tracker.condition || "";
         if (elements.editRegionSelect) elements.editRegionSelect.value = tracker.region_name || "";
         if (elements.editConfigInput) elements.editConfigInput.value = tracker.config_keyword || "";
-        if (elements.editExcludeDuplicatesToggle) elements.editExcludeDuplicatesToggle.checked = Boolean(tracker.exclude_duplicates);
 
         if (elements.editTrackerModal) {
             if (state.modalCleanup) {
@@ -263,7 +261,6 @@ function createApiTrackers(context) {
                     condition: elements.editConditionSelect?.value || null,
                     region_name: elements.editRegionSelect?.value || null,
                     config_keyword: elements.editConfigInput?.value || null,
-                    exclude_duplicates: elements.editExcludeDuplicatesToggle?.checked,
                 }),
             });
 
