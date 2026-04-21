@@ -618,53 +618,6 @@ body {
     line-height: 1;
 }
 
-.photo-search-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: var(--space-3);
-    padding: 7px 14px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--bg-elevated);
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.photo-search-btn:hover {
-    background: var(--accent-soft);
-    color: var(--accent);
-    border-color: var(--accent-glow);
-}
-
-.photo-search-btn svg {
-    flex-shrink: 0;
-}
-
-.photo-results-desc {
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    margin: 0 0 4px;
-}
-
-.photo-results-query {
-    color: var(--text-muted);
-    font-size: var(--text-xs);
-    margin: 0 0 var(--space-3);
-}
-
-.photo-results-query strong {
-    color: var(--text);
-}
-
-.photo-results-empty {
-    color: var(--text-muted);
-    text-align: center;
-    padding: var(--space-6) 0;
-}
-
 .quick-section {
     display: flex;
     gap: 8px;
@@ -5829,5 +5782,241 @@ body {
 
 .ai-similar-item:hover {
     opacity: 0.85;
+}
+
+/* ── AI Analysis Modal ── */
+.ai-modal-overlay {
+    z-index: 600;
+}
+
+.ai-sheet {
+    max-height: 96vh;
+    overflow-y: overlay;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+
+.ai-sheet::-webkit-scrollbar {
+    width: 4px;
+}
+
+.ai-sheet::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.ai-sheet::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+}
+
+.ai-modal-header {
+    padding: 0 16px 8px;
+}
+
+.ai-modal-title {
+    font-size: var(--text-lg);
+    font-weight: 700;
+    margin: 0;
+}
+
+.ai-modal-subtitle {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin: 4px 0 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-modal-body {
+    padding: 0 16px 16px;
+}
+
+/* ── AI Loading ── */
+.ai-modal-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 20px;
+    gap: 20px;
+}
+
+.ai-loader {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ai-loader-ring {
+    position: absolute;
+    inset: 0;
+    border: 3px solid var(--border);
+    border-top-color: var(--violet);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    transition: border-color 0.4s ease;
+}
+
+.ai-loader-ring--done {
+    border-color: var(--green);
+    border-top-color: var(--green);
+    animation: none;
+}
+
+.ai-loader-icon {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--violet);
+    letter-spacing: -0.02em;
+    transition: color 0.4s ease;
+}
+
+.ai-loader-icon--done {
+    color: var(--green);
+}
+
+.ai-loader-ring--error {
+    border-color: var(--red);
+    border-top-color: var(--red);
+    animation: none;
+}
+
+.ai-loader-icon--error {
+    color: var(--red);
+}
+
+.ai-loader-text {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.ai-progress {
+    width: 200px;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.ai-progress-bar {
+    height: 100%;
+    width: 5%;
+    background: var(--violet);
+    border-radius: 2px;
+    transition: width 0.6s ease;
+}
+
+.ai-progress-pct {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--violet);
+    font-family: var(--font-mono);
+    letter-spacing: -0.02em;
+    margin-top: -4px;
+    transition: color 0.4s ease;
+}
+
+.ai-progress-bar--done {
+    background: var(--green);
+}
+
+.ai-progress-bar--error {
+    background: var(--red);
+}
+
+.ai-progress-pct--done {
+    color: var(--green);
+}
+
+.ai-progress-pct--error {
+    color: var(--red);
+}
+
+.ai-modal-error {
+    padding: 16px;
+}
+
+/* ── AI Modal Result ── */
+.ai-modal-result {
+    animation: aiFadeIn 0.3s ease;
+}
+
+@keyframes aiFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.ai-modal-verdict {
+    text-align: center;
+    padding: 16px 0 12px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+}
+
+.ai-badge--lg {
+    font-size: var(--text-md);
+    padding: 6px 20px;
+}
+
+.ai-modal-summary {
+    margin: 10px 0 0;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: 1.6;
+}
+
+.ai-confidence {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: 8px;
+}
+
+.ai-checklist {
+    margin: 6px 0 0 20px;
+    padding: 0;
+    list-style: decimal;
+    font-size: var(--text-sm);
+    color: var(--text);
+    line-height: 1.8;
+}
+
+.ai-tips {
+    margin: 6px 0 0 20px;
+    padding: 0;
+    list-style: disc;
+    font-size: var(--text-sm);
+    color: var(--text);
+    line-height: 1.8;
+}
+
+.ai-flags {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ai-flag-item {
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: var(--text-sm);
+    background: var(--red-soft);
+    color: var(--red);
+    border-left: 3px solid var(--red);
+}
+
+.ai-best-condition {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.ai-best-reason {
+    margin: 8px 0 0;
+    font-size: var(--text-sm);
+    color: var(--text);
+    line-height: 1.5;
 }
 

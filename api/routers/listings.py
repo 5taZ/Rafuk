@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from api.config import Settings
 from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.limiter import limiter
 from api.schemas import ListingsResponse
 from api.services.aggregator import (
     filter_deal_ads,
@@ -22,7 +23,9 @@ router = APIRouter(tags=["analytics"])
 
 
 @router.get("/listings", response_model=ListingsResponse)
+@limiter.limit("30/minute")
 async def get_listings(
+    request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     sort: str = "newest",
     currency: str = "BYN",

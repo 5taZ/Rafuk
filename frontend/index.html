@@ -96,15 +96,6 @@
             <span class="strict-toggle-copy">Строгий поиск</span>
         </label>
 
-        <button class="photo-search-btn" id="photo-search-btn" type="button" title="Поиск по фото" aria-label="Поиск по фото">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                <circle cx="12" cy="13" r="4"/>
-            </svg>
-            <span>По фото</span>
-        </button>
-        <input type="file" id="photo-file-input" accept="image/jpeg,image/png,image/webp" hidden>
-
         <section class="recent-strip" id="recent-section" hidden>
             <span class="recent-kicker">Недавние</span>
             <div class="recent-scroll" id="recent-scroll">
@@ -332,15 +323,6 @@
     </section>
 
     <section class="view-panel" id="ads-view" hidden role="tabpanel" aria-labelledby="tab-ads">
-        <section class="section" id="photo-results-section" hidden>
-            <div class="sec-head">
-                <h2 class="sec-title">Поиск по фото</h2>
-                <button class="ghost-btn small" id="photo-results-close" type="button" aria-label="Закрыть">✕</button>
-            </div>
-            <p class="photo-results-desc" id="photo-results-desc"></p>
-            <p class="photo-results-query">Запрос: <strong id="photo-results-query"></strong></p>
-            <div class="listings-list" id="photo-results-list" role="list" aria-live="polite"></div>
-        </section>
         <section class="section" id="listings-section" hidden>
             <div class="sec-head listings-head">
                 <h2 class="sec-title">Объявления</h2>
@@ -707,6 +689,35 @@
                         <button class="ghost-btn small" id="cancel-expense-btn" type="button">Отмена</button>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Analysis Modal -->
+    <div class="detail-modal ai-modal-overlay" id="ai-modal" hidden>
+        <div class="detail-overlay" id="ai-overlay"></div>
+        <div class="detail-sheet ai-sheet" role="dialog" aria-modal="true" aria-labelledby="ai-modal-title">
+            <div class="detail-top-bar">
+                <button class="detail-close" id="ai-modal-close" type="button" aria-label="Закрыть">×</button>
+            </div>
+            <div class="ai-modal-header">
+                <h3 class="ai-modal-title" id="ai-modal-title">AI Анализ</h3>
+                <p class="ai-modal-subtitle" id="ai-modal-subtitle"></p>
+            </div>
+            <div class="ai-modal-body" id="ai-modal-body">
+                <div class="ai-modal-loading" id="ai-modal-loading">
+                    <div class="ai-loader">
+                        <div class="ai-loader-ring"></div>
+                        <span class="ai-loader-icon">AI</span>
+                    </div>
+                    <p class="ai-loader-text" id="ai-loader-text">Подготавливаю данные...</p>
+                    <div class="ai-progress">
+                        <div class="ai-progress-bar" id="ai-progress-bar"></div>
+                    </div>
+                    <span class="ai-progress-pct" id="ai-progress-pct">0%</span>
+                </div>
+                <div class="ai-modal-error" id="ai-modal-error" hidden></div>
+                <div class="ai-modal-result" id="ai-modal-result" hidden></div>
             </div>
         </div>
     </div>

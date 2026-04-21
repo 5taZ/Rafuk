@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -11,6 +11,7 @@ from api.dependencies import (
     get_session_factory_dependency,
     get_settings_dependency,
 )
+from api.limiter import limiter
 from api.schemas import CompareRequestItem, CompareResponse
 from api.services.aggregator import build_query_key, filter_deal_ads
 from api.services.currency_service import CurrencyService
@@ -109,7 +110,9 @@ async def _build_compare_item(
 
 
 @router.get("/compare", response_model=CompareResponse)
+@limiter.limit("20/minute")
 async def compare_queries(
+    request: Request,
     base_query: str = Query(
         ..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Base query",
     ),

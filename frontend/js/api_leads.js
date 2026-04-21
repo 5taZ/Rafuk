@@ -17,6 +17,7 @@ function createApiLeads(context) {
         renderProfitDashboard,
         renderDetailModal,
         showToast,
+        dismissToast,
         getJson,
         postJson,
         deleteJson,
@@ -285,7 +286,7 @@ function createApiLeads(context) {
             return;
         }
 
-        showToast("Загружаю...");
+        const loadingToast = showToast("Загружаю...", "info", 1400);
         state.error = null;
         renderError();
         try {
@@ -306,6 +307,8 @@ function createApiLeads(context) {
         } catch (error) {
             state.error = error.message || "Не удалось загрузить детали";
             renderError();
+        } finally {
+            if (loadingToast) dismissToast(loadingToast);
         }
     }
 

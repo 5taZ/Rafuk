@@ -1,10 +1,10 @@
-"""AI Analysis router — listing analysis, quick condition, search by photo."""
+"""AI Analysis router — listing analysis and quick condition assessment."""
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.dependencies import get_cache, get_telegram_user
 from api.schemas import (
@@ -12,13 +12,11 @@ from api.schemas import (
     AIAnalysisResponse,
     AIQuickConditionRequest,
     AIQuickConditionResponse,
-    AISearchByPhotoResponse,
 )
 from api.services.aggregator import normalize_price_byn
 from api.services.ai_service import get_ai_service
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import first_image_url
-from api.services.photo_search_service import PhotoSearchError, get_photo_search_service
 from api.services.query_pipeline import load_query_dataset
 
 logger = logging.getLogger(__name__)
@@ -57,6 +55,53 @@ async def _check_rate_limit(request: Request, user_id: int) -> None:
     await cache.set(key, str(count + 1), ttl=3600)
 
 
+def _collect_similar_listings(
+    dataset, target_ad_id: int, target_price: float, median: float | None
+) -> list[dict]:
+    """Collect similar listings with rich data for AI comparison."""
+    if not median or target_price <= 0:
+        return []
+
+    price_min = target_price * 0.7
+    price_max = target_price * 1.15
+    similar: list[dict] = []
+
+    for ad in dataset.ads:
+        ad_id = int(ad.get("ad_id", 0))
+        if ad_id == target_ad_id:
+            continue
+        ad_price = normalize_price_byn(ad.get("price_byn")) or 0.0
+        if ad_price <= 0:
+            continue
+        if price_min <= ad_price <= price_max:
+            ad_condition = None
+            for param in ad.get("ad_parameters", []):
+                if param.get("p") == "condition":
+                    ad_condition = param.get("vl") or param.get("v")
+                    break
+            ad_desc = (ad.get("body", "") or ad.get("description", "")) or ""
+            ad_images = []
+            for img in (ad.get("images") or [])[:3]:
+                path = img.get("path", "")
+                if path:
+                    ad_images.append(f"https://rms.kufar.by/v1/gallery/{path}")
+            similar.append(
+                {
+                    "ad_id": ad_id,
+                    "title": ad.get("subject", "")[:80],
+                    "price_byn": ad_price,
+                    "image_url": first_image_url(ad),
+                    "image_urls": ad_images,
+                    "link": ad.get("ad_link", f"https://www.kufar.by/item/{ad_id}"),
+                    "deal_score": 0.0,
+                    "condition": ad_condition,
+                    "description": ad_desc[:200],
+                }
+            )
+    similar.sort(key=lambda item: item["price_byn"])
+    return similar[:5]
+
+
 @router.post("/analyze", response_model=AIAnalysisResponse)
 async def analyze_listing(
     payload: AIAnalysisRequest,
@@ -79,10 +124,15 @@ async def analyze_listing(
 
         settings = get_settings()
 
+    # Try strict search first — yields more relevant comparable listings
+    logger.info(
+        "AI analyze: loading dataset for ad_id=%d query=%s",
+        payload.ad_id, payload.query[:50],
+    )
     dataset = await load_query_dataset(
         query=payload.query,
         currency="BYN",
-        strict_search=False,
+        strict_search=True,
         settings=settings,
         client_factory=KufarClient,
     )
@@ -91,6 +141,21 @@ async def analyze_listing(
         (ad for ad in dataset.ads if int(ad.get("ad_id", 0)) == payload.ad_id),
         None,
     )
+
+    # Fallback to non-strict if target not found in strict results
+    if not target_ad:
+        dataset = await load_query_dataset(
+            query=payload.query,
+            currency="BYN",
+            strict_search=False,
+            settings=settings,
+            client_factory=KufarClient,
+        )
+        target_ad = next(
+            (ad for ad in dataset.ads if int(ad.get("ad_id", 0)) == payload.ad_id),
+            None,
+        )
+
     if not target_ad:
         raise HTTPException(status_code=404, detail="Объявление не найдено")
 
@@ -123,7 +188,27 @@ async def analyze_listing(
     median = dataset.price_stats.median if dataset.price_stats else None
     count = dataset.price_stats.count if dataset.price_stats else 0
 
+    # Collect similar listings with rich data
+    similar = _collect_similar_listings(dataset, payload.ad_id, price_byn, median)
+
+    # Prepare similar listings for AI comparison (with images and descriptions)
+    ai_similar_for_comparison = [
+        {
+            "ad_id": s["ad_id"],
+            "title": s["title"],
+            "price_byn": s["price_byn"],
+            "condition": s.get("condition"),
+            "description": s.get("description", ""),
+            "image_urls": s.get("image_urls", []),
+        }
+        for s in similar
+    ]
+
     try:
+        logger.info(
+            "AI analyze: calling ai.analyze_listing for '%s' (%d imgs, %d similar)",
+            title[:50], len(images), len(ai_similar_for_comparison),
+        )
         result = await ai.analyze_listing(
             title=title,
             description=description,
@@ -133,41 +218,61 @@ async def analyze_listing(
             market_median=median,
             market_count=count,
             image_urls=images,
+            similar_listings=ai_similar_for_comparison,
         )
+        logger.info("AI analyze: success, keys=%s", list(result.keys()))
     except Exception as exc:
-        logger.error("AI analysis failed: %s", exc)
+        logger.error(
+            "AI analysis failed: [%s] %s\nProxy: %s",
+            type(exc).__name__, exc, "yes" if settings.ai_proxy_url else "no",
+        )
         err_msg = "AI сервис недоступен. Попробуйте позже."
-        err_str = str(exc)
-        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower():
+        err_str = str(exc).lower()
+        if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
             err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
+        elif (
+            "timeout" in err_str
+            or "timed out" in err_str
+            or "connect" in err_str
+            or "connection" in err_str
+        ):
+            err_msg = (
+                "Не удалось подключиться к AI-сервису. "
+                "Возможно, требуется VPN на сервере."
+            )
+        # In debug mode, append actual error for diagnostics
+        if settings and getattr(settings, "debug", False):
+            err_msg += f" [{type(exc).__name__}: {exc}]"
         raise HTTPException(status_code=502, detail=err_msg) from None
 
-    similar = []
-    if median and price_byn > 0:
-        price_min = price_byn * 0.7
-        price_max = price_byn * 1.15
-        for ad in dataset.ads:
-            ad_id = int(ad.get("ad_id", 0))
-            if ad_id == payload.ad_id:
-                continue
-            ad_price = normalize_price_byn(ad.get("price_byn")) or 0.0
-            if ad_price <= 0:
-                continue
-            if price_min <= ad_price <= price_max:
-                similar.append(
-                    {
-                        "ad_id": ad_id,
-                        "title": ad.get("subject", "")[:80],
-                        "price_byn": ad_price,
-                        "image_url": first_image_url(ad),
-                        "link": ad.get("ad_link", f"https://www.kufar.by/item/{ad_id}"),
-                        "deal_score": 0.0,
-                    }
-                )
-        similar.sort(key=lambda item: item["price_byn"])
-        similar = similar[:5]
+    # Determine best alternative based on AI's best_pick
+    best_pick_ad_id = None
+    best_pick_reason = ""
+    bp = result.get("best_pick") or {}
+    if isinstance(bp, dict):
+        best_pick_ad_id = bp.get("ad_id")
+        best_pick_reason = bp.get("reason", "")
 
-    best_alternative = similar[0] if similar else None
+    best_alternative = None
+    if best_pick_ad_id:
+        best_alternative = next(
+            (s for s in similar if s["ad_id"] == best_pick_ad_id), None
+        )
+    if not best_alternative and similar:
+        # Fallback: cheapest similar listing
+        best_alternative = similar[0]
+
+    if best_alternative:
+        best_alternative = {
+            "ad_id": best_alternative["ad_id"],
+            "title": best_alternative["title"],
+            "price_byn": best_alternative["price_byn"],
+            "image_url": best_alternative.get("image_url"),
+            "link": best_alternative.get("link", ""),
+            "deal_score": best_alternative.get("deal_score", 0.0),
+            "condition": best_alternative.get("condition"),
+            "ai_note": best_pick_reason if best_pick_ad_id == best_alternative["ad_id"] else "",
+        }
 
     response = AIAnalysisResponse(
         ad_id=payload.ad_id,
@@ -177,6 +282,11 @@ async def analyze_listing(
         recommendation=result.get("recommendation"),
         similar_listings=similar,
         best_alternative=best_alternative,
+        meeting_checklist=result.get("meeting_checklist", []),
+        negotiation_tips=result.get("negotiation_tips", []),
+        red_flags=result.get("red_flags", []),
+        market_context=result.get("market_context", ""),
+        best_pick_reason=best_pick_reason,
         summary=result.get("summary", ""),
         disclaimer=DISCLAIMER,
     )
@@ -238,82 +348,4 @@ async def quick_condition(
         ad_id=payload.ad_id,
         condition=result.get("condition", ""),
         notes=result.get("notes", []),
-    )
-
-
-@router.post("/search-by-photo", response_model=AISearchByPhotoResponse)
-async def search_by_photo(
-    request: Request,
-    photo: UploadFile = File(..., description="Photo of the item to search for"),
-    _user=Depends(get_telegram_user),
-):
-    """Upload a photo -> AI or OCR identifies the item -> search Kufar."""
-    await _check_rate_limit(request, _user.user_id)
-
-    allowed_types = {"image/jpeg", "image/png", "image/webp", "image/jpg"}
-    content_type = photo.content_type or ""
-    if content_type not in allowed_types:
-        raise HTTPException(
-            status_code=422,
-            detail="Поддерживаются только фото (JPEG, PNG, WebP)",
-        )
-
-    image_bytes = await photo.read()
-    if len(image_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=422, detail="Фото слишком большое (максимум 10 МБ)")
-    if len(image_bytes) < 100:
-        raise HTTPException(status_code=422, detail="Файл слишком маленький")
-
-    mime_type = "image/jpeg" if content_type == "image/jpg" else content_type
-    photo_search = get_photo_search_service()
-    ai_service = get_ai_service()
-
-    try:
-        identified = await photo_search.identify_from_bytes(image_bytes, mime_type, ai_service)
-    except PhotoSearchError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    except Exception as exc:
-        logger.error("Search by photo failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Не удалось обработать фото") from None
-
-    settings = getattr(request.app.state, "settings", None)
-    if settings is None:
-        from api.config import get_settings
-
-        settings = get_settings()
-
-    client = KufarClient(settings)
-    try:
-        raw = await client.search(query=identified.query, limit=30)
-    except Exception as exc:
-        logger.error("Kufar search failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Не удалось выполнить поиск") from None
-    finally:
-        await client.aclose()
-
-    ads = raw.get("ads", [])
-    listings = []
-    for ad in ads[:15]:
-        price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
-        listings.append(
-            {
-                "ad_id": int(ad.get("ad_id", 0)),
-                "title": ad.get("subject", "")[:100],
-                "price_byn": price_byn,
-                "image_url": first_image_url(ad),
-                "link": ad.get(
-                    "ad_link",
-                    f"https://www.kufar.by/item/{ad.get('ad_id', 0)}",
-                ),
-                "list_time": ad.get("list_time"),
-            }
-        )
-
-    return AISearchByPhotoResponse(
-        query=identified.query,
-        description=identified.description,
-        listings=listings,
-        total=len(listings),
-        source=identified.source,
-        recognized_text=identified.recognized_text,
     )

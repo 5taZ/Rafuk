@@ -569,6 +569,8 @@ class AISimilarListing(BaseModel):
     image_url: str | None = None
     link: str = ""
     deal_score: float = 0.0
+    condition: str | None = None
+    ai_note: str = ""
 
 
 class AIAnalysisResponse(BaseModel):
@@ -579,6 +581,11 @@ class AIAnalysisResponse(BaseModel):
     recommendation: AIRecommendation | None = None
     similar_listings: list[AISimilarListing] = Field(default_factory=list)
     best_alternative: AISimilarListing | None = None
+    meeting_checklist: list[str] = Field(default_factory=list)
+    negotiation_tips: list[str] = Field(default_factory=list)
+    red_flags: list[str] = Field(default_factory=list)
+    market_context: str = ""
+    best_pick_reason: str = ""
     summary: str = ""
     disclaimer: str = "Анализ носит информационный характер. Результаты не являются гарантией."
     analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -588,12 +595,3 @@ class AIQuickConditionResponse(BaseModel):
     ad_id: int
     condition: str = ""
     notes: list[str] = Field(default_factory=list)
-
-
-class AISearchByPhotoResponse(BaseModel):
-    query: str = ""
-    description: str = ""
-    listings: list[dict] = Field(default_factory=list)
-    total: int = 0
-    source: str = "ai"
-    recognized_text: list[str] = Field(default_factory=list)

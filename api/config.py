@@ -26,13 +26,14 @@ class Settings(BaseSettings):
     alert_check_interval: int = 30
     cache_ttl_seconds: int = 300
     auto_remove_missing_days: int = 7
+    debug: bool = False
     db_pool_size: int = 10
     db_max_overflow: int = 20
 
-    # AI Analysis (OpenAI-compatible API)
+    # AI Analysis (Together API — OpenAI-compatible)
     ai_api_key: SecretStr | None = None
-    ai_base_url: str = "https://api.deepseek.com"
-    ai_model: str = "deepseek-chat"
+    ai_base_url: str = "https://api.together.xyz/v1"
+    ai_model: str = "google/gemma-4-31B-it"
     ai_max_images: int = 3
     ai_cache_hours: int = 1
     ai_hourly_limit: int = 10

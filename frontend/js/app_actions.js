@@ -201,7 +201,7 @@ function createAppActions(context) {
 
         // From AI
         loadAIAnalysis: ai.loadAIAnalysis,
-        searchByPhoto: ai.searchByPhoto,
+        closeAIModal: ai.closeAIModal,
     });
     // ── Wire events module (needs all action functions on context) ────────
     const events = createApiEvents(context);
@@ -451,6 +451,6 @@ function createAppActions(context) {
         exportLeadsCSV,
         loadDetailRisks: listings.loadDetailRisks,
         loadAIAnalysis: ai.loadAIAnalysis,
-        searchByPhoto: ai.searchByPhoto,
+        closeAIModal: ai.closeAIModal,
     };
 }

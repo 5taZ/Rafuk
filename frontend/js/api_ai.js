@@ -1,17 +1,137 @@
 /**
- * api_ai.js — AI listing analysis API calls.
+ * api_ai.js — AI listing analysis with dedicated modal.
  */
 function createApiAi(context) {
     const { state, elements, postJson, escapeHtml, formatPrice, telegramHeaders } = context;
 
     let _aiLoading = false;
+    let _aiProgress = 0;
+
+    const LOADING_STEPS = [
+        "Загружаю данные объявления...",
+        "Анализирую фотографии...",
+        "Сравниваю с другими вариантами...",
+        "Формирую рекомендации...",
+    ];
+
+    function _updateProgressDisplay(pct) {
+        _aiProgress = pct;
+        const barEl = elements.aiProgressBar;
+        const pctEl = elements.aiProgressPct;
+        if (barEl) barEl.style.width = pct + "%";
+        if (pctEl) pctEl.textContent = Math.round(pct) + "%";
+    }
+
+    function _startLoadingAnimation() {
+        let step = 0;
+        _aiProgress = 0;
+        const textEl = elements.aiLoaderText;
+
+        function tick() {
+            step = (step + 1) % LOADING_STEPS.length;
+            if (textEl) textEl.textContent = LOADING_STEPS[step];
+            _aiProgress = Math.min(_aiProgress + 8 + Math.random() * 5, 92);
+            _updateProgressDisplay(_aiProgress);
+        }
+
+        if (textEl) textEl.textContent = LOADING_STEPS[0];
+        _updateProgressDisplay(5);
+        state.aiLoadingTimer = setInterval(tick, 2800);
+    }
+
+    function _stopLoadingAnimation(success = true) {
+        if (state.aiLoadingTimer) {
+            clearInterval(state.aiLoadingTimer);
+            state.aiLoadingTimer = null;
+        }
+        if (success) {
+            _updateProgressDisplay(100);
+            const pctEl = elements.aiProgressPct;
+            if (pctEl) pctEl.classList.add("ai-progress-pct--done");
+            const barEl = elements.aiProgressBar;
+            if (barEl) barEl.classList.add("ai-progress-bar--done");
+        }
+    }
+
+    function _showCompletionThen(callback) {
+        _stopLoadingAnimation();
+
+        const loadingEl = elements.aiModalLoading;
+        if (!loadingEl) { callback(); return; }
+
+        const ring = loadingEl.querySelector(".ai-loader-ring");
+        const icon = loadingEl.querySelector(".ai-loader-icon");
+        if (ring) ring.classList.add("ai-loader-ring--done");
+        if (icon) {
+            icon.textContent = "✓";
+            icon.classList.add("ai-loader-icon--done");
+        }
+        if (elements.aiLoaderText) elements.aiLoaderText.textContent = "Анализ завершён!";
+
+        setTimeout(callback, 700);
+    }
+
+    function openAIModal(subtitle) {
+        if (elements.aiModalSubtitle && subtitle) {
+            elements.aiModalSubtitle.textContent = subtitle;
+        }
+
+        // Reset completion classes from previous run
+        const loadingEl = elements.aiModalLoading;
+        if (loadingEl) {
+            loadingEl.hidden = false;
+            const ring = loadingEl.querySelector(".ai-loader-ring");
+            const icon = loadingEl.querySelector(".ai-loader-icon");
+            if (ring) {
+                ring.classList.remove("ai-loader-ring--done");
+                ring.classList.remove("ai-loader-ring--error");
+            }
+            if (icon) {
+                icon.classList.remove("ai-loader-icon--done");
+                icon.classList.remove("ai-loader-icon--error");
+                icon.textContent = "AI";
+            }
+        }
+        const pctEl = elements.aiProgressPct;
+        if (pctEl) {
+            pctEl.classList.remove("ai-progress-pct--error");
+            pctEl.classList.remove("ai-progress-pct--done");
+        }
+        const barEl = elements.aiProgressBar;
+        if (barEl) {
+            barEl.classList.remove("ai-progress-bar--done");
+            barEl.classList.remove("ai-progress-bar--error");
+        }
+        if (elements.aiModalError) elements.aiModalError.hidden = true;
+        if (elements.aiModalResult) elements.aiModalResult.hidden = true;
+        if (elements.aiModal) elements.aiModal.hidden = false;
+
+        // Scroll to top
+        const sheet = elements.aiModal?.querySelector(".detail-sheet");
+        if (sheet) sheet.scrollTop = 0;
+
+        _startLoadingAnimation();
+    }
+
+    function closeAIModal() {
+        _stopLoadingAnimation();
+        if (elements.aiModal) elements.aiModal.hidden = true;
+    }
 
     async function loadAIAnalysis(adId) {
-        const block = elements.detailAiBlock;
-        const content = elements.detailAiContent;
         const query = (state.detail?.query || state.query || "").trim();
-        if (_aiLoading || !adId || !query || !block || !content) return;
+        if (!adId || !query) return;
 
+        // If already analyzed for this ad, show cached result immediately
+        const cached = state.detailAi;
+        if (cached && cached.adId === adId && cached.result && !cached.error) {
+            openAIModal(state.detail?.title || "");
+            _stopLoadingAnimation();
+            setTimeout(() => _renderAIModalResult(cached.result), 200);
+            return;
+        }
+
+        if (_aiLoading) return;
         _aiLoading = true;
         state.detailAi = {
             adId,
@@ -21,8 +141,7 @@ function createApiAi(context) {
             source: "ai",
         };
 
-        block.hidden = false;
-        content.innerHTML = '<div class="ai-loading">Анализирую объявление…</div>';
+        openAIModal(state.detail?.title || "");
 
         try {
             const result = await postJson("/api/v1/ai/analyze", {
@@ -36,7 +155,7 @@ function createApiAi(context) {
                 error: "",
                 source: "ai",
             };
-            renderAIResult(content, result);
+            _showCompletionThen(() => _renderAIModalResult(result));
         } catch (err) {
             const message = `Не удалось выполнить анализ${err.message ? `: ${err.message}` : ""}`;
             state.detailAi = {
@@ -46,16 +165,66 @@ function createApiAi(context) {
                 error: message,
                 source: "ai",
             };
-            content.innerHTML = `<div class="ai-error">${escapeHtml(message)}</div>`;
+            _showAIError(message);
         } finally {
             _aiLoading = false;
         }
     }
 
-    function renderAIResult(container, data) {
+    function _showAIError(message) {
+        _stopLoadingAnimation(false);
+
+        const loadingEl = elements.aiModalLoading;
+        if (loadingEl) {
+            const ring = loadingEl.querySelector(".ai-loader-ring");
+            const icon = loadingEl.querySelector(".ai-loader-icon");
+            if (ring) ring.classList.add("ai-loader-ring--error");
+            if (icon) {
+                icon.textContent = "✕";
+                icon.classList.add("ai-loader-icon--error");
+            }
+            if (elements.aiLoaderText) elements.aiLoaderText.textContent = "Ошибка анализа";
+        }
+        // Show percentage and bar in red on error
+        const pctEl = elements.aiProgressPct;
+        if (pctEl) pctEl.classList.add("ai-progress-pct--error");
+        const barEl = elements.aiProgressBar;
+        if (barEl) barEl.classList.add("ai-progress-bar--error");
+
+        setTimeout(() => {
+            if (elements.aiModalLoading) elements.aiModalLoading.hidden = true;
+            if (elements.aiModalResult) elements.aiModalResult.hidden = true;
+            if (elements.aiModalError) {
+                elements.aiModalError.hidden = false;
+                elements.aiModalError.innerHTML = `<div class="ai-error">${escapeHtml(message)}</div>`;
+            }
+        }, 700);
+    }
+
+    function _renderAIModalResult(data) {
+        if (elements.aiModalLoading) elements.aiModalLoading.hidden = true;
+        if (elements.aiModalError) elements.aiModalError.hidden = true;
+
+        const container = elements.aiModalResult;
+        if (!container) return;
+        container.hidden = false;
+
         let html = "";
 
-        // ── Condition assessment from photos ──
+        // ── Summary + verdict ──
+        if (data.recommendation) {
+            const rec = data.recommendation;
+            const verdictClass = rec.verdict === "worth_it" ? "ai-badge--good"
+                : rec.verdict === "think_twice" ? "ai-badge--warn" : "ai-badge--bad";
+            const verdictText = rec.verdict === "worth_it" ? "Стоит брать"
+                : rec.verdict === "think_twice" ? "Подумай" : "Дорого";
+            html += `<div class="ai-modal-verdict">
+                <span class="ai-badge ${verdictClass} ai-badge--lg">${verdictText}</span>
+                ${data.summary ? `<p class="ai-modal-summary">${escapeHtml(data.summary)}</p>` : ""}
+            </div>`;
+        }
+
+        // ── Condition assessment ──
         if (data.condition) {
             const cond = data.condition;
             const badgeClass = cond.label === "Отличное" ? "ai-badge--good" :
@@ -64,17 +233,18 @@ function createApiAi(context) {
             html += `<div class="ai-section">
                 <span class="ai-label">Состояние по фото</span>
                 <span class="ai-badge ${badgeClass}">${escapeHtml(cond.label)}</span>
+                ${cond.confidence ? `<span class="ai-confidence">уверенность ${Math.round(cond.confidence * 100)}%</span>` : ""}
                 ${cond.notes?.length ? `<ul class="ai-notes">${cond.notes.map(n => `<li>${escapeHtml(n)}</li>`).join("")}</ul>` : ""}
             </div>`;
         }
 
-        // ── Fair price estimate ──
+        // ── Fair price ──
         if (data.fair_price) {
             const fp = data.fair_price;
             const fromPrice = fp.from || fp.from_price;
             const toPrice = fp.to || fp.to_price;
             html += `<div class="ai-section">
-                <span class="ai-label">За сколько можно купить</span>
+                <span class="ai-label">Справедливая цена</span>
                 ${fromPrice != null && toPrice != null
                     ? `<div class="ai-fair-price">${Math.round(fromPrice)} — ${Math.round(toPrice)} BYN</div>`
                     : fromPrice != null
@@ -84,7 +254,54 @@ function createApiAi(context) {
             </div>`;
         }
 
-        // ── What to watch out for ──
+        // ── Market context ──
+        if (data.market_context) {
+            html += `<div class="ai-section">
+                <span class="ai-label">Контекст рынка</span>
+                <p class="ai-reasoning">${escapeHtml(data.market_context)}</p>
+            </div>`;
+        }
+
+        // ── Best alternative ──
+        if (data.best_alternative) {
+            const ba = data.best_alternative;
+            html += `<div class="ai-section ai-section--best">
+                <span class="ai-label">Лучший вариант</span>
+                <a class="ai-best-link" href="${escapeHtml(ba.link)}" target="_blank" rel="noreferrer noopener">
+                    ${ba.image_url ? `<img class="ai-best-thumb" src="${escapeHtml(ba.image_url)}" alt="" loading="lazy">` : ""}
+                    <div class="ai-best-info">
+                        <span class="ai-best-title">${escapeHtml(ba.title)}</span>
+                        <span class="ai-best-price mono">${Math.round(ba.price_byn)} BYN</span>
+                        ${ba.condition ? `<span class="ai-best-condition">${escapeHtml(ba.condition)}</span>` : ""}
+                    </div>
+                    <span class="ai-best-arrow">→</span>
+                </a>
+                ${data.best_pick_reason ? `<p class="ai-best-reason">${escapeHtml(data.best_pick_reason)}</p>` : ""}
+            </div>`;
+        }
+
+        // ── Other alternatives ──
+        if (data.similar_listings?.length) {
+            const others = data.best_alternative
+                ? data.similar_listings.filter(s => s.ad_id !== data.best_alternative.ad_id)
+                : data.similar_listings;
+            if (others.length) {
+                html += `<div class="ai-section">
+                    <span class="ai-label">Другие варианты (${others.length})</span>
+                    <div class="ai-similar">${others.map(s =>
+                        `<a class="ai-similar-item" href="${escapeHtml(s.link)}" target="_blank" rel="noreferrer noopener">
+                            ${s.image_url ? `<img class="ai-similar-thumb" src="${escapeHtml(s.image_url)}" alt="" loading="lazy">` : ""}
+                            <div class="ai-similar-info">
+                                <span class="ai-similar-title">${escapeHtml(s.title)}</span>
+                                <span class="ai-similar-price mono">${Math.round(s.price_byn)} BYN${s.condition ? ` · ${escapeHtml(s.condition)}` : ""}</span>
+                            </div>
+                        </a>`
+                    ).join("")}</div>
+                </div>`;
+            }
+        }
+
+        // ── Watch out ──
         if (data.watch_out?.length) {
             html += `<div class="ai-section">
                 <span class="ai-label">На что обратить внимание</span>
@@ -97,60 +314,42 @@ function createApiAi(context) {
             </div>`;
         }
 
-        // ── Best alternative (link to cheapest similar) ──
-        if (data.best_alternative) {
-            const ba = data.best_alternative;
-            html += `<div class="ai-section ai-section--best">
-                <span class="ai-label">Лучше вариант</span>
-                <a class="ai-best-link" href="${escapeHtml(ba.link)}" target="_blank" rel="noreferrer noopener">
-                    ${ba.image_url ? `<img class="ai-best-thumb" src="${escapeHtml(ba.image_url)}" alt="" loading="lazy">` : ""}
-                    <div class="ai-best-info">
-                        <span class="ai-best-title">${escapeHtml(ba.title)}</span>
-                        <span class="ai-best-price mono">${Math.round(ba.price_byn)} BYN</span>
-                    </div>
-                    <span class="ai-best-arrow">→</span>
-                </a>
+        // ── Meeting checklist ──
+        if (data.meeting_checklist?.length) {
+            html += `<div class="ai-section">
+                <span class="ai-label">Чек-лист для встречи</span>
+                <ol class="ai-checklist">${data.meeting_checklist.map(item =>
+                    `<li>${escapeHtml(item)}</li>`
+                ).join("")}</ol>
             </div>`;
         }
 
-        // ── Other alternatives ──
-        if (data.similar_listings?.length) {
-            const others = data.best_alternative
-                ? data.similar_listings.filter(s => s.ad_id !== data.best_alternative.ad_id)
-                : data.similar_listings;
-            if (others.length) {
-                html += `<div class="ai-section">
-                    <span class="ai-label">Другие варианты</span>
-                    <div class="ai-similar">${others.map(s =>
-                        `<a class="ai-similar-item" href="${escapeHtml(s.link)}" target="_blank" rel="noreferrer noopener">
-                            ${s.image_url ? `<img class="ai-similar-thumb" src="${escapeHtml(s.image_url)}" alt="" loading="lazy">` : ""}
-                            <div class="ai-similar-info">
-                                <span class="ai-similar-title">${escapeHtml(s.title)}</span>
-                                <span class="ai-similar-price mono">${Math.round(s.price_byn)} BYN</span>
-                            </div>
-                        </a>`
-                    ).join("")}</div>
-                </div>`;
-            }
+        // ── Negotiation tips ──
+        if (data.negotiation_tips?.length) {
+            html += `<div class="ai-section">
+                <span class="ai-label">Как торговаться</span>
+                <ul class="ai-tips">${data.negotiation_tips.map(tip =>
+                    `<li>${escapeHtml(tip)}</li>`
+                ).join("")}</ul>
+            </div>`;
         }
 
-        // ── Recommendation ──
+        // ── Red flags ──
+        if (data.red_flags?.length) {
+            html += `<div class="ai-section">
+                <span class="ai-label">Красные флаги</span>
+                <div class="ai-flags">${data.red_flags.map(flag =>
+                    `<div class="ai-flag-item">${escapeHtml(flag)}</div>`
+                ).join("")}</div>
+            </div>`;
+        }
+
+        // ── Recommendation text ──
         if (data.recommendation?.text) {
-            const rec = data.recommendation;
-            const verdictClass = rec.verdict === "worth_it" ? "ai-badge--good"
-                : rec.verdict === "think_twice" ? "ai-badge--warn" : "ai-badge--bad";
-            const verdictText = rec.verdict === "worth_it" ? "Стоит брать"
-                : rec.verdict === "think_twice" ? "Подумай" : "Дорого";
             html += `<div class="ai-section ai-section--recommendation">
                 <span class="ai-label">Рекомендация</span>
-                <span class="ai-badge ${verdictClass}">${verdictText}</span>
-                <p class="ai-recommendation-text">${escapeHtml(rec.text)}</p>
+                <p class="ai-recommendation-text">${escapeHtml(data.recommendation.text)}</p>
             </div>`;
-        }
-
-        // ── Summary ──
-        if (data.summary) {
-            html += `<div class="ai-summary">${escapeHtml(data.summary)}</div>`;
         }
 
         // ── Disclaimer ──
@@ -159,98 +358,8 @@ function createApiAi(context) {
         container.innerHTML = html;
     }
 
-    let _photoLoading = false;
-
-    async function searchByPhoto(file) {
-        if (_photoLoading) return;
-        _photoLoading = true;
-
-        const section = elements.photoResultsSection;
-        const list = elements.photoResultsList;
-        const descEl = elements.photoResultsDesc;
-        const queryEl = elements.photoResultsQuery;
-
-        if (!section || !list) return;
-
-        // Show photo results section, hide regular listings
-        section.hidden = false;
-        const listingsSection = document.getElementById("listings-section");
-        if (listingsSection) listingsSection.hidden = true;
-
-        descEl.textContent = "Анализирую фото…";
-        queryEl.textContent = "";
-        list.innerHTML = '<div class="ai-loading">Определяю товар и ищу на Kufar…</div>';
-
-        // Switch to ads view
-        const adsTab = document.getElementById("tab-ads");
-        if (adsTab) adsTab.click();
-
-        try {
-            const formData = new FormData();
-            formData.append("photo", file);
-
-            const resp = await fetch("/api/v1/ai/search-by-photo", {
-                method: "POST",
-                headers: { ...telegramHeaders() },
-                body: formData,
-            });
-
-            if (!resp.ok) {
-                let detail = "";
-                try { const j = await resp.json(); detail = j.detail || ""; } catch {}
-                throw new Error(detail || `Ошибка ${resp.status}`);
-            }
-
-            const data = await resp.json();
-
-            const sourceLabel = data.source === "ocr" ? "OCR" : "AI";
-            descEl.textContent = data.description || "Товар определён";
-            if (data.source && descEl.textContent) {
-                descEl.textContent = `${descEl.textContent} (${sourceLabel})`;
-            }
-            queryEl.textContent = data.query || "";
-
-            if (!data.listings?.length) {
-                list.innerHTML = '<p class="photo-results-empty">Ничего не найдено на Kufar по этому запросу</p>';
-                return;
-            }
-
-            list.innerHTML = "";
-            data.listings.forEach(item => {
-                const card = document.createElement("article");
-                card.className = "listing";
-
-                const thumb = item.image_url
-                    ? `<img class="listing-thumb" src="${escapeHtml(item.image_url)}" alt="" loading="lazy">`
-                    : `<div class="listing-thumb placeholder">Нет фото</div>`;
-
-                const price = item.price_byn ? formatPrice(item.price_byn) : "—";
-                const link = item.link || `https://www.kufar.by/item/${item.ad_id}`;
-
-                card.innerHTML = `
-                    <div class="listing-top">
-                        ${thumb}
-                        <div class="listing-body">
-                            <span class="listing-name">${escapeHtml(item.title)}</span>
-                            <span class="listing-price mono">${price}</span>
-                        </div>
-                    </div>
-                    <div class="listing-actions">
-                        <a class="listing-btn listing-btn--accent" href="${escapeHtml(link)}" target="_blank" rel="noreferrer noopener">Перейти на Kufar</a>
-                    </div>
-                `;
-                list.appendChild(card);
-            });
-
-        } catch (err) {
-            list.innerHTML = `<div class="ai-error">Не удалось выполнить поиск${err.message ? ": " + escapeHtml(err.message) : ""}</div>`;
-        } finally {
-            _photoLoading = false;
-        }
-    }
-
     return {
         loadAIAnalysis,
-        searchByPhoto,
+        closeAIModal,
     };
 }

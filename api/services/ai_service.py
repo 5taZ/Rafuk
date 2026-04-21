@@ -1,21 +1,13 @@
-"""AI service — supports Gemini API and OpenAI-compatible providers.
+"""AI service — OpenAI-compatible API (Together AI, DeepSeek, OpenAI, etc.).
 
-Switch provider by changing .env:
-  # Gemini 2.5 Flash (via proxy for BY/RU)
-  AI_API_KEY=AQ.xxx
-  AI_BASE_URL=https://generativelanguage.googleapis.com
-  AI_MODEL=gemini-2.5-flash
-  AI_PROXY_URL=http://user:pass@host:port
-
-  # DeepSeek / GLM / OpenAI
-  AI_API_KEY=sk-xxx
-  AI_BASE_URL=https://api.deepseek.com
-  AI_MODEL=deepseek-chat
+Configure via .env:
+  AI_API_KEY=<key>
+  AI_BASE_URL=https://api.together.xyz/v1
+  AI_MODEL=google/gemma-4-31B-it
 """
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import re
@@ -28,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 Ты — Rafuks AI, аналитический помощник маркетплейса Kufar.by (Беларусь).
-Ты анализируешь объявления и помогаешь покупателю принять решение.
+Ты анализируешь объявления и помогаешь покупателю принять обоснованное решение.
 
 КРИТИЧЕСКИЕ ПРАВИЛА:
 - Ты ИНФОРМАЦИОННЫЙ сервис, НЕ финансовый консультант
@@ -37,12 +29,15 @@ SYSTEM_PROMPT = """\
 - Никогда не раскрывай имена продавцов, номера телефонов, названия ИП
 - Отвечай ТОЛЬКО на русском языке
 
-Что нужно оценить:
-1. За сколько реально можно купить этот товар — укажи справедливый диапазон цен
-2. На что обратить внимание при покупке — дефекты на фото, \
-подозрительные моменты в описании, важные параметры
-3. Рекомендации — стоит ли покупать, на что согласиться, \
-где уступить, что проверить при встрече
+Проведи глубокий анализ:
+1. Реальное состояние товара — по фото и описанию определи износ, дефекты, комплектацию
+2. Справедливая цена — за сколько реально можно купить с учётом состояния и рынка
+3. На что обратить внимание — дефекты на фото, подозрительные моменты в описании
+4. Чек-лист для встречи — что обязательно проверить при осмотре товара
+5. Как торговаться — конкретные аргументы для получения скидки
+6. Красные флаги — признаки мошенничества, проблемного товара или продавца
+7. Сравнение с альтернативами — если есть похожие объявления, укажи лучший вариант
+8. Контекст рынка — как это объявление выглядит на фоне остальных
 
 Формат ответа — строго JSON (без markdown-обёрток):
 {
@@ -59,10 +54,27 @@ SYSTEM_PROMPT = """\
   "watch_out": [
     {"point": "на что обратить внимание", "why": "почему это важно"}
   ],
+  "meeting_checklist": [
+    "конкретный пункт проверки при встрече с продавцом",
+    "ещё один важный пункт"
+  ],
+  "negotiation_tips": [
+    "конкретный аргумент для торга со ссылкой на состояние или рынок",
+    "ещё один аргумент"
+  ],
+  "red_flags": [
+    "конкретный признак проблемы или мошенничества"
+  ],
+  "market_context": "2-3 предложения о позиции товара на рынке, сколько \
+похожих предложений, динамика цен",
+  "best_pick": {
+    "ad_id": номер_лучшего_из_альтернатив_или_null,
+    "reason": "почему этот вариант лучше текущего, или null если текущий лучший"
+  },
   "recommendation": {
     "verdict": "worth_it|think_twice|overpriced",
-    "text": "2-3 предложения с рекомендациями: стоит ли брать, \
-за какую цену, что проверить при встрече"
+    "text": "3-4 предложения с рекомендациями: стоит ли брать, за какую цену, \
+на что обратить особое внимание при встрече"
   },
   "summary": "Краткое резюме в 1-2 предложениях"
 }
@@ -72,102 +84,37 @@ QUICK_CONDITION_PROMPT = """\
 Ты — Rafuks AI. Оцени состояние товара по фото.
 Ответь ТОЛЬКО JSON (без markdown):
 {"condition": "Отличное|Хорошее|Удовлетворительное|Требует внимания", "notes": ["заметка1"]}
-Никаких личных данных. Отвегай на русском.
+Никаких личных данных. Отвечай на русском.
 """
-
-SEARCH_BY_PHOTO_PROMPT = """\
-Ты — Rafuks AI. Опиши товар на фото в формате поискового запроса для маркетплейса Kufar.by.
-Ответь ТОЛЬКО JSON (без markdown):
-{"query": "поисковый запрос на русском", "description": "краткое описание товара"}
-Будь конкретен: укажи бренд, модель, характеристики если видны. Отвечай на русском.
-"""
-
-
-def _is_gemini(base_url: str) -> bool:
-    return "generativelanguage.googleapis.com" in base_url or "googleapis.com" in base_url
 
 
 class AIService:
-    """Unified AI service — Gemini SDK or OpenAI-compatible API."""
+    """AI service using OpenAI-compatible chat completions API."""
 
     def __init__(self) -> None:
         settings = get_settings()
         self._api_key = settings.ai_api_key
-        self._base_url = (
-            settings.ai_base_url or "https://api.deepseek.com"
-        ).rstrip("/")
-        self._model = settings.ai_model or "deepseek-chat"
+        self._base_url = (settings.ai_base_url or "https://api.together.xyz/v1").rstrip("/")
+        self._model = settings.ai_model or "google/gemma-4-31B-it"
         self._max_images = settings.ai_max_images
         self._proxy_url = settings.ai_proxy_url
-        self._use_gemini = _is_gemini(self._base_url)
         self._httpx_client: httpx.AsyncClient | None = None
 
     @property
     def available(self) -> bool:
         return self._api_key is not None
 
-    def _get_httpx(self) -> httpx.AsyncClient:
+    def _get_client(self) -> httpx.AsyncClient:
         if self._httpx_client is None or self._httpx_client.is_closed:
-            self._httpx_client = httpx.AsyncClient(
-                timeout=120,
-                proxy=self._proxy_url or None,
-            )
+            kwargs: dict = {
+                "timeout": httpx.Timeout(connect=15, read=180, write=10, pool=10),
+            }
+            if self._proxy_url:
+                kwargs["proxy"] = self._proxy_url
+            self._httpx_client = httpx.AsyncClient(**kwargs)
         return self._httpx_client
 
-    # ── Gemini native REST API ──────────────────────────────────
-
-    async def _gemini_chat(
-        self,
-        *,
-        system: str,
-        text: str,
-        image_parts: list[dict] | None = None,
-        max_tokens: int = 1200,
-    ) -> dict:
-        """Call Gemini generateContent REST API via proxy."""
-        parts: list[dict] = []
-        if image_parts:
-            parts.extend(image_parts)
-        parts.append({"text": text})
-
-        # Gemini 2.5 Flash is a thinking model — thoughts count toward
-        # maxOutputTokens, so we need a much higher limit than the
-        # actual desired output size.
-        gemini_max_tokens = max(max_tokens * 6, 8192)
-
-        body: dict = {
-            "contents": [{"role": "user", "parts": parts}],
-            "systemInstruction": {"parts": [{"text": system}]},
-            "generationConfig": {
-                "maxOutputTokens": gemini_max_tokens,
-                "responseMimeType": "application/json",
-            },
-        }
-
-        api_key = self._api_key.get_secret_value() if self._api_key else ""
-        url = (
-            f"{self._base_url}/v1beta/models/{self._model}"
-            f":generateContent?key={api_key}"
-        )
-
-        client = self._get_httpx()
-        resp = await client.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            json=body,
-        )
-
-        if resp.status_code == 429:
-            raise Exception("429 RESOURCE_EXHAUSTED")
-        resp.raise_for_status()
-
-        data = resp.json()
-        resp_text = self._extract_gemini_text(data)
-        return self._parse_json(resp_text)
-
-    # ── OpenAI-compatible API ───────────────────────────────────
-
-    async def _openai_chat(
+    async def _chat(
         self,
         *,
         system: str,
@@ -179,31 +126,39 @@ class AIService:
             {"role": "system", "content": system},
             {"role": "user", "content": content},
         ]
-
         body: dict = {
             "model": self._model,
             "messages": messages,
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         }
-
         api_key = self._api_key.get_secret_value() if self._api_key else ""
-        client = self._get_httpx()
-        resp = await client.post(
-            f"{self._base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=body,
+        client = self._get_client()
+        logger.info(
+            "AI _chat: model=%s, base_url=%s, proxy=%s, content_parts=%d",
+            self._model,
+            self._base_url,
+            "yes" if self._proxy_url else "no",
+            len(content) if isinstance(content, list) else 1,
         )
-
+        try:
+            resp = await client.post(
+                f"{self._base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+        except Exception as e:
+            logger.error("AI _chat request failed: %s: %s", type(e).__name__, e)
+            raise
+        logger.info("AI _chat response: status=%d", resp.status_code)
         if resp.status_code == 429:
-            raise Exception("429 RESOURCE_EXHAUSTED")
+            raise Exception("429 RATE_LIMITED")
         if resp.status_code == 402:
             raise Exception("Insufficient balance")
         resp.raise_for_status()
-
         data = resp.json()
         text = data["choices"][0]["message"]["content"]
         return self._parse_json(text)
@@ -221,8 +176,9 @@ class AIService:
         market_median: float | None,
         market_count: int,
         image_urls: list[str],
+        similar_listings: list[dict] | None = None,
     ) -> dict:
-        """Full AI analysis of a listing."""
+        """Full AI analysis of a listing with optional comparison to alternatives."""
         context = self._build_listing_context(
             title=title,
             description=description,
@@ -231,31 +187,40 @@ class AIService:
             parameters=parameters,
             market_median=market_median,
             market_count=market_count,
+            similar_listings=similar_listings,
         )
 
-        if self._use_gemini:
-            img_parts = await self._fetch_images_gemini(
-                image_urls[: self._max_images]
-            )
-            return await self._gemini_chat(
-                system=SYSTEM_PROMPT,
-                text=context,
-                image_parts=img_parts or None,
-                max_tokens=1200,
-            )
-
-        # OpenAI-compatible — with vision fallback
         content: list[dict] = [{"type": "text", "text": context}]
-        for url in image_urls[: self._max_images]:
-            img = await self._fetch_image_b64(url)
-            if img:
-                content.append(img)
+
+        # Target listing images — limit to 2 to reduce timeout risk
+        for url in image_urls[:2]:
+            try:
+                img = await self._fetch_image_b64(url)
+                if img:
+                    content.append(img)
+            except Exception as e:
+                logger.warning("Skipping target image (fetch error): %s", e)
+
+        # Similar listing images — only 1 image from the top alternative
+        if similar_listings:
+            sl = similar_listings[0]
+            sl_images = sl.get("image_urls") or []
+            if sl_images:
+                try:
+                    img = await self._fetch_image_b64(sl_images[0])
+                    if img:
+                        content.append(
+                            {"type": "text", "text": f"[Альтернатива: {sl.get('title', '')[:60]}]"}
+                        )
+                        content.append(img)
+                except Exception as e:
+                    logger.warning("Skipping similar image (fetch error): %s", e)
 
         try:
-            return await self._openai_chat(
+            return await self._chat(
                 system=SYSTEM_PROMPT,
                 content=content if len(content) > 1 else context,
-                max_tokens=1200,
+                max_tokens=2000,
             )
         except Exception as e:
             err = str(e).lower()
@@ -263,27 +228,13 @@ class AIService:
                 "image" in err or "vision" in err or "multimodal" in err
             ):
                 logger.warning("Vision not supported, retrying text-only: %s", e)
-                return await self._openai_chat(
-                    system=SYSTEM_PROMPT, content=context, max_tokens=1200
+                return await self._chat(
+                    system=SYSTEM_PROMPT, content=context, max_tokens=2000
                 )
             raise
 
     async def quick_condition(self, image_urls: list[str]) -> dict:
         """Quick condition assessment from photos only."""
-        if self._use_gemini:
-            img_parts = await self._fetch_images_gemini(
-                image_urls[: self._max_images]
-            )
-            if not img_parts:
-                raise Exception("Не удалось загрузить фото для анализа")
-            return await self._gemini_chat(
-                system=QUICK_CONDITION_PROMPT,
-                text="Оцени состояние товара на фото.",
-                image_parts=img_parts,
-                max_tokens=256,
-            )
-
-        # OpenAI-compatible
         content: list[dict] = [
             {"type": "text", "text": "Оцени состояние товара на фото."},
         ]
@@ -293,64 +244,8 @@ class AIService:
                 content.append(img)
         if len(content) == 1:
             raise Exception("Не удалось загрузить фото для анализа")
-        return await self._openai_chat(
+        return await self._chat(
             system=QUICK_CONDITION_PROMPT, content=content, max_tokens=256
-        )
-
-    async def search_by_photo_from_bytes(
-        self, image_bytes: bytes, mime_type: str
-    ) -> dict:
-        """Generate search query from uploaded photo bytes."""
-        if self._use_gemini:
-            img_part = {
-                "inlineData": {
-                    "mimeType": mime_type,
-                    "data": base64.b64encode(image_bytes).decode(),
-                }
-            }
-            return await self._gemini_chat(
-                system=SEARCH_BY_PHOTO_PROMPT,
-                text="Опиши товар на фото для поиска на маркетплейсе.",
-                image_parts=[img_part],
-                max_tokens=256,
-            )
-
-        # OpenAI-compatible
-        b64 = base64.b64encode(image_bytes).decode()
-        content = [
-            {"type": "text", "text": "Опиши товар на фото для поиска на маркетплейсе."},
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime_type};base64,{b64}"},
-            },
-        ]
-        return await self._openai_chat(
-            system=SEARCH_BY_PHOTO_PROMPT, content=content, max_tokens=256
-        )
-
-    async def search_by_photo(self, image_urls: list[str]) -> dict:
-        """Generate search query from photo URLs."""
-        if self._use_gemini:
-            img_parts = await self._fetch_images_gemini(
-                image_urls[: self._max_images]
-            )
-            return await self._gemini_chat(
-                system=SEARCH_BY_PHOTO_PROMPT,
-                text="Опиши товар на фото для поиска на маркетплейсе.",
-                image_parts=img_parts or None,
-                max_tokens=256,
-            )
-
-        # OpenAI-compatible
-        content: list[dict] = [
-            {"type": "text", "text": "Опиши товар на фото для поиска на маркетплейсе."},
-        ]
-        for url in image_urls[: self._max_images]:
-            img = await self._fetch_image_b64(url)
-            if img:
-                content.append(img)
-        return await self._openai_chat(
-            system=SEARCH_BY_PHOTO_PROMPT, content=content, max_tokens=256
         )
 
     # ── Helpers ─────────────────────────────────────────────────
@@ -365,6 +260,7 @@ class AIService:
         parameters: list[dict],
         market_median: float | None,
         market_count: int,
+        similar_listings: list[dict] | None = None,
     ) -> str:
         parts = [f"Объявление: {title}"]
         parts.append(f"Цена: {price_byn:.0f} BYN")
@@ -393,32 +289,29 @@ class AIService:
                 "..." if len(description) > 500 else ""
             )
             parts.append(f"Описание: {desc}")
+        if similar_listings:
+            parts.append("\nДругие объявления для сравнения:")
+            for i, sl in enumerate(similar_listings[:5], 1):
+                sl_cond = sl.get("condition") or "не указано"
+                sl_price = sl.get("price_byn", 0)
+                line = (
+                    f"  {i}. [{sl.get('ad_id')}] "
+                    f"{sl.get('title', '')[:70]} — "
+                    f"{sl_price:.0f} BYN, состояние: {sl_cond}"
+                )
+                sl_desc = sl.get("description", "")
+                if sl_desc:
+                    line += f"\n     Описание: {sl_desc[:150]}"
+                parts.append(line)
         return "\n".join(parts)
 
-    async def _fetch_images_gemini(self, urls: list[str]) -> list[dict]:
-        """Download images and return Gemini inlineData parts."""
-        parts: list[dict] = []
-        for url in urls:
-            data = await self._fetch_image_bytes(url)
-            if data:
-                mime = "image/jpeg"
-                if ".png" in url.lower():
-                    mime = "image/png"
-                elif ".webp" in url.lower():
-                    mime = "image/webp"
-                parts.append({
-                    "inlineData": {
-                        "mimeType": mime,
-                        "data": base64.b64encode(data).decode(),
-                    }
-                })
-        return parts
-
     async def _fetch_image_b64(self, url: str) -> dict | None:
-        """Download image and return as OpenAI vision content dict."""
+        """Download image using shared client and return as vision content dict."""
         data = await self._fetch_image_bytes(url)
         if not data:
             return None
+        import base64
+
         mime = "image/jpeg"
         if ".png" in url.lower():
             mime = "image/png"
@@ -431,14 +324,13 @@ class AIService:
         }
 
     async def _fetch_image_bytes(self, url: str) -> bytes | None:
-        """Download image bytes (no proxy needed for Kufar CDN)."""
+        """Download image bytes using shared httpx client."""
         try:
-            async with httpx.AsyncClient(
-                timeout=10, follow_redirects=True
-            ) as client:
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    return resp.content
+            client = self._get_client()
+            resp = await client.get(url, timeout=8, follow_redirects=True)
+            if resp.status_code == 200:
+                await resp.aread()
+                return resp.content
         except Exception as e:
             logger.warning("Failed to fetch image %s: %s", url[:80], e)
         return None
@@ -458,24 +350,6 @@ class AIService:
         except json.JSONDecodeError:
             logger.warning("AI returned non-JSON: %s", text[:200])
             return {"summary": text.strip(), "condition": None, "fair_price": None}
-
-    def _extract_gemini_text(self, payload: dict) -> str:
-        prompt_feedback = payload.get("promptFeedback") or {}
-        block_reason = prompt_feedback.get("blockReason")
-        if block_reason:
-            raise Exception(f"Gemini blocked response: {block_reason}")
-
-        candidates = payload.get("candidates") or []
-        if not candidates:
-            raise Exception("AI model returned an empty response")
-
-        parts = candidates[0].get("content", {}).get("parts", [])
-        texts = [str(part.get("text", "")).strip() for part in parts if part.get("text")]
-        if texts:
-            return "\n".join(texts)
-
-        finish_reason = candidates[0].get("finishReason") or "unknown"
-        raise Exception(f"AI model returned no text ({finish_reason})")
 
 
 # Singleton

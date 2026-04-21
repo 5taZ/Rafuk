@@ -20,6 +20,7 @@ function createApiListings(context) {
         renderDetailModal,
         closeDetailModal,
         showToast,
+        dismissToast,
         buildCommonQuery,
         getJson,
         postJson,
@@ -314,7 +315,7 @@ function createApiListings(context) {
             return;
         }
 
-        showToast("Загружаю...");
+        const loadingToast = showToast("Загружаю...", "info", 1400);
         state.error = null;
         renderError();
         try {
@@ -335,6 +336,8 @@ function createApiListings(context) {
         } catch (error) {
             state.error = error.message || "Не удалось загрузить детали";
             renderError();
+        } finally {
+            if (loadingToast) dismissToast(loadingToast);
         }
     }
 

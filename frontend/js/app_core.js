@@ -75,6 +75,7 @@ function createAppCore() {
             error: "",
             source: "",
         },
+        aiLoadingTimer: null,
         activeView: "overview",
         expenses: [],
         expensesLoading: false,
@@ -228,6 +229,17 @@ function createAppCore() {
         elements.expenseNotesInput = document.getElementById("expense-notes-input");
         elements.saveExpenseButton = document.getElementById("save-expense-btn");
         elements.cancelExpenseButton = document.getElementById("cancel-expense-btn");
+        // AI Analysis Modal
+        elements.aiModal = document.getElementById("ai-modal");
+        elements.aiOverlay = document.getElementById("ai-overlay");
+        elements.aiModalClose = document.getElementById("ai-modal-close");
+        elements.aiModalSubtitle = document.getElementById("ai-modal-subtitle");
+        elements.aiModalLoading = document.getElementById("ai-modal-loading");
+        elements.aiLoaderText = document.getElementById("ai-loader-text");
+        elements.aiProgressBar = document.getElementById("ai-progress-bar");
+        elements.aiProgressPct = document.getElementById("ai-progress-pct");
+        elements.aiModalError = document.getElementById("ai-modal-error");
+        elements.aiModalResult = document.getElementById("ai-modal-result");
         elements.profitDashboardSection = document.getElementById("profit-dashboard-section");
         elements.profitCards = document.getElementById("profit-cards");
         elements.profitChartBox = document.getElementById("profit-chart-box");
@@ -239,13 +251,6 @@ function createAppCore() {
         elements.recentSection = document.getElementById("recent-section");
         elements.recentList = document.getElementById("recent-list");
         elements.recentClearBtn = document.getElementById("recent-clear-btn");
-        elements.photoSearchBtn = document.getElementById("photo-search-btn");
-        elements.photoFileInput = document.getElementById("photo-file-input");
-        elements.photoResultsSection = document.getElementById("photo-results-section");
-        elements.photoResultsClose = document.getElementById("photo-results-close");
-        elements.photoResultsDesc = document.getElementById("photo-results-desc");
-        elements.photoResultsQuery = document.getElementById("photo-results-query");
-        elements.photoResultsList = document.getElementById("photo-results-list");
         elements.filterBtn = document.getElementById("filter-btn");
         elements.filterDropdown = document.getElementById("filter-dropdown");
         elements.filterCategories = document.getElementById("filter-categories");

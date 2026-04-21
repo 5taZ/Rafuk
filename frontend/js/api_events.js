@@ -79,7 +79,7 @@ function createApiEvents(context) {
         exportLeadsCSV,
         loadDetailRisks,
         loadAIAnalysis,
-        searchByPhoto,
+        closeAIModal,
         startTrackerRefresh,
         stopTrackerRefresh,
         parseComparisonQueries,
@@ -724,29 +724,20 @@ function createApiEvents(context) {
             }
         });
 
-        // ── Photo search ────────────────────────────────────────────
-        elements.photoSearchBtn?.addEventListener("click", () => {
-            elements.photoFileInput?.click();
+        // ── AI modal close ──
+        elements.aiModalClose?.addEventListener("click", () => {
+            closeAIModal();
         });
-
-        elements.photoFileInput?.addEventListener("change", () => {
-            const file = elements.photoFileInput?.files?.[0];
-            if (file) {
-                void searchByPhoto(file);
-                elements.photoFileInput.value = "";
-            }
-        });
-
-        elements.photoResultsClose?.addEventListener("click", () => {
-            if (elements.photoResultsSection) elements.photoResultsSection.hidden = true;
-            const listingsSection = document.getElementById("listings-section");
-            if (listingsSection && state.listings?.length) listingsSection.hidden = false;
+        elements.aiOverlay?.addEventListener("click", () => {
+            closeAIModal();
         });
 
         // ── Escape key (modal close) ─────────────────────────────────
         document.addEventListener("keydown", (event) => {
             if (event.key === "Escape") {
-                if (!state.detail && !elements.editTrackerModal?.hidden) {
+                if (!elements.aiModal?.hidden) {
+                    closeAIModal();
+                } else if (!state.detail && !elements.editTrackerModal?.hidden) {
                     closeEditTrackerAction();
                 } else if (!elements.expensesModal?.hidden) {
                     closeExpensesModal();

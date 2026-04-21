@@ -39,20 +39,8 @@ function createRenderModals(context) {
 
         const aiState = state.detailAi || {};
         if (elements.detailAiBlock && elements.detailAiContent) {
-            const hasAiContext = aiState.adId === detail.ad_id;
-            elements.detailAiBlock.hidden = !(
-                (hasAiContext && (aiState.loading || aiState.error || aiState.result))
-            );
-            if (hasAiContext) {
-                if (aiState.loading) {
-                    elements.detailAiContent.innerHTML = '<div class="ai-loading">Анализирую объявление…</div>';
-                } else if (aiState.error) {
-                    elements.detailAiContent.innerHTML = `<div class="ai-error">${escapeHtml(aiState.error)}</div>`;
-                }
-            } else {
-                elements.detailAiBlock.hidden = true;
-                elements.detailAiContent.innerHTML = "";
-            }
+            elements.detailAiBlock.hidden = true;
+            elements.detailAiContent.innerHTML = "";
         }
 
         elements.detailDescription.textContent = detail.description || "";

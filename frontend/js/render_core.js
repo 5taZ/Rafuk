@@ -42,7 +42,7 @@ function createRenderCore(context) {
     /* ===== Toast ===== */
 
     function showToast(message, type = "info", duration = 3000) {
-        if (!elements.toastContainer) return;
+        if (!elements.toastContainer) return null;
 
         const toast = document.createElement("div");
         toast.className = `toast toast-${type} entering`;
@@ -85,6 +85,8 @@ function createRenderCore(context) {
                 Telegram.WebApp.HapticFeedback.notificationOccurred("error");
             }
         }
+
+        return toast;
     }
 
     function dismissToast(toast) {

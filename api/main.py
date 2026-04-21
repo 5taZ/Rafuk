@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
 from api.config import get_settings
@@ -34,8 +35,6 @@ from api.services.currency_service import CurrencyService
 
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     """Handle rate limit exceeded."""
-    from fastapi.responses import JSONResponse
-
     return JSONResponse(
         status_code=429,
         content={
@@ -77,8 +76,17 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[settings.mini_app_url, settings.api_base_url],
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["X-Telegram-Init-Data", "Content-Type", "Accept"],
     )
+
+    # Security headers middleware
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
 
     # Add rate limiter to app state
     app.state.limiter = limiter

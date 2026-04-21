@@ -19,11 +19,8 @@ dependencies = [
     "aiogram>=3.15.0",
     "apscheduler>=3.10.4",
     "slowapi>=0.1.9",
-    "python-multipart>=0.0.26",
     "httpx-socks>=0.10.0",
     "google-genai>=1.73.1",
-    "Pillow>=11.2.1",
-    "rapidocr-onnxruntime>=1.4.4",
 ]
 
 [project.optional-dependencies]

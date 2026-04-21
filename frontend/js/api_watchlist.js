@@ -16,6 +16,7 @@ function createApiWatchlist(context) {
         renderMonitoringHeroStats,
         renderDetailModal,
         showToast,
+        dismissToast,
         getJson,
         postJson,
         deleteJson,
@@ -144,7 +145,7 @@ function createApiWatchlist(context) {
             return;
         }
 
-        showToast("Загружаю...");
+        const loadingToast = showToast("Загружаю...", "info", 1400);
         state.error = null;
         renderError();
         try {
@@ -165,6 +166,8 @@ function createApiWatchlist(context) {
         } catch (error) {
             state.error = error.message || "Не удалось загрузить детали";
             renderError();
+        } finally {
+            if (loadingToast) dismissToast(loadingToast);
         }
     }
 
