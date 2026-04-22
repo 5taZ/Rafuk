@@ -16,6 +16,4 @@ async def test_cmd_top_handles_empty_list(monkeypatch) -> None:
     from bot.handlers import start
 
     # Verify the start module has bot command handlers wired
-    assert callable(getattr(start, "cmd_start", None)) or callable(
-        getattr(start, "cmd_app", None)
-    )
+    assert callable(getattr(start, "cmd_start", None)) or callable(getattr(start, "cmd_app", None))

@@ -25,10 +25,7 @@ async def cmd_start(message: Message) -> None:
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(
-        "/app — открыть мини-апп\n"
-        "/start — приветственное сообщение"
-    )
+    await message.answer("/app — открыть мини-апп\n/start — приветственное сообщение")
 
 
 @router.message(Command("app"))

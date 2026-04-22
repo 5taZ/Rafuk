@@ -137,6 +137,7 @@ function createApiAi(context) {
         if (!adId || !query) return;
 
         // If already analyzed for this ad, show cached result immediately
+        // (but not if it was an error — allow retry)
         const cached = state.detailAi;
         if (cached && cached.adId === adId && cached.result && !cached.error) {
             openAIModal(state.detail?.title || "");
@@ -161,6 +162,7 @@ function createApiAi(context) {
             const result = await postJson("/api/v1/ai/analyze", {
                 ad_id: adId,
                 query,
+                category: state.category || undefined,
             }, { timeout: 270000 });
             console.log("[AI] Response received:", result ? "ok" : "null", result ? Object.keys(result).join(",") : "");
             state.detailAi = {
@@ -173,7 +175,10 @@ function createApiAi(context) {
             _showCompletionThen(() => _renderAIModalResult(result));
         } catch (err) {
             console.error("[AI] Request failed:", err);
-            const message = `Не удалось выполнить анализ${err.message ? `: ${err.message}` : ""}`;
+            const isTimeout = err.message && err.message.includes("таймаут");
+            const message = isTimeout
+                ? "Анализ занял слишком долго. Проверьте соединение и попробуйте снова."
+                : `Не удалось выполнить анализ. Проверьте интернет-соединение.`;
             state.detailAi = {
                 adId,
                 loading: false,
@@ -181,13 +186,13 @@ function createApiAi(context) {
                 error: message,
                 source: "ai",
             };
-            _showAIError(message);
+            _showAIError(message, adId);
         } finally {
             _aiLoading = false;
         }
     }
 
-    function _showAIError(message) {
+    function _showAIError(message, adId) {
         _stopLoadingAnimation(false);
 
         const loadingEl = elements.aiModalLoading;
@@ -212,7 +217,9 @@ function createApiAi(context) {
             if (elements.aiModalResult) elements.aiModalResult.hidden = true;
             if (elements.aiModalError) {
                 elements.aiModalError.hidden = false;
-                elements.aiModalError.innerHTML = `<div class="ai-error">${escapeHtml(message)}</div>`;
+                elements.aiModalError.innerHTML = `<div class="ai-error">${escapeHtml(message)}</div><button class="ai-retry-btn" type="button">Повторить</button>`;
+                const retryBtn = elements.aiModalError.querySelector(".ai-retry-btn");
+                if (retryBtn) retryBtn.addEventListener("click", () => loadAIAnalysis(adId));
             }
         }, 700);
     }
@@ -231,12 +238,14 @@ function createApiAi(context) {
         // ── Summary + verdict ──
         if (data.recommendation) {
             const rec = data.recommendation;
-            const verdictClass = rec.verdict === "worth_it" ? "ai-badge--good"
-                : rec.verdict === "think_twice" ? "ai-badge--warn" : "ai-badge--bad";
-            const verdictText = rec.verdict === "worth_it" ? "Стоит брать"
-                : rec.verdict === "think_twice" ? "Подумай" : "Дорого";
+            const verdictMap = {
+                worth_it: { text: "Стоит брать", cls: "ai-badge--good" },
+                think_twice: { text: "Подумай", cls: "ai-badge--warn" },
+                overpriced: { text: "Дорого", cls: "ai-badge--bad" },
+            };
+            const v = verdictMap[rec.verdict] || verdictMap.think_twice;
             html += `<div class="ai-modal-verdict">
-                <span class="ai-badge ${verdictClass} ai-badge--lg">${verdictText}</span>
+                <span class="ai-badge ${v.cls} ai-badge--lg">${v.text}</span>
                 ${data.summary ? `<p class="ai-modal-summary">${escapeHtml(data.summary)}</p>` : ""}
             </div>`;
         }
@@ -244,12 +253,21 @@ function createApiAi(context) {
         // ── Condition assessment ──
         if (data.condition) {
             const cond = data.condition;
-            const badgeClass = cond.label === "Отличное" ? "ai-badge--good" :
-                               cond.label === "Хорошее" ? "ai-badge--ok" :
-                               cond.label === "Удовлетворительное" ? "ai-badge--warn" : "ai-badge--bad";
+            const condLabelMap = {
+                "Отличное": { text: "Отличное", cls: "ai-badge--good" },
+                "Хорошее": { text: "Хорошее", cls: "ai-badge--ok" },
+                "Удовлетворительное": { text: "Удовлетв.", cls: "ai-badge--warn" },
+                "Плохое": { text: "Плохое", cls: "ai-badge--bad" },
+                "Excellent": { text: "Отличное", cls: "ai-badge--good" },
+                "Good": { text: "Хорошее", cls: "ai-badge--ok" },
+                "Fair": { text: "Удовлетв.", cls: "ai-badge--warn" },
+                "Poor": { text: "Плохое", cls: "ai-badge--bad" },
+            };
+            const mapped = condLabelMap[cond.label] || { text: cond.label, cls: "ai-badge--ok" };
+            const badgeClass = mapped.cls;
             html += `<div class="ai-section">
                 <span class="ai-label">Состояние по фото</span>
-                <span class="ai-badge ${badgeClass}">${escapeHtml(cond.label)}</span>
+                <span class="ai-badge ${badgeClass}">${escapeHtml(mapped.text)}</span>
                 ${cond.confidence ? `<span class="ai-confidence">уверенность ${Math.round(cond.confidence * 100)}%</span>` : ""}
                 ${cond.notes?.length ? `<ul class="ai-notes">${cond.notes.map(n => `<li>${escapeHtml(n)}</li>`).join("")}</ul>` : ""}
             </div>`;

@@ -20,35 +20,43 @@ def assess_listing_risks(ad: dict[str, Any], market_median: float | None = None)
     if price_byn and market_median and market_median > 0:
         ratio = price_byn / market_median
         if ratio < 0.5:
-            risks.append({
-                "type": "too_cheap",
-                "level": "high",
-                "message": "Цена подозрительно низкая (менее 50% от рыночной)",
-            })
+            risks.append(
+                {
+                    "type": "too_cheap",
+                    "level": "high",
+                    "message": "Цена подозрительно низкая (менее 50% от рыночной)",
+                }
+            )
         elif ratio < 0.7:
-            risks.append({
-                "type": "too_cheap_moderate",
-                "level": "medium",
-                "message": "Цена ниже рыночной (50-70% от медианы)",
-            })
+            risks.append(
+                {
+                    "type": "too_cheap_moderate",
+                    "level": "medium",
+                    "message": "Цена ниже рыночной (50-70% от медианы)",
+                }
+            )
 
     # Check suspicious words in description
     suspicious_words = ["предоплата", "предварительная оплата", "перевод на карту", "без встреч"]
     found_words = [word for word in suspicious_words if word in description]
     if found_words:
-        risks.append({
-            "type": "suspicious_words",
-            "level": "medium",
-            "message": f"Подозрительные слова в описании: {', '.join(found_words)}",
-        })
+        risks.append(
+            {
+                "type": "suspicious_words",
+                "level": "medium",
+                "message": f"Подозрительные слова в описании: {', '.join(found_words)}",
+            }
+        )
 
     # Check photo count
     if photo_count == 0:
-        risks.append({
-            "type": "no_photos",
-            "level": "low",
-            "message": "Нет фотографий",
-        })
+        risks.append(
+            {
+                "type": "no_photos",
+                "level": "low",
+                "message": "Нет фотографий",
+            }
+        )
 
     # Determine overall risk
     if any(r["level"] == "high" for r in risks):

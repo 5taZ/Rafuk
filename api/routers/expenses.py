@@ -102,11 +102,7 @@ async def update_expense(
         if user_id is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
         expense = await session.get(DealExpense, expense_id)
-        if (
-            expense is None
-            or expense.user_id != user_id
-            or expense.lead_id != lead_id
-        ):
+        if expense is None or expense.user_id != user_id or expense.lead_id != lead_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
 
         if payload.expense_type is not None:
@@ -138,11 +134,7 @@ async def delete_expense(
         if user_id is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
         expense = await session.get(DealExpense, expense_id)
-        if (
-            expense is None
-            or expense.user_id != user_id
-            or expense.lead_id != lead_id
-        ):
+        if expense is None or expense.user_id != user_id or expense.lead_id != lead_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
 
         await session.delete(expense)

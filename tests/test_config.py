@@ -34,8 +34,10 @@ def test_settings_applies_defaults() -> None:
     import os
 
     _config_keys = [
-        "KUFAR_REQUEST_DELAY", "KUFAR_PARALLEL_SEMAPHORE",
-        "SCHEDULER_SNAPSHOT_HOUR", "ALERT_CHECK_INTERVAL",
+        "KUFAR_REQUEST_DELAY",
+        "KUFAR_PARALLEL_SEMAPHORE",
+        "SCHEDULER_SNAPSHOT_HOUR",
+        "ALERT_CHECK_INTERVAL",
     ]
     original_env = {}
     for key in _config_keys:

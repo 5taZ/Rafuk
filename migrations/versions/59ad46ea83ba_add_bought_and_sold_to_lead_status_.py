@@ -5,13 +5,14 @@ Revises: 1a13fdcc7463
 Create Date: 2026-04-09 19:54:47.513696
 
 """
+
 from collections.abc import Sequence
 
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '59ad46ea83ba'
-down_revision: str | None = '1a13fdcc7463'
+revision: str = "59ad46ea83ba"
+down_revision: str | None = "1a13fdcc7463"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

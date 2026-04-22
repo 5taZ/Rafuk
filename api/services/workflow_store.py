@@ -19,9 +19,7 @@ async def ensure_user(
 
     Returns the internal auto-increment ``users.id``, **not** the Telegram user ID.
     """
-    existing = await session.scalar(
-        select(User).where(User.telegram_user_id == telegram_user_id)
-    )
+    existing = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
     if existing is not None:
         return existing.id
     user = User(
@@ -36,9 +34,7 @@ async def ensure_user(
 
 async def resolve_user_id(session: AsyncSession, telegram_user_id: int) -> int | None:
     """Return ``users.id`` for a Telegram user, or ``None`` if not found."""
-    row = await session.scalar(
-        select(User.id).where(User.telegram_user_id == telegram_user_id)
-    )
+    row = await session.scalar(select(User.id).where(User.telegram_user_id == telegram_user_id))
     return row
 
 

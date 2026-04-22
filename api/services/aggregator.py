@@ -135,11 +135,7 @@ def apply_search_mode(
 ) -> list[dict[str, Any]]:
     if not strict_search:
         return ads
-    return [
-        ad
-        for ad in ads
-        if is_strict_match(str(ad.get("subject", "")), query)
-    ]
+    return [ad for ad in ads if is_strict_match(str(ad.get("subject", "")), query)]
 
 
 def normalize_price_byn(raw_price: Any) -> float | None:

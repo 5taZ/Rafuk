@@ -86,8 +86,9 @@ async def get_leads(
         lead_ids = [lead.id for lead in leads]
         if lead_ids:
             expense_result = await session.execute(
-                select(DealExpense.lead_id, DealExpense.amount_byn)
-                .where(DealExpense.lead_id.in_(lead_ids))
+                select(DealExpense.lead_id, DealExpense.amount_byn).where(
+                    DealExpense.lead_id.in_(lead_ids)
+                )
             )
             # Build a mapping: lead_id -> total_expenses
             expenses_by_lead: dict[int, float] = defaultdict(float)
@@ -176,9 +177,7 @@ async def update_lead(
             first_name=telegram_user.first_name,
         )
         lead = await session.scalar(
-            select(LeadItem).where(
-                LeadItem.id == lead_id, LeadItem.user_id == user_id
-            )
+            select(LeadItem).where(LeadItem.id == lead_id, LeadItem.user_id == user_id)
         )
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
@@ -242,9 +241,7 @@ async def delete_lead(
             first_name=telegram_user.first_name,
         )
         lead = await session.scalar(
-            select(LeadItem).where(
-                LeadItem.id == lead_id, LeadItem.user_id == user_id
-            )
+            select(LeadItem).where(LeadItem.id == lead_id, LeadItem.user_id == user_id)
         )
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
@@ -345,9 +342,7 @@ async def delete_all_watchlist_items(
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is not None:
-            await session.execute(
-                delete(WatchlistItem).where(WatchlistItem.user_id == user_id)
-            )
+            await session.execute(delete(WatchlistItem).where(WatchlistItem.user_id == user_id))
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -417,9 +412,7 @@ async def refresh_watchlist(
                 client_factory=KufarClient,
             )
             ads_by_id = {
-                int(ad.get("ad_id", 0)): ad
-                for ad in dataset.ads
-                if int(ad.get("ad_id", 0)) > 0
+                int(ad.get("ad_id", 0)): ad for ad in dataset.ads if int(ad.get("ad_id", 0)) > 0
             }
             for item in query_items:
                 ad = ads_by_id.get(item.ad_id)
@@ -505,9 +498,7 @@ async def refresh_leads(
                 client_factory=KufarClient,
             )
             ads_by_id = {
-                int(ad.get("ad_id", 0)): ad
-                for ad in dataset.ads
-                if int(ad.get("ad_id", 0)) > 0
+                int(ad.get("ad_id", 0)): ad for ad in dataset.ads if int(ad.get("ad_id", 0)) > 0
             }
 
             for lead in query_leads:

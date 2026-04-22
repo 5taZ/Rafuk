@@ -99,7 +99,7 @@ async def test_search_raises_kufar_api_error_after_retries(mock_settings: MagicM
         patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=bad_response),
         pytest.raises(KufarAPIError, match="after 3 attempts"),
     ):
-            await KufarClient(mock_settings).search(query="test")
+        await KufarClient(mock_settings).search(query="test")
 
 
 @pytest.mark.asyncio

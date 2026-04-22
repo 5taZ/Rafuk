@@ -55,9 +55,7 @@ async def clear_tracker_events(
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is not None:
-            await session.execute(
-                delete(TrackerEvent).where(TrackerEvent.user_id == user_id)
-            )
+            await session.execute(delete(TrackerEvent).where(TrackerEvent.user_id == user_id))
             await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -86,14 +84,14 @@ async def get_trackers(
         stats_rows = await session.execute(
             select(
                 TrackerEvent.tracker_id,
-                func.count(TrackerEvent.id).label('total_events'),
+                func.count(TrackerEvent.id).label("total_events"),
                 func.count(TrackerEvent.id)
-                .filter(TrackerEvent.event_type == 'new_listing')
-                .label('new_listings'),
+                .filter(TrackerEvent.event_type == "new_listing")
+                .label("new_listings"),
                 func.count(TrackerEvent.id)
-                .filter(TrackerEvent.event_type == 'price_drop')
-                .label('price_drops'),
-                func.max(TrackerEvent.created_at).label('last_event_at'),
+                .filter(TrackerEvent.event_type == "price_drop")
+                .label("price_drops"),
+                func.max(TrackerEvent.created_at).label("last_event_at"),
             )
             .where(TrackerEvent.tracker_id.in_(tracker_ids))
             .group_by(TrackerEvent.tracker_id)

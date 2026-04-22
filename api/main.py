@@ -1,15 +1,12 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import logging
-
 from slowapi.errors import RateLimitExceeded
-
-logger = logging.getLogger(__name__)
 
 from api.config import get_settings
 from api.database import get_engine, get_session_factory
@@ -35,6 +32,8 @@ from api.routers import (
 )
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
+
+logger = logging.getLogger(__name__)
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
@@ -64,14 +63,18 @@ async def lifespan(app: FastAPI):
     app.state.currency_service = currency_service
     app.state.settings = settings
 
+    if settings.debug:
+        logger.warning("Debug mode is active — auth bypassed")
+
     try:
         yield
     finally:
         # Close AI service httpx client
         from api.services.ai_service import get_ai_service
+
         ai = get_ai_service()
-        if ai and hasattr(ai, "_httpx_client") and ai._httpx_client:
-            await ai._httpx_client.aclose()
+        if ai is not None:
+            await ai.close()
         # Close Redis connection pool
         if isinstance(cache, RedisCache):
             await cache.aclose()
@@ -86,12 +89,14 @@ def create_app() -> FastAPI:
     # Add CORS middleware
     origins = [settings.mini_app_url, settings.api_base_url]
     if settings.debug:
-        origins.extend([
-            "http://localhost:8081",
-            "http://127.0.0.1:8081",
-            "http://localhost:8010",
-            "http://127.0.0.1:8010",
-        ])
+        origins.extend(
+            [
+                "http://localhost:8081",
+                "http://127.0.0.1:8081",
+                "http://localhost:8010",
+                "http://127.0.0.1:8010",
+            ]
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
@@ -104,8 +109,10 @@ def create_app() -> FastAPI:
     async def global_exception_handler(request: Request, exc: Exception):
         logger.error(
             "Unhandled exception on %s %s: [%s] %s",
-            request.method, request.url.path,
-            type(exc).__name__, exc,
+            request.method,
+            request.url.path,
+            type(exc).__name__,
+            exc,
         )
         return JSONResponse(
             status_code=500,

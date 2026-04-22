@@ -76,9 +76,7 @@ async def _build_compare_item(
         )
         for ad in source_ads
     ]
-    listing_items.sort(
-        key=lambda item: (-float(item.deal_score or 0.0), float(item.price or 0.0))
-    )
+    listing_items.sort(key=lambda item: (-float(item.deal_score or 0.0), float(item.price or 0.0)))
 
     trend_percent: float | None = None
     async with session_factory() as session:
@@ -114,7 +112,10 @@ async def _build_compare_item(
 async def compare_queries(
     request: Request,
     base_query: str = Query(
-        ..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Base query",
+        ...,
+        min_length=1,
+        max_length=MAX_QUERY_LENGTH,
+        description="Base query",
     ),
     compare_query: list[str] | None = Query(default=None, description="Queries to compare"),
     currency: str = "BYN",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import statistics
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -14,6 +15,8 @@ from api.services.aggregator import (
 )
 from api.services.currency_service import CurrencyService
 
+logger = logging.getLogger(__name__)
+
 PRICE_STATS_FIELDS = ("mean", "median", "q1", "q3", "min", "max")
 
 # Condition-based API tasks — seller_type filtering is done client-side
@@ -23,9 +26,11 @@ _API_CONDITION_TASKS = (
     ("used", {"condition": "used"}),
 )
 
+
 # Seller type classification: company_ad==True means shop, else private
 def _is_shop_ad(ad: dict[str, Any]) -> bool:
     return bool(ad.get("company_ad"))
+
 
 SEGMENT_NAMES = ("new_private", "new_shop", "used_private", "used_shop")
 
@@ -63,11 +68,15 @@ def _normalize_response_ads(response: dict[str, Any]) -> dict[str, Any]:
 
     raw_median = statistics.median(raw_prices)
     likely_direct_byn = (
-        100 <= raw_median <= MAX_PRICE_BYN
-        and raw_median / 100 < 100
-        and max(raw_prices) < 10_000
+        100 <= raw_median <= MAX_PRICE_BYN and raw_median / 100 < 100 and max(raw_prices) < 10_000
     )
     if not likely_direct_byn:
+        logger.warning(
+            "Price normalization heuristic triggered: raw_median=%.0f, "
+            "max_raw=%.0f — assuming prices are already in BYN (not kopecks)",
+            raw_median,
+            max(raw_prices),
+        )
         return response
 
     normalized_ads: list[dict[str, Any]] = []
@@ -125,8 +134,11 @@ async def load_query_dataset(
     client_factory: type[SupportsSearchAllAds],
     search_kwargs: dict[str, Any] | None = None,
     category: int | None = None,
+    client: SupportsSearchAllAds | None = None,
 ) -> QueryDataset:
-    client = client_factory(settings)
+    owns_client = client is None
+    if client is None:
+        client = client_factory(settings)
     try:
         effective_kwargs = dict(search_kwargs or {})
         if category is not None:
@@ -138,7 +150,8 @@ async def load_query_dataset(
         )
         response = _normalize_response_ads(response)
     finally:
-        await client.aclose()
+        if owns_client:
+            await client.aclose()
 
     ads = apply_search_mode(response.get("ads", []), query, strict_search)
     return QueryDataset(
@@ -159,8 +172,11 @@ async def load_segment_datasets(
     client_factory: type[SupportsSearchAllAds],
     parallel_search: SupportsParallelSearch,
     category: int | None = None,
+    client: SupportsSearchAllAds | None = None,
 ) -> dict[str, QueryDataset]:
-    client = client_factory(settings)
+    owns_client = client is None
+    if client is None:
+        client = client_factory(settings)
     # Fetch by condition only (seller type filtered client-side)
     tasks = [
         {
@@ -178,7 +194,8 @@ async def load_segment_datasets(
         responses = await parallel_search(client, tasks, settings)
         responses = [_normalize_response_ads(response) for response in responses]
     finally:
-        await client.aclose()
+        if owns_client:
+            await client.aclose()
 
     datasets: dict[str, QueryDataset] = {}
     for (cond_name, _), response in zip(_API_CONDITION_TASKS, responses, strict=True):

@@ -29,15 +29,6 @@ class MemoryCache:
         self._storage: OrderedDict[str, tuple[str, float]] = OrderedDict()
         # (value, expires_at) — expires_at=0 means no expiry
 
-    def _evict_expired(self) -> None:
-        """Remove expired entries."""
-        now = time.monotonic()
-        expired = [
-            k for k, (_, exp) in self._storage.items() if exp > 0 and now >= exp
-        ]
-        for k in expired:
-            del self._storage[k]
-
     async def get(self, key: str) -> str | None:
         entry = self._storage.get(key)
         if entry is None:

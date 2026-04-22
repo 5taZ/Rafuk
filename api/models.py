@@ -51,25 +51,19 @@ class User(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
-    trackers = relationship(
-        "Tracker", back_populates="user", cascade="all, delete-orphan"
-    )
+    trackers = relationship("Tracker", back_populates="user", cascade="all, delete-orphan")
     saved_searches = relationship(
         "SavedSearch", back_populates="user", cascade="all, delete-orphan"
     )
     tracker_events = relationship(
         "TrackerEvent", back_populates="user", cascade="all, delete-orphan"
     )
-    lead_items = relationship(
-        "LeadItem", back_populates="user", cascade="all, delete-orphan"
-    )
+    lead_items = relationship("LeadItem", back_populates="user", cascade="all, delete-orphan")
     watchlist_items = relationship(
         "WatchlistItem", back_populates="user", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (
-        Index("idx_users_telegram_id", "telegram_user_id"),
-    )
+    __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
 
 
 class UserIDMixin:

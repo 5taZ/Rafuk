@@ -29,7 +29,8 @@ SYSTEM_PROMPT_TEMPLATE = """\
 - Каждый пункт — действие или факт, а не пожелание.
 - fair_price.from/to — реалистичный диапазон для ЭТОГО товара в ЕГО состоянии.
 - reasoning в fair_price — почему именно этот диапазон (сравнение с конкретными аналогами).
-- negotiation_tips — конкретные аргументы с BYN-суммами скидки ("попросите скидку X BYN, потому что...").
+- negotiation_tips — конкретные аргументы с BYN-суммами скидки
+  ("попросите скидку X BYN, потому что...").
 - watch_out — конкретные дефекты, которые ты видишь или предполагаешь с обоснованием.
 - meeting_checklist — пошаговая проверка при встрече (5-7 пунктов, специфичных для категории).
 - red_flags — только реальные признаки мошенничества/проблем, не очевидные вещи.
@@ -49,7 +50,7 @@ SYSTEM_PROMPT_TEMPLATE = """\
 
 JSON_SCHEMA = """{
   "condition": {
-    "label": "Отличное|Хорошее|Удовлетворительное|Требует внимания",
+    "label": "строго на русском: Отличное, Хорошее, Удовлетворительное или Требует внимания",
     "confidence": 0.0-1.0,
     "notes": ["конкретное наблюдение с фото или описания — что именно видно"]
   },
@@ -67,8 +68,8 @@ JSON_SCHEMA = """{
   "market_context": "2-3 предложения: позиция цены, конкретные аналоги, тренд",
   "best_pick": {"ad_id": номер_или_null, "reason": "почему именно этот вариант лучше"},
   "recommendation": {
-    "verdict": "worth_it|think_twice|overpriced",
-    "text": "рекомендация с суммой и действием"
+    "verdict": "worth_it или think_twice или overpriced (строго одно из трёх)",
+    "text": "рекомендация с суммой и действием на русском"
   },
   "summary": "1-2 предложения: вердикт + ключевая причина"
 }"""
@@ -88,6 +89,7 @@ def _build_system_prompt(
         )
         + JSON_SCHEMA
     )
+
 
 # Category-specific analysis hints injected into the prompt
 CATEGORY_HINTS: dict[str, dict[str, str]] = {
@@ -178,7 +180,7 @@ CATEGORY_HINTS: dict[str, dict[str, str]] = {
         "bargain_hint": (
             "Возраст модели: каждый год — -10-15%. "
             "Отсутствие SMART TV — -15%. "
-            "Разрешение ниже 4K для диагонали >50\" — аргумент для скидки."
+            'Разрешение ниже 4K для диагонали >50" — аргумент для скидки.'
         ),
     },
     "headphones": {
@@ -295,42 +297,233 @@ CATEGORY_HINTS: dict[str, dict[str, str]] = {
 
 # Keywords for category detection from title/params
 CATEGORY_KEYWORDS: dict[str, list[str]] = {
-    "phone": ["iphone", "samsung galaxy", "xiaomi", "pixel", "huawei", "honor", "oneplus",
-              "телефон", "смартфон", "phone", "redmi", "note ", "pro max", "pro plus",
-              "galaxy s", "galaxy a", "galaxy m", "iphone 1", "iphone se", "poco "],
-    "laptop": ["macbook", "ноутбук", "laptop", "thinkpad", "lenovo ", "asus ", "hp ",
-               "acer ", "msi ", "dell ", "surface", "пк", "компьютер", "игровой ноутбук",
-               "ultrabook", "legion", "rog ", "predator ", "vivobook", "ideapad"],
-    "tablet": ["ipad", "tablet", "планшет", "galaxy tab", "tab s", "matepad", "ipad air",
-               "ipad pro", "ipad mini"],
-    "auto": ["автомобиль", "седан", "хэтчбек", "универсал", "кроссовер", "внедорожник",
-             "кузов", "двигатель", "пробег", "л.с.", "vin", "bmw ", "audi ",
-             "mercedes", "volkswagen", "toyota", "honda", "ford ", "hyundai",
-             "kia ", "nissan", "skoda", "mazda", "opel ", "renault", "peugeot",
-             "объём", "куб.см", "легковой", "минивэн", "пикап"],
-    "motorcycle": ["мотоцикл", "скутер", "мопед", "эндуро", "кросс", "мотард", "chopper",
-                   "квадроцикл", "байк", "мотороллер"],
-    "tv": ["телевизор", "tv ", "smart tv", "oled", "qled", "led tv",
-           "samsung q", "lg oled", "панель", "монитор ", "monitor"],
-    "headphones": ["наушники", "headphones", "airpods", "galaxy buds", "sony wh", "bose",
-                   "jbl ", "маршал", "marshall", "airpods pro", "airpods max",
-                   "beats ", "sennheiser", "audio-technica", "наушник"],
-    "console": ["playstation", "xbox", "nintendo", "switch", "ps5", "ps4", "приставка",
-                "консоль", "геймпад", "ps ", "xbox one", "xbox series"],
-    "watch": ["часы", "apple watch", "galaxy watch", "smartwatch", "умные часы",
-              "фитнес-браслет", "mi band", "garmin", "часы ", "watch "],
-    "camera": ["фотоаппарат", "камера", "camera", "canon ", "nikon ", "sony alpha",
-               "объектив", "lens", "зеркалка", "беззеркалн", "фото", "goPro"],
-    "bicycle": ["велосипед", "bike", "велик", "горный велосипед", "шоссейный",
-                "bmx", "кросс-кантри", "двухподвес", "хардтейл", "электровелосипед"],
-    "appliance": ["холодильник", "стиральн", "пылесос", "микроволнов", "печь",
-                  "духовой шкаф", "посудомо", "кондиционер", "бойлер", "утюг",
-                  "фен", "блендер", "кофемашина", "кофеварка", "тостер",
-                  "мультиварка", "roboclean", "робот-пылесос", "сушильн",
-                  "варочн", "вытяжк", "морозильн", "dishwasher", "refrigerator"],
-    "furniture": ["диван", "кровать", "шкаф", "стол ", "стул ", "кресло", "тумба",
-                  "комод", "полка", "стеллаж", "обеденн", "журнальн",
-                  "кухонный гарнитур", "мебель", "софа", "пуфик", "матрас"],
+    "phone": [
+        "iphone",
+        "samsung galaxy",
+        "xiaomi",
+        "pixel",
+        "huawei",
+        "honor",
+        "oneplus",
+        "телефон",
+        "смартфон",
+        "phone",
+        "redmi",
+        "note ",
+        "pro max",
+        "pro plus",
+        "galaxy s",
+        "galaxy a",
+        "galaxy m",
+        "iphone 1",
+        "iphone se",
+        "poco ",
+    ],
+    "laptop": [
+        "macbook",
+        "ноутбук",
+        "laptop",
+        "thinkpad",
+        "lenovo ",
+        "asus ",
+        "hp ",
+        "acer ",
+        "msi ",
+        "dell ",
+        "surface",
+        "пк",
+        "компьютер",
+        "игровой ноутбук",
+        "ultrabook",
+        "legion",
+        "rog ",
+        "predator ",
+        "vivobook",
+        "ideapad",
+    ],
+    "tablet": [
+        "ipad",
+        "tablet",
+        "планшет",
+        "galaxy tab",
+        "tab s",
+        "matepad",
+        "ipad air",
+        "ipad pro",
+        "ipad mini",
+    ],
+    "auto": [
+        "автомобиль",
+        "седан",
+        "хэтчбек",
+        "универсал",
+        "кроссовер",
+        "внедорожник",
+        "кузов",
+        "двигатель",
+        "пробег",
+        "л.с.",
+        "vin",
+        "bmw ",
+        "audi ",
+        "mercedes",
+        "volkswagen",
+        "toyota",
+        "honda",
+        "ford ",
+        "hyundai",
+        "kia ",
+        "nissan",
+        "skoda",
+        "mazda",
+        "opel ",
+        "renault",
+        "peugeot",
+        "объём",
+        "куб.см",
+        "легковой",
+        "минивэн",
+        "пикап",
+    ],
+    "motorcycle": [
+        "мотоцикл",
+        "скутер",
+        "мопед",
+        "эндуро",
+        "кросс",
+        "мотард",
+        "chopper",
+        "квадроцикл",
+        "байк",
+        "мотороллер",
+    ],
+    "tv": [
+        "телевизор",
+        "tv ",
+        "smart tv",
+        "oled",
+        "qled",
+        "led tv",
+        "samsung q",
+        "lg oled",
+        "панель",
+        "монитор ",
+        "monitor",
+    ],
+    "headphones": [
+        "наушники",
+        "headphones",
+        "airpods",
+        "galaxy buds",
+        "sony wh",
+        "bose",
+        "jbl ",
+        "маршал",
+        "marshall",
+        "airpods pro",
+        "airpods max",
+        "beats ",
+        "sennheiser",
+        "audio-technica",
+        "наушник",
+    ],
+    "console": [
+        "playstation",
+        "xbox",
+        "nintendo",
+        "switch",
+        "ps5",
+        "ps4",
+        "приставка",
+        "консоль",
+        "геймпад",
+        "ps ",
+        "xbox one",
+        "xbox series",
+    ],
+    "watch": [
+        "часы",
+        "apple watch",
+        "galaxy watch",
+        "smartwatch",
+        "умные часы",
+        "фитнес-браслет",
+        "mi band",
+        "garmin",
+        "часы ",
+        "watch ",
+    ],
+    "camera": [
+        "фотоаппарат",
+        "камера",
+        "camera",
+        "canon ",
+        "nikon ",
+        "sony alpha",
+        "объектив",
+        "lens",
+        "зеркалка",
+        "беззеркалн",
+        "фото",
+        "goPro",
+    ],
+    "bicycle": [
+        "велосипед",
+        "bike",
+        "велик",
+        "горный велосипед",
+        "шоссейный",
+        "bmx",
+        "кросс-кантри",
+        "двухподвес",
+        "хардтейл",
+        "электровелосипед",
+    ],
+    "appliance": [
+        "холодильник",
+        "стиральн",
+        "пылесос",
+        "микроволнов",
+        "печь",
+        "духовой шкаф",
+        "посудомо",
+        "кондиционер",
+        "бойлер",
+        "утюг",
+        "фен",
+        "блендер",
+        "кофемашина",
+        "кофеварка",
+        "тостер",
+        "мультиварка",
+        "roboclean",
+        "робот-пылесос",
+        "сушильн",
+        "варочн",
+        "вытяжк",
+        "морозильн",
+        "dishwasher",
+        "refrigerator",
+    ],
+    "furniture": [
+        "диван",
+        "кровать",
+        "шкаф",
+        "стол ",
+        "стул ",
+        "кресло",
+        "тумба",
+        "комод",
+        "полка",
+        "стеллаж",
+        "обеденн",
+        "журнальн",
+        "кухонный гарнитур",
+        "мебель",
+        "софа",
+        "пуфик",
+        "матрас",
+    ],
 }
 
 
@@ -351,12 +544,68 @@ def detect_category(title: str, parameters: list[dict] | None = None) -> str:
             best_match = category
     return best_match
 
+
 QUICK_CONDITION_PROMPT = """\
 Ты — Rafuks AI. Оцени состояние товара по фото.
 Ответь ТОЛЬКО JSON (без markdown):
 {"condition": "Отличное|Хорошее|Удовлетворительное|Требует внимания", "notes": ["заметка1"]}
 Никаких личных данных. Отвечай на русском.
 """
+
+
+def _repair_truncated_json(text: str) -> dict:
+    """Try to repair a truncated JSON response from the AI model.
+
+    When max_tokens cuts off the response mid-JSON, we try to close
+    open braces/brackets and parse what we have, preserving as many
+    sections as possible.
+    """
+    start = text.find("{")
+    if start == -1:
+        return {"summary": text.strip()[:500], "condition": None, "fair_price": None}
+
+    fragment = text[start:]
+
+    # Count open braces/brackets and close them
+    open_braces = 0
+    open_brackets = 0
+    in_string = False
+    escape_next = False
+    for ch in fragment:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\":
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            open_braces += 1
+        elif ch == "}":
+            open_braces -= 1
+        elif ch == "[":
+            open_brackets += 1
+        elif ch == "]":
+            open_brackets -= 1
+
+    # Close any open string
+    if in_string:
+        fragment += '"'
+    # Close open brackets and braces
+    fragment += "]" * max(0, open_brackets)
+    fragment += "}" * max(0, open_braces)
+
+    try:
+        result = json.loads(fragment)
+        logger.info("Repaired truncated JSON: recovered keys=%s", list(result.keys()))
+        return result
+    except json.JSONDecodeError:
+        logger.warning("Could not repair truncated JSON")
+        return {"summary": text.strip()[:500], "condition": None, "fair_price": None}
 
 
 class AIService:
@@ -534,13 +783,10 @@ class AIService:
 
         if fetch_tasks:
             results = await asyncio.gather(
-                *(
-                    self._fetch_image_b64(url)
-                    for _, url, _ in fetch_tasks
-                ),
+                *(self._fetch_image_b64(url) for _, url, _ in fetch_tasks),
                 return_exceptions=True,
             )
-            for (kind, _url, label), result in zip(fetch_tasks, results, strict=True):
+            for (kind, _url, _label), result in zip(fetch_tasks, results, strict=True):
                 if isinstance(result, Exception):
                     logger.warning("Skipping %s image (fetch error): %s", kind, result)
                     continue
@@ -556,13 +802,9 @@ class AIService:
             )
         except Exception as e:
             err = str(e).lower()
-            if len(content) > 1 and (
-                "image" in err or "vision" in err or "multimodal" in err
-            ):
+            if len(content) > 1 and ("image" in err or "vision" in err or "multimodal" in err):
                 logger.warning("Vision not supported, retrying text-only: %s", e)
-                return await self._chat(
-                    system=system, content=context, max_tokens=2800
-                )
+                return await self._chat(system=system, content=context, max_tokens=2800)
             raise
 
     async def quick_condition(self, image_urls: list[str]) -> dict:
@@ -576,9 +818,7 @@ class AIService:
                 content.append(img)
         if len(content) == 1:
             raise Exception("Не удалось загрузить фото для анализа")
-        return await self._chat(
-            system=QUICK_CONDITION_PROMPT, content=content, max_tokens=256
-        )
+        return await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=256)
 
     # ── Helpers ─────────────────────────────────────────────────
 
@@ -660,7 +900,8 @@ class AIService:
         if condition:
             parts.append(f"Состояние (заявлено): {condition}")
         if seller_type:
-            parts.append(f"Продавец: {'магазин/дилер' if seller_type == 'shop' else 'частное лицо'}")
+            seller_label = "магазин/дилер" if seller_type == "shop" else "частное лицо"
+            parts.append(f"Продавец: {seller_label}")
         if listing_age_days is not None:
             if listing_age_days == 0:
                 parts.append("Опубликовано: сегодня")
@@ -673,7 +914,7 @@ class AIService:
 
         # Market statistics
         if market_median:
-            parts.append(f"\n## РЫНОК")
+            parts.append("\n## РЫНОК")
             if market_q1 and market_q3:
                 parts.append(
                     f"Медиана: {market_median:.0f} BYN | "
@@ -681,9 +922,7 @@ class AIService:
                     f"Q1={market_q1:.0f} | Q3={market_q3:.0f} BYN"
                 )
             else:
-                parts.append(
-                    f"Медиана: {market_median:.0f} BYN | Объявлений: {market_count}"
-                )
+                parts.append(f"Медиана: {market_median:.0f} BYN | Объявлений: {market_count}")
             if market_min and market_max:
                 parts.append(f"Диапазон: {market_min:.0f} — {market_max:.0f} BYN")
 
@@ -692,8 +931,7 @@ class AIService:
                 iqr = market_q3 - market_q1
                 if iqr > 0:
                     parts.append(
-                        f"Справедливый диапазон (Q1-Q3): "
-                        f"{market_q1:.0f} — {market_q3:.0f} BYN"
+                        f"Справедливый диапазон (Q1-Q3): {market_q1:.0f} — {market_q3:.0f} BYN"
                     )
                     if price_byn < market_q1:
                         parts.append(
@@ -814,7 +1052,8 @@ class AIService:
             logger.debug("Image compression skipped: %s", e)
             return None
 
-    def _parse_json(self, text: str) -> dict:
+    @staticmethod
+    def _parse_json(text: str) -> dict:
         """Parse JSON from model response, handling reasoning chains and code blocks."""
         text = text.strip()
 
@@ -857,8 +1096,15 @@ class AIService:
             except json.JSONDecodeError:
                 pass
 
-        logger.warning("AI returned non-JSON: %s", text[:300])
-        return {"summary": text.strip(), "condition": None, "fair_price": None}
+        logger.warning("AI returned non-JSON (%d chars): %s", len(text), text[:500])
+        # Try to extract partial data from truncated JSON
+        return _repair_truncated_json(text)
+
+    async def close(self) -> None:
+        """Close the underlying httpx client, if it was created."""
+        if self._httpx_client is not None and not self._httpx_client.is_closed:
+            await self._httpx_client.aclose()
+            self._httpx_client = None
 
 
 # Singleton

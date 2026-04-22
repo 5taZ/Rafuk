@@ -65,10 +65,12 @@ async def notify_user(
         if internal_user_id is not None:
             # Mark tracker as inactive - caller will commit
             await session.execute(
-                update(Tracker).where(
+                update(Tracker)
+                .where(
                     Tracker.user_id == internal_user_id,
                     Tracker.active.is_(True),
-                ).values(active=False)
+                )
+                .values(active=False)
             )
         return False
 
@@ -81,8 +83,7 @@ async def _recent_event_keys(
     """Return (ad_id, event_type) pairs that already have events within *hours*."""
     cutoff = datetime.now(UTC) - timedelta(hours=hours)
     result = await session.execute(
-        select(TrackerEvent.ad_id, TrackerEvent.event_type)
-        .where(
+        select(TrackerEvent.ad_id, TrackerEvent.event_type).where(
             TrackerEvent.tracker_id == tracker_id,
             TrackerEvent.created_at >= cutoff,
         )
@@ -164,9 +165,8 @@ def _filter_sync_result_for_tracker(
     new_listings = [
         state
         for state in sync_result.new_listings
-        if (
-            ad := ads_by_id.get(state.ad_id)
-        ) and matches_tracker_filters(
+        if (ad := ads_by_id.get(state.ad_id))
+        and matches_tracker_filters(
             ad,
             market_stats=market_stats,
             min_discount_percent=tracker.min_discount_percent,
@@ -180,9 +180,8 @@ def _filter_sync_result_for_tracker(
     price_drops = [
         (state, delta)
         for state, delta in sync_result.price_drops
-        if (
-            ad := ads_by_id.get(state.ad_id)
-        ) and matches_tracker_filters(
+        if (ad := ads_by_id.get(state.ad_id))
+        and matches_tracker_filters(
             ad,
             market_stats=market_stats,
             min_discount_percent=tracker.min_discount_percent,
@@ -216,7 +215,7 @@ def _build_tracker_message(
     sync_result: QuerySyncResult,
 ) -> str | None:
     lines: list[str] = []
-    label = f'{query} [строгий]' if strict_mode else query
+    label = f"{query} [строгий]" if strict_mode else query
 
     if sync_result.new_listings:
         lines.append(f'Запрос "{label}"')
@@ -237,8 +236,7 @@ def _build_tracker_message(
         for state, delta in sync_result.price_drops[:3]:
             delta_str = f"(-{round(delta)} р.)" if round(delta) > 0 else ""
             lines.append(
-                f"• {state.title} - {_format_price_byn(state.last_price_byn)} "
-                f"{delta_str}".rstrip()
+                f"• {state.title} - {_format_price_byn(state.last_price_byn)} {delta_str}".rstrip()
             )
             if state.link:
                 lines.append(state.link)
@@ -270,7 +268,8 @@ async def check_trackers(
         # Filter out trackers whose interval_min hasn't elapsed yet
         now = datetime.now(UTC)
         trackers = [
-            t for t in all_trackers
+            t
+            for t in all_trackers
             if t.last_checked_at is None
             or (now - t.last_checked_at).total_seconds() >= t.interval_min * 60
         ]
@@ -287,7 +286,9 @@ async def check_trackers(
 
         logger.info(
             "Tracker check: %d due (of %d total), %d unique query group(s)",
-            len(trackers), len(all_trackers), len(trackers_by_query),
+            len(trackers),
+            len(all_trackers),
+            len(trackers_by_query),
         )
 
         client = KufarClient(settings)
@@ -317,28 +318,30 @@ async def check_trackers(
                         total_results=len(ads),
                     )
                     ads_by_id = {
-                        int(ad.get("ad_id", 0)): ad
-                        for ad in ads
-                        if int(ad.get("ad_id", 0)) > 0
+                        int(ad.get("ad_id", 0)): ad for ad in ads if int(ad.get("ad_id", 0)) > 0
                     }
 
                     newest_id = int(ads[0].get("ad_id", 0)) if ads else None
                     newest_price_byn = (
-                        normalize_price_byn(ads[0].get("price_byn"))
-                        if ads else None
+                        normalize_price_byn(ads[0].get("price_byn")) if ads else None
                     )
 
+                    safe_query = query.replace("\n", " ")[:80]
                     logger.info(
                         "Query %r [strict=%s]: %d ads, %d new, %d price drops",
-                        query, strict_mode, len(ads),
-                        len(sync_result.new_listings), len(sync_result.price_drops),
+                        safe_query,
+                        strict_mode,
+                        len(ads),
+                        len(sync_result.new_listings),
+                        len(sync_result.price_drops),
                     )
 
                     for tracker in query_trackers:
                         if tracker.last_checked_at is None:
                             logger.info(
                                 "Tracker %d (user %d): first check, initializing baseline",
-                                tracker.id, tracker.user_id,
+                                tracker.id,
+                                tracker.user_id,
                             )
                             tracker.last_seen_ad_id = newest_id
                             tracker.last_seen_price_byn = newest_price_byn
@@ -379,30 +382,38 @@ async def check_trackers(
                                 total_notified += 1
                                 logger.info(
                                     "Tracker %d (user %d): notified (%d events)",
-                                    tracker.id, tracker.user_id, len(created_events),
+                                    tracker.id,
+                                    tracker.user_id,
+                                    len(created_events),
                                 )
                             else:
                                 logger.info(
                                     "Deactivated tracker %d for user %d (Telegram forbidden)",
-                                    tracker.id, tracker.user_id,
+                                    tracker.id,
+                                    tracker.user_id,
                                 )
 
                         tracker.last_seen_ad_id = newest_id
                         tracker.last_seen_price_byn = newest_price_byn
                         tracker.last_checked_at = observed_at
 
+                    # Flush after each query group so a later failure
+                    # doesn't discard this group's snapshot/state/events.
+                    await session.flush()
                 except Exception:
                     total_errors += 1
                     logger.exception(
                         "Error processing query %r [strict=%s], skipping",
-                        query, strict_mode,
+                        query,
+                        strict_mode,
                     )
 
             # Commit whatever succeeded — errors are logged but don't block
             await session.commit()
             logger.info(
                 "Tracker check complete: notified %d, errors %d",
-                total_notified, total_errors,
+                total_notified,
+                total_errors,
             )
         finally:
             await client.aclose()
@@ -457,9 +468,7 @@ async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None
 async def cleanup_old_events(session: AsyncSession, days: int = 30) -> int:
     """Delete tracker events older than specified days."""
     cutoff = datetime.now(UTC) - timedelta(days=days)
-    result = await session.execute(
-        delete(TrackerEvent).where(TrackerEvent.created_at < cutoff)
-    )
+    result = await session.execute(delete(TrackerEvent).where(TrackerEvent.created_at < cutoff))
     deleted_count = result.rowcount
     if deleted_count > 0:
         logger.info("Cleaned up %d old tracker events (older than %d days)", deleted_count, days)

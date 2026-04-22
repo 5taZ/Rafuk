@@ -47,6 +47,7 @@ async def create_test_tables():
 async def init_test_tables(app) -> None:
     """Create all tables for a test app instance."""
     from api.models import Base
+
     async with app.state.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

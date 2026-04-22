@@ -33,8 +33,10 @@ def upgrade() -> None:
             sa.Column("username", String(128), nullable=True),
             sa.Column("is_bot", sa.Boolean, nullable=False, server_default="false"),
             sa.Column(
-                "created_at", DateTime(timezone=True),
-                nullable=False, server_default=sa.func.now(),
+                "created_at",
+                DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
             ),
             sa.Column("last_seen_at", DateTime(timezone=True), nullable=True),
         )
@@ -122,9 +124,7 @@ def upgrade() -> None:
         # WatchlistItem.user_id -> User.id
         if "watchlist_items" in tables:
             fks = [
-                fk["name"]
-                for fk in inspector.get_foreign_keys("watchlist_items")
-                if fk["name"]
+                fk["name"] for fk in inspector.get_foreign_keys("watchlist_items") if fk["name"]
             ]
             if "fk_watchlist_items_user_id" not in fks:
                 op.create_foreign_key(
@@ -153,7 +153,8 @@ def downgrade() -> None:
     if not is_sqlite:
         if "tracker_events" in tables:
             op.drop_constraint(
-                "fk_tracker_events_tracker_id", "tracker_events",
+                "fk_tracker_events_tracker_id",
+                "tracker_events",
                 type_="foreignkey",
             )
             op.drop_constraint("fk_tracker_events_user_id", "tracker_events", type_="foreignkey")

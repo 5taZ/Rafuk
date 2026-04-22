@@ -96,7 +96,7 @@ Scheduler (every N minutes)
 - `deal_workflow.py` — lead/watchlist CRUD, status transitions, per-item liquidity scoring
 - `query_pipeline.py` — `QueryDataset` dataclass and `load_query_dataset()` / `load_segment_datasets()` — shared query parameter parsing across routers
 - `listing_mapper.py` — transforms raw Kufar ad dicts into `ListingItem`/`ListingDetailResponse` schemas. Image base URL: `https://rms.kufar.by/v1/gallery/`
-- `ai_service.py` — OpenAI-compatible API client (Together AI). Gemma 4 uses internal reasoning tokens; `response_format` must NOT be used (causes empty `content`). Reads from `reasoning` field as fallback. Temperature 0.3, max_tokens 4000.
+- `ai_service.py` — OpenAI-compatible API client (Together AI). Gemma 4 uses internal reasoning tokens; `response_format` must NOT be used (causes empty `content`). Reads from `reasoning` field as fallback. Temperature 0.2, max_tokens 2800. 1 image (prefers 2nd/3rd photo over hero shot for better condition assessment). `_parse_json()` handles reasoning chains with balanced-brace extraction.
 - `cache.py` — `RedisCache` (primary) and `MemoryCache` (OrderedDict with TTL + LRU eviction, max 500 entries). Both have `get_json`/`set_json` helpers.
 - `currency_service.py` — BYN↔USD conversion. All DB prices in BYN.
 
@@ -164,10 +164,10 @@ Each ad in the search response is a dict with these notable fields:
 
 FastAPI dependencies in `api/dependencies.py`:
 - `get_session_factory_dependency` — pulls `session_factory` from `app.state` (set in lifespan), falls back to creating a new engine
-- `get_telegram_user` — validates `X-Telegram-Init-Data` header, returns `TelegramInitData` with `user_id`
+- `get_telegram_user` — validates `X-Telegram-Init-Data` header, returns `TelegramInitData` with `user_id`. In debug mode (`debug=true` in `.env`), allows requests without Telegram initData (returns mock user with `user_id=0`). CORS also allows `localhost:8081`/`localhost:8010` in debug mode.
 - `get_cache` / `get_currency_service` — from `app.state`
 
-All user-scoped endpoints require `get_telegram_user`; public endpoints (price-stats, listings, currency-rates, health) do not.
+All user-scoped endpoints require `get_telegram_user`; public endpoints (price-stats, listings, currency-rates, health) do not. Debug mode bypasses Telegram auth for browser testing.
 
 ## Configuration
 
@@ -199,9 +199,12 @@ Docker Compose maps PostgreSQL `5432→5433` and Redis `6379→6380` to avoid co
 - All user-scoped endpoints require `X-Telegram-Init-Data` header; public endpoints do not
 - Currency: all DB values in BYN. API returns in requested currency. Frontend converts using `state.usdRateByn`
 - AI model (Gemma 4): does NOT support `response_format: {"type": "json_object"}` — causes empty `content`. Uses `reasoning` field for chain-of-thought. `_parse_json()` extracts JSON from either field
-- Nginx `proxy_read_timeout: 300s` — AI analysis can take 60-90 seconds; must not be lower
+- Nginx `proxy_read_timeout: 300s` — AI analysis can take 30-60 seconds; must not be lower
+- AI analysis context: enriched with anomaly flags, deal score, full parameters, price deltas from alternatives. System prompt includes scam detection checklist and BYN-specific negotiation guidance per category
+- Frontend context sharing: `createAppRenderers` must both destructure AND return functions like `safeUrl` in its public API, otherwise downstream modules (`createApiAi`) get `undefined`
 
 ## Known Issues
 
 - `ruff UP017` suggests `datetime.UTC` but this does not exist on the `datetime` class — use `timezone.utc` and ignore UP017
-- Gemma 4 on Together AI uses internal reasoning tokens that consume output budget — `max_tokens` must be ≥4000 for analysis prompts
+- Gemma 4 on Together AI uses internal reasoning tokens that consume output budget — `max_tokens` must be ≥2800 for analysis prompts
+- CSS `display: flex/grid` overrides HTML `hidden` attribute — always add `[hidden] { display: none !important }` rules for elements that use both flex layout and `hidden`

@@ -63,9 +63,7 @@ async def seed_tracker_event(session_factory) -> None:
         # Create user with telegram_user_id matching the fake auth
         from api.services.workflow_store import ensure_user
 
-        user_id = await ensure_user(
-            session, telegram_user_id=123456, first_name="Test"
-        )
+        user_id = await ensure_user(session, telegram_user_id=123456, first_name="Test")
         await session.commit()
 
         session.add(

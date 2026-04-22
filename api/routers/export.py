@@ -16,9 +16,22 @@ from api.services.workflow_store import resolve_user_id
 router = APIRouter(tags=["export"])
 
 CSV_HEADERS = [
-    "id", "query", "title", "link", "price_byn", "target_resale_byn",
-    "status", "source", "notes", "sold_price_byn", "sold_at",
-    "total_expenses", "actual_profit", "roi_percent", "created_at", "updated_at",
+    "id",
+    "query",
+    "title",
+    "link",
+    "price_byn",
+    "target_resale_byn",
+    "status",
+    "source",
+    "notes",
+    "sold_price_byn",
+    "sold_at",
+    "total_expenses",
+    "actual_profit",
+    "roi_percent",
+    "created_at",
+    "updated_at",
 ]
 
 
@@ -83,24 +96,26 @@ async def export_leads_csv(
             else None
         )
 
-        writer.writerow([
-            lead.id,
-            lead.query,
-            lead.title,
-            lead.link,
-            lead.price_byn or "",
-            lead.target_resale_byn or "",
-            lead.status,
-            lead.source,
-            getattr(lead, "notes", "") or "",
-            lead.sold_price_byn or "",
-            lead.sold_at.isoformat() if lead.sold_at else "",
-            f"{total_expenses:.2f}",
-            f"{actual_profit:.2f}" if actual_profit is not None else "",
-            f"{roi_percent:.2f}" if roi_percent is not None else "",
-            lead.created_at.isoformat(),
-            lead.updated_at.isoformat(),
-        ])
+        writer.writerow(
+            [
+                lead.id,
+                lead.query,
+                lead.title,
+                lead.link,
+                lead.price_byn or "",
+                lead.target_resale_byn or "",
+                lead.status,
+                lead.source,
+                getattr(lead, "notes", "") or "",
+                lead.sold_price_byn or "",
+                lead.sold_at.isoformat() if lead.sold_at else "",
+                f"{total_expenses:.2f}",
+                f"{actual_profit:.2f}" if actual_profit is not None else "",
+                f"{roi_percent:.2f}" if roi_percent is not None else "",
+                lead.created_at.isoformat(),
+                lead.updated_at.isoformat(),
+            ]
+        )
 
     content = output.getvalue()
     output.close()

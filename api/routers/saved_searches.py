@@ -165,6 +165,7 @@ async def _load_saved_search_opportunities(
     currency: str,
     settings: Settings,
     currency_service: CurrencyService,
+    kufar_client: KufarClient | None = None,
 ) -> list[OpportunityItem]:
     dataset = await load_query_dataset(
         query=saved_search.query,
@@ -172,6 +173,7 @@ async def _load_saved_search_opportunities(
         strict_search=saved_search.strict_mode,
         settings=settings,
         client_factory=KufarClient,
+        client=kufar_client,
     )
     candidate_ads = filter_deal_ads(
         dataset.ads,
@@ -295,23 +297,24 @@ async def get_opportunity_board(
             market_signals=[],
         )
 
-    batches = await asyncio.gather(
-        *[
-            _load_saved_search_opportunities(
-                saved_search,
-                currency=currency,
-                settings=settings,
-                currency_service=currency_service,
-            )
-            for saved_search in saved_searches
-        ]
-    )
+    shared_client = KufarClient(settings)
+    try:
+        batches = await asyncio.gather(
+            *[
+                _load_saved_search_opportunities(
+                    saved_search,
+                    currency=currency,
+                    settings=settings,
+                    currency_service=currency_service,
+                    kufar_client=shared_client,
+                )
+                for saved_search in saved_searches
+            ]
+        )
+    finally:
+        await shared_client.aclose()
     items = [item for batch in batches for item in batch]
-    rare_opportunities = [
-        item
-        for item in items
-        if item.signal_label == "Редкий оффер"
-    ]
+    rare_opportunities = [item for item in items if item.signal_label == "Редкий оффер"]
     items.sort(
         key=lambda item: (
             -float(item.listing.deal_score or 0.0),

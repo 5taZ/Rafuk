@@ -24,11 +24,21 @@ from api.services.reseller_tools import analyze_query_text, compute_deal_score
 IMAGE_BASE_URL = "https://rms.kufar.by/v1/gallery/"
 IGNORED_AD_PARAMETER_KEYS = {"users_synonyms"}
 
-PII_PARAMETER_KEYS = frozenset({
-    "phone", "phone_hidden", "contact_person", "email",
-    "company_name", "company_address", "vat_number", "user_id",
-    "username", "address", "legal_name",
-})
+PII_PARAMETER_KEYS = frozenset(
+    {
+        "phone",
+        "phone_hidden",
+        "contact_person",
+        "email",
+        "company_name",
+        "company_address",
+        "vat_number",
+        "user_id",
+        "username",
+        "address",
+        "legal_name",
+    }
+)
 
 
 def _stringify_value(value: Any) -> str | None:

@@ -219,6 +219,7 @@ class TrackerCreate(BaseModel):
 
 class TrackerUpdate(BaseModel):
     """Schema for updating an existing tracker."""
+
     strict_mode: bool | None = None
     interval_min: int | None = None
     min_discount_percent: float | None = None
@@ -533,11 +534,13 @@ class RiskAssessmentResponse(BaseModel):
 class AIAnalysisRequest(BaseModel):
     ad_id: int
     query: str = Field(min_length=1, max_length=200)
+    category: int | None = None
 
 
 class AIQuickConditionRequest(BaseModel):
     ad_id: int
     query: str = Field(min_length=1, max_length=200)
+    category: int | None = None
 
 
 class AIConditionAssessment(BaseModel):

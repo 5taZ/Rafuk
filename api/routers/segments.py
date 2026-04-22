@@ -13,6 +13,8 @@ from api.services.query_pipeline import convert_price_stats, load_segment_datase
 from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
+
+
 @router.get("/segments", response_model=SegmentsResponse)
 async def get_segments(
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),

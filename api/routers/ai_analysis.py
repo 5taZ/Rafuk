@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -65,8 +65,8 @@ def _parse_list_age_days(list_time_str: str | None) -> int | None:
         dt = datetime.fromisoformat(list_time_str.replace("Z", "+00:00"))
         # Make naive datetimes timezone-aware (assume UTC)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
+        now = datetime.now(UTC)
         delta = now - dt
         return max(0, delta.days)
     except (ValueError, TypeError):
@@ -178,7 +178,7 @@ async def analyze_listing(
 
     # Check cache BEFORE rate limit — cached results should not consume quota
     cache = get_cache(request)
-    cache_key = f"ai_analysis:{payload.ad_id}:{payload.query}"
+    cache_key = f"ai_analysis:{payload.ad_id}:{payload.query}:cat={payload.category}"
     cached = await cache.get_json(cache_key)
     if cached:
         return AIAnalysisResponse(**cached)
@@ -193,36 +193,39 @@ async def analyze_listing(
         settings = get_settings()
 
     # Try strict search first — yields more relevant comparable listings
+    safe_query = payload.query.replace("\n", " ")[:80]
     logger.info(
-        "AI analyze: loading dataset for ad_id=%d query=%s",
-        payload.ad_id, payload.query[:50],
-    )
-    dataset = await load_query_dataset(
-        query=payload.query,
-        currency="BYN",
-        strict_search=True,
-        settings=settings,
-        client_factory=KufarClient,
+        "AI analyze: loading dataset for ad_id=%d query=%s cat=%s",
+        payload.ad_id,
+        safe_query,
+        payload.category,
     )
 
-    target_ad = next(
-        (ad for ad in dataset.ads if int(ad.get("ad_id", 0)) == payload.ad_id),
-        None,
-    )
+    # Search strategies in order: strict+cat → non-strict+cat → non-strict (no cat)
+    search_attempts = [
+        {"strict_search": True, "category": payload.category},
+        {"strict_search": False, "category": payload.category},
+    ]
+    # Only add fallback without category if a category was specified
+    if payload.category is not None:
+        search_attempts.append({"strict_search": False, "category": None})
 
-    # Fallback to non-strict if target not found in strict results
-    if not target_ad:
+    dataset = None
+    target_ad = None
+    for attempt in search_attempts:
         dataset = await load_query_dataset(
             query=payload.query,
             currency="BYN",
-            strict_search=False,
             settings=settings,
             client_factory=KufarClient,
+            **attempt,
         )
         target_ad = next(
             (ad for ad in dataset.ads if int(ad.get("ad_id", 0)) == payload.ad_id),
             None,
         )
+        if target_ad:
+            break
 
     if not target_ad:
         raise HTTPException(status_code=404, detail="Объявление не найдено")
@@ -274,7 +277,10 @@ async def analyze_listing(
 
     # Collect similar listings with rich data
     similar = _collect_similar_listings(
-        dataset, payload.ad_id, price_byn, median,
+        dataset,
+        payload.ad_id,
+        price_byn,
+        median,
         target_condition=condition,
     )
 
@@ -302,26 +308,39 @@ async def analyze_listing(
     if stats:
         from api.services.market_signals import anomaly_labels as _anomaly_labels
         from api.services.reseller_tools import compute_deal_score as _compute_deal_score
+
         raw_flags = []
         try:
             from api.services.market_signals import detect_anomaly_flags
+
             raw_flags = detect_anomaly_flags(target_ad, stats)
         except Exception:
-            pass
+            logger.warning(
+                "Failed to compute anomaly flags for ad_id=%d",
+                payload.ad_id,
+                exc_info=True,
+            )
         target_anomaly_labels = _anomaly_labels(raw_flags)
         try:
             deal = _compute_deal_score(target_ad, query=payload.query, market_stats=stats)
             target_deal_score = deal.score
             target_deal_verdict = deal.verdict
         except Exception:
-            pass
+            logger.warning(
+                "Failed to compute deal score for ad_id=%d",
+                payload.ad_id,
+                exc_info=True,
+            )
 
     try:
         import time as _time
+
         _t0 = _time.monotonic()
         logger.info(
             "AI analyze: calling ai.analyze_listing for '%s' (%d imgs, %d similar)",
-            title[:50], len(images), len(ai_similar_for_comparison),
+            title[:50],
+            len(images),
+            len(ai_similar_for_comparison),
         )
         result = await asyncio.wait_for(
             ai.analyze_listing(
@@ -347,7 +366,11 @@ async def analyze_listing(
             ),
             timeout=240,
         )
-        logger.info("AI analyze: success in %.1fs, keys=%s", _time.monotonic() - _t0, list(result.keys()))
+        logger.info(
+            "AI analyze: success in %.1fs, keys=%s",
+            _time.monotonic() - _t0,
+            list(result.keys()),
+        )
     except TimeoutError:
         logger.error("AI analysis timed out after 240s for ad_id=%d", payload.ad_id)
         raise HTTPException(
@@ -357,7 +380,9 @@ async def analyze_listing(
     except Exception as exc:
         logger.error(
             "AI analysis failed: [%s] %s\nProxy: %s",
-            type(exc).__name__, exc, "yes" if settings.ai_proxy_url else "no",
+            type(exc).__name__,
+            exc,
+            "yes" if settings.ai_proxy_url else "no",
         )
         err_msg = "AI сервис недоступен. Попробуйте позже."
         err_str = str(exc).lower()
@@ -369,10 +394,7 @@ async def analyze_listing(
             or "connect" in err_str
             or "connection" in err_str
         ):
-            err_msg = (
-                "Не удалось подключиться к AI-сервису. "
-                "Возможно, требуется VPN на сервере."
-            )
+            err_msg = "Не удалось подключиться к AI-сервису. Возможно, требуется VPN на сервере."
         elif "insufficient balance" in err_str:
             err_msg = "Баланс AI-сервиса исчерпан."
         # In debug mode, append actual error for diagnostics
@@ -390,9 +412,7 @@ async def analyze_listing(
 
     best_alternative = None
     if best_pick_ad_id:
-        best_alternative = next(
-            (s for s in similar if s["ad_id"] == best_pick_ad_id), None
-        )
+        best_alternative = next((s for s in similar if s["ad_id"] == best_pick_ad_id), None)
     if not best_alternative and similar:
         # Fallback: cheapest similar listing
         best_alternative = similar[0]
@@ -452,6 +472,7 @@ async def quick_condition(
         strict_search=False,
         settings=settings,
         client_factory=KufarClient,
+        category=payload.category,
     )
 
     target_ad = next(

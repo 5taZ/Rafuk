@@ -25,9 +25,7 @@ def upgrade() -> None:
         columns = {col["name"] for col in inspector.get_columns("watchlist_items")}
         if "market_median_byn" not in columns:
             with op.batch_alter_table("watchlist_items") as batch_op:
-                batch_op.add_column(
-                    sa.Column("market_median_byn", sa.Float, nullable=True)
-                )
+                batch_op.add_column(sa.Column("market_median_byn", sa.Float, nullable=True))
 
 
 def downgrade() -> None:

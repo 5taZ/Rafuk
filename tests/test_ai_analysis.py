@@ -66,7 +66,9 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
                     "ad_parameters": [],
                 },
             ],
-            price_stats=SimpleNamespace(median=1590.0, count=24),
+            price_stats=SimpleNamespace(
+                median=1590.0, count=24, q1=1550.0, q3=1630.0, min=1500.0, max=1700.0
+            ),
         )
 
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: FakeAIService())
