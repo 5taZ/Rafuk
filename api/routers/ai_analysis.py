@@ -278,21 +278,43 @@ async def analyze_listing(
         target_condition=condition,
     )
 
-    # Prepare similar listings for AI comparison (with images and descriptions)
+    # Prepare similar listings for AI comparison
     ai_similar_for_comparison = [
         {
             "ad_id": s["ad_id"],
             "title": s["title"],
             "price_byn": s["price_byn"],
+            "price_delta_byn": round(s["price_byn"] - price_byn, 0),
             "condition": s.get("condition"),
             "description": s.get("description", ""),
-            "image_urls": s.get("image_urls", []),
             "seller_type": s.get("seller_type"),
             "parameters": s.get("parameters", ""),
             "age_days": s.get("age_days"),
+            "deal_score": round(s.get("deal_score", 0), 1),
         }
         for s in similar
     ]
+
+    # Compute anomaly flags and deal score for target listing
+    target_anomaly_labels: list[str] = []
+    target_deal_score = 0.0
+    target_deal_verdict = ""
+    if stats:
+        from api.services.market_signals import anomaly_labels as _anomaly_labels
+        from api.services.reseller_tools import compute_deal_score as _compute_deal_score
+        raw_flags = []
+        try:
+            from api.services.market_signals import detect_anomaly_flags
+            raw_flags = detect_anomaly_flags(target_ad, stats)
+        except Exception:
+            pass
+        target_anomaly_labels = _anomaly_labels(raw_flags)
+        try:
+            deal = _compute_deal_score(target_ad, query=payload.query, market_stats=stats)
+            target_deal_score = deal.score
+            target_deal_verdict = deal.verdict
+        except Exception:
+            pass
 
     try:
         import time as _time
@@ -319,6 +341,9 @@ async def analyze_listing(
                 listing_age_days=listing_age_days,
                 image_urls=images,
                 similar_listings=ai_similar_for_comparison,
+                anomaly_flags=target_anomaly_labels,
+                deal_score=target_deal_score,
+                deal_verdict=target_deal_verdict,
             ),
             timeout=240,
         )

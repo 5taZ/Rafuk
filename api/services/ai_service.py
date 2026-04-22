@@ -20,22 +20,57 @@ from api.config import get_settings
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_TEMPLATE = """\
-Ты — Rafuks AI, аналитик Kufar.by. Отвечай на русском, будь конкретен.
+Ты — Rafuks AI, эксперт-аналитик объявлений Kufar.by. \
+Отвечай ТОЛЬКО на русском.
+
+ПРАВИЛА ОТВЕТА:
+- Будь конкретен: указывай суммы в BYN, сроки, модели, проценты.
+- НЕ пиши общие фразы типа "сравните с аналогами" или "проверьте товар".
+- Каждый пункт — действие или факт, а не пожелание.
+- fair_price.from/to — реалистичный диапазон для ЭТОГО товара в ЕГО состоянии.
+- reasoning в fair_price — почему именно этот диапазон (сравнение с конкретными аналогами).
+- negotiation_tips — конкретные аргументы с BYN-суммами скидки ("попросите скидку X BYN, потому что...").
+- watch_out — конкретные дефекты, которые ты видишь или предполагаешь с обоснованием.
+- meeting_checklist — пошаговая проверка при встрече (5-7 пунктов, специфичных для категории).
+- red_flags — только реальные признаки мошенничества/проблем, не очевидные вещи.
+- market_context — 2-3 предложения: позиция цены, сравнение с конкретными аналогами.
+- summary — 1-2 предложения с вердиктом и ключевой причиной.
+
+ПРИЗНАКИ МОШЕННИЧЕСТВА — проверяй:
+- Цена значительно ниже рынка (>30% ниже медианы) без обоснования
+- Мало фото или фото низкого качества / с водяными знаками других сайтов
+- Описание скопировано, шаблонно или не соответствует фото
+- Нет реальных фото товара (только стоковые/промо изображения)
+- Несоответствие: в описании одна модель, в параметрах другая
+
 Цена товара {price_position_label}. {category_hints} {bargain_hint}
 Ответь строго JSON:
 """
 
 JSON_SCHEMA = """{
-  "condition": {"label": "Отличное|Хорошее|Удовлетворительное|Требует внимания", "confidence": 0.0-1.0, "notes": ["наблюдение"]},
-  "fair_price": {"from": число_BYN, "to": число_BYN, "reasoning": "почему"},
-  "watch_out": [{"point": "на что смотреть", "why": "почему"}],
-  "meeting_checklist": ["что проверить при встрече"],
-  "negotiation_tips": ["аргумент для скидки"],
-  "red_flags": ["признак проблемы"],
-  "market_context": "позиция на рынке",
-  "best_pick": {"ad_id": номер_или_null, "reason": "почему"},
-  "recommendation": {"verdict": "worth_it|think_twice|overpriced", "text": "рекомендация"},
-  "summary": "резюме"
+  "condition": {
+    "label": "Отличное|Хорошее|Удовлетворительное|Требует внимания",
+    "confidence": 0.0-1.0,
+    "notes": ["конкретное наблюдение с фото или описания — что именно видно"]
+  },
+  "fair_price": {
+    "from": число_BYN,
+    "to": число_BYN,
+    "reasoning": "обоснование: аналог X стоит Y BYN в состоянии Z, этот — потому что..."
+  },
+  "watch_out": [
+    {"point": "конкретная проблема", "why": "почему важно и как проверить"}
+  ],
+  "meeting_checklist": ["конкретное действие — что нажать, подключить, проверить"],
+  "negotiation_tips": ["аргумент: 'Скиньте X BYN, потому что...' с суммой"],
+  "red_flags": ["конкретный признак мошенничества или проблемы"],
+  "market_context": "2-3 предложения: позиция цены, конкретные аналоги, тренд",
+  "best_pick": {"ad_id": номер_или_null, "reason": "почему именно этот вариант лучше"},
+  "recommendation": {
+    "verdict": "worth_it|think_twice|overpriced",
+    "text": "рекомендация с суммой и действием"
+  },
+  "summary": "1-2 предложения: вердикт + ключевая причина"
 }"""
 
 
@@ -62,13 +97,15 @@ CATEGORY_HINTS: dict[str, dict[str, str]] = {
             "(битые пиксели, олеофобку, равномерность), камеры (все линзы), "
             "разъём зарядки (люфт), Touch ID/Face ID (работает ли), "
             "Activation Lock (отвязан ли от Apple ID), "
-            "звук (динамики, микрофон), кнопки (качество отклика)."
+            "звук (динамики, микрофон), кнопки (качество отклика). "
+            "Обрати внимание на коробку и комплект — оригинальная коробка + чек = +5% к ценности."
         ),
         "bargain_hint": (
-            "Износ батареи ниже 80% — аргумент для -10-15% цены. "
-            "Царапины на экране — ещё -5-10%. "
-            "Отсутствие коробки/чека — -5%. "
-            "Сравни с ценой аналогов в таком же состоянии."
+            "Износ батареи ниже 80% — аргумент для скидки 50-100 BYN. "
+            "Царапины на экране — ещё 30-80 BYN скидки. "
+            "Отсутствие коробки/чека — 20-50 BYN. "
+            "Сравни с конкретными аналогами — укажи разницу в BYN. "
+            "ВАЖНО: в negotiation_tips укажи конкретные суммы в BYN."
         ),
     },
     "laptop": {
@@ -81,10 +118,11 @@ CATEGORY_HINTS: dict[str, dict[str, str]] = {
             "Wi-Fi и Bluetooth, веб-камеру."
         ),
         "bargain_hint": (
-            "Износ батареи >500 циклов — аргумент для -15-20%. "
-            "Устаревшие порты, царапины на корпусе — -5-10%. "
-            "Отсутствие гарантии — -10%. "
-            "Сравни с новыми моделями в этом ценовом диапазоне."
+            "Износ батареи >500 циклов — аргумент для скидки 100-200 BYN. "
+            "Устаревшие порты, царапины на корпусе — 50-100 BYN. "
+            "Отсутствие гарантии — 80-150 BYN скидки. "
+            "Сравни с новыми моделями — укажи разницу в BYN. "
+            "ВАЖНО: в negotiation_tips укажи конкретные суммы в BYN."
         ),
     },
     "tablet": {
@@ -110,9 +148,10 @@ CATEGORY_HINTS: dict[str, dict[str, str]] = {
         ),
         "bargain_hint": (
             "Каждый выявленный дефект — аргумент для торга. "
-            "Возраст и пробег: каждый год сверх среднего — -5%. "
-            "Необходимость ремонта — скидка на стоимость ремонта + 20%. "
-            "Сезонность: зимой кабриолеты/мото дешевле, весной — дороже."
+            "Возраст: каждый год сверх среднего — 200-500 BYN. "
+            "Необходимость ремонта — скидка = стоимость ремонта + 20%. "
+            "Сезонность: зимой кабриолеты/мото дешевле, весной — дороже. "
+            "ВАЖНО: в negotiation_tips укажи конкретные суммы в BYN для каждого дефекта."
         ),
     },
     "motorcycle": {
@@ -365,7 +404,7 @@ class AIService:
             "model": self._model,
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": 0.3,
+            "temperature": 0.2,
         }
         api_key = self._api_key.get_secret_value() if self._api_key else ""
         client = self._get_client()
@@ -431,6 +470,9 @@ class AIService:
         seller_type: str | None = None,
         photo_count: int = 0,
         listing_age_days: int | None = None,
+        anomaly_flags: list[str] | None = None,
+        deal_score: float | None = None,
+        deal_verdict: str | None = None,
     ) -> dict:
         """Full AI analysis of a listing with optional comparison to alternatives."""
         # Build category-aware system prompt
@@ -460,14 +502,34 @@ class AIService:
             photo_count=photo_count,
             similar_listings=similar_listings,
             listing_age_days=listing_age_days,
+            anomaly_flags=anomaly_flags,
+            deal_score=deal_score,
+            deal_verdict=deal_verdict,
         )
 
-        content: list[dict] = [{"type": "text", "text": context}]
+        # Photo analysis instruction — focus model's vision on defect detection
+        photo_instruction = ""
+        if image_urls:
+            photo_instruction = (
+                "ФОТОАНАЛИЗ: Внимательно осмотри фото. Укажи в condition.notes "
+                "конкретные видимые дефекты (царапины, сколы, потёртости, пятна, "
+                "трещины, несоответствия). Если фото не соответствует описанию — "
+                "отметь это. Если фото стоковое (не реальное) — обязательно укажи в red_flags.\n\n"
+            )
 
-        # Fetch up to 2 target images only (no similar listing images — too slow).
-        # Gemma 4 on Together AI takes ~75s per image; sending more causes timeout.
+        content: list[dict] = [{"type": "text", "text": photo_instruction + context}]
+
+        # Select most informative image — prefer 2nd/3rd image over hero shot
+        # for better condition assessment (hero shots are often staged)
+        if len(image_urls) >= 3:
+            selected_urls = [image_urls[2]]
+        elif len(image_urls) == 2:
+            selected_urls = [image_urls[1]]
+        else:
+            selected_urls = image_urls[:1]
+
         fetch_tasks: list[tuple[str, str | None, str | None]] = []
-        for url in image_urls[:1]:
+        for url in selected_urls:
             fetch_tasks.append(("target", url, None))
 
         if fetch_tasks:
@@ -490,7 +552,7 @@ class AIService:
             return await self._chat(
                 system=system,
                 content=content if len(content) > 1 else context,
-                max_tokens=2500,
+                max_tokens=2800,
             )
         except Exception as e:
             err = str(e).lower()
@@ -499,7 +561,7 @@ class AIService:
             ):
                 logger.warning("Vision not supported, retrying text-only: %s", e)
                 return await self._chat(
-                    system=system, content=context, max_tokens=2500
+                    system=system, content=context, max_tokens=2800
                 )
             raise
 
@@ -562,58 +624,134 @@ class AIService:
         photo_count: int = 0,
         similar_listings: list[dict] | None = None,
         listing_age_days: int | None = None,
+        anomaly_flags: list[str] | None = None,
+        deal_score: float | None = None,
+        deal_verdict: str | None = None,
     ) -> str:
-        # Detect category for display in context
-        category = detect_category(title, parameters)
+        parts = [f"## ОБЪЯВЛЕНИЕ: {title}"]
 
-        # Pre-compute price position relative to market
+        # Price position
         price_pos = "позиция неизвестна"
+        price_delta_pct = 0.0
         if market_median and market_q1 and market_q3:
+            price_delta_pct = (price_byn - market_median) / market_median * 100
             if price_byn <= market_q1:
-                price_pos = "НИЖЕ Q1 — дешёвое предложение"
+                price_pos = f"НИЖЕ Q1 ({market_q1:.0f} BYN) — дешёвое"
             elif price_byn <= market_median:
                 price_pos = "между Q1 и медианой — ниже средней"
             elif price_byn <= market_q3:
                 price_pos = "между медианой и Q3 — средняя цена"
             else:
-                price_pos = "ВЫШЕ Q3 — дорогое предложение"
+                price_pos = f"ВЫШЕ Q3 ({market_q3:.0f} BYN) — дорогое"
         elif market_median:
-            delta = (price_byn - market_median) / market_median * 100
-            if delta < -10:
-                price_pos = "значительно ниже медианы"
-            elif delta < 0:
+            price_delta_pct = (price_byn - market_median) / market_median * 100
+            if price_delta_pct < -10:
+                price_pos = f"на {abs(price_delta_pct):.0f}% ниже медианы"
+            elif price_delta_pct < 0:
                 price_pos = "немного ниже медианы"
-            elif delta < 10:
+            elif price_delta_pct < 10:
                 price_pos = "около медианы"
             else:
-                price_pos = "значительно выше медианы"
+                price_pos = f"на {price_delta_pct:.0f}% выше медианы"
 
-        parts = [f"Объявление: {title}"]
         parts.append(f"Цена: {price_byn:.0f} BYN ({price_pos})")
+        parts.append(f"Отклонение от медианы: {price_delta_pct:+.0f}%")
+
         if condition:
-            parts.append(f"Состояние: {condition}")
+            parts.append(f"Состояние (заявлено): {condition}")
         if seller_type:
-            parts.append(f"Продавец: {'магазин' if seller_type == 'shop' else 'частное лицо'}")
+            parts.append(f"Продавец: {'магазин/дилер' if seller_type == 'shop' else 'частное лицо'}")
+        if listing_age_days is not None:
+            if listing_age_days == 0:
+                parts.append("Опубликовано: сегодня")
+            elif listing_age_days == 1:
+                parts.append("Опубликовано: вчера")
+            else:
+                parts.append(f"Опубликовано: {listing_age_days} дн. назад")
+        if photo_count:
+            parts.append(f"Количество фото: {photo_count}")
+
+        # Market statistics
         if market_median:
-            delta_pct = (price_byn - market_median) / market_median * 100 if market_median else 0
-            parts.append(f"Рынок: медиана {market_median:.0f} BYN ({delta_pct:+.0f}%), {market_count} объявлений")
+            parts.append(f"\n## РЫНОК")
             if market_q1 and market_q3:
-                parts.append(f"Q1={market_q1:.0f} Q3={market_q3:.0f} BYN")
+                parts.append(
+                    f"Медиана: {market_median:.0f} BYN | "
+                    f"Объявлений: {market_count} | "
+                    f"Q1={market_q1:.0f} | Q3={market_q3:.0f} BYN"
+                )
+            else:
+                parts.append(
+                    f"Медиана: {market_median:.0f} BYN | Объявлений: {market_count}"
+                )
+            if market_min and market_max:
+                parts.append(f"Диапазон: {market_min:.0f} — {market_max:.0f} BYN")
+
+            # Pre-computed fair range guidance
+            if market_q1 and market_q3:
+                iqr = market_q3 - market_q1
+                if iqr > 0:
+                    parts.append(
+                        f"Справедливый диапазон (Q1-Q3): "
+                        f"{market_q1:.0f} — {market_q3:.0f} BYN"
+                    )
+                    if price_byn < market_q1:
+                        parts.append(
+                            f"Цена НА {market_q1 - price_byn:.0f} BYN ниже "
+                            f"справедливого диапазона — хорошая сделка или есть причины"
+                        )
+                    elif price_byn > market_q3:
+                        parts.append(
+                            f"Цена НА {price_byn - market_q3:.0f} BYN выше "
+                            f"справедливого диапазона — продавец хочет больше рынка"
+                        )
+
+        # Anomaly flags
+        if anomaly_flags:
+            parts.append(f"\n## АНОМАЛИИ: {', '.join(anomaly_flags)}")
+        if deal_score is not None:
+            parts.append(f"Оценка сделки: {deal_score:.0f}/100 ({deal_verdict or '?'})")
+
+        # All parameters (not truncated)
         if parameters:
             params_str = ", ".join(
-                f"{p.get('label', '')}: {p.get('value', '')}" for p in parameters[:6]
+                f"{p.get('label', '')}: {p.get('value', '')}" for p in parameters
             )
-            parts.append(f"Параметры: {params_str}")
+            parts.append(f"\n## ПАРАМЕТРЫ: {params_str}")
+
+        # Full description
         if description:
-            parts.append(f"Описание: {description[:400]}")
+            parts.append(f"\n## ОПИСАНИЕ ПРОДАВЦА:\n{description[:1200]}")
+
+        # Similar listings — enriched with price deltas
         if similar_listings:
-            parts.append("Альтернативы:")
-            for i, sl in enumerate(similar_listings[:3], 1):
+            parts.append(f"\n## АЛЬТЕРНАТИВЫ ({len(similar_listings)} вариантов):")
+            for i, sl in enumerate(similar_listings[:5], 1):
+                price_diff = sl.get("price_byn", 0) - price_byn
+                if price_diff > 0:
+                    diff_str = f"на {price_diff:.0f} BYN дороже"
+                elif price_diff < 0:
+                    diff_str = f"на {abs(price_diff):.0f} BYN дешевле"
+                else:
+                    diff_str = "та же цена"
+                age_str = ""
+                ad = sl.get("age_days")
+                if ad is not None:
+                    age_str = f", {ad} дн." if ad > 0 else ", сегодня"
+
                 parts.append(
-                    f"  {i}. [{sl.get('ad_id')}] {sl.get('title', '')[:50]} — "
-                    f"{sl.get('price_byn', 0):.0f} BYN, "
-                    f"{sl.get('condition') or 'не указано'}"
+                    f"  {i}. [{sl.get('ad_id')}] "
+                    f"{sl.get('title', '')[:60]} — "
+                    f"{sl.get('price_byn', 0):.0f} BYN ({diff_str}), "
+                    f"{sl.get('condition') or 'не указано'}, "
+                    f"{sl.get('seller_type', '?')}{age_str}"
                 )
+                desc = (sl.get("description") or "").strip()
+                if desc:
+                    parts.append(f"     Описание: {desc[:200]}")
+                params = (sl.get("parameters") or "").strip()
+                if params:
+                    parts.append(f"     Параметры: {params[:150]}")
 
         return "\n".join(parts)
 
