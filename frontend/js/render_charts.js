@@ -17,6 +17,7 @@ function createRenderCharts(context) {
         trapFocus,
         hasTelegramInitData,
         escapeHtml: escapeHtml,
+        safeUrl: safeUrl,
         safeRender: safeRender,
     } = context;
 
@@ -401,7 +402,7 @@ function createRenderCharts(context) {
             const dateStr = lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("ru-RU") : "";
 
             const thumbMarkup = lead.thumbnail
-                ? `<img class="history-deal-thumb" src="${escapeHtml(lead.thumbnail)}" alt="" loading="lazy">`
+                ? `<img class="history-deal-thumb" src="${safeUrl(lead.thumbnail)}" alt="" loading="lazy">`
                 : `<div class="history-deal-thumb-placeholder">📦</div>`;
 
             card.innerHTML = `

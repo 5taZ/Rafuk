@@ -30,6 +30,19 @@ function createRenderCore(context) {
         return _escapeDiv.innerHTML;
     }
 
+    /**
+     * Validate URL is safe for href/src attributes.
+     * Blocks javascript:, data:, and other dangerous schemes.
+     */
+    function safeUrl(url) {
+        if (!url || typeof url !== "string") return "";
+        const trimmed = url.trim().toLowerCase();
+        if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) {
+            return url;
+        }
+        return "";
+    }
+
     function safeRender(name, fn) {
         try {
             return fn();
@@ -193,7 +206,9 @@ function createRenderCore(context) {
     function renderViewTabs() {
         return safeRender('renderViewTabs', () => {
             for (const button of elements.viewTabs) {
-                button.classList.toggle("active", button.dataset.view === state.activeView);
+                const isActive = button.dataset.view === state.activeView;
+                button.classList.toggle("active", isActive);
+                button.setAttribute("aria-selected", String(isActive));
             }
         });
     }
@@ -328,6 +343,7 @@ function createRenderCore(context) {
 
     return {
         escapeHtml,
+        safeUrl,
         showToast,
         dismissToast,
         renderError,

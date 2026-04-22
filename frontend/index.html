@@ -604,48 +604,50 @@
             <div class="detail-top-bar">
                 <button class="detail-close" id="detail-close" type="button" aria-label="Закрыть">×</button>
             </div>
-            <div class="detail-media" id="detail-media" aria-label="Фото объявления 1 из 1">
-                <img id="detail-main-image" alt="" hidden>
-                <div class="detail-no-image" id="detail-no-image">Нет фото</div>
-            </div>
-            <div class="detail-thumbs" id="detail-thumbs"></div>
-            <div class="detail-head">
-                <div class="detail-head-main">
-                    <h3 class="detail-title" id="detail-title"></h3>
-                    <div class="detail-price mono" id="detail-price"></div>
+            <div class="detail-sheet-content">
+                <div class="detail-media" id="detail-media" aria-label="Фото объявления 1 из 1">
+                    <img id="detail-main-image" alt="" hidden>
+                    <div class="detail-no-image" id="detail-no-image">Нет фото</div>
                 </div>
-            </div>
-            <div class="detail-meta" id="detail-meta"></div>
-            <p class="detail-description" id="detail-description" hidden></p>
-            <section class="detail-block" id="detail-profit-block" hidden>
-                <h4 class="detail-block-title">Перепродажа</h4>
-                <div class="detail-fields" id="detail-profit"></div>
-            </section>
-            <section class="detail-block" id="detail-liquidity-block" hidden>
-                <h4 class="detail-block-title">Ликвидность</h4>
-                <div class="detail-fields" id="detail-liquidity"></div>
-            </section>
-            <section class="detail-block" id="detail-params-block" hidden>
-                <h4 class="detail-block-title">Параметры</h4>
-                <div class="detail-fields" id="detail-params"></div>
-            </section>
-            <section class="detail-block" id="detail-seller-block" hidden>
-                <h4 class="detail-block-title">Продавец</h4>
-                <div class="detail-fields" id="detail-seller"></div>
-            </section>
-            <section class="detail-block" id="detail-risk-block" hidden>
-                <h4 class="detail-block-title">Оценка рисков</h4>
-                <div class="detail-fields" id="detail-risks"></div>
-            </section>
-            <section class="detail-block" id="detail-ai-block" hidden>
-                <h4 class="detail-block-title">AI Анализ</h4>
-                <div id="detail-ai-content"></div>
-            </section>
-            <div class="listing-actions detail-bottom-actions">
-                <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
-                <button class="listing-btn" id="detail-add-watchlist-btn" type="button">В избранное</button>
-                <button class="listing-btn listing-btn--ai" id="detail-ai-btn" type="button">AI анализ</button>
-                <a class="listing-btn listing-btn--accent" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
+                <div class="detail-thumbs" id="detail-thumbs"></div>
+                <div class="detail-head">
+                    <div class="detail-head-main">
+                        <h3 class="detail-title" id="detail-title"></h3>
+                        <div class="detail-price mono" id="detail-price"></div>
+                    </div>
+                </div>
+                <div class="detail-meta" id="detail-meta"></div>
+                <p class="detail-description" id="detail-description" hidden></p>
+                <section class="detail-block" id="detail-profit-block" hidden>
+                    <h4 class="detail-block-title">Перепродажа</h4>
+                    <div class="detail-fields" id="detail-profit"></div>
+                </section>
+                <section class="detail-block" id="detail-liquidity-block" hidden>
+                    <h4 class="detail-block-title">Ликвидность</h4>
+                    <div class="detail-fields" id="detail-liquidity"></div>
+                </section>
+                <section class="detail-block" id="detail-params-block" hidden>
+                    <h4 class="detail-block-title">Параметры</h4>
+                    <div class="detail-fields" id="detail-params"></div>
+                </section>
+                <section class="detail-block" id="detail-seller-block" hidden>
+                    <h4 class="detail-block-title">Продавец</h4>
+                    <div class="detail-fields" id="detail-seller"></div>
+                </section>
+                <section class="detail-block" id="detail-risk-block" hidden>
+                    <h4 class="detail-block-title">Оценка рисков</h4>
+                    <div class="detail-fields" id="detail-risks"></div>
+                </section>
+                <section class="detail-block" id="detail-ai-block" hidden>
+                    <h4 class="detail-block-title">AI Анализ</h4>
+                    <div id="detail-ai-content"></div>
+                </section>
+                <div class="listing-actions detail-bottom-actions">
+                    <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
+                    <button class="listing-btn" id="detail-add-watchlist-btn" type="button">В избранное</button>
+                    <button class="listing-btn listing-btn--ai" id="detail-ai-btn" type="button">AI анализ</button>
+                    <a class="listing-btn listing-btn--accent" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
+                </div>
             </div>
         </div>
     </div>
@@ -656,37 +658,39 @@
             <div class="detail-top-bar">
                 <button class="detail-close" id="expenses-close" type="button" aria-label="Закрыть">×</button>
             </div>
-            <h3 class="detail-title" id="expenses-title">Расходы</h3>
-            <p class="section-note" id="expenses-subtitle" hidden></p>
-            <div class="expenses-list" id="expenses-list"></div>
-            <div class="expense-form-wrap" id="expense-form-wrap">
-                <div class="contact-form">
-                    <label class="workflow-field">
-                        <span class="workflow-field-label">Тип</span>
-                        <div class="deal-range-input-wrap workflow-input-wrap">
-                            <select id="expense-type-select" class="deal-select">
-                                <option value="delivery">Доставка</option>
-                                <option value="repair">Ремонт</option>
-                                <option value="other">Другое</option>
-                            </select>
+            <div class="detail-sheet-content">
+                <h3 class="detail-title" id="expenses-title">Расходы</h3>
+                <p class="section-note" id="expenses-subtitle" hidden></p>
+                <div class="expenses-list" id="expenses-list"></div>
+                <div class="expense-form-wrap" id="expense-form-wrap">
+                    <div class="contact-form">
+                        <label class="workflow-field">
+                            <span class="workflow-field-label">Тип</span>
+                            <div class="deal-range-input-wrap workflow-input-wrap">
+                                <select id="expense-type-select" class="deal-select">
+                                    <option value="delivery">Доставка</option>
+                                    <option value="repair">Ремонт</option>
+                                    <option value="other">Другое</option>
+                                </select>
+                            </div>
+                        </label>
+                        <label class="workflow-field">
+                            <span class="workflow-field-label">Сумма</span>
+                            <div class="deal-range-input-wrap workflow-input-wrap">
+                                <input id="expense-amount-input" type="number" min="0" step="1" inputmode="numeric" placeholder="50">
+                                <span id="expense-currency-label">BYN</span>
+                            </div>
+                        </label>
+                        <label class="workflow-field workflow-field-wide">
+                            <span class="workflow-field-label">Заметка</span>
+                            <div class="deal-range-input-wrap workflow-input-wrap">
+                                <input id="expense-notes-input" type="text" placeholder="курьер, ремонт экрана">
+                            </div>
+                        </label>
+                        <div class="contact-form-actions">
+                            <button class="primary-btn small" id="save-expense-btn" type="button">Добавить</button>
+                            <button class="ghost-btn small" id="cancel-expense-btn" type="button">Отмена</button>
                         </div>
-                    </label>
-                    <label class="workflow-field">
-                        <span class="workflow-field-label">Сумма</span>
-                        <div class="deal-range-input-wrap workflow-input-wrap">
-                            <input id="expense-amount-input" type="number" min="0" step="1" inputmode="numeric" placeholder="50">
-                            <span id="expense-currency-label">BYN</span>
-                        </div>
-                    </label>
-                    <label class="workflow-field workflow-field-wide">
-                        <span class="workflow-field-label">Заметка</span>
-                        <div class="deal-range-input-wrap workflow-input-wrap">
-                            <input id="expense-notes-input" type="text" placeholder="курьер, ремонт экрана">
-                        </div>
-                    </label>
-                    <div class="contact-form-actions">
-                        <button class="primary-btn small" id="save-expense-btn" type="button">Добавить</button>
-                        <button class="ghost-btn small" id="cancel-expense-btn" type="button">Отмена</button>
                     </div>
                 </div>
             </div>

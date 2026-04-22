@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import MutableMapping
+import time
+from collections import OrderedDict
 from typing import Any, Protocol
 
 from redis.asyncio import Redis
@@ -20,15 +21,44 @@ class CacheBackend(Protocol):
 
 
 class MemoryCache:
+    """In-memory cache with TTL enforcement and LRU eviction."""
+
+    MAX_ENTRIES = 500
+
     def __init__(self) -> None:
-        self._storage: MutableMapping[str, str] = {}
+        self._storage: OrderedDict[str, tuple[str, float]] = OrderedDict()
+        # (value, expires_at) — expires_at=0 means no expiry
+
+    def _evict_expired(self) -> None:
+        """Remove expired entries."""
+        now = time.monotonic()
+        expired = [
+            k for k, (_, exp) in self._storage.items() if exp > 0 and now >= exp
+        ]
+        for k in expired:
+            del self._storage[k]
 
     async def get(self, key: str) -> str | None:
-        return self._storage.get(key)
+        entry = self._storage.get(key)
+        if entry is None:
+            return None
+        value, expires_at = entry
+        if expires_at > 0 and time.monotonic() >= expires_at:
+            del self._storage[key]
+            return None
+        # Move to end (most recently used)
+        self._storage.move_to_end(key)
+        return value
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
-        del ttl
-        self._storage[key] = value
+        expires_at = 0.0
+        if ttl and ttl > 0:
+            expires_at = time.monotonic() + ttl
+        self._storage[key] = (value, expires_at)
+        self._storage.move_to_end(key)
+        # Evict oldest if over capacity
+        while len(self._storage) > self.MAX_ENTRIES:
+            self._storage.popitem(last=False)
 
     async def get_json(self, key: str) -> Any:
         value = await self.get(key)
@@ -62,6 +92,10 @@ class RedisCache:
                 retry_on_timeout=False,
             )
         )
+
+    async def aclose(self) -> None:
+        """Close the Redis connection pool."""
+        await self._client.aclose()
 
     async def get(self, key: str) -> str | None:
         try:

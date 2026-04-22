@@ -5,7 +5,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import logging
+
 from slowapi.errors import RateLimitExceeded
+
+logger = logging.getLogger(__name__)
 
 from api.config import get_settings
 from api.database import get_engine, get_session_factory
@@ -63,6 +67,14 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Close AI service httpx client
+        from api.services.ai_service import get_ai_service
+        ai = get_ai_service()
+        if ai and hasattr(ai, "_httpx_client") and ai._httpx_client:
+            await ai._httpx_client.aclose()
+        # Close Redis connection pool
+        if isinstance(cache, RedisCache):
+            await cache.aclose()
         await currency_service.aclose()
         await engine.dispose()
 
@@ -72,12 +84,33 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Rafuks API", lifespan=lifespan)
 
     # Add CORS middleware
+    origins = [settings.mini_app_url, settings.api_base_url]
+    if settings.debug:
+        origins.extend([
+            "http://localhost:8081",
+            "http://127.0.0.1:8081",
+            "http://localhost:8010",
+            "http://127.0.0.1:8010",
+        ])
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.mini_app_url, settings.api_base_url],
+        allow_origins=origins,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["X-Telegram-Init-Data", "Content-Type", "Accept"],
     )
+
+    # Global exception handler — ensures JSON responses for ALL errors
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        logger.error(
+            "Unhandled exception on %s %s: [%s] %s",
+            request.method, request.url.path,
+            type(exc).__name__, exc,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Внутренняя ошибка сервера. Попробуйте позже."},
+        )
 
     # Security headers middleware
     @app.middleware("http")

@@ -11,6 +11,7 @@ function createApiListings(context) {
         elements,
         hasTelegramInitData,
         renderAll,
+        scheduleRender,
         markDirty,
         renderLoading,
         renderError,
@@ -151,7 +152,7 @@ function createApiListings(context) {
                     }
                     dependency.apply(payload);
                     markDirty('stats', 'history', 'comparison', 'segments', 'geography', 'listings', 'deals');
-                    renderAll();
+                    scheduleRender();
                 })
                 .catch((err) => {
                     if (err.name === "AbortError" || !isActiveRequest(requestId)) {
@@ -159,7 +160,7 @@ function createApiListings(context) {
                     }
                     state._listingsPending = false;
                     markDirty('stats', 'history', 'comparison', 'segments', 'geography', 'listings', 'deals');
-                    renderAll();
+                    scheduleRender();
                 });
         }
     }

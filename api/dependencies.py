@@ -47,13 +47,17 @@ def get_session_factory_dependency(request: Request) -> async_sessionmaker[Async
 def get_telegram_user(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ) -> TelegramInitData:
+    settings = get_settings()
     if not x_telegram_init_data:
+        if settings.debug:
+            logger.warning("Debug mode: allowing request without Telegram initData")
+            return TelegramInitData(user_id=0, first_name="Debug", raw={})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing Telegram initData header",
         )
     try:
-        bot_token = get_settings().bot_token.get_secret_value()
+        bot_token = settings.bot_token.get_secret_value()
         return verify_telegram_init_data(x_telegram_init_data, bot_token)
     except ValueError as exc:
         raise HTTPException(

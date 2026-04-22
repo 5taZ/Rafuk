@@ -17,6 +17,7 @@ function createRenderTrackers(context) {
         trapFocus,
         hasTelegramInitData,
         escapeHtml: escapeHtml,
+        safeUrl: safeUrl,
         safeRender: safeRender,
     } = context;
 
@@ -286,7 +287,7 @@ function createRenderTrackers(context) {
             card.innerHTML = `
                 <div class="event-header">
                     ${event.thumbnail
-                        ? `<img class="event-thumbnail" src="${escapeHtml(event.thumbnail)}" alt="" loading="lazy">`
+                        ? `<img class="event-thumbnail" src="${safeUrl(event.thumbnail)}" alt="" loading="lazy">`
                         : `<div class="event-thumbnail-placeholder">📱</div>`
                     }
                     <div class="event-body">
@@ -311,7 +312,7 @@ function createRenderTrackers(context) {
                 <div class="event-actions">
                     <button class="listing-btn" data-role="open-query" type="button">Открыть</button>
                     <button class="listing-btn" data-role="lead" type="button">В покупки</button>
-                    <a class="listing-btn listing-btn--accent" href="${escapeHtml(event.link)}" target="_blank" rel="noreferrer noopener">Kufar →</a>
+                    <a class="listing-btn listing-btn--accent" href="${safeUrl(event.link)}" target="_blank" rel="noreferrer noopener">Kufar →</a>
                 </div>
             `;
 

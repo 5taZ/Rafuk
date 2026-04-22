@@ -41,30 +41,28 @@ set_env_var() {
 }
 
 stop_existing() {
-    pkill -f 'uv run uvicorn api.main:app --host 0.0.0.0 --port 8010' || true
-    pkill -f 'uv run uvicorn api.main:app --host 127.0.0.1 --port 8010' || true
+    # Kill by port (most reliable — catches both uv run and direct python)
+    for port in 8010; do
+        local pids
+        pids="$(lsof -ti :"$port" 2>/dev/null)" || true
+        if [[ -n "$pids" ]]; then
+            kill $pids 2>/dev/null || true
+        fi
+    done
+
+    # Kill by process pattern (catches bot/scheduler regardless of how launched)
+    pkill -f 'uvicorn api.main:app' || true
     pkill -f 'python -m bot.main' || true
     pkill -f 'python -m scheduler.collector' || true
+
+    sleep 1
 
     if [[ -f "$RUN_DIR/cloudflared.pid" ]]; then
         kill "$(cat "$RUN_DIR/cloudflared.pid")" 2>/dev/null || true
         rm -f "$RUN_DIR/cloudflared.pid"
     fi
 
-    if [[ -f "$RUN_DIR/api.pid" ]]; then
-        kill "$(cat "$RUN_DIR/api.pid")" 2>/dev/null || true
-        rm -f "$RUN_DIR/api.pid"
-    fi
-
-    if [[ -f "$RUN_DIR/bot.pid" ]]; then
-        kill "$(cat "$RUN_DIR/bot.pid")" 2>/dev/null || true
-        rm -f "$RUN_DIR/bot.pid"
-    fi
-
-    if [[ -f "$RUN_DIR/scheduler.pid" ]]; then
-        kill "$(cat "$RUN_DIR/scheduler.pid")" 2>/dev/null || true
-        rm -f "$RUN_DIR/scheduler.pid"
-    fi
+    rm -f "$RUN_DIR/api.pid" "$RUN_DIR/bot.pid" "$RUN_DIR/scheduler.pid"
 }
 
 wait_for_http() {

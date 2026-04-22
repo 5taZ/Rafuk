@@ -49,17 +49,14 @@ Three long-running services + static frontend. All share the same PostgreSQL dat
 
 3. **Scheduler** (`scheduler/collector.py`) — APScheduler loop that periodically checks all active trackers, detects new listings and price drops, notifies users via bot, and persists `TrackerEvent` rows.
 
-4. **Frontend** (`frontend/`) — Vanilla JS single-page app served by Nginx container on `:8081`. No build step. Four files:
-   - `app_core.js` — state object, DOM element cache, formatters, Telegram theme init
-   - `app_renderers.js` — all DOM rendering functions, Chart.js charts, toast notifications
-   - `app_actions.js` — API calls, event binding, user actions
-   - `app.js` — entry point that wires everything together
+4. **Frontend** (`frontend/`) — Vanilla JS single-page app served by Nginx container on `:8081`. No build step. Nginx proxies `/api/` to the API backend (`nginx/default.conf`).
 
 ### Data Flow
 
 ```
 Frontend (Telegram WebApp)
   → fetch with X-Telegram-Init-Data header
+  → Nginx proxy (/api/ → backend :8010)
   → FastAPI router
   → KufarClient (api.kufar.by/search-rendered-paginated)
   → aggregator computes stats (median, mean, fair range, segments)
@@ -99,13 +96,59 @@ Scheduler (every N minutes)
 - `deal_workflow.py` — lead/watchlist CRUD, status transitions, per-item liquidity scoring
 - `query_pipeline.py` — `QueryDataset` dataclass and `load_query_dataset()` / `load_segment_datasets()` — shared query parameter parsing across routers
 - `listing_mapper.py` — transforms raw Kufar ad dicts into `ListingItem`/`ListingDetailResponse` schemas. Image base URL: `https://rms.kufar.by/v1/gallery/`
-- `currency_service.py` — BYN↔USD conversion. All DB prices in BYN. `state.usdRateByn` in frontend = BYN per 1 USD.
+- `ai_service.py` — OpenAI-compatible API client (Together AI). Gemma 4 uses internal reasoning tokens; `response_format` must NOT be used (causes empty `content`). Reads from `reasoning` field as fallback. Temperature 0.3, max_tokens 4000.
+- `cache.py` — `RedisCache` (primary) and `MemoryCache` (OrderedDict with TTL + LRU eviction, max 500 entries). Both have `get_json`/`set_json` helpers.
+- `currency_service.py` — BYN↔USD conversion. All DB prices in BYN.
+
+### Key Routers (`api/routers/`)
+
+- `ai_analysis.py` — `/ai/analyze` (full AI analysis with images + market context), `/ai/quick-condition` (photo-only condition check). Rate-limited, cached, uses `asyncio.wait_for(timeout=240)`.
+- `listings.py` — search listings, cheap deals
+- `listing_detail.py` — single listing detail
+- `trackers.py` — CRUD for tracker queries
+- `workflow.py` — lead/watchlist CRUD and status transitions
+- `price_stats.py` — market statistics for a query
+- `price_history.py` — time-series price snapshots
+- `segments.py` — price segmentation
+- `geography.py` — geographic distribution
+- `compare.py` — side-by-side query comparison
+- `risks.py` — listing risk assessment
 
 ### Frontend Architecture
 
-Module pattern: each JS file exports a factory function. `app.js` creates core → renderers → actions, passing shared context. The `state` object in `app_core.js` is the single source of truth. All DOM updates go through `render*()` functions in `app_renderers.js`. Event handlers in `app_actions.js` call API endpoints, update state, then call render functions.
+**Module pattern**: each JS file exports a factory function (`createXxx`). `app.js` is the entry point:
 
-Views: overview, ads, tracking, cheap, monitoring, deals — switched via `data-view` tabs. Sections within overview are collapsible panels.
+```
+app.js
+  → createAppCore()         — state, DOM cache, formatters
+  → createAppRenderers()    — composition hub, delegates to sub-modules
+  → createAppActions()      — API calls, event binding
+```
+
+**Renderer modules** (all instantiated by `createAppRenderers` in `app_renderers.js`):
+- `render_core.js` — toast, error bar, loading skeletons, view tabs, panels, summary, helper
+- `render_cards.js` — listing cards, deal cards, watchlist cards, opportunity board
+- `render_views.js` — view switching, history range buttons, deals hero stats, deal inputs, tracker inputs
+- `render_modals.js` — detail modal, expenses modal
+- `render_charts.js` — price distribution chart, history chart, profit dashboard, history deals
+- `render_trackers.js` — tracker cards, tracker events with virtual scrolling, event filters
+
+**API modules** (all instantiated by `createAppActions` in `app_actions.js`):
+- `api_core.js` — HTTP primitives (`getJson`, `postJson`, `deleteJson`), query builder, Telegram headers
+- `api_listings.js` — search, listings, detail, segments, geography, history, deals
+- `api_trackers.js` — tracker CRUD, event loading
+- `api_events.js` — all DOM event binding (click, touch, keyboard)
+- `api_watchlist.js` — watchlist CRUD
+- `api_leads.js` — lead/deal CRUD
+- `api_ai.js` — AI analysis modal with progress animation
+
+**Cross-module communication**: `context._hooks` object shared between renderer modules. Example: `render_core.js` calls `context._hooks.renderChart()` to trigger chart rendering from the charts module.
+
+**State**: `state` object in `app_core.js` is the single source of truth. All DOM updates go through `render*()` functions. Event handlers call API endpoints, update state, then call render functions.
+
+**Views**: overview, ads, tracking, cheap, monitoring, deals — switched via `data-view` tabs.
+
+**Modals**: bottom-sheet style (`detail-sheet`). Body scroll is locked via `document.body.classList.add("modal-open")` when any modal is open. Content scrolls inside `.detail-sheet-content` (detail/expenses modals) or `.ai-modal-body` (AI modal) via flex layout + `overflow-y: auto; -webkit-overflow-scrolling: touch`.
 
 ### Kufar API Response Structure
 
@@ -138,6 +181,10 @@ Environment variables loaded from `.env` via pydantic-settings (`api/config.py`)
 - `KUFAR_REQUEST_DELAY` — delay between Kufar API calls (default 1.0s)
 - `KUFAR_PARALLEL_SEMAPHORE` — max parallel Kufar requests (default 3)
 - `ALERT_CHECK_INTERVAL` — scheduler tracker check interval in minutes (default 30)
+- `AI_API_KEY` — Together AI API key (SecretStr)
+- `AI_BASE_URL` — OpenAI-compatible API base URL (default: `https://api.together.xyz/v1`)
+- `AI_MODEL` — model ID (default: `google/gemma-4-31B-it`)
+- `AI_PROXY_URL` — optional HTTP proxy for AI API calls
 
 Docker Compose maps PostgreSQL `5432→5433` and Redis `6379→6380` to avoid conflicts with local installs.
 
@@ -146,6 +193,15 @@ Docker Compose maps PostgreSQL `5432→5433` and Redis `6379→6380` to avoid co
 - Python: ruff linting (E/W/F/I/N/UP/B/SIM/TCH), line length 99, isort with known-first-party `[api, bot, scheduler]`
 - Async everywhere: SQLAlchemy async sessions, httpx async client, aiogram 3
 - Frontend: no framework, no build step, vanilla JS with CSS custom properties for dark/light theming via `data-theme` attribute
-- Toast notifications: 1400ms auto-dismiss, created via `showToast()` in app_renderers.js
-- All user-scoped endpoints require `X-Telegram-Init-Data` header; public endpoints (price-stats, listings, etc.) do not
-- Currency: all DB values in BYN. API returns in requested currency. Frontend converts using `state.usdRateByn` (BYN per 1 USD, so BYN→USD divides by this rate)
+- XSS prevention: use `escapeHtml()` for text content, `safeUrl()` for `href`/`src` attributes (blocks `javascript:`, `data:` schemes)
+- Modal scroll: `body.modal-open` locks page scroll; modal content scrolls inside `.detail-sheet-content` or `.ai-modal-body`
+- Toast notifications: 3000ms auto-dismiss, created via `showToast()` in render_core.js
+- All user-scoped endpoints require `X-Telegram-Init-Data` header; public endpoints do not
+- Currency: all DB values in BYN. API returns in requested currency. Frontend converts using `state.usdRateByn`
+- AI model (Gemma 4): does NOT support `response_format: {"type": "json_object"}` — causes empty `content`. Uses `reasoning` field for chain-of-thought. `_parse_json()` extracts JSON from either field
+- Nginx `proxy_read_timeout: 300s` — AI analysis can take 60-90 seconds; must not be lower
+
+## Known Issues
+
+- `ruff UP017` suggests `datetime.UTC` but this does not exist on the `datetime` class — use `timezone.utc` and ignore UP017
+- Gemma 4 on Together AI uses internal reasoning tokens that consume output budget — `max_tokens` must be ≥4000 for analysis prompts

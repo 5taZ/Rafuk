@@ -43,11 +43,10 @@ class Settings(BaseSettings):
     @classmethod
     def validate_https_url(cls, v: str) -> str:
         v = v.rstrip("/")
-        # Allow http:// for localhost/127.0.0.1 (local development)
         if v.startswith("http://") and not (
             v.startswith("http://127.0.0.1")
             or v.startswith("http://localhost")
-            or v.startswith("http://10.0.2.2")  # Docker host on Android emulator
+            or v.startswith("http://10.0.2.2")
         ):
             raise ValueError("URLs must use HTTPS unless using localhost/127.0.0.1")
         if not (v.startswith("https://") or v.startswith("http://")):

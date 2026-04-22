@@ -368,16 +368,18 @@ function createAppCore() {
         return delta > 0 ? "over" : "under";
     }
 
+    const _dateFormatter = new Intl.DateTimeFormat("ru-BY", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+
     function formatDate(value) {
         if (!value) return "";
         const date = new Date(value);
         if (Number.isNaN(date.getTime())) return "";
-        return new Intl.DateTimeFormat("ru-BY", {
-            day: "2-digit",
-            month: "short",
-            hour: "2-digit",
-            minute: "2-digit",
-        }).format(date);
+        return _dateFormatter.format(date);
     }
 
     function hasTelegramInitData() {

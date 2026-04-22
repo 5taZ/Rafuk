@@ -17,6 +17,7 @@ function createRenderCards(context) {
         trapFocus,
         hasTelegramInitData,
         escapeHtml: escapeHtml,
+        safeUrl: safeUrl,
         safeRender: safeRender,
     } = context;
 
@@ -121,7 +122,7 @@ function createRenderCards(context) {
         }
 
         const thumbMarkup = item.thumbnail
-            ? `<img class="listing-thumb" src="${escapeHtml(item.thumbnail)}" alt="" loading="lazy">`
+            ? `<img class="listing-thumb" src="${safeUrl(item.thumbnail)}" alt="" loading="lazy">`
             : `<div class="listing-thumb placeholder">Нет фото</div>`;
         const badgesMarkup = [freshnessMarkup, verdictMarkup, deltaMarkup].filter(Boolean).join("");
 
@@ -139,7 +140,7 @@ function createRenderCards(context) {
                 <button class="listing-btn" type="button">Подробнее</button>
                 <button class="listing-btn" data-role="lead" type="button">В покупки</button>
                 <button class="listing-btn" data-role="watch" type="button">В избранное</button>
-                <a class="listing-btn listing-btn--accent" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                <a class="listing-btn listing-btn--accent" href="${safeUrl(item.link)}" target="_blank" rel="noreferrer noopener">Kufar</a>
             </div>
         `;
 
@@ -351,7 +352,7 @@ function createRenderCards(context) {
                     <button class="ghost-btn small" data-role="open-detail" type="button">Подробнее</button>
                     <button class="ghost-btn small" data-role="lead" type="button">В покупки</button>
                     <button class="ghost-btn small" data-role="watch" type="button">В избранное</button>
-                    <a class="primary-link small" href="${escapeHtml(item.listing.link)}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                    <a class="primary-link small" href="${safeUrl(item.listing.link)}" target="_blank" rel="noreferrer noopener">Kufar</a>
                 </div>
             `;
             card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
@@ -532,7 +533,7 @@ function createRenderCards(context) {
             const priceByn = priceBynRaw ? Math.round(priceBynRaw) : null;
 
             const thumbMarkup = lead.thumbnail
-                ? `<img class="watchlist-thumb" src="${escapeHtml(lead.thumbnail)}" alt="" loading="lazy">`
+                ? `<img class="watchlist-thumb" src="${safeUrl(lead.thumbnail)}" alt="" loading="lazy">`
                 : `<div class="watchlist-thumb-placeholder">Нет фото</div>`;
 
             const missingBanner = isMissing
@@ -591,7 +592,7 @@ function createRenderCards(context) {
                 <div class="lead-card-actions">
                     ${!isSold ? `
                         <div class="lead-btn-row">
-                            <a class="lead-btn lead-btn--kufar" href="${escapeHtml(lead.link)}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
+                            <a class="lead-btn lead-btn--kufar" href="${safeUrl(lead.link)}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
                         </div>
                         <div class="lead-btn-row">
                             <button class="lead-btn lead-btn--confirm" data-role="confirm" type="button">✓</button>
@@ -788,7 +789,7 @@ function createRenderCards(context) {
             }
 
             const thumbMarkup = item.thumbnail
-                ? `<img class="watchlist-thumb" src="${escapeHtml(item.thumbnail)}" alt="" loading="lazy">`
+                ? `<img class="watchlist-thumb" src="${safeUrl(item.thumbnail)}" alt="" loading="lazy">`
                 : `<div class="watchlist-thumb-placeholder">Нет фото</div>`;
 
             const isMissing = item.market_status === "missing";
@@ -831,7 +832,7 @@ function createRenderCards(context) {
                 <div class="watchlist-card-actions">
                     <button class="wl-btn wl-btn--detail" data-role="detail" type="button">Подробнее</button>
                     ${!isMissing ? `<button class="wl-btn wl-btn--accent" data-role="lead" type="button">В покупки</button>` : ""}
-                    ${!isMissing ? `<a class="wl-btn" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>` : ""}
+                    ${!isMissing ? `<a class="wl-btn" href="${safeUrl(item.link)}" target="_blank" rel="noreferrer noopener">Kufar ↗</a>` : ""}
                     <button class="wl-btn wl-btn--danger" data-role="delete" type="button">Удалить</button>
                 </div>
             `;

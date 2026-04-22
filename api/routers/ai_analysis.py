@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -55,15 +57,39 @@ async def _check_rate_limit(request: Request, user_id: int) -> None:
     await cache.set(key, str(count + 1), ttl=3600)
 
 
+def _parse_list_age_days(list_time_str: str | None) -> int | None:
+    """Parse Kufar list_time to days-since-publication."""
+    if not list_time_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(list_time_str.replace("Z", "+00:00"))
+        # Make naive datetimes timezone-aware (assume UTC)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = now - dt
+        return max(0, delta.days)
+    except (ValueError, TypeError):
+        return None
+
+
 def _collect_similar_listings(
-    dataset, target_ad_id: int, target_price: float, median: float | None
+    dataset,
+    target_ad_id: int,
+    target_price: float,
+    median: float | None,
+    target_condition: str | None = None,
 ) -> list[dict]:
-    """Collect similar listings with rich data for AI comparison."""
+    """Collect similar listings with rich data for AI comparison.
+
+    Filters by price proximity (±30%/+30%) and prefers similar condition.
+    Returns up to 5 most relevant alternatives.
+    """
     if not median or target_price <= 0:
         return []
 
     price_min = target_price * 0.7
-    price_max = target_price * 1.15
+    price_max = target_price * 1.30
     similar: list[dict] = []
 
     for ad in dataset.ads:
@@ -73,32 +99,71 @@ def _collect_similar_listings(
         ad_price = normalize_price_byn(ad.get("price_byn")) or 0.0
         if ad_price <= 0:
             continue
-        if price_min <= ad_price <= price_max:
-            ad_condition = None
-            for param in ad.get("ad_parameters", []):
-                if param.get("p") == "condition":
-                    ad_condition = param.get("vl") or param.get("v")
-                    break
-            ad_desc = (ad.get("body", "") or ad.get("description", "")) or ""
-            ad_images = []
-            for img in (ad.get("images") or [])[:3]:
-                path = img.get("path", "")
-                if path:
-                    ad_images.append(f"https://rms.kufar.by/v1/gallery/{path}")
-            similar.append(
-                {
-                    "ad_id": ad_id,
-                    "title": ad.get("subject", "")[:80],
-                    "price_byn": ad_price,
-                    "image_url": first_image_url(ad),
-                    "image_urls": ad_images,
-                    "link": ad.get("ad_link", f"https://www.kufar.by/item/{ad_id}"),
-                    "deal_score": 0.0,
-                    "condition": ad_condition,
-                    "description": ad_desc[:200],
-                }
-            )
-    similar.sort(key=lambda item: item["price_byn"])
+        if not (price_min <= ad_price <= price_max):
+            continue
+
+        ad_condition = None
+        for param in ad.get("ad_parameters", []):
+            if param.get("p") == "condition":
+                ad_condition = param.get("vl") or param.get("v")
+                break
+
+        ad_desc = (ad.get("body", "") or ad.get("description", "")) or ""
+        ad_images = []
+        for img in (ad.get("images") or [])[:3]:
+            path = img.get("path", "")
+            if path:
+                ad_images.append(f"https://rms.kufar.by/v1/gallery/{path}")
+        ad_params = []
+        for param in ad.get("ad_parameters", []):
+            pk = param.get("p", "")
+            if pk in {"condition", "currency", "price", "users_synonyms"}:
+                continue
+            pl = param.get("pl") or pk
+            pv = param.get("vl") or str(param.get("v", ""))
+            if pl and pv:
+                ad_params.append(f"{pl}: {pv}")
+
+        # Compute relevance score for sorting
+        score = 0.0
+        # Prefer similar condition
+        if target_condition and ad_condition and target_condition == ad_condition:
+            score += 10.0
+        # Prefer closer to median
+        if median:
+            score -= abs(ad_price - median) / median * 5
+        # Prefer private sellers (usually better deals)
+        if not ad.get("company_ad"):
+            score += 1.0
+        # Prefer listings with photos
+        if ad_images:
+            score += 2.0
+        # Prefer newer listings
+        age_days = _parse_list_age_days(ad.get("list_time"))
+        if age_days is not None and age_days <= 3:
+            score += 1.5
+        elif age_days is not None and age_days <= 7:
+            score += 0.5
+
+        similar.append(
+            {
+                "ad_id": ad_id,
+                "title": ad.get("subject", "")[:80],
+                "price_byn": ad_price,
+                "image_url": first_image_url(ad),
+                "image_urls": ad_images,
+                "link": ad.get("ad_link", f"https://www.kufar.by/item/{ad_id}"),
+                "deal_score": score,
+                "condition": ad_condition,
+                "description": ad_desc[:300],
+                "seller_type": "shop" if ad.get("company_ad") else "private",
+                "parameters": ", ".join(ad_params[:8]),
+                "age_days": age_days,
+            }
+        )
+
+    # Sort by relevance score (best first), then price
+    similar.sort(key=lambda item: (-item["deal_score"], item["price_byn"]))
     return similar[:5]
 
 
@@ -110,13 +175,16 @@ async def analyze_listing(
 ):
     """Full AI analysis of a listing."""
     ai = _check_ai_available()
-    await _check_rate_limit(request, _user.user_id)
 
+    # Check cache BEFORE rate limit — cached results should not consume quota
     cache = get_cache(request)
     cache_key = f"ai_analysis:{payload.ad_id}:{payload.query}"
     cached = await cache.get_json(cache_key)
     if cached:
         return AIAnalysisResponse(**cached)
+
+    # Only count against rate limit for actual (non-cached) analysis
+    await _check_rate_limit(request, _user.user_id)
 
     settings = getattr(request.app.state, "settings", None)
     if settings is None:
@@ -179,17 +247,36 @@ async def analyze_listing(
         if label and value:
             parameters.append({"label": label, "value": value})
 
+    # Seller type: shop vs private
+    is_company = target_ad.get("company_ad", False)
+    seller_type = "shop" if is_company else "private"
+
+    # Photo count
+    all_images = target_ad.get("images") or []
+    photo_count = len(all_images)
+
+    # Listing age
+    listing_age_days = _parse_list_age_days(target_ad.get("list_time"))
+
     images = []
-    for img in (target_ad.get("images") or [])[:3]:
+    for img in all_images[:3]:
         path = img.get("path", "")
         if path:
             images.append(f"https://rms.kufar.by/v1/gallery/{path}")
 
-    median = dataset.price_stats.median if dataset.price_stats else None
-    count = dataset.price_stats.count if dataset.price_stats else 0
+    stats = dataset.price_stats
+    median = stats.median if stats else None
+    count = stats.count if stats else 0
+    q1 = stats.q1 if stats else None
+    q3 = stats.q3 if stats else None
+    price_min = stats.min if stats else None
+    price_max = stats.max if stats else None
 
     # Collect similar listings with rich data
-    similar = _collect_similar_listings(dataset, payload.ad_id, price_byn, median)
+    similar = _collect_similar_listings(
+        dataset, payload.ad_id, price_byn, median,
+        target_condition=condition,
+    )
 
     # Prepare similar listings for AI comparison (with images and descriptions)
     ai_similar_for_comparison = [
@@ -200,27 +287,48 @@ async def analyze_listing(
             "condition": s.get("condition"),
             "description": s.get("description", ""),
             "image_urls": s.get("image_urls", []),
+            "seller_type": s.get("seller_type"),
+            "parameters": s.get("parameters", ""),
+            "age_days": s.get("age_days"),
         }
         for s in similar
     ]
 
     try:
+        import time as _time
+        _t0 = _time.monotonic()
         logger.info(
             "AI analyze: calling ai.analyze_listing for '%s' (%d imgs, %d similar)",
             title[:50], len(images), len(ai_similar_for_comparison),
         )
-        result = await ai.analyze_listing(
-            title=title,
-            description=description,
-            price_byn=price_byn,
-            condition=condition,
-            parameters=parameters,
-            market_median=median,
-            market_count=count,
-            image_urls=images,
-            similar_listings=ai_similar_for_comparison,
+        result = await asyncio.wait_for(
+            ai.analyze_listing(
+                title=title,
+                description=description,
+                price_byn=price_byn,
+                condition=condition,
+                parameters=parameters,
+                market_median=median,
+                market_count=count,
+                market_q1=q1,
+                market_q3=q3,
+                market_min=price_min,
+                market_max=price_max,
+                seller_type=seller_type,
+                photo_count=photo_count,
+                listing_age_days=listing_age_days,
+                image_urls=images,
+                similar_listings=ai_similar_for_comparison,
+            ),
+            timeout=240,
         )
-        logger.info("AI analyze: success, keys=%s", list(result.keys()))
+        logger.info("AI analyze: success in %.1fs, keys=%s", _time.monotonic() - _t0, list(result.keys()))
+    except TimeoutError:
+        logger.error("AI analysis timed out after 240s for ad_id=%d", payload.ad_id)
+        raise HTTPException(
+            status_code=504,
+            detail="AI анализ занял слишком долго. Попробуйте ещё раз.",
+        ) from None
     except Exception as exc:
         logger.error(
             "AI analysis failed: [%s] %s\nProxy: %s",
@@ -240,6 +348,8 @@ async def analyze_listing(
                 "Не удалось подключиться к AI-сервису. "
                 "Возможно, требуется VPN на сервере."
             )
+        elif "insufficient balance" in err_str:
+            err_msg = "Баланс AI-сервиса исчерпан."
         # In debug mode, append actual error for diagnostics
         if settings and getattr(settings, "debug", False):
             err_msg += f" [{type(exc).__name__}: {exc}]"

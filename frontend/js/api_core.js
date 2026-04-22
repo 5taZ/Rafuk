@@ -32,11 +32,28 @@ function createApiCore(context) {
             ...telegramHeaders(),
             ...(options.headers || {}),
         };
-        const response = await fetch(url, {
-            ...options,
-            headers,
-            signal: options.signal || undefined,
-        });
+
+        // Default 90s timeout via AbortController (can be overridden per-request)
+        const timeoutMs = options.timeout || 90000;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        let response;
+        try {
+            response = await fetch(url, {
+                ...options,
+                headers,
+                signal: options.signal || controller.signal,
+            });
+        } catch (fetchErr) {
+            clearTimeout(timer);
+            if (fetchErr.name === "AbortError") {
+                throw new Error("Превышено время ожидания. Попробуйте ещё раз.");
+            }
+            throw fetchErr;
+        } finally {
+            clearTimeout(timer);
+        }
 
         if (!response.ok) {
             let message = "Не удалось выполнить запрос.";
@@ -65,11 +82,12 @@ function createApiCore(context) {
         return requestJson(url, options);
     }
 
-    function postJson(url, payload) {
+    function postJson(url, payload, extraOptions) {
         return requestJson(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
+            ...(extraOptions || {}),
         });
     }
 

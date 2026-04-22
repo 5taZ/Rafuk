@@ -16,6 +16,7 @@ function createRenderModals(context) {
         trapFocus,
         hasTelegramInitData,
         escapeHtml: escapeHtml,
+        safeUrl: safeUrl,
         safeRender: safeRender,
     } = context;
 
@@ -114,7 +115,7 @@ function createRenderModals(context) {
             const button = document.createElement("button");
             button.type = "button";
             button.className = `detail-thumb${state.detailImageIndex === index ? " active" : ""}`;
-            button.innerHTML = `<img src="${escapeHtml(image)}" alt="">`;
+            button.innerHTML = `<img src="${safeUrl(image)}" alt="">`;
             button.addEventListener("click", () => {
                 state.detailImageIndex = index;
                 renderDetailModal();
@@ -156,13 +157,13 @@ function createRenderModals(context) {
         }
 
         // Reset scroll position to top when modal opens
-        if (elements.detailModalContent) {
-            elements.detailModalContent.scrollTop = 0;
-        } else if (elements.detailModal) {
-            elements.detailModal.scrollTop = 0;
+        const scrollContainer = elements.detailModal?.querySelector(".detail-sheet-content");
+        if (scrollContainer) {
+            scrollContainer.scrollTop = 0;
         }
 
         elements.detailModal.hidden = false;
+        document.body.classList.add("modal-open");
         });
     }
 
@@ -220,6 +221,7 @@ function createRenderModals(context) {
             source: "",
         };
         renderDetailModal();
+        document.body.classList.remove("modal-open");
     }
 
     /* ===== Expenses Modal ===== */

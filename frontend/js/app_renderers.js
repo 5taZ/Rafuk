@@ -29,6 +29,7 @@ function createAppRenderers(context) {
 
     // Share escapeHtml and safeRender across sub-modules via context
     context.escapeHtml = core.escapeHtml;
+    context.safeUrl = core.safeUrl;
     context.safeRender = safeRender;
 
     const cards = createRenderCards(context);
@@ -83,6 +84,7 @@ function createAppRenderers(context) {
     // ── Forwarded functions (all names that app_actions.js destructures) ─
     const {
         escapeHtml,
+        safeUrl,
         showToast,
         dismissToast,
         renderError,
@@ -217,12 +219,26 @@ function createAppRenderers(context) {
         state.dirtyViews.clear();
     }
 
+    // Batch multiple renderAll calls into a single requestAnimationFrame.
+    // This prevents render cascades when parallel API calls each trigger renderAll.
+    let _renderScheduled = false;
+    function scheduleRender() {
+        if (!_renderScheduled) {
+            _renderScheduled = true;
+            requestAnimationFrame(() => {
+                _renderScheduled = false;
+                renderAll();
+            });
+        }
+    }
+
     // ── Public API (every name the original file exported) ───────────────
 
     return {
         showToast,
         dismissToast,
         escapeHtml,
+        safeUrl,
         renderError,
         renderLoading,
         renderStrictSearch,
@@ -270,5 +286,6 @@ function createAppRenderers(context) {
         renderHistory,
         renderHistoryChart,
         renderAll,
+        scheduleRender,
     };
 }

@@ -2,7 +2,7 @@
  * api_ai.js — AI listing analysis with dedicated modal.
  */
 function createApiAi(context) {
-    const { state, elements, postJson, escapeHtml, formatPrice, telegramHeaders } = context;
+    const { state, elements, postJson, escapeHtml, safeUrl, formatPrice, telegramHeaders } = context;
 
     let _aiLoading = false;
     let _aiProgress = 0;
@@ -10,8 +10,10 @@ function createApiAi(context) {
     const LOADING_STEPS = [
         "Загружаю данные объявления...",
         "Анализирую фотографии...",
-        "Сравниваю с другими вариантами...",
+        "Сравниваю с рынком...",
+        "Подбираю альтернативы...",
         "Формирую рекомендации...",
+        "Осталось немного...",
     ];
 
     function _updateProgressDisplay(pct) {
@@ -68,7 +70,17 @@ function createApiAi(context) {
         }
         if (elements.aiLoaderText) elements.aiLoaderText.textContent = "Анализ завершён!";
 
-        setTimeout(callback, 700);
+        setTimeout(() => {
+            try {
+                callback();
+            } catch (e) {
+                console.error("AI render error:", e);
+                if (elements.aiModalResult) {
+                    elements.aiModalResult.hidden = false;
+                    elements.aiModalResult.innerHTML = `<div class="ai-error">Ошибка отображения результата</div>`;
+                }
+            }
+        }, 500);
     }
 
     function openAIModal(subtitle) {
@@ -105,10 +117,11 @@ function createApiAi(context) {
         if (elements.aiModalError) elements.aiModalError.hidden = true;
         if (elements.aiModalResult) elements.aiModalResult.hidden = true;
         if (elements.aiModal) elements.aiModal.hidden = false;
+        document.body.classList.add("modal-open");
 
         // Scroll to top
-        const sheet = elements.aiModal?.querySelector(".detail-sheet");
-        if (sheet) sheet.scrollTop = 0;
+        const scrollBody = elements.aiModal?.querySelector(".ai-modal-body");
+        if (scrollBody) scrollBody.scrollTop = 0;
 
         _startLoadingAnimation();
     }
@@ -116,6 +129,7 @@ function createApiAi(context) {
     function closeAIModal() {
         _stopLoadingAnimation();
         if (elements.aiModal) elements.aiModal.hidden = true;
+        document.body.classList.remove("modal-open");
     }
 
     async function loadAIAnalysis(adId) {
@@ -147,7 +161,8 @@ function createApiAi(context) {
             const result = await postJson("/api/v1/ai/analyze", {
                 ad_id: adId,
                 query,
-            });
+            }, { timeout: 270000 });
+            console.log("[AI] Response received:", result ? "ok" : "null", result ? Object.keys(result).join(",") : "");
             state.detailAi = {
                 adId,
                 loading: false,
@@ -157,6 +172,7 @@ function createApiAi(context) {
             };
             _showCompletionThen(() => _renderAIModalResult(result));
         } catch (err) {
+            console.error("[AI] Request failed:", err);
             const message = `Не удалось выполнить анализ${err.message ? `: ${err.message}` : ""}`;
             state.detailAi = {
                 adId,
@@ -202,6 +218,7 @@ function createApiAi(context) {
     }
 
     function _renderAIModalResult(data) {
+        console.log("[AI] Rendering result, data keys:", data ? Object.keys(data).join(",") : "null");
         if (elements.aiModalLoading) elements.aiModalLoading.hidden = true;
         if (elements.aiModalError) elements.aiModalError.hidden = true;
 
@@ -267,8 +284,8 @@ function createApiAi(context) {
             const ba = data.best_alternative;
             html += `<div class="ai-section ai-section--best">
                 <span class="ai-label">Лучший вариант</span>
-                <a class="ai-best-link" href="${escapeHtml(ba.link)}" target="_blank" rel="noreferrer noopener">
-                    ${ba.image_url ? `<img class="ai-best-thumb" src="${escapeHtml(ba.image_url)}" alt="" loading="lazy">` : ""}
+                <a class="ai-best-link" href="${safeUrl(ba.link)}" target="_blank" rel="noreferrer noopener">
+                    ${ba.image_url ? `<img class="ai-best-thumb" src="${safeUrl(ba.image_url)}" alt="" loading="lazy">` : ""}
                     <div class="ai-best-info">
                         <span class="ai-best-title">${escapeHtml(ba.title)}</span>
                         <span class="ai-best-price mono">${Math.round(ba.price_byn)} BYN</span>
@@ -289,8 +306,8 @@ function createApiAi(context) {
                 html += `<div class="ai-section">
                     <span class="ai-label">Другие варианты (${others.length})</span>
                     <div class="ai-similar">${others.map(s =>
-                        `<a class="ai-similar-item" href="${escapeHtml(s.link)}" target="_blank" rel="noreferrer noopener">
-                            ${s.image_url ? `<img class="ai-similar-thumb" src="${escapeHtml(s.image_url)}" alt="" loading="lazy">` : ""}
+                        `<a class="ai-similar-item" href="${safeUrl(s.link)}" target="_blank" rel="noreferrer noopener">
+                            ${s.image_url ? `<img class="ai-similar-thumb" src="${safeUrl(s.image_url)}" alt="" loading="lazy">` : ""}
                             <div class="ai-similar-info">
                                 <span class="ai-similar-title">${escapeHtml(s.title)}</span>
                                 <span class="ai-similar-price mono">${Math.round(s.price_byn)} BYN${s.condition ? ` · ${escapeHtml(s.condition)}` : ""}</span>
