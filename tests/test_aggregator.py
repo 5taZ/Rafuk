@@ -6,8 +6,10 @@ from api.services.aggregator import (
     PriceStats,
     apply_search_mode,
     build_query_key,
+    compute_category_price_stats,
     compute_price_stats,
     compute_price_vs_median,
+    compute_price_vs_reference,
     compute_segments,
     extract_category_distribution,
     extract_prices,
@@ -138,3 +140,44 @@ def test_extract_category_distribution_no_category_field() -> None:
     result = extract_category_distribution(ads)
     assert len(result) == 1
     assert result[0]["count"] == 1
+
+
+def test_compute_price_vs_reference_prefers_category_median() -> None:
+    ads = [
+        {"ad_id": 1, "category": "2010", "price_byn": 30000},
+        {"ad_id": 2, "category": "2010", "price_byn": 40000},
+        {"ad_id": 3, "category": "2010", "price_byn": 41000},
+        {"ad_id": 4, "category": "2040", "price_byn": 100},
+        {"ad_id": 5, "category": "2040", "price_byn": 120},
+        {"ad_id": 6, "category": "2040", "price_byn": 141},
+    ]
+    market_stats = compute_price_stats(extract_prices(ads))
+    category_stats = compute_category_price_stats(ads)
+
+    result = compute_price_vs_reference(ads[-1], market_stats, category_stats)
+
+    assert result == pytest.approx(17.5)
+
+
+def test_filter_deal_ads_uses_category_reference_when_available() -> None:
+    ads = [
+        {"ad_id": 1, "category": "2010", "price_byn": 30000},
+        {"ad_id": 2, "category": "2010", "price_byn": 40000},
+        {"ad_id": 3, "category": "2010", "price_byn": 41000},
+        {"ad_id": 4, "category": "2040", "price_byn": 100},
+        {"ad_id": 5, "category": "2040", "price_byn": 120},
+        {"ad_id": 6, "category": "2040", "price_byn": 141},
+        {"ad_id": 7, "category": "2040", "price_byn": 90},
+    ]
+    market_stats = compute_price_stats(extract_prices(ads))
+    category_stats = compute_category_price_stats(ads)
+
+    result = filter_deal_ads(
+        ads,
+        market_stats.median,
+        10.0,
+        market_stats=market_stats,
+        category_price_stats=category_stats,
+    )
+
+    assert [item["ad_id"] for item in result] == [1, 7]

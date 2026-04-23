@@ -145,7 +145,7 @@ function createRenderCharts(context) {
         if (context._hooks?.renderHistoryRangeButtons) context._hooks.renderHistoryRangeButtons();
         elements.historyEmpty.hidden = hasHistory;
         elements.historySummary.hidden = !hasHistory;
-        elements.historySummary.innerHTML = "";
+        domClear(elements.historySummary);
         if (!state.query) {
             destroyHistoryChart();
             return;
@@ -188,17 +188,17 @@ function createRenderCharts(context) {
                 meta: "по медиане",
             },
         ];
-        elements.historySummary.innerHTML = summaryItems
-            .map(
-                (item) => `
-                    <div class="history-summary-card">
-                        <span class="history-summary-label">${item.label}</span>
-                        <strong class="history-summary-value mono">${item.value}</strong>
-                        <span class="history-summary-meta">${item.meta}</span>
-                    </div>
-                `
+        elements.historySummary.replaceChildren(
+            domFragment(
+                summaryItems.map((item) => domEl(
+                    "div",
+                    { className: "history-summary-card" },
+                    domEl("span", { className: "history-summary-label", text: item.label }),
+                    domEl("strong", { className: "history-summary-value mono", text: item.value }),
+                    domEl("span", { className: "history-summary-meta", text: item.meta }),
+                ))
             )
-            .join("");
+        );
         elements.historySummary.hidden = false;
 
         destroyHistoryChart();
@@ -282,7 +282,7 @@ function createRenderCharts(context) {
     function renderProfitDashboard() {
         return safeRender('renderProfitDashboard', () => {
         if (!elements.profitCards) return;
-        elements.profitCards.innerHTML = "";
+        domClear(elements.profitCards);
 
         if (!hasTelegramInitData()) {
             elements.profitDashboardSection.hidden = true;
@@ -292,20 +292,15 @@ function createRenderCharts(context) {
         // Show loading skeleton while leads are loading
         if (!state.leads.length) {
             elements.profitDashboardSection.hidden = false;
-            elements.profitCards.innerHTML = `
-                <div class="profit-card skeleton">
-                    <div class="skeleton-profit-row"></div>
-                    <div class="skeleton-profit-row short"></div>
-                </div>
-                <div class="profit-card skeleton">
-                    <div class="skeleton-profit-row"></div>
-                    <div class="skeleton-profit-row short"></div>
-                </div>
-                <div class="profit-card skeleton">
-                    <div class="skeleton-profit-row"></div>
-                    <div class="skeleton-profit-row short"></div>
-                </div>
-            `;
+            const buildSkeleton = () => domEl(
+                "div",
+                { className: "profit-card skeleton" },
+                domEl("div", { className: "skeleton-profit-row" }),
+                domEl("div", { className: "skeleton-profit-row short" }),
+            );
+            elements.profitCards.appendChild(
+                domFragment(buildSkeleton(), buildSkeleton(), buildSkeleton())
+            );
             return;
         }
 
@@ -348,13 +343,13 @@ function createRenderCharts(context) {
         ];
 
         for (const card of cards) {
-            const el = document.createElement("div");
-            el.className = `profit-card ${card.className}`;
-            el.innerHTML = `
-                <span class="profit-card-label">${card.label}</span>
-                <span class="profit-card-value mono">${card.value}</span>
-                <span class="profit-card-sub">${card.sub}</span>
-            `;
+            const el = domEl(
+                "div",
+                { className: `profit-card ${card.className}`.trim() },
+                domEl("span", { className: "profit-card-label", text: card.label }),
+                domEl("span", { className: "profit-card-value mono", text: card.value }),
+                domEl("span", { className: "profit-card-sub", text: card.sub }),
+            );
             elements.profitCards.appendChild(el);
         }
         });
@@ -365,7 +360,7 @@ function createRenderCharts(context) {
     function renderHistoryDeals() {
         return safeRender('renderHistoryDeals', () => {
         if (!elements.historyDealsList) return;
-        elements.historyDealsList.innerHTML = "";
+        domClear(elements.historyDealsList);
 
         const closedLeads = state.leads.filter((l) => l.status === "closed");
 
@@ -401,27 +396,48 @@ function createRenderCharts(context) {
 
             const dateStr = lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("ru-RU") : "";
 
-            const thumbMarkup = lead.thumbnail
-                ? `<img class="history-deal-thumb" src="${safeUrl(lead.thumbnail)}" alt="" loading="lazy">`
-                : `<div class="history-deal-thumb-placeholder">📦</div>`;
+            const thumbNode = lead.thumbnail
+                ? domEl("img", {
+                    className: "history-deal-thumb",
+                    attrs: { src: safeUrl(lead.thumbnail), alt: "", loading: "lazy" },
+                })
+                : domEl("div", { className: "history-deal-thumb-placeholder", text: "📦" });
 
-            card.innerHTML = `
-                ${thumbMarkup}
-                <div class="history-deal-info">
-                    <strong class="history-deal-title">${escapeHtml(lead.title)}</strong>
-                    <div class="history-deal-meta">
-                        <span class="history-deal-price">${buyPrice} → ${soldPrice} BYN</span>
-                        <span class="history-deal-date">${dateStr}</span>
-                    </div>
-                </div>
-                <div class="history-deal-profit-wrap">
-                    <div class="history-deal-profit ${profitClass}">
-                        ${profit !== null ? `${profitSign}${Math.round(profit)}` : "—"}
-                    </div>
-                    <span class="history-deal-profit-currency">BYN</span>
-                </div>
-                <button class="history-deal-delete" data-role="delete-history-deal" type="button" aria-label="Удалить из истории">✕</button>
-            `;
+            card.appendChild(
+                domFragment(
+                    thumbNode,
+                    domEl(
+                        "div",
+                        { className: "history-deal-info" },
+                        domEl("strong", { className: "history-deal-title", text: lead.title }),
+                        domEl(
+                            "div",
+                            { className: "history-deal-meta" },
+                            domEl("span", { className: "history-deal-price", text: `${buyPrice} → ${soldPrice} BYN` }),
+                            domEl("span", { className: "history-deal-date", text: dateStr }),
+                        ),
+                    ),
+                    domEl(
+                        "div",
+                        { className: "history-deal-profit-wrap" },
+                        domEl(
+                            "div",
+                            {
+                                className: `history-deal-profit ${profitClass}`.trim(),
+                                text: profit !== null ? `${profitSign}${Math.round(profit)}` : "—",
+                            },
+                        ),
+                        domEl("span", { className: "history-deal-profit-currency", text: "BYN" }),
+                    ),
+                    domEl("button", {
+                        className: "history-deal-delete",
+                        type: "button",
+                        text: "✕",
+                        dataset: { role: "delete-history-deal" },
+                        attrs: { "aria-label": "Удалить из истории" },
+                    }),
+                )
+            );
 
             card.querySelector('[data-role="delete-history-deal"]')?.addEventListener("click", () => {
                 void actions.deleteHistoryDeal(lead.id);

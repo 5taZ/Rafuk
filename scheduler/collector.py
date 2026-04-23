@@ -9,8 +9,9 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import httpx
 from sqlalchemy import delete, select, text, update
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import joinedload
 
@@ -20,6 +21,7 @@ from api.models import Tracker, TrackerEvent
 from api.services.aggregator import (
     apply_search_mode,
     build_query_key,
+    compute_category_price_stats,
     compute_price_stats,
     extract_prices,
     normalize_price_byn,
@@ -30,7 +32,7 @@ from api.services.history_service import (
     sync_query_listing_states,
     upsert_query_snapshot,
 )
-from api.services.kufar_client import KufarClient
+from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.market_signals import region_label
 from api.services.reseller_tools import matches_tracker_filters
 from bot.keyboards import tracker_alert_keyboard
@@ -43,6 +45,16 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+_TRACKER_QUERY_ERRORS = (
+    OperationalError,
+    SQLAlchemyError,
+    httpx.HTTPError,
+    httpx.TimeoutException,
+    KufarAPIError,
+    TypeError,
+    ValueError,
+)
 
 
 async def notify_user(
@@ -162,6 +174,7 @@ def _filter_sync_result_for_tracker(
     ads_by_id: dict[int, dict[str, object]],
 ) -> QuerySyncResult:
     market_stats = compute_price_stats(extract_prices(list(ads_by_id.values())))
+    category_price_stats = compute_category_price_stats(list(ads_by_id.values()))
     new_listings = [
         state
         for state in sync_result.new_listings
@@ -169,6 +182,7 @@ def _filter_sync_result_for_tracker(
         and matches_tracker_filters(
             ad,
             market_stats=market_stats,
+            category_price_stats=category_price_stats,
             min_discount_percent=tracker.min_discount_percent,
             max_price_byn=tracker.max_price_byn,
             seller_type=tracker.seller_type,
@@ -184,6 +198,7 @@ def _filter_sync_result_for_tracker(
         and matches_tracker_filters(
             ad,
             market_stats=market_stats,
+            category_price_stats=category_price_stats,
             min_discount_percent=tracker.min_discount_percent,
             max_price_byn=tracker.max_price_byn,
             seller_type=tracker.seller_type,
@@ -400,7 +415,7 @@ async def check_trackers(
                     # Flush after each query group so a later failure
                     # doesn't discard this group's snapshot/state/events.
                     await session.flush()
-                except Exception:
+                except _TRACKER_QUERY_ERRORS:
                     total_errors += 1
                     logger.exception(
                         "Error processing query %r [strict=%s], skipping",
@@ -460,7 +475,7 @@ async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None
             await cleanup_stale_missing_watchlist(session, days=settings.auto_remove_missing_days)
             await session.commit()
             logger.info("Daily cleanup completed successfully")
-        except Exception:
+        except (OperationalError, SQLAlchemyError):
             await session.rollback()
             logger.exception("Daily cleanup failed")
 

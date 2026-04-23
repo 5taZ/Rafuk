@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query, Request
 
 from api.config import Settings
@@ -7,6 +9,7 @@ from api.dependencies import get_cache, get_currency_service, get_settings_depen
 from api.limiter import limiter
 from api.schemas import ListingsResponse
 from api.services.aggregator import (
+    compute_category_price_stats,
     filter_deal_ads,
     sort_listings,
 )
@@ -15,7 +18,7 @@ from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_item
-from api.services.query_pipeline import load_query_dataset
+from api.services.query_pipeline import load_query_dataset_context
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
@@ -34,6 +37,7 @@ async def get_listings(
     discount_from_percent: float | None = None,
     discount_to_percent: float | None = None,
     category: int | None = None,
+    reference_context: Literal["current", "base_query"] = "current",
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
@@ -48,33 +52,50 @@ async def get_listings(
 
     cache_key = (
         f"listings:{query}:{sort}:{currency}:{discount_percent}:"
-        f"{effective_from}:{effective_to}:{strict_search}:{category}"
+        f"{effective_from}:{effective_to}:{strict_search}:{category}:{reference_context}"
     )
     cached = await cache.get_json(cache_key)
     if cached:
         return ListingsResponse(**cached)
 
-    dataset = await load_query_dataset(
+    context = await load_query_dataset_context(
         query=query,
         currency=currency,
         strict_search=strict_search,
         settings=settings,
         client_factory=KufarClient,
+        reference_context=reference_context,
         category=category,
     )
-    median_byn = dataset.price_stats.median
-    liquidity = compute_liquidity_insight(dataset.ads, dataset.price_stats)
+    visible_dataset = context.visible
+    reference_dataset = context.reference
+    median_byn = visible_dataset.price_stats.median
+    category_price_stats = compute_category_price_stats(reference_dataset.ads)
+    liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats)
     rates_payload = await currency_service.get_rates()
     rates = rates_payload["rates"]
     insights = analyze_query_text(query)
 
     deal_ads = (
-        filter_deal_ads(dataset.ads, median_byn, effective_from, effective_to)
+        filter_deal_ads(
+            visible_dataset.ads,
+            reference_dataset.price_stats.median,
+            effective_from,
+            effective_to,
+            market_stats=reference_dataset.price_stats,
+            category_price_stats=category_price_stats,
+        )
         if sort == "cheap"
-        else dataset.ads
+        else visible_dataset.ads
     )
     effective_sort = "newest" if sort == "deal_score" else sort
-    sorted_ads = sort_listings(deal_ads, effective_sort, median_byn)
+    sorted_ads = sort_listings(
+        deal_ads,
+        effective_sort,
+        median_byn,
+        market_stats=reference_dataset.price_stats,
+        category_price_stats=category_price_stats,
+    )
     listings = []
     for ad in sorted_ads[:200]:
         listings.append(
@@ -85,7 +106,8 @@ async def get_listings(
                 rates=rates,
                 currency_service=currency_service,
                 median_byn=median_byn,
-                market_stats=dataset.price_stats,
+                market_stats=reference_dataset.price_stats,
+                category_price_stats=category_price_stats,
                 liquidity=liquidity,
             )
         )
@@ -106,7 +128,7 @@ async def get_listings(
         storage_gb=insights.storage_gb,
         ram_gb=insights.ram_gb,
         sort=sort,
-        total=dataset.total_results,
+        total=visible_dataset.total_results,
         returned=len(listings),
         discount_percent=effective_from if sort == "cheap" else None,
         discount_from_percent=effective_from if sort == "cheap" else None,

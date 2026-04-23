@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import statistics
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 KOPECKS = 100
 MAX_PRICE_BYN = 100_000.0
 MIN_PRICE_BYN = 0.5  # Ignore listings priced below 0.50 BYN (kopecks remainder / spam)
+MIN_CATEGORY_REFERENCE_COUNT = 3
 STRICT_VARIANT_TOKENS = {
     "pro",
     "max",
@@ -79,6 +81,13 @@ class PriceStats(BaseModel):
     min: float
     max: float
     count: int
+
+
+@dataclass(slots=True, frozen=True)
+class PriceReference:
+    stats: PriceStats
+    scope: str
+    label: str
 
 
 def normalize_search_text(value: str) -> str:
@@ -223,11 +232,91 @@ def compute_price_vs_median(ad: dict[str, Any], median: float) -> float:
     return round((price_byn - median) / median * 100.0, 2)
 
 
+def get_category_id(ad: dict[str, Any]) -> int | None:
+    raw_category = ad.get("category")
+    try:
+        return int(raw_category)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_category_label(ad: dict[str, Any]) -> str | None:
+    for param in ad.get("ad_parameters", []):
+        if param.get("p") == "category":
+            value = param.get("vl") or param.get("v")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    category_id = get_category_id(ad)
+    if category_id is None:
+        return None
+    return f"Категория {category_id}"
+
+
+def compute_category_price_stats(ads: list[dict[str, Any]]) -> dict[int, PriceStats]:
+    grouped_prices: dict[int, list[float]] = {}
+    for ad in ads:
+        category_id = get_category_id(ad)
+        if category_id is None:
+            continue
+        price_byn = normalize_price_byn(ad.get("price_byn"))
+        if price_byn is None:
+            continue
+        grouped_prices.setdefault(category_id, []).append(price_byn)
+    return {
+        category_id: compute_price_stats(prices)
+        for category_id, prices in grouped_prices.items()
+        if prices
+    }
+
+
+def resolve_price_reference(
+    ad: dict[str, Any],
+    market_stats: PriceStats,
+    category_price_stats: dict[int, PriceStats] | None = None,
+    *,
+    min_category_count: int = MIN_CATEGORY_REFERENCE_COUNT,
+) -> PriceReference:
+    if category_price_stats:
+        category_id = get_category_id(ad)
+        if category_id is not None:
+            category_stats = category_price_stats.get(category_id)
+            if (
+                category_stats is not None
+                and category_stats.count >= min_category_count
+                and category_stats.median > 0
+            ):
+                return PriceReference(
+                    stats=category_stats,
+                    scope="category",
+                    label=get_category_label(ad) or f"Категория {category_id}",
+                )
+    return PriceReference(stats=market_stats, scope="query", label="Весь запрос")
+
+
+def compute_price_vs_reference(
+    ad: dict[str, Any],
+    market_stats: PriceStats,
+    category_price_stats: dict[int, PriceStats] | None = None,
+    *,
+    min_category_count: int = MIN_CATEGORY_REFERENCE_COUNT,
+) -> float:
+    reference = resolve_price_reference(
+        ad,
+        market_stats,
+        category_price_stats,
+        min_category_count=min_category_count,
+    )
+    return compute_price_vs_median(ad, reference.stats.median)
+
+
 def filter_deal_ads(
     ads: list[dict[str, Any]],
     median: float,
     discount_from_percent: float,
     discount_to_percent: float | None = None,
+    *,
+    market_stats: PriceStats | None = None,
+    category_price_stats: dict[int, PriceStats] | None = None,
 ) -> list[dict[str, Any]]:
     if not median:
         return []
@@ -238,8 +327,13 @@ def filter_deal_ads(
         lower_bound, upper_bound = upper_bound, lower_bound
 
     filtered = []
+    effective_market_stats = market_stats or compute_price_stats(extract_prices(ads))
     for ad in ads:
-        delta = compute_price_vs_median(ad, median)
+        delta = compute_price_vs_reference(
+            ad,
+            effective_market_stats,
+            category_price_stats,
+        )
         if delta >= 0:
             continue
         discount = abs(delta)
@@ -251,12 +345,24 @@ def filter_deal_ads(
     return filtered
 
 
-def sort_listings(ads: list[dict[str, Any]], sort: str, median: float) -> list[dict[str, Any]]:
+def sort_listings(
+    ads: list[dict[str, Any]],
+    sort: str,
+    median: float,
+    *,
+    market_stats: PriceStats | None = None,
+    category_price_stats: dict[int, PriceStats] | None = None,
+) -> list[dict[str, Any]]:
+    effective_market_stats = market_stats or compute_price_stats(extract_prices(ads))
     if sort == "cheap":
         return sorted(
             ads,
             key=lambda ad: (
-                compute_price_vs_median(ad, median),
+                compute_price_vs_reference(
+                    ad,
+                    effective_market_stats,
+                    category_price_stats,
+                ),
                 normalize_price_byn(ad.get("price_byn")) or 0.0,
             ),
         )
@@ -286,18 +392,15 @@ def get_param(ad: dict[str, Any], name: str) -> str | None:
 def extract_category_distribution(ads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     cat_map: dict[int, dict[str, Any]] = {}
     for ad in ads:
-        raw_cat = ad.get("category")
-        try:
-            cat_id = int(raw_cat)
-        except (TypeError, ValueError):
+        cat_id = get_category_id(ad)
+        if cat_id is None:
             continue
         if cat_id not in cat_map:
-            label = None
-            for param in ad.get("ad_parameters", []):
-                if param.get("p") == "category":
-                    label = param.get("vl") or str(param.get("v", ""))
-                    break
-            cat_map[cat_id] = {"id": cat_id, "label": label or f"Категория {cat_id}", "count": 0}
+            cat_map[cat_id] = {
+                "id": cat_id,
+                "label": get_category_label(ad) or f"Категория {cat_id}",
+                "count": 0,
+            }
         cat_map[cat_id]["count"] += 1
     return sorted(cat_map.values(), key=lambda x: x["count"], reverse=True)
 

@@ -33,7 +33,11 @@ FAKE_ADS = [
         "ad_link": "https://www.kufar.by/item/1",
         "list_time": "2026-04-01T10:00:00",
         "region_id": 6,
-        "ad_parameters": [{"p": "condition", "v": "Новый"}],
+        "category": "1000",
+        "ad_parameters": [
+            {"p": "condition", "v": "Новый"},
+            {"p": "category", "v": "1000", "vl": "Телефоны"},
+        ],
     },
     {
         "ad_id": 2,
@@ -42,7 +46,11 @@ FAKE_ADS = [
         "ad_link": "https://www.kufar.by/item/2",
         "list_time": "2026-04-01T11:00:00",
         "region_id": 6,
-        "ad_parameters": [{"p": "condition", "v": "Новый"}],
+        "category": "1000",
+        "ad_parameters": [
+            {"p": "condition", "v": "Новый"},
+            {"p": "category", "v": "1000", "vl": "Телефоны"},
+        ],
     },
     {
         "ad_id": 3,
@@ -51,7 +59,11 @@ FAKE_ADS = [
         "ad_link": "https://www.kufar.by/item/3",
         "list_time": "2026-04-01T09:00:00",
         "region_id": 6,
-        "ad_parameters": [{"p": "condition", "v": "Б/у"}],
+        "category": "1000",
+        "ad_parameters": [
+            {"p": "condition", "v": "Б/у"},
+            {"p": "category", "v": "1000", "vl": "Телефоны"},
+        ],
     },
 ]
 
@@ -245,3 +257,230 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
     assert first_item["liquidity"] is not None
     assert anomaly_item["anomaly_flags"] == ["too_expensive"]
     assert anomaly_item["region_name"] == "Регион 6"
+
+
+def test_listings_endpoint_uses_category_reference_for_mixed_query(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+    from api.routers import listings
+
+    mixed_ads = [
+        {
+            "ad_id": 1,
+            "subject": "Audi Q7",
+            "price_byn": 38000,
+            "ad_link": "https://www.kufar.by/item/1",
+            "list_time": "2026-04-01T10:00:00",
+            "region_id": 6,
+            "category": "2010",
+            "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}],
+        },
+        {
+            "ad_id": 2,
+            "subject": "Audi Q7 rest",
+            "price_byn": 40000,
+            "ad_link": "https://www.kufar.by/item/2",
+            "list_time": "2026-04-01T10:10:00",
+            "region_id": 6,
+            "category": "2010",
+            "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}],
+        },
+        {
+            "ad_id": 3,
+            "subject": "Audi Q7 4L",
+            "price_byn": 41000,
+            "ad_link": "https://www.kufar.by/item/3",
+            "list_time": "2026-04-01T10:20:00",
+            "region_id": 6,
+            "category": "2010",
+            "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}],
+        },
+        {
+            "ad_id": 4,
+            "subject": "Регулятор давления топлива Audi Q7",
+            "price_byn": 100,
+            "ad_link": "https://www.kufar.by/item/4",
+            "list_time": "2026-04-01T10:30:00",
+            "region_id": 6,
+            "category": "2040",
+            "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}],
+        },
+        {
+            "ad_id": 5,
+            "subject": "ТНВД Audi Q7",
+            "price_byn": 120,
+            "ad_link": "https://www.kufar.by/item/5",
+            "list_time": "2026-04-01T10:40:00",
+            "region_id": 6,
+            "category": "2040",
+            "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}],
+        },
+        {
+            "ad_id": 6,
+            "subject": "Форсунка Audi Q7",
+            "price_byn": 141,
+            "ad_link": "https://www.kufar.by/item/6",
+            "list_time": "2026-04-01T10:50:00",
+            "region_id": 6,
+            "category": "2040",
+            "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}],
+        },
+    ]
+
+    class MixedCategoriesClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            return {"total": len(mixed_ads), "ads": mixed_ads}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", MixedCategoriesClient)
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/listings", params={"query": "audi q7", "currency": "BYN"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    parts_item = next(item for item in payload["listings"] if item["ad_id"] == 6)
+    car_item = next(item for item in payload["listings"] if item["ad_id"] == 2)
+
+    assert parts_item["price_reference_scope"] == "category"
+    assert parts_item["price_reference_label"] == "Запчасти"
+    assert parts_item["price_vs_median"] == 17.5
+    assert parts_item["deal_verdict"] == "Выше рынка"
+    assert car_item["price_reference_scope"] == "category"
+
+
+def test_listings_endpoint_keeps_price_delta_stable_in_category_view(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+    from api.routers import listings
+
+    broad_ads = [
+        {
+            "ad_id": 10,
+            "subject": "Audi Q7 3.0 TDI",
+            "price_byn": 3200000,
+            "ad_link": "https://www.kufar.by/item/10",
+            "list_time": "2026-04-01T10:00:00",
+            "region_id": 6,
+            "category": "2010",
+            "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}],
+        },
+        {
+            "ad_id": 11,
+            "subject": "Audi Q7 4L",
+            "price_byn": 3400000,
+            "ad_link": "https://www.kufar.by/item/11",
+            "list_time": "2026-04-01T10:10:00",
+            "region_id": 6,
+            "category": "2010",
+            "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}],
+        },
+        {
+            "ad_id": 12,
+            "subject": "Audi Q7 рестайлинг",
+            "price_byn": 3600000,
+            "ad_link": "https://www.kufar.by/item/12",
+            "list_time": "2026-04-01T10:20:00",
+            "region_id": 6,
+            "category": "2010",
+            "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}],
+        },
+        {
+            "ad_id": 20,
+            "subject": "Форсунка Audi Q7",
+            "price_byn": 10000,
+            "ad_link": "https://www.kufar.by/item/20",
+            "list_time": "2026-04-01T10:30:00",
+            "region_id": 6,
+            "category": "2040",
+            "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}],
+        },
+        {
+            "ad_id": 21,
+            "subject": "ТНВД Audi Q7",
+            "price_byn": 12000,
+            "ad_link": "https://www.kufar.by/item/21",
+            "list_time": "2026-04-01T10:40:00",
+            "region_id": 6,
+            "category": "2040",
+            "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}],
+        },
+        {
+            "ad_id": 22,
+            "subject": "Регулятор давления Audi Q7",
+            "price_byn": 14000,
+            "ad_link": "https://www.kufar.by/item/22",
+            "list_time": "2026-04-01T10:50:00",
+            "region_id": 6,
+            "category": "2040",
+            "ad_parameters": [{"p": "category", "v": "2040", "vl": "Запчасти"}],
+        },
+    ]
+    category_ads = [
+        *broad_ads[:3],
+        {
+            "ad_id": 13,
+            "subject": "Audi Q7 S-Line",
+            "price_byn": 3800000,
+            "ad_link": "https://www.kufar.by/item/13",
+            "list_time": "2026-04-01T11:00:00",
+            "region_id": 6,
+            "category": "2010",
+            "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}],
+        },
+        {
+            "ad_id": 14,
+            "subject": "Audi Q7 3.0 бензин",
+            "price_byn": 4000000,
+            "ad_link": "https://www.kufar.by/item/14",
+            "list_time": "2026-04-01T11:10:00",
+            "region_id": 6,
+            "category": "2010",
+            "ad_parameters": [{"p": "category", "v": "2010", "vl": "Легковые авто"}],
+        },
+    ]
+
+    class CategoryDriftClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            category = kwargs.get("category")
+            ads = category_ads if category == 2010 else broad_ads
+            return {"total": len(ads), "ads": ads}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", CategoryDriftClient)
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        broad_response = client.get("/api/v1/listings", params={"query": "audi q7", "currency": "BYN"})
+        category_response = client.get(
+            "/api/v1/listings",
+            params={
+                "query": "audi q7",
+                "currency": "BYN",
+                "category": 2010,
+                "reference_context": "base_query",
+            },
+        )
+
+    assert broad_response.status_code == 200
+    assert category_response.status_code == 200
+    broad_payload = broad_response.json()
+    category_payload = category_response.json()
+    broad_item = next(item for item in broad_payload["listings"] if item["ad_id"] == 10)
+    category_item = next(item for item in category_payload["listings"] if item["ad_id"] == 10)
+
+    assert broad_item["price_vs_median"] == category_item["price_vs_median"]

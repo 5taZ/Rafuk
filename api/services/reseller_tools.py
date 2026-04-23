@@ -8,6 +8,7 @@ from typing import Any
 from api.services.aggregator import (
     PriceStats,
     compute_price_vs_median,
+    compute_price_vs_reference,
     get_param,
     normalize_price_byn,
     normalize_search_text,
@@ -347,6 +348,7 @@ def matches_tracker_filters(
     ad: dict[str, Any],
     *,
     market_stats: PriceStats,
+    category_price_stats: dict[int, PriceStats] | None = None,
     min_discount_percent: float | None = None,
     max_price_byn: float | None = None,
     seller_type: str | None = None,
@@ -376,7 +378,7 @@ def matches_tracker_filters(
     if config_keyword and not config_keyword_matches(str(ad.get("subject", "")), config_keyword):
         return False
     if min_discount_percent is not None:
-        delta = compute_price_vs_median(ad, market_stats.median)
+        delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
         if abs(min(delta, 0.0)) < min_discount_percent:
             return False
     return True

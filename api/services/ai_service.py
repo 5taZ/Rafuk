@@ -693,9 +693,9 @@ class AIService:
             raise
         logger.info("AI _chat response: status=%d", resp.status_code)
         if resp.status_code == 429:
-            raise Exception("429 RATE_LIMITED")
+            raise RuntimeError("429 RATE_LIMITED")
         if resp.status_code == 402:
-            raise Exception("Insufficient balance")
+            raise RuntimeError("Insufficient balance")
         resp.raise_for_status()
         data = resp.json()
         message = data["choices"][0]["message"]
@@ -845,7 +845,7 @@ class AIService:
             if img:
                 content.append(img)
         if len(content) == 1:
-            raise Exception("Не удалось загрузить фото для анализа")
+            raise ValueError("Не удалось загрузить фото для анализа")
         return await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=256)
 
     # ── Helpers ─────────────────────────────────────────────────

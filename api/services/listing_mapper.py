@@ -5,9 +5,11 @@ from typing import Any
 from api.schemas import ListingDetailResponse, ListingField, ListingItem
 from api.services.aggregator import (
     PriceStats,
-    compute_price_vs_median,
+    compute_price_vs_reference,
+    get_category_label,
     get_param,
     normalize_price_byn,
+    resolve_price_reference,
 )
 from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import LiquidityInsight, compute_flip_estimates
@@ -91,14 +93,6 @@ def collect_fields(
         fields.append(ListingField(label=label, value=value))
     return fields
 
-
-def category_label(ad: dict[str, Any]) -> str | None:
-    for item in ad.get("ad_parameters", []):
-        if item.get("p") == "category":
-            return _parameter_value(item)
-    return None
-
-
 def extract_seller_rating(ad: dict[str, Any]) -> float | None:
     for param in ad.get("account_parameters", []):
         p = param.get("p", "")
@@ -127,18 +121,20 @@ def build_listing_detail(
     currency_service: CurrencyService,
     median_byn: float,
     market_stats: PriceStats,
+    category_price_stats: dict[int, PriceStats] | None = None,
     liquidity: LiquidityInsight | None = None,
 ) -> ListingDetailResponse:
     price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
     description = _stringify_value(ad.get("body")) or _stringify_value(ad.get("body_short"))
-    price_delta = compute_price_vs_median(ad, median_byn)
+    reference = resolve_price_reference(ad, market_stats, category_price_stats)
+    price_delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
     fair_band = fair_price_band(price_delta)
-    flags = detect_anomaly_flags(ad, market_stats)
+    flags = detect_anomaly_flags(ad, reference.stats)
     query_insights = analyze_query_text(query)
     deal_score = compute_deal_score(
         ad,
         query=query,
-        market_stats=market_stats,
+        market_stats=reference.stats,
     )
 
     return ListingDetailResponse(
@@ -156,10 +152,12 @@ def build_listing_detail(
         region_id=ad.get("region_id"),
         region_name=region_label(ad),
         area_name=area_label(ad),
-        category=category_label(ad),
+        category=get_category_label(ad),
         condition=get_param(ad, "condition"),
         seller_type=get_param(ad, "seller_type"),
         price_vs_median=price_delta,
+        price_reference_scope=reference.scope,
+        price_reference_label=reference.label,
         fair_price_band=fair_band,
         fair_price_label=fair_price_label(fair_band),
         anomaly_flags=flags,
@@ -189,16 +187,18 @@ def build_listing_item(
     currency_service: CurrencyService,
     median_byn: float,
     market_stats: PriceStats,
+    category_price_stats: dict[int, PriceStats] | None = None,
     liquidity: LiquidityInsight | None = None,
 ) -> ListingItem:
     price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
-    price_delta = compute_price_vs_median(ad, median_byn)
+    reference = resolve_price_reference(ad, market_stats, category_price_stats)
+    price_delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
     fair_band = fair_price_band(price_delta)
-    flags = detect_anomaly_flags(ad, market_stats)
+    flags = detect_anomaly_flags(ad, reference.stats)
     deal_score = compute_deal_score(
         ad,
         query=query,
-        market_stats=market_stats,
+        market_stats=reference.stats,
     )
 
     return ListingItem(
@@ -215,6 +215,8 @@ def build_listing_item(
         seller_type=get_param(ad, "seller_type"),
         company_ad=bool(ad.get("company_ad")),
         price_vs_median=price_delta,
+        price_reference_scope=reference.scope,
+        price_reference_label=reference.label,
         config_summary=deal_score.config_summary,
         fair_price_band=fair_band,
         fair_price_label=fair_price_label(fair_band),

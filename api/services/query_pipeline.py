@@ -125,6 +125,12 @@ class QueryDataset:
         return self._price_stats
 
 
+@dataclass(slots=True)
+class QueryDatasetContext:
+    visible: QueryDataset
+    reference: QueryDataset
+
+
 async def load_query_dataset(
     *,
     query: str,
@@ -161,6 +167,52 @@ async def load_query_dataset(
         response=response,
         ads=ads,
     )
+
+
+async def load_query_dataset_context(
+    *,
+    query: str,
+    currency: str,
+    strict_search: bool,
+    settings: Settings,
+    client_factory: type[SupportsSearchAllAds],
+    reference_context: str = "current",
+    category: int | None = None,
+) -> QueryDatasetContext:
+    if reference_context != "base_query" or category is None:
+        dataset = await load_query_dataset(
+            query=query,
+            currency=currency,
+            strict_search=strict_search,
+            settings=settings,
+            client_factory=client_factory,
+            category=category,
+        )
+        return QueryDatasetContext(visible=dataset, reference=dataset)
+
+    client = client_factory(settings)
+    try:
+        reference_dataset = await load_query_dataset(
+            query=query,
+            currency=currency,
+            strict_search=strict_search,
+            settings=settings,
+            client_factory=client_factory,
+            client=client,
+        )
+        visible_dataset = await load_query_dataset(
+            query=query,
+            currency=currency,
+            strict_search=strict_search,
+            settings=settings,
+            client_factory=client_factory,
+            category=category,
+            client=client,
+        )
+    finally:
+        await client.aclose()
+
+    return QueryDatasetContext(visible=visible_dataset, reference=reference_dataset)
 
 
 async def load_segment_datasets(

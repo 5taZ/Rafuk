@@ -13,7 +13,7 @@ from api.dependencies import (
 )
 from api.limiter import limiter
 from api.schemas import CompareRequestItem, CompareResponse
-from api.services.aggregator import build_query_key, filter_deal_ads
+from api.services.aggregator import build_query_key, compute_category_price_stats, filter_deal_ads
 from api.services.currency_service import CurrencyService
 from api.services.history_service import load_query_snapshots
 from api.services.kufar_client import KufarClient
@@ -62,7 +62,14 @@ async def _build_compare_item(
         category=category,
     )
     rates_payload = await currency_service.get_rates()
-    deal_ads = filter_deal_ads(dataset.ads, dataset.price_stats.median, 5.0)
+    category_price_stats = compute_category_price_stats(dataset.ads)
+    deal_ads = filter_deal_ads(
+        dataset.ads,
+        dataset.price_stats.median,
+        5.0,
+        market_stats=dataset.price_stats,
+        category_price_stats=category_price_stats,
+    )
     source_ads = deal_ads or dataset.ads[:20]
     listing_items = [
         build_listing_item(
@@ -73,6 +80,7 @@ async def _build_compare_item(
             currency_service=currency_service,
             median_byn=dataset.price_stats.median,
             market_stats=dataset.price_stats,
+            category_price_stats=category_price_stats,
         )
         for ad in source_ads
     ]

@@ -89,7 +89,7 @@ function createVirtualList(container, options) {
         const bottomPadding = (items.length - end) * itemHeight;
 
         // Clear and re-render visible items
-        viewport.innerHTML = "";
+        domClear(viewport);
         spacer.style.height = `${topPadding}px`;
 
         // Create a bottom spacer if needed

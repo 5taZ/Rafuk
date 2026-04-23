@@ -23,7 +23,7 @@ from api.schemas import (
     SavedSearchCreate,
     SavedSearchRead,
 )
-from api.services.aggregator import filter_deal_ads
+from api.services.aggregator import compute_category_price_stats, filter_deal_ads
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_item
@@ -175,10 +175,13 @@ async def _load_saved_search_opportunities(
         client_factory=KufarClient,
         client=kufar_client,
     )
+    category_price_stats = compute_category_price_stats(dataset.ads)
     candidate_ads = filter_deal_ads(
         dataset.ads,
         dataset.price_stats.median,
         saved_search.target_discount_percent,
+        market_stats=dataset.price_stats,
+        category_price_stats=category_price_stats,
     )
     candidate_ads = [
         ad
@@ -186,6 +189,7 @@ async def _load_saved_search_opportunities(
         if matches_tracker_filters(
             ad,
             market_stats=dataset.price_stats,
+            category_price_stats=category_price_stats,
             min_discount_percent=saved_search.target_discount_percent,
             max_price_byn=saved_search.max_price_byn,
             seller_type=saved_search.seller_type,
@@ -207,6 +211,7 @@ async def _load_saved_search_opportunities(
             currency_service=currency_service,
             median_byn=dataset.price_stats.median,
             market_stats=dataset.price_stats,
+            category_price_stats=category_price_stats,
         )
         for ad in candidate_ads[:20]
     ]

@@ -2,7 +2,7 @@
  * api_ai.js — AI listing analysis with dedicated modal + PDF export.
  */
 function createApiAi(context) {
-    const { state, elements, postJson, getJson, escapeHtml, safeUrl, formatPrice } = context;
+    const { state, elements, postJson, getJson, safeUrl, formatPrice } = context;
 
     let _aiLoading = false;
     let _aiProgress = 0;
@@ -124,7 +124,9 @@ function createApiAi(context) {
                 console.error("AI render error:", e);
                 if (elements.aiModalResult) {
                     elements.aiModalResult.hidden = false;
-                    elements.aiModalResult.innerHTML = `<div class="ai-error">Ошибка отображения результата</div>`;
+                    elements.aiModalResult.replaceChildren(
+                        domEl("div", { className: "ai-error", text: "Ошибка отображения результата" })
+                    );
                 }
             }
         }, 500);
@@ -301,6 +303,287 @@ function createApiAi(context) {
         }
     }
 
+    function _renderAiErrorState(container, message, onRetry) {
+        const retryBtn = domEl("button", {
+            className: "ai-retry-btn",
+            type: "button",
+            text: "Повторить",
+        });
+        retryBtn.addEventListener("click", onRetry);
+        container.replaceChildren(
+            domEl("div", { className: "ai-error", text: message }),
+            retryBtn,
+        );
+    }
+
+    function _buildAiSection(label, children, extraClass = "") {
+        return domEl(
+            "div",
+            { className: `ai-section${extraClass ? ` ${extraClass}` : ""}` },
+            domEl("span", { className: "ai-label", text: label }),
+            children,
+        );
+    }
+
+    function _buildAiList(tagName, className, items) {
+        return domEl(
+            tagName,
+            { className },
+            items.map((item) => domEl("li", { text: item })),
+        );
+    }
+
+    function _buildAiResultNodes(data) {
+        const nodes = [];
+
+        if (data.recommendation) {
+            const verdictMap = {
+                worth_it: { text: "Стоит брать", cls: "ai-badge--good" },
+                think_twice: { text: "Подумай", cls: "ai-badge--warn" },
+                overpriced: { text: "Дорого", cls: "ai-badge--bad" },
+            };
+            const verdict = verdictMap[data.recommendation.verdict] || verdictMap.think_twice;
+            nodes.push(
+                domEl(
+                    "div",
+                    { className: "ai-modal-verdict" },
+                    domEl("span", { className: `ai-badge ${verdict.cls} ai-badge--lg`, text: verdict.text }),
+                    data.summary ? domEl("p", { className: "ai-modal-summary", text: data.summary }) : null,
+                )
+            );
+        }
+
+        if (data.condition) {
+            const cond = data.condition;
+            const condLabelMap = {
+                "Отличное": { text: "Отличное", cls: "ai-badge--good" },
+                "Хорошее": { text: "Хорошее", cls: "ai-badge--ok" },
+                "Удовлетворительное": { text: "Удовлетв.", cls: "ai-badge--warn" },
+                "Плохое": { text: "Плохое", cls: "ai-badge--bad" },
+                "Excellent": { text: "Отличное", cls: "ai-badge--good" },
+                "Good": { text: "Хорошее", cls: "ai-badge--ok" },
+                "Fair": { text: "Удовлетв.", cls: "ai-badge--warn" },
+                "Poor": { text: "Плохое", cls: "ai-badge--bad" },
+            };
+            const mapped = condLabelMap[cond.label] || { text: cond.label, cls: "ai-badge--ok" };
+            nodes.push(
+                _buildAiSection(
+                    "Состояние по фото",
+                    domFragment(
+                        domEl("span", { className: `ai-badge ${mapped.cls}`, text: mapped.text }),
+                        cond.confidence
+                            ? domEl("span", { className: "ai-confidence", text: `уверенность ${Math.round(cond.confidence * 100)}%` })
+                            : null,
+                        cond.notes?.length
+                            ? domEl("ul", { className: "ai-notes" }, cond.notes.map((note) => domEl("li", { text: note })))
+                            : null,
+                    ),
+                )
+            );
+        }
+
+        if (data.fair_price) {
+            const fairPrice = data.fair_price;
+            const fromPrice = fairPrice.from || fairPrice.from_price;
+            const toPrice = fairPrice.to || fairPrice.to_price;
+            let priceText = "";
+            if (fromPrice != null && toPrice != null) {
+                priceText = `${Math.round(fromPrice)} — ${Math.round(toPrice)} BYN`;
+            } else if (fromPrice != null) {
+                priceText = `~${Math.round(fromPrice)} BYN`;
+            }
+            nodes.push(
+                _buildAiSection(
+                    "Справедливая цена",
+                    domFragment(
+                        priceText ? domEl("div", { className: "ai-fair-price", text: priceText }) : null,
+                        fairPrice.reasoning ? domEl("p", { className: "ai-reasoning", text: fairPrice.reasoning }) : null,
+                    ),
+                )
+            );
+        }
+
+        if (data.resale_potential) {
+            const resale = data.resale_potential;
+            const prices = [resale.fast_price, resale.market_price, resale.optimal_price].filter(Boolean);
+            if (prices.length) {
+                nodes.push(
+                    _buildAiSection(
+                        "Потенциал перепродажи",
+                        domFragment(
+                            domEl(
+                                "div",
+                                { className: "ai-resale-prices" },
+                                prices.map((price) => domEl(
+                                    "div",
+                                    { className: "ai-resale-row" },
+                                    domEl("span", { className: "ai-resale-label", text: price.label }),
+                                    domEl("span", { className: "ai-resale-price mono", text: `${Math.round(price.price_byn)} BYN` }),
+                                    price.reasoning ? domEl("span", { className: "ai-resale-note", text: price.reasoning }) : null,
+                                ))
+                            ),
+                            resale.reasoning ? domEl("p", { className: "ai-reasoning", text: resale.reasoning }) : null,
+                        ),
+                    )
+                );
+            }
+        }
+
+        if (data.market_context) {
+            nodes.push(
+                _buildAiSection(
+                    "Контекст рынка",
+                    domEl("p", { className: "ai-reasoning", text: data.market_context }),
+                )
+            );
+        }
+
+        if (data.best_alternative) {
+            const bestAlternative = data.best_alternative;
+            nodes.push(
+                _buildAiSection(
+                    "Лучший вариант",
+                    domFragment(
+                        domEl(
+                            "a",
+                            {
+                                className: "ai-best-link",
+                                attrs: { href: safeUrl(bestAlternative.link), target: "_blank", rel: "noreferrer noopener" },
+                            },
+                            bestAlternative.image_url
+                                ? domEl("img", {
+                                    className: "ai-best-thumb",
+                                    attrs: { src: safeUrl(bestAlternative.image_url), alt: "", loading: "lazy" },
+                                })
+                                : null,
+                            domEl(
+                                "div",
+                                { className: "ai-best-info" },
+                                domEl("span", { className: "ai-best-title", text: bestAlternative.title }),
+                                domEl("span", { className: "ai-best-price mono", text: `${Math.round(bestAlternative.price_byn)} BYN` }),
+                                bestAlternative.condition
+                                    ? domEl("span", { className: "ai-best-condition", text: bestAlternative.condition })
+                                    : null,
+                            ),
+                            domEl("span", { className: "ai-best-arrow", text: "→" }),
+                        ),
+                        data.best_pick_reason ? domEl("p", { className: "ai-best-reason", text: data.best_pick_reason }) : null,
+                    ),
+                    "ai-section--best",
+                )
+            );
+        }
+
+        if (data.similar_listings?.length) {
+            const others = data.best_alternative
+                ? data.similar_listings.filter((item) => item.ad_id !== data.best_alternative.ad_id)
+                : data.similar_listings;
+            if (others.length) {
+                nodes.push(
+                    _buildAiSection(
+                        `Другие варианты (${others.length})`,
+                        domEl(
+                            "div",
+                            { className: "ai-similar" },
+                            others.map((item) => domEl(
+                                "a",
+                                {
+                                    className: "ai-similar-item",
+                                    attrs: { href: safeUrl(item.link), target: "_blank", rel: "noreferrer noopener" },
+                                },
+                                item.image_url
+                                    ? domEl("img", {
+                                        className: "ai-similar-thumb",
+                                        attrs: { src: safeUrl(item.image_url), alt: "", loading: "lazy" },
+                                    })
+                                    : null,
+                                domEl(
+                                    "div",
+                                    { className: "ai-similar-info" },
+                                    domEl("span", { className: "ai-similar-title", text: item.title }),
+                                    domEl(
+                                        "span",
+                                        {
+                                            className: "ai-similar-price mono",
+                                            text: `${Math.round(item.price_byn)} BYN${item.condition ? ` · ${item.condition}` : ""}`,
+                                        },
+                                    ),
+                                ),
+                            ))
+                        ),
+                    )
+                );
+            }
+        }
+
+        if (data.watch_out?.length) {
+            nodes.push(
+                _buildAiSection(
+                    "На что обратить внимание",
+                    domEl(
+                        "div",
+                        { className: "ai-watch-list" },
+                        data.watch_out.map((item) => domEl(
+                            "div",
+                            { className: "ai-watch-item" },
+                            domEl("strong", { text: item.point }),
+                            domEl("span", { text: item.why }),
+                        ))
+                    ),
+                )
+            );
+        }
+
+        if (data.meeting_checklist?.length) {
+            nodes.push(
+                _buildAiSection(
+                    "Чек-лист для встречи",
+                    _buildAiList("ol", "ai-checklist", data.meeting_checklist),
+                )
+            );
+        }
+
+        if (data.negotiation_tips?.length) {
+            nodes.push(
+                _buildAiSection(
+                    "Как торговаться",
+                    _buildAiList("ul", "ai-tips", data.negotiation_tips),
+                )
+            );
+        }
+
+        if (data.red_flags?.length) {
+            nodes.push(
+                _buildAiSection(
+                    "Красные флаги",
+                    domEl(
+                        "div",
+                        { className: "ai-flags" },
+                        data.red_flags.map((flag) => domEl("div", { className: "ai-flag-item", text: flag })),
+                    ),
+                )
+            );
+        }
+
+        if (data.recommendation?.text) {
+            nodes.push(
+                _buildAiSection(
+                    "Рекомендация",
+                    domEl("p", { className: "ai-recommendation-text", text: data.recommendation.text }),
+                    "ai-section--recommendation",
+                )
+            );
+        }
+
+        nodes.push(
+            domEl("p", {
+                className: "ai-disclaimer",
+                text: data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.",
+            })
+        );
+        return nodes;
+    }
+
     function _showAIError(message, adId) {
         _stopLoadingAnimation(false);
 
@@ -323,9 +606,7 @@ function createApiAi(context) {
             if (elements.aiModalResult) elements.aiModalResult.hidden = true;
             if (elements.aiModalError) {
                 elements.aiModalError.hidden = false;
-                elements.aiModalError.innerHTML = `<div class="ai-error">${escapeHtml(message)}</div><button class="ai-retry-btn" type="button">Повторить</button>`;
-                const retryBtn = elements.aiModalError.querySelector(".ai-retry-btn");
-                if (retryBtn) retryBtn.addEventListener("click", () => loadAIAnalysis(adId));
+                _renderAiErrorState(elements.aiModalError, message, () => loadAIAnalysis(adId));
             }
         }, 700);
     }
@@ -349,183 +630,7 @@ function createApiAi(context) {
         const notice = elements.aiModal?.querySelector(".ai-time-notice");
         if (notice) notice.hidden = true;
 
-        let html = "";
-
-        // ── Summary + verdict ──
-        if (data.recommendation) {
-            const rec = data.recommendation;
-            const verdictMap = {
-                worth_it: { text: "Стоит брать", cls: "ai-badge--good" },
-                think_twice: { text: "Подумай", cls: "ai-badge--warn" },
-                overpriced: { text: "Дорого", cls: "ai-badge--bad" },
-            };
-            const v = verdictMap[rec.verdict] || verdictMap.think_twice;
-            html += `<div class="ai-modal-verdict">
-                <span class="ai-badge ${v.cls} ai-badge--lg">${v.text}</span>
-                ${data.summary ? `<p class="ai-modal-summary">${escapeHtml(data.summary)}</p>` : ""}
-            </div>`;
-        }
-
-        // ── Condition assessment ──
-        if (data.condition) {
-            const cond = data.condition;
-            const condLabelMap = {
-                "Отличное": { text: "Отличное", cls: "ai-badge--good" },
-                "Хорошее": { text: "Хорошее", cls: "ai-badge--ok" },
-                "Удовлетворительное": { text: "Удовлетв.", cls: "ai-badge--warn" },
-                "Плохое": { text: "Плохое", cls: "ai-badge--bad" },
-                "Excellent": { text: "Отличное", cls: "ai-badge--good" },
-                "Good": { text: "Хорошее", cls: "ai-badge--ok" },
-                "Fair": { text: "Удовлетв.", cls: "ai-badge--warn" },
-                "Poor": { text: "Плохое", cls: "ai-badge--bad" },
-            };
-            const mapped = condLabelMap[cond.label] || { text: cond.label, cls: "ai-badge--ok" };
-            const badgeClass = mapped.cls;
-            html += `<div class="ai-section">
-                <span class="ai-label">Состояние по фото</span>
-                <span class="ai-badge ${badgeClass}">${escapeHtml(mapped.text)}</span>
-                ${cond.confidence ? `<span class="ai-confidence">уверенность ${Math.round(cond.confidence * 100)}%</span>` : ""}
-                ${cond.notes?.length ? `<ul class="ai-notes">${cond.notes.map(n => `<li>${escapeHtml(n)}</li>`).join("")}</ul>` : ""}
-            </div>`;
-        }
-
-        // ── Fair price ──
-        if (data.fair_price) {
-            const fp = data.fair_price;
-            const fromPrice = fp.from || fp.from_price;
-            const toPrice = fp.to || fp.to_price;
-            html += `<div class="ai-section">
-                <span class="ai-label">Справедливая цена</span>
-                ${fromPrice != null && toPrice != null
-                    ? `<div class="ai-fair-price">${Math.round(fromPrice)} — ${Math.round(toPrice)} BYN</div>`
-                    : fromPrice != null
-                        ? `<div class="ai-fair-price">~${Math.round(fromPrice)} BYN</div>`
-                        : ""}
-                ${fp.reasoning ? `<p class="ai-reasoning">${escapeHtml(fp.reasoning)}</p>` : ""}
-            </div>`;
-        }
-
-        // ── Resale potential ──
-        if (data.resale_potential) {
-            const rp = data.resale_potential;
-            const prices = [rp.fast_price, rp.market_price, rp.optimal_price].filter(Boolean);
-            if (prices.length) {
-                html += `<div class="ai-section">
-                    <span class="ai-label">Потенциал перепродажи</span>
-                    <div class="ai-resale-prices">${prices.map(p =>
-                        `<div class="ai-resale-row">
-                            <span class="ai-resale-label">${escapeHtml(p.label)}</span>
-                            <span class="ai-resale-price mono">${Math.round(p.price_byn)} BYN</span>
-                            ${p.reasoning ? `<span class="ai-resale-note">${escapeHtml(p.reasoning)}</span>` : ""}
-                        </div>`
-                    ).join("")}</div>
-                    ${rp.reasoning ? `<p class="ai-reasoning">${escapeHtml(rp.reasoning)}</p>` : ""}
-                </div>`;
-            }
-        }
-
-        // ── Market context ──
-        if (data.market_context) {
-            html += `<div class="ai-section">
-                <span class="ai-label">Контекст рынка</span>
-                <p class="ai-reasoning">${escapeHtml(data.market_context)}</p>
-            </div>`;
-        }
-
-        // ── Best alternative ──
-        if (data.best_alternative) {
-            const ba = data.best_alternative;
-            html += `<div class="ai-section ai-section--best">
-                <span class="ai-label">Лучший вариант</span>
-                <a class="ai-best-link" href="${safeUrl(ba.link)}" target="_blank" rel="noreferrer noopener">
-                    ${ba.image_url ? `<img class="ai-best-thumb" src="${safeUrl(ba.image_url)}" alt="" loading="lazy">` : ""}
-                    <div class="ai-best-info">
-                        <span class="ai-best-title">${escapeHtml(ba.title)}</span>
-                        <span class="ai-best-price mono">${Math.round(ba.price_byn)} BYN</span>
-                        ${ba.condition ? `<span class="ai-best-condition">${escapeHtml(ba.condition)}</span>` : ""}
-                    </div>
-                    <span class="ai-best-arrow">→</span>
-                </a>
-                ${data.best_pick_reason ? `<p class="ai-best-reason">${escapeHtml(data.best_pick_reason)}</p>` : ""}
-            </div>`;
-        }
-
-        // ── Other alternatives ──
-        if (data.similar_listings?.length) {
-            const others = data.best_alternative
-                ? data.similar_listings.filter(s => s.ad_id !== data.best_alternative.ad_id)
-                : data.similar_listings;
-            if (others.length) {
-                html += `<div class="ai-section">
-                    <span class="ai-label">Другие варианты (${others.length})</span>
-                    <div class="ai-similar">${others.map(s =>
-                        `<a class="ai-similar-item" href="${safeUrl(s.link)}" target="_blank" rel="noreferrer noopener">
-                            ${s.image_url ? `<img class="ai-similar-thumb" src="${safeUrl(s.image_url)}" alt="" loading="lazy">` : ""}
-                            <div class="ai-similar-info">
-                                <span class="ai-similar-title">${escapeHtml(s.title)}</span>
-                                <span class="ai-similar-price mono">${Math.round(s.price_byn)} BYN${s.condition ? ` · ${escapeHtml(s.condition)}` : ""}</span>
-                            </div>
-                        </a>`
-                    ).join("")}</div>
-                </div>`;
-            }
-        }
-
-        // ── Watch out ──
-        if (data.watch_out?.length) {
-            html += `<div class="ai-section">
-                <span class="ai-label">На что обратить внимание</span>
-                <div class="ai-watch-list">${data.watch_out.map(w =>
-                    `<div class="ai-watch-item">
-                        <strong>${escapeHtml(w.point)}</strong>
-                        <span>${escapeHtml(w.why)}</span>
-                    </div>`
-                ).join("")}</div>
-            </div>`;
-        }
-
-        // ── Meeting checklist ──
-        if (data.meeting_checklist?.length) {
-            html += `<div class="ai-section">
-                <span class="ai-label">Чек-лист для встречи</span>
-                <ol class="ai-checklist">${data.meeting_checklist.map(item =>
-                    `<li>${escapeHtml(item)}</li>`
-                ).join("")}</ol>
-            </div>`;
-        }
-
-        // ── Negotiation tips ──
-        if (data.negotiation_tips?.length) {
-            html += `<div class="ai-section">
-                <span class="ai-label">Как торговаться</span>
-                <ul class="ai-tips">${data.negotiation_tips.map(tip =>
-                    `<li>${escapeHtml(tip)}</li>`
-                ).join("")}</ul>
-            </div>`;
-        }
-
-        // ── Red flags ──
-        if (data.red_flags?.length) {
-            html += `<div class="ai-section">
-                <span class="ai-label">Красные флаги</span>
-                <div class="ai-flags">${data.red_flags.map(flag =>
-                    `<div class="ai-flag-item">${escapeHtml(flag)}</div>`
-                ).join("")}</div>
-            </div>`;
-        }
-
-        // ── Recommendation text ──
-        if (data.recommendation?.text) {
-            html += `<div class="ai-section ai-section--recommendation">
-                <span class="ai-label">Рекомендация</span>
-                <p class="ai-recommendation-text">${escapeHtml(data.recommendation.text)}</p>
-            </div>`;
-        }
-
-        // ── Disclaimer ──
-        html += `<p class="ai-disclaimer">${escapeHtml(data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.")}</p>`;
-
-        container.innerHTML = html;
+        container.replaceChildren(domFragment(_buildAiResultNodes(data)));
     }
 
     /* ===== PDF Export ===== */

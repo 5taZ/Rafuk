@@ -68,6 +68,8 @@ class ListingItem(BaseModel):
     seller_type: str | None = None
     company_ad: bool = False
     price_vs_median: float | None = None
+    price_reference_scope: str = "query"
+    price_reference_label: str | None = None
     region_name: str | None = None
     area_name: str | None = None
     config_summary: str | None = None
@@ -107,6 +109,8 @@ class ListingDetailResponse(BaseModel):
     condition: str | None = None
     seller_type: str | None = None
     price_vs_median: float | None = None
+    price_reference_scope: str = "query"
+    price_reference_label: str | None = None
     region_name: str | None = None
     area_name: str | None = None
     fair_price_band: str | None = None

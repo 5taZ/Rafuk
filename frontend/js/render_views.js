@@ -230,9 +230,9 @@ function createRenderViews(context) {
         return safeRender('renderComparison', () => {
             if (!state.query) {
             elements.comparisonSection.hidden = true;
-            elements.comparisonGrid.innerHTML = "";
+            clearChildren(elements.comparisonGrid);
             elements.comparisonSummary.hidden = true;
-            elements.comparisonSummary.innerHTML = "";
+            clearChildren(elements.comparisonSummary);
             return;
         }
 
@@ -244,8 +244,8 @@ function createRenderViews(context) {
         if (state.comparisonLoading) {
             elements.comparisonNote.textContent = "Сравниваю запросы...";
             elements.comparisonSummary.hidden = true;
-            elements.comparisonSummary.innerHTML = "";
-            elements.comparisonGrid.innerHTML = "";
+            clearChildren(elements.comparisonSummary);
+            clearChildren(elements.comparisonGrid);
             return;
         }
 
@@ -253,8 +253,8 @@ function createRenderViews(context) {
             elements.comparisonNote.textContent =
                 "Сравните текущий запрос с другим товаром или другой конфигурацией.";
             elements.comparisonSummary.hidden = true;
-            elements.comparisonSummary.innerHTML = "";
-            elements.comparisonGrid.innerHTML = "";
+            clearChildren(elements.comparisonSummary);
+            clearChildren(elements.comparisonGrid);
             return;
         }
 
@@ -262,8 +262,8 @@ function createRenderViews(context) {
             elements.comparisonNote.textContent =
                 "Введите до двух дополнительных запросов через запятую и нажмите «Сравнить».";
             elements.comparisonSummary.hidden = true;
-            elements.comparisonSummary.innerHTML = "";
-            elements.comparisonGrid.innerHTML = "";
+            clearChildren(elements.comparisonSummary);
+            clearChildren(elements.comparisonGrid);
             return;
         }
 
@@ -290,52 +290,75 @@ function createRenderViews(context) {
             `${otherItems.reduce((sum, item) => sum + Number(item.cheap_count || 0), 0)} дешёвых лотов в сравнении`,
             `рынок ${state.comparisonItems.map((item) => item.total_results || 0).join(" / ")}`,
         ];
-        elements.comparisonSummary.innerHTML = compareSummaryItems
-            .map((item) => `<span class="compare-summary-chip">${item}</span>`)
-            .join("");
+        clearChildren(elements.comparisonSummary);
+        elements.comparisonSummary.appendChild(
+            domFragment(compareSummaryItems.map((item) => domEl("span", { className: "compare-summary-chip", text: item })))
+        );
         elements.comparisonSummary.hidden = false;
 
-        elements.comparisonGrid.innerHTML = state.comparisonItems
-            .map((item, index) => {
-                const isBase = index === 0;
-                const bestListing = item.best_listing || null;
-                const medianDelta = isBase
-                    ? { text: "база", className: "" }
-                    : comparisonDelta(Number(item.median || 0), Number(baseItem?.median || 0));
-                const trend = item.trend_percent == null
-                    ? "нет истории"
-                    : `${item.trend_percent > 0 ? "+" : ""}${item.trend_percent.toFixed(1)}%`;
-                return `
-                    <article class="compare-card">
-                        <span class="compare-kicker">${isBase ? "База" : "Сравнение"}</span>
-                        <strong class="compare-query">${escapeHtml(item.query)}</strong>
-                        <div class="compare-deltas">
-                            <span class="compare-delta-chip ${medianDelta?.className || ""}">
-                                медиана ${medianDelta?.text || "—"}
-                            </span>
-                            <span class="compare-delta-chip">
-                                тренд ${trend}
-                            </span>
-                        </div>
-                        <div class="compare-metrics">
-                            <div class="compare-metric">
-                                <span class="compare-label">Медиана</span>
-                                <strong class="compare-value mono">${formatPrice(item.median)}</strong>
-                            </div>
-                            <div class="compare-metric">
-                                <span class="compare-label">Дешёвые лоты</span>
-                                <strong class="compare-value mono">${item.cheap_count || 0}</strong>
-                            </div>
-                            <div class="compare-metric wide">
-                                <span class="compare-label">Размер рынка</span>
-                                <strong class="compare-value mono">${item.total_results || 0}</strong>
-                                <span class="compare-meta">${bestListing ? `${escapeHtml(bestListing.title)} · ${formatPrice(bestListing.price)}` : "Лучший оффер пока не найден"}</span>
-                            </div>
-                        </div>
-                    </article>
-                `;
-            })
-            .join("");
+        clearChildren(elements.comparisonGrid);
+        for (const [index, item] of state.comparisonItems.entries()) {
+            const isBase = index === 0;
+            const bestListing = item.best_listing || null;
+            const medianDelta = isBase
+                ? { text: "база", className: "" }
+                : comparisonDelta(Number(item.median || 0), Number(baseItem?.median || 0));
+            const trend = item.trend_percent == null
+                ? "нет истории"
+                : `${item.trend_percent > 0 ? "+" : ""}${item.trend_percent.toFixed(1)}%`;
+            const metrics = domEl(
+                "div",
+                { className: "compare-metrics" },
+                domEl(
+                    "div",
+                    { className: "compare-metric" },
+                    domEl("span", { className: "compare-label", text: "Медиана" }),
+                    domEl("strong", { className: "compare-value mono", text: formatPrice(item.median) }),
+                ),
+                domEl(
+                    "div",
+                    { className: "compare-metric" },
+                    domEl("span", { className: "compare-label", text: "Дешёвые лоты" }),
+                    domEl("strong", { className: "compare-value mono", text: item.cheap_count || 0 }),
+                ),
+                domEl(
+                    "div",
+                    { className: "compare-metric wide" },
+                    domEl("span", { className: "compare-label", text: "Размер рынка" }),
+                    domEl("strong", { className: "compare-value mono", text: item.total_results || 0 }),
+                    domEl(
+                        "span",
+                        {
+                            className: "compare-meta",
+                            text: bestListing
+                                ? `${bestListing.title} · ${formatPrice(bestListing.price)}`
+                                : "Лучший оффер пока не найден",
+                        },
+                    ),
+                ),
+            );
+            elements.comparisonGrid.appendChild(
+                domEl(
+                    "article",
+                    { className: "compare-card" },
+                    domEl("span", { className: "compare-kicker", text: isBase ? "База" : "Сравнение" }),
+                    domEl("strong", { className: "compare-query", text: item.query }),
+                    domEl(
+                        "div",
+                        { className: "compare-deltas" },
+                        domEl(
+                            "span",
+                            {
+                                className: `compare-delta-chip ${medianDelta?.className || ""}`.trim(),
+                                text: `медиана ${medianDelta?.text || "—"}`,
+                            },
+                        ),
+                        domEl("span", { className: "compare-delta-chip", text: `тренд ${trend}` }),
+                    ),
+                    metrics,
+                )
+            );
+        }
         });
     }
 
@@ -355,11 +378,11 @@ function createRenderViews(context) {
         elements.stats.min.textContent = formatPrice(state.stats.min);
         elements.stats.max.textContent = formatPrice(state.stats.max);
         if (state.stats.fair_price_from != null && state.stats.fair_price_to != null) {
-            elements.stats.fairRange.innerHTML = `
-                <span class="stat-range-item">${formatPrice(state.stats.fair_price_from)}</span>
-                <span class="stat-range-sep">-</span>
-                <span class="stat-range-item">${formatPrice(state.stats.fair_price_to)}</span>
-            `;
+            elements.stats.fairRange.replaceChildren(
+                domEl("span", { className: "stat-range-item", text: formatPrice(state.stats.fair_price_from) }),
+                domEl("span", { className: "stat-range-sep", text: "-" }),
+                domEl("span", { className: "stat-range-item", text: formatPrice(state.stats.fair_price_to) }),
+            );
         } else {
             elements.stats.fairRange.textContent = "—";
         }
@@ -381,7 +404,7 @@ function createRenderViews(context) {
 
     function renderSegments() {
         return safeRender('renderSegments', () => {
-        elements.segmentsGrid.innerHTML = "";
+        clearChildren(elements.segmentsGrid);
         if (!state.segments) {
             elements.segmentsSection.hidden = true;
             return;
@@ -433,20 +456,24 @@ function createRenderViews(context) {
             const deltaText = Math.abs(delta) < 0.5
                 ? "≈ рынок"
                 : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}% к рынку`;
-            const card = document.createElement("div");
-            card.className = "seg-card";
-            card.innerHTML = `
-                <div class="seg-head">
-                    <span class="seg-pill ${segment.type}">${segment.typeLabel}</span>
-                    <span class="seg-seller">${segment.sellerLabel}</span>
-                </div>
-                <span class="seg-price mono">${formatPrice(segment.data.median)}</span>
-                <div class="seg-meta-row">
-                    <span class="seg-count">${segment.data.count} с ценой</span>
-                    <span class="seg-share">${share}% выборки</span>
-                </div>
-                <span class="seg-delta ${deltaClassName}">${deltaText}</span>
-            `;
+            const card = domEl(
+                "div",
+                { className: "seg-card" },
+                domEl(
+                    "div",
+                    { className: "seg-head" },
+                    domEl("span", { className: `seg-pill ${segment.type}`, text: segment.typeLabel }),
+                    domEl("span", { className: "seg-seller", text: segment.sellerLabel }),
+                ),
+                domEl("span", { className: "seg-price mono", text: formatPrice(segment.data.median) }),
+                domEl(
+                    "div",
+                    { className: "seg-meta-row" },
+                    domEl("span", { className: "seg-count", text: `${segment.data.count} с ценой` }),
+                    domEl("span", { className: "seg-share", text: `${share}% выборки` }),
+                ),
+                domEl("span", { className: `seg-delta ${deltaClassName}`, text: deltaText }),
+            );
             elements.segmentsGrid.appendChild(card);
         }
 
@@ -458,26 +485,30 @@ function createRenderViews(context) {
 
     function renderGeography() {
         return safeRender('renderGeography', () => {
-        elements.geographyGrid.innerHTML = "";
+        clearChildren(elements.geographyGrid);
         if (!state.geography.length) {
             elements.geographySection.hidden = true;
             return;
         }
 
         for (const region of state.geography) {
-            const card = document.createElement("div");
-            card.className = "geo-card";
-            card.innerHTML = `
-                <div class="geo-head">
-                    <strong class="geo-name">${escapeHtml(region.region_name)}</strong>
-                    <span class="geo-share">${escapeHtml(region.share_percent)}% выборки</span>
-                </div>
-                <span class="geo-price mono">${formatPrice(region.median)}</span>
-                <div class="geo-meta">
-                    <span>${region.count} с ценой</span>
-                    <span>ср. ${formatPrice(region.mean)}</span>
-                </div>
-            `;
+            const card = domEl(
+                "div",
+                { className: "geo-card" },
+                domEl(
+                    "div",
+                    { className: "geo-head" },
+                    domEl("strong", { className: "geo-name", text: region.region_name }),
+                    domEl("span", { className: "geo-share", text: `${region.share_percent}% выборки` }),
+                ),
+                domEl("span", { className: "geo-price mono", text: formatPrice(region.median) }),
+                domEl(
+                    "div",
+                    { className: "geo-meta" },
+                    domEl("span", { text: `${region.count} с ценой` }),
+                    domEl("span", { text: `ср. ${formatPrice(region.mean)}` }),
+                ),
+            );
             elements.geographyGrid.appendChild(card);
         }
 

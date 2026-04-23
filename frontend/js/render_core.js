@@ -10,12 +10,18 @@ function createRenderCore(context) {
      * Escape HTML special characters to prevent XSS attacks.
      * Uses a singleton DOM element to avoid creating new elements on every call.
      */
-    const _escapeDiv = document.createElement("div");
-
     function escapeHtml(str) {
         if (str == null) return "";
-        _escapeDiv.textContent = String(str);
-        return _escapeDiv.innerHTML;
+        return String(str).replace(/[&<>"']/g, (char) => {
+            const map = {
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+            };
+            return map[char] || char;
+        });
     }
 
     /**
@@ -45,22 +51,27 @@ function createRenderCore(context) {
     function showToast(message, type = "info", duration = 3000) {
         if (!elements.toastContainer) return null;
 
-        const toast = document.createElement("div");
-        toast.className = `toast toast-${type} entering`;
-        toast.setAttribute("role", "status");
-        toast.setAttribute("aria-live", "polite");
-
         const iconMap = {
             success: "✓",
             error: "✕",
             info: "ℹ",
         };
 
-        toast.innerHTML = `
-            <span class="toast-icon ${type}">${iconMap[type] || iconMap.info}</span>
-            <span class="toast-message">${escapeHtml(message)}</span>
-            <button class="toast-close" aria-label="Закрыть уведомление">×</button>
-        `;
+        const toast = domEl(
+            "div",
+            {
+                className: `toast toast-${type} entering`,
+                attrs: { role: "status", "aria-live": "polite" },
+            },
+            domEl("span", { className: `toast-icon ${type}`, text: iconMap[type] || iconMap.info }),
+            domEl("span", { className: "toast-message", text: message }),
+            domEl("button", {
+                className: "toast-close",
+                type: "button",
+                text: "×",
+                attrs: { "aria-label": "Закрыть уведомление" },
+            }),
+        );
 
         elements.toastContainer.appendChild(toast);
 
@@ -131,14 +142,18 @@ function createRenderCore(context) {
         const card = document.createElement("div");
         card.className = "skeleton-card";
         card.setAttribute("aria-hidden", "true");
-        card.innerHTML = `
-            <div class="skeleton-image"></div>
-            <div class="skeleton-content">
-                <div class="skeleton-text skeleton-title"></div>
-                <div class="skeleton-text skeleton-subtitle"></div>
-                <div class="skeleton-text skeleton-price"></div>
-            </div>
-        `;
+        card.appendChild(
+            domFragment(
+                domEl("div", { className: "skeleton-image" }),
+                domEl(
+                    "div",
+                    { className: "skeleton-content" },
+                    domEl("div", { className: "skeleton-text skeleton-title" }),
+                    domEl("div", { className: "skeleton-text skeleton-subtitle" }),
+                    domEl("div", { className: "skeleton-text skeleton-price" }),
+                ),
+            )
+        );
         return card;
     }
 
@@ -147,21 +162,21 @@ function createRenderCore(context) {
             elements.searchButton.disabled = state.loading || !state.query.trim();
             elements.searchInput.disabled = state.loading;
             if (state.loading) {
-                elements.searchButtonLabel.innerHTML = '<span class="spin"></span>';
+                elements.searchButtonLabel.replaceChildren(domEl("span", { className: "spin" }));
                 elements.listingsSection?.setAttribute('aria-busy', 'true');
                 elements.dealsSection?.setAttribute('aria-busy', 'true');
                 elements.statsSection?.setAttribute('aria-busy', 'true');
 
                 // Show skeleton cards in listing containers during initial load
                 if (!state.listings.length && elements.listingsList) {
-                    elements.listingsList.innerHTML = "";
+                    domClear(elements.listingsList);
                     for (let i = 0; i < 3; i++) {
                         elements.listingsList.appendChild(buildSkeletonCard());
                     }
                     elements.listingsSection.hidden = false;
                 }
                 if (!state.dealListings.length && elements.dealsList) {
-                    elements.dealsList.innerHTML = "";
+                    domClear(elements.dealsList);
                     for (let i = 0; i < 3; i++) {
                         elements.dealsList.appendChild(buildSkeletonCard());
                     }

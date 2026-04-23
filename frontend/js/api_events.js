@@ -150,7 +150,7 @@ function createApiEvents(context) {
                 // 3. Don't call renderRecentSearches() — we handle it directly
                 // to avoid double-render and ensure instant response
                 if (elements.recentSection) elements.recentSection.hidden = true;
-                if (elements.recentList) elements.recentList.innerHTML = "";
+                if (elements.recentList) domClear(elements.recentList);
 
                 // 4. Optional haptic feedback
                 if (window.Telegram?.WebApp?.HapticFeedback) {

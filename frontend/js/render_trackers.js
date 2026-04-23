@@ -68,7 +68,7 @@ function createRenderTrackers(context) {
 
     function renderTrackers() {
         return safeRender('renderTrackers', () => {
-        elements.trackersList.innerHTML = "";
+        domClear(elements.trackersList);
 
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
@@ -104,51 +104,57 @@ function createRenderTrackers(context) {
                 }
             }
 
-            const card = document.createElement("div");
-            card.className = `tracker-card-enhanced${tracker.paused ? " paused" : ""}`;
-            card.innerHTML = `
-                <div class="tracker-header">
-                    <div class="tracker-icon">🔍</div>
-                    <div class="tracker-title-wrap">
-                        <h4 class="tracker-query-title">${escapeHtml(tracker.query)}</h4>
-                    </div>
-                </div>
-                <div class="tracker-filters">
-                    <span class="tracker-filter-tag">каждые ${tracker.interval_min} мин</span>
-                    ${tracker.strict_mode ? '<span class="tracker-filter-tag">строгий</span>' : ""}
-                    ${tracker.min_discount_percent ? `<span class="tracker-filter-tag">от -${Math.round(tracker.min_discount_percent)}%</span>` : ""}
-                    ${tracker.max_price_byn ? `<span class="tracker-filter-tag">до ${Math.round(tracker.max_price_byn)} BYN</span>` : ""}
-                    ${tracker.seller_type === "Частное лицо" ? '<span class="tracker-filter-tag">частники</span>' : ""}
-                    ${tracker.condition ? `<span class="tracker-filter-tag">${escapeHtml(tracker.condition)}</span>` : ""}
-                    ${tracker.region_name ? `<span class="tracker-filter-tag">${escapeHtml(tracker.region_name)}</span>` : ""}
-                </div>
-                <div class="tracker-stats">
-                    <div class="tracker-stat">
-                        <span class="tracker-stat-label">События</span>
-                        <span class="tracker-stat-value highlight">${tracker.event_count || 0}</span>
-                    </div>
-                    <div class="tracker-stat">
-                        <span class="tracker-stat-label">В среднем</span>
-                        <span class="tracker-stat-value">${tracker.avg_events_per_day || 0}/день</span>
-                    </div>
-                    <div class="tracker-stat">
-                        <span class="tracker-stat-label">Посл. событие</span>
-                        <span class="tracker-stat-value">${formatLastEventTime(tracker.last_event_at)}</span>
-                    </div>
-                </div>
-                ${lastCheckedLabel ? `<div class="tracker-last-checked">🕐 ${escapeHtml(lastCheckedLabel)}</div>` : ""}
-                <div class="tracker-card-actions">
-                    <button class="ghost-btn small" data-role="${tracker.paused ? "resume" : "pause"}" type="button">
-                        ${tracker.paused ? "▶ Возобновить" : "⏸ Пауза"}
-                    </button>
-                    <button class="ghost-btn small" data-role="edit" type="button">
-                        ✏️ Изменить
-                    </button>
-                    <button class="ghost-btn small danger" data-role="delete" type="button">
-                        🗑 Удалить
-                    </button>
-                </div>
-            `;
+            const trackerFilters = domEl(
+                "div",
+                { className: "tracker-filters" },
+                domEl("span", { className: "tracker-filter-tag", text: `каждые ${tracker.interval_min} мин` }),
+            );
+            if (tracker.strict_mode) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: "строгий" }));
+            if (tracker.min_discount_percent) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `от -${Math.round(tracker.min_discount_percent)}%` }));
+            if (tracker.max_price_byn) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `до ${Math.round(tracker.max_price_byn)} BYN` }));
+            if (tracker.seller_type === "Частное лицо") trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: "частники" }));
+            if (tracker.condition) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: tracker.condition }));
+            if (tracker.region_name) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: tracker.region_name }));
+
+            const buildStat = (label, value, className) => domEl(
+                "div",
+                { className: "tracker-stat" },
+                domEl("span", { className: "tracker-stat-label", text: label }),
+                domEl("span", { className: `tracker-stat-value${className ? ` ${className}` : ""}`.trim(), text: value }),
+            );
+
+            const actionRole = tracker.paused ? "resume" : "pause";
+            const actionText = tracker.paused ? "▶ Возобновить" : "⏸ Пауза";
+            const card = domEl(
+                "div",
+                { className: `tracker-card-enhanced${tracker.paused ? " paused" : ""}` },
+                domEl(
+                    "div",
+                    { className: "tracker-header" },
+                    domEl("div", { className: "tracker-icon", text: "🔍" }),
+                    domEl(
+                        "div",
+                        { className: "tracker-title-wrap" },
+                        domEl("h4", { className: "tracker-query-title", text: tracker.query }),
+                    ),
+                ),
+                trackerFilters,
+                domEl(
+                    "div",
+                    { className: "tracker-stats" },
+                    buildStat("События", tracker.event_count || 0, "highlight"),
+                    buildStat("В среднем", `${tracker.avg_events_per_day || 0}/день`),
+                    buildStat("Посл. событие", formatLastEventTime(tracker.last_event_at)),
+                ),
+                lastCheckedLabel ? domEl("div", { className: "tracker-last-checked", text: `🕐 ${lastCheckedLabel}` }) : null,
+                domEl(
+                    "div",
+                    { className: "tracker-card-actions" },
+                    domEl("button", { className: "ghost-btn small", type: "button", dataset: { role: actionRole }, text: actionText }),
+                    domEl("button", { className: "ghost-btn small", type: "button", dataset: { role: "edit" }, text: "✏️ Изменить" }),
+                    domEl("button", { className: "ghost-btn small danger", type: "button", dataset: { role: "delete" }, text: "🗑 Удалить" }),
+                ),
+            );
 
             card.querySelector('[data-role="pause"]')?.addEventListener("click", () => {
                 void actions.pauseTracker(tracker.id);
@@ -203,7 +209,7 @@ function createRenderTrackers(context) {
         container.style.overflowY = "";
         container.style.maxHeight = "";
 
-        container.innerHTML = "";
+        domClear(container);
 
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
@@ -244,12 +250,13 @@ function createRenderTrackers(context) {
                     uniqueTrackers.set(evt.tracker_id, evt.query);
                 }
             }
-            let html = '<option value="">Все трекеры</option>';
+            const options = [domEl("option", { value: "", text: "Все трекеры" })];
             for (const [id, query] of uniqueTrackers) {
-                const selected = String(id) === prevValue ? " selected" : "";
-                html += `<option value="${id}"${selected}>${escapeHtml(query)}</option>`;
+                const option = domEl("option", { value: id, text: query });
+                if (String(id) === prevValue) option.selected = true;
+                options.push(option);
             }
-            select.innerHTML = html;
+            select.replaceChildren(...options);
             // Restore selection from state
             select.value = state.trackerEventFilterTrackerId || "";
         }
@@ -281,40 +288,62 @@ function createRenderTrackers(context) {
 
         // Build event card element — extracted for virtual scrolling
         function buildEventNode(event) {
-            const card = document.createElement("article");
             const isPriceDrop = event.event_type === "price_drop";
-            card.className = `tracker-event-card${isPriceDrop ? " price-drop" : ""}`;
-            card.innerHTML = `
-                <div class="event-header">
-                    ${event.thumbnail
-                        ? `<img class="event-thumbnail" src="${safeUrl(event.thumbnail)}" alt="" loading="lazy">`
-                        : `<div class="event-thumbnail-placeholder">📱</div>`
-                    }
-                    <div class="event-body">
-                        <div class="event-top-row">
-                            <span class="event-type-badge ${isPriceDrop ? "drop" : "new"}">
-                                ${isPriceDrop ? "🔽 Падение цены" : "🆕 Новый лот"}
-                            </span>
-                            <span class="event-time">${formatDate(event.created_at)}</span>
-                        </div>
-                        <strong class="event-title">${escapeHtml(event.title)}</strong>
-                        <div class="event-price-row">
-                            <span class="event-price mono">${event.price_byn ? `${Math.round(event.price_byn)} р.` : "без цены"}</span>
-                            ${event.delta_byn ? `<span class="event-delta">-${Math.round(event.delta_byn)} р.</span>` : ""}
-                        </div>
-                        <div class="event-meta">
-                            ${event.region_name ? `<span class="event-meta-item">📍 ${escapeHtml(event.region_name)}</span>` : ""}
-                            ${event.seller_type ? `<span class="event-meta-item">👤 ${escapeHtml(event.seller_type)}</span>` : ""}
-                        </div>
-                        <span class="event-tracker-source">🔍 ${escapeHtml(event.query)}</span>
-                    </div>
-                </div>
-                <div class="event-actions">
-                    <button class="listing-btn" data-role="open-query" type="button">Открыть</button>
-                    <button class="listing-btn" data-role="lead" type="button">В покупки</button>
-                    <a class="listing-btn listing-btn--accent" href="${safeUrl(event.link)}" target="_blank" rel="noreferrer noopener">Kufar →</a>
-                </div>
-            `;
+            const thumbnailNode = event.thumbnail
+                ? domEl("img", {
+                    className: "event-thumbnail",
+                    attrs: { src: safeUrl(event.thumbnail), alt: "", loading: "lazy" },
+                })
+                : domEl("div", { className: "event-thumbnail-placeholder", text: "📱" });
+            const eventMeta = domEl("div", { className: "event-meta" });
+            if (event.region_name) eventMeta.appendChild(domEl("span", { className: "event-meta-item", text: `📍 ${event.region_name}` }));
+            if (event.seller_type) eventMeta.appendChild(domEl("span", { className: "event-meta-item", text: `👤 ${event.seller_type}` }));
+            const priceRow = domEl(
+                "div",
+                { className: "event-price-row" },
+                domEl("span", { className: "event-price mono", text: event.price_byn ? `${Math.round(event.price_byn)} р.` : "без цены" }),
+            );
+            if (event.delta_byn) priceRow.appendChild(domEl("span", { className: "event-delta", text: `-${Math.round(event.delta_byn)} р.` }));
+            const card = domEl(
+                "article",
+                { className: `tracker-event-card${isPriceDrop ? " price-drop" : ""}` },
+                domEl(
+                    "div",
+                    { className: "event-header" },
+                    thumbnailNode,
+                    domEl(
+                        "div",
+                        { className: "event-body" },
+                        domEl(
+                            "div",
+                            { className: "event-top-row" },
+                            domEl(
+                                "span",
+                                {
+                                    className: `event-type-badge ${isPriceDrop ? "drop" : "new"}`,
+                                    text: isPriceDrop ? "🔽 Падение цены" : "🆕 Новый лот",
+                                },
+                            ),
+                            domEl("span", { className: "event-time", text: formatDate(event.created_at) }),
+                        ),
+                        domEl("strong", { className: "event-title", text: event.title }),
+                        priceRow,
+                        eventMeta,
+                        domEl("span", { className: "event-tracker-source", text: `🔍 ${event.query}` }),
+                    ),
+                ),
+                domEl(
+                    "div",
+                    { className: "event-actions" },
+                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "open-query" }, text: "Открыть" }),
+                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "lead" }, text: "В покупки" }),
+                    domEl("a", {
+                        className: "listing-btn listing-btn--accent",
+                        text: "Kufar →",
+                        attrs: { href: safeUrl(event.link), target: "_blank", rel: "noreferrer noopener" },
+                    }),
+                ),
+            );
 
             card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
                 if (event.query) {

@@ -33,6 +33,14 @@ function createApiListings(context) {
         return requestId === state.searchRequestId;
     }
 
+    function buildListingsQuery(params = {}) {
+        const query = new URLSearchParams(buildCommonQuery(params));
+        if (state.category != null) {
+            query.set("reference_context", "base_query");
+        }
+        return query.toString();
+    }
+
     // ── Clear search-dependent state ─────────────────────────────────────
     function clearSearchData() {
         state.stats = null;
@@ -119,7 +127,7 @@ function createApiListings(context) {
                 },
             },
             {
-                request: getJson(`/api/v1/listings?${buildCommonQuery({ sort: state.sort })}`, { signal }),
+                request: getJson(`/api/v1/listings?${buildListingsQuery({ sort: state.sort })}`, { signal }),
                 apply(payload) {
                     state.listings = payload.listings || [];
                     state.listingsTotal = payload.total || 0;
@@ -130,7 +138,7 @@ function createApiListings(context) {
             },
             {
                 request: getJson(
-                    `/api/v1/listings?${buildCommonQuery({
+                    `/api/v1/listings?${buildListingsQuery({
                         sort: "cheap",
                         discount_from_percent: state.discountFromPercent,
                         discount_to_percent: state.discountToPercent,
@@ -183,7 +191,7 @@ function createApiListings(context) {
 
         try {
             const payload = await getJson(
-                `/api/v1/listings?${buildCommonQuery({ sort: state.sort })}`
+                `/api/v1/listings?${buildListingsQuery({ sort: state.sort })}`
             );
             state.listings = payload.listings || [];
             state.listingsTotal = payload.total || 0;
@@ -216,7 +224,7 @@ function createApiListings(context) {
 
         try {
             const payload = await getJson(
-                `/api/v1/listings?${buildCommonQuery({
+                `/api/v1/listings?${buildListingsQuery({
                     sort: "cheap",
                     discount_from_percent: state.discountFromPercent,
                     discount_to_percent: state.discountToPercent,
@@ -320,9 +328,18 @@ function createApiListings(context) {
         state.error = null;
         renderError();
         try {
-            const catParam = state.category != null ? `&category=${state.category}` : "";
+            const params = new URLSearchParams({
+                query: queryToUse,
+                currency: state.currency,
+                strict_search: String(state.strictSearch),
+                ad_id: String(item.ad_id),
+            });
+            if (state.category != null) {
+                params.set("category", String(state.category));
+                params.set("reference_context", "base_query");
+            }
             const fullDetail = await getJson(
-                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${item.ad_id}${catParam}`
+                `/api/v1/listing-detail?${params.toString()}`
             );
             state.detail = fullDetail;
             state.detailImageIndex = 0;

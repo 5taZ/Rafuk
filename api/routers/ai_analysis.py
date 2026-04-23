@@ -7,9 +7,10 @@ import logging
 import secrets
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from api.dependencies import get_cache, get_telegram_user
 from api.schemas import (
@@ -21,13 +22,23 @@ from api.schemas import (
 from api.services.aggregator import normalize_price_byn
 from api.services.ai_guardrails import apply_ai_market_guardrails
 from api.services.ai_service import get_ai_service
-from api.services.kufar_client import KufarClient
+from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.listing_mapper import first_image_url
 from api.services.query_pipeline import load_query_dataset
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+_AI_ANALYSIS_ERRORS = (
+    httpx.HTTPError,
+    KufarAPIError,
+    RuntimeError,
+    ValidationError,
+    ValueError,
+    TypeError,
+    KeyError,
+)
 
 # ── In-memory async task store ────────────────────────────────────────────
 _tasks: dict[str, dict] = {}
@@ -361,7 +372,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             try:
                 from api.services.market_signals import detect_anomaly_flags
                 raw_flags = detect_anomaly_flags(target_ad, stats)
-            except Exception:
+            except (AttributeError, KeyError, TypeError, ValueError):
                 logger.warning(
                     "Failed to compute anomaly flags for ad_id=%d",
                     payload.ad_id,
@@ -372,7 +383,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 deal = _compute_deal_score(target_ad, query=payload.query, market_stats=stats)
                 target_deal_score = deal.score
                 target_deal_verdict = deal.verdict
-            except Exception:
+            except (AttributeError, KeyError, TypeError, ValueError):
                 logger.warning(
                     "Failed to compute deal score for ad_id=%d",
                     payload.ad_id,
@@ -507,7 +518,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         logger.error("AI async task %s timed out for ad_id=%d", task_id, payload.ad_id)
         task["status"] = "error"
         task["error"] = "AI анализ занял слишком долго. Попробуйте ещё раз."
-    except Exception as exc:
+    except _AI_ANALYSIS_ERRORS as exc:
         logger.error("AI async task %s failed: [%s] %s", task_id, type(exc).__name__, exc)
         err_msg = "AI сервис недоступен. Попробуйте позже."
         err_str = str(exc).lower()
@@ -661,7 +672,7 @@ async def quick_condition(
 
     try:
         result = await ai.quick_condition(images)
-    except Exception as exc:
+    except (asyncio.TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
         logger.error("Quick condition failed: %s", exc)
         err_msg = "AI сервис недоступен"
         if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
