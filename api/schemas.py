@@ -555,6 +555,19 @@ class AIFairPrice(BaseModel):
     reasoning: str = ""
 
 
+class AIResalePrice(BaseModel):
+    label: str = ""
+    price_byn: float = 0.0
+    reasoning: str = ""
+
+
+class AIResalePotential(BaseModel):
+    fast_price: AIResalePrice | None = None
+    market_price: AIResalePrice | None = None
+    optimal_price: AIResalePrice | None = None
+    reasoning: str = ""
+
+
 class AIWatchOutItem(BaseModel):
     point: str = ""
     why: str = ""
@@ -580,6 +593,7 @@ class AIAnalysisResponse(BaseModel):
     ad_id: int
     condition: AIConditionAssessment | None = None
     fair_price: AIFairPrice | None = None
+    resale_potential: AIResalePotential | None = None
     watch_out: list[AIWatchOutItem] = Field(default_factory=list)
     recommendation: AIRecommendation | None = None
     similar_listings: list[AISimilarListing] = Field(default_factory=list)

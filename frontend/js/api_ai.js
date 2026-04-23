@@ -1,11 +1,12 @@
 /**
- * api_ai.js — AI listing analysis with dedicated modal.
+ * api_ai.js — AI listing analysis with dedicated modal + PDF export.
  */
 function createApiAi(context) {
-    const { state, elements, postJson, escapeHtml, safeUrl, formatPrice, telegramHeaders } = context;
+    const { state, elements, postJson, getJson, escapeHtml, safeUrl, formatPrice, telegramHeaders } = context;
 
     let _aiLoading = false;
     let _aiProgress = 0;
+    let _lastAiData = null;
 
     const LOADING_STEPS = [
         "Загружаю данные объявления...",
@@ -24,21 +25,46 @@ function createApiAi(context) {
         if (pctEl) pctEl.textContent = Math.round(pct) + "%";
     }
 
+    /**
+     * Progress model: server sends milestones (10, 30, 50, 85).
+     * Between milestones we creep slowly so the bar never stalls.
+     * When a new server milestone arrives, we jump toward it quickly.
+     * The bar never reaches 100% until analysis is truly done.
+     */
+    let _serverCeiling = 0; // highest server milestone seen
+
+    function _setServerProgress(serverPct) {
+        if (serverPct > _serverCeiling) {
+            _serverCeiling = serverPct;
+        }
+    }
+
     function _startLoadingAnimation() {
         let step = 0;
         _aiProgress = 0;
+        _serverCeiling = 0;
         const textEl = elements.aiLoaderText;
 
         function tick() {
             step = (step + 1) % LOADING_STEPS.length;
             if (textEl) textEl.textContent = LOADING_STEPS[step];
-            _aiProgress = Math.min(_aiProgress + 8 + Math.random() * 5, 92);
+
+            // Ceilings: server milestones define brackets the bar can move through.
+            // Current ceiling determines the max local bar can show.
+            // Between ticks, bar creeps ~0.3-0.6% per 800ms tick.
+            // When server jumps from 30→50, the ceiling rises and bar accelerates.
+            const maxLocal = Math.min(_serverCeiling + 5, 93);
+            if (_aiProgress < maxLocal) {
+                // Slow creep: 0.3-0.6% per tick (0.375-0.75% per second)
+                const creep = 0.3 + Math.random() * 0.3;
+                _aiProgress = Math.min(_aiProgress + creep, maxLocal);
+            }
             _updateProgressDisplay(_aiProgress);
         }
 
         if (textEl) textEl.textContent = LOADING_STEPS[0];
-        _updateProgressDisplay(5);
-        state.aiLoadingTimer = setInterval(tick, 2800);
+        _updateProgressDisplay(2);
+        state.aiLoadingTimer = setInterval(tick, 800);
     }
 
     function _stopLoadingAnimation(success = true) {
@@ -48,8 +74,6 @@ function createApiAi(context) {
         }
         if (success) {
             _updateProgressDisplay(100);
-            const pctEl = elements.aiProgressPct;
-            if (pctEl) pctEl.classList.add("ai-progress-pct--done");
             const barEl = elements.aiProgressBar;
             if (barEl) barEl.classList.add("ai-progress-bar--done");
         }
@@ -61,8 +85,9 @@ function createApiAi(context) {
         const loadingEl = elements.aiModalLoading;
         if (!loadingEl) { callback(); return; }
 
-        const ring = loadingEl.querySelector(".ai-loader-ring");
-        const icon = loadingEl.querySelector(".ai-loader-icon");
+        const wrap = loadingEl.querySelector(".ai-loader-wrap") || loadingEl.querySelector(".ai-loader");
+        const ring = wrap?.querySelector(".ai-loader-ring") || loadingEl.querySelector(".ai-loader-ring");
+        const icon = wrap?.querySelector(".ai-loader-icon") || loadingEl.querySelector(".ai-loader-icon");
         if (ring) ring.classList.add("ai-loader-ring--done");
         if (icon) {
             icon.textContent = "✓";
@@ -88,6 +113,26 @@ function createApiAi(context) {
             elements.aiModalSubtitle.textContent = subtitle;
         }
 
+        // Hide PDF button until results
+        const pdfBtn = document.getElementById("ai-export-pdf");
+        if (pdfBtn) pdfBtn.hidden = true;
+
+        // Show time estimate notice
+        const bodyEl = elements.aiModal?.querySelector(".ai-modal-body");
+        if (bodyEl) {
+            let notice = bodyEl.querySelector(".ai-time-notice");
+            if (!notice) {
+                notice = document.createElement("p");
+                notice.className = "ai-time-notice";
+                notice.textContent = "Анализ занимает 2–3 минуты";
+                const loadingEl = elements.aiModalLoading;
+                if (loadingEl) {
+                    loadingEl.parentNode.insertBefore(notice, loadingEl.nextSibling);
+                }
+            }
+            notice.hidden = false;
+        }
+
         // Reset completion classes from previous run
         const loadingEl = elements.aiModalLoading;
         if (loadingEl) {
@@ -103,11 +148,6 @@ function createApiAi(context) {
                 icon.classList.remove("ai-loader-icon--error");
                 icon.textContent = "AI";
             }
-        }
-        const pctEl = elements.aiProgressPct;
-        if (pctEl) {
-            pctEl.classList.remove("ai-progress-pct--error");
-            pctEl.classList.remove("ai-progress-pct--done");
         }
         const barEl = elements.aiProgressBar;
         if (barEl) {
@@ -136,8 +176,6 @@ function createApiAi(context) {
         const query = (state.detail?.query || state.query || "").trim();
         if (!adId || !query) return;
 
-        // If already analyzed for this ad, show cached result immediately
-        // (but not if it was an error — allow retry)
         const cached = state.detailAi;
         if (cached && cached.adId === adId && cached.result && !cached.error) {
             openAIModal(state.detail?.title || "");
@@ -159,26 +197,75 @@ function createApiAi(context) {
         openAIModal(state.detail?.title || "");
 
         try {
-            const result = await postJson("/api/v1/ai/analyze", {
+            // POST starts async analysis, returns task_id immediately
+            const startResp = await postJson("/api/v1/ai/analyze", {
                 ad_id: adId,
                 query,
                 category: state.category || undefined,
-            }, { timeout: 270000 });
-            console.log("[AI] Response received:", result ? "ok" : "null", result ? Object.keys(result).join(",") : "");
-            state.detailAi = {
-                adId,
-                loading: false,
-                result,
-                error: "",
-                source: "ai",
-            };
-            _showCompletionThen(() => _renderAIModalResult(result));
+            });
+
+            // Cached result returned immediately
+            if (startResp.cached && startResp.result) {
+                console.log("[AI] Cached result received");
+                const result = startResp.result;
+                state.detailAi = { adId, loading: false, result, error: "", source: "ai" };
+                _showCompletionThen(() => _renderAIModalResult(result));
+                return;
+            }
+
+            const taskId = startResp.task_id;
+            if (!taskId) {
+                throw new Error("Сервер не вернул идентификатор задачи");
+            }
+
+            console.log("[AI] Task started:", taskId);
+
+            // Poll for result every 3 seconds
+            const POLL_INTERVAL = 3000;
+            const MAX_POLLS = 120; // 6 minutes max
+            let pollCount = 0;
+
+            await new Promise((resolve, reject) => {
+                const poll = async () => {
+                    pollCount++;
+                    if (pollCount > MAX_POLLS) {
+                        reject(new Error("Анализ занял слишком долго. Попробуйте ещё раз."));
+                        return;
+                    }
+                    try {
+                        const status = await getJson(`/api/v1/ai/task/${taskId}`);
+                        // Update server milestone — local timer creeps toward it
+                        if (status.progress > 0) {
+                            _setServerProgress(status.progress);
+                        }
+                        if (status.status === "done") {
+                            resolve(status.result);
+                        } else if (status.status === "error") {
+                            reject(new Error(status.error || "Ошибка AI анализа"));
+                        } else {
+                            // Still pending/processing — poll again
+                            setTimeout(poll, POLL_INTERVAL);
+                        }
+                    } catch (err) {
+                        // Transient network error — retry
+                        if (pollCount > 5 && err.message && err.message.includes("не найдена")) {
+                            reject(err);
+                        } else {
+                            setTimeout(poll, POLL_INTERVAL);
+                        }
+                    }
+                };
+                setTimeout(poll, POLL_INTERVAL);
+            }).then((result) => {
+                console.log("[AI] Analysis complete");
+                state.detailAi = { adId, loading: false, result, error: "", source: "ai" };
+                _showCompletionThen(() => _renderAIModalResult(result));
+            }).catch((err) => {
+                throw err;
+            });
         } catch (err) {
             console.error("[AI] Request failed:", err);
-            const isTimeout = err.message && err.message.includes("таймаут");
-            const message = isTimeout
-                ? "Анализ занял слишком долго. Проверьте соединение и попробуйте снова."
-                : `Не удалось выполнить анализ. Проверьте интернет-соединение.`;
+            const message = err.message || "Не удалось выполнить анализ. Проверьте интернет-соединение.";
             state.detailAi = {
                 adId,
                 loading: false,
@@ -206,9 +293,6 @@ function createApiAi(context) {
             }
             if (elements.aiLoaderText) elements.aiLoaderText.textContent = "Ошибка анализа";
         }
-        // Show percentage and bar in red on error
-        const pctEl = elements.aiProgressPct;
-        if (pctEl) pctEl.classList.add("ai-progress-pct--error");
         const barEl = elements.aiProgressBar;
         if (barEl) barEl.classList.add("ai-progress-bar--error");
 
@@ -226,12 +310,22 @@ function createApiAi(context) {
 
     function _renderAIModalResult(data) {
         console.log("[AI] Rendering result, data keys:", data ? Object.keys(data).join(",") : "null");
+        _lastAiData = data;
+
         if (elements.aiModalLoading) elements.aiModalLoading.hidden = true;
         if (elements.aiModalError) elements.aiModalError.hidden = true;
 
         const container = elements.aiModalResult;
         if (!container) return;
         container.hidden = false;
+
+        // Show PDF export button
+        const pdfBtn = document.getElementById("ai-export-pdf");
+        if (pdfBtn) pdfBtn.hidden = false;
+
+        // Hide time notice when results appear
+        const notice = elements.aiModal?.querySelector(".ai-time-notice");
+        if (notice) notice.hidden = true;
 
         let html = "";
 
@@ -287,6 +381,25 @@ function createApiAi(context) {
                         : ""}
                 ${fp.reasoning ? `<p class="ai-reasoning">${escapeHtml(fp.reasoning)}</p>` : ""}
             </div>`;
+        }
+
+        // ── Resale potential ──
+        if (data.resale_potential) {
+            const rp = data.resale_potential;
+            const prices = [rp.fast_price, rp.market_price, rp.optimal_price].filter(Boolean);
+            if (prices.length) {
+                html += `<div class="ai-section">
+                    <span class="ai-label">Потенциал перепродажи</span>
+                    <div class="ai-resale-prices">${prices.map(p =>
+                        `<div class="ai-resale-row">
+                            <span class="ai-resale-label">${escapeHtml(p.label)}</span>
+                            <span class="ai-resale-price mono">${Math.round(p.price_byn)} BYN</span>
+                            ${p.reasoning ? `<span class="ai-resale-note">${escapeHtml(p.reasoning)}</span>` : ""}
+                        </div>`
+                    ).join("")}</div>
+                    ${rp.reasoning ? `<p class="ai-reasoning">${escapeHtml(rp.reasoning)}</p>` : ""}
+                </div>`;
+            }
         }
 
         // ── Market context ──
@@ -393,8 +506,282 @@ function createApiAi(context) {
         container.innerHTML = html;
     }
 
+    /* ===== PDF Export ===== */
+
+    function _buildPdfSections(data) {
+        const sections = [];
+
+        // Verdict
+        if (data.recommendation) {
+            const verdictMap = {
+                worth_it: "Стоит брать",
+                think_twice: "Подумай",
+                overpriced: "Дорого",
+            };
+            sections.push({
+                title: "Вердикт",
+                body: (verdictMap[data.recommendation.verdict] || data.recommendation.verdict)
+                    + (data.summary ? "\n\n" + data.summary : ""),
+            });
+        }
+
+        // Condition
+        if (data.condition) {
+            const c = data.condition;
+            let body = c.label || "";
+            if (c.confidence) body += ` (уверенность ${Math.round(c.confidence * 100)}%)`;
+            if (c.notes?.length) body += "\n\n" + c.notes.map(n => "• " + n).join("\n");
+            sections.push({ title: "Состояние по фото", body });
+        }
+
+        // Fair price
+        if (data.fair_price) {
+            const fp = data.fair_price;
+            const from = fp.from || fp.from_price;
+            const to = fp.to || fp.to_price;
+            let body = from != null && to != null
+                ? `${Math.round(from)} — ${Math.round(to)} BYN`
+                : from != null ? `~${Math.round(from)} BYN` : "";
+            if (fp.reasoning) body += "\n\n" + fp.reasoning;
+            sections.push({ title: "Справедливая цена", body });
+        }
+
+        // Resale
+        if (data.resale_potential) {
+            const rp = data.resale_potential;
+            const prices = [rp.fast_price, rp.market_price, rp.optimal_price].filter(Boolean);
+            if (prices.length) {
+                let body = prices.map(p => `${p.label}: ${Math.round(p.price_byn)} BYN`).join("\n");
+                if (rp.reasoning) body += "\n\n" + rp.reasoning;
+                sections.push({ title: "Потенциал перепродажи", body });
+            }
+        }
+
+        // Market context
+        if (data.market_context) {
+            sections.push({ title: "Контекст рынка", body: data.market_context });
+        }
+
+        // Best alternative
+        if (data.best_alternative) {
+            const ba = data.best_alternative;
+            let body = `${ba.title} — ${Math.round(ba.price_byn)} BYN`;
+            if (ba.condition) body += ` (${ba.condition})`;
+            if (ba.link) body += "\n" + ba.link;
+            if (data.best_pick_reason) body += "\n\n" + data.best_pick_reason;
+            sections.push({ title: "Лучший вариант", body });
+        }
+
+        // Similar listings
+        if (data.similar_listings?.length) {
+            const others = data.best_alternative
+                ? data.similar_listings.filter(s => s.ad_id !== data.best_alternative.ad_id)
+                : data.similar_listings;
+            if (others.length) {
+                const body = others.map(s => `${s.title} — ${Math.round(s.price_byn)} BYN${s.condition ? " (" + s.condition + ")" : ""}`).join("\n");
+                sections.push({ title: `Другие варианты (${others.length})`, body });
+            }
+        }
+
+        // Watch out
+        if (data.watch_out?.length) {
+            const body = data.watch_out.map(w => `${w.point}: ${w.why}`).join("\n\n");
+            sections.push({ title: "На что обратить внимание", body });
+        }
+
+        // Meeting checklist
+        if (data.meeting_checklist?.length) {
+            const body = data.meeting_checklist.map((item, i) => `${i + 1}. ${item}`).join("\n");
+            sections.push({ title: "Чек-лист для встречи", body });
+        }
+
+        // Negotiation tips
+        if (data.negotiation_tips?.length) {
+            const body = data.negotiation_tips.map(t => "• " + t).join("\n");
+            sections.push({ title: "Как торговаться", body });
+        }
+
+        // Red flags
+        if (data.red_flags?.length) {
+            const body = data.red_flags.map(f => "⚠ " + f).join("\n");
+            sections.push({ title: "Красные флаги", body });
+        }
+
+        // Recommendation text
+        if (data.recommendation?.text) {
+            sections.push({ title: "Рекомендация", body: data.recommendation.text });
+        }
+
+        return sections;
+    }
+
+    function exportToPdf() {
+        const data = _lastAiData;
+        if (!data) return;
+
+        const title = state.detail?.title || "Объявление";
+        const price = state.detail?.price ? formatPrice(state.detail?.price) : "";
+        const adId = data.ad_id || "";
+        const link = state.detail?.link || (adId ? `https://www.kufar.by/item/${adId}` : "");
+        const dateStr = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+        const sections = _buildPdfSections(data);
+
+        // Verdict section extracted for hero treatment
+        const verdictSection = sections.find(s => s.title === "Вердикт");
+        const otherSections = sections.filter(s => s.title !== "Вердикт");
+        const vMap = { "Стоит брать": { cls: "good", icon: "&#10003;" }, "Подумай": { cls: "warn", icon: "&#9888;" }, "Дорого": { cls: "bad", icon: "&#10007;" } };
+        const verdictLine = verdictSection ? verdictSection.body.split("\n")[0] : "";
+        const verdictSummary = verdictSection ? verdictSection.body.split("\n").slice(1).join("\n").trim() : "";
+        const vInfo = vMap[verdictLine] || { cls: "warn", icon: "&#9888;" };
+
+        const pdfHtml = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>${_escXml(title)}</title>
+<style>
+  @page { margin: 0; size: A4; }
+  @page :first { margin-top: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; font-size: 10pt; line-height: 1.6; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* ── Hero ── */
+  .hero { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 36px 32px 28px; position: relative; overflow: hidden; }
+  .hero::after { content: ""; position: absolute; top: -40px; right: -40px; width: 200px; height: 200px; background: rgba(59,130,246,0.15); border-radius: 50%; }
+  .hero-badge { display: inline-block; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 3px 10px; font-size: 8pt; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255,255,255,0.8); margin-bottom: 12px; }
+  .hero h1 { font-size: 18pt; font-weight: 800; line-height: 1.25; margin-bottom: 6px; max-width: 85%; }
+  .hero-price { font-size: 16pt; font-weight: 700; color: #60a5fa; margin-bottom: 10px; }
+  .hero-meta { font-size: 8.5pt; color: rgba(255,255,255,0.5); display: flex; gap: 16px; flex-wrap: wrap; }
+  .hero-meta span { display: inline-flex; align-items: center; gap: 4px; }
+  .hero-link { color: rgba(255,255,255,0.6); text-decoration: none; font-size: 8pt; word-break: break-all; }
+
+  /* ── Verdict strip ── */
+  .verdict-strip { padding: 16px 32px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #e2e8f0; }
+  .verdict-strip.good { background: linear-gradient(90deg, #f0fdf4 0%, #fff 100%); border-left: 4px solid #22c55e; }
+  .verdict-strip.warn { background: linear-gradient(90deg, #fffbeb 0%, #fff 100%); border-left: 4px solid #f59e0b; }
+  .verdict-strip.bad { background: linear-gradient(90deg, #fef2f2 0%, #fff 100%); border-left: 4px solid #ef4444; }
+  .verdict-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16pt; font-weight: 700; flex-shrink: 0; }
+  .good .verdict-icon { background: #dcfce7; color: #15803d; }
+  .warn .verdict-icon { background: #fef3c7; color: #b45309; }
+  .bad .verdict-icon { background: #fee2e2; color: #dc2626; }
+  .verdict-text { font-size: 13pt; font-weight: 700; }
+  .good .verdict-text { color: #15803d; }
+  .warn .verdict-text { color: #b45309; }
+  .bad .verdict-text { color: #dc2626; }
+  .verdict-summary { font-size: 9.5pt; color: #475569; margin-top: 3px; line-height: 1.5; }
+
+  /* ── Content ── */
+  .content { padding: 20px 32px 32px; }
+  .section { margin-bottom: 18px; page-break-inside: avoid; }
+  .section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .section-dot { width: 6px; height: 6px; border-radius: 50%; background: #3b82f6; flex-shrink: 0; }
+  .section-title { font-size: 9pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #3b82f6; }
+  .section-body { font-size: 10pt; color: #334155; white-space: pre-wrap; padding-left: 14px; border-left: 2px solid #e2e8f0; line-height: 1.6; }
+
+  /* ── Price range highlight ── */
+  .section-body.price-highlight { background: #f8fafc; border-left-color: #3b82f6; padding: 8px 12px; border-radius: 0 6px 6px 0; font-weight: 600; font-size: 11pt; }
+
+  /* ── Footer ── */
+  .footer { margin-top: 28px; padding: 14px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; }
+  .footer p { font-size: 7.5pt; color: #94a3b8; line-height: 1.5; }
+  .footer-brand { font-weight: 600; color: #64748b; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-badge">Rafuks &middot; AI Report</div>
+  <h1>${_escXml(title)}</h1>
+  ${price ? `<div class="hero-price">${_escXml(price)}</div>` : ""}
+  <div class="hero-meta">
+    <span>${dateStr}</span>
+    ${adId ? `<span>ID ${_escXml(String(adId))}</span>` : ""}
+  </div>
+  ${link ? `<a class="hero-link" href="${_escXml(link)}">${_escXml(link)}</a>` : ""}
+</div>
+
+${verdictSection ? `
+<div class="verdict-strip ${vInfo.cls}">
+  <div class="verdict-icon">${vInfo.icon}</div>
+  <div>
+    <div class="verdict-text">${_escXml(verdictLine)}</div>
+    ${verdictSummary ? `<div class="verdict-summary">${_escXml(verdictSummary)}</div>` : ""}
+  </div>
+</div>
+` : ""}
+
+<div class="content">
+${otherSections.map(s => {
+    const isPrice = s.title === "Справедливая цена" || s.title === "Потенциал перепродажи";
+    const isFlags = s.title === "Красные флаги";
+    const bodyCls = isPrice ? " price-highlight" : "";
+    return `<div class="section">
+  <div class="section-header">
+    <div class="section-dot"${isFlags ? ' style="background:#ef4444;"' : ""}></div>
+    <div class="section-title"${isFlags ? ' style="color:#ef4444;"' : ""}>${_escXml(s.title)}</div>
+  </div>
+  <div class="section-body${bodyCls}">${_escXml(s.body)}</div>
+</div>`;
+}).join("\n")}
+</div>
+
+<div class="footer">
+  <p><span class="footer-brand">Rafuks</span> &mdash; ${_escXml(data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.")}</p>
+</div>
+
+</body>
+</html>`;
+
+        // Open report for printing.
+        // Telegram WebApp blocks window.open — use hidden iframe approach.
+        // Regular browsers get a new window with auto-print.
+        const isTelegram = !!window.Telegram?.WebApp?.initData;
+
+        if (isTelegram) {
+            // Telegram: write into a hidden iframe and print it
+            let iframe = document.getElementById("_ai-export-frame");
+            if (!iframe) {
+                iframe = document.createElement("iframe");
+                iframe.id = "_ai-export-frame";
+                iframe.style.cssText = "position:fixed;left:-9999px;width:0;height:0;border:none;";
+                document.body.appendChild(iframe);
+            }
+            iframe.srcdoc = pdfHtml;
+            iframe.onload = function () {
+                try { iframe.contentWindow.print(); } catch (_) {}
+            };
+        } else {
+            // Regular browser: new window with auto-print
+            const win = window.open("", "_blank");
+            if (win) {
+                win.document.write(pdfHtml);
+                win.document.close();
+                win.onload = function () { win.print(); };
+            }
+        }
+    }
+
+    function _escXml(str) {
+        if (!str) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    // Bind PDF export button
+    const pdfBtn = document.getElementById("ai-export-pdf");
+    if (pdfBtn) {
+        pdfBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            exportToPdf();
+        });
+    }
+
     return {
         loadAIAnalysis,
         closeAIModal,
+        exportToPdf,
     };
 }

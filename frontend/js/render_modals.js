@@ -47,29 +47,8 @@ function createRenderModals(context) {
         elements.detailDescription.textContent = detail.description || "";
         elements.detailDescription.hidden = !detail.description;
 
-        elements.detailProfit.innerHTML = "";
-        for (const estimate of detail.flip_estimates || []) {
-            const item = document.createElement("div");
-            item.className = "detail-field";
-            item.innerHTML = `
-                <span class="detail-field-label">${escapeHtml(estimate.label)}</span>
-                <span class="detail-field-value">${formatPrice(estimate.target_price)} • ${Math.round(estimate.profit_byn)} BYN (${estimate.profit_percent > 0 ? "+" : ""}${escapeHtml(estimate.profit_percent)}%)</span>
-                <span class="detail-field-note">оценка</span>
-            `;
-            elements.detailProfit.appendChild(item);
-        }
-        elements.detailProfitBlock.hidden = (detail.flip_estimates || []).length === 0;
-        // Add disclaimer to resale block
-        if (elements.detailProfitBlock && !elements.detailProfitBlock.hidden) {
-            const title = elements.detailProfitBlock.querySelector(".detail-block-title");
-            if (title && !title.dataset.disclaimerAdded) {
-                title.dataset.disclaimerAdded = "true";
-                const note = document.createElement("span");
-                note.className = "detail-disclaimer";
-                note.textContent = " — оценка, не гарантия";
-                title.appendChild(note);
-            }
-        }
+        // Flip estimates hidden — resale info now shown in AI analysis
+        elements.detailProfitBlock.hidden = true;
 
         elements.detailLiquidity.innerHTML = "";
         if (detail.liquidity) {

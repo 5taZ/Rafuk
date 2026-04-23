@@ -290,8 +290,9 @@ function createApiLeads(context) {
         state.error = null;
         renderError();
         try {
+            const catParam = state.category != null ? `&category=${state.category}` : "";
             const fullDetail = await getJson(
-                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${lead.ad_id}`
+                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${lead.ad_id}${catParam}`
             );
             state.detail = fullDetail;
             state.detailImageIndex = 0;

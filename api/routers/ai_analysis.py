@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -24,6 +25,35 @@ from api.services.query_pipeline import load_query_dataset
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+# ── In-memory async task store ────────────────────────────────────────────
+_tasks: dict[str, dict] = {}
+_tasks_lock = asyncio.Lock()
+_TASK_TTL = 3600  # 1 hour cleanup
+
+
+def _prune_old_tasks() -> None:
+    """Remove tasks older than TTL."""
+    now = datetime.now(UTC).timestamp()
+    expired = [tid for tid, t in _tasks.items()
+               if now - t.get("_created_ts", 0) > _TASK_TTL]
+    for tid in expired:
+        _tasks.pop(tid, None)
+
+
+@router.get("/task/{task_id}")
+async def get_task_status(task_id: str):
+    """Poll AI analysis task status."""
+    task = _tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    resp: dict = {"status": task["status"], "progress": task.get("progress", 0)}
+    if task["status"] == "done" and task.get("result"):
+        resp["result"] = task["result"]
+    elif task["status"] == "error" and task.get("error"):
+        resp["error"] = task["error"]
+    return resp
+
 
 DISCLAIMER = "Анализ носит информационный характер. Результаты не являются гарантией."
 
@@ -82,14 +112,17 @@ def _collect_similar_listings(
 ) -> list[dict]:
     """Collect similar listings with rich data for AI comparison.
 
-    Filters by price proximity (±30%/+30%) and prefers similar condition.
+    Filters by price proximity (±30%) and prefers similar condition.
+    For negotiable-price listings (price=0), uses median as reference.
     Returns up to 5 most relevant alternatives.
     """
-    if not median or target_price <= 0:
+    if not median:
         return []
 
-    price_min = target_price * 0.7
-    price_max = target_price * 1.30
+    # Negotiable price: use median as reference point for price filtering
+    ref_price = target_price if target_price > 0 else median
+    price_min = ref_price * 0.7
+    price_max = ref_price * 1.30
     similar: list[dict] = []
 
     for ad in dataset.ads:
@@ -167,287 +200,297 @@ def _collect_similar_listings(
     return similar[:5]
 
 
-@router.post("/analyze", response_model=AIAnalysisResponse)
+async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cache) -> None:
+    """Background coroutine: does the full analysis and updates the task store."""
+    task = _tasks[task_id]
+    ai = get_ai_service()
+
+    safe_query = payload.query.replace("\n", " ")[:80]
+    logger.info("AI async task %s: starting for ad_id=%d query=%s", task_id, payload.ad_id, safe_query)
+
+    try:
+        task["status"] = "processing"
+        task["progress"] = 10
+
+        # Search strategies — run all in parallel for speed
+        search_attempts = [
+            {"strict_search": True, "category": payload.category},
+            {"strict_search": False, "category": payload.category},
+        ]
+        if payload.category is not None:
+            search_attempts.append({"strict_search": False, "category": None})
+
+        async def _search_one(attempt: dict):
+            ds = await load_query_dataset(
+                query=payload.query, currency="BYN", settings=settings,
+                client_factory=KufarClient, **attempt,
+            )
+            target = next(
+                (ad for ad in ds.ads if int(ad.get("ad_id", 0)) == payload.ad_id), None,
+            )
+            return ds, target
+
+        results = await asyncio.gather(
+            *[_search_one(a) for a in search_attempts], return_exceptions=True,
+        )
+
+        task["progress"] = 30
+
+        dataset = None
+        target_ad = None
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.warning("Search strategy %d failed: %s", i, result)
+                continue
+            ds, target = result
+            if target:
+                dataset = ds
+                target_ad = target
+                break
+
+        if dataset is None:
+            for result in results:
+                if isinstance(result, Exception):
+                    continue
+                ds, _ = result
+                dataset = ds
+                break
+
+        if not target_ad:
+            task["status"] = "error"
+            task["error"] = "Объявление не найдено"
+            return
+
+        title = target_ad.get("subject", "") or target_ad.get("title", "")
+        description = target_ad.get("body", "") or target_ad.get("description", "")
+        price_byn = normalize_price_byn(target_ad.get("price_byn")) or 0.0
+
+        condition = None
+        for param in target_ad.get("ad_parameters", []):
+            if param.get("p") == "condition":
+                condition = param.get("vl") or param.get("v")
+                break
+
+        parameters = []
+        for param in target_ad.get("ad_parameters", []):
+            param_key = param.get("p", "")
+            if param_key in {"condition", "currency", "price", "users_synonyms"}:
+                continue
+            label = param.get("pl") or param_key
+            value = param.get("vl") or str(param.get("v", ""))
+            if label and value:
+                parameters.append({"label": label, "value": value})
+
+        is_company = target_ad.get("company_ad", False)
+        seller_type = "shop" if is_company else "private"
+        all_images = target_ad.get("images") or []
+        photo_count = len(all_images)
+        listing_age_days = _parse_list_age_days(target_ad.get("list_time"))
+
+        images = []
+        for img in all_images[:3]:
+            path = img.get("path", "")
+            if path:
+                images.append(f"https://rms.kufar.by/v1/gallery/{path}")
+
+        stats = dataset.price_stats
+        median = stats.median if stats else None
+        count = stats.count if stats else 0
+        q1 = stats.q1 if stats else None
+        q3 = stats.q3 if stats else None
+        price_min = stats.min if stats else None
+        price_max = stats.max if stats else None
+
+        similar = _collect_similar_listings(
+            dataset, payload.ad_id, price_byn, median, target_condition=condition,
+        )
+
+        ai_similar_for_comparison = [
+            {
+                "ad_id": s["ad_id"],
+                "title": s["title"],
+                "price_byn": s["price_byn"],
+                "price_delta_byn": round(s["price_byn"] - price_byn, 0),
+                "condition": s.get("condition"),
+                "description": s.get("description", ""),
+                "seller_type": s.get("seller_type"),
+                "parameters": s.get("parameters", ""),
+                "age_days": s.get("age_days"),
+                "deal_score": round(s.get("deal_score", 0), 1),
+            }
+            for s in similar
+        ]
+
+        target_anomaly_labels: list[str] = []
+        target_deal_score = 0.0
+        target_deal_verdict = ""
+        if stats:
+            from api.services.market_signals import anomaly_labels as _anomaly_labels
+            from api.services.reseller_tools import compute_deal_score as _compute_deal_score
+
+            raw_flags = []
+            try:
+                from api.services.market_signals import detect_anomaly_flags
+                raw_flags = detect_anomaly_flags(target_ad, stats)
+            except Exception:
+                logger.warning("Failed to compute anomaly flags for ad_id=%d", payload.ad_id, exc_info=True)
+            target_anomaly_labels = _anomaly_labels(raw_flags)
+            try:
+                deal = _compute_deal_score(target_ad, query=payload.query, market_stats=stats)
+                target_deal_score = deal.score
+                target_deal_verdict = deal.verdict
+            except Exception:
+                logger.warning("Failed to compute deal score for ad_id=%d", payload.ad_id, exc_info=True)
+
+        task["progress"] = 50
+
+        import time as _time
+        _t0 = _time.monotonic()
+        logger.info(
+            "AI async task %s: calling ai.analyze_listing for '%s' (%d imgs, %d similar)",
+            task_id, title[:50], len(images), len(ai_similar_for_comparison),
+        )
+        result = await asyncio.wait_for(
+            ai.analyze_listing(
+                title=title, description=description, price_byn=price_byn,
+                condition=condition, parameters=parameters, market_median=median,
+                market_count=count, market_q1=q1, market_q3=q3,
+                market_min=price_min, market_max=price_max,
+                seller_type=seller_type, photo_count=photo_count,
+                listing_age_days=listing_age_days, image_urls=images,
+                similar_listings=ai_similar_for_comparison,
+                anomaly_flags=target_anomaly_labels,
+                deal_score=target_deal_score, deal_verdict=target_deal_verdict,
+            ),
+            timeout=300,
+        )
+        logger.info("AI async task %s: AI done in %.1fs", task_id, _time.monotonic() - _t0)
+
+        task["progress"] = 85
+
+        # Build response
+        best_pick_ad_id = None
+        best_pick_reason = ""
+        bp = result.get("best_pick") or {}
+        if isinstance(bp, dict):
+            best_pick_ad_id = bp.get("ad_id")
+            best_pick_reason = bp.get("reason", "")
+
+        best_alternative = None
+        if best_pick_ad_id:
+            best_alternative = next((s for s in similar if s["ad_id"] == best_pick_ad_id), None)
+        if not best_alternative and similar:
+            best_alternative = similar[0]
+
+        if best_alternative:
+            best_alternative = {
+                "ad_id": best_alternative["ad_id"],
+                "title": best_alternative["title"],
+                "price_byn": best_alternative["price_byn"],
+                "image_url": best_alternative.get("image_url"),
+                "link": best_alternative.get("link", ""),
+                "deal_score": best_alternative.get("deal_score", 0.0),
+                "condition": best_alternative.get("condition"),
+                "ai_note": best_pick_reason if best_pick_ad_id == best_alternative["ad_id"] else "",
+            }
+
+        resale_data = result.get("resale_potential")
+        resale_potential = None
+        if resale_data and isinstance(resale_data, dict):
+            from api.schemas import AIResalePotential, AIResalePrice
+            resale_potential = AIResalePotential(
+                fast_price=AIResalePrice(**resale_data["fast_price"])
+                if resale_data.get("fast_price") and isinstance(resale_data["fast_price"], dict) else None,
+                market_price=AIResalePrice(**resale_data["market_price"])
+                if resale_data.get("market_price") and isinstance(resale_data["market_price"], dict) else None,
+                optimal_price=AIResalePrice(**resale_data["optimal_price"])
+                if resale_data.get("optimal_price") and isinstance(resale_data["optimal_price"], dict) else None,
+                reasoning=resale_data.get("reasoning", ""),
+            )
+
+        response = AIAnalysisResponse(
+            ad_id=payload.ad_id,
+            condition=result.get("condition"),
+            fair_price=result.get("fair_price"),
+            resale_potential=resale_potential,
+            watch_out=result.get("watch_out", []),
+            recommendation=result.get("recommendation"),
+            similar_listings=similar,
+            best_alternative=best_alternative,
+            meeting_checklist=result.get("meeting_checklist", []),
+            negotiation_tips=result.get("negotiation_tips", []),
+            red_flags=result.get("red_flags", []),
+            market_context=result.get("market_context", ""),
+            best_pick_reason=best_pick_reason,
+            summary=result.get("summary", ""),
+            disclaimer=DISCLAIMER,
+        )
+
+        # Cache result (use cache passed from endpoint)
+        cache_key = f"ai_analysis:v2:{payload.ad_id}:{payload.query}:cat={payload.category}"
+        await cache.set_json(cache_key, response.model_dump(), ttl=3600)
+
+        task["status"] = "done"
+        task["progress"] = 100
+        task["result"] = response.model_dump()
+
+    except TimeoutError:
+        logger.error("AI async task %s timed out for ad_id=%d", task_id, payload.ad_id)
+        task["status"] = "error"
+        task["error"] = "AI анализ занял слишком долго. Попробуйте ещё раз."
+    except Exception as exc:
+        logger.error("AI async task %s failed: [%s] %s", task_id, type(exc).__name__, exc)
+        err_msg = "AI сервис недоступен. Попробуйте позже."
+        err_str = str(exc).lower()
+        if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+            err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
+        elif "timeout" in err_str or "timed out" in err_str or "connect" in err_str or "connection" in err_str:
+            err_msg = "Не удалось подключиться к AI-сервису. Возможно, требуется VPN на сервере."
+        elif "insufficient balance" in err_str:
+            err_msg = "Баланс AI-сервиса исчерпан."
+        if getattr(settings, "debug", False):
+            err_msg += f" [{type(exc).__name__}: {exc}]"
+        task["status"] = "error"
+        task["error"] = err_msg
+
+
+@router.post("/analyze")
 async def analyze_listing(
     payload: AIAnalysisRequest,
     request: Request,
     _user=Depends(get_telegram_user),
 ):
-    """Full AI analysis of a listing."""
-    ai = _check_ai_available()
+    """Start async AI analysis. Returns task_id immediately for polling."""
+    _check_ai_available()
 
-    # Check cache BEFORE rate limit — cached results should not consume quota
+    # Check cache BEFORE rate limit — cached results return immediately
     cache = get_cache(request)
-    cache_key = f"ai_analysis:{payload.ad_id}:{payload.query}:cat={payload.category}"
+    cache_key = f"ai_analysis:v2:{payload.ad_id}:{payload.query}:cat={payload.category}"
     cached = await cache.get_json(cache_key)
     if cached:
-        return AIAnalysisResponse(**cached)
+        return {"task_id": None, "cached": True, "result": cached}
 
-    # Only count against rate limit for actual (non-cached) analysis
     await _check_rate_limit(request, _user.user_id)
 
     settings = getattr(request.app.state, "settings", None)
     if settings is None:
         from api.config import get_settings
-
         settings = get_settings()
 
-    # Try strict search first — yields more relevant comparable listings
-    safe_query = payload.query.replace("\n", " ")[:80]
-    logger.info(
-        "AI analyze: loading dataset for ad_id=%d query=%s cat=%s",
-        payload.ad_id,
-        safe_query,
-        payload.category,
-    )
+    # Create background task
+    task_id = secrets.token_urlsafe(16)
+    _prune_old_tasks()
+    _tasks[task_id] = {
+        "status": "pending",
+        "progress": 0,
+        "result": None,
+        "error": None,
+        "_created_ts": datetime.now(UTC).timestamp(),
+    }
 
-    # Search strategies in order: strict+cat → non-strict+cat → non-strict (no cat)
-    search_attempts = [
-        {"strict_search": True, "category": payload.category},
-        {"strict_search": False, "category": payload.category},
-    ]
-    # Only add fallback without category if a category was specified
-    if payload.category is not None:
-        search_attempts.append({"strict_search": False, "category": None})
+    asyncio.create_task(_run_analysis(task_id, payload, settings, cache))
 
-    dataset = None
-    target_ad = None
-    for attempt in search_attempts:
-        dataset = await load_query_dataset(
-            query=payload.query,
-            currency="BYN",
-            settings=settings,
-            client_factory=KufarClient,
-            **attempt,
-        )
-        target_ad = next(
-            (ad for ad in dataset.ads if int(ad.get("ad_id", 0)) == payload.ad_id),
-            None,
-        )
-        if target_ad:
-            break
-
-    if not target_ad:
-        raise HTTPException(status_code=404, detail="Объявление не найдено")
-
-    title = target_ad.get("subject", "") or target_ad.get("title", "")
-    description = target_ad.get("body", "") or target_ad.get("description", "")
-    price_byn = normalize_price_byn(target_ad.get("price_byn")) or 0.0
-
-    condition = None
-    for param in target_ad.get("ad_parameters", []):
-        if param.get("p") == "condition":
-            condition = param.get("vl") or param.get("v")
-            break
-
-    parameters = []
-    for param in target_ad.get("ad_parameters", []):
-        param_key = param.get("p", "")
-        if param_key in {"condition", "currency", "price", "users_synonyms"}:
-            continue
-        label = param.get("pl") or param_key
-        value = param.get("vl") or str(param.get("v", ""))
-        if label and value:
-            parameters.append({"label": label, "value": value})
-
-    # Seller type: shop vs private
-    is_company = target_ad.get("company_ad", False)
-    seller_type = "shop" if is_company else "private"
-
-    # Photo count
-    all_images = target_ad.get("images") or []
-    photo_count = len(all_images)
-
-    # Listing age
-    listing_age_days = _parse_list_age_days(target_ad.get("list_time"))
-
-    images = []
-    for img in all_images[:3]:
-        path = img.get("path", "")
-        if path:
-            images.append(f"https://rms.kufar.by/v1/gallery/{path}")
-
-    stats = dataset.price_stats
-    median = stats.median if stats else None
-    count = stats.count if stats else 0
-    q1 = stats.q1 if stats else None
-    q3 = stats.q3 if stats else None
-    price_min = stats.min if stats else None
-    price_max = stats.max if stats else None
-
-    # Collect similar listings with rich data
-    similar = _collect_similar_listings(
-        dataset,
-        payload.ad_id,
-        price_byn,
-        median,
-        target_condition=condition,
-    )
-
-    # Prepare similar listings for AI comparison
-    ai_similar_for_comparison = [
-        {
-            "ad_id": s["ad_id"],
-            "title": s["title"],
-            "price_byn": s["price_byn"],
-            "price_delta_byn": round(s["price_byn"] - price_byn, 0),
-            "condition": s.get("condition"),
-            "description": s.get("description", ""),
-            "seller_type": s.get("seller_type"),
-            "parameters": s.get("parameters", ""),
-            "age_days": s.get("age_days"),
-            "deal_score": round(s.get("deal_score", 0), 1),
-        }
-        for s in similar
-    ]
-
-    # Compute anomaly flags and deal score for target listing
-    target_anomaly_labels: list[str] = []
-    target_deal_score = 0.0
-    target_deal_verdict = ""
-    if stats:
-        from api.services.market_signals import anomaly_labels as _anomaly_labels
-        from api.services.reseller_tools import compute_deal_score as _compute_deal_score
-
-        raw_flags = []
-        try:
-            from api.services.market_signals import detect_anomaly_flags
-
-            raw_flags = detect_anomaly_flags(target_ad, stats)
-        except Exception:
-            logger.warning(
-                "Failed to compute anomaly flags for ad_id=%d",
-                payload.ad_id,
-                exc_info=True,
-            )
-        target_anomaly_labels = _anomaly_labels(raw_flags)
-        try:
-            deal = _compute_deal_score(target_ad, query=payload.query, market_stats=stats)
-            target_deal_score = deal.score
-            target_deal_verdict = deal.verdict
-        except Exception:
-            logger.warning(
-                "Failed to compute deal score for ad_id=%d",
-                payload.ad_id,
-                exc_info=True,
-            )
-
-    try:
-        import time as _time
-
-        _t0 = _time.monotonic()
-        logger.info(
-            "AI analyze: calling ai.analyze_listing for '%s' (%d imgs, %d similar)",
-            title[:50],
-            len(images),
-            len(ai_similar_for_comparison),
-        )
-        result = await asyncio.wait_for(
-            ai.analyze_listing(
-                title=title,
-                description=description,
-                price_byn=price_byn,
-                condition=condition,
-                parameters=parameters,
-                market_median=median,
-                market_count=count,
-                market_q1=q1,
-                market_q3=q3,
-                market_min=price_min,
-                market_max=price_max,
-                seller_type=seller_type,
-                photo_count=photo_count,
-                listing_age_days=listing_age_days,
-                image_urls=images,
-                similar_listings=ai_similar_for_comparison,
-                anomaly_flags=target_anomaly_labels,
-                deal_score=target_deal_score,
-                deal_verdict=target_deal_verdict,
-            ),
-            timeout=240,
-        )
-        logger.info(
-            "AI analyze: success in %.1fs, keys=%s",
-            _time.monotonic() - _t0,
-            list(result.keys()),
-        )
-    except TimeoutError:
-        logger.error("AI analysis timed out after 240s for ad_id=%d", payload.ad_id)
-        raise HTTPException(
-            status_code=504,
-            detail="AI анализ занял слишком долго. Попробуйте ещё раз.",
-        ) from None
-    except Exception as exc:
-        logger.error(
-            "AI analysis failed: [%s] %s\nProxy: %s",
-            type(exc).__name__,
-            exc,
-            "yes" if settings.ai_proxy_url else "no",
-        )
-        err_msg = "AI сервис недоступен. Попробуйте позже."
-        err_str = str(exc).lower()
-        if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
-            err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
-        elif (
-            "timeout" in err_str
-            or "timed out" in err_str
-            or "connect" in err_str
-            or "connection" in err_str
-        ):
-            err_msg = "Не удалось подключиться к AI-сервису. Возможно, требуется VPN на сервере."
-        elif "insufficient balance" in err_str:
-            err_msg = "Баланс AI-сервиса исчерпан."
-        # In debug mode, append actual error for diagnostics
-        if settings and getattr(settings, "debug", False):
-            err_msg += f" [{type(exc).__name__}: {exc}]"
-        raise HTTPException(status_code=502, detail=err_msg) from None
-
-    # Determine best alternative based on AI's best_pick
-    best_pick_ad_id = None
-    best_pick_reason = ""
-    bp = result.get("best_pick") or {}
-    if isinstance(bp, dict):
-        best_pick_ad_id = bp.get("ad_id")
-        best_pick_reason = bp.get("reason", "")
-
-    best_alternative = None
-    if best_pick_ad_id:
-        best_alternative = next((s for s in similar if s["ad_id"] == best_pick_ad_id), None)
-    if not best_alternative and similar:
-        # Fallback: cheapest similar listing
-        best_alternative = similar[0]
-
-    if best_alternative:
-        best_alternative = {
-            "ad_id": best_alternative["ad_id"],
-            "title": best_alternative["title"],
-            "price_byn": best_alternative["price_byn"],
-            "image_url": best_alternative.get("image_url"),
-            "link": best_alternative.get("link", ""),
-            "deal_score": best_alternative.get("deal_score", 0.0),
-            "condition": best_alternative.get("condition"),
-            "ai_note": best_pick_reason if best_pick_ad_id == best_alternative["ad_id"] else "",
-        }
-
-    response = AIAnalysisResponse(
-        ad_id=payload.ad_id,
-        condition=result.get("condition"),
-        fair_price=result.get("fair_price"),
-        watch_out=result.get("watch_out", []),
-        recommendation=result.get("recommendation"),
-        similar_listings=similar,
-        best_alternative=best_alternative,
-        meeting_checklist=result.get("meeting_checklist", []),
-        negotiation_tips=result.get("negotiation_tips", []),
-        red_flags=result.get("red_flags", []),
-        market_context=result.get("market_context", ""),
-        best_pick_reason=best_pick_reason,
-        summary=result.get("summary", ""),
-        disclaimer=DISCLAIMER,
-    )
-
-    await cache.set_json(cache_key, response.model_dump(), ttl=3600)
-    return response
+    return {"task_id": task_id}
 
 
 @router.post("/quick-condition", response_model=AIQuickConditionResponse)
