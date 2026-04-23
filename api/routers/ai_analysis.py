@@ -8,6 +8,8 @@ import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 from api.dependencies import get_cache, get_telegram_user
 from api.schemas import (
@@ -17,6 +19,7 @@ from api.schemas import (
     AIQuickConditionResponse,
 )
 from api.services.aggregator import normalize_price_byn
+from api.services.ai_guardrails import apply_ai_market_guardrails
 from api.services.ai_service import get_ai_service
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import first_image_url
@@ -28,8 +31,9 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 # ── In-memory async task store ────────────────────────────────────────────
 _tasks: dict[str, dict] = {}
-_tasks_lock = asyncio.Lock()
 _TASK_TTL = 3600  # 1 hour cleanup
+_exports: dict[str, dict] = {}
+_EXPORT_TTL = 900  # 15 minutes
 
 
 def _prune_old_tasks() -> None:
@@ -39,6 +43,17 @@ def _prune_old_tasks() -> None:
                if now - t.get("_created_ts", 0) > _TASK_TTL]
     for tid in expired:
         _tasks.pop(tid, None)
+
+
+def _prune_old_exports() -> None:
+    """Remove expired HTML exports."""
+    now = datetime.now(UTC).timestamp()
+    expired = [
+        token for token, item in _exports.items()
+        if now - item.get("_created_ts", 0) > _EXPORT_TTL
+    ]
+    for token in expired:
+        _exports.pop(token, None)
 
 
 @router.get("/task/{task_id}")
@@ -56,6 +71,10 @@ async def get_task_status(task_id: str):
 
 
 DISCLAIMER = "Анализ носит информационный характер. Результаты не являются гарантией."
+
+
+class AIExportReportRequest(BaseModel):
+    html: str
 
 
 def _check_ai_available():
@@ -206,7 +225,12 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
     ai = get_ai_service()
 
     safe_query = payload.query.replace("\n", " ")[:80]
-    logger.info("AI async task %s: starting for ad_id=%d query=%s", task_id, payload.ad_id, safe_query)
+    logger.info(
+        "AI async task %s: starting for ad_id=%d query=%s",
+        task_id,
+        payload.ad_id,
+        safe_query,
+    )
 
     try:
         task["status"] = "processing"
@@ -264,6 +288,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         title = target_ad.get("subject", "") or target_ad.get("title", "")
         description = target_ad.get("body", "") or target_ad.get("description", "")
         price_byn = normalize_price_byn(target_ad.get("price_byn")) or 0.0
+        is_negotiable_price = price_byn <= 0
 
         condition = None
         for param in target_ad.get("ad_parameters", []):
@@ -310,7 +335,11 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 "ad_id": s["ad_id"],
                 "title": s["title"],
                 "price_byn": s["price_byn"],
-                "price_delta_byn": round(s["price_byn"] - price_byn, 0),
+                "price_delta_byn": (
+                    round(s["price_byn"] - price_byn, 0)
+                    if not is_negotiable_price
+                    else None
+                ),
                 "condition": s.get("condition"),
                 "description": s.get("description", ""),
                 "seller_type": s.get("seller_type"),
@@ -333,14 +362,22 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 from api.services.market_signals import detect_anomaly_flags
                 raw_flags = detect_anomaly_flags(target_ad, stats)
             except Exception:
-                logger.warning("Failed to compute anomaly flags for ad_id=%d", payload.ad_id, exc_info=True)
+                logger.warning(
+                    "Failed to compute anomaly flags for ad_id=%d",
+                    payload.ad_id,
+                    exc_info=True,
+                )
             target_anomaly_labels = _anomaly_labels(raw_flags)
             try:
                 deal = _compute_deal_score(target_ad, query=payload.query, market_stats=stats)
                 target_deal_score = deal.score
                 target_deal_verdict = deal.verdict
             except Exception:
-                logger.warning("Failed to compute deal score for ad_id=%d", payload.ad_id, exc_info=True)
+                logger.warning(
+                    "Failed to compute deal score for ad_id=%d",
+                    payload.ad_id,
+                    exc_info=True,
+                )
 
         task["progress"] = 50
 
@@ -352,17 +389,39 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         )
         result = await asyncio.wait_for(
             ai.analyze_listing(
-                title=title, description=description, price_byn=price_byn,
-                condition=condition, parameters=parameters, market_median=median,
-                market_count=count, market_q1=q1, market_q3=q3,
-                market_min=price_min, market_max=price_max,
-                seller_type=seller_type, photo_count=photo_count,
-                listing_age_days=listing_age_days, image_urls=images,
+                title=title,
+                description=description,
+                price_byn=price_byn,
+                is_negotiable_price=is_negotiable_price,
+                condition=condition,
+                parameters=parameters,
+                market_median=median,
+                market_count=count,
+                market_q1=q1,
+                market_q3=q3,
+                market_min=price_min,
+                market_max=price_max,
+                seller_type=seller_type,
+                photo_count=photo_count,
+                listing_age_days=listing_age_days,
+                image_urls=images,
                 similar_listings=ai_similar_for_comparison,
                 anomaly_flags=target_anomaly_labels,
-                deal_score=target_deal_score, deal_verdict=target_deal_verdict,
+                deal_score=target_deal_score,
+                deal_verdict=target_deal_verdict,
             ),
             timeout=300,
+        )
+        result = apply_ai_market_guardrails(
+            result,
+            title=title,
+            description=description,
+            market_median=median,
+            market_q1=q1,
+            market_q3=q3,
+            market_count=count,
+            similar_listings=similar,
+            is_negotiable_price=is_negotiable_price,
         )
         logger.info("AI async task %s: AI done in %.1fs", task_id, _time.monotonic() - _t0)
 
@@ -391,7 +450,11 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 "link": best_alternative.get("link", ""),
                 "deal_score": best_alternative.get("deal_score", 0.0),
                 "condition": best_alternative.get("condition"),
-                "ai_note": best_pick_reason if best_pick_ad_id == best_alternative["ad_id"] else "",
+                "ai_note": (
+                    best_pick_reason
+                    if best_pick_ad_id == best_alternative["ad_id"]
+                    else ""
+                ),
             }
 
         resale_data = result.get("resale_potential")
@@ -400,11 +463,17 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             from api.schemas import AIResalePotential, AIResalePrice
             resale_potential = AIResalePotential(
                 fast_price=AIResalePrice(**resale_data["fast_price"])
-                if resale_data.get("fast_price") and isinstance(resale_data["fast_price"], dict) else None,
+                if resale_data.get("fast_price")
+                and isinstance(resale_data["fast_price"], dict)
+                else None,
                 market_price=AIResalePrice(**resale_data["market_price"])
-                if resale_data.get("market_price") and isinstance(resale_data["market_price"], dict) else None,
+                if resale_data.get("market_price")
+                and isinstance(resale_data["market_price"], dict)
+                else None,
                 optimal_price=AIResalePrice(**resale_data["optimal_price"])
-                if resale_data.get("optimal_price") and isinstance(resale_data["optimal_price"], dict) else None,
+                if resale_data.get("optimal_price")
+                and isinstance(resale_data["optimal_price"], dict)
+                else None,
                 reasoning=resale_data.get("reasoning", ""),
             )
 
@@ -444,7 +513,12 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         err_str = str(exc).lower()
         if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
             err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
-        elif "timeout" in err_str or "timed out" in err_str or "connect" in err_str or "connection" in err_str:
+        elif (
+            "timeout" in err_str
+            or "timed out" in err_str
+            or "connect" in err_str
+            or "connection" in err_str
+        ):
             err_msg = "Не удалось подключиться к AI-сервису. Возможно, требуется VPN на сервере."
         elif "insufficient balance" in err_str:
             err_msg = "Баланс AI-сервиса исчерпан."
@@ -491,6 +565,57 @@ async def analyze_listing(
     asyncio.create_task(_run_analysis(task_id, payload, settings, cache))
 
     return {"task_id": task_id}
+
+
+@router.post("/export-report")
+async def create_export_report(
+    payload: AIExportReportRequest,
+    request: Request,
+    _user=Depends(get_telegram_user),
+):
+    """Create a short-lived HTML export with a real URL for Telegram/browser printing."""
+    html = (payload.html or "").strip()
+    if not html:
+        raise HTTPException(status_code=400, detail="Пустой HTML отчёта")
+    if len(html) > 300_000:
+        raise HTTPException(status_code=400, detail="HTML отчёта слишком большой")
+
+    _prune_old_exports()
+    token = secrets.token_urlsafe(18)
+    _exports[token] = {
+        "html": html,
+        "_created_ts": datetime.now(UTC).timestamp(),
+    }
+    return {"url": str(request.url_for("get_export_report", token=token))}
+
+
+@router.get(
+    "/export-report/{token}",
+    name="get_export_report",
+    response_class=HTMLResponse,
+)
+async def get_export_report(token: str):
+    """Return previously created short-lived HTML export."""
+    _prune_old_exports()
+    item = _exports.get(token)
+    if not item:
+        raise HTTPException(status_code=404, detail="Экспорт не найден или истёк")
+    return HTMLResponse(
+        item["html"],
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Content-Security-Policy": (
+                "default-src 'none'; "
+                "img-src https: data:; "
+                "style-src 'unsafe-inline'; "
+                "script-src 'unsafe-inline'; "
+                "base-uri 'none'; "
+                "form-action 'none'; "
+                "frame-ancestors 'none'; "
+                "connect-src 'none'"
+            ),
+        },
+    )
 
 
 @router.post("/quick-condition", response_model=AIQuickConditionResponse)

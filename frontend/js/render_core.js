@@ -4,19 +4,7 @@
  */
 
 function createRenderCore(context) {
-    const {
-        state,
-        elements,
-        actions,
-        formatPrice,
-        formatCondition,
-        formatSeller,
-        formatDelta,
-        deltaClass,
-        formatDate,
-        trapFocus,
-        hasTelegramInitData,
-    } = context;
+    const { state, elements } = context;
 
     /**
      * Escape HTML special characters to prevent XSS attacks.

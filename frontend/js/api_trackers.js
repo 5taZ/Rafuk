@@ -16,17 +16,11 @@ function createApiTrackers(context) {
         renderTrackerEvents,
         renderTrackerEventFilters,
         renderTrackerStatus,
-        renderTrackerInputs,
-        renderStrictSearch,
-        renderDealInputs,
-        setPanelOpen,
         showToast,
         getJson,
         postJson,
         deleteJson,
         requestJson,
-        buildCommonQuery,
-        search,
     } = context;
 
     // ── Auto-refresh state ───────────────────────────────────────────────

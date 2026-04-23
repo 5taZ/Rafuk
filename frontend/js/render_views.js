@@ -7,18 +7,25 @@ function createRenderViews(context) {
     const {
         state,
         elements,
-        actions,
         formatPrice,
-        formatCondition,
-        formatSeller,
-        formatDelta,
-        deltaClass,
-        formatDate,
-        trapFocus,
-        hasTelegramInitData,
         escapeHtml: escapeHtml,
         safeRender: safeRender,
     } = context;
+
+    function clearChildren(node) {
+        if (node) node.replaceChildren();
+    }
+
+    function appendHeroStat(container, value, label) {
+        const stat = document.createElement("span");
+        stat.className = "hero-stat";
+        const valueEl = document.createElement("span");
+        valueEl.className = "hero-stat-val mono";
+        valueEl.textContent = value;
+        stat.appendChild(valueEl);
+        stat.append(` ${label}`);
+        container.appendChild(stat);
+    }
 
     /* ===== Hero Stats ===== */
 
@@ -26,10 +33,9 @@ function createRenderViews(context) {
         if (!elements.trackingHeroStats) return;
         const trackerCount = state.trackers.length;
         const eventCount = state.trackerEvents.length;
-        elements.trackingHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${trackerCount}</span> трекеров</span>`,
-            `<span class="hero-stat"><span class="hero-stat-val mono">${eventCount}</span> событий</span>`,
-        ].join("");
+        clearChildren(elements.trackingHeroStats);
+        appendHeroStat(elements.trackingHeroStats, String(trackerCount), "трекеров");
+        appendHeroStat(elements.trackingHeroStats, String(eventCount), "событий");
     }
 
     function renderCheapHeroStats() {
@@ -38,26 +44,30 @@ function createRenderViews(context) {
         const range = state.discountFromPercent === state.discountToPercent
             ? `${state.discountFromPercent}%`
             : `${state.discountFromPercent}-${state.discountToPercent}%`;
-        elements.cheapHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${cheapCount}</span> лотов дешевле рынка</span>`,
-            `<span class="hero-stat">диапазон <span class="hero-stat-val mono">${range}</span></span>`,
-        ].join("");
+        clearChildren(elements.cheapHeroStats);
+        appendHeroStat(elements.cheapHeroStats, String(cheapCount), "лотов дешевле рынка");
+        const rangeStat = document.createElement("span");
+        rangeStat.className = "hero-stat";
+        rangeStat.append("диапазон ");
+        const rangeValue = document.createElement("span");
+        rangeValue.className = "hero-stat-val mono";
+        rangeValue.textContent = range;
+        rangeStat.appendChild(rangeValue);
+        elements.cheapHeroStats.appendChild(rangeStat);
     }
 
     function renderMonitoringHeroStats() {
         if (!elements.monitoringHeroStats) return;
         const watchCount = state.watchlist.length;
-        elements.monitoringHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${watchCount}</span> объявлений</span>`,
-        ].join("");
+        clearChildren(elements.monitoringHeroStats);
+        appendHeroStat(elements.monitoringHeroStats, String(watchCount), "объявлений");
     }
 
     function renderDealsHeroStats() {
         if (!elements.dealsHeroStats) return;
         const activeLeads = state.leads.filter((l) => l.status !== "closed");
-        elements.dealsHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${activeLeads.length}</span> сделок</span>`,
-        ].join("");
+        clearChildren(elements.dealsHeroStats);
+        appendHeroStat(elements.dealsHeroStats, String(activeLeads.length), "сделок");
     }
 
     /* ===== Sort / Discount / Filter buttons ===== */
@@ -76,8 +86,12 @@ function createRenderViews(context) {
             }
 
             // Render category chips
+            clearChildren(elements.filterCategories);
             if (!state.categories.length || state.categories.length <= 1) {
-                elements.filterCategories.innerHTML = "<span class=\"filter-empty\">Нет категорий</span>";
+                const empty = document.createElement("span");
+                empty.className = "filter-empty";
+                empty.textContent = "Нет категорий";
+                elements.filterCategories.appendChild(empty);
             } else {
                 // Use total_results from stats instead of sum of categories
                 // because not all ads have category data
@@ -89,12 +103,20 @@ function createRenderViews(context) {
                 // Use pendingCategory for display, fall back to applied category
                 const displayCategory = state.pendingCategory !== undefined ? state.pendingCategory : state.category;
                 
-                let html = `<button class="filter-chip ${displayCategory == null ? 'active' : ''}" data-category="" type="button">Все (${displayTotal})</button>`;
+                const allButton = document.createElement("button");
+                allButton.className = `filter-chip ${displayCategory == null ? 'active' : ''}`;
+                allButton.dataset.category = "";
+                allButton.type = "button";
+                allButton.textContent = `Все (${displayTotal})`;
+                elements.filterCategories.appendChild(allButton);
                 for (const cat of state.categories) {
-                    const isActive = displayCategory === cat.id;
-                    html += `<button class="filter-chip ${isActive ? 'active' : ''}" data-category="${cat.id}" type="button">${escapeHtml(cat.label)} (${cat.count})</button>`;
+                    const button = document.createElement("button");
+                    button.className = `filter-chip ${displayCategory === cat.id ? 'active' : ''}`;
+                    button.dataset.category = String(cat.id);
+                    button.type = "button";
+                    button.textContent = `${cat.label} (${cat.count})`;
+                    elements.filterCategories.appendChild(button);
                 }
-                elements.filterCategories.innerHTML = html;
             }
 
             // Update price range inputs with PENDING values
@@ -471,16 +493,21 @@ function createRenderViews(context) {
             const searches = state.recentSearches || [];
             if (!searches.length) {
                 elements.recentSection.hidden = true;
-                elements.recentList.innerHTML = "";
+                clearChildren(elements.recentList);
                 return;
             }
             elements.recentSection.hidden = false;
-            elements.recentList.innerHTML = searches
-                .map(
-                    (query) =>
-                        `<button class="recent-chip" type="button" data-recent-query="${escapeHtml(query)}">${escapeHtml(query)}</button>`
-                )
-                .join("");
+            clearChildren(elements.recentList);
+            const fragment = document.createDocumentFragment();
+            for (const query of searches) {
+                const button = document.createElement("button");
+                button.className = "recent-chip";
+                button.type = "button";
+                button.dataset.recentQuery = query;
+                button.textContent = query;
+                fragment.appendChild(button);
+            }
+            elements.recentList.appendChild(fragment);
         });
     }
 

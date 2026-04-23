@@ -11,14 +11,28 @@ function createRenderModals(context) {
         formatCondition,
         formatSeller,
         formatDelta,
-        deltaClass,
         formatDate,
         trapFocus,
-        hasTelegramInitData,
-        escapeHtml: escapeHtml,
         safeUrl: safeUrl,
         safeRender: safeRender,
     } = context;
+
+    function clearChildren(node) {
+        if (node) node.replaceChildren();
+    }
+
+    function buildDetailField(label, value) {
+        const item = document.createElement("div");
+        item.className = "detail-field";
+        const labelEl = document.createElement("span");
+        labelEl.className = "detail-field-label";
+        labelEl.textContent = label;
+        const valueEl = document.createElement("span");
+        valueEl.className = "detail-field-value";
+        valueEl.textContent = value;
+        item.append(labelEl, valueEl);
+        return item;
+    }
 
     /* ===== Detail Modal ===== */
 
@@ -41,7 +55,7 @@ function createRenderModals(context) {
         const aiState = state.detailAi || {};
         if (elements.detailAiBlock && elements.detailAiContent) {
             elements.detailAiBlock.hidden = true;
-            elements.detailAiContent.innerHTML = "";
+            clearChildren(elements.detailAiContent);
         }
 
         elements.detailDescription.textContent = detail.description || "";
@@ -50,14 +64,12 @@ function createRenderModals(context) {
         // Flip estimates hidden — resale info now shown in AI analysis
         elements.detailProfitBlock.hidden = true;
 
-        elements.detailLiquidity.innerHTML = "";
+        clearChildren(elements.detailLiquidity);
         if (detail.liquidity) {
-            const item = document.createElement("div");
-            item.className = "detail-field";
-            item.innerHTML = `
-                <span class="detail-field-label">${escapeHtml(detail.liquidity.label)}</span>
-                <span class="detail-field-value">${Math.round(detail.liquidity.score)} • ${(detail.liquidity.reasons || []).map(String).map(escapeHtml).join(" · ")}</span>
-            `;
+            const item = buildDetailField(
+                detail.liquidity.label,
+                `${Math.round(detail.liquidity.score)} • ${(detail.liquidity.reasons || []).map(String).join(" · ")}`
+            );
             elements.detailLiquidity.appendChild(item);
         }
         elements.detailLiquidityBlock.hidden = !detail.liquidity;
@@ -70,7 +82,13 @@ function createRenderModals(context) {
             detail.fair_price_label || "",
             formatDelta(detail.price_vs_median),
         ].filter(Boolean);
-        elements.detailMeta.innerHTML = metaItems.map((item) => `<span class="detail-pill">${escapeHtml(item)}</span>`).join("");
+        clearChildren(elements.detailMeta);
+        for (const item of metaItems) {
+            const pill = document.createElement("span");
+            pill.className = "detail-pill";
+            pill.textContent = item;
+            elements.detailMeta.appendChild(pill);
+        }
 
         elements.detailMainImage.hidden = !hasImages;
         elements.detailNoImage.hidden = hasImages;
@@ -89,12 +107,15 @@ function createRenderModals(context) {
             elements.detailMainImage.removeAttribute("src");
         }
 
-        elements.detailThumbs.innerHTML = "";
+        clearChildren(elements.detailThumbs);
         for (const [index, image] of images.entries()) {
             const button = document.createElement("button");
             button.type = "button";
             button.className = `detail-thumb${state.detailImageIndex === index ? " active" : ""}`;
-            button.innerHTML = `<img src="${safeUrl(image)}" alt="">`;
+            const img = document.createElement("img");
+            img.src = safeUrl(image);
+            img.alt = "";
+            button.appendChild(img);
             button.addEventListener("click", () => {
                 state.detailImageIndex = index;
                 renderDetailModal();
@@ -102,29 +123,17 @@ function createRenderModals(context) {
             elements.detailThumbs.appendChild(button);
         }
 
-        elements.detailParams.innerHTML = "";
+        clearChildren(elements.detailParams);
         const params = detail.parameters || [];
         for (const field of params) {
-            const item = document.createElement("div");
-            item.className = "detail-field";
-            item.innerHTML = `
-                <span class="detail-field-label">${escapeHtml(field.label)}</span>
-                <span class="detail-field-value">${escapeHtml(field.value)}</span>
-            `;
-            elements.detailParams.appendChild(item);
+            elements.detailParams.appendChild(buildDetailField(field.label, field.value));
         }
         elements.detailParamsBlock.hidden = params.length === 0;
 
-        elements.detailSeller.innerHTML = "";
+        clearChildren(elements.detailSeller);
         const sellerFields = detail.seller_fields || [];
         for (const field of sellerFields) {
-            const item = document.createElement("div");
-            item.className = "detail-field";
-            item.innerHTML = `
-                <span class="detail-field-label">${escapeHtml(field.label)}</span>
-                <span class="detail-field-value">${escapeHtml(field.value)}</span>
-            `;
-            elements.detailSeller.appendChild(item);
+            elements.detailSeller.appendChild(buildDetailField(field.label, field.value));
         }
         elements.detailSellerBlock.hidden = sellerFields.length === 0;
 
@@ -148,7 +157,7 @@ function createRenderModals(context) {
 
     function renderDetailRisks(riskData) {
         return safeRender('renderDetailRisks', () => {
-        elements.detailRisks.innerHTML = "";
+        clearChildren(elements.detailRisks);
 
         if (!riskData || !riskData.risks || riskData.risks.length === 0) {
             elements.detailRiskBlock.hidden = true;
@@ -164,21 +173,23 @@ function createRenderModals(context) {
             high: "Высокий риск",
         }[riskData.overall_risk] || riskData.overall_risk;
 
-        const riskBadges = riskData.risks
-            .map((risk) => {
-                const levelClass = {
-                    low: "risk-low",
-                    medium: "risk-medium",
-                    high: "risk-high",
-                }[risk.level] || "";
-                return `<span class="risk-badge ${levelClass}">${escapeHtml(risk.message)}</span>`;
-            })
-            .join("");
-
-        item.innerHTML = `
-            <span class="detail-field-label">${escapeHtml(overallEmoji)} ${escapeHtml(overallLabel)}</span>
-            <div class="risk-badges-wrap">${riskBadges}</div>
-        `;
+        const labelEl = document.createElement("span");
+        labelEl.className = "detail-field-label";
+        labelEl.textContent = `${overallEmoji} ${overallLabel}`;
+        const badgesWrap = document.createElement("div");
+        badgesWrap.className = "risk-badges-wrap";
+        for (const risk of riskData.risks) {
+            const badge = document.createElement("span");
+            const levelClass = {
+                low: "risk-low",
+                medium: "risk-medium",
+                high: "risk-high",
+            }[risk.level] || "";
+            badge.className = `risk-badge ${levelClass}`.trim();
+            badge.textContent = risk.message;
+            badgesWrap.appendChild(badge);
+        }
+        item.append(labelEl, badgesWrap);
         elements.detailRisks.appendChild(item);
         elements.detailRiskBlock.hidden = false;
         });
@@ -208,17 +219,17 @@ function createRenderModals(context) {
     function renderExpensesModal() {
         return safeRender('renderExpensesModal', () => {
             if (!elements.expensesModal) return;
-            elements.expensesList.innerHTML = "";
+            clearChildren(elements.expensesList);
 
         // Show loading state
         if (state.expensesLoading) {
             const loader = document.createElement("div");
             loader.className = "expenses-loading";
-            loader.innerHTML = `
-                <div class="skeleton-expense-row"></div>
-                <div class="skeleton-expense-row"></div>
-                <div class="skeleton-expense-row"></div>
-            `;
+            for (let i = 0; i < 3; i++) {
+                const row = document.createElement("div");
+                row.className = "skeleton-expense-row";
+                loader.appendChild(row);
+            }
             elements.expensesList.appendChild(loader);
             return;
         }
@@ -238,27 +249,40 @@ function createRenderModals(context) {
             const row = document.createElement("div");
             row.className = "expense-row";
             const typeLabels = { delivery: "🚚 Доставка", repair: "🔧 Ремонт", other: "📦 Другое" };
-            row.innerHTML = `
-                <div class="expense-main">
-                    <span class="expense-type">${typeLabels[expense.expense_type] || expense.expense_type}</span>
-                    <span class="expense-meta">${expense.notes || ""}</span>
-                </div>
-                <span class="expense-amount mono">-${Math.round(amount)} BYN</span>
-                <button class="expense-delete-btn" data-expense-id="${expense.id}" type="button" aria-label="Удалить расход">✕</button>
-            `;
-            row.querySelector('[data-expense-id]')?.addEventListener("click", () => {
+            const main = document.createElement("div");
+            main.className = "expense-main";
+            const type = document.createElement("span");
+            type.className = "expense-type";
+            type.textContent = typeLabels[expense.expense_type] || expense.expense_type;
+            const meta = document.createElement("span");
+            meta.className = "expense-meta";
+            meta.textContent = expense.notes || "";
+            main.append(type, meta);
+            const amountEl = document.createElement("span");
+            amountEl.className = "expense-amount mono";
+            amountEl.textContent = `-${Math.round(amount)} BYN`;
+            const deleteBtn = document.createElement("button");
+            deleteBtn.className = "expense-delete-btn";
+            deleteBtn.type = "button";
+            deleteBtn.setAttribute("aria-label", "Удалить расход");
+            deleteBtn.textContent = "✕";
+            deleteBtn.addEventListener("click", () => {
                 void actions.deleteExpense(state.currentExpenseLeadId, expense.id);
             });
+            row.append(main, amountEl, deleteBtn);
             elements.expensesList.appendChild(row);
         }
 
         // Show total
         const totalRow = document.createElement("div");
         totalRow.className = "expense-total";
-        totalRow.innerHTML = `
-            <span class="expense-total-label">Итого расходов</span>
-            <span class="expense-total-value mono">-${Math.round(totalExpenses)} BYN</span>
-        `;
+        const totalLabel = document.createElement("span");
+        totalLabel.className = "expense-total-label";
+        totalLabel.textContent = "Итого расходов";
+        const totalValue = document.createElement("span");
+        totalValue.className = "expense-total-value mono";
+        totalValue.textContent = `-${Math.round(totalExpenses)} BYN`;
+        totalRow.append(totalLabel, totalValue);
         elements.expensesList.prepend(totalRow);
         });
     }

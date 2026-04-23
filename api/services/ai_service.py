@@ -90,6 +90,7 @@ def _build_system_prompt(
     category_hints: str,
     bargain_hint: str,
     price_position_label: str,
+    negotiable_hint: str,
 ) -> str:
     """Build system prompt with category-specific hints injected."""
     return (
@@ -98,6 +99,9 @@ def _build_system_prompt(
             bargain_hint=bargain_hint,
             price_position_label=price_position_label,
         )
+        + "\n"
+        + negotiable_hint
+        + "\n"
         + JSON_SCHEMA
     )
 
@@ -684,7 +688,7 @@ class AIService:
                 },
                 json=body,
             )
-        except Exception as e:
+        except httpx.HTTPError as e:
             logger.error("AI _chat request failed: %s: %s", type(e).__name__, e)
             raise
         logger.info("AI _chat response: status=%d", resp.status_code)
@@ -717,6 +721,7 @@ class AIService:
         title: str,
         description: str | None,
         price_byn: float,
+        is_negotiable_price: bool = False,
         condition: str | None,
         parameters: list[dict],
         market_median: float | None,
@@ -742,7 +747,18 @@ class AIService:
             category_hints=hints["category_hints"],
             bargain_hint=hints["bargain_hint"],
             price_position_label=self._price_position_label(
-                price_byn, market_median, market_q1, market_q3
+                price_byn,
+                market_median,
+                market_q1,
+                market_q3,
+                is_negotiable_price=is_negotiable_price,
+            ),
+            negotiable_hint=(
+                "Цена в объявлении указана как договорная. "
+                "Не считай, что цена покупки равна 0 BYN. "
+                "Опирайся на рыночный диапазон и похожие объявления."
+                if is_negotiable_price
+                else ""
             ),
         )
 
@@ -750,6 +766,7 @@ class AIService:
             title=title,
             description=description,
             price_byn=price_byn,
+            is_negotiable_price=is_negotiable_price,
             condition=condition,
             parameters=parameters,
             market_median=market_median,
@@ -811,7 +828,7 @@ class AIService:
                 content=content if len(content) > 1 else context,
                 max_tokens=2800,
             )
-        except Exception as e:
+        except httpx.HTTPError as e:
             err = str(e).lower()
             if len(content) > 1 and ("image" in err or "vision" in err or "multimodal" in err):
                 logger.warning("Vision not supported, retrying text-only: %s", e)
@@ -839,7 +856,13 @@ class AIService:
         median: float | None,
         q1: float | None,
         q3: float | None,
+        *,
+        is_negotiable_price: bool = False,
     ) -> str:
+        if is_negotiable_price:
+            if median:
+                return "не указана продавцом; ориентир — рыночная медиана"
+            return "не указана продавцом"
         if not median:
             return "неизвестна"
         if q1 and q3:
@@ -863,6 +886,7 @@ class AIService:
         title: str,
         description: str | None,
         price_byn: float,
+        is_negotiable_price: bool,
         condition: str | None,
         parameters: list[dict],
         market_median: float | None,
@@ -883,8 +907,10 @@ class AIService:
 
         # Price position
         price_pos = "позиция неизвестна"
-        price_delta_pct = 0.0
-        if market_median and market_q1 and market_q3:
+        price_delta_pct = None
+        if is_negotiable_price:
+            price_pos = "цена договорная, точная сумма не указана"
+        elif market_median and market_q1 and market_q3:
             price_delta_pct = (price_byn - market_median) / market_median * 100
             if price_byn <= market_q1:
                 price_pos = f"НИЖЕ Q1 ({market_q1:.0f} BYN) — дешёвое"
@@ -905,8 +931,14 @@ class AIService:
             else:
                 price_pos = f"на {price_delta_pct:.0f}% выше медианы"
 
-        parts.append(f"Цена: {price_byn:.0f} BYN ({price_pos})")
-        parts.append(f"Отклонение от медианы: {price_delta_pct:+.0f}%")
+        if is_negotiable_price:
+            parts.append(f"Цена: договорная ({price_pos})")
+            if market_median:
+                parts.append(f"Рыночный ориентир: медиана {market_median:.0f} BYN")
+        else:
+            parts.append(f"Цена: {price_byn:.0f} BYN ({price_pos})")
+            if price_delta_pct is not None:
+                parts.append(f"Отклонение от медианы: {price_delta_pct:+.0f}%")
 
         if condition:
             parts.append(f"Состояние (заявлено): {condition}")
@@ -944,7 +976,12 @@ class AIService:
                     parts.append(
                         f"Справедливый диапазон (Q1-Q3): {market_q1:.0f} — {market_q3:.0f} BYN"
                     )
-                    if price_byn < market_q1:
+                    if is_negotiable_price:
+                        parts.append(
+                            "Цена не указана, поэтому сравнивай объявление с этим диапазоном "
+                            "и оцени, насколько выгодной будет сделка после торга."
+                        )
+                    elif price_byn < market_q1:
                         parts.append(
                             f"Цена НА {market_q1 - price_byn:.0f} BYN ниже "
                             f"справедливого диапазона — хорошая сделка или есть причины"
@@ -956,7 +993,13 @@ class AIService:
                         )
 
             # Resale instruction
-            if price_byn:
+            if is_negotiable_price:
+                parts.append(
+                    "\nПЕРЕПРОДАЖА: цена покупки ещё не согласована. "
+                    "Оцени resale_potential по рынку и укажи, при какой цене входа "
+                    "сделка выглядит разумной."
+                )
+            elif price_byn:
                 parts.append(
                     f"\nПЕРЕПРОДАЖА: цена покупки {price_byn:.0f} BYN. "
                     f"Оцени resale_potential — за сколько потенциально можно перепродать."
@@ -983,13 +1026,25 @@ class AIService:
         if similar_listings:
             parts.append(f"\n## АЛЬТЕРНАТИВЫ ({len(similar_listings)} вариантов):")
             for i, sl in enumerate(similar_listings[:5], 1):
-                price_diff = sl.get("price_byn", 0) - price_byn
-                if price_diff > 0:
-                    diff_str = f"на {price_diff:.0f} BYN дороже"
-                elif price_diff < 0:
-                    diff_str = f"на {abs(price_diff):.0f} BYN дешевле"
+                if is_negotiable_price:
+                    if market_median:
+                        price_diff = sl.get("price_byn", 0) - market_median
+                        if price_diff > 0:
+                            diff_str = f"на {price_diff:.0f} BYN выше медианы"
+                        elif price_diff < 0:
+                            diff_str = f"на {abs(price_diff):.0f} BYN ниже медианы"
+                        else:
+                            diff_str = "около медианы"
+                    else:
+                        diff_str = "рыночный ориентир"
                 else:
-                    diff_str = "та же цена"
+                    price_diff = sl.get("price_byn", 0) - price_byn
+                    if price_diff > 0:
+                        diff_str = f"на {price_diff:.0f} BYN дороже"
+                    elif price_diff < 0:
+                        diff_str = f"на {abs(price_diff):.0f} BYN дешевле"
+                    else:
+                        diff_str = "та же цена"
                 age_str = ""
                 ad = sl.get("age_days")
                 if ad is not None:
@@ -1042,7 +1097,7 @@ class AIService:
             if resp.status_code == 200:
                 await resp.aread()
                 return resp.content
-        except Exception as e:
+        except httpx.HTTPError as e:
             logger.warning("Failed to fetch image %s: %s", url[:80], e)
         return None
 
@@ -1066,7 +1121,7 @@ class AIService:
             buf = BytesIO()
             img.save(buf, format="JPEG", quality=quality, optimize=True)
             return buf.getvalue()
-        except Exception as e:
+        except (ImportError, OSError, ValueError) as e:
             logger.debug("Image compression skipped: %s", e)
             return None
 

@@ -2,7 +2,7 @@
  * api_ai.js — AI listing analysis with dedicated modal + PDF export.
  */
 function createApiAi(context) {
-    const { state, elements, postJson, getJson, escapeHtml, safeUrl, formatPrice, telegramHeaders } = context;
+    const { state, elements, postJson, getJson, escapeHtml, safeUrl, formatPrice } = context;
 
     let _aiLoading = false;
     let _aiProgress = 0;
@@ -15,6 +15,13 @@ function createApiAi(context) {
         "Подбираю альтернативы...",
         "Формирую рекомендации...",
         "Осталось немного...",
+    ];
+    const PROGRESS_CAPS = [
+        { server: 0, cap: 12 },
+        { server: 10, cap: 28 },
+        { server: 30, cap: 56 },
+        { server: 50, cap: 82 },
+        { server: 85, cap: 96 },
     ];
 
     function _updateProgressDisplay(pct) {
@@ -39,6 +46,16 @@ function createApiAi(context) {
         }
     }
 
+    function _getProgressCap(serverPct) {
+        let cap = 12;
+        for (let i = 0; i < PROGRESS_CAPS.length; i++) {
+            if (serverPct >= PROGRESS_CAPS[i].server) {
+                cap = PROGRESS_CAPS[i].cap;
+            }
+        }
+        return cap;
+    }
+
     function _startLoadingAnimation() {
         let step = 0;
         _aiProgress = 0;
@@ -49,14 +66,19 @@ function createApiAi(context) {
             step = (step + 1) % LOADING_STEPS.length;
             if (textEl) textEl.textContent = LOADING_STEPS[step];
 
-            // Ceilings: server milestones define brackets the bar can move through.
-            // Current ceiling determines the max local bar can show.
-            // Between ticks, bar creeps ~0.3-0.6% per 800ms tick.
-            // When server jumps from 30→50, the ceiling rises and bar accelerates.
-            const maxLocal = Math.min(_serverCeiling + 5, 93);
-            if (_aiProgress < maxLocal) {
-                // Slow creep: 0.3-0.6% per tick (0.375-0.75% per second)
-                const creep = 0.3 + Math.random() * 0.3;
+            const maxLocal = _getProgressCap(_serverCeiling);
+            if (_aiProgress < _serverCeiling) {
+                const gap = _serverCeiling - _aiProgress;
+                const jump = Math.max(1.6, gap * 0.45);
+                _aiProgress = Math.min(_aiProgress + jump, _serverCeiling);
+            } else if (_aiProgress < maxLocal) {
+                const remaining = maxLocal - _aiProgress;
+                const minCreep = _serverCeiling >= 85 ? 0.15 : 0.35;
+                const maxCreep = _serverCeiling >= 85 ? 0.35 : 0.75;
+                const creep = Math.min(
+                    remaining,
+                    minCreep + Math.random() * (maxCreep - minCreep),
+                );
                 _aiProgress = Math.min(_aiProgress + creep, maxLocal);
             }
             _updateProgressDisplay(_aiProgress);
@@ -615,7 +637,7 @@ function createApiAi(context) {
         return sections;
     }
 
-    function exportToPdf() {
+    async function exportToPdf() {
         const data = _lastAiData;
         if (!data) return;
 
@@ -644,6 +666,10 @@ function createApiAi(context) {
   @page :first { margin-top: 0; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; font-size: 10pt; line-height: 1.6; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .print-banner { display: none; padding: 14px 18px; background: #eff6ff; border-bottom: 1px solid #bfdbfe; }
+  .print-banner-inner { max-width: 860px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .print-banner-text { color: #1e3a8a; font-size: 9pt; }
+  .print-banner-btn { appearance: none; border: none; border-radius: 10px; background: #2563eb; color: #fff; padding: 10px 14px; font: inherit; font-size: 9pt; font-weight: 700; cursor: pointer; }
 
   /* ── Hero ── */
   .hero { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 36px 32px 28px; position: relative; overflow: hidden; }
@@ -685,9 +711,25 @@ function createApiAi(context) {
   .footer { margin-top: 28px; padding: 14px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; }
   .footer p { font-size: 7.5pt; color: #94a3b8; line-height: 1.5; }
   .footer-brand { font-weight: 600; color: #64748b; }
+  @media screen {
+    body { background: #e2e8f0; }
+    .page-shell { max-width: 860px; margin: 0 auto; background: #fff; min-height: 100vh; box-shadow: 0 10px 40px rgba(15, 23, 42, 0.16); }
+    .print-banner { display: block; }
+  }
+  @media print {
+    .print-banner { display: none !important; }
+    .page-shell { box-shadow: none; }
+  }
 </style>
 </head>
 <body>
+<div class="print-banner">
+  <div class="print-banner-inner">
+    <div class="print-banner-text">Если диалог печати не открылся автоматически, нажмите кнопку и выберите «Сохранить как PDF».</div>
+    <button class="print-banner-btn" type="button" onclick="window.print()">Печать / PDF</button>
+  </div>
+</div>
+<div class="page-shell">
 
 <div class="hero">
   <div class="hero-badge">Rafuks &middot; AI Report</div>
@@ -729,35 +771,42 @@ ${otherSections.map(s => {
   <p><span class="footer-brand">Rafuks</span> &mdash; ${_escXml(data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.")}</p>
 </div>
 
+</div>
+<script>
+window.addEventListener("load", function () {
+  setTimeout(function () {
+    try { window.print(); } catch (_) {}
+  }, 350);
+});
+</script>
 </body>
 </html>`;
 
-        // Open report for printing.
-        // Telegram WebApp blocks window.open — use hidden iframe approach.
-        // Regular browsers get a new window with auto-print.
         const isTelegram = !!window.Telegram?.WebApp?.initData;
 
         if (isTelegram) {
-            // Telegram: write into a hidden iframe and print it
-            let iframe = document.getElementById("_ai-export-frame");
-            if (!iframe) {
-                iframe = document.createElement("iframe");
-                iframe.id = "_ai-export-frame";
-                iframe.style.cssText = "position:fixed;left:-9999px;width:0;height:0;border:none;";
-                document.body.appendChild(iframe);
+            try {
+                const exportResp = await postJson("/api/v1/ai/export-report", { html: pdfHtml });
+                const exportUrl = exportResp?.url;
+                if (!exportUrl) {
+                    throw new Error("Сервер не вернул ссылку на экспорт");
+                }
+                if (window.Telegram?.WebApp?.openLink) {
+                    window.Telegram.WebApp.openLink(exportUrl);
+                } else {
+                    window.location.href = exportUrl;
+                }
+                return;
+            } catch (err) {
+                console.error("[AI] Telegram PDF export failed:", err);
             }
-            iframe.srcdoc = pdfHtml;
-            iframe.onload = function () {
-                try { iframe.contentWindow.print(); } catch (_) {}
-            };
-        } else {
-            // Regular browser: new window with auto-print
-            const win = window.open("", "_blank");
-            if (win) {
-                win.document.write(pdfHtml);
-                win.document.close();
-                win.onload = function () { win.print(); };
-            }
+        }
+
+        const win = window.open("", "_blank");
+        if (win) {
+            win.document.write(pdfHtml);
+            win.document.close();
+            win.onload = function () { win.print(); };
         }
     }
 

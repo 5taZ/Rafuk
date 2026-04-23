@@ -5,6 +5,7 @@ import hmac
 import json
 import urllib.parse
 from dataclasses import dataclass
+from time import time
 
 
 @dataclass(slots=True)
@@ -14,7 +15,13 @@ class TelegramInitData:
     raw: dict[str, str]
 
 
-def verify_telegram_init_data(init_data: str, bot_token: str) -> TelegramInitData:
+def verify_telegram_init_data(
+    init_data: str,
+    bot_token: str,
+    *,
+    max_age_seconds: int = 86_400,
+    now_ts: int | None = None,
+) -> TelegramInitData:
     if not init_data:
         raise ValueError("initData is empty")
 
@@ -31,6 +38,20 @@ def verify_telegram_init_data(init_data: str, bot_token: str) -> TelegramInitDat
 
     if not hmac.compare_digest(expected_hash, received_hash):
         raise ValueError("Invalid Telegram initData signature")
+
+    auth_date_raw = parsed.get("auth_date")
+    try:
+        auth_date = int(auth_date_raw or "0")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("initData auth_date is invalid") from exc
+
+    now = int(now_ts if now_ts is not None else time())
+    if auth_date <= 0:
+        raise ValueError("initData auth_date is missing")
+    if auth_date > now + 60:
+        raise ValueError("initData auth_date is in the future")
+    if max_age_seconds > 0 and now - auth_date > max_age_seconds:
+        raise ValueError("initData is too old")
 
     try:
         user_data = json.loads(parsed.get("user", "{}"))
