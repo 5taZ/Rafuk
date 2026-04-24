@@ -362,7 +362,16 @@ def merge_marketplace_red_flags(
     red_flags: list[str] | None,
     risk_context: MarketplaceRiskContext,
 ) -> list[str]:
-    merged = [flag for flag in (red_flags or []) if isinstance(flag, str) and flag.strip()]
+    # Normalize: AI may return dicts instead of strings (e.g. {"point": "...", "why": "..."})
+    normalized_flags: list[str] = []
+    for flag in (red_flags or []):
+        if isinstance(flag, str) and flag.strip():
+            normalized_flags.append(flag.strip())
+        elif isinstance(flag, dict):
+            text = flag.get("point") or flag.get("text") or flag.get("why") or ""
+            if text.strip():
+                normalized_flags.append(text.strip())
+    merged = normalized_flags
     normalized = normalize_search_text(" ".join(merged))
     if risk_context.score < 2.5:
         return merged
@@ -1005,6 +1014,9 @@ def complete_analysis_sections(
             max_items=5,
         )
     completed["negotiation_tips"] = tips
+
+    # ── Red flags ───────────────────────────────────────────────
+    completed["red_flags"] = red_flags
 
     # ── Summary ────────────────────────────────────────────────
     summary = _clean_text(completed.get("summary"))

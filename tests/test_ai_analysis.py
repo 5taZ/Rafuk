@@ -28,7 +28,7 @@ class FakeAIService:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def analyze_listing(self, **kwargs) -> dict:
+    async def analyze_listing_parallel(self, **kwargs) -> dict:
         self.calls.append(kwargs)
         return {
             "condition": {
@@ -62,7 +62,7 @@ class FakeOutlierAIService:
     async def quick_condition(self, image_urls: list[str]) -> dict:
         return {"condition": "Удовлетворительное", "notes": []}
 
-    async def analyze_listing(self, **kwargs) -> dict:
+    async def analyze_listing_parallel(self, **kwargs) -> dict:
         del kwargs
         return {
             "fair_price": {
@@ -415,7 +415,7 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
         )
 
     class QuietAIService(FakeAIService):
-        async def analyze_listing(self, **kwargs) -> dict:
+        async def analyze_listing_parallel(self, **kwargs) -> dict:
             self.calls.append(kwargs)
             return {
                 "condition": {

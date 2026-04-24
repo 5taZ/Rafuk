@@ -8,6 +8,7 @@ Configure via .env:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -18,102 +19,6 @@ import httpx
 from api.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_PROMPT_TEMPLATE = """\
-Ты — Rafuks AI, эксперт-аналитик объявлений Kufar.by. \
-Отвечай ТОЛЬКО на русском.
-
-ПРАВИЛА ОТВЕТА:
-- Будь конкретен: указывай суммы в BYN, сроки, модели, проценты.
-- НЕ пиши общие фразы типа "сравните с аналогами" или "проверьте товар".
-- Каждый пункт — действие или факт, а не пожелание.
-- ОБЯЗАТЕЛЬНО заполни ВСЕ секции JSON. Пустые или отсутствующие секции НЕДОПУСТИМЫ.
-- fair_price.from/to — реалистичный диапазон для ЭТОГО товара в ЕГО состоянии.
-- reasoning в fair_price — почему именно этот диапазон (сравнение с конкретными аналогами).
-- negotiation_tips — МИНИМУМ 3 конкретных аргумента с BYN-суммами скидки
-  ("попросите скидку X BYN, потому что...").
-- watch_out — МИНИМУМ 3 конкретных дефекта/риска, которые ты видишь или \
-предполагаешь с обоснованием. Каждый пункт содержит point и why.
-- meeting_checklist — МИНИМУМ 5 пошаговых проверок при встрече, \
-специфичных для категории товара.
-- red_flags — только реальные признаки мошенничества/проблем, не очевидные вещи.
-- red_flags — максимум 3 коротких пункта, самые важные сначала.
-- Если во входном контексте есть явные hot words или risk signals вроде кредита,
-  рассрочки, перекупа, автохауса, площадки, магазина или reseller-поведения,
-  учитывай их в red_flags или market_context, но не выдумывай факты сверх контекста.
-- Если цена договорная, recommendation и negotiation_tips должны опираться на
-  реалистичный диапазон входа после торга в BYN, а не на абстрактную формулировку.
-- market_context — 2-3 предложения: позиция цены, сравнение с лучшим аналогом и 1 ключевой вывод.
-- summary — 1-2 предложения с вердиктом и ключевой причиной.
-- resale_potential — за сколько потенциально можно перепродать этот товар.
-  fast_price: цена для быстрой продажи (ниже рынка, быстрый отчёт).
-  market_price: справедливая рыночная цена перепродажи.
-  optimal_price: максимальная реалистичная цена (продажа терпеливо, в идеальном состоянии).
-  Учитывай состояние товара, спрос и конкретные аналоги. Укажи конкретные суммы BYN.
-- condition.notes — МИНИМУМ 2 конкретных наблюдения по фото или описанию.
-
-ПРИЗНАКИ МОШЕННИЧЕСТВА — проверяй:
-- Цена значительно ниже рынка (>30% ниже медианы) без обоснования
-- Мало фото или фото низкого качества / с водяными знаками других сайтов
-- Описание скопировано, шаблонно или не соответствует фото
-- Нет реальных фото товара (только стоковые/промо изображения)
-- Несоответствие: в описании одна модель, в параметрах другая
-
-Цена товара {price_position_label}. {category_hints} {bargain_hint}
-Ответь строго JSON:
-"""
-
-JSON_SCHEMA = """{
-  "condition": {
-    "label": "строго на русском: Отличное, Хорошее, Удовлетворительное или Требует внимания",
-    "confidence": 0.0-1.0,
-    "notes": ["конкретное наблюдение с фото или описания — что именно видно"]
-  },
-  "fair_price": {
-    "from": число_BYN,
-    "to": число_BYN,
-    "reasoning": "обоснование: аналог X стоит Y BYN в состоянии Z, этот — потому что..."
-  },
-  "resale_potential": {
-    "fast_price": {"label": "Быстро", "price_byn": число, "reasoning": "почему"},
-    "market_price": {"label": "По рынку", "price_byn": число, "reasoning": "почему"},
-    "optimal_price": {"label": "Оптимально", "price_byn": число, "reasoning": "почему"},
-    "reasoning": "общее обоснование: за сколько можно перепродать и почему"
-  },
-  "watch_out": [
-    {"point": "конкретная проблема", "why": "почему важно и как проверить"}
-  ],
-  "meeting_checklist": ["конкретное действие — что нажать, подключить, проверить"],
-  "negotiation_tips": ["аргумент: 'Скиньте X BYN, потому что...' с суммой"],
-  "red_flags": ["конкретный признак мошенничества или проблемы"],
-  "market_context": "2-3 предложения: позиция цены, конкретные аналоги, тренд",
-  "best_pick": {"ad_id": номер_или_null, "reason": "почему именно этот вариант лучше"},
-  "recommendation": {
-    "verdict": "worth_it или think_twice или overpriced (строго одно из трёх)",
-    "text": "рекомендация с суммой и действием на русском"
-  },
-  "summary": "1-2 предложения: вердикт + ключевая причина"
-}"""
-
-
-def _build_system_prompt(
-    category_hints: str,
-    bargain_hint: str,
-    price_position_label: str,
-    negotiable_hint: str,
-) -> str:
-    """Build system prompt with category-specific hints injected."""
-    return (
-        SYSTEM_PROMPT_TEMPLATE.format(
-            category_hints=category_hints,
-            bargain_hint=bargain_hint,
-            price_position_label=price_position_label,
-        )
-        + "\n"
-        + negotiable_hint
-        + "\n"
-        + JSON_SCHEMA
-    )
 
 
 def _entry_price_guidance(
@@ -601,6 +506,108 @@ def detect_category(title: str, parameters: list[dict] | None = None) -> str:
     return best_match
 
 
+# ── Parallel analysis sub-prompts ────────────────────────────────────────
+# The monolithic analyze_listing call is split into two parallel calls:
+#   Call A — Price & Market: fair_price, resale_potential, market_context,
+#            negotiation_tips, best_pick
+#   Call B — Condition & Risks: condition, watch_out, meeting_checklist,
+#            red_flags, recommendation, summary
+# Both receive the same listing context but produce different JSON sections,
+# cutting max_tokens per call from 2800 to ~1500 and running concurrently.
+
+_PRICE_MARKET_PROMPT_TEMPLATE = """\
+Ты — Rafuks AI, эксперт-аналитик объявлений Kufar.by. \
+Отвечай ТОЛЬКО на русском.
+
+Твоя задача — оценить ЦЕНУ и РЫНОК для объявления.
+ПРАВИЛА:
+- Будь конкретен: указывай суммы в BYN, сроки, проценты.
+- НЕ пиши общие фразы — каждый пункт — действие или факт.
+- ОБЯЗАТЕЛЬНО заполни ВСЕ секции JSON.
+- fair_price.from/to — реалистичный диапазон для ЭТОГО товара в ЕГО состоянии.
+- reasoning в fair_price — почему именно этот диапазон (сравнение с конкретными аналогами).
+- negotiation_tips — МИНИМУМ 3 конкретных аргумента с BYN-суммами скидки.
+- Если цена договорная, negotiation_tips должны опираться на реалистичный диапазон входа.
+- resale_potential — за сколько потенциально можно перепродать этот товар.
+  fast_price: цена для быстрой продажи (ниже рынка, быстрый отчёт).
+  market_price: справедливая рыночная цена перепродажи.
+  optimal_price: максимальная реалистичная цена (продажа терпеливо, в идеальном состоянии).
+  Учитывай состояние товара, спрос и конкретные аналоги. Укажи конкретные суммы BYN.
+- market_context — 2-3 предложения: позиция цены, сравнение с лучшим аналогом, 1 ключевой вывод.
+
+Цена товара {price_position_label}. {category_hints} {bargain_hint}
+Ответь строго JSON:
+"""
+
+_PRICE_MARKET_SCHEMA = """{
+  "fair_price": {
+    "from": число_BYN,
+    "to": число_BYN,
+    "reasoning": "обоснование: аналог X стоит Y BYN в состоянии Z, этот — потому что..."
+  },
+  "resale_potential": {
+    "fast_price": {"label": "Быстро", "price_byn": число, "reasoning": "почему"},
+    "market_price": {"label": "По рынку", "price_byn": число, "reasoning": "почему"},
+    "optimal_price": {"label": "Оптимально", "price_byn": число, "reasoning": "почему"},
+    "reasoning": "общее обоснование: за сколько можно перепродать и почему"
+  },
+  "negotiation_tips": ["аргумент: 'Скиньте X BYN, потому что...' с суммой"],
+  "market_context": "2-3 предложения: позиция цены, конкретные аналоги, тренд",
+  "best_pick": {"ad_id": номер_или_null, "reason": "почему именно этот вариант лучше"}
+}"""
+
+_CONDITION_RISKS_PROMPT_TEMPLATE = """\
+Ты — Rafuks AI, эксперт-аналитик объявлений Kufar.by. \
+Отвечай ТОЛЬКО на русском.
+
+Твоя задача — оценить СОСТОЯНИЕ и РИСКИ для объявления.
+ПРАВИЛА:
+- Будь конкретен: указывай конкретные дефекты, модели, проценты.
+- НЕ пиши общие фразы — каждый пункт — действие или факт.
+- ОБЯЗАТЕЛЬНО заполни ВСЕ секции JSON.
+- condition.notes — МИНИМУМ 2 конкретных наблюдения по фото или описанию.
+- watch_out — МИНИМУМ 3 конкретных дефекта/риска с обоснованием. Каждый пункт: point и why.
+- meeting_checklist — МИНИМУМ 5 пошаговых проверок при встрече, специфичных для категории.
+- red_flags — только реальные признаки мошенничества/проблем, не очевидные вещи.
+  Максимум 3 коротких пункта, самые важные сначала.
+- Если во входном контексте есть явные hot words или risk signals вроде кредита,
+  рассрочки, перекупа, автохауса, площадки, магазина или reseller-поведения,
+  учитывай их в red_flags, но не выдумывай факты сверх контекста.
+- recommendation.verdict — строго одно из: worth_it, think_twice, overpriced.
+- Если цена договорная, recommendation должна опираться на реалистичный
+  диапазон входа после торга в BYN, а не на абстрактную формулировку.
+- summary — 1-2 предложения с вердиктом и ключевой причиной.
+
+ПРИЗНАКИ МОШЕННИЧЕСТВА — проверяй:
+- Цена значительно ниже рынка (>30% ниже медианы) без обоснования
+- Мало фото или фото низкого качества / с водяными знаками других сайтов
+- Описание скопировано, шаблонно или не соответствует фото
+- Нет реальных фото товара (только стоковые/промо изображения)
+- Несоответствие: в описании одна модель, в параметрах другая
+
+Цена товара {price_position_label}. {category_hints} {bargain_hint}
+Ответь строго JSON:
+"""
+
+_CONDITION_RISKS_SCHEMA = """{
+  "condition": {
+    "label": "строго на русском: Отличное, Хорошее, Удовлетворительное или Требует внимания",
+    "confidence": 0.0-1.0,
+    "notes": ["конкретное наблюдение с фото или описания — что именно видно"]
+  },
+  "watch_out": [
+    {"point": "конкретная проблема", "why": "почему важно и как проверить"}
+  ],
+  "meeting_checklist": ["конкретное действие — что нажать, подключить, проверить"],
+  "red_flags": ["конкретный признак мошенничества или проблемы"],
+  "recommendation": {
+    "verdict": "worth_it или think_twice или overpriced (строго одно из трёх)",
+    "text": "рекомендация с суммой и действием на русском"
+  },
+  "summary": "1-2 предложения: вердикт + ключевая причина"
+}"""
+
+
 QUICK_CONDITION_PROMPT = """\
 Ты — Rafuks AI. Оцени состояние товара по фото.
 Выбери РОВНО ОДНО значение condition из списка:
@@ -812,7 +819,7 @@ class AIService:
 
     # ── Public methods ──────────────────────────────────────────
 
-    async def analyze_listing(
+    async def analyze_listing_parallel(
         self,
         *,
         title: str,
@@ -823,7 +830,6 @@ class AIService:
         parameters: list[dict],
         market_median: float | None,
         market_count: int,
-        image_urls: list[str],
         similar_listings: list[dict] | None = None,
         market_q1: float | None = None,
         market_q3: float | None = None,
@@ -840,29 +846,35 @@ class AIService:
         photo_condition_label: str | None = None,
         photo_condition_notes: list[str] | None = None,
     ) -> dict:
-        """Full AI analysis of a listing with optional comparison to alternatives."""
-        # Build category-aware system prompt
+        """Parallel AI analysis — splits work into 2 concurrent sub-calls.
+
+        Call A (Price & Market): fair_price, resale_potential, market_context,
+            negotiation_tips, best_pick
+        Call B (Condition & Risks): condition, watch_out, meeting_checklist,
+            red_flags, recommendation, summary
+
+        Both calls share the same listing context but produce different JSON
+        sections, so each needs ~1500 max_tokens instead of 2800.  Running
+        them concurrently means wall-clock time ≈ max(A, B), not A + B.
+        """
         category = detect_category(title, parameters)
         hints = CATEGORY_HINTS.get(category, CATEGORY_HINTS["default"])
-        system = _build_system_prompt(
-            category_hints=hints["category_hints"],
-            bargain_hint=hints["bargain_hint"],
-            price_position_label=self._price_position_label(
-                price_byn,
-                market_median,
-                market_q1,
-                market_q3,
-                is_negotiable_price=is_negotiable_price,
-            ),
-            negotiable_hint=(
-                "Цена в объявлении указана как договорная. "
-                "Не считай, что цена покупки равна 0 BYN. "
-                "Опирайся на рыночный диапазон и похожие объявления."
-                if is_negotiable_price
-                else ""
-            ),
+        price_position_label = self._price_position_label(
+            price_byn,
+            market_median,
+            market_q1,
+            market_q3,
+            is_negotiable_price=is_negotiable_price,
+        )
+        negotiable_hint = (
+            "Цена в объявлении указана как договорная. "
+            "Не считай, что цена покупки равна 0 BYN. "
+            "Опирайся на рыночный диапазон и похожие объявления."
+            if is_negotiable_price
+            else ""
         )
 
+        # Build shared context once
         context = self._build_listing_context(
             title=title,
             description=description,
@@ -888,13 +900,82 @@ class AIService:
             photo_condition_label=photo_condition_label,
             photo_condition_notes=photo_condition_notes,
         )
-        logger.warning("AI analyze_listing: starting full report")
-        # No inner timeout — the caller (router) controls the deadline via
-        # asyncio.wait_for(timeout=150).  An inner timeout here would fire
-        # first and prevent the outer one from ever being reached.
-        # Gemma 4 uses internal reasoning tokens that consume output budget,
-        # so max_tokens must be ≥2800 for the full JSON response to fit.
-        return await self._chat(system=system, content=context, max_tokens=2800)
+
+        # Build system prompts for each sub-call
+        system_a = (
+            _PRICE_MARKET_PROMPT_TEMPLATE.format(
+                category_hints=hints["category_hints"],
+                bargain_hint=hints["bargain_hint"],
+                price_position_label=price_position_label,
+            )
+            + "\n"
+            + negotiable_hint
+            + "\n"
+            + _PRICE_MARKET_SCHEMA
+        )
+        system_b = (
+            _CONDITION_RISKS_PROMPT_TEMPLATE.format(
+                category_hints=hints["category_hints"],
+                bargain_hint=hints["bargain_hint"],
+                price_position_label=price_position_label,
+            )
+            + "\n"
+            + negotiable_hint
+            + "\n"
+            + _CONDITION_RISKS_SCHEMA
+        )
+
+        # Gemma 4 uses internal reasoning tokens that consume output budget.
+        # Each sub-call needs enough room for reasoning + ~5-6 JSON sections.
+        # 2200 tokens per call (vs 2800 for the old monolithic call).
+        async def _call_a():
+            return await self._chat(system=system_a, content=context, max_tokens=2200)
+
+        async def _call_b():
+            # Stagger by 1s to avoid Together AI rate-limit (429) on concurrent requests
+            await asyncio.sleep(1.0)
+            return await self._chat(system=system_b, content=context, max_tokens=2200)
+
+        logger.warning("AI analyze_listing_parallel: starting staggered sub-calls")
+        # Use return_exceptions so one failure doesn't kill the other
+        results = await asyncio.gather(_call_a(), _call_b(), return_exceptions=True)
+
+        result_a = results[0] if not isinstance(results[0], Exception) else {}
+        result_b = results[1] if not isinstance(results[1], Exception) else {}
+        if isinstance(results[0], Exception):
+            logger.warning(
+                "AI parallel Call A failed: %s: %s",
+                type(results[0]).__name__, results[0],
+            )
+        if isinstance(results[1], Exception):
+            logger.warning(
+                "AI parallel Call B failed: %s: %s",
+                type(results[1]).__name__, results[1],
+            )
+        # If BOTH failed, re-raise the first error so the router fallback path kicks in
+        if isinstance(results[0], Exception) and isinstance(results[1], Exception):
+            raise results[0]
+
+        # Merge: Call B sections take priority for overlapping keys,
+        # Call A sections fill in the rest.
+        merged: dict = {}
+        # fair_price, resale_potential, negotiation_tips, market_context, best_pick
+        merged.update(result_a)
+        # condition, watch_out, meeting_checklist, red_flags, recommendation, summary
+        merged.update(result_b)
+        # Ensure all expected keys exist even if a sub-call returned partial data
+        merged.setdefault("fair_price", None)
+        merged.setdefault("resale_potential", None)
+        merged.setdefault("negotiation_tips", [])
+        merged.setdefault("market_context", "")
+        merged.setdefault("best_pick", {"ad_id": None, "reason": ""})
+        merged.setdefault("condition", None)
+        merged.setdefault("watch_out", [])
+        merged.setdefault("meeting_checklist", [])
+        merged.setdefault("red_flags", [])
+        merged.setdefault("recommendation", None)
+        merged.setdefault("summary", "")
+        return merged
 
     async def quick_condition(self, image_urls: list[str]) -> dict:
         """Quick condition assessment from photos only."""

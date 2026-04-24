@@ -430,7 +430,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         import time as _time
         _t0 = _time.monotonic()
         logger.info(
-            "AI async task %s: calling ai.analyze_listing for '%s' (%d imgs, %d similar)",
+            "AI async task %s: calling ai.analyze_listing_parallel for '%s' (%d imgs, %d similar)",
             task_id, title[:50], len(images), len(ai_similar_for_comparison),
         )
         # Wrap the AI call so that httpx transport-level timeouts
@@ -438,35 +438,52 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         # Without this, they fall into the generic _AI_ANALYSIS_ERRORS handler
         # and the user sees "AI сервис недоступен" instead of a fallback result.
         try:
-            result = await asyncio.wait_for(
-                ai.analyze_listing(
-                    title=title,
-                    description=description,
-                    price_byn=price_byn,
-                    is_negotiable_price=is_negotiable_price,
-                    condition=condition,
-                    parameters=parameters,
-                    market_median=median,
-                    market_count=count,
-                    market_q1=q1,
-                    market_q3=q3,
-                    market_min=price_min,
-                    market_max=price_max,
-                    seller_type=seller_type,
-                    photo_count=photo_count,
-                    listing_age_days=listing_age_days,
-                    image_urls=images,
-                    similar_listings=ai_similar_for_comparison,
-                    risk_context_summary=risk_context.summary,
-                    risk_context_flags=risk_context.flags,
-                    anomaly_flags=target_anomaly_labels,
-                    deal_score=target_deal_score,
-                    deal_verdict=target_deal_verdict,
-                    photo_condition_label=photo_condition_label or None,
-                    photo_condition_notes=photo_condition_notes or None,
-                ),
-                timeout=150,
-            )
+            # Report intermediate progress while parallel sub-calls are running.
+            # The parallel approach splits the monolithic call into 2 concurrent
+            # sub-calls (Price & Market / Condition & Risks), so wall-clock
+            # time ≈ max(A, B) instead of A + B.
+            async def _run_parallel_with_progress():
+                # Fire a background progress updater while the AI calls run
+                async def _progress_pump():
+                    for pct, stage in [
+                        (55, "calling_ai"),
+                        (62, "calling_ai"),
+                        (70, "calling_ai"),
+                    ]:
+                        await asyncio.sleep(8)
+                        await _update_task(cache, task_id, progress=pct, stage=stage)
+
+                pump_task = asyncio.create_task(_progress_pump())
+                try:
+                    return await ai.analyze_listing_parallel(
+                        title=title,
+                        description=description,
+                        price_byn=price_byn,
+                        is_negotiable_price=is_negotiable_price,
+                        condition=condition,
+                        parameters=parameters,
+                        market_median=median,
+                        market_count=count,
+                        market_q1=q1,
+                        market_q3=q3,
+                        market_min=price_min,
+                        market_max=price_max,
+                        seller_type=seller_type,
+                        photo_count=photo_count,
+                        listing_age_days=listing_age_days,
+                        similar_listings=ai_similar_for_comparison,
+                        risk_context_summary=risk_context.summary,
+                        risk_context_flags=risk_context.flags,
+                        anomaly_flags=target_anomaly_labels,
+                        deal_score=target_deal_score,
+                        deal_verdict=target_deal_verdict,
+                        photo_condition_label=photo_condition_label or None,
+                        photo_condition_notes=photo_condition_notes or None,
+                    )
+                finally:
+                    pump_task.cancel()
+
+            result = await asyncio.wait_for(_run_parallel_with_progress(), timeout=150)
         except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
             logger.warning(
                 "AI task %s: httpx %s — converting to TimeoutError",
