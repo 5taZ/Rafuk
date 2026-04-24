@@ -6,6 +6,7 @@ import asyncio
 import logging
 import secrets
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -21,9 +22,18 @@ from api.schemas import (
 )
 from api.services.aggregator import normalize_price_byn
 from api.services.ai_guardrails import apply_ai_market_guardrails
+from api.services.ai_marketplace import (
+    BestAlternativeDecision,
+    build_marketplace_risk_context,
+    build_market_context_fallback,
+    complete_analysis_sections,
+    collect_similar_listings_from_cohorts,
+    choose_best_alternative,
+    finalize_red_flags,
+)
 from api.services.ai_service import get_ai_service
+from api.services.cache import CacheBackend
 from api.services.kufar_client import KufarAPIError, KufarClient
-from api.services.listing_mapper import first_image_url
 from api.services.query_pipeline import load_query_dataset
 
 logger = logging.getLogger(__name__)
@@ -40,20 +50,68 @@ _AI_ANALYSIS_ERRORS = (
     KeyError,
 )
 
-# ── In-memory async task store ────────────────────────────────────────────
+# ── Async task store ──────────────────────────────────────────────────────
+# Redis-backed when available, with in-process shadow fallback.
 _tasks: dict[str, dict] = {}
 _TASK_TTL = 3600  # 1 hour cleanup
 _exports: dict[str, dict] = {}
 _EXPORT_TTL = 900  # 15 minutes
 
 
-def _prune_old_tasks() -> None:
-    """Remove tasks older than TTL."""
+def _prune_old_tasks_shadow() -> None:
+    """Remove local shadow tasks older than TTL."""
     now = datetime.now(UTC).timestamp()
     expired = [tid for tid, t in _tasks.items()
                if now - t.get("_created_ts", 0) > _TASK_TTL]
     for tid in expired:
         _tasks.pop(tid, None)
+
+
+def _task_cache_key(task_id: str) -> str:
+    return f"ai_task:{task_id}"
+
+
+def _task_version(task: dict[str, Any] | None) -> float:
+    if not task:
+        return 0.0
+    try:
+        return float(task.get("_updated_ts") or task.get("_created_ts") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def _get_task(cache: CacheBackend, task_id: str) -> dict[str, Any] | None:
+    cached_task = await cache.get_json(_task_cache_key(task_id))
+    shadow_task = _tasks.get(task_id)
+
+    if _task_version(shadow_task) > _task_version(cached_task):
+        return shadow_task
+    if cached_task:
+        _tasks[task_id] = cached_task
+        return cached_task
+    return shadow_task
+
+
+async def _set_task(cache: CacheBackend, task_id: str, task: dict[str, Any]) -> dict[str, Any]:
+    if "_updated_ts" not in task:
+        task["_updated_ts"] = datetime.now(UTC).timestamp()
+    _tasks[task_id] = task
+    await cache.set_json(_task_cache_key(task_id), task, ttl=_TASK_TTL)
+    return task
+
+
+async def _update_task(cache: CacheBackend, task_id: str, **updates: Any) -> dict[str, Any]:
+    task = await _get_task(cache, task_id) or {
+        "status": "pending",
+        "progress": 0,
+        "result": None,
+        "error": None,
+        "_created_ts": datetime.now(UTC).timestamp(),
+        "_updated_ts": datetime.now(UTC).timestamp(),
+    }
+    task.update(updates)
+    task["_updated_ts"] = datetime.now(UTC).timestamp()
+    return await _set_task(cache, task_id, task)
 
 
 def _prune_old_exports() -> None:
@@ -68,12 +126,16 @@ def _prune_old_exports() -> None:
 
 
 @router.get("/task/{task_id}")
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, request: Request):
     """Poll AI analysis task status."""
-    task = _tasks.get(task_id)
+    task = await _get_task(get_cache(request), task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
-    resp: dict = {"status": task["status"], "progress": task.get("progress", 0)}
+    resp: dict = {
+        "status": task["status"],
+        "progress": task.get("progress", 0),
+        "stage": task.get("stage", ""),
+    }
     if task["status"] == "done" and task.get("result"):
         resp["result"] = task["result"]
     elif task["status"] == "error" and task.get("error"):
@@ -133,106 +195,8 @@ def _parse_list_age_days(list_time_str: str | None) -> int | None:
         return None
 
 
-def _collect_similar_listings(
-    dataset,
-    target_ad_id: int,
-    target_price: float,
-    median: float | None,
-    target_condition: str | None = None,
-) -> list[dict]:
-    """Collect similar listings with rich data for AI comparison.
-
-    Filters by price proximity (±30%) and prefers similar condition.
-    For negotiable-price listings (price=0), uses median as reference.
-    Returns up to 5 most relevant alternatives.
-    """
-    if not median:
-        return []
-
-    # Negotiable price: use median as reference point for price filtering
-    ref_price = target_price if target_price > 0 else median
-    price_min = ref_price * 0.7
-    price_max = ref_price * 1.30
-    similar: list[dict] = []
-
-    for ad in dataset.ads:
-        ad_id = int(ad.get("ad_id", 0))
-        if ad_id == target_ad_id:
-            continue
-        ad_price = normalize_price_byn(ad.get("price_byn")) or 0.0
-        if ad_price <= 0:
-            continue
-        if not (price_min <= ad_price <= price_max):
-            continue
-
-        ad_condition = None
-        for param in ad.get("ad_parameters", []):
-            if param.get("p") == "condition":
-                ad_condition = param.get("vl") or param.get("v")
-                break
-
-        ad_desc = (ad.get("body", "") or ad.get("description", "")) or ""
-        ad_images = []
-        for img in (ad.get("images") or [])[:3]:
-            path = img.get("path", "")
-            if path:
-                ad_images.append(f"https://rms.kufar.by/v1/gallery/{path}")
-        ad_params = []
-        for param in ad.get("ad_parameters", []):
-            pk = param.get("p", "")
-            if pk in {"condition", "currency", "price", "users_synonyms"}:
-                continue
-            pl = param.get("pl") or pk
-            pv = param.get("vl") or str(param.get("v", ""))
-            if pl and pv:
-                ad_params.append(f"{pl}: {pv}")
-
-        # Compute relevance score for sorting
-        score = 0.0
-        # Prefer similar condition
-        if target_condition and ad_condition and target_condition == ad_condition:
-            score += 10.0
-        # Prefer closer to median
-        if median:
-            score -= abs(ad_price - median) / median * 5
-        # Prefer private sellers (usually better deals)
-        if not ad.get("company_ad"):
-            score += 1.0
-        # Prefer listings with photos
-        if ad_images:
-            score += 2.0
-        # Prefer newer listings
-        age_days = _parse_list_age_days(ad.get("list_time"))
-        if age_days is not None and age_days <= 3:
-            score += 1.5
-        elif age_days is not None and age_days <= 7:
-            score += 0.5
-
-        similar.append(
-            {
-                "ad_id": ad_id,
-                "title": ad.get("subject", "")[:80],
-                "price_byn": ad_price,
-                "image_url": first_image_url(ad),
-                "image_urls": ad_images,
-                "link": ad.get("ad_link", f"https://www.kufar.by/item/{ad_id}"),
-                "deal_score": score,
-                "condition": ad_condition,
-                "description": ad_desc[:300],
-                "seller_type": "shop" if ad.get("company_ad") else "private",
-                "parameters": ", ".join(ad_params[:8]),
-                "age_days": age_days,
-            }
-        )
-
-    # Sort by relevance score (best first), then price
-    similar.sort(key=lambda item: (-item["deal_score"], item["price_byn"]))
-    return similar[:5]
-
-
 async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cache) -> None:
     """Background coroutine: does the full analysis and updates the task store."""
-    task = _tasks[task_id]
     ai = get_ai_service()
 
     safe_query = payload.query.replace("\n", " ")[:80]
@@ -244,8 +208,15 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
     )
 
     try:
-        task["status"] = "processing"
-        task["progress"] = 10
+        await _update_task(
+            cache,
+            task_id,
+            status="processing",
+            progress=10,
+            stage="loading_market_data",
+            error=None,
+        )
+        logger.warning("AI task %s stage=loading_market_data ad_id=%d", task_id, payload.ad_id)
 
         # Search strategies — run all in parallel for speed
         search_attempts = [
@@ -269,8 +240,15 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             *[_search_one(a) for a in search_attempts], return_exceptions=True,
         )
 
-        task["progress"] = 30
+        await _update_task(cache, task_id, progress=30, stage="search_ready")
+        logger.warning("AI task %s stage=search_ready", task_id)
 
+        datasets_by_cohort: list[tuple[str, Any]] = []
+        cohort_keys = [
+            "strict_category",
+            "broad_category",
+            "broad_query",
+        ]
         dataset = None
         target_ad = None
         for i, result in enumerate(results):
@@ -278,10 +256,11 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 logger.warning("Search strategy %d failed: %s", i, result)
                 continue
             ds, target = result
-            if target:
+            if i < len(cohort_keys):
+                datasets_by_cohort.append((cohort_keys[i], ds))
+            if target and target_ad is None:
                 dataset = ds
                 target_ad = target
-                break
 
         if dataset is None:
             for result in results:
@@ -292,8 +271,13 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 break
 
         if not target_ad:
-            task["status"] = "error"
-            task["error"] = "Объявление не найдено"
+            await _update_task(
+                cache,
+                task_id,
+                status="error",
+                stage="target_missing",
+                error="Объявление не найдено",
+            )
             return
 
         title = target_ad.get("subject", "") or target_ad.get("title", "")
@@ -319,6 +303,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
 
         is_company = target_ad.get("company_ad", False)
         seller_type = "shop" if is_company else "private"
+        risk_context = build_marketplace_risk_context(target_ad)
         all_images = target_ad.get("images") or []
         photo_count = len(all_images)
         listing_age_days = _parse_list_age_days(target_ad.get("list_time"))
@@ -337,8 +322,13 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         price_min = stats.min if stats else None
         price_max = stats.max if stats else None
 
-        similar = _collect_similar_listings(
-            dataset, payload.ad_id, price_byn, median, target_condition=condition,
+        similar = collect_similar_listings_from_cohorts(
+            cohorts=datasets_by_cohort or [("broad_category", dataset)],
+            query=payload.query,
+            target_ad=target_ad,
+            target_ad_id=payload.ad_id,
+            target_price=price_byn,
+            market_median=median,
         )
 
         ai_similar_for_comparison = [
@@ -364,6 +354,8 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         target_anomaly_labels: list[str] = []
         target_deal_score = 0.0
         target_deal_verdict = ""
+        photo_condition_label = ""
+        photo_condition_notes: list[str] = []
         if stats:
             from api.services.market_signals import anomaly_labels as _anomaly_labels
             from api.services.reseller_tools import compute_deal_score as _compute_deal_score
@@ -390,7 +382,34 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                     exc_info=True,
                 )
 
-        task["progress"] = 50
+        if images:
+            await _update_task(cache, task_id, progress=40, stage="photo_precheck")
+            logger.warning("AI task %s stage=photo_precheck images=%d", task_id, len(images))
+            try:
+                quick_photo = await asyncio.wait_for(ai.quick_condition(images[:1]), timeout=20)
+                photo_condition_label = str(quick_photo.get("condition") or "").strip()
+                photo_condition_notes = [
+                    str(note).strip()
+                    for note in (quick_photo.get("notes") or [])
+                    if str(note).strip()
+                ][:4]
+                logger.warning(
+                    "AI task %s photo_precheck ok label=%r notes=%d",
+                    task_id,
+                    photo_condition_label,
+                    len(photo_condition_notes),
+                )
+            except (asyncio.TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
+                logger.warning("AI task %s photo_precheck skipped: %s", task_id, exc)
+
+        await _update_task(cache, task_id, progress=50, stage="calling_ai")
+        logger.warning(
+            "AI task %s stage=calling_ai title=%r images=%d similar=%d",
+            task_id,
+            title[:60],
+            len(images),
+            len(ai_similar_for_comparison),
+        )
 
         import time as _time
         _t0 = _time.monotonic()
@@ -417,11 +436,15 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 listing_age_days=listing_age_days,
                 image_urls=images,
                 similar_listings=ai_similar_for_comparison,
+                risk_context_summary=risk_context.summary,
+                risk_context_flags=risk_context.flags,
                 anomaly_flags=target_anomaly_labels,
                 deal_score=target_deal_score,
                 deal_verdict=target_deal_verdict,
+                photo_condition_label=photo_condition_label or None,
+                photo_condition_notes=photo_condition_notes or None,
             ),
-            timeout=300,
+            timeout=150,
         )
         result = apply_ai_market_guardrails(
             result,
@@ -436,7 +459,8 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         )
         logger.info("AI async task %s: AI done in %.1fs", task_id, _time.monotonic() - _t0)
 
-        task["progress"] = 85
+        await _update_task(cache, task_id, progress=85, stage="building_response")
+        logger.warning("AI task %s stage=building_response", task_id)
 
         # Build response
         best_pick_ad_id = None
@@ -446,11 +470,15 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             best_pick_ad_id = bp.get("ad_id")
             best_pick_reason = bp.get("reason", "")
 
-        best_alternative = None
-        if best_pick_ad_id:
-            best_alternative = next((s for s in similar if s["ad_id"] == best_pick_ad_id), None)
-        if not best_alternative and similar:
-            best_alternative = similar[0]
+        best_decision: BestAlternativeDecision = choose_best_alternative(
+            similar,
+            target_price=price_byn,
+            is_negotiable_price=is_negotiable_price,
+            ai_best_pick_ad_id=best_pick_ad_id,
+        )
+        best_alternative = best_decision.item
+        if not best_pick_reason and best_decision.reason:
+            best_pick_reason = best_decision.reason
 
         if best_alternative:
             best_alternative = {
@@ -461,12 +489,31 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 "link": best_alternative.get("link", ""),
                 "deal_score": best_alternative.get("deal_score", 0.0),
                 "condition": best_alternative.get("condition"),
-                "ai_note": (
-                    best_pick_reason
-                    if best_pick_ad_id == best_alternative["ad_id"]
-                    else ""
-                ),
+                "ai_note": best_pick_reason,
             }
+
+        final_red_flags = finalize_red_flags(result.get("red_flags", []), risk_context)
+        final_market_context = build_market_context_fallback(
+            price_byn=price_byn,
+            is_negotiable_price=is_negotiable_price,
+            market_median=median,
+            similar_listings=similar,
+            risk_context=risk_context,
+            ai_market_context=result.get("market_context", ""),
+        )
+        result = complete_analysis_sections(
+            result=result,
+            title=title,
+            parameters=parameters,
+            price_byn=price_byn,
+            market_median=median,
+            best_alternative=best_alternative,
+            risk_context=risk_context,
+            photo_condition_label=photo_condition_label,
+            photo_condition_notes=photo_condition_notes,
+            is_negotiable_price=is_negotiable_price,
+            red_flags=final_red_flags,
+        )
 
         resale_data = result.get("resale_potential")
         resale_potential = None
@@ -490,7 +537,18 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
 
         response = AIAnalysisResponse(
             ad_id=payload.ad_id,
-            condition=result.get("condition"),
+            condition=(
+                result.get("condition")
+                or (
+                    {
+                        "label": photo_condition_label,
+                        "confidence": 0.72 if photo_condition_label else 0.0,
+                        "notes": photo_condition_notes,
+                    }
+                    if photo_condition_label or photo_condition_notes
+                    else None
+                )
+            ),
             fair_price=result.get("fair_price"),
             resale_potential=resale_potential,
             watch_out=result.get("watch_out", []),
@@ -499,25 +557,37 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             best_alternative=best_alternative,
             meeting_checklist=result.get("meeting_checklist", []),
             negotiation_tips=result.get("negotiation_tips", []),
-            red_flags=result.get("red_flags", []),
-            market_context=result.get("market_context", ""),
+            red_flags=final_red_flags,
+            market_context=final_market_context,
             best_pick_reason=best_pick_reason,
             summary=result.get("summary", ""),
             disclaimer=DISCLAIMER,
         )
 
         # Cache result (use cache passed from endpoint)
-        cache_key = f"ai_analysis:v2:{payload.ad_id}:{payload.query}:cat={payload.category}"
+        cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
         await cache.set_json(cache_key, response.model_dump(), ttl=3600)
 
-        task["status"] = "done"
-        task["progress"] = 100
-        task["result"] = response.model_dump()
+        await _update_task(
+            cache,
+            task_id,
+            status="done",
+            progress=100,
+            stage="done",
+            result=response.model_dump(),
+            error=None,
+        )
+        logger.warning("AI task %s stage=done", task_id)
 
     except TimeoutError:
         logger.error("AI async task %s timed out for ad_id=%d", task_id, payload.ad_id)
-        task["status"] = "error"
-        task["error"] = "AI анализ занял слишком долго. Попробуйте ещё раз."
+        await _update_task(
+            cache,
+            task_id,
+            status="error",
+            stage="timeout",
+            error="AI анализ занял слишком долго. Попробуйте ещё раз.",
+        )
     except _AI_ANALYSIS_ERRORS as exc:
         logger.error("AI async task %s failed: [%s] %s", task_id, type(exc).__name__, exc)
         err_msg = "AI сервис недоступен. Попробуйте позже."
@@ -535,8 +605,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             err_msg = "Баланс AI-сервиса исчерпан."
         if getattr(settings, "debug", False):
             err_msg += f" [{type(exc).__name__}: {exc}]"
-        task["status"] = "error"
-        task["error"] = err_msg
+        await _update_task(cache, task_id, status="error", stage="error", error=err_msg)
 
 
 @router.post("/analyze")
@@ -550,7 +619,7 @@ async def analyze_listing(
 
     # Check cache BEFORE rate limit — cached results return immediately
     cache = get_cache(request)
-    cache_key = f"ai_analysis:v2:{payload.ad_id}:{payload.query}:cat={payload.category}"
+    cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
     cached = await cache.get_json(cache_key)
     if cached:
         return {"task_id": None, "cached": True, "result": cached}
@@ -564,14 +633,17 @@ async def analyze_listing(
 
     # Create background task
     task_id = secrets.token_urlsafe(16)
-    _prune_old_tasks()
-    _tasks[task_id] = {
+    _prune_old_tasks_shadow()
+    task = {
         "status": "pending",
         "progress": 0,
+        "stage": "queued",
         "result": None,
         "error": None,
         "_created_ts": datetime.now(UTC).timestamp(),
+        "_updated_ts": datetime.now(UTC).timestamp(),
     }
+    await _set_task(cache, task_id, task)
 
     asyncio.create_task(_run_analysis(task_id, payload, settings, cache))
 

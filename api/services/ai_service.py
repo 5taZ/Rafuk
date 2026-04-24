@@ -19,6 +19,9 @@ from api.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+AI_QUICK_PHOTO_DEADLINE_S = 20
+AI_TEXT_DEADLINE_S = 45
+
 SYSTEM_PROMPT_TEMPLATE = """\
 Ты — Rafuks AI, эксперт-аналитик объявлений Kufar.by. \
 Отвечай ТОЛЬКО на русском.
@@ -34,7 +37,13 @@ SYSTEM_PROMPT_TEMPLATE = """\
 - watch_out — конкретные дефекты, которые ты видишь или предполагаешь с обоснованием.
 - meeting_checklist — пошаговая проверка при встрече (5-7 пунктов, специфичных для категории).
 - red_flags — только реальные признаки мошенничества/проблем, не очевидные вещи.
-- market_context — 2-3 предложения: позиция цены, сравнение с конкретными аналогами.
+- red_flags — максимум 3 коротких пункта, самые важные сначала.
+- Если во входном контексте есть явные hot words или risk signals вроде кредита,
+  рассрочки, перекупа, автохауса, площадки, магазина или reseller-поведения,
+  учитывай их в red_flags или market_context, но не выдумывай факты сверх контекста.
+- Если цена договорная, recommendation и negotiation_tips должны опираться на
+  реалистичный диапазон входа после торга в BYN, а не на абстрактную формулировку.
+- market_context — 2-3 предложения: позиция цены, сравнение с лучшим аналогом и 1 ключевой вывод.
 - summary — 1-2 предложения с вердиктом и ключевой причиной.
 - resale_potential — за сколько потенциально можно перепродать этот товар.
   fast_price: цена для быстрой продажи (ниже рынка, быстрый отчёт).
@@ -104,6 +113,37 @@ def _build_system_prompt(
         + "\n"
         + JSON_SCHEMA
     )
+
+
+def _entry_price_guidance(
+    *,
+    market_median: float | None,
+    market_q1: float | None,
+    market_q3: float | None,
+    similar_listings: list[dict] | None,
+) -> tuple[int, int] | None:
+    priced = [
+        float(item.get("price_byn") or 0)
+        for item in (similar_listings or [])
+        if float(item.get("price_byn") or 0) > 0
+    ]
+    priced = sorted(priced)
+
+    low_anchor = market_q1 if market_q1 and market_q1 > 0 else (priced[0] if priced else None)
+    high_anchor = market_median if market_median and market_median > 0 else None
+    if high_anchor is None and priced:
+        high_anchor = priced[min(len(priced) - 1, max(0, len(priced) // 2))]
+    if low_anchor is None and market_q3 and market_q3 > 0:
+        low_anchor = market_q3 * 0.9
+    if high_anchor is None and market_q3 and market_q3 > 0:
+        high_anchor = market_q3
+
+    if low_anchor is None or high_anchor is None:
+        return None
+    if high_anchor < low_anchor:
+        low_anchor, high_anchor = high_anchor, low_anchor
+
+    return int(round(low_anchor)), int(round(high_anchor))
 
 
 # Category-specific analysis hints injected into the prompt
@@ -562,10 +602,65 @@ def detect_category(title: str, parameters: list[dict] | None = None) -> str:
 
 QUICK_CONDITION_PROMPT = """\
 Ты — Rafuks AI. Оцени состояние товара по фото.
+Выбери РОВНО ОДНО значение condition из списка:
+- Отличное
+- Хорошее
+- Удовлетворительное
+- Требует внимания
+notes:
+- 1-3 коротких конкретных наблюдения по фото
+- не используй шаблоны вроде "заметка1"
+Если по фото нельзя уверенно судить, выбирай "Удовлетворительное" и объясняй почему.
 Ответь ТОЛЬКО JSON (без markdown):
-{"condition": "Отличное|Хорошее|Удовлетворительное|Требует внимания", "notes": ["заметка1"]}
+{"condition": "Хорошее", "notes": ["Есть реальные фото устройства", "На корпусе видны лёгкие потёртости"]}
 Никаких личных данных. Отвечай на русском.
 """
+
+_VALID_CONDITION_LABELS = {
+    "отличное": "Отличное",
+    "хорошее": "Хорошее",
+    "удовлетворительное": "Удовлетворительное",
+    "требует внимания": "Требует внимания",
+    "excellent": "Отличное",
+    "good": "Хорошее",
+    "fair": "Удовлетворительное",
+    "poor": "Требует внимания",
+}
+
+
+def _normalize_condition_label(value: str | None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    normalized = text.lower()
+    if "|" in normalized:
+        for token in ("хорошее", "удовлетворительное", "требует внимания", "отличное"):
+            if token in normalized:
+                return _VALID_CONDITION_LABELS[token]
+    for key, label in _VALID_CONDITION_LABELS.items():
+        if key == normalized or key in normalized:
+            return label
+    return ""
+
+
+def _clean_photo_notes(notes: list[Any] | None) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in notes or []:
+        text = re.sub(r"\s+", " ", str(item or "").strip(" .;"))
+        if not text:
+            continue
+        lowered = text.lower()
+        if lowered in {"заметка1", "заметка 1", "note1", "note 1"}:
+            continue
+        if "|" in text and any(token in lowered for token in _VALID_CONDITION_LABELS):
+            continue
+        key = lowered
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+    return cleaned[:4]
 
 
 def _repair_truncated_json(text: str) -> dict:
@@ -642,7 +737,7 @@ class AIService:
     def _get_client(self) -> httpx.AsyncClient:
         if self._httpx_client is None or self._httpx_client.is_closed:
             kwargs: dict = {
-                "timeout": httpx.Timeout(connect=15, read=300, write=10, pool=10),
+                "timeout": httpx.Timeout(connect=15, read=90, write=20, pool=10),
             }
             if self._proxy_url:
                 kwargs["proxy"] = self._proxy_url
@@ -735,9 +830,13 @@ class AIService:
         seller_type: str | None = None,
         photo_count: int = 0,
         listing_age_days: int | None = None,
+        risk_context_summary: str | None = None,
+        risk_context_flags: list[str] | None = None,
         anomaly_flags: list[str] | None = None,
         deal_score: float | None = None,
         deal_verdict: str | None = None,
+        photo_condition_label: str | None = None,
+        photo_condition_notes: list[str] | None = None,
     ) -> dict:
         """Full AI analysis of a listing with optional comparison to alternatives."""
         # Build category-aware system prompt
@@ -779,61 +878,19 @@ class AIService:
             photo_count=photo_count,
             similar_listings=similar_listings,
             listing_age_days=listing_age_days,
+            risk_context_summary=risk_context_summary,
+            risk_context_flags=risk_context_flags,
             anomaly_flags=anomaly_flags,
             deal_score=deal_score,
             deal_verdict=deal_verdict,
+            photo_condition_label=photo_condition_label,
+            photo_condition_notes=photo_condition_notes,
         )
-
-        # Photo analysis instruction — focus model's vision on defect detection
-        photo_instruction = ""
-        if image_urls:
-            photo_instruction = (
-                "ФОТОАНАЛИЗ: Внимательно осмотри фото. Укажи в condition.notes "
-                "конкретные видимые дефекты (царапины, сколы, потёртости, пятна, "
-                "трещины, несоответствия). Если фото не соответствует описанию — "
-                "отметь это. Если фото стоковое (не реальное) — обязательно укажи в red_flags.\n\n"
-            )
-
-        content: list[dict] = [{"type": "text", "text": photo_instruction + context}]
-
-        # Select most informative image — prefer 2nd/3rd image over hero shot
-        # for better condition assessment (hero shots are often staged)
-        if len(image_urls) >= 3:
-            selected_urls = [image_urls[2]]
-        elif len(image_urls) == 2:
-            selected_urls = [image_urls[1]]
-        else:
-            selected_urls = image_urls[:1]
-
-        fetch_tasks: list[tuple[str, str | None, str | None]] = []
-        for url in selected_urls:
-            fetch_tasks.append(("target", url, None))
-
-        if fetch_tasks:
-            results = await asyncio.gather(
-                *(self._fetch_image_b64(url) for _, url, _ in fetch_tasks),
-                return_exceptions=True,
-            )
-            for (kind, _url, _label), result in zip(fetch_tasks, results, strict=True):
-                if isinstance(result, Exception):
-                    logger.warning("Skipping %s image (fetch error): %s", kind, result)
-                    continue
-                if result is None:
-                    continue
-                content.append(result)
-
-        try:
-            return await self._chat(
-                system=system,
-                content=content if len(content) > 1 else context,
-                max_tokens=2800,
-            )
-        except httpx.HTTPError as e:
-            err = str(e).lower()
-            if len(content) > 1 and ("image" in err or "vision" in err or "multimodal" in err):
-                logger.warning("Vision not supported, retrying text-only: %s", e)
-                return await self._chat(system=system, content=context, max_tokens=2800)
-            raise
+        logger.warning("AI analyze_listing: starting compact text-only report")
+        return await asyncio.wait_for(
+            self._chat(system=system, content=context, max_tokens=1600),
+            timeout=AI_TEXT_DEADLINE_S,
+        )
 
     async def quick_condition(self, image_urls: list[str]) -> dict:
         """Quick condition assessment from photos only."""
@@ -846,7 +903,11 @@ class AIService:
                 content.append(img)
         if len(content) == 1:
             raise ValueError("Не удалось загрузить фото для анализа")
-        return await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=256)
+        result = await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=220)
+        return {
+            "condition": _normalize_condition_label(result.get("condition")),
+            "notes": _clean_photo_notes(result.get("notes")),
+        }
 
     # ── Helpers ─────────────────────────────────────────────────
 
@@ -899,9 +960,13 @@ class AIService:
         photo_count: int = 0,
         similar_listings: list[dict] | None = None,
         listing_age_days: int | None = None,
+        risk_context_summary: str | None = None,
+        risk_context_flags: list[str] | None = None,
         anomaly_flags: list[str] | None = None,
         deal_score: float | None = None,
         deal_verdict: str | None = None,
+        photo_condition_label: str | None = None,
+        photo_condition_notes: list[str] | None = None,
     ) -> str:
         parts = [f"## ОБЪЯВЛЕНИЕ: {title}"]
 
@@ -954,6 +1019,16 @@ class AIService:
                 parts.append(f"Опубликовано: {listing_age_days} дн. назад")
         if photo_count:
             parts.append(f"Количество фото: {photo_count}")
+        if risk_context_summary:
+            parts.append(f"Риск-контекст площадки: {risk_context_summary}")
+        if photo_condition_label or photo_condition_notes:
+            parts.append("\n## БЫСТРЫЙ ФОТО-ОСМОТР")
+            if photo_condition_label:
+                parts.append(f"Состояние по фото: {photo_condition_label}")
+            if photo_condition_notes:
+                parts.append(
+                    "Наблюдения: " + "; ".join(str(note)[:140] for note in photo_condition_notes[:4])
+                )
 
         # Market statistics
         if market_median:
@@ -992,6 +1067,22 @@ class AIService:
                             f"справедливого диапазона — продавец хочет больше рынка"
                         )
 
+            entry_guidance = _entry_price_guidance(
+                market_median=market_median,
+                market_q1=market_q1,
+                market_q3=market_q3,
+                similar_listings=similar_listings,
+            )
+            if is_negotiable_price and entry_guidance is not None:
+                entry_from, entry_to = entry_guidance
+                parts.append(
+                    f"Разумный вход после торга: {entry_from} — {entry_to} BYN."
+                )
+                parts.append(
+                    "Для recommendation и negotiation_tips используй этот диапазон как "
+                    "рабочий ориентир цены входа, если нет более сильных аналогов."
+                )
+
             # Resale instruction
             if is_negotiable_price:
                 parts.append(
@@ -1010,6 +1101,8 @@ class AIService:
             parts.append(f"\n## АНОМАЛИИ: {', '.join(anomaly_flags)}")
         if deal_score is not None:
             parts.append(f"Оценка сделки: {deal_score:.0f}/100 ({deal_verdict or '?'})")
+        if risk_context_flags:
+            parts.append(f"\n## РИСК-СИГНАЛЫ: {'; '.join(risk_context_flags[:4])}")
 
         # All parameters (not truncated)
         if parameters:
@@ -1020,12 +1113,13 @@ class AIService:
 
         # Full description
         if description:
-            parts.append(f"\n## ОПИСАНИЕ ПРОДАВЦА:\n{description[:1200]}")
+            parts.append(f"\n## ОПИСАНИЕ ПРОДАВЦА:\n{description[:700]}")
 
         # Similar listings — enriched with price deltas
         if similar_listings:
-            parts.append(f"\n## АЛЬТЕРНАТИВЫ ({len(similar_listings)} вариантов):")
-            for i, sl in enumerate(similar_listings[:5], 1):
+            compact_similar = similar_listings[:3]
+            parts.append(f"\n## АЛЬТЕРНАТИВЫ ({len(compact_similar)} вариантов):")
+            for i, sl in enumerate(compact_similar, 1):
                 if is_negotiable_price:
                     if market_median:
                         price_diff = sl.get("price_byn", 0) - market_median
@@ -1059,10 +1153,10 @@ class AIService:
                 )
                 desc = (sl.get("description") or "").strip()
                 if desc:
-                    parts.append(f"     Описание: {desc[:200]}")
+                    parts.append(f"     Описание: {desc[:120]}")
                 params = (sl.get("parameters") or "").strip()
                 if params:
-                    parts.append(f"     Параметры: {params[:150]}")
+                    parts.append(f"     Параметры: {params[:90]}")
 
         return "\n".join(parts)
 

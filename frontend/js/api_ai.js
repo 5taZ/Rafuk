@@ -23,6 +23,18 @@ function createApiAi(context) {
         { server: 50, cap: 82 },
         { server: 85, cap: 96 },
     ];
+    const STAGE_LABELS = {
+        queued: "Ставлю задачу в очередь...",
+        loading_market_data: "Загружаю данные объявления...",
+        search_ready: "Подбираю рынок и аналоги...",
+        photo_precheck: "Быстро оцениваю фото...",
+        calling_ai: "Отправляю данные в AI...",
+        building_response: "Собираю итоговый анализ...",
+        done: "Анализ завершён!",
+        timeout: "AI анализ занял слишком долго...",
+        error: "Не удалось завершить AI анализ...",
+        target_missing: "Объявление не найдено...",
+    };
 
     function _updateProgressDisplay(pct) {
         _aiProgress = pct;
@@ -30,6 +42,12 @@ function createApiAi(context) {
         const pctEl = elements.aiProgressPct;
         if (barEl) barEl.style.width = pct + "%";
         if (pctEl) pctEl.textContent = Math.round(pct) + "%";
+    }
+
+    function _setStageLabel(stage) {
+        const textEl = elements.aiLoaderText;
+        if (!textEl || !stage || !STAGE_LABELS[stage]) return;
+        textEl.textContent = STAGE_LABELS[stage];
     }
 
     /**
@@ -246,8 +264,11 @@ function createApiAi(context) {
 
             // Poll for result every 3 seconds
             const POLL_INTERVAL = 3000;
+            const POLL_TIMEOUT = 12000;
             const MAX_POLLS = 120; // 6 minutes max
+            const MAX_CONSECUTIVE_POLL_ERRORS = 4;
             let pollCount = 0;
+            let consecutivePollErrors = 0;
 
             await new Promise((resolve, reject) => {
                 const poll = async () => {
@@ -257,7 +278,12 @@ function createApiAi(context) {
                         return;
                     }
                     try {
-                        const status = await getJson(`/api/v1/ai/task/${taskId}`);
+                        const status = await getJson(`/api/v1/ai/task/${taskId}`, { timeout: POLL_TIMEOUT });
+                        consecutivePollErrors = 0;
+                        if (status.stage) {
+                            _setStageLabel(status.stage);
+                            console.log("[AI] stage:", status.stage, "progress:", status.progress);
+                        }
                         // Update server milestone — local timer creeps toward it
                         if (status.progress > 0) {
                             _setServerProgress(status.progress);
@@ -271,12 +297,21 @@ function createApiAi(context) {
                             setTimeout(poll, POLL_INTERVAL);
                         }
                     } catch (err) {
-                        // Transient network error — retry
-                        if (pollCount > 5 && err.message && err.message.includes("не найдена")) {
-                            reject(err);
-                        } else {
-                            setTimeout(poll, POLL_INTERVAL);
+                        const message = String(err?.message || "");
+                        const isTaskMissing = message.includes("не найдена");
+                        consecutivePollErrors += 1;
+
+                        if (isTaskMissing && pollCount > 5) {
+                            reject(new Error("Связь с задачей AI-анализа потеряна. Попробуйте открыть анализ ещё раз."));
+                            return;
                         }
+
+                        if (consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+                            reject(new Error("Не удалось стабильно получить статус AI-анализа. Проверьте соединение и попробуйте ещё раз."));
+                            return;
+                        }
+
+                        setTimeout(poll, POLL_INTERVAL);
                     }
                 };
                 setTimeout(poll, POLL_INTERVAL);
@@ -333,6 +368,30 @@ function createApiAi(context) {
         );
     }
 
+    function _splitAiSentences(text) {
+        const normalized = String(text || "").replace(/\s+/g, " ").trim();
+        if (!normalized) {
+            return { lead: "", details: [] };
+        }
+
+        const parts = normalized
+            .match(/[^.!?]+[.!?]?/gu)
+            ?.map((part) => part.trim())
+            .filter(Boolean) || [normalized];
+
+        return {
+            lead: parts[0] || normalized,
+            details: parts.slice(1, 4),
+        };
+    }
+
+    function _buildAiMetaPill(text, extraClass = "") {
+        return domEl("span", {
+            className: `ai-meta-pill${extraClass ? ` ${extraClass}` : ""}`,
+            text,
+        });
+    }
+
     function _buildAiResultNodes(data) {
         const nodes = [];
 
@@ -349,6 +408,25 @@ function createApiAi(context) {
                     { className: "ai-modal-verdict" },
                     domEl("span", { className: `ai-badge ${verdict.cls} ai-badge--lg`, text: verdict.text }),
                     data.summary ? domEl("p", { className: "ai-modal-summary", text: data.summary }) : null,
+                )
+            );
+        }
+
+        if (data.red_flags?.length) {
+            nodes.push(
+                _buildAiSection(
+                    "Красные флаги",
+                    domEl(
+                        "div",
+                        { className: "ai-flags" },
+                        data.red_flags.map((flag, index) => domEl(
+                            "div",
+                            { className: "ai-flag-item" },
+                            domEl("span", { className: "ai-flag-index mono", text: String(index + 1).padStart(2, "0") }),
+                            domEl("span", { className: "ai-flag-text", text: flag }),
+                        )),
+                    ),
+                    "ai-section--flags",
                 )
             );
         }
@@ -430,20 +508,56 @@ function createApiAi(context) {
         }
 
         if (data.market_context) {
+            const marketContext = _splitAiSentences(data.market_context);
+            const contextPills = [];
+            if (data.similar_listings?.length) {
+                contextPills.push(_buildAiMetaPill(`Аналогов: ${data.similar_listings.length}`, "ai-meta-pill--accent"));
+            }
+            if (data.best_alternative?.price_byn) {
+                contextPills.push(_buildAiMetaPill(`Ориентир: ${formatPrice(data.best_alternative.price_byn)}`));
+            }
             nodes.push(
                 _buildAiSection(
                     "Контекст рынка",
-                    domEl("p", { className: "ai-reasoning", text: data.market_context }),
+                    domEl(
+                        "div",
+                        { className: "ai-market-context" },
+                        domEl("p", { className: "ai-market-lead", text: marketContext.lead || data.market_context }),
+                        marketContext.details.length
+                            ? domEl(
+                                "div",
+                                { className: "ai-market-points" },
+                                marketContext.details.map((item) => domEl("div", { className: "ai-market-point", text: item })),
+                            )
+                            : null,
+                        contextPills.length
+                            ? domEl("div", { className: "ai-meta-pills" }, contextPills)
+                            : null,
+                    ),
+                    "ai-section--market",
                 )
             );
         }
 
         if (data.best_alternative) {
             const bestAlternative = data.best_alternative;
+            const bestPills = [];
+            if (bestAlternative.price_byn) {
+                bestPills.push(_buildAiMetaPill(formatPrice(bestAlternative.price_byn), "ai-meta-pill--good"));
+            }
+            if (bestAlternative.condition) {
+                bestPills.push(_buildAiMetaPill(bestAlternative.condition, "ai-meta-pill--muted"));
+            }
             nodes.push(
                 _buildAiSection(
                     "Лучший вариант",
                     domFragment(
+                        domEl(
+                            "div",
+                            { className: "ai-best-caption" },
+                            domEl("span", { className: "ai-best-kicker", text: "Самый близкий аналог из найденных" }),
+                            data.best_pick_reason ? domEl("p", { className: "ai-best-reason", text: data.best_pick_reason }) : null,
+                        ),
                         domEl(
                             "a",
                             {
@@ -460,14 +574,10 @@ function createApiAi(context) {
                                 "div",
                                 { className: "ai-best-info" },
                                 domEl("span", { className: "ai-best-title", text: bestAlternative.title }),
-                                domEl("span", { className: "ai-best-price mono", text: `${Math.round(bestAlternative.price_byn)} BYN` }),
-                                bestAlternative.condition
-                                    ? domEl("span", { className: "ai-best-condition", text: bestAlternative.condition })
-                                    : null,
+                                bestPills.length ? domEl("div", { className: "ai-meta-pills" }, bestPills) : null,
                             ),
-                            domEl("span", { className: "ai-best-arrow", text: "→" }),
+                            domEl("span", { className: "ai-best-cta", text: "Открыть" }),
                         ),
-                        data.best_pick_reason ? domEl("p", { className: "ai-best-reason", text: data.best_pick_reason }) : null,
                     ),
                     "ai-section--best",
                 )
@@ -548,19 +658,6 @@ function createApiAi(context) {
                 _buildAiSection(
                     "Как торговаться",
                     _buildAiList("ul", "ai-tips", data.negotiation_tips),
-                )
-            );
-        }
-
-        if (data.red_flags?.length) {
-            nodes.push(
-                _buildAiSection(
-                    "Красные флаги",
-                    domEl(
-                        "div",
-                        { className: "ai-flags" },
-                        data.red_flags.map((flag) => domEl("div", { className: "ai-flag-item", text: flag })),
-                    ),
                 )
             );
         }
