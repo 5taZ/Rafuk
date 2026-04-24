@@ -554,6 +554,7 @@ class AIConditionAssessment(BaseModel):
 
 
 class AIFairPrice(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     from_price: float | None = Field(None, alias="from")
     to_price: float | None = Field(None, alias="to")
     reasoning: str = ""

@@ -19,8 +19,6 @@ from api.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-AI_QUICK_PHOTO_DEADLINE_S = 20
-
 SYSTEM_PROMPT_TEMPLATE = """\
 Ты — Rafuks AI, эксперт-аналитик объявлений Kufar.by. \
 Отвечай ТОЛЬКО на русском.
@@ -29,12 +27,15 @@ SYSTEM_PROMPT_TEMPLATE = """\
 - Будь конкретен: указывай суммы в BYN, сроки, модели, проценты.
 - НЕ пиши общие фразы типа "сравните с аналогами" или "проверьте товар".
 - Каждый пункт — действие или факт, а не пожелание.
+- ОБЯЗАТЕЛЬНО заполни ВСЕ секции JSON. Пустые или отсутствующие секции НЕДОПУСТИМЫ.
 - fair_price.from/to — реалистичный диапазон для ЭТОГО товара в ЕГО состоянии.
 - reasoning в fair_price — почему именно этот диапазон (сравнение с конкретными аналогами).
-- negotiation_tips — конкретные аргументы с BYN-суммами скидки
+- negotiation_tips — МИНИМУМ 3 конкретных аргумента с BYN-суммами скидки
   ("попросите скидку X BYN, потому что...").
-- watch_out — конкретные дефекты, которые ты видишь или предполагаешь с обоснованием.
-- meeting_checklist — пошаговая проверка при встрече (5-7 пунктов, специфичных для категории).
+- watch_out — МИНИМУМ 3 конкретных дефекта/риска, которые ты видишь или \
+предполагаешь с обоснованием. Каждый пункт содержит point и why.
+- meeting_checklist — МИНИМУМ 5 пошаговых проверок при встрече, \
+специфичных для категории товара.
 - red_flags — только реальные признаки мошенничества/проблем, не очевидные вещи.
 - red_flags — максимум 3 коротких пункта, самые важные сначала.
 - Если во входном контексте есть явные hot words или risk signals вроде кредита,
@@ -49,6 +50,7 @@ SYSTEM_PROMPT_TEMPLATE = """\
   market_price: справедливая рыночная цена перепродажи.
   optimal_price: максимальная реалистичная цена (продажа терпеливо, в идеальном состоянии).
   Учитывай состояние товара, спрос и конкретные аналоги. Укажи конкретные суммы BYN.
+- condition.notes — МИНИМУМ 2 конкретных наблюдения по фото или описанию.
 
 ПРИЗНАКИ МОШЕННИЧЕСТВА — проверяй:
 - Цена значительно ниже рынка (>30% ниже медианы) без обоснования
@@ -683,8 +685,9 @@ def _repair_truncated_json(text: str) -> dict:
     for ch in fragment:
         if escape_next:
             escape_next = False
+            # Escaped char inside string — skip, but stay in_string
             continue
-        if ch == "\\":
+        if ch == "\\" and in_string:
             escape_next = True
             continue
         if ch == '"' and not escape_next:
@@ -736,7 +739,7 @@ class AIService:
     def _get_client(self) -> httpx.AsyncClient:
         if self._httpx_client is None or self._httpx_client.is_closed:
             kwargs: dict = {
-                "timeout": httpx.Timeout(connect=15, read=90, write=20, pool=10),
+                "timeout": httpx.Timeout(connect=15, read=180, write=20, pool=10),
             }
             if self._proxy_url:
                 kwargs["proxy"] = self._proxy_url
@@ -885,11 +888,13 @@ class AIService:
             photo_condition_label=photo_condition_label,
             photo_condition_notes=photo_condition_notes,
         )
-        logger.warning("AI analyze_listing: starting compact text-only report")
+        logger.warning("AI analyze_listing: starting full report")
         # No inner timeout — the caller (router) controls the deadline via
         # asyncio.wait_for(timeout=150).  An inner timeout here would fire
         # first and prevent the outer one from ever being reached.
-        return await self._chat(system=system, content=context, max_tokens=1600)
+        # Gemma 4 uses internal reasoning tokens that consume output budget,
+        # so max_tokens must be ≥2800 for the full JSON response to fit.
+        return await self._chat(system=system, content=context, max_tokens=2800)
 
     async def quick_condition(self, image_urls: list[str]) -> dict:
         """Quick condition assessment from photos only."""
@@ -1188,7 +1193,6 @@ class AIService:
             client = self._get_client()
             resp = await client.get(url, timeout=8, follow_redirects=True)
             if resp.status_code == 200:
-                await resp.aread()
                 return resp.content
         except httpx.HTTPError as e:
             logger.warning("Failed to fetch image %s: %s", url[:80], e)

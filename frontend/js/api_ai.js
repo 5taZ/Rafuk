@@ -21,7 +21,8 @@ function createApiAi(context) {
         { server: 10, cap: 28 },
         { server: 30, cap: 56 },
         { server: 50, cap: 82 },
-        { server: 85, cap: 96 },
+        { server: 85, cap: 92 },
+        { server: 95, cap: 97 },
     ];
     const STAGE_LABELS = {
         queued: "Ставлю задачу в очередь...",
@@ -113,9 +114,32 @@ function createApiAi(context) {
             state.aiLoadingTimer = null;
         }
         if (success) {
-            _updateProgressDisplay(100);
-            const barEl = elements.aiProgressBar;
-            if (barEl) barEl.classList.add("ai-progress-bar--done");
+            // Smooth transition from current progress to 100%
+            const startPct = _aiProgress;
+            const targetPct = 100;
+            if (startPct >= targetPct - 1) {
+                _updateProgressDisplay(targetPct);
+                const barEl = elements.aiProgressBar;
+                if (barEl) barEl.classList.add("ai-progress-bar--done");
+            } else {
+                const duration = 400; // ms
+                const startTime = performance.now();
+                function animateStep(now) {
+                    const elapsed = now - startTime;
+                    const t = Math.min(elapsed / duration, 1);
+                    // Ease-out cubic
+                    const eased = 1 - Math.pow(1 - t, 3);
+                    const pct = startPct + (targetPct - startPct) * eased;
+                    _updateProgressDisplay(pct);
+                    if (t < 1) {
+                        requestAnimationFrame(animateStep);
+                    } else {
+                        const barEl = elements.aiProgressBar;
+                        if (barEl) barEl.classList.add("ai-progress-bar--done");
+                    }
+                }
+                requestAnimationFrame(animateStep);
+            }
         }
     }
 
@@ -433,27 +457,30 @@ function createApiAi(context) {
 
         if (data.condition) {
             const cond = data.condition;
+            // Defensive: condition might be a string from cached/poll result
+            const condObj = typeof cond === "string" ? { label: cond } : cond;
             const condLabelMap = {
                 "Отличное": { text: "Отличное", cls: "ai-badge--good" },
                 "Хорошее": { text: "Хорошее", cls: "ai-badge--ok" },
                 "Удовлетворительное": { text: "Удовлетв.", cls: "ai-badge--warn" },
+                "Требует внимания": { text: "Внимание", cls: "ai-badge--bad" },
                 "Плохое": { text: "Плохое", cls: "ai-badge--bad" },
                 "Excellent": { text: "Отличное", cls: "ai-badge--good" },
                 "Good": { text: "Хорошее", cls: "ai-badge--ok" },
                 "Fair": { text: "Удовлетв.", cls: "ai-badge--warn" },
                 "Poor": { text: "Плохое", cls: "ai-badge--bad" },
             };
-            const mapped = condLabelMap[cond.label] || { text: cond.label, cls: "ai-badge--ok" };
+            const mapped = condLabelMap[condObj.label] || { text: condObj.label || "—", cls: "ai-badge--ok" };
             nodes.push(
                 _buildAiSection(
                     "Состояние по фото",
                     domFragment(
                         domEl("span", { className: `ai-badge ${mapped.cls}`, text: mapped.text }),
-                        cond.confidence
-                            ? domEl("span", { className: "ai-confidence", text: `уверенность ${Math.round(cond.confidence * 100)}%` })
+                        condObj.confidence
+                            ? domEl("span", { className: "ai-confidence", text: `уверенность ${Math.round(condObj.confidence * 100)}%` })
                             : null,
-                        cond.notes?.length
-                            ? domEl("ul", { className: "ai-notes" }, cond.notes.map((note) => domEl("li", { text: note })))
+                        condObj.notes?.length
+                            ? domEl("ul", { className: "ai-notes" }, condObj.notes.map((note) => domEl("li", { text: note })))
                             : null,
                     ),
                 )
@@ -633,12 +660,17 @@ function createApiAi(context) {
                     domEl(
                         "div",
                         { className: "ai-watch-list" },
-                        data.watch_out.map((item) => domEl(
-                            "div",
-                            { className: "ai-watch-item" },
-                            domEl("strong", { text: item.point }),
-                            domEl("span", { text: item.why }),
-                        ))
+                        data.watch_out.map((item) => {
+                            // Defensive: item might be a string instead of {point, why}
+                            const point = typeof item === "string" ? item : (item.point || "");
+                            const why = typeof item === "string" ? "" : (item.why || "");
+                            return domEl(
+                                "div",
+                                { className: "ai-watch-item" },
+                                domEl("strong", { text: point }),
+                                why ? domEl("span", { text: why }) : null,
+                            );
+                        })
                     ),
                 )
             );
@@ -751,7 +783,7 @@ function createApiAi(context) {
 
         // Condition
         if (data.condition) {
-            const c = data.condition;
+            const c = typeof data.condition === "string" ? { label: data.condition } : data.condition;
             let body = c.label || "";
             if (c.confidence) body += ` (уверенность ${Math.round(c.confidence * 100)}%)`;
             if (c.notes?.length) body += "\n\n" + c.notes.map(n => "• " + n).join("\n");
@@ -809,7 +841,11 @@ function createApiAi(context) {
 
         // Watch out
         if (data.watch_out?.length) {
-            const body = data.watch_out.map(w => `${w.point}: ${w.why}`).join("\n\n");
+            const body = data.watch_out.map(w => {
+                const point = typeof w === "string" ? w : w.point;
+                const why = typeof w === "string" ? "" : w.why;
+                return why ? `${point}: ${why}` : point;
+            }).join("\n\n");
             sections.push({ title: "На что обратить внимание", body });
         }
 
@@ -843,12 +879,19 @@ function createApiAi(context) {
         const data = _lastAiData;
         if (!data) return;
 
-        const title = state.detail?.title || "Объявление";
-        const price = state.detail?.price ? formatPrice(state.detail?.price) : "";
+        const detail = state.detail || {};
+        const title = detail.title || "Объявление";
+        const price = detail.price ? formatPrice(detail.price) : "";
         const adId = data.ad_id || "";
-        const link = state.detail?.link || (adId ? `https://www.kufar.by/item/${adId}` : "");
+        const link = detail.link || (adId ? `https://www.kufar.by/item/${adId}` : "");
         const dateStr = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
         const sections = _buildPdfSections(data);
+
+        // Listing images from detail
+        const listingImages = (detail.images || []).slice(0, 4);
+
+        // Listing parameters from detail
+        const listingParams = detail.parameters || [];
 
         // Verdict section extracted for hero treatment
         const verdictSection = sections.find(s => s.title === "Вердикт");
@@ -857,6 +900,60 @@ function createApiAi(context) {
         const verdictLine = verdictSection ? verdictSection.body.split("\n")[0] : "";
         const verdictSummary = verdictSection ? verdictSection.body.split("\n").slice(1).join("\n").trim() : "";
         const vInfo = vMap[verdictLine] || { cls: "warn", icon: "&#9888;" };
+
+        // Build best alternative card HTML
+        let bestAltHtml = "";
+        if (data.best_alternative) {
+            const ba = data.best_alternative;
+            bestAltHtml = `<div class="alt-card">
+  ${ba.image_url ? `<img class="alt-thumb" src="${_escXml(ba.image_url)}" alt="" />` : ""}
+  <div class="alt-info">
+    <div class="alt-title">${_escXml(ba.title)}</div>
+    <div class="alt-meta">
+      <span class="alt-price mono">${Math.round(ba.price_byn)} BYN</span>
+      ${ba.condition ? `<span class="alt-cond">${_escXml(ba.condition)}</span>` : ""}
+    </div>
+    ${data.best_pick_reason ? `<div class="alt-reason">${_escXml(data.best_pick_reason)}</div>` : ""}
+    ${ba.link ? `<a class="alt-link" href="${_escXml(ba.link)}">Открыть на Kufar</a>` : ""}
+  </div>
+</div>`;
+        }
+
+        // Build similar listings cards HTML
+        let similarHtml = "";
+        if (data.similar_listings?.length) {
+            const others = data.best_alternative
+                ? data.similar_listings.filter(s => s.ad_id !== data.best_alternative.ad_id)
+                : data.similar_listings;
+            if (others.length) {
+                similarHtml = `<div class="section">
+  <div class="section-header">
+    <div class="section-dot"></div>
+    <div class="section-title">Другие варианты (${others.length})</div>
+  </div>
+  <div class="similar-grid">
+${others.map(s => `    <div class="similar-card">
+      ${s.image_url ? `<img class="similar-thumb" src="${_escXml(s.image_url)}" alt="" />` : ""}
+      <div class="similar-info">
+        <div class="similar-title">${_escXml(s.title)}</div>
+        <div class="similar-meta">
+          <span class="mono">${Math.round(s.price_byn)} BYN</span>
+          ${s.condition ? `<span>${_escXml(s.condition)}</span>` : ""}
+        </div>
+        ${s.link ? `<a class="similar-link" href="${_escXml(s.link)}">Открыть</a>` : ""}
+      </div>
+    </div>`).join("\n")}
+  </div>
+</div>`;
+                // Remove "Другие варианты" from text sections so it doesn't duplicate
+                const idx = otherSections.findIndex(s => s.title.startsWith("Другие варианты"));
+                if (idx >= 0) otherSections.splice(idx, 1);
+            }
+        }
+
+        // Remove "Лучший вариант" from text sections (rendered as card above)
+        const bestIdx = otherSections.findIndex(s => s.title === "Лучший вариант");
+        if (bestIdx >= 0) otherSections.splice(bestIdx, 1);
 
         const pdfHtml = `<!DOCTYPE html>
 <html lang="ru">
@@ -868,20 +965,30 @@ function createApiAi(context) {
   @page :first { margin-top: 0; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; font-size: 10pt; line-height: 1.6; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .mono { font-family: "SF Mono", "Cascadia Code", "Fira Code", Menlo, Consolas, monospace; }
   .print-banner { display: none; padding: 14px 18px; background: #eff6ff; border-bottom: 1px solid #bfdbfe; }
   .print-banner-inner { max-width: 860px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   .print-banner-text { color: #1e3a8a; font-size: 9pt; }
   .print-banner-btn { appearance: none; border: none; border-radius: 10px; background: #2563eb; color: #fff; padding: 10px 14px; font: inherit; font-size: 9pt; font-weight: 700; cursor: pointer; }
 
   /* ── Hero ── */
-  .hero { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 36px 32px 28px; position: relative; overflow: hidden; }
+  .hero { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 28px 32px 24px; position: relative; overflow: hidden; display: flex; gap: 20px; align-items: flex-start; }
   .hero::after { content: ""; position: absolute; top: -40px; right: -40px; width: 200px; height: 200px; background: rgba(59,130,246,0.15); border-radius: 50%; }
+  .hero-text { flex: 1; min-width: 0; position: relative; z-index: 1; }
   .hero-badge { display: inline-block; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 3px 10px; font-size: 8pt; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255,255,255,0.8); margin-bottom: 12px; }
-  .hero h1 { font-size: 18pt; font-weight: 800; line-height: 1.25; margin-bottom: 6px; max-width: 85%; }
+  .hero h1 { font-size: 16pt; font-weight: 800; line-height: 1.25; margin-bottom: 6px; max-width: 95%; }
   .hero-price { font-size: 16pt; font-weight: 700; color: #60a5fa; margin-bottom: 10px; }
   .hero-meta { font-size: 8.5pt; color: rgba(255,255,255,0.5); display: flex; gap: 16px; flex-wrap: wrap; }
   .hero-meta span { display: inline-flex; align-items: center; gap: 4px; }
-  .hero-link { color: rgba(255,255,255,0.6); text-decoration: none; font-size: 8pt; word-break: break-all; }
+  .hero-link { color: rgba(255,255,255,0.7); text-decoration: underline; text-underline-offset: 2px; font-size: 8pt; word-break: break-all; }
+  .hero-link:hover { color: #93c5fd; }
+  .hero-photos { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; position: relative; z-index: 1; }
+  .hero-photos img { width: 90px; height: 90px; object-fit: cover; border-radius: 8px; border: 2px solid rgba(255,255,255,0.15); }
+
+  /* ── Parameters strip ── */
+  .params-strip { padding: 10px 32px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  .param-chip { font-size: 8pt; color: #475569; }
+  .param-chip b { color: #1e293b; font-weight: 600; }
 
   /* ── Verdict strip ── */
   .verdict-strip { padding: 16px 32px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #e2e8f0; }
@@ -905,9 +1012,33 @@ function createApiAi(context) {
   .section-dot { width: 6px; height: 6px; border-radius: 50%; background: #3b82f6; flex-shrink: 0; }
   .section-title { font-size: 9pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #3b82f6; }
   .section-body { font-size: 10pt; color: #334155; white-space: pre-wrap; padding-left: 14px; border-left: 2px solid #e2e8f0; line-height: 1.6; }
+  .section-body a { color: #2563eb; text-decoration: none; word-break: break-all; }
+  .section-body a:hover { text-decoration: underline; }
 
   /* ── Price range highlight ── */
   .section-body.price-highlight { background: #f8fafc; border-left-color: #3b82f6; padding: 8px 12px; border-radius: 0 6px 6px 0; font-weight: 600; font-size: 11pt; }
+
+  /* ── Best alternative card ── */
+  .alt-card { display: flex; gap: 14px; padding: 12px; background: #f0f9ff; border: 1px solid #bfdbfe; border-radius: 10px; margin-left: 14px; }
+  .alt-thumb { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
+  .alt-info { min-width: 0; }
+  .alt-title { font-size: 10pt; font-weight: 700; color: #1e293b; margin-bottom: 3px; }
+  .alt-meta { display: flex; gap: 10px; align-items: baseline; margin-bottom: 4px; }
+  .alt-price { font-size: 12pt; font-weight: 700; color: #15803d; }
+  .alt-cond { font-size: 8.5pt; color: #64748b; }
+  .alt-reason { font-size: 9pt; color: #475569; line-height: 1.4; margin-bottom: 4px; }
+  .alt-link { font-size: 8.5pt; color: #2563eb; text-decoration: none; }
+  .alt-link:hover { text-decoration: underline; }
+
+  /* ── Similar listings grid ── */
+  .similar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; padding-left: 14px; }
+  .similar-card { display: flex; gap: 10px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
+  .similar-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
+  .similar-info { min-width: 0; }
+  .similar-title { font-size: 9pt; font-weight: 600; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+  .similar-meta { font-size: 8.5pt; color: #64748b; display: flex; gap: 6px; margin-top: 2px; }
+  .similar-link { font-size: 8pt; color: #2563eb; text-decoration: none; display: inline-block; margin-top: 2px; }
+  .similar-link:hover { text-decoration: underline; }
 
   /* ── Footer ── */
   .footer { margin-top: 28px; padding: 14px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; }
@@ -921,6 +1052,9 @@ function createApiAi(context) {
   @media print {
     .print-banner { display: none !important; }
     .page-shell { box-shadow: none; }
+    .hero-photos img { width: 70px; height: 70px; }
+    .alt-thumb { width: 60px; height: 60px; }
+    .similar-thumb { width: 44px; height: 44px; }
   }
 </style>
 </head>
@@ -934,15 +1068,24 @@ function createApiAi(context) {
 <div class="page-shell">
 
 <div class="hero">
-  <div class="hero-badge">Rafuks &middot; AI Report</div>
-  <h1>${_escXml(title)}</h1>
-  ${price ? `<div class="hero-price">${_escXml(price)}</div>` : ""}
-  <div class="hero-meta">
-    <span>${dateStr}</span>
-    ${adId ? `<span>ID ${_escXml(String(adId))}</span>` : ""}
+  <div class="hero-text">
+    <div class="hero-badge">Rafuks &middot; AI Report</div>
+    <h1>${_escXml(title)}</h1>
+    ${price ? `<div class="hero-price">${_escXml(price)}</div>` : ""}
+    <div class="hero-meta">
+      <span>${dateStr}</span>
+      ${adId ? `<span>ID ${_escXml(String(adId))}</span>` : ""}
+    </div>
+    ${link ? `<a class="hero-link" href="${_escXml(link)}">${_escXml(link)}</a>` : ""}
   </div>
-  ${link ? `<a class="hero-link" href="${_escXml(link)}">${_escXml(link)}</a>` : ""}
+  ${listingImages.length ? `<div class="hero-photos">
+    ${listingImages.map(img => `<img src="${_escXml(img)}" alt="" />`).join("\n    ")}
+  </div>` : ""}
 </div>
+
+${listingParams.length ? `<div class="params-strip">
+${listingParams.map(p => `<span class="param-chip"><b>${_escXml(p.label)}</b> ${_escXml(p.value)}</span>`).join("\n")}
+</div>` : ""}
 
 ${verdictSection ? `
 <div class="verdict-strip ${vInfo.cls}">
@@ -967,6 +1110,16 @@ ${otherSections.map(s => {
   <div class="section-body${bodyCls}">${_escXml(s.body)}</div>
 </div>`;
 }).join("\n")}
+
+${data.best_alternative ? `<div class="section">
+  <div class="section-header">
+    <div class="section-dot" style="background:#15803d;"></div>
+    <div class="section-title" style="color:#15803d;">Лучший вариант</div>
+  </div>
+  ${bestAltHtml}
+</div>` : ""}
+
+${similarHtml}
 </div>
 
 <div class="footer">
@@ -978,7 +1131,7 @@ ${otherSections.map(s => {
 window.addEventListener("load", function () {
   setTimeout(function () {
     try { window.print(); } catch (_) {}
-  }, 350);
+  }, 600);
 });
 </script>
 </body>

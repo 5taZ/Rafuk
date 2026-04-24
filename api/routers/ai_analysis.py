@@ -32,7 +32,7 @@ from api.services.ai_marketplace import (
     complete_analysis_sections,
     finalize_red_flags,
 )
-from api.services.ai_service import get_ai_service
+from api.services.ai_service import _normalize_condition_label, get_ai_service
 from api.services.cache import CacheBackend
 from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.query_pipeline import load_query_dataset
@@ -82,6 +82,9 @@ def _task_version(task: dict[str, Any] | None) -> float:
 
 
 async def _get_task(cache: CacheBackend, task_id: str) -> dict[str, Any] | None:
+    # Periodically prune shadow dict on reads too (not just on new task creation)
+    if len(_tasks) > 200:
+        _prune_old_tasks_shadow()
     cached_task = await cache.get_json(_task_cache_key(task_id))
     shadow_task = _tasks.get(task_id)
 
@@ -116,7 +119,9 @@ async def _update_task(cache: CacheBackend, task_id: str, **updates: Any) -> dic
 
 
 def _prune_old_exports() -> None:
-    """Remove expired HTML exports."""
+    """Remove expired HTML exports. Only scans when dict has entries."""
+    if not _exports:
+        return
     now = datetime.now(UTC).timestamp()
     expired = [
         token for token, item in _exports.items()
@@ -217,7 +222,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             stage="loading_market_data",
             error=None,
         )
-        logger.warning("AI task %s stage=loading_market_data ad_id=%d", task_id, payload.ad_id)
+        logger.info("AI task %s stage=loading_market_data ad_id=%d", task_id, payload.ad_id)
 
         # Search strategies — run all in parallel for speed
         search_attempts = [
@@ -242,7 +247,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         )
 
         await _update_task(cache, task_id, progress=30, stage="search_ready")
-        logger.warning("AI task %s stage=search_ready", task_id)
+        logger.info("AI task %s stage=search_ready", task_id)
 
         datasets_by_cohort: list[tuple[str, Any]] = []
         cohort_keys = [
@@ -385,7 +390,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
 
         if images:
             await _update_task(cache, task_id, progress=40, stage="photo_precheck")
-            logger.warning("AI task %s stage=photo_precheck images=%d", task_id, len(images))
+            logger.info("AI task %s stage=photo_precheck images=%d", task_id, len(images))
             try:
                 quick_photo = await asyncio.wait_for(ai.quick_condition(images[:1]), timeout=30)
                 photo_condition_label = str(quick_photo.get("condition") or "").strip()
@@ -394,7 +399,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                     for note in (quick_photo.get("notes") or [])
                     if str(note).strip()
                 ][:4]
-                logger.warning(
+                logger.info(
                     "AI task %s photo_precheck ok label=%r notes=%d",
                     task_id,
                     photo_condition_label,
@@ -414,7 +419,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 )
 
         await _update_task(cache, task_id, progress=50, stage="calling_ai")
-        logger.warning(
+        logger.info(
             "AI task %s stage=calling_ai title=%r images=%d similar=%d",
             task_id,
             title[:60],
@@ -428,35 +433,46 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             "AI async task %s: calling ai.analyze_listing for '%s' (%d imgs, %d similar)",
             task_id, title[:50], len(images), len(ai_similar_for_comparison),
         )
-        result = await asyncio.wait_for(
-            ai.analyze_listing(
-                title=title,
-                description=description,
-                price_byn=price_byn,
-                is_negotiable_price=is_negotiable_price,
-                condition=condition,
-                parameters=parameters,
-                market_median=median,
-                market_count=count,
-                market_q1=q1,
-                market_q3=q3,
-                market_min=price_min,
-                market_max=price_max,
-                seller_type=seller_type,
-                photo_count=photo_count,
-                listing_age_days=listing_age_days,
-                image_urls=images,
-                similar_listings=ai_similar_for_comparison,
-                risk_context_summary=risk_context.summary,
-                risk_context_flags=risk_context.flags,
-                anomaly_flags=target_anomaly_labels,
-                deal_score=target_deal_score,
-                deal_verdict=target_deal_verdict,
-                photo_condition_label=photo_condition_label or None,
-                photo_condition_notes=photo_condition_notes or None,
-            ),
-            timeout=150,
-        )
+        # Wrap the AI call so that httpx transport-level timeouts
+        # (ReadTimeout, ConnectTimeout) are converted to TimeoutError.
+        # Without this, they fall into the generic _AI_ANALYSIS_ERRORS handler
+        # and the user sees "AI сервис недоступен" instead of a fallback result.
+        try:
+            result = await asyncio.wait_for(
+                ai.analyze_listing(
+                    title=title,
+                    description=description,
+                    price_byn=price_byn,
+                    is_negotiable_price=is_negotiable_price,
+                    condition=condition,
+                    parameters=parameters,
+                    market_median=median,
+                    market_count=count,
+                    market_q1=q1,
+                    market_q3=q3,
+                    market_min=price_min,
+                    market_max=price_max,
+                    seller_type=seller_type,
+                    photo_count=photo_count,
+                    listing_age_days=listing_age_days,
+                    image_urls=images,
+                    similar_listings=ai_similar_for_comparison,
+                    risk_context_summary=risk_context.summary,
+                    risk_context_flags=risk_context.flags,
+                    anomaly_flags=target_anomaly_labels,
+                    deal_score=target_deal_score,
+                    deal_verdict=target_deal_verdict,
+                    photo_condition_label=photo_condition_label or None,
+                    photo_condition_notes=photo_condition_notes or None,
+                ),
+                timeout=150,
+            )
+        except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+            logger.warning(
+                "AI task %s: httpx %s — converting to TimeoutError",
+                task_id, type(exc).__name__,
+            )
+            raise TimeoutError(str(exc)) from exc
         result = apply_ai_market_guardrails(
             result,
             title=title,
@@ -471,7 +487,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         logger.info("AI async task %s: AI done in %.1fs", task_id, _time.monotonic() - _t0)
 
         await _update_task(cache, task_id, progress=85, stage="building_response")
-        logger.warning("AI task %s stage=building_response", task_id)
+        logger.info("AI task %s stage=building_response", task_id)
 
         # Build response
         best_pick_ad_id = None
@@ -525,6 +541,8 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             is_negotiable_price=is_negotiable_price,
             red_flags=final_red_flags,
             listing_condition=condition,
+            market_q1=q1,
+            market_q3=q3,
         )
 
         resale_data = result.get("resale_potential")
@@ -553,7 +571,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 result.get("condition")
                 or (
                     {
-                        "label": photo_condition_label,
+                        "label": _normalize_condition_label(photo_condition_label),
                         "confidence": 0.72 if photo_condition_label else 0.0,
                         "notes": photo_condition_notes,
                     }
@@ -576,9 +594,13 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             disclaimer=DISCLAIMER,
         )
 
+        # Brief intermediate progress so the bar doesn't stall at 85→100
+        await _update_task(cache, task_id, progress=95, stage="building_response")
+
         # Cache result (use cache passed from endpoint)
         cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
-        await cache.set_json(cache_key, response.model_dump(), ttl=3600)
+        serialized = response.model_dump(by_alias=True)
+        await cache.set_json(cache_key, serialized, ttl=3600)
 
         await _update_task(
             cache,
@@ -586,21 +608,12 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             status="done",
             progress=100,
             stage="done",
-            result=response.model_dump(),
+            result=serialized,
             error=None,
         )
-        logger.warning("AI task %s stage=done", task_id)
+        logger.info("AI task %s stage=done", task_id)
 
     except TimeoutError:
-        # All market data variables (title, price_byn, median, similar, etc.)
-        # are defined BEFORE the AI call, so they are available here.
-        # best_alternative and final_red_flags are computed after AI, so we
-        # compute them from the data we already have.
-        logger.warning(
-            "AI async task %s timed out for ad_id=%d — building deterministic fallback",
-            task_id,
-            payload.ad_id,
-        )
         try:
             # Compute best_alternative without AI input
             fallback_best_decision = choose_best_alternative(
@@ -662,16 +675,39 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 summary=fallback_result.get("summary", ""),
                 disclaimer=DISCLAIMER,
             )
+            # Build resale_potential from fallback data if available
+            resale_data = fallback_result.get("resale_potential")
+            if resale_data and isinstance(resale_data, dict):
+                from api.schemas import AIResalePotential, AIResalePrice
+                try:
+                    response.resale_potential = AIResalePotential(
+                        fast_price=AIResalePrice(**resale_data["fast_price"])
+                        if resale_data.get("fast_price")
+                        and isinstance(resale_data["fast_price"], dict)
+                        else None,
+                        market_price=AIResalePrice(**resale_data["market_price"])
+                        if resale_data.get("market_price")
+                        and isinstance(resale_data["market_price"], dict)
+                        else None,
+                        optimal_price=AIResalePrice(**resale_data["optimal_price"])
+                        if resale_data.get("optimal_price")
+                        and isinstance(resale_data["optimal_price"], dict)
+                        else None,
+                        reasoning=resale_data.get("reasoning", ""),
+                    )
+                except (KeyError, TypeError, ValueError):
+                    pass
             # Cache the fallback result too
             cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
-            await cache.set_json(cache_key, response.model_dump(), ttl=1800)
+            fallback_serialized = response.model_dump(by_alias=True)
+            await cache.set_json(cache_key, fallback_serialized, ttl=1800)
             await _update_task(
                 cache,
                 task_id,
                 status="done",
                 progress=100,
                 stage="done",
-                result=response.model_dump(),
+                result=fallback_serialized,
                 error=None,
             )
             logger.warning(
@@ -848,7 +884,7 @@ async def quick_condition(
         raise HTTPException(status_code=400, detail="Нет фото для анализа")
 
     try:
-        result = await ai.quick_condition(images)
+        result = await asyncio.wait_for(ai.quick_condition(images), timeout=45)
     except (TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
         logger.error("Quick condition failed: %s", exc)
         err_msg = "AI сервис недоступен"

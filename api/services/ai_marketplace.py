@@ -5,9 +5,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from api.services.aggregator import get_param, normalize_price_byn, normalize_search_text, tokenize_search_text
+from api.services.aggregator import (
+    get_param,
+    normalize_price_byn,
+    normalize_search_text,
+    tokenize_search_text,
+)
 from api.services.ai_guardrails import contains_financing_bait
-from api.services.ai_service import detect_category
+from api.services.ai_service import _normalize_condition_label, detect_category
 from api.services.listing_mapper import first_image_url
 from api.services.reseller_tools import analyze_query_text
 
@@ -224,7 +229,15 @@ def _normalized_ad_text(ad: dict[str, Any]) -> str:
 
 
 def _ad_condition(ad: dict[str, Any]) -> str | None:
-    return get_param(ad, "condition")
+    """Extract condition label from ad parameters.
+
+    Prefers ``vl`` (localized label like «Б/у») over ``v`` (internal code
+    like «used») so that similar-listing cards always show Russian text.
+    """
+    for param in ad.get("ad_parameters", []):
+        if param.get("p") == "condition":
+            return param.get("vl") or param.get("v")
+    return None
 
 
 def _ad_parameters_string(ad: dict[str, Any]) -> str:
@@ -459,14 +472,16 @@ def choose_best_alternative(
     )
     if not is_negotiable_price and target_price > 0 and float(chosen.get("price_byn") or 0.0) > 0:
         diff = int(round(target_price - float(chosen["price_byn"])))
+        chosen_cond = chosen.get("condition")
+        cond_note = f", состояние: {chosen_cond}" if chosen_cond else ""
         if diff > 0:
-            reason = f"Ближайший сильный аналог: дешевле на {diff} BYN и выглядит наиболее сопоставимым."
+            reason = f"Дешевле на {diff} BYN при сопоставимой конфигурации{cond_note}."
         elif diff < 0:
-            reason = "Ближайший сильный аналог: немного дороже, но самый сопоставимый по конфигурации."
+            reason = f"Чуть дороже (+{abs(diff)} BYN), но самый близкий по параметрам{cond_note}."
         else:
-            reason = "Ближайший сильный аналог по конфигурации и структуре объявления."
+            reason = f"Та же цена, но наиболее сопоставимый вариант{cond_note}."
     else:
-        reason = "Ближайший сильный аналог по конфигурации и структуре объявления."
+        reason = "Наиболее сопоставимый вариант по параметрам и структуре объявления."
     return BestAlternativeDecision(item=chosen, reason=reason)
 
 
@@ -511,19 +526,19 @@ def build_market_context_fallback(
             diff = int(round(price_byn - best_price))
             if diff > 0:
                 parts.append(
-                    f"Самый близкий аналог [{best.get('ad_id')}] стоит {best_price} BYN, то есть дешевле примерно на {diff} BYN."
+                    f"Самый близкий аналог стоит {best_price} BYN, то есть дешевле примерно на {diff} BYN."
                 )
             elif diff < 0:
                 parts.append(
-                    f"Самый близкий аналог [{best.get('ad_id')}] стоит {best_price} BYN, то есть дороже примерно на {abs(diff)} BYN."
+                    f"Самый близкий аналог стоит {best_price} BYN, то есть дороже примерно на {abs(diff)} BYN."
                 )
             else:
                 parts.append(
-                    f"Самый близкий аналог [{best.get('ad_id')}] стоит примерно столько же: {best_price} BYN."
+                    f"Самый близкий аналог стоит примерно столько же: {best_price} BYN."
                 )
         else:
             parts.append(
-                f"Сильный аналог [{best.get('ad_id')}] находится в районе {best_price} BYN и задаёт ориентир по рынку."
+                f"Сильный аналог находится в районе {best_price} BYN и задаёт ориентир по рынку."
             )
 
     if risk_context.score >= 3.0 and risk_context.summary:
@@ -705,29 +720,81 @@ def _build_fallback_negotiation_tips(
         is_negotiable_price=is_negotiable_price,
     )
     tips: list[str] = []
+
+    # Tip 1: opening offer / anchor
     if is_negotiable_price and market_median:
+        entry_price = int(round(market_median * 0.9))
         tips.append(
-            f"Начни торг с диапазона на 5-10% ниже рынка: предложи около {int(round(market_median * 0.9))} BYN и смотри на реакцию продавца."
+            f"Предложи около {entry_price} BYN — это на 10% ниже рынка, "
+            "и посмотри, как продавец отреагирует: если не отказывает сразу, "
+            "значит есть пространство для торга."
         )
     elif amount:
-        tips.append(
-            f"Проси скидку около {amount} BYN, опираясь на разницу {basis} и текущее состояние товара."
-        )
+        if price_byn > 0 and market_median and price_byn > market_median:
+            tips.append(
+                f"Скажи: «Я видел аналогичные варианты дешевле, могу предложить "
+                f"на {amount} BYN ниже — {basis}». Конкретная сумма работает "
+                "лучше абстрактного «можно дешевле?»."
+            )
+        else:
+            tips.append(
+                f"Попроси скидку {amount} BYN — {basis}. "
+                "Даже если продавец откажет, это задаст рамку для дальнейшего торга."
+            )
+
+    # Tip 2: leverage the alternative
     if best_alternative and float(best_alternative.get("price_byn") or 0) > 0:
+        alt_price = int(round(float(best_alternative["price_byn"])))
+        alt_cond = best_alternative.get("condition")
+        cond_str = f" в состоянии «{alt_cond}»" if alt_cond else ""
         tips.append(
-            f"Сошлись на ближайший аналог за {int(round(float(best_alternative['price_byn'])))} BYN как на более сильный рыночный ориентир."
+            f"У тебя есть козырь: аналогичный вариант за {alt_price} BYN{cond_str}. "
+            "Сошлись на него — продавец понимает, что ты не обязан брать именно этот."
         )
+
+    # Tip 3: risk-specific tactic
     if risk_context.score >= 3.0:
         tips.append(
-            "Если продавец уводит разговор в кредит, рассрочку или общие обещания, возвращай торг к фактическому состоянию и итоговой цене."
+            "Если продавец переключается на кредит, рассрочку или обещания — "
+            "верни разговор к конкретике: состояние, цена, документы. "
+            "Перекупам невыгоден предметный торг."
         )
+
+    # Tip 4: category-specific closing tactic
     if category in {"phone", "tablet", "watch"}:
-        tips.append("Любой износ батареи, экрана или комплекта сразу переводить в конкретную скидку, а не в абстрактный торг.")
+        tips.append(
+            "При встрече проверь батарею и экран на месте — каждый найденный "
+            "дефект это минус 30–100 BYN от цены. Не стесняйся торговаться "
+            "прямо при осмотре."
+        )
     elif category in {"auto", "auto_parts"}:
-        tips.append("Все найденные дефекты сразу считай в стоимости ремонта и проси скидку минимум на эту сумму.")
+        tips.append(
+            "Каждый дефект = стоимость ремонта + твой риск. Озвучивай сумму "
+            "сразу: «Замена этой детали стоит X BYN, давай учтём»."
+        )
+    elif category in {"laptop"}:
+        tips.append(
+            "Проверь циклы батареи и SMART диска при встрече — если циклов "
+            "больше 400 или диск «жёлтый», это минус 100–200 BYN от цены."
+        )
     else:
-        tips.append("Торгуйся от конкретных проверяемых недостатков: состояние, комплект, гарантия, расходники.")
-    return _unique_texts(tips, max_items=4)
+        tips.append(
+            "Торгуйся от конкретных недостатков: сколы, отсутствие комплекта, "
+            "просроченная гарантия — каждый пункт это реальный аргумент, "
+            "а не просто «можно подешевле?»."
+        )
+
+    # Tip 5: closing anchor (if we have market data)
+    if market_median and not is_negotiable_price and price_byn > market_median:
+        gap = int(round(price_byn - market_median))
+        if gap > 0:
+            tips.append(
+                f"Финальное предложение: {int(round(market_median))} BYN — "
+                f"это ровно медиана рынка. Продавец знает, что ты в курсе цен, "
+                "и скорее согласится, чем потеряет покупателя."
+            )
+
+    return _unique_texts(tips, max_items=5)
 
 
 def _build_summary_fallback(
@@ -777,17 +844,23 @@ def complete_analysis_sections(
     is_negotiable_price: bool,
     red_flags: list[str],
     listing_condition: str | None = None,
+    market_q1: float | None = None,
+    market_q3: float | None = None,
 ) -> dict[str, Any]:
     completed = dict(result)
     category = detect_category(title, parameters)
 
+    # ── Condition ─────────────────────────────────────────────
     condition = completed.get("condition")
+    # AI may return condition as a bare string instead of a dict
+    if isinstance(condition, str):
+        condition = {"label": condition}
     if not isinstance(condition, dict):
         condition = {}
     label = (
-        _clean_text(condition.get("label"))
-        or _clean_text(photo_condition_label)
-        or _clean_text(listing_condition)
+        _normalize_condition_label(_clean_text(condition.get("label")))
+        or _normalize_condition_label(_clean_text(photo_condition_label))
+        or _normalize_condition_label(_clean_text(listing_condition))
     )
     notes = [
         _clean_text(note)
@@ -800,10 +873,52 @@ def complete_analysis_sections(
     if label or notes:
         completed["condition"] = {
             "label": label or "Удовлетворительное",
-            "confidence": float(condition.get("confidence") or (0.72 if photo_condition_notes else 0.64)),
+            "confidence": float(
+                condition.get("confidence")
+                or (0.72 if photo_condition_notes else 0.64)
+            ),
             "notes": notes,
         }
 
+    # ── Fair price ─────────────────────────────────────────────
+    fair = completed.get("fair_price")
+    if not isinstance(fair, dict) or not fair.get("from") or not fair.get("to"):
+        fallback_fair = _fallback_fair_price(
+            market_median=market_median,
+            market_q1=market_q1,
+            market_q3=market_q3,
+            best_alternative=best_alternative,
+        )
+        if fallback_fair:
+            completed["fair_price"] = fallback_fair
+
+    # ── Resale potential ────────────────────────────────────────
+    resale = completed.get("resale_potential")
+    if not isinstance(resale, dict) or not resale.get("fast_price"):
+        fallback_resale = _fallback_resale_potential(
+            price_byn=price_byn,
+            is_negotiable_price=is_negotiable_price,
+            market_median=market_median,
+            market_q1=market_q1,
+            market_q3=market_q3,
+            best_alternative=best_alternative,
+        )
+        if fallback_resale:
+            completed["resale_potential"] = fallback_resale
+
+    # ── Recommendation ─────────────────────────────────────────
+    rec = completed.get("recommendation")
+    if not isinstance(rec, dict) or not _clean_text(rec.get("verdict")):
+        completed["recommendation"] = _fallback_recommendation(
+            price_byn=price_byn,
+            is_negotiable_price=is_negotiable_price,
+            market_median=market_median,
+            market_q1=market_q1,
+            market_q3=market_q3,
+            risk_context=risk_context,
+        )
+
+    # ── Watch out ──────────────────────────────────────────────
     raw_watch_out = completed.get("watch_out") or []
     watch_items: list[dict[str, str]] = []
     for item in raw_watch_out:
@@ -827,17 +942,55 @@ def complete_analysis_sections(
         watch_items.append(item)
     completed["watch_out"] = watch_items[:5]
 
+    # ── Meeting checklist ──────────────────────────────────────
     checklist = _unique_texts(
         [str(item) for item in (completed.get("meeting_checklist") or [])],
-        max_items=6,
+        max_items=7,
     )
-    if len(checklist) < 4:
-        checklist = _unique_texts(checklist + _build_fallback_meeting_checklist(category), max_items=6)
-    completed["meeting_checklist"] = checklist
+    if len(checklist) < 5:
+        checklist = _unique_texts(
+            checklist + _build_fallback_meeting_checklist(category),
+            max_items=7,
+        )
 
+    # Deduplicate: if a watch_out point covers the same topic as a checklist
+    # item, keep it in watch_out (which has the "why" explanation) and remove
+    # from checklist to avoid saying the same thing twice.
+    watch_topics: set[str] = set()
+    for wo in watch_items:
+        point_lower = normalize_search_text(wo.get("point", ""))
+        # Extract key topic words (first 2 significant tokens)
+        tokens = [t for t in point_lower.split() if t and t not in _STOP_TOKENS][:3]
+        if tokens:
+            watch_topics.add(" ".join(tokens))
+
+    deduped_checklist: list[str] = []
+    for item in checklist:
+        item_lower = normalize_search_text(item)
+        tokens = [t for t in item_lower.split() if t and t not in _STOP_TOKENS][:3]
+        topic = " ".join(tokens)
+        # Check if any watch_out topic overlaps with this checklist topic
+        overlap = any(
+            wt_topic in topic or topic in wt_topic
+            for wt_topic in watch_topics
+            if len(wt_topic) >= 3
+        )
+        if not overlap:
+            deduped_checklist.append(item)
+
+    # If deduplication removed too many, add back from fallback
+    if len(deduped_checklist) < 5:
+        fallback_checklist = _build_fallback_meeting_checklist(category)
+        deduped_checklist = _unique_texts(
+            deduped_checklist + fallback_checklist,
+            max_items=7,
+        )
+    completed["meeting_checklist"] = deduped_checklist
+
+    # ── Negotiation tips ───────────────────────────────────────
     tips = _unique_texts(
         [str(item) for item in (completed.get("negotiation_tips") or [])],
-        max_items=4,
+        max_items=5,
     )
     if len(tips) < 3:
         tips = _unique_texts(
@@ -849,10 +1002,11 @@ def complete_analysis_sections(
                 is_negotiable_price=is_negotiable_price,
                 risk_context=risk_context,
             ),
-            max_items=4,
+            max_items=5,
         )
     completed["negotiation_tips"] = tips
 
+    # ── Summary ────────────────────────────────────────────────
     summary = _clean_text(completed.get("summary"))
     verdict = _clean_text((completed.get("recommendation") or {}).get("verdict"))
     if len(summary) < 90:
@@ -867,6 +1021,72 @@ def complete_analysis_sections(
         )
 
     return completed
+
+
+def _fallback_resale_potential(
+    *,
+    price_byn: float,
+    is_negotiable_price: bool,
+    market_median: float | None,
+    market_q1: float | None,
+    market_q3: float | None,
+    best_alternative: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Compute resale_potential from market data when AI didn't return one."""
+    # Need at least a median to estimate anything
+    anchor = market_median
+    if not anchor or anchor <= 0:
+        alt_price = float(best_alternative.get("price_byn") or 0) if best_alternative else 0
+        if alt_price > 0:
+            anchor = alt_price
+        else:
+            return None
+
+    # For negotiable price, use market anchor as the assumed purchase price
+    purchase = price_byn if (price_byn > 0 and not is_negotiable_price) else anchor
+
+    fast_price = int(round(anchor * 0.88))
+    market_price = int(round(anchor * 0.96))
+    optimal_price = int(round(min(anchor * 1.04, (market_q3 or anchor * 1.05) * 1.02)))
+
+    # Don't show resale if purchase price is already below fast resale
+    # (would imply a guaranteed profit which is misleading)
+    if not is_negotiable_price and purchase > 0 and fast_price >= purchase:
+        fast_price = int(round(purchase * 0.92))
+
+    reasoning_parts = [
+        f"Ориентир по рынку — около {int(round(anchor))} BYN.",
+    ]
+    if market_q1 and market_q3:
+        reasoning_parts.append(
+            f"Квартильный диапазон {int(round(market_q1))}–{int(round(market_q3))} BYN."
+        )
+    if best_alternative and float(best_alternative.get("price_byn") or 0) > 0:
+        reasoning_parts.append(
+            f"Ближайший аналог около {int(round(float(best_alternative['price_byn'])))} BYN."
+        )
+    reasoning_parts.append(
+        "Перепродажа оценивается по текущей выборке без учёта возможных скрытых дефектов."
+    )
+
+    return {
+        "fast_price": {
+            "label": "Быстро",
+            "price_byn": fast_price,
+            "reasoning": "Быстрая продажа с дисконтом 8-12% к центру рынка.",
+        },
+        "market_price": {
+            "label": "По рынку",
+            "price_byn": market_price,
+            "reasoning": "Ориентир на медиану сопоставимых объявлений.",
+        },
+        "optimal_price": {
+            "label": "Оптимально",
+            "price_byn": optimal_price,
+            "reasoning": "Верхняя реалистичная точка при хорошем состоянии и терпеливой продаже.",
+        },
+        "reasoning": " ".join(reasoning_parts),
+    }
 
 
 def _fallback_fair_price(
@@ -977,7 +1197,7 @@ def build_fallback_analysis_result(
     return {
         "condition": (
             {
-                "label": photo_condition_label or "Удовлетворительное",
+                "label": _normalize_condition_label(photo_condition_label) or "Удовлетворительное",
                 "confidence": 0.72 if photo_condition_label else 0.58,
                 "notes": photo_condition_notes,
             }
@@ -990,7 +1210,14 @@ def build_fallback_analysis_result(
             market_q3=market_q3,
             best_alternative=best_alternative,
         ),
-        "resale_potential": None,
+        "resale_potential": _fallback_resale_potential(
+            price_byn=price_byn,
+            is_negotiable_price=is_negotiable_price,
+            market_median=market_median,
+            market_q1=market_q1,
+            market_q3=market_q3,
+            best_alternative=best_alternative,
+        ),
         "watch_out": watch_out,
         "recommendation": recommendation,
         "meeting_checklist": checklist,
@@ -1007,22 +1234,6 @@ def build_fallback_analysis_result(
         "summary": summary,
     }
 
-
-def merge_analysis_result_with_fallback(
-    *,
-    ai_result: dict[str, Any] | None,
-    fallback_result: dict[str, Any],
-) -> dict[str, Any]:
-    merged = dict(fallback_result)
-    for key, value in (ai_result or {}).items():
-        if value is None:
-            continue
-        if isinstance(value, str) and not _clean_text(value):
-            continue
-        if isinstance(value, list) and not value:
-            continue
-        merged[key] = value
-    return merged
 
 
 def _query_similarity_bonus(query_tokens: set[str], candidate_tokens: set[str]) -> float:

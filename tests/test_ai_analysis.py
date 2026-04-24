@@ -163,7 +163,7 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
 
     assert payload["ad_id"] == 1
     assert payload["condition"]["label"] == "Хорошее"
-    assert payload["fair_price"]["from_price"] == 1500
+    assert payload["fair_price"]["from"] == 1500
     assert payload["best_alternative"]["ad_id"] == 2
     assert fake_ai.calls
     assert fake_ai.calls[0]["is_negotiable_price"] is False
@@ -296,8 +296,8 @@ def test_ai_guardrails_clamp_outlier_price_for_negotiable_financing_bait(monkeyp
         start_payload = response.json()
         payload = _wait_for_task_result(client, start_payload["task_id"])
 
-    assert payload["fair_price"]["from_price"] == 40054
-    assert payload["fair_price"]["to_price"] == 44692
+    assert payload["fair_price"]["from"] == 40054
+    assert payload["fair_price"]["to"] == 44692
     assert payload["resale_potential"]["market_price"]["price_byn"] == 42373
     assert "180 000" not in payload["summary"]
     assert "40" in payload["market_context"]
@@ -657,3 +657,63 @@ def test_complete_analysis_sections_restores_full_sections() -> None:
     assert len(result["meeting_checklist"]) >= 4
     assert len(result["negotiation_tips"]) >= 3
     assert len(result["summary"]) > 90
+
+
+def test_complete_analysis_sections_adds_resale_potential_fallback() -> None:
+    from api.services.ai_marketplace import _fallback_resale_potential
+
+    # When AI returns no resale_potential, complete_analysis_sections fills it
+    risk = build_marketplace_risk_context(
+        {"subject": "iPhone 14", "body": "Продаю", "ad_parameters": []}
+    )
+    result = complete_analysis_sections(
+        result={
+            "recommendation": {"verdict": "think_twice", "text": "Нужен торг."},
+            "summary": "Коротко.",
+        },
+        title="iPhone 14 128GB",
+        parameters=[{"label": "Память", "value": "128 Гб"}],
+        price_byn=1500,
+        market_median=1400,
+        best_alternative={"ad_id": 2, "price_byn": 1350},
+        risk_context=risk,
+        photo_condition_label="",
+        photo_condition_notes=[],
+        is_negotiable_price=False,
+        red_flags=[],
+        market_q1=1300,
+        market_q3=1500,
+    )
+
+    resale = result.get("resale_potential")
+    assert resale is not None
+    assert isinstance(resale, dict)
+    assert resale["fast_price"]["price_byn"] > 0
+    assert resale["market_price"]["price_byn"] > 0
+    assert resale["optimal_price"]["price_byn"] > 0
+    # fast < market < optimal
+    assert resale["fast_price"]["price_byn"] < resale["market_price"]["price_byn"]
+    assert resale["market_price"]["price_byn"] < resale["optimal_price"]["price_byn"]
+
+    # Also test the standalone function
+    standalone = _fallback_resale_potential(
+        price_byn=1500,
+        is_negotiable_price=False,
+        market_median=1400,
+        market_q1=1300,
+        market_q3=1500,
+        best_alternative={"ad_id": 2, "price_byn": 1350},
+    )
+    assert standalone is not None
+    assert standalone["fast_price"]["price_byn"] < standalone["market_price"]["price_byn"]
+
+    # Returns None when no market data at all
+    empty = _fallback_resale_potential(
+        price_byn=0,
+        is_negotiable_price=True,
+        market_median=None,
+        market_q1=None,
+        market_q3=None,
+        best_alternative=None,
+    )
+    assert empty is None
