@@ -169,6 +169,210 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
     assert fake_ai.calls[0]["is_negotiable_price"] is False
 
 
+def _fake_iphone_dataset() -> SimpleNamespace:
+    return SimpleNamespace(
+        ads=[
+            {
+                "ad_id": 1,
+                "subject": "iPhone 14",
+                "body": "Отличное состояние",
+                "price_byn": 160000,
+                "ad_link": "https://www.kufar.by/item/1",
+                "images": [{"path": "adim1/test.jpg"}],
+                "ad_parameters": [
+                    {"p": "condition", "vl": "Б/у"},
+                    {"p": "memory", "pl": "Память", "vl": "128 Гб"},
+                ],
+            },
+            {
+                "ad_id": 2,
+                "subject": "iPhone 14 128GB",
+                "price_byn": 158000,
+                "ad_link": "https://www.kufar.by/item/2",
+                "images": [{"path": "adim1/test2.jpg"}],
+                "ad_parameters": [],
+            },
+        ],
+        price_stats=SimpleNamespace(
+            median=1590.0,
+            count=24,
+            q1=1550.0,
+            q3=1630.0,
+            min=1500.0,
+            max=1700.0,
+        ),
+    )
+
+
+def test_ai_fallback_delivered_when_analyze_raises_http_error(monkeypatch) -> None:
+    """If the AI provider fails mid-analysis (non-timeout), the task should
+    still complete as `done` with a deterministic fallback built from market
+    data, not surface a blunt "AI unavailable" error to the user."""
+    import httpx
+
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        return _fake_iphone_dataset()
+
+    class ExplodingAIService:
+        available = True
+
+        def __init__(self) -> None:
+            self.analyze_calls = 0
+            self.quick_calls = 0
+
+        async def quick_condition(self, image_urls):  # noqa: ARG002
+            self.quick_calls += 1
+            return {
+                "condition": "Хорошее",
+                "notes": ["Корпус без явных повреждений"],
+            }
+
+        async def analyze_listing_parallel(self, **kwargs):  # noqa: ARG002
+            self.analyze_calls += 1
+            raise httpx.HTTPError("502 Bad Gateway")
+
+    fake_ai = ExplodingAIService()
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/ai/analyze",
+            json={"ad_id": 1, "query": "iphone 14"},
+        )
+        assert response.status_code == 200
+        payload = _wait_for_task_result(client, response.json()["task_id"])
+
+    # AI actually got called (and failed) before the fallback kicked in
+    assert fake_ai.analyze_calls == 1
+
+    # Task must have completed as `done` — asserted implicitly by
+    # _wait_for_task_result already (it raises on status=="error").
+    assert payload["ad_id"] == 1
+    # Deterministic fallback fills the headline sections
+    assert payload["summary"], "fallback summary must not be empty"
+    assert payload["recommendation"] is not None
+    assert payload["recommendation"]["verdict"]
+    assert payload["watch_out"], "fallback must produce at least one watch_out"
+    assert len(payload["meeting_checklist"]) >= 3
+    assert len(payload["negotiation_tips"]) >= 1
+    # Photo-precheck output survives through the fallback
+    assert payload["condition"] is not None
+    assert payload["condition"]["label"] in {
+        "Хорошее",
+        "Отличное",
+        "Удовлетворительное",
+        "Требует внимания",
+    }
+    # Market context falls back to a non-empty deterministic paragraph
+    assert payload["market_context"]
+    # best_alternative comes from the market data, not the (failing) AI
+    assert payload["best_alternative"]["ad_id"] == 2
+
+
+def test_ai_fallback_delivered_when_analyze_times_out(monkeypatch) -> None:
+    """Regression safeguard: TimeoutError from the AI call must still result
+    in a `done` status with fallback content."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        return _fake_iphone_dataset()
+
+    class SlowAIService:
+        available = True
+
+        async def quick_condition(self, image_urls):  # noqa: ARG002
+            return {"condition": "Хорошее", "notes": []}
+
+        async def analyze_listing_parallel(self, **kwargs):  # noqa: ARG002
+            raise TimeoutError("simulated timeout")
+
+    monkeypatch.setattr(ai_analysis, "get_ai_service", SlowAIService)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/ai/analyze",
+            json={"ad_id": 1, "query": "iphone 14"},
+        )
+        assert response.status_code == 200
+        payload = _wait_for_task_result(client, response.json()["task_id"])
+
+    assert payload["ad_id"] == 1
+    assert payload["summary"]
+    assert payload["recommendation"] is not None
+    assert payload["best_alternative"]["ad_id"] == 2
+
+
+def test_ai_task_errors_when_market_data_cannot_be_loaded(monkeypatch) -> None:
+    """If we never successfully load market data (e.g. every search strategy
+    raises), the fallback should NOT be delivered — we should surface an
+    actionable error instead so the user can retry."""
+    import httpx
+
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        raise httpx.HTTPError("Kufar 502")
+
+    class UnusedAIService:
+        available = True
+
+        async def quick_condition(self, image_urls):  # noqa: ARG002
+            return {"condition": "Хорошее", "notes": []}
+
+        async def analyze_listing_parallel(self, **kwargs):  # noqa: ARG002
+            raise AssertionError("AI should never be called when market data failed")
+
+    monkeypatch.setattr(ai_analysis, "get_ai_service", UnusedAIService)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        start = client.post(
+            "/api/v1/ai/analyze",
+            json={"ad_id": 1, "query": "iphone 14"},
+        )
+        assert start.status_code == 200
+        task_id = start.json()["task_id"]
+
+        # Poll until the task settles — but we expect status=="error"
+        deadline = monotonic() + 5.0
+        status_payload = None
+        while monotonic() < deadline:
+            r = client.get(f"/api/v1/ai/task/{task_id}")
+            assert r.status_code == 200
+            status_payload = r.json()
+            if status_payload["status"] in {"done", "error"}:
+                break
+            sleep(0.05)
+
+    assert status_payload is not None
+    assert status_payload["status"] == "error", (
+        f"expected error when market data cannot load, got {status_payload}"
+    )
+    assert status_payload.get("error")
+
+
 def test_ai_task_status_reads_from_cache_backend() -> None:
     from api.main import create_app
 

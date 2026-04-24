@@ -213,6 +213,143 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         safe_query,
     )
 
+    # Defaults so the fallback path can be entered even if AI call aborts
+    # before the "full AI result" stage. Reset as the pipeline progresses.
+    market_data_ready = False
+    title = ""
+    description = ""
+    price_byn = 0.0
+    is_negotiable_price = False
+    condition: str | None = None
+    parameters: list[dict[str, Any]] = []
+    similar: list[dict[str, Any]] = []
+    median: float | None = None
+    q1: float | None = None
+    q3: float | None = None
+    risk_context = build_marketplace_risk_context({})
+    photo_condition_label = ""
+    photo_condition_notes: list[str] = []
+
+    async def _deliver_fallback_result(reason: str) -> bool:
+        """Build a deterministic fallback AIAnalysisResponse and mark task done.
+
+        Returns True on success, False if the fallback itself could not be built
+        (callers should then fall back to the normal error path).
+        """
+        if not market_data_ready:
+            return False
+        try:
+            fallback_best_decision = choose_best_alternative(
+                similar,
+                target_price=price_byn,
+                is_negotiable_price=is_negotiable_price,
+                ai_best_pick_ad_id=None,
+            )
+            fallback_best_alt = fallback_best_decision.item
+            if fallback_best_alt:
+                fallback_best_alt = {
+                    "ad_id": fallback_best_alt["ad_id"],
+                    "title": fallback_best_alt["title"],
+                    "price_byn": fallback_best_alt["price_byn"],
+                    "image_url": fallback_best_alt.get("image_url"),
+                    "link": fallback_best_alt.get("link", ""),
+                    "deal_score": fallback_best_alt.get("deal_score", 0.0),
+                    "condition": fallback_best_alt.get("condition"),
+                    "ai_note": fallback_best_decision.reason,
+                }
+            fallback_red_flags = finalize_red_flags([], risk_context)
+            fallback_result = build_fallback_analysis_result(
+                title=title or "",
+                parameters=parameters,
+                price_byn=price_byn,
+                is_negotiable_price=is_negotiable_price,
+                market_median=median,
+                market_q1=q1,
+                market_q3=q3,
+                best_alternative=fallback_best_alt,
+                similar_listings=similar,
+                risk_context=risk_context,
+                photo_condition_label=photo_condition_label or None,
+                photo_condition_notes=photo_condition_notes or [],
+                red_flags=fallback_red_flags,
+            )
+            fallback_market_ctx = build_market_context_fallback(
+                price_byn=price_byn,
+                is_negotiable_price=is_negotiable_price,
+                market_median=median,
+                similar_listings=similar,
+                risk_context=risk_context,
+                ai_market_context="",
+            )
+            response = AIAnalysisResponse(
+                ad_id=payload.ad_id,
+                condition=fallback_result.get("condition"),
+                fair_price=fallback_result.get("fair_price"),
+                resale_potential=None,
+                watch_out=fallback_result.get("watch_out", []),
+                recommendation=fallback_result.get("recommendation"),
+                similar_listings=similar,
+                best_alternative=fallback_best_alt,
+                meeting_checklist=fallback_result.get("meeting_checklist", []),
+                negotiation_tips=fallback_result.get("negotiation_tips", []),
+                red_flags=fallback_red_flags,
+                market_context=fallback_market_ctx,
+                best_pick_reason=fallback_best_decision.reason,
+                summary=fallback_result.get("summary", ""),
+                disclaimer=DISCLAIMER,
+            )
+            resale_data = fallback_result.get("resale_potential")
+            if resale_data and isinstance(resale_data, dict):
+                import contextlib
+
+                from api.schemas import AIResalePotential, AIResalePrice
+
+                with contextlib.suppress(KeyError, TypeError, ValueError):
+                    response.resale_potential = AIResalePotential(
+                        fast_price=AIResalePrice(**resale_data["fast_price"])
+                        if resale_data.get("fast_price")
+                        and isinstance(resale_data["fast_price"], dict)
+                        else None,
+                        market_price=AIResalePrice(**resale_data["market_price"])
+                        if resale_data.get("market_price")
+                        and isinstance(resale_data["market_price"], dict)
+                        else None,
+                        optimal_price=AIResalePrice(**resale_data["optimal_price"])
+                        if resale_data.get("optimal_price")
+                        and isinstance(resale_data["optimal_price"], dict)
+                        else None,
+                        reasoning=resale_data.get("reasoning", ""),
+                    )
+            cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
+            fallback_serialized = response.model_dump(by_alias=True)
+            # Short TTL so a recovered provider is re-hit sooner than the
+            # 1h TTL for full AI results.
+            await cache.set_json(cache_key, fallback_serialized, ttl=1800)
+            await _update_task(
+                cache,
+                task_id,
+                status="done",
+                progress=100,
+                stage="done",
+                result=fallback_serialized,
+                error=None,
+            )
+            logger.warning(
+                "AI task %s: fallback result delivered (%s) for ad_id=%d",
+                task_id,
+                reason,
+                payload.ad_id,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "AI task %s: fallback build failed (%s) for ad_id=%d",
+                task_id,
+                reason,
+                payload.ad_id,
+            )
+            return False
+
     try:
         await _update_task(
             cache,
@@ -336,6 +473,9 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             target_price=price_byn,
             market_median=median,
         )
+        # From this point on we have enough market data to synthesise a full
+        # deterministic fallback if the AI call fails or times out.
+        market_data_ready = True
 
         ai_similar_for_comparison = [
             {
@@ -631,123 +771,28 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         logger.info("AI task %s stage=done", task_id)
 
     except TimeoutError:
-        try:
-            # Compute best_alternative without AI input
-            fallback_best_decision = choose_best_alternative(
-                similar,
-                target_price=price_byn,
-                is_negotiable_price=is_negotiable_price,
-                ai_best_pick_ad_id=None,
-            )
-            fallback_best_alt = fallback_best_decision.item
-            if fallback_best_alt:
-                fallback_best_alt = {
-                    "ad_id": fallback_best_alt["ad_id"],
-                    "title": fallback_best_alt["title"],
-                    "price_byn": fallback_best_alt["price_byn"],
-                    "image_url": fallback_best_alt.get("image_url"),
-                    "link": fallback_best_alt.get("link", ""),
-                    "deal_score": fallback_best_alt.get("deal_score", 0.0),
-                    "condition": fallback_best_alt.get("condition"),
-                    "ai_note": fallback_best_decision.reason,
-                }
-            fallback_red_flags = finalize_red_flags([], risk_context)
-            fallback_result = build_fallback_analysis_result(
-                title=title or "",
-                parameters=parameters,
-                price_byn=price_byn,
-                is_negotiable_price=is_negotiable_price,
-                market_median=median,
-                market_q1=q1,
-                market_q3=q3,
-                best_alternative=fallback_best_alt,
-                similar_listings=similar,
-                risk_context=risk_context,
-                photo_condition_label=photo_condition_label or None,
-                photo_condition_notes=photo_condition_notes or [],
-                red_flags=fallback_red_flags,
-            )
-            fallback_market_ctx = build_market_context_fallback(
-                price_byn=price_byn,
-                is_negotiable_price=is_negotiable_price,
-                market_median=median,
-                similar_listings=similar,
-                risk_context=risk_context,
-                ai_market_context="",
-            )
-            response = AIAnalysisResponse(
-                ad_id=payload.ad_id,
-                condition=fallback_result.get("condition"),
-                fair_price=fallback_result.get("fair_price"),
-                resale_potential=None,
-                watch_out=fallback_result.get("watch_out", []),
-                recommendation=fallback_result.get("recommendation"),
-                similar_listings=similar,
-                best_alternative=fallback_best_alt,
-                meeting_checklist=fallback_result.get("meeting_checklist", []),
-                negotiation_tips=fallback_result.get("negotiation_tips", []),
-                red_flags=fallback_red_flags,
-                market_context=fallback_market_ctx,
-                best_pick_reason=fallback_best_decision.reason,
-                summary=fallback_result.get("summary", ""),
-                disclaimer=DISCLAIMER,
-            )
-            # Build resale_potential from fallback data if available
-            resale_data = fallback_result.get("resale_potential")
-            if resale_data and isinstance(resale_data, dict):
-                from api.schemas import AIResalePotential, AIResalePrice
-                try:
-                    response.resale_potential = AIResalePotential(
-                        fast_price=AIResalePrice(**resale_data["fast_price"])
-                        if resale_data.get("fast_price")
-                        and isinstance(resale_data["fast_price"], dict)
-                        else None,
-                        market_price=AIResalePrice(**resale_data["market_price"])
-                        if resale_data.get("market_price")
-                        and isinstance(resale_data["market_price"], dict)
-                        else None,
-                        optimal_price=AIResalePrice(**resale_data["optimal_price"])
-                        if resale_data.get("optimal_price")
-                        and isinstance(resale_data["optimal_price"], dict)
-                        else None,
-                        reasoning=resale_data.get("reasoning", ""),
-                    )
-                except (KeyError, TypeError, ValueError):
-                    pass
-            # Cache the fallback result too
-            cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
-            fallback_serialized = response.model_dump(by_alias=True)
-            await cache.set_json(cache_key, fallback_serialized, ttl=1800)
-            await _update_task(
-                cache,
-                task_id,
-                status="done",
-                progress=100,
-                stage="done",
-                result=fallback_serialized,
-                error=None,
-            )
-            logger.warning(
-                "AI task %s: fallback result delivered for ad_id=%d",
-                task_id,
-                payload.ad_id,
-            )
-        except Exception as fallback_exc:
-            logger.error(
-                "Fallback build also failed for task %s: %s",
-                task_id,
-                fallback_exc,
-                exc_info=True,
-            )
-            await _update_task(
-                cache,
-                task_id,
-                status="error",
-                stage="timeout",
-                error="AI анализ занял слишком долго. Попробуйте ещё раз.",
-            )
+        logger.warning(
+            "AI async task %s timed out for ad_id=%d — attempting deterministic fallback",
+            task_id,
+            payload.ad_id,
+        )
+        if await _deliver_fallback_result("timeout"):
+            return
+        await _update_task(
+            cache,
+            task_id,
+            status="error",
+            stage="timeout",
+            error="AI анализ занял слишком долго. Попробуйте ещё раз.",
+        )
     except _AI_ANALYSIS_ERRORS as exc:
         logger.error("AI async task %s failed: [%s] %s", task_id, type(exc).__name__, exc)
+        # When the AI provider itself fails (5xx, parse error, empty content,
+        # etc.) we still have all the market data needed to synthesise a full
+        # deterministic analysis. Prefer giving the user a complete (if
+        # conservative) report over a blunt "AI unavailable" error.
+        if await _deliver_fallback_result(f"ai_error:{type(exc).__name__}"):
+            return
         err_msg = "AI сервис недоступен. Попробуйте позже."
         err_str = str(exc).lower()
         if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
