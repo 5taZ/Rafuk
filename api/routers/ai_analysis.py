@@ -24,11 +24,12 @@ from api.services.aggregator import normalize_price_byn
 from api.services.ai_guardrails import apply_ai_market_guardrails
 from api.services.ai_marketplace import (
     BestAlternativeDecision,
-    build_marketplace_risk_context,
+    build_fallback_analysis_result,
     build_market_context_fallback,
-    complete_analysis_sections,
-    collect_similar_listings_from_cohorts,
+    build_marketplace_risk_context,
     choose_best_alternative,
+    collect_similar_listings_from_cohorts,
+    complete_analysis_sections,
     finalize_red_flags,
 )
 from api.services.ai_service import get_ai_service
@@ -386,7 +387,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             await _update_task(cache, task_id, progress=40, stage="photo_precheck")
             logger.warning("AI task %s stage=photo_precheck images=%d", task_id, len(images))
             try:
-                quick_photo = await asyncio.wait_for(ai.quick_condition(images[:1]), timeout=20)
+                quick_photo = await asyncio.wait_for(ai.quick_condition(images[:1]), timeout=30)
                 photo_condition_label = str(quick_photo.get("condition") or "").strip()
                 photo_condition_notes = [
                     str(note).strip()
@@ -399,8 +400,18 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                     photo_condition_label,
                     len(photo_condition_notes),
                 )
-            except (asyncio.TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
-                logger.warning("AI task %s photo_precheck skipped: %s", task_id, exc)
+            except TimeoutError:
+                logger.warning(
+                    "AI task %s photo_precheck timed out (30s) — will use text-only condition",
+                    task_id,
+                )
+            except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+                logger.warning(
+                    "AI task %s photo_precheck failed [%s]: %s — will use text-only condition",
+                    task_id,
+                    type(exc).__name__,
+                    exc,
+                )
 
         await _update_task(cache, task_id, progress=50, stage="calling_ai")
         logger.warning(
@@ -513,6 +524,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             photo_condition_notes=photo_condition_notes,
             is_negotiable_price=is_negotiable_price,
             red_flags=final_red_flags,
+            listing_condition=condition,
         )
 
         resale_data = result.get("resale_potential")
@@ -580,14 +592,107 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         logger.warning("AI task %s stage=done", task_id)
 
     except TimeoutError:
-        logger.error("AI async task %s timed out for ad_id=%d", task_id, payload.ad_id)
-        await _update_task(
-            cache,
+        # All market data variables (title, price_byn, median, similar, etc.)
+        # are defined BEFORE the AI call, so they are available here.
+        # best_alternative and final_red_flags are computed after AI, so we
+        # compute them from the data we already have.
+        logger.warning(
+            "AI async task %s timed out for ad_id=%d — building deterministic fallback",
             task_id,
-            status="error",
-            stage="timeout",
-            error="AI анализ занял слишком долго. Попробуйте ещё раз.",
+            payload.ad_id,
         )
+        try:
+            # Compute best_alternative without AI input
+            fallback_best_decision = choose_best_alternative(
+                similar,
+                target_price=price_byn,
+                is_negotiable_price=is_negotiable_price,
+                ai_best_pick_ad_id=None,
+            )
+            fallback_best_alt = fallback_best_decision.item
+            if fallback_best_alt:
+                fallback_best_alt = {
+                    "ad_id": fallback_best_alt["ad_id"],
+                    "title": fallback_best_alt["title"],
+                    "price_byn": fallback_best_alt["price_byn"],
+                    "image_url": fallback_best_alt.get("image_url"),
+                    "link": fallback_best_alt.get("link", ""),
+                    "deal_score": fallback_best_alt.get("deal_score", 0.0),
+                    "condition": fallback_best_alt.get("condition"),
+                    "ai_note": fallback_best_decision.reason,
+                }
+            fallback_red_flags = finalize_red_flags([], risk_context)
+            fallback_result = build_fallback_analysis_result(
+                title=title or "",
+                parameters=parameters,
+                price_byn=price_byn,
+                is_negotiable_price=is_negotiable_price,
+                market_median=median,
+                market_q1=q1,
+                market_q3=q3,
+                best_alternative=fallback_best_alt,
+                similar_listings=similar,
+                risk_context=risk_context,
+                photo_condition_label=photo_condition_label or None,
+                photo_condition_notes=photo_condition_notes or [],
+                red_flags=fallback_red_flags,
+            )
+            fallback_market_ctx = build_market_context_fallback(
+                price_byn=price_byn,
+                is_negotiable_price=is_negotiable_price,
+                market_median=median,
+                similar_listings=similar,
+                risk_context=risk_context,
+                ai_market_context="",
+            )
+            response = AIAnalysisResponse(
+                ad_id=payload.ad_id,
+                condition=fallback_result.get("condition"),
+                fair_price=fallback_result.get("fair_price"),
+                resale_potential=None,
+                watch_out=fallback_result.get("watch_out", []),
+                recommendation=fallback_result.get("recommendation"),
+                similar_listings=similar,
+                best_alternative=fallback_best_alt,
+                meeting_checklist=fallback_result.get("meeting_checklist", []),
+                negotiation_tips=fallback_result.get("negotiation_tips", []),
+                red_flags=fallback_red_flags,
+                market_context=fallback_market_ctx,
+                best_pick_reason=fallback_best_decision.reason,
+                summary=fallback_result.get("summary", ""),
+                disclaimer=DISCLAIMER,
+            )
+            # Cache the fallback result too
+            cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
+            await cache.set_json(cache_key, response.model_dump(), ttl=1800)
+            await _update_task(
+                cache,
+                task_id,
+                status="done",
+                progress=100,
+                stage="done",
+                result=response.model_dump(),
+                error=None,
+            )
+            logger.warning(
+                "AI task %s: fallback result delivered for ad_id=%d",
+                task_id,
+                payload.ad_id,
+            )
+        except Exception as fallback_exc:
+            logger.error(
+                "Fallback build also failed for task %s: %s",
+                task_id,
+                fallback_exc,
+                exc_info=True,
+            )
+            await _update_task(
+                cache,
+                task_id,
+                status="error",
+                stage="timeout",
+                error="AI анализ занял слишком долго. Попробуйте ещё раз.",
+            )
     except _AI_ANALYSIS_ERRORS as exc:
         logger.error("AI async task %s failed: [%s] %s", task_id, type(exc).__name__, exc)
         err_msg = "AI сервис недоступен. Попробуйте позже."
@@ -744,7 +849,7 @@ async def quick_condition(
 
     try:
         result = await ai.quick_condition(images)
-    except (asyncio.TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
+    except (TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
         logger.error("Quick condition failed: %s", exc)
         err_msg = "AI сервис недоступен"
         if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):

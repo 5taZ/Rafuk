@@ -8,10 +8,10 @@ Configure via .env:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
+from typing import Any
 
 import httpx
 
@@ -20,7 +20,6 @@ from api.config import get_settings
 logger = logging.getLogger(__name__)
 
 AI_QUICK_PHOTO_DEADLINE_S = 20
-AI_TEXT_DEADLINE_S = 45
 
 SYSTEM_PROMPT_TEMPLATE = """\
 Ты — Rafuks AI, эксперт-аналитик объявлений Kufar.by. \
@@ -887,10 +886,10 @@ class AIService:
             photo_condition_notes=photo_condition_notes,
         )
         logger.warning("AI analyze_listing: starting compact text-only report")
-        return await asyncio.wait_for(
-            self._chat(system=system, content=context, max_tokens=1600),
-            timeout=AI_TEXT_DEADLINE_S,
-        )
+        # No inner timeout — the caller (router) controls the deadline via
+        # asyncio.wait_for(timeout=150).  An inner timeout here would fire
+        # first and prevent the outer one from ever being reached.
+        return await self._chat(system=system, content=context, max_tokens=1600)
 
     async def quick_condition(self, image_urls: list[str]) -> dict:
         """Quick condition assessment from photos only."""
@@ -903,7 +902,7 @@ class AIService:
                 content.append(img)
         if len(content) == 1:
             raise ValueError("Не удалось загрузить фото для анализа")
-        result = await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=220)
+        result = await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=400)
         return {
             "condition": _normalize_condition_label(result.get("condition")),
             "notes": _clean_photo_notes(result.get("notes")),

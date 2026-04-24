@@ -49,9 +49,18 @@ class FakeAIService:
             "summary": "Выглядит адекватно, но нужен осмотр.",
         }
 
+    async def quick_condition(self, image_urls: list[str]) -> dict:
+        return {
+            "condition": "Хорошее",
+            "notes": ["Видны лёгкие потёртости на корпусе"],
+        }
+
 
 class FakeOutlierAIService:
     available = True
+
+    async def quick_condition(self, image_urls: list[str]) -> dict:
+        return {"condition": "Удовлетворительное", "notes": []}
 
     async def analyze_listing(self, **kwargs) -> dict:
         del kwargs

@@ -776,6 +776,7 @@ def complete_analysis_sections(
     photo_condition_notes: list[str],
     is_negotiable_price: bool,
     red_flags: list[str],
+    listing_condition: str | None = None,
 ) -> dict[str, Any]:
     completed = dict(result)
     category = detect_category(title, parameters)
@@ -783,13 +784,19 @@ def complete_analysis_sections(
     condition = completed.get("condition")
     if not isinstance(condition, dict):
         condition = {}
-    label = _clean_text(condition.get("label")) or _clean_text(photo_condition_label)
+    label = (
+        _clean_text(condition.get("label"))
+        or _clean_text(photo_condition_label)
+        or _clean_text(listing_condition)
+    )
     notes = [
         _clean_text(note)
         for note in (condition.get("notes") or [])
         if _clean_text(note)
     ]
     notes = _unique_texts(notes + photo_condition_notes, max_items=4)
+    if not notes and listing_condition:
+        notes = [f"Заявленное состояние: {listing_condition}"]
     if label or notes:
         completed["condition"] = {
             "label": label or "Удовлетворительное",
