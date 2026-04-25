@@ -72,7 +72,7 @@ async def test_tracker_callback_creates_lead() -> None:
             select(LeadItem).where(LeadItem.user_id == internal_user_id, LeadItem.ad_id == 101)
         )
         assert lead is not None
-        assert lead.status == "in_progress"
+        assert lead.status == "researching"
         assert lead.source == "telegram_alert"
 
     callback.answer.assert_awaited_once()

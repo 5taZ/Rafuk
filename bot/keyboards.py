@@ -24,11 +24,11 @@ def tracker_alert_keyboard(
     mini_app_url: str,
     *,
     query: str,
-    listing_url: str,
+    listing_url: str | None,
     event_id: int,
 ) -> InlineKeyboardMarkup:
     query_url = f"{mini_app_url}?query={quote_plus(query)}&view=trackers"
-    first_row = []
+    first_row: list[InlineKeyboardButton] = []
     if mini_app_url.startswith("https://"):
         first_row.append(
             InlineKeyboardButton(
@@ -36,9 +36,15 @@ def tracker_alert_keyboard(
                 web_app=WebAppInfo(url=query_url),
             )
         )
-    first_row.append(InlineKeyboardButton(text="Открыть лот", url=listing_url))
-    second_row = [
+    # Telegram requires a non-empty https URL — skip the "Open listing"
+    # button when we don't have one rather than crashing the alert.
+    if listing_url and listing_url.startswith(("http://", "https://")):
+        first_row.append(InlineKeyboardButton(text="Открыть лот", url=listing_url))
+    rows: list[list[InlineKeyboardButton]] = []
+    if first_row:
+        rows.append(first_row)
+    rows.append([
         InlineKeyboardButton(text="В работу", callback_data=f"lead:{event_id}"),
         InlineKeyboardButton(text="Позже", callback_data=f"later:{event_id}"),
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=[first_row, second_row])
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

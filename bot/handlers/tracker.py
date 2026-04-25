@@ -53,7 +53,7 @@ async def handle_tracker_action(callback: CallbackQuery) -> None:
             await callback.answer("Сигнал уже недоступен.", show_alert=True)
             return
 
-        status = "in_progress" if action == "lead" else "deferred"
+        status = "researching" if action == "lead" else "new"
         await upsert_lead(
             session,
             user_id=user_id,

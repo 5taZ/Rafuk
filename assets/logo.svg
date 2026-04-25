@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Rafuk">
+  <defs>
+    <linearGradient id="rafuk-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="rafuk-shine" x1="0" y1="0" x2="0" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tile background with corner-to-corner gradient -->
+  <rect width="64" height="64" rx="14" fill="url(#rafuk-bg)"/>
+  <!-- Subtle top-edge highlight for depth -->
+  <rect width="64" height="64" rx="14" fill="url(#rafuk-shine)"/>
+
+  <!-- Letter R -->
+  <g fill="#ffffff" fill-rule="evenodd">
+    <!-- Stem (full-height vertical bar) -->
+    <path d="M 18 16 H 27 V 48 H 18 Z"/>
+    <!-- Bowl: outer "D" shape with inner "D" hole -->
+    <path d="M 27 16 H 36 A 9 9 0 0 1 36 34 H 27 Z M 27 20 H 33 A 5 5 0 0 1 33 30 H 27 Z"/>
+    <!-- Diagonal leg -->
+    <path d="M 27 34 L 33 34 L 50 48 L 44 48 Z"/>
+  </g>
+</svg>

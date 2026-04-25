@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re as _re
 import secrets
+import time as _time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,12 +15,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ValidationError
 
-from api.dependencies import get_cache, get_telegram_user
+from api.config import get_settings
+from api.dependencies import get_cache, get_kufar_client, get_telegram_user
 from api.schemas import (
     AIAnalysisRequest,
     AIAnalysisResponse,
     AIQuickConditionRequest,
     AIQuickConditionResponse,
+    AIResalePotential,
+    AIResalePrice,
 )
 from api.services.aggregator import normalize_price_byn
 from api.services.ai_guardrails import apply_ai_market_guardrails
@@ -32,10 +37,12 @@ from api.services.ai_marketplace import (
     complete_analysis_sections,
     finalize_red_flags,
 )
-from api.services.ai_service import _normalize_condition_label, get_ai_service
+from api.services.ai_service import get_ai_service, normalize_condition_label
 from api.services.cache import CacheBackend
 from api.services.kufar_client import KufarAPIError, KufarClient
+from api.services.market_signals import anomaly_labels, detect_anomaly_flags
 from api.services.query_pipeline import load_query_dataset
+from api.services.reseller_tools import compute_deal_score
 
 logger = logging.getLogger(__name__)
 
@@ -54,18 +61,51 @@ _AI_ANALYSIS_ERRORS = (
 # ── Async task store ──────────────────────────────────────────────────────
 # Redis-backed when available, with in-process shadow fallback.
 _tasks: dict[str, dict] = {}
-_TASK_TTL = 3600  # 1 hour cleanup
 _exports: dict[str, dict] = {}
-_EXPORT_TTL = 900  # 15 minutes
+
+# Strong references to background asyncio tasks — without this the GC may
+# drop a task before it finishes (documented behaviour in Python 3.12+ for
+# fire-and-forget asyncio.create_task patterns). Tasks self-clean from
+# this set in their done callback.
+_bg_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _spawn_bg_task(coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
+    """Spawn a background task that survives GC until completion."""
+    task = asyncio.create_task(coro, name=name)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return task
+
+
+def _task_ttl() -> int:
+    return int(getattr(get_settings(), "ai_task_ttl", 3600) or 3600)
+
+
+def _export_ttl() -> int:
+    return int(getattr(get_settings(), "ai_export_ttl", 900) or 900)
 
 
 def _prune_old_tasks_shadow() -> None:
     """Remove local shadow tasks older than TTL."""
     now = datetime.now(UTC).timestamp()
+    ttl = _task_ttl()
     expired = [tid for tid, t in _tasks.items()
-               if now - t.get("_created_ts", 0) > _TASK_TTL]
+               if now - t.get("_created_ts", 0) > ttl]
     for tid in expired:
         _tasks.pop(tid, None)
+
+
+async def periodic_prune_shadow_stores() -> None:
+    """Background task: periodically prune in-memory shadow stores.
+
+    Called from the API lifespan so that _tasks and _exports dicts
+    don't grow unbounded between task creation events.
+    """
+    while True:
+        await asyncio.sleep(300)  # every 5 minutes
+        _prune_old_tasks_shadow()
+        _prune_old_exports()
 
 
 def _task_cache_key(task_id: str) -> str:
@@ -100,7 +140,7 @@ async def _set_task(cache: CacheBackend, task_id: str, task: dict[str, Any]) -> 
     if "_updated_ts" not in task:
         task["_updated_ts"] = datetime.now(UTC).timestamp()
     _tasks[task_id] = task
-    await cache.set_json(_task_cache_key(task_id), task, ttl=_TASK_TTL)
+    await cache.set_json(_task_cache_key(task_id), task, ttl=_task_ttl())
     return task
 
 
@@ -123,9 +163,10 @@ def _prune_old_exports() -> None:
     if not _exports:
         return
     now = datetime.now(UTC).timestamp()
+    ttl = _export_ttl()
     expired = [
         token for token, item in _exports.items()
-        if now - item.get("_created_ts", 0) > _EXPORT_TTL
+        if now - item.get("_created_ts", 0) > ttl
     ]
     for token in expired:
         _exports.pop(token, None)
@@ -201,9 +242,40 @@ def _parse_list_age_days(list_time_str: str | None) -> int | None:
         return None
 
 
-async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cache) -> None:
+def _build_resale_potential(resale_data: Any) -> AIResalePotential | None:
+    """Build the AIResalePotential pydantic model from a raw dict.
+
+    Returns None when the input doesn't look like a valid resale block.
+    Used in both the success and TimeoutError fallback paths to avoid
+    duplicating ~20 lines of nested conditionals.
+    """
+    if not isinstance(resale_data, dict):
+        return None
+    try:
+        return AIResalePotential(
+            fast_price=AIResalePrice(**resale_data["fast_price"])
+            if isinstance(resale_data.get("fast_price"), dict)
+            else None,
+            market_price=AIResalePrice(**resale_data["market_price"])
+            if isinstance(resale_data.get("market_price"), dict)
+            else None,
+            optimal_price=AIResalePrice(**resale_data["optimal_price"])
+            if isinstance(resale_data.get("optimal_price"), dict)
+            else None,
+            reasoning=resale_data.get("reasoning", ""),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cache, kufar_client: KufarClient) -> None:
     """Background coroutine: does the full analysis and updates the task store."""
     ai = get_ai_service()
+
+    # Read configurable timeouts from settings
+    analysis_timeout = getattr(settings, "ai_analysis_timeout", 150)
+    photo_precheck_timeout = getattr(settings, "ai_photo_precheck_timeout", 30)
+    fallback_cache_ttl = getattr(settings, "ai_fallback_cache_ttl", 1800)
 
     safe_query = payload.query.replace("\n", " ")[:80]
     logger.info(
@@ -235,7 +307,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         async def _search_one(attempt: dict):
             ds = await load_query_dataset(
                 query=payload.query, currency="BYN", settings=settings,
-                client_factory=KufarClient, **attempt,
+                client=kufar_client, **attempt,
             )
             target = next(
                 (ad for ad in ds.ads if int(ad.get("ad_id", 0)) == payload.ad_id), None,
@@ -363,12 +435,8 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         photo_condition_label = ""
         photo_condition_notes: list[str] = []
         if stats:
-            from api.services.market_signals import anomaly_labels as _anomaly_labels
-            from api.services.reseller_tools import compute_deal_score as _compute_deal_score
-
-            raw_flags = []
+            raw_flags: list[Any] = []
             try:
-                from api.services.market_signals import detect_anomaly_flags
                 raw_flags = detect_anomaly_flags(target_ad, stats)
             except (AttributeError, KeyError, TypeError, ValueError):
                 logger.warning(
@@ -376,9 +444,9 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                     payload.ad_id,
                     exc_info=True,
                 )
-            target_anomaly_labels = _anomaly_labels(raw_flags)
+            target_anomaly_labels = anomaly_labels(raw_flags)
             try:
-                deal = _compute_deal_score(target_ad, query=payload.query, market_stats=stats)
+                deal = compute_deal_score(target_ad, query=payload.query, market_stats=stats)
                 target_deal_score = deal.score
                 target_deal_verdict = deal.verdict
             except (AttributeError, KeyError, TypeError, ValueError):
@@ -392,7 +460,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             await _update_task(cache, task_id, progress=40, stage="photo_precheck")
             logger.info("AI task %s stage=photo_precheck images=%d", task_id, len(images))
             try:
-                quick_photo = await asyncio.wait_for(ai.quick_condition(images[:1]), timeout=30)
+                quick_photo = await asyncio.wait_for(ai.quick_condition(images[:1]), timeout=photo_precheck_timeout)
                 photo_condition_label = str(quick_photo.get("condition") or "").strip()
                 photo_condition_notes = [
                     str(note).strip()
@@ -427,7 +495,6 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             len(ai_similar_for_comparison),
         )
 
-        import time as _time
         _t0 = _time.monotonic()
         logger.info(
             "AI async task %s: calling ai.analyze_listing_parallel for '%s' (%d imgs, %d similar)",
@@ -443,15 +510,24 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             # sub-calls (Price & Market / Condition & Risks), so wall-clock
             # time ≈ max(A, B) instead of A + B.
             async def _run_parallel_with_progress():
-                # Fire a background progress updater while the AI calls run
+                # Fire a background progress updater while the AI calls run.
+                # Smoother steps prevent the bar from stalling at any
+                # single milestone — the AI call typically takes 30-90s,
+                # so we creep through (55, 60, 65, 70, 74, 78) over ~42s
+                # with a final hold at 80 to avoid passing 85 prematurely.
                 async def _progress_pump():
-                    for pct, stage in [
-                        (55, "calling_ai"),
-                        (62, "calling_ai"),
-                        (70, "calling_ai"),
-                    ]:
-                        await asyncio.sleep(8)
-                        await _update_task(cache, task_id, progress=pct, stage=stage)
+                    steps: list[tuple[int, float]] = [
+                        (55, 6.0),
+                        (60, 6.0),
+                        (65, 7.0),
+                        (70, 7.0),
+                        (74, 8.0),
+                        (78, 8.0),
+                        (80, 12.0),
+                    ]
+                    for pct, delay in steps:
+                        await asyncio.sleep(delay)
+                        await _update_task(cache, task_id, progress=pct, stage="calling_ai")
 
                 pump_task = asyncio.create_task(_progress_pump())
                 try:
@@ -483,7 +559,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 finally:
                     pump_task.cancel()
 
-            result = await asyncio.wait_for(_run_parallel_with_progress(), timeout=150)
+            result = await asyncio.wait_for(_run_parallel_with_progress(), timeout=analysis_timeout)
         except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
             logger.warning(
                 "AI task %s: httpx %s — converting to TimeoutError",
@@ -562,25 +638,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             market_q3=q3,
         )
 
-        resale_data = result.get("resale_potential")
-        resale_potential = None
-        if resale_data and isinstance(resale_data, dict):
-            from api.schemas import AIResalePotential, AIResalePrice
-            resale_potential = AIResalePotential(
-                fast_price=AIResalePrice(**resale_data["fast_price"])
-                if resale_data.get("fast_price")
-                and isinstance(resale_data["fast_price"], dict)
-                else None,
-                market_price=AIResalePrice(**resale_data["market_price"])
-                if resale_data.get("market_price")
-                and isinstance(resale_data["market_price"], dict)
-                else None,
-                optimal_price=AIResalePrice(**resale_data["optimal_price"])
-                if resale_data.get("optimal_price")
-                and isinstance(resale_data["optimal_price"], dict)
-                else None,
-                reasoning=resale_data.get("reasoning", ""),
-            )
+        resale_potential = _build_resale_potential(result.get("resale_potential"))
 
         response = AIAnalysisResponse(
             ad_id=payload.ad_id,
@@ -588,7 +646,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 result.get("condition")
                 or (
                     {
-                        "label": _normalize_condition_label(photo_condition_label),
+                        "label": normalize_condition_label(photo_condition_label),
                         "confidence": 0.72 if photo_condition_label else 0.0,
                         "notes": photo_condition_notes,
                     }
@@ -615,9 +673,9 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         await _update_task(cache, task_id, progress=95, stage="building_response")
 
         # Cache result (use cache passed from endpoint)
-        cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
+        cache_key = f"ai_analysis:v4:{payload.ad_id}:{payload.query}:cat={payload.category}"
         serialized = response.model_dump(by_alias=True)
-        await cache.set_json(cache_key, serialized, ttl=3600)
+        await cache.set_json(cache_key, serialized, ttl=_task_ttl())
 
         await _update_task(
             cache,
@@ -693,31 +751,13 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 disclaimer=DISCLAIMER,
             )
             # Build resale_potential from fallback data if available
-            resale_data = fallback_result.get("resale_potential")
-            if resale_data and isinstance(resale_data, dict):
-                from api.schemas import AIResalePotential, AIResalePrice
-                try:
-                    response.resale_potential = AIResalePotential(
-                        fast_price=AIResalePrice(**resale_data["fast_price"])
-                        if resale_data.get("fast_price")
-                        and isinstance(resale_data["fast_price"], dict)
-                        else None,
-                        market_price=AIResalePrice(**resale_data["market_price"])
-                        if resale_data.get("market_price")
-                        and isinstance(resale_data["market_price"], dict)
-                        else None,
-                        optimal_price=AIResalePrice(**resale_data["optimal_price"])
-                        if resale_data.get("optimal_price")
-                        and isinstance(resale_data["optimal_price"], dict)
-                        else None,
-                        reasoning=resale_data.get("reasoning", ""),
-                    )
-                except (KeyError, TypeError, ValueError):
-                    pass
+            response.resale_potential = _build_resale_potential(
+                fallback_result.get("resale_potential")
+            )
             # Cache the fallback result too
-            cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
+            cache_key = f"ai_analysis:v4:{payload.ad_id}:{payload.query}:cat={payload.category}"
             fallback_serialized = response.model_dump(by_alias=True)
-            await cache.set_json(cache_key, fallback_serialized, ttl=1800)
+            await cache.set_json(cache_key, fallback_serialized, ttl=fallback_cache_ttl)
             await _update_task(
                 cache,
                 task_id,
@@ -771,13 +811,14 @@ async def analyze_listing(
     payload: AIAnalysisRequest,
     request: Request,
     _user=Depends(get_telegram_user),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ):
     """Start async AI analysis. Returns task_id immediately for polling."""
     _check_ai_available()
 
     # Check cache BEFORE rate limit — cached results return immediately
     cache = get_cache(request)
-    cache_key = f"ai_analysis:v3:{payload.ad_id}:{payload.query}:cat={payload.category}"
+    cache_key = f"ai_analysis:v4:{payload.ad_id}:{payload.query}:cat={payload.category}"
     cached = await cache.get_json(cache_key)
     if cached:
         return {"task_id": None, "cached": True, "result": cached}
@@ -786,7 +827,6 @@ async def analyze_listing(
 
     settings = getattr(request.app.state, "settings", None)
     if settings is None:
-        from api.config import get_settings
         settings = get_settings()
 
     # Create background task
@@ -803,9 +843,62 @@ async def analyze_listing(
     }
     await _set_task(cache, task_id, task)
 
-    asyncio.create_task(_run_analysis(task_id, payload, settings, cache))
+    # Use _spawn_bg_task instead of bare asyncio.create_task — without a
+    # strong reference Python's GC can drop the task before completion.
+    _spawn_bg_task(
+        _run_analysis(task_id, payload, settings, cache, kufar_client),
+        name=f"ai-analysis-{task_id[:8]}",
+    )
 
     return {"task_id": task_id}
+
+
+# ── XSS sanitization for export HTML ──────────────────────────────────────
+# Defence-in-depth: even with a strict CSP we strip dangerous tags and
+# attributes server-side so that the export remains safe when the CSP is
+# accidentally relaxed (e.g. opened outside the export route).
+_XSS_PAIRED_TAGS = (
+    "script", "iframe", "object", "embed", "applet",
+    "form", "svg", "frame", "frameset", "title", "style",
+)
+# Tags that MUST NOT appear in the export at all — including self-closing.
+_XSS_VOID_TAGS = (
+    "script", "iframe", "object", "embed", "applet",
+    "link", "meta", "base", "svg", "frame", "frameset",
+)
+_XSS_PAIRED_TAG_PATTERNS = [
+    _re.compile(
+        rf"<\s*{tag}\b[^>]*>.*?<\s*/\s*{tag}\s*>",
+        flags=_re.DOTALL | _re.IGNORECASE,
+    )
+    for tag in _XSS_PAIRED_TAGS
+]
+_XSS_VOID_TAG_RE = _re.compile(
+    r"<\s*(?:" + "|".join(_XSS_VOID_TAGS) + r")\b[^>]*/?\s*>",
+    flags=_re.IGNORECASE,
+)
+_XSS_EVENT_HANDLER_RE = _re.compile(
+    r"\son\w+\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)",
+    flags=_re.IGNORECASE,
+)
+# Match dangerous URL schemes inside href/src/action attributes.
+# Allow https:, http:, mailto:, tel:, data: (images only), and relative URLs.
+_XSS_DANGEROUS_URL_ATTR_RE = _re.compile(
+    r"(\s(?:href|src|action|formaction|xlink:href|background|cite|poster|srcset)\s*=\s*)"
+    r"(\"|')\s*(?:javascript|vbscript|data:(?!image/)|about|file)\s*:[^\"'>]*\2",
+    flags=_re.IGNORECASE,
+)
+
+
+def _sanitize_export_html(html: str) -> str:
+    """Strip XSS vectors from user-provided HTML before storing it."""
+    sanitized = html
+    for pattern in _XSS_PAIRED_TAG_PATTERNS:
+        sanitized = pattern.sub("", sanitized)
+    sanitized = _XSS_VOID_TAG_RE.sub("", sanitized)
+    sanitized = _XSS_EVENT_HANDLER_RE.sub("", sanitized)
+    sanitized = _XSS_DANGEROUS_URL_ATTR_RE.sub(r"\1\2#\2", sanitized)
+    return sanitized
 
 
 @router.post("/export-report")
@@ -820,6 +913,8 @@ async def create_export_report(
         raise HTTPException(status_code=400, detail="Пустой HTML отчёта")
     if len(html) > 300_000:
         raise HTTPException(status_code=400, detail="HTML отчёта слишком большой")
+
+    html = _sanitize_export_html(html)
 
     _prune_old_exports()
     token = secrets.token_urlsafe(18)
@@ -849,7 +944,7 @@ async def get_export_report(token: str):
                 "default-src 'none'; "
                 "img-src https: data:; "
                 "style-src 'unsafe-inline'; "
-                "script-src 'unsafe-inline'; "
+                "script-src 'none'; "
                 "base-uri 'none'; "
                 "form-action 'none'; "
                 "frame-ancestors 'none'; "
@@ -864,6 +959,7 @@ async def quick_condition(
     payload: AIQuickConditionRequest,
     request: Request,
     _user=Depends(get_telegram_user),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ):
     """Quick condition assessment from listing photos."""
     ai = _check_ai_available()
@@ -871,8 +967,6 @@ async def quick_condition(
 
     settings = getattr(request.app.state, "settings", None)
     if settings is None:
-        from api.config import get_settings
-
         settings = get_settings()
 
     dataset = await load_query_dataset(
@@ -880,7 +974,7 @@ async def quick_condition(
         currency="BYN",
         strict_search=False,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
         category=payload.category,
     )
 
@@ -900,8 +994,9 @@ async def quick_condition(
     if not images:
         raise HTTPException(status_code=400, detail="Нет фото для анализа")
 
+    quick_condition_timeout = getattr(settings, "ai_quick_condition_timeout", 45)
     try:
-        result = await asyncio.wait_for(ai.quick_condition(images), timeout=45)
+        result = await asyncio.wait_for(ai.quick_condition(images), timeout=quick_condition_timeout)
     except (TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
         logger.error("Quick condition failed: %s", exc)
         err_msg = "AI сервис недоступен"

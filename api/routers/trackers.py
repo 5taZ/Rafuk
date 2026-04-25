@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from api.config import get_settings
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
@@ -152,8 +153,8 @@ async def create_tracker(
             first_name=telegram_user.first_name,
         )
 
-        # Enforce per-user max tracker limit
-        max_trackers_per_user = 50
+        # Enforce per-user max tracker limit (from config)
+        max_trackers_per_user = get_settings().max_trackers_per_user
         existing_count = await session.execute(
             select(func.count(Tracker.id)).where(
                 Tracker.user_id == user_id,

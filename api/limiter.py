@@ -7,6 +7,8 @@ falls back to client IP for public endpoints.
 from __future__ import annotations
 
 import logging
+import socket
+from urllib.parse import urlparse
 
 from fastapi import Request
 from slowapi import Limiter
@@ -24,26 +26,51 @@ def _rate_limit_key(request: Request) -> str:
     return get_remote_address(request)
 
 
+def _redis_reachable(url: str, *, timeout: float = 0.3) -> bool:
+    """Quick TCP probe to decide whether to use Redis or fall back to memory.
+
+    slowapi's Limiter doesn't ping at construction — it only fails on the
+    first INCR. If Redis is down, every request would 500 with
+    `ConnectionError: 111 Connection refused`. So we probe up-front.
+    """
+    try:
+        parsed = urlparse(url)
+    except (ValueError, TypeError):
+        return False
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 6379
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def _create_limiter() -> Limiter:
-    """Create the limiter, preferring Redis storage when available."""
+    """Create the limiter, preferring Redis storage when available.
+
+    Uses the REDIS_URL env var if set. Probes Redis with a short TCP
+    connect; if unreachable, falls back to in-memory storage so that
+    requests continue to succeed (rate limits become per-process).
+    """
     try:
         from api.config import get_settings
 
         settings = get_settings()
-        import redis
-
-        r = redis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            socket_connect_timeout=0.5,
-        )
-        # Verify connectivity
-        r.ping()
-        logger.info("Rate limiter using Redis storage")
-        return Limiter(key_func=_rate_limit_key, storage_uri=settings.redis_url)
+        storage_uri = settings.redis_url or ""
     except Exception:
-        logger.info("Rate limiter using in-memory storage (Redis unavailable)")
-        return Limiter(key_func=_rate_limit_key)
+        logger.info("Rate limiter using in-memory storage (Settings unavailable)")
+        return Limiter(key_func=_rate_limit_key, storage_uri="memory://")
+
+    if storage_uri.startswith(("redis://", "rediss://", "unix://")) and _redis_reachable(storage_uri):
+        logger.info("Rate limiter configured with Redis storage URI")
+        return Limiter(key_func=_rate_limit_key, storage_uri=storage_uri)
+
+    logger.warning(
+        "Rate limiter using in-memory storage — Redis at %s is unreachable",
+        storage_uri or "<unset>",
+    )
+    return Limiter(key_func=_rate_limit_key, storage_uri="memory://")
 
 
 limiter = _create_limiter()

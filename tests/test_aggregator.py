@@ -64,7 +64,11 @@ def test_filter_deal_ads_respects_discount_threshold(sample_ads: list[dict[str, 
 
 
 def test_filter_deal_ads_supports_discount_range(sample_ads: list[dict[str, object]]) -> None:
-    result = filter_deal_ads(sample_ads[:4], 22.0, 5.0, 10.0)
+    # Sample ads have prices [1800, 2000, 2200, 2500] which after kopecks
+    # normalization become BYN [18, 20, 22, 25]; median is 21. So ad #1
+    # (price 20) sits ~4.8% below the median, ad #4 (price 18) ~14.3%.
+    # A 3-6% window must capture only ad #1.
+    result = filter_deal_ads(sample_ads[:4], 22.0, 3.0, 6.0)
     assert [item["ad_id"] for item in result] == [1]
 
 

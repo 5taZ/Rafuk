@@ -5,7 +5,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from api.config import Settings
-from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.dependencies import (
+    get_cache,
+    get_currency_service,
+    get_kufar_client,
+    get_settings_dependency,
+)
 from api.limiter import limiter
 from api.schemas import ListingDetailResponse
 from api.services.aggregator import compute_category_price_stats
@@ -33,6 +38,7 @@ async def get_listing_detail(
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> ListingDetailResponse:
     cache_key = (
         f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}:{category}:"
@@ -47,7 +53,7 @@ async def get_listing_detail(
         currency=currency,
         strict_search=strict_search,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
         reference_context=reference_context,
         category=category,
     )

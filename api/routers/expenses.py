@@ -45,7 +45,7 @@ async def create_expense(
         expense = DealExpense(
             lead_id=lead_id,
             user_id=user_id,
-            expense_type=payload.expense_type,
+            expense_type=payload.expense_type.value,
             amount_byn=payload.amount_byn,
             notes=payload.notes,
             expense_date=payload.expense_date or datetime.now(UTC),
@@ -106,7 +106,7 @@ async def update_expense(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
 
         if payload.expense_type is not None:
-            expense.expense_type = payload.expense_type
+            expense.expense_type = payload.expense_type.value
         if payload.amount_byn is not None:
             expense.amount_byn = payload.amount_byn
         if payload.notes is not None:

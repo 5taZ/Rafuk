@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     alert_check_interval: int = 30
     cache_ttl_seconds: int = 300
     auto_remove_missing_days: int = 7
+    max_trackers_per_user: int = 50
     debug: bool = False
     db_pool_size: int = 10
     db_max_overflow: int = 20
@@ -38,6 +39,20 @@ class Settings(BaseSettings):
     ai_cache_hours: int = 1
     ai_hourly_limit: int = 10
     ai_proxy_url: str | None = None
+    ai_analysis_timeout: int = 150
+    ai_quick_condition_timeout: int = 45
+    ai_photo_precheck_timeout: int = 30
+    ai_task_ttl: int = 3600
+    ai_export_ttl: int = 900
+    ai_fallback_cache_ttl: int = 1800
+
+    # Result size limits
+    max_compare_queries: int = 2
+    max_deal_ads_per_query: int = 20
+    max_opportunity_items: int = 12
+    max_opportunity_signals: int = 4
+    max_saved_searches_for_board: int = 8
+    max_recent_tracker_events: int = 6
 
     @field_validator("api_base_url", "mini_app_url")
     @classmethod

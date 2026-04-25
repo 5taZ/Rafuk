@@ -5,11 +5,17 @@ import logging
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from aiogram import Bot
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramForbiddenError,
+    TelegramNotFound,
+    TelegramRetryAfter,
+    TelegramUnauthorizedError,
+)
 from aiogram.types import InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import httpx
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -17,7 +23,7 @@ from sqlalchemy.orm import joinedload
 
 from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
-from api.models import Tracker, TrackerEvent
+from api.models import QueryListingState, Tracker, TrackerEvent, WatchlistItem
 from api.services.aggregator import (
     apply_search_mode,
     build_query_key,
@@ -68,14 +74,17 @@ async def notify_user(
 ) -> bool:
     """Send message to user via telegram_user_id.
 
-    Returns False if tracker should be deactivated.
+    Returns False if tracker should be deactivated (user blocked/deleted bot
+    or chat is no longer reachable). Other transient telegram errors are
+    logged but the tracker stays active so the next tick can retry.
     """
     try:
         await bot.send_message(telegram_user_id, message, reply_markup=reply_markup)
         return True
-    except TelegramForbiddenError:
+    except (TelegramForbiddenError, TelegramUnauthorizedError, TelegramNotFound):
+        # User blocked the bot or deleted the chat — disable all their
+        # active trackers so we stop spamming the failing chat_id.
         if internal_user_id is not None:
-            # Mark tracker as inactive - caller will commit
             await session.execute(
                 update(Tracker)
                 .where(
@@ -85,6 +94,21 @@ async def notify_user(
                 .values(active=False)
             )
         return False
+    except TelegramRetryAfter as exc:
+        logger.warning(
+            "Telegram rate limit hit for user %d, retry_after=%ss",
+            telegram_user_id,
+            getattr(exc, "retry_after", "?"),
+        )
+        return True  # Keep tracker active, next tick will retry
+    except TelegramAPIError as exc:
+        logger.warning(
+            "Telegram API error sending to user %d: [%s] %s",
+            telegram_user_id,
+            type(exc).__name__,
+            exc,
+        )
+        return True  # Keep tracker active for unknown / transient errors
 
 
 async def _recent_event_keys(
@@ -492,8 +516,6 @@ async def cleanup_old_events(session: AsyncSession, days: int = 30) -> int:
 
 async def cleanup_inactive_listing_states(session: AsyncSession, days: int = 90) -> int:
     """Delete inactive listing states older than specified days."""
-    from api.models import QueryListingState
-
     cutoff = datetime.now(UTC) - timedelta(days=days)
     result = await session.execute(
         delete(QueryListingState).where(
@@ -513,8 +535,6 @@ async def cleanup_inactive_listing_states(session: AsyncSession, days: int = 90)
 
 async def cleanup_stale_missing_watchlist(session: AsyncSession, days: int = 7) -> int:
     """Auto-remove watchlist items that have been missing for longer than the threshold."""
-    from api.models import WatchlistItem
-
     cutoff = datetime.now(UTC) - timedelta(days=days)
     result = await session.execute(
         delete(WatchlistItem).where(

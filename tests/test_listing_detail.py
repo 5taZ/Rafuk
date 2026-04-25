@@ -64,12 +64,13 @@ class FakeKufarClient:
 
 
 def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listing_detail
 
     monkeypatch.setattr(listing_detail, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
@@ -95,12 +96,13 @@ def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
 
 
 def test_listing_detail_not_found(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listing_detail
 
     monkeypatch.setattr(listing_detail, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
@@ -113,7 +115,7 @@ def test_listing_detail_not_found(monkeypatch) -> None:
 
 
 def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listing_detail
 
@@ -233,6 +235,7 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
 
     monkeypatch.setattr(listing_detail, "KufarClient", CategoryDriftClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: CategoryDriftClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:

@@ -67,12 +67,13 @@ class FakeKufarClient:
 
 
 def test_geography_endpoint_returns_region_stats(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import geography
 
     monkeypatch.setattr(geography, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 

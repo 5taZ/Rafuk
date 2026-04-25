@@ -12,7 +12,7 @@ from api.services.aggregator import (
     tokenize_search_text,
 )
 from api.services.ai_guardrails import contains_financing_bait
-from api.services.ai_service import _normalize_condition_label, detect_category
+from api.services.ai_service import detect_category, normalize_condition_label
 from api.services.listing_mapper import first_image_url
 from api.services.reseller_tools import analyze_query_text
 
@@ -180,6 +180,38 @@ _CATEGORY_GENERIC_TOKENS: dict[str, set[str]] = {
         "laptop", "ноутбук", "macbook", "ультрабук", "gaming", "игровой",
     },
 }
+
+
+# ── Similarity scoring weights ────────────────────────────────────────────
+# These weights define how strongly each signal contributes to the score
+# of a candidate alternative listing. They are tuned together (raising one
+# without raising the threshold makes weaker matches pass through).
+# Keep these in one place so future tuning is auditable.
+
+# Cohort weight: how trustworthy the source pool is (strict same-category
+# match scores higher than a broad query-only match).
+COHORT_WEIGHT_STRICT_CATEGORY = 26.0
+COHORT_WEIGHT_BROAD_CATEGORY = 18.0
+COHORT_WEIGHT_BROAD_QUERY = 10.0
+
+# Query/title similarity bonuses (token-overlap based).
+QUERY_TOKEN_COVERAGE_BONUS = 16.0  # multiplied by coverage ratio (0..1)
+QUERY_TOKEN_PER_OVERLAP_BONUS = 1.5  # per overlapping token
+TITLE_TOKEN_COVERAGE_BONUS = 12.0  # multiplied by coverage ratio (0..1)
+
+# Parameter similarity scoring.
+PARAM_EXACT_MATCH_BONUS = 4.0
+PARAM_SUBSTRING_MATCH_BONUS = 2.0
+PARAM_MISMATCH_PENALTY = -1.5
+
+# Hard cut-off: candidates below this combined score are dropped.
+# Raising this value makes the alternative pool smaller but cleaner.
+SIMILARITY_MIN_SCORE = 24.0
+
+# Sentinel used by _auto_parts_similarity_bonus to mark "incompatible" —
+# the caller checks the boolean compatibility flag, but the score is set
+# very low so any accidental use also rejects the candidate.
+INCOMPATIBLE_PART_SCORE = -999.0
 
 
 @dataclass(slots=True, frozen=True)
@@ -440,11 +472,11 @@ def finalize_red_flags(
 
 def _cohort_weight(cohort_key: str) -> float:
     if cohort_key == "strict_category":
-        return 26.0
+        return COHORT_WEIGHT_STRICT_CATEGORY
     if cohort_key == "broad_category":
-        return 18.0
+        return COHORT_WEIGHT_BROAD_CATEGORY
     if cohort_key == "broad_query":
-        return 10.0
+        return COHORT_WEIGHT_BROAD_QUERY
     return 0.0
 
 
@@ -598,10 +630,45 @@ _CATEGORY_WATCH_OUT: dict[str, list[tuple[str, str]]] = {
         ("Затвор", "Уточни пробег затвора и сравни его с ресурсом модели."),
         ("Стабилизация и видео", "Проверь автофокус, стабилизацию и запись видео без артефактов."),
     ],
+    "animal": [
+        ("Здоровье и документы", "Уточни прививки, чипирование и наличие ветпаспорта или родословной."),
+        ("Условия содержания", "Спроси про питание, режим, причину продажи и текущее самочувствие."),
+        ("Поведение и социализация", "Постарайся посмотреть животное вживую — пугливость и агрессия видны сразу."),
+    ],
+    "clothing": [
+        ("Состояние ткани", "Осмотри пятна, катышки, потёртости и швы на изгибах."),
+        ("Размер и посадка", "Сверь размер по бирке с реальными замерами — производители часто врут."),
+        ("Оригинальность", "Для брендовых вещей проверь логотипы, бирки, фурнитуру и упаковку — подделок много."),
+    ],
+    "baby": [
+        ("Безопасность", "Для колясок и автокресел обязательно проверь год выпуска и историю использования."),
+        ("Износ и комплект", "Осмотри ремни, крепления, стирку и наличие инструкции/документов."),
+        ("Гигиена", "Для предметов личной гигиены (соски, бутылочки) лучше брать новые или в идеальном состоянии."),
+    ],
+    "tools": [
+        ("Работоспособность", "Проверь инструмент под нагрузкой, а не только включение."),
+        ("Расходники и комплект", "Уточни состояние батарей, патрона/цепи, наличие зарядки и кейса."),
+        ("История использования", "Спроси, насколько интенсивно использовали — для бытового и профессионального ресурс разный."),
+    ],
+    "sports": [
+        ("Состояние под нагрузкой", "Попроси примерить или попробовать — дефекты часто проявляются только в работе."),
+        ("Износ трущихся частей", "Проверь подшипники, лезвия, скользяк, крепления — это первые расходники."),
+        ("Сезон и хранение", "Уточни, как хранили в межсезонье — сырость и солнце убивают спортивный инвентарь."),
+    ],
+    "books": [
+        ("Состояние страниц", "Проверь, нет ли вырванных или загнутых листов, пятен и подчёркиваний."),
+        ("Переплёт и обложка", "Осмотри корешок и углы — расклеенный переплёт это уже расход."),
+        ("Комплектность", "Для коллекционных изданий уточни наличие суперобложки, футляра и автографа, если он заявлен."),
+    ],
+    "plants": [
+        ("Здоровье растения", "Осмотри листья и стебель на следы вредителей, плесени и заболеваний."),
+        ("Корневая система", "По возможности попроси аккуратно достать растение из горшка — гниль корней не видна снаружи."),
+        ("Условия и пересадка", "Уточни режим полива, освещение и нужна ли срочная пересадка после переезда."),
+    ],
     "default": [
         ("Состояние", "Сверь фото, описание и фактические следы износа, чтобы не купить товар хуже заявленного."),
-        ("Комплект", "Уточни, что реально входит в комплект и нет ли скрытых недостающих частей."),
-        ("Проверка на месте", "Договорись о демонстрации ключевых функций до оплаты."),
+        ("Комплект и документы", "Уточни, что реально входит в комплект, есть ли документы, чек и оригинальная упаковка."),
+        ("Проверка на месте", "Договорись о демонстрации ключевых функций или примерке/осмотре до оплаты."),
     ],
 }
 
@@ -641,12 +708,61 @@ _CATEGORY_CHECKLIST: dict[str, list[str]] = {
         "Попроси видео работы или проверку на стенде, если это возможно.",
         "Заранее договорись о возврате при несовместимости.",
     ],
+    "animal": [
+        "Попроси показать ветпаспорт, прививки и (если есть) родословную.",
+        "Уточни, чем кормят, режим прогулок/туалета и привычки.",
+        "Понаблюдай поведение: пугливость, агрессия, реакция на людей.",
+        "Спроси про прежние болезни, операции и хронические особенности.",
+        "Договорись посмотреть условия содержания вживую, а не только по фото.",
+    ],
+    "clothing": [
+        "Сверь реальные замеры (длина, обхват) с заявленным размером.",
+        "Осмотри швы, молнии, пуговицы и подкладку под ярким светом.",
+        "Проверь пятна, катышки и следы стирки на проблемных зонах (подмышки, манжеты, низ).",
+        "Для брендовых вещей сверь логотипы, бирки и фурнитуру с оригинальными фото.",
+        "Если возможно — примерь до оплаты.",
+    ],
+    "baby": [
+        "Сверь дату выпуска (для автокресел/колясок — критично).",
+        "Проверь все ремни, крепления и замки на исправность.",
+        "Осмотри ткани и пластик на пятна, трещины и следы дефектов.",
+        "Уточни, единственный ли это владелец и как использовали (ребёнок какого возраста).",
+        "Попроси показать инструкцию и документы, если они должны быть.",
+    ],
+    "tools": [
+        "Включи инструмент и попробуй под нагрузкой (резать, сверлить, шлифовать).",
+        "Послушай шум двигателя/редуктора — посторонние звуки = ремонт.",
+        "Проверь батарею (для аккумуляторного) и кабель (для сетевого).",
+        "Осмотри патрон, диск, цепь, оснастку — расходники могут стоить как сам инструмент.",
+        "Уточни наличие зарядки, кейса и оригинального комплекта.",
+    ],
+    "sports": [
+        "Попроси примерить или попробовать инвентарь — статичная проверка не выявит дефекты.",
+        "Осмотри металлические и пластиковые части на трещины и деформации.",
+        "Проверь крепления, ремни, замки и подвижные элементы.",
+        "Для электроники тренажёров — все режимы, дисплей, датчики пульса.",
+        "Уточни, как хранили в межсезонье и не было ли падений/перегрузок.",
+    ],
+    "books": [
+        "Пролистай книгу — проверь, нет ли вырванных или склеенных страниц.",
+        "Осмотри корешок и углы обложки на разрывы и потёртости.",
+        "Проверь записи и подчёркивания внутри (особенно для учебников).",
+        "Для коллекционных — уточни тираж, год издания и наличие супера/футляра.",
+        "Для пластинок — попроси проиграть пробный трек, чтобы услышать царапины.",
+    ],
+    "plants": [
+        "Осмотри листья сверху и снизу — паутинка, тля, белёсый налёт.",
+        "Понюхай землю — кислый запах = залив и гниль корней.",
+        "Если возможно, аккуратно достань растение из горшка и посмотри корни.",
+        "Уточни режим полива, освещение и температуру в текущих условиях.",
+        "Спроси, давно ли пересаживали и не нужна ли пересадка прямо сейчас.",
+    ],
     "default": [
         "Сверь модель, версию и комплектацию с объявлением.",
-        "Проверь ключевые функции товара до оплаты.",
-        "Осмотри корпус, экран, разъёмы и следы вскрытия.",
-        "Уточни комплект, документы и историю использования.",
-        "Сравни состояние на месте с фото из объявления.",
+        "Проверь ключевые функции товара до оплаты (включи, попробуй, примерь).",
+        "Осмотри товар на видимые дефекты, следы использования и ремонта.",
+        "Уточни комплект, документы, чек и историю использования.",
+        "Сравни состояние на месте с фото из объявления — расхождения это повод торговаться.",
     ],
 }
 
@@ -786,11 +902,51 @@ def _build_fallback_negotiation_tips(
             "Проверь циклы батареи и SMART диска при встрече — если циклов "
             "больше 400 или диск «жёлтый», это минус 100–200 BYN от цены."
         )
+    elif category == "animal":
+        tips.append(
+            "Заложи в торг будущие траты: вакцинация, кастрация, корм. "
+            "Назови сумму прямо: «Прививки на полгода стоят X BYN, давайте учтём»."
+        )
+    elif category == "clothing":
+        tips.append(
+            "Торгуйся от конкретных следов носки: каждое пятно или катышек "
+            "= минус 5-10% от цены. Сравни с ценой нового аналога в магазине "
+            "и отнимай за б/у не меньше 30%."
+        )
+    elif category == "baby":
+        tips.append(
+            "Аргумент сильный: детские вещи быстро перерастаются. "
+            "Сошлись на короткий срок использования и попроси скидку "
+            "за следы носки и стирки."
+        )
+    elif category == "tools":
+        tips.append(
+            "При встрече попроси проверить инструмент под нагрузкой. "
+            "Износ батареи, изношенный патрон или щётки — это минус "
+            "30-100 BYN, не стесняйся озвучивать."
+        )
+    elif category == "sports":
+        tips.append(
+            "Проверь инвентарь под нагрузкой и осмотри трущиеся части. "
+            "Замена подшипников/лезвий/креплений — это реальная стоимость "
+            "восстановления, закладывай её в торг."
+        )
+    elif category == "books":
+        tips.append(
+            "Сравни цену с новым изданием в книжном магазине. "
+            "Для б/у нормальный дисконт 40-60%, а с дефектами и пометками — больше."
+        )
+    elif category == "plants":
+        tips.append(
+            "Если найдёшь следы вредителей или признаки залива, "
+            "это серьёзный повод сбить цену или отказаться. "
+            "Здоровое растение стоит дороже больного в разы."
+        )
     else:
         tips.append(
-            "Торгуйся от конкретных недостатков: сколы, отсутствие комплекта, "
-            "просроченная гарантия — каждый пункт это реальный аргумент, "
-            "а не просто «можно подешевле?»."
+            "Торгуйся от конкретных недостатков: следы использования, "
+            "отсутствие комплекта или документов, истёкшая гарантия — "
+            "каждый пункт это реальный аргумент, а не «можно подешевле?»."
         )
 
     # Tip 5: closing anchor (if we have market data)
@@ -867,9 +1023,9 @@ def complete_analysis_sections(
     if not isinstance(condition, dict):
         condition = {}
     label = (
-        _normalize_condition_label(_clean_text(condition.get("label")))
-        or _normalize_condition_label(_clean_text(photo_condition_label))
-        or _normalize_condition_label(_clean_text(listing_condition))
+        normalize_condition_label(_clean_text(condition.get("label")))
+        or normalize_condition_label(_clean_text(photo_condition_label))
+        or normalize_condition_label(_clean_text(listing_condition))
     )
     notes = [
         _clean_text(note)
@@ -1209,7 +1365,7 @@ def build_fallback_analysis_result(
     return {
         "condition": (
             {
-                "label": _normalize_condition_label(photo_condition_label) or "Удовлетворительное",
+                "label": normalize_condition_label(photo_condition_label) or "Удовлетворительное",
                 "confidence": 0.72 if photo_condition_label else 0.58,
                 "notes": photo_condition_notes,
             }
@@ -1253,14 +1409,14 @@ def _query_similarity_bonus(query_tokens: set[str], candidate_tokens: set[str]) 
         return 0.0
     overlap = len(query_tokens & candidate_tokens)
     coverage = overlap / max(len(query_tokens), 1)
-    return coverage * 16.0 + overlap * 1.5
+    return coverage * QUERY_TOKEN_COVERAGE_BONUS + overlap * QUERY_TOKEN_PER_OVERLAP_BONUS
 
 
 def _title_similarity_bonus(target_tokens: set[str], candidate_tokens: set[str]) -> float:
     if not target_tokens:
         return 0.0
     overlap = len(target_tokens & candidate_tokens)
-    return overlap / max(len(target_tokens), 1) * 12.0
+    return overlap / max(len(target_tokens), 1) * TITLE_TOKEN_COVERAGE_BONUS
 
 
 def _parameter_similarity_bonus(target_params: dict[str, str], candidate_params: dict[str, str]) -> float:
@@ -1272,11 +1428,11 @@ def _parameter_similarity_bonus(target_params: dict[str, str], candidate_params:
         if not candidate_value:
             continue
         if candidate_value == target_value:
-            score += 4.0
+            score += PARAM_EXACT_MATCH_BONUS
         elif target_value in candidate_value or candidate_value in target_value:
-            score += 2.0
+            score += PARAM_SUBSTRING_MATCH_BONUS
         else:
-            score -= 1.5
+            score += PARAM_MISMATCH_PENALTY
     return score
 
 
@@ -1396,9 +1552,12 @@ def _camera_similarity_bonus(target_text: str, candidate_text: str) -> float:
             score -= 2.5
     target_aperture = _APERTURE_RE.findall(target_text)
     candidate_aperture = _APERTURE_RE.findall(candidate_text)
-    if target_aperture and candidate_aperture:
-        if set(target_aperture) & set(candidate_aperture):
-            score += 1.5
+    if (
+        target_aperture
+        and candidate_aperture
+        and set(target_aperture) & set(candidate_aperture)
+    ):
+        score += 1.5
     return score
 
 
@@ -1433,7 +1592,7 @@ def _auto_parts_similarity_bonus(target_text: str, candidate_text: str) -> tuple
         return True, -4.0
     overlap = target_parts & candidate_parts
     if not overlap:
-        return False, -999.0
+        return False, INCOMPATIBLE_PART_SCORE
     coverage = len(overlap) / max(len(target_parts), 1)
     return True, 8.0 + coverage * 8.0
 
@@ -1599,7 +1758,7 @@ def collect_similar_listings_from_cohorts(
             if bool(target_ad.get("company_ad")) == bool(ad.get("company_ad")):
                 score += 1.0
 
-            if score < 24.0:
+            if score < SIMILARITY_MIN_SCORE:
                 continue
 
             risk_context = build_marketplace_risk_context(ad)

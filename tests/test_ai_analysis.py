@@ -7,11 +7,11 @@ from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
 from api.services.ai_marketplace import (
-    build_marketplace_risk_context,
     build_market_context_fallback,
+    build_marketplace_risk_context,
     choose_best_alternative,
-    complete_analysis_sections,
     collect_similar_listings_from_cohorts,
+    complete_analysis_sections,
     finalize_red_flags,
     merge_marketplace_red_flags,
 )
@@ -170,15 +170,20 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
 
 
 def test_ai_task_status_reads_from_cache_backend() -> None:
+    import asyncio
+
     from api.main import create_app
+    from api.services.cache import MemoryCache
 
     app = create_app()
 
     with TestClient(app) as client:
-        cache = client.app.state.cache
-        import asyncio
+        # Override with a fresh MemoryCache to avoid both Redis loop binding
+        # and cross-test pollution when a real Redis is reachable in dev.
+        test_cache = MemoryCache()
+        client.app.state.cache = test_cache
 
-        asyncio.run(cache.set_json(
+        asyncio.run(test_cache.set_json(
             "ai_task:cached-task",
             {
                 "status": "done",

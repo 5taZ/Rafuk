@@ -5,7 +5,12 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, Query
 
 from api.config import Settings
-from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.dependencies import (
+    get_cache,
+    get_currency_service,
+    get_kufar_client,
+    get_settings_dependency,
+)
 from api.schemas import GeographyRegionPoint, GeographyResponse
 from api.services.aggregator import compute_price_stats, extract_prices
 from api.services.cache import CacheBackend
@@ -27,6 +32,7 @@ async def get_geography(
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> GeographyResponse:
     cache_key = f"geography:{query}:{currency}:{strict_search}:{category}"
     cached = await cache.get_json(cache_key)
@@ -38,7 +44,7 @@ async def get_geography(
         currency=currency,
         strict_search=strict_search,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
         category=category,
     )
     grouped: dict[int, list[dict]] = defaultdict(list)

@@ -5,7 +5,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request
 
 from api.config import Settings
-from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.dependencies import (
+    get_cache,
+    get_currency_service,
+    get_kufar_client,
+    get_settings_dependency,
+)
 from api.limiter import limiter
 from api.schemas import ListingsResponse
 from api.services.aggregator import (
@@ -41,6 +46,7 @@ async def get_listings(
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> ListingsResponse:
     effective_from_source = (
         discount_from_percent if discount_from_percent is not None else discount_percent
@@ -63,7 +69,7 @@ async def get_listings(
         currency=currency,
         strict_search=strict_search,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
         reference_context=reference_context,
         category=category,
     )
