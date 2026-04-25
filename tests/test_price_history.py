@@ -131,12 +131,13 @@ def test_price_history_caps_days_at_ninety() -> None:
 
 
 def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import price_stats
 
     monkeypatch.setattr(price_stats, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 

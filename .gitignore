@@ -12,4 +12,11 @@ build/
 .run/
 bot.db
 *.db
-*.md
+# Exclude generated audit/report markdown, but keep project docs
+FULL_PROJECT_AUDIT.md
+FRONTEND_OPTIMIZATION_REPORT.md
+AUDIT_FIX_VERIFICATION.md
+FINAL_AUDIT_VERIFICATION.md
+FIX_RECENT_SEARCHES_CLEAR.md
+FIX_SEARCH_DEBOUNCE.md
+FIX_VIRTUAL_SCROLLING.md

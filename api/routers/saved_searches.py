@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.config import Settings
 from api.dependencies import (
     get_currency_service,
+    get_kufar_client,
     get_session_factory_dependency,
     get_settings_dependency,
     get_telegram_user,
@@ -172,7 +173,6 @@ async def _load_saved_search_opportunities(
         currency=currency,
         strict_search=saved_search.strict_mode,
         settings=settings,
-        client_factory=KufarClient,
         client=kufar_client,
     )
     category_price_stats = compute_category_price_stats(dataset.ads)
@@ -213,7 +213,7 @@ async def _load_saved_search_opportunities(
             market_stats=dataset.price_stats,
             category_price_stats=category_price_stats,
         )
-        for ad in candidate_ads[:20]
+        for ad in candidate_ads[: settings.max_deal_ads_per_query]
     ]
     items.sort(key=lambda item: (-float(item.deal_score or 0.0), float(item.price or 0.0)))
     insights = analyze_query_text(saved_search.query)
@@ -235,7 +235,7 @@ async def _load_saved_search_opportunities(
             signal_label="Редкий оффер" if dataset.total_results <= 5 else None,
             listing=item,
         )
-        for item in items[:3]
+        for item in items[: settings.max_opportunity_signals]
     ]
 
 
@@ -243,6 +243,7 @@ async def _load_price_drop_signals(
     *,
     user_id: int,
     session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
 ) -> list[OpportunitySignal]:
     async with session_factory() as session:
         result = await session.execute(
@@ -252,7 +253,7 @@ async def _load_price_drop_signals(
                 TrackerEvent.event_type == "price_drop",
             )
             .order_by(TrackerEvent.created_at.desc())
-            .limit(6)
+            .limit(settings.max_recent_tracker_events)
         )
         events = list(result.scalars())
     return [
@@ -274,6 +275,7 @@ async def get_opportunity_board(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),
     currency_service: CurrencyService = Depends(get_currency_service),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> OpportunityBoardResponse:
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user.user_id)
@@ -289,7 +291,7 @@ async def get_opportunity_board(
             select(SavedSearch)
             .where(SavedSearch.user_id == user_id, SavedSearch.active.is_(True))
             .order_by(SavedSearch.created_at.desc(), SavedSearch.id.desc())
-            .limit(8)
+            .limit(settings.max_saved_searches_for_board)
         )
         saved_searches = list(result.scalars())
 
@@ -302,22 +304,18 @@ async def get_opportunity_board(
             market_signals=[],
         )
 
-    shared_client = KufarClient(settings)
-    try:
-        batches = await asyncio.gather(
-            *[
-                _load_saved_search_opportunities(
-                    saved_search,
-                    currency=currency,
-                    settings=settings,
-                    currency_service=currency_service,
-                    kufar_client=shared_client,
-                )
-                for saved_search in saved_searches
-            ]
-        )
-    finally:
-        await shared_client.aclose()
+    batches = await asyncio.gather(
+        *[
+            _load_saved_search_opportunities(
+                saved_search,
+                currency=currency,
+                settings=settings,
+                currency_service=currency_service,
+                kufar_client=kufar_client,
+            )
+            for saved_search in saved_searches
+        ]
+    )
     items = [item for batch in batches for item in batch]
     rare_opportunities = [item for item in items if item.signal_label == "Редкий оффер"]
     items.sort(
@@ -329,6 +327,7 @@ async def get_opportunity_board(
     top_price_drops = await _load_price_drop_signals(
         user_id=user_id,
         session_factory=session_factory,
+        settings=settings,
     )
     market_signals = []
     for batch, saved_search in zip(batches, saved_searches, strict=True):
@@ -355,8 +354,8 @@ async def get_opportunity_board(
             )
     return OpportunityBoardResponse(
         currency=currency,
-        items=items[:12],
-        top_price_drops=top_price_drops[:4],
-        rare_opportunities=rare_opportunities[:4],
-        market_signals=market_signals[:4],
+        items=items[: settings.max_opportunity_items],
+        top_price_drops=top_price_drops[: settings.max_opportunity_signals],
+        rare_opportunities=rare_opportunities[: settings.max_opportunity_signals],
+        market_signals=market_signals[: settings.max_opportunity_signals],
     )

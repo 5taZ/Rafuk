@@ -70,13 +70,49 @@ wait_for_http() {
     local attempts="${2:-30}"
 
     for _ in $(seq 1 "$attempts"); do
-        if curl -fsS "$url" >/dev/null 2>&1; then
+        if curl -fsS --noproxy '*' "$url" >/dev/null 2>&1; then
             return 0
         fi
         sleep 1
     done
 
     return 1
+}
+
+wait_for_tcp() {
+    local host="$1" port="$2" attempts="${3:-30}"
+    for _ in $(seq 1 "$attempts"); do
+        if (echo > "/dev/tcp/${host}/${port}") >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+start_infra() {
+    # Bring up Redis (defined in docker-compose.yml) and verify Postgres
+    # is reachable. Postgres lives in a separate container in this repo
+    # (e.g. marketplace_postgres on :5433), so we only probe it instead
+    # of trying to start a non-existent compose service.
+    echo "Starting Redis container on :6380 ..."
+    docker compose up -d redis
+
+    if ! wait_for_tcp 127.0.0.1 6380 30; then
+        echo "Warning: Redis on :6380 did not become reachable within 30s." >&2
+        echo "Check: docker compose ps redis; docker compose logs redis" >&2
+    else
+        echo "Redis is ready on :6380."
+    fi
+
+    if ! wait_for_tcp 127.0.0.1 5433 5; then
+        echo "Warning: PostgreSQL on :5433 is not reachable." >&2
+        echo "Migrations and the API will fail. Start it manually:" >&2
+        echo "  docker start marketplace_postgres   # if container already exists" >&2
+        echo "  # or follow the docs to provision Postgres on :5433" >&2
+    else
+        echo "PostgreSQL is ready on :5433."
+    fi
 }
 
 start_frontend() {
@@ -149,6 +185,7 @@ start_scheduler() {
 main() {
     cd "$ROOT_DIR"
     stop_existing
+    start_infra
     start_frontend
 
     if [[ "$WITH_TUNNEL" -eq 1 ]]; then

@@ -348,24 +348,55 @@ body {
 .logo {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     flex-shrink: 0;
+    /* Reset anchor styling since the logo is now a clickable <a href="/"> */
+    text-decoration: none;
+    color: inherit;
+    border-radius: 8px;
+    transition: opacity 120ms ease;
+}
+
+.logo:hover,
+.logo:focus-visible {
+    opacity: 0.85;
+}
+
+.logo:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
 }
 
 .logo-mark {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
+    width: 30px;
+    height: 30px;
+    /* SVG has its own rx=14 in a 64-unit viewBox = ~6.5px at this size.
+       Match it on the wrapper for tight clipping. */
+    border-radius: 7px;
     display: block;
-    object-fit: cover;
-    box-shadow: 0 0 0 1px var(--border);
+    /* SVG renders its own background, so contain (not cover) keeps the
+       full glyph visible without clipping. */
+    object-fit: contain;
 }
 
 .logo-name {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
     color: var(--text);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.015em;
+    /* Match the gradient direction of the logo mark for cohesion. */
+    background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+}
+
+/* Light theme: text gradient stays vibrant; dark theme uses same gradient */
+[data-theme="light"] .logo-name {
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
 }
 
 /* Theme toggle */

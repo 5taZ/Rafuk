@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -30,8 +32,11 @@ from api.routers import (
     trackers,
     workflow,
 )
+from api.routers.ai_analysis import periodic_prune_shadow_stores
+from api.services.ai_service import get_ai_service
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
+from api.services.kufar_client import KufarClient
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +67,10 @@ async def lifespan(app: FastAPI):
     app.state.cache = cache
     app.state.currency_service = currency_service
     app.state.settings = settings
+    app.state.kufar_client = KufarClient(settings)
+
+    # Start background prune task for AI shadow stores
+    prune_task = asyncio.create_task(periodic_prune_shadow_stores())
 
     if settings.debug:
         logger.warning("Debug mode is active — auth bypassed")
@@ -69,12 +78,16 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Cancel background prune task
+        prune_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await prune_task
         # Close AI service httpx client
-        from api.services.ai_service import get_ai_service
-
         ai = get_ai_service()
         if ai is not None:
             await ai.close()
+        # Close shared KufarClient
+        await app.state.kufar_client.aclose()
         # Close Redis connection pool
         if isinstance(cache, RedisCache):
             await cache.aclose()
@@ -84,7 +97,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="Rafuks API", lifespan=lifespan)
+    app = FastAPI(title="Rafuk API", lifespan=lifespan)
 
     # Add CORS middleware
     origins = [settings.mini_app_url, settings.api_base_url]

@@ -137,13 +137,15 @@ async def load_query_dataset(
     currency: str,
     strict_search: bool,
     settings: Settings,
-    client_factory: type[SupportsSearchAllAds],
+    client_factory: type[SupportsSearchAllAds] | None = None,
     search_kwargs: dict[str, Any] | None = None,
     category: int | None = None,
     client: SupportsSearchAllAds | None = None,
 ) -> QueryDataset:
     owns_client = client is None
     if client is None:
+        if client_factory is None:
+            raise ValueError("Either client or client_factory must be provided")
         client = client_factory(settings)
     try:
         effective_kwargs = dict(search_kwargs or {})
@@ -175,29 +177,36 @@ async def load_query_dataset_context(
     currency: str,
     strict_search: bool,
     settings: Settings,
-    client_factory: type[SupportsSearchAllAds],
+    client_factory: type[SupportsSearchAllAds] | None = None,
+    client: SupportsSearchAllAds | None = None,
     reference_context: str = "current",
     category: int | None = None,
 ) -> QueryDatasetContext:
+    owns_client = client is None and client_factory is not None
+    if client is None and client_factory is not None:
+        client = client_factory(settings)  # type: ignore[misc]
+
     if reference_context != "base_query" or category is None:
-        dataset = await load_query_dataset(
-            query=query,
-            currency=currency,
-            strict_search=strict_search,
-            settings=settings,
-            client_factory=client_factory,
-            category=category,
-        )
+        try:
+            dataset = await load_query_dataset(
+                query=query,
+                currency=currency,
+                strict_search=strict_search,
+                settings=settings,
+                client=client,
+                category=category,
+            )
+        finally:
+            if owns_client and client is not None:
+                await client.aclose()
         return QueryDatasetContext(visible=dataset, reference=dataset)
 
-    client = client_factory(settings)
     try:
         reference_dataset = await load_query_dataset(
             query=query,
             currency=currency,
             strict_search=strict_search,
             settings=settings,
-            client_factory=client_factory,
             client=client,
         )
         visible_dataset = await load_query_dataset(
@@ -205,12 +214,12 @@ async def load_query_dataset_context(
             currency=currency,
             strict_search=strict_search,
             settings=settings,
-            client_factory=client_factory,
             category=category,
             client=client,
         )
     finally:
-        await client.aclose()
+        if owns_client and client is not None:
+            await client.aclose()
 
     return QueryDatasetContext(visible=visible_dataset, reference=reference_dataset)
 
@@ -221,13 +230,13 @@ async def load_segment_datasets(
     currency: str,
     strict_search: bool,
     settings: Settings,
-    client_factory: type[SupportsSearchAllAds],
+    client_factory: type[SupportsSearchAllAds] | None = None,
+    client: SupportsSearchAllAds | None = None,
     parallel_search: SupportsParallelSearch,
     category: int | None = None,
-    client: SupportsSearchAllAds | None = None,
 ) -> dict[str, QueryDataset]:
-    owns_client = client is None
-    if client is None:
+    owns_client = client is None and client_factory is not None
+    if client is None and client_factory is not None:
         client = client_factory(settings)
     # Fetch by condition only (seller type filtered client-side)
     tasks = [
@@ -246,7 +255,7 @@ async def load_segment_datasets(
         responses = await parallel_search(client, tasks, settings)
         responses = [_normalize_response_ads(response) for response in responses]
     finally:
-        if owns_client:
+        if owns_client and client is not None:
             await client.aclose()
 
     datasets: dict[str, QueryDataset] = {}

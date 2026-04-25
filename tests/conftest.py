@@ -17,9 +17,14 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         db_url = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
     monkeypatch.setenv("DATABASE_URL", db_url)
 
-    monkeypatch.setenv("REDIS_URL", "redis://localhost:6380/0")
+    # Point tests at a separate Redis logical DB so they don't pollute the
+    # dev cache when a real Redis is reachable. Falls back gracefully to
+    # MemoryCache via ping() if Redis is unavailable.
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6380/15")
     monkeypatch.setenv("API_BASE_URL", "https://kufar-analytics.example.com")
     monkeypatch.setenv("MINI_APP_URL", "https://kufar-analytics.example.com/app")
+    # Tests must never hit real telegram auth (they use dependency_overrides).
+    monkeypatch.setenv("DEBUG", "false")
 
     try:
         from api.config import get_settings
@@ -27,6 +32,29 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         get_settings.cache_clear()
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+async def _flush_test_redis() -> None:
+    """Flush the test Redis DB before each test so tests are isolated.
+
+    Uses redis-py directly (not the async cache) to avoid event-loop
+    binding issues. Silent no-op when Redis isn't reachable — tests fall
+    back to MemoryCache automatically.
+    """
+    try:
+        import redis
+
+        client = redis.Redis.from_url(
+            "redis://localhost:6380/15",
+            socket_connect_timeout=0.2,
+            socket_timeout=0.2,
+        )
+        client.flushdb()
+        client.close()
+    except Exception:
+        pass
+    yield
 
 
 @pytest.fixture(autouse=True)

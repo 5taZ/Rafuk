@@ -9,6 +9,7 @@ from api.config import Settings
 from api.dependencies import (
     get_cache,
     get_currency_service,
+    get_kufar_client,
     get_session_factory_dependency,
     get_settings_dependency,
 )
@@ -41,6 +42,7 @@ async def get_price_stats(
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> PriceStatsResponse:
     cache_key = f"price-stats:{query}:{currency}:{strict_search}:{category}"
     cached = await cache.get_json(cache_key)
@@ -52,7 +54,7 @@ async def get_price_stats(
         currency=currency,
         strict_search=strict_search,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
         category=category,
     )
     stats = dataset.price_stats

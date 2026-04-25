@@ -21,10 +21,14 @@ function createApiAi(context) {
         { server: 10, cap: 28 },
         { server: 30, cap: 56 },
         { server: 50, cap: 72 },
-        { server: 55, cap: 78 },
-        { server: 62, cap: 84 },
-        { server: 70, cap: 88 },
-        { server: 85, cap: 92 },
+        { server: 55, cap: 76 },
+        { server: 60, cap: 80 },
+        { server: 65, cap: 83 },
+        { server: 70, cap: 86 },
+        { server: 74, cap: 88 },
+        { server: 78, cap: 90 },
+        { server: 80, cap: 91 },
+        { server: 85, cap: 93 },
         { server: 95, cap: 97 },
     ];
     const STAGE_LABELS = {
@@ -909,7 +913,7 @@ function createApiAi(context) {
         if (data.best_alternative) {
             const ba = data.best_alternative;
             bestAltHtml = `<div class="alt-card">
-  ${ba.image_url ? `<img class="alt-thumb" src="${_escXml(ba.image_url)}" alt="" />` : ""}
+  ${ba.image_url ? `<img class="alt-thumb" src="${_safeXmlUrl(ba.image_url)}" alt="" />` : ""}
   <div class="alt-info">
     <div class="alt-title">${_escXml(ba.title)}</div>
     <div class="alt-meta">
@@ -917,7 +921,7 @@ function createApiAi(context) {
       ${ba.condition ? `<span class="alt-cond">${_escXml(ba.condition)}</span>` : ""}
     </div>
     ${data.best_pick_reason ? `<div class="alt-reason">${_escXml(data.best_pick_reason)}</div>` : ""}
-    ${ba.link ? `<a class="alt-link" href="${_escXml(ba.link)}">Открыть на Kufar</a>` : ""}
+    ${ba.link ? `<a class="alt-link" href="${_safeXmlUrl(ba.link)}">Открыть на Kufar</a>` : ""}
   </div>
 </div>`;
         }
@@ -936,14 +940,14 @@ function createApiAi(context) {
   </div>
   <div class="similar-grid">
 ${others.map(s => `    <div class="similar-card">
-      ${s.image_url ? `<img class="similar-thumb" src="${_escXml(s.image_url)}" alt="" />` : ""}
+      ${s.image_url ? `<img class="similar-thumb" src="${_safeXmlUrl(s.image_url)}" alt="" />` : ""}
       <div class="similar-info">
         <div class="similar-title">${_escXml(s.title)}</div>
         <div class="similar-meta">
           <span class="mono">${Math.round(s.price_byn)} BYN</span>
           ${s.condition ? `<span>${_escXml(s.condition)}</span>` : ""}
         </div>
-        ${s.link ? `<a class="similar-link" href="${_escXml(s.link)}">Открыть</a>` : ""}
+        ${s.link ? `<a class="similar-link" href="${_safeXmlUrl(s.link)}">Открыть</a>` : ""}
       </div>
     </div>`).join("\n")}
   </div>
@@ -1072,17 +1076,17 @@ ${others.map(s => `    <div class="similar-card">
 
 <div class="hero">
   <div class="hero-text">
-    <div class="hero-badge">Rafuks &middot; AI Report</div>
+    <div class="hero-badge">Rafuk &middot; AI Report</div>
     <h1>${_escXml(title)}</h1>
     ${price ? `<div class="hero-price">${_escXml(price)}</div>` : ""}
     <div class="hero-meta">
       <span>${dateStr}</span>
       ${adId ? `<span>ID ${_escXml(String(adId))}</span>` : ""}
     </div>
-    ${link ? `<a class="hero-link" href="${_escXml(link)}">${_escXml(link)}</a>` : ""}
+    ${link ? `<a class="hero-link" href="${_safeXmlUrl(link)}">${_escXml(link)}</a>` : ""}
   </div>
   ${listingImages.length ? `<div class="hero-photos">
-    ${listingImages.map(img => `<img src="${_escXml(img)}" alt="" />`).join("\n    ")}
+    ${listingImages.map(img => `<img src="${_safeXmlUrl(img)}" alt="" />`).join("\n    ")}
   </div>` : ""}
 </div>
 
@@ -1126,7 +1130,7 @@ ${similarHtml}
 </div>
 
 <div class="footer">
-  <p><span class="footer-brand">Rafuks</span> &mdash; ${_escXml(data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.")}</p>
+  <p><span class="footer-brand">Rafuk</span> &mdash; ${_escXml(data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.")}</p>
 </div>
 
 </div>
@@ -1174,7 +1178,25 @@ window.addEventListener("load", function () {
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;");
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    // Sanitize URLs for href/src attributes — blocks javascript:, data:,
+    // vbscript:, file:, and any other non-http(s) scheme. Returns "#"
+    // for unsafe values so the link is rendered but does nothing on click.
+    function _safeXmlUrl(url) {
+        if (!url || typeof url !== "string") return "#";
+        const trimmed = url.trim();
+        const lowered = trimmed.toLowerCase();
+        if (lowered.startsWith("https://") || lowered.startsWith("http://")) {
+            return _escXml(trimmed);
+        }
+        // Allow same-origin relative URLs (no scheme).
+        if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+            return _escXml(trimmed);
+        }
+        return "#";
     }
 
     // Bind PDF export button

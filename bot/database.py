@@ -4,7 +4,7 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from api.database import get_engine
+from api.database import get_engine, get_session_factory
 
 _engine: AsyncEngine | None = None
 _init_lock: asyncio.Lock | None = None
@@ -28,8 +28,6 @@ def get_bot_engine() -> AsyncEngine:
 
 def get_bot_session_factory(engine: AsyncEngine | None = None) -> async_sessionmaker[AsyncSession]:
     """Get session factory for the bot process."""
-    from api.database import get_session_factory
-
     return get_session_factory(engine or get_bot_engine())
 
 

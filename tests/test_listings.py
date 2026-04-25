@@ -83,12 +83,13 @@ class FakeKufarClient:
 
 
 def test_listings_endpoint_returns_items(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listings
 
     monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
@@ -107,12 +108,13 @@ def test_listings_endpoint_returns_items(monkeypatch) -> None:
 
 
 def test_listings_endpoint_supports_cheap_sort(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listings
 
     monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
@@ -135,12 +137,13 @@ def test_listings_endpoint_supports_cheap_sort(monkeypatch) -> None:
 
 
 def test_listings_endpoint_supports_strict_search(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listings
 
     monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
@@ -156,12 +159,13 @@ def test_listings_endpoint_supports_strict_search(monkeypatch) -> None:
 
 
 def test_listings_endpoint_normalizes_alias_queries(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listings
 
     monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
@@ -176,7 +180,7 @@ def test_listings_endpoint_normalizes_alias_queries(monkeypatch) -> None:
 
 
 def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listings
 
@@ -242,6 +246,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
 
     monkeypatch.setattr(listings, "KufarClient", SignalsClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: SignalsClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
@@ -260,7 +265,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
 
 
 def test_listings_endpoint_uses_category_reference_for_mixed_query(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listings
 
@@ -340,6 +345,7 @@ def test_listings_endpoint_uses_category_reference_for_mixed_query(monkeypatch) 
 
     monkeypatch.setattr(listings, "KufarClient", MixedCategoriesClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: MixedCategoriesClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
@@ -358,7 +364,7 @@ def test_listings_endpoint_uses_category_reference_for_mixed_query(monkeypatch) 
 
 
 def test_listings_endpoint_keeps_price_delta_stable_in_category_view(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listings
 
@@ -462,6 +468,7 @@ def test_listings_endpoint_keeps_price_delta_stable_in_category_view(monkeypatch
 
     monkeypatch.setattr(listings, "KufarClient", CategoryDriftClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: CategoryDriftClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:

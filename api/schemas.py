@@ -6,6 +6,39 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class LeadStatusEnum(StrEnum):
+    """Allowed lead statuses."""
+
+    new = "new"
+    in_progress = "in_progress"
+    researching = "researching"
+    bought = "bought"
+    sold = "sold"
+    skipped = "skipped"
+
+
+class WatchlistStatusEnum(StrEnum):
+    """Allowed watchlist workflow statuses.
+
+    Watchlist priorities used by the mini-app dropdown
+    (default / important / very_important) plus pipeline-style
+    states the frontend filter and sort code references
+    (watching / reviewing / interested / contacted / passed / skipped).
+    Keep this list aligned with frontend/js/render_card_builders.js
+    and frontend/js/render_cards.js.
+    """
+
+    default = "default"
+    important = "important"
+    very_important = "very_important"
+    watching = "watching"
+    reviewing = "reviewing"
+    interested = "interested"
+    contacted = "contacted"
+    passed = "passed"
+    skipped = "skipped"
+
+
 class ExpenseTypeEnum(StrEnum):
     """Allowed expense types."""
 
@@ -294,12 +327,12 @@ class LeadCreate(BaseModel):
     price_byn: float | None = None
     thumbnail: str | None = None
     target_resale_byn: float | None = None
-    status: str = "new"
+    status: LeadStatusEnum = LeadStatusEnum.new
     source: str = "manual"
 
 
 class LeadUpdate(BaseModel):
-    status: str | None = None
+    status: LeadStatusEnum | None = None
     target_resale_byn: float | None = None
     buy_price_byn: float | None = None
     sold_price_byn: float | None = None
@@ -344,7 +377,7 @@ class WatchlistCreate(BaseModel):
 
 
 class WatchlistUpdate(BaseModel):
-    workflow_status: str | None = None
+    workflow_status: WatchlistStatusEnum | None = None
     notes: str | None = None
 
 
@@ -482,7 +515,7 @@ class DealExpenseCreate(BaseModel):
 
 
 class DealExpenseUpdate(BaseModel):
-    expense_type: str | None = None
+    expense_type: ExpenseTypeEnum | None = None
     amount_byn: float | None = None
     notes: str | None = None
     expense_date: datetime | None = None

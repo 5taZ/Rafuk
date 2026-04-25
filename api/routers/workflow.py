@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
@@ -9,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
 from api.dependencies import (
+    get_kufar_client,
     get_session_factory_dependency,
     get_settings_dependency,
     get_telegram_user,
@@ -30,6 +33,8 @@ from api.services.aggregator import normalize_price_byn
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import load_query_dataset
 from api.services.workflow_store import ensure_user, resolve_user_id, upsert_lead, upsert_watchlist
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["workflow"])
 
@@ -154,7 +159,7 @@ async def create_lead(
             price_byn=payload.price_byn,
             thumbnail=payload.thumbnail,
             target_resale_byn=payload.target_resale_byn,
-            status=payload.status,
+            status=payload.status.value,
             source=payload.source,
         )
         await session.commit()
@@ -182,7 +187,7 @@ async def update_lead(
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
         if "status" in payload.model_fields_set:
-            lead.status = payload.status
+            lead.status = payload.status.value
         if "target_resale_byn" in payload.model_fields_set:
             lead.target_resale_byn = payload.target_resale_byn
         if "buy_price_byn" in payload.model_fields_set:
@@ -207,10 +212,11 @@ async def delete_all_leads(
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is not None:
-            # Delete expenses for active leads only (not closed ones)
+            # Delete expenses for active leads only (not sold/skipped ones)
+            closed_statuses = ("sold", "skipped")
             active_lead_ids = select(LeadItem.id).where(
                 LeadItem.user_id == user_id,
-                LeadItem.status != "closed",
+                LeadItem.status.notin_(closed_statuses),
             )
             await session.execute(
                 delete(DealExpense).where(DealExpense.lead_id.in_(active_lead_ids))
@@ -219,7 +225,7 @@ async def delete_all_leads(
             await session.execute(
                 delete(LeadItem).where(
                     LeadItem.user_id == user_id,
-                    LeadItem.status != "closed",
+                    LeadItem.status.notin_(closed_statuses),
                 )
             )
         await session.commit()
@@ -324,7 +330,7 @@ async def update_watchlist_item(
                 detail="Watchlist item not found",
             )
         if "workflow_status" in payload.model_fields_set:
-            item.workflow_status = payload.workflow_status
+            item.workflow_status = payload.workflow_status.value
         if "notes" in payload.model_fields_set:
             item.notes = payload.notes
         await session.commit()
@@ -384,6 +390,7 @@ async def refresh_watchlist(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> WatchlistRefreshResponse:
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
@@ -400,17 +407,30 @@ async def refresh_watchlist(
         for item in items:
             grouped[item.query].append(item)
 
+        # Batch Kufar queries in parallel instead of sequential N+1
+        unique_queries = list(grouped.keys())
+        datasets = await asyncio.gather(
+            *[
+                load_query_dataset(
+                    query=q,
+                    currency="BYN",
+                    strict_search=False,
+                    settings=settings,
+                    client=kufar_client,
+                )
+                for q in unique_queries
+            ],
+            return_exceptions=True,
+        )
+
         updated = 0
         missing = 0
         price_drops = 0
-        for query, query_items in grouped.items():
-            dataset = await load_query_dataset(
-                query=query,
-                currency="BYN",
-                strict_search=False,
-                settings=settings,
-                client_factory=KufarClient,
-            )
+        for query, dataset in zip(unique_queries, datasets, strict=True):
+            if isinstance(dataset, Exception):
+                logger.warning("Watchlist refresh: query %r failed: %s", query, dataset)
+                continue
+            query_items = grouped[query]
             ads_by_id = {
                 int(ad.get("ad_id", 0)): ad for ad in dataset.ads if int(ad.get("ad_id", 0)) > 0
             }
@@ -463,6 +483,7 @@ async def refresh_leads(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> LeadsRefreshResponse:
     """Check which leads are still available on Kufar.
 
@@ -486,17 +507,30 @@ async def refresh_leads(
         for lead in leads:
             grouped[lead.query].append(lead)
 
+        # Batch Kufar queries in parallel instead of sequential N+1
+        unique_queries = list(grouped.keys())
+        datasets = await asyncio.gather(
+            *[
+                load_query_dataset(
+                    query=q,
+                    currency="BYN",
+                    strict_search=False,
+                    settings=settings,
+                    client=kufar_client,
+                )
+                for q in unique_queries
+            ],
+            return_exceptions=True,
+        )
+
         checked = 0
         active_count = 0
         missing_count = 0
-        for query, query_leads in grouped.items():
-            dataset = await load_query_dataset(
-                query=query,
-                currency="BYN",
-                strict_search=False,
-                settings=settings,
-                client_factory=KufarClient,
-            )
+        for query, dataset in zip(unique_queries, datasets, strict=True):
+            if isinstance(dataset, Exception):
+                logger.warning("Leads refresh: query %r failed: %s", query, dataset)
+                continue
+            query_leads = grouped[query]
             ads_by_id = {
                 int(ad.get("ad_id", 0)): ad for ad in dataset.ads if int(ad.get("ad_id", 0)) > 0
             }

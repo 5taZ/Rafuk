@@ -44,12 +44,13 @@ class FakeKufarClient:
 
 
 def test_leads_and_watchlist_workflow(monkeypatch) -> None:
-    from api.dependencies import get_telegram_user
+    from api.dependencies import get_kufar_client, get_telegram_user
     from api.main import create_app
     from api.routers import workflow
 
     monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
 
     with TestClient(app) as client:

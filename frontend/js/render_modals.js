@@ -50,7 +50,7 @@ function createRenderModals(context) {
 
         elements.detailTitle.textContent = detail.title || "Объявление";
         elements.detailPrice.textContent = formatPrice(detail.price);
-        elements.detailLink.href = detail.link || "#";
+        elements.detailLink.href = safeUrl(detail.link) || "#";
 
         const aiState = state.detailAi || {};
         if (elements.detailAiBlock && elements.detailAiContent) {
@@ -101,8 +101,13 @@ function createRenderModals(context) {
         }
 
         if (currentImage) {
-            elements.detailMainImage.src = currentImage;
-            elements.detailMainImage.alt = detail.title || "Фото объявления";
+            const safeImage = safeUrl(currentImage);
+            if (safeImage) {
+                elements.detailMainImage.src = safeImage;
+                elements.detailMainImage.alt = detail.title || "Фото объявления";
+            } else {
+                elements.detailMainImage.removeAttribute("src");
+            }
         } else {
             elements.detailMainImage.removeAttribute("src");
         }

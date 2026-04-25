@@ -11,6 +11,7 @@ from api.database import get_session_factory as build_session_factory
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
 from api.services.cache import CacheBackend, RedisCache
 from api.services.currency_service import CurrencyService
+from api.services.kufar_client import KufarClient
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,16 @@ def get_currency_service(request: Request) -> CurrencyService:
     if service is not None:
         return service
     return CurrencyService(get_cache(request))
+
+
+def get_kufar_client(request: Request) -> KufarClient:
+    """Get the shared KufarClient from app state (created in lifespan)."""
+    client = getattr(request.app.state, "kufar_client", None)
+    if client is not None:
+        return client
+    # Fallback: create a new client (should not happen in normal operation)
+    logger.warning("Falling back to creating a new KufarClient — lifespan client not available")
+    return KufarClient(get_settings())
 
 
 def get_session_factory_dependency(request: Request) -> async_sessionmaker[AsyncSession]:

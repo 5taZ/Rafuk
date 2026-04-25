@@ -78,7 +78,7 @@ async def upsert_lead(
     existing.thumbnail = thumbnail or existing.thumbnail
     if target_resale_byn is not None:
         existing.target_resale_byn = target_resale_byn
-    existing.status = status or existing.status
+    existing.status = (status.value if hasattr(status, "value") else status) or existing.status
     existing.source = source or existing.source
     return existing
 

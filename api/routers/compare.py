@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.config import Settings
 from api.dependencies import (
     get_currency_service,
+    get_kufar_client,
     get_session_factory_dependency,
     get_settings_dependency,
 )
@@ -25,7 +26,7 @@ from api.validators import MAX_QUERY_LENGTH
 router = APIRouter(tags=["analytics"])
 
 
-def _split_compare_queries(values: list[str]) -> list[str]:
+def _split_compare_queries(values: list[str], settings: Settings) -> list[str]:
     items: list[str] = []
     for value in values:
         for part in value.replace("\n", ",").split(","):
@@ -40,7 +41,7 @@ def _split_compare_queries(values: list[str]) -> list[str]:
             continue
         seen.add(key)
         unique.append(item)
-    return unique[:2]
+    return unique[: settings.max_compare_queries]
 
 
 async def _build_compare_item(
@@ -52,13 +53,14 @@ async def _build_compare_item(
     settings: Settings,
     currency_service: CurrencyService,
     session_factory: async_sessionmaker[AsyncSession],
+    kufar_client: KufarClient,
 ) -> CompareRequestItem:
     dataset = await load_query_dataset(
         query=query,
         currency=currency,
         strict_search=strict_search,
         settings=settings,
-        client_factory=KufarClient,
+        client=kufar_client,
         category=category,
     )
     rates_payload = await currency_service.get_rates()
@@ -70,7 +72,7 @@ async def _build_compare_item(
         market_stats=dataset.price_stats,
         category_price_stats=category_price_stats,
     )
-    source_ads = deal_ads or dataset.ads[:20]
+    source_ads = deal_ads or dataset.ads[: settings.max_deal_ads_per_query]
     listing_items = [
         build_listing_item(
             ad,
@@ -132,8 +134,9 @@ async def compare_queries(
     settings: Settings = Depends(get_settings_dependency),
     currency_service: CurrencyService = Depends(get_currency_service),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+    kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> CompareResponse:
-    compare_queries = _split_compare_queries(compare_query or [])
+    compare_queries = _split_compare_queries(compare_query or [], settings)
     queries = [base_query.strip(), *compare_queries]
     batches = await asyncio.gather(
         *[
@@ -145,6 +148,7 @@ async def compare_queries(
                 settings=settings,
                 currency_service=currency_service,
                 session_factory=session_factory,
+                kufar_client=kufar_client,
             )
             for query in queries
             if query

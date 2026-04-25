@@ -146,12 +146,13 @@ async def create_tables(engine) -> None:
 
 
 def test_compare_endpoint_returns_multi_query_summary(monkeypatch) -> None:
-    from api.dependencies import get_cache, get_currency_service
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import compare
 
     monkeypatch.setattr(compare, "KufarClient", FakeKufarClient)
     app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 

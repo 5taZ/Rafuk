@@ -24,7 +24,6 @@ CSV_HEADERS = [
     "target_resale_byn",
     "status",
     "source",
-    "notes",
     "sold_price_byn",
     "sold_at",
     "total_expenses",
@@ -33,6 +32,21 @@ CSV_HEADERS = [
     "created_at",
     "updated_at",
 ]
+
+# CSV injection protection: cells starting with these characters are
+# interpreted as formulas by Excel/LibreOffice. Prefix with a single
+# quote (the standard mitigation) so the cell is treated as text.
+# https://owasp.org/www-community/attacks/CSV_Injection
+_CSV_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: object) -> object:
+    """Sanitize a value for CSV output to prevent CSV injection."""
+    if not isinstance(value, str):
+        return value
+    if value and value[0] in _CSV_FORMULA_TRIGGERS:
+        return "'" + value
+    return value
 
 
 def _empty_csv_response() -> Response:
@@ -99,14 +113,13 @@ async def export_leads_csv(
         writer.writerow(
             [
                 lead.id,
-                lead.query,
-                lead.title,
-                lead.link,
+                _csv_safe(lead.query),
+                _csv_safe(lead.title),
+                _csv_safe(lead.link),
                 lead.price_byn or "",
                 lead.target_resale_byn or "",
-                lead.status,
-                lead.source,
-                getattr(lead, "notes", "") or "",
+                _csv_safe(lead.status),
+                _csv_safe(lead.source),
                 lead.sold_price_byn or "",
                 lead.sold_at.isoformat() if lead.sold_at else "",
                 f"{total_expenses:.2f}",
