@@ -15,11 +15,42 @@ from api.services.ai_marketplace import (
     finalize_red_flags,
     merge_marketplace_red_flags,
 )
-from api.services.ai_service import AIService, _clean_photo_notes, _normalize_condition_label
+from api.services.ai_service import (
+    AIService,
+    _clean_photo_notes,
+    _normalize_condition_label,
+    detect_category,
+)
 
 
 def fake_telegram_user() -> TelegramInitData:
     return TelegramInitData(user_id=123456, first_name="Test", raw={})
+
+
+def test_ai_parse_json_handles_reasoning_with_braces_before_final_json() -> None:
+    text = (
+        'Сначала модель рассуждает: {"draft": "не финал"}. '
+        'Финальный ответ: {"summary": "Проверь {серийник}", "red_flags": []}'
+    )
+
+    parsed = AIService._parse_json(text)
+
+    assert parsed == {"summary": "Проверь {серийник}", "red_flags": []}
+
+
+def test_ai_image_fetch_allows_only_kufar_gallery_https_urls() -> None:
+    assert AIService._is_allowed_image_url("https://rms.kufar.by/v1/gallery/x.jpg") is True
+    assert AIService._is_allowed_image_url("https://rms6.kufar.by/v1/gallery/x.jpg") is True
+    assert AIService._is_allowed_image_url("http://rms.kufar.by/v1/gallery/x.jpg") is False
+    assert AIService._is_allowed_image_url("https://notrms.kufar.by/v1/gallery/x.jpg") is False
+    assert AIService._is_allowed_image_url("https://rms6.kufar.by.evil.com/x.jpg") is False
+    assert AIService._is_allowed_image_url("https://example.com/x.jpg") is False
+
+
+def test_detect_category_covers_belarus_marketplace_categories() -> None:
+    assert detect_category("Сдам 1-комнатную квартиру в Минске") == "real_estate"
+    assert detect_category("Бампер передний BMW F30 оригинал") == "auto_parts"
+    assert detect_category("Остатки плитки и клей плиточный после ремонта") == "construction"
 
 
 class FakeAIService:
@@ -183,17 +214,19 @@ def test_ai_task_status_reads_from_cache_backend() -> None:
         test_cache = MemoryCache()
         client.app.state.cache = test_cache
 
-        asyncio.run(test_cache.set_json(
-            "ai_task:cached-task",
-            {
-                "status": "done",
-                "progress": 100,
-                "result": {"ad_id": 42, "summary": "ok"},
-                "error": None,
-                "_created_ts": monotonic(),
-            },
-            ttl=3600,
-        ))
+        asyncio.run(
+            test_cache.set_json(
+                "ai_task:cached-task",
+                {
+                    "status": "done",
+                    "progress": 100,
+                    "result": {"ad_id": 42, "summary": "ok"},
+                    "error": None,
+                    "_created_ts": monotonic(),
+                },
+                ttl=3600,
+            )
+        )
 
         response = client.get("/api/v1/ai/task/cached-task")
 
@@ -344,7 +377,10 @@ def test_finalize_red_flags_prioritizes_marketplace_risk_and_limits_count() -> N
     )
 
     assert 1 <= len(flags) <= 3
-    assert any("кредит" in flag.lower() or "площад" in flag.lower() or "автохаус" in flag.lower() for flag in flags)
+    assert any(
+        "кредит" in flag.lower() or "площад" in flag.lower() or "автохаус" in flag.lower()
+        for flag in flags
+    )
 
 
 def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkeypatch) -> None:
@@ -406,7 +442,11 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
 
     async def fake_load_query_dataset(**kwargs):
         strict_search = kwargs.get("strict_search", False)
-        ads = [target_ad, precise_analog] if strict_search else [target_ad, precise_analog, weak_broad]
+        ads = (
+            [target_ad, precise_analog]
+            if strict_search
+            else [target_ad, precise_analog, weak_broad]
+        )
         return SimpleNamespace(
             ads=ads,
             price_stats=SimpleNamespace(
@@ -458,7 +498,9 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
 
     assert payload["best_alternative"]["ad_id"] == 11
     assert len(payload["similar_listings"]) == 1
-    assert any("автохаус" in flag.lower() or "кредит" in flag.lower() for flag in payload["red_flags"])
+    assert any(
+        "автохаус" in flag.lower() or "кредит" in flag.lower() for flag in payload["red_flags"]
+    )
     assert fake_ai.calls
     assert fake_ai.calls[0]["risk_context_summary"]
     assert fake_ai.calls[0]["risk_context_flags"]
@@ -467,8 +509,20 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
 def test_choose_best_alternative_prefers_strong_and_cheaper_candidate() -> None:
     decision = choose_best_alternative(
         [
-            {"ad_id": 1, "price_byn": 1100, "deal_score": 40, "seller_type": "shop", "image_url": None},
-            {"ad_id": 2, "price_byn": 900, "deal_score": 39, "seller_type": "private", "image_url": "x"},
+            {
+                "ad_id": 1,
+                "price_byn": 1100,
+                "deal_score": 40,
+                "seller_type": "shop",
+                "image_url": None,
+            },
+            {
+                "ad_id": 2,
+                "price_byn": 900,
+                "deal_score": 39,
+                "seller_type": "private",
+                "image_url": "x",
+            },
         ],
         target_price=1200,
         is_negotiable_price=False,
@@ -622,10 +676,13 @@ def test_collect_similar_listings_prefers_matching_watch_size_and_series() -> No
 
 
 def test_quick_condition_normalization_cleans_template_output() -> None:
-    assert _normalize_condition_label("Отличное|Хорошее|Удовлетворительное|Требует внимания") == "Хорошее"
-    assert _clean_photo_notes(["заметка1", "Есть реальные фото устройства", "Есть реальные фото устройства"]) == [
-        "Есть реальные фото устройства"
-    ]
+    assert (
+        _normalize_condition_label("Отличное|Хорошее|Удовлетворительное|Требует внимания")
+        == "Хорошее"
+    )
+    assert _clean_photo_notes(
+        ["заметка1", "Есть реальные фото устройства", "Есть реальные фото устройства"]
+    ) == ["Есть реальные фото устройства"]
 
 
 def test_complete_analysis_sections_restores_full_sections() -> None:
@@ -652,7 +709,10 @@ def test_complete_analysis_sections_restores_full_sections() -> None:
         best_alternative={"ad_id": 1, "price_byn": 1250},
         risk_context=risk,
         photo_condition_label="Хорошее",
-        photo_condition_notes=["Есть реальные фото устройства", "На корпусе видны лёгкие потёртости"],
+        photo_condition_notes=[
+            "Есть реальные фото устройства",
+            "На корпусе видны лёгкие потёртости",
+        ],
         is_negotiable_price=False,
         red_flags=["В объявлении есть акцент на кредите, а не на фактическом состоянии товара"],
     )

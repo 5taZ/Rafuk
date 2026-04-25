@@ -74,12 +74,23 @@ function createRenderModals(context) {
         }
         elements.detailLiquidityBlock.hidden = !detail.liquidity;
 
+        // Build the price-vs-market badge with the reference label so the user
+        // sees WHAT the deviation is measured against (per-category fallback
+        // is computed on the backend when the category has ≥3 ads).
+        let priceVsMarketLabel = detail.fair_price_label || "";
+        if (priceVsMarketLabel && detail.price_reference_scope === "category"
+            && detail.price_reference_label) {
+            priceVsMarketLabel += ` · ${detail.price_reference_label}`;
+        } else if (priceVsMarketLabel && detail.price_reference_scope === "query") {
+            priceVsMarketLabel += " · по запросу";
+        }
+
         const metaItems = [
             detail.category,
             detail.condition ? formatCondition(detail.condition) : "",
             detail.seller_type ? formatSeller(detail.seller_type) : "",
             detail.list_time ? formatDate(detail.list_time) : "",
-            detail.fair_price_label || "",
+            priceVsMarketLabel,
             formatDelta(detail.price_vs_median),
         ].filter(Boolean);
         clearChildren(elements.detailMeta);
@@ -142,8 +153,6 @@ function createRenderModals(context) {
         }
         elements.detailSellerBlock.hidden = sellerFields.length === 0;
 
-        void actions.loadDetailRisks(detail);
-
         // Hide "Следить" button if item is already in watchlist
         if (elements.detailAddWatchlistButton) {
             elements.detailAddWatchlistButton.hidden = state.detailFromWatchlist || false;
@@ -157,46 +166,6 @@ function createRenderModals(context) {
 
         elements.detailModal.hidden = false;
         document.body.classList.add("modal-open");
-        });
-    }
-
-    function renderDetailRisks(riskData) {
-        return safeRender('renderDetailRisks', () => {
-        clearChildren(elements.detailRisks);
-
-        if (!riskData || !riskData.risks || riskData.risks.length === 0) {
-            elements.detailRiskBlock.hidden = true;
-            return;
-        }
-
-        const item = document.createElement("div");
-        item.className = "detail-field";
-        const overallEmoji = riskData.overall_emoji || "🟢";
-        const overallLabel = {
-            low: "Низкий риск",
-            medium: "Средний риск",
-            high: "Высокий риск",
-        }[riskData.overall_risk] || riskData.overall_risk;
-
-        const labelEl = document.createElement("span");
-        labelEl.className = "detail-field-label";
-        labelEl.textContent = `${overallEmoji} ${overallLabel}`;
-        const badgesWrap = document.createElement("div");
-        badgesWrap.className = "risk-badges-wrap";
-        for (const risk of riskData.risks) {
-            const badge = document.createElement("span");
-            const levelClass = {
-                low: "risk-low",
-                medium: "risk-medium",
-                high: "risk-high",
-            }[risk.level] || "";
-            badge.className = `risk-badge ${levelClass}`.trim();
-            badge.textContent = risk.message;
-            badgesWrap.appendChild(badge);
-        }
-        item.append(labelEl, badgesWrap);
-        elements.detailRisks.appendChild(item);
-        elements.detailRiskBlock.hidden = false;
         });
     }
 
@@ -327,7 +296,6 @@ function createRenderModals(context) {
 
     return {
         renderDetailModal,
-        renderDetailRisks,
         closeDetailModal,
         renderExpensesModal,
         openExpensesModal,

@@ -2534,21 +2534,56 @@ body.modal-open {
     width: 100%;
     max-height: 340px;
     object-fit: contain;
-    transition: opacity 0.15s ease, transform 0.15s ease;
+    /* Cubic-bezier curve approximating "ease-out-expo" — fast start, gentle
+       settle. Feels natural for swipe-driven carousels. */
+    transition:
+        transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 220ms ease-out;
     will-change: opacity, transform;
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
     display: block;
 }
 
-.detail-media img.swipe-anim {
-    opacity: 0.3;
-    transform: scale(0.95);
+/* Step 1 — outgoing image slides off in the swipe direction and fades out.
+   `next` (user wants the next image): old image moves LEFT.
+   `prev` (user wants the previous image): old image moves RIGHT. */
+.detail-media img.swipe-out-next {
+    transform: translateX(-32px) scale(0.97);
+    opacity: 0;
+}
+.detail-media img.swipe-out-prev {
+    transform: translateX(32px) scale(0.97);
+    opacity: 0;
 }
 
-.detail-media.swipe-anim img {
-    opacity: 0.3;
-    transform: scale(0.95);
+/* Step 2 — incoming image starts pre-positioned on the OPPOSITE side and
+   then transitions to (0, 0) once the class is removed. */
+.detail-media img.swipe-in-next {
+    transform: translateX(32px) scale(0.97);
+    opacity: 0;
+    transition: none;
+}
+.detail-media img.swipe-in-prev {
+    transform: translateX(-32px) scale(0.97);
+    opacity: 0;
+    transition: none;
+}
+
+/* Respect the user's reduced-motion preference — no slide, just a quick
+   crossfade so the photo still changes visibly. */
+@media (prefers-reduced-motion: reduce) {
+    .detail-media img {
+        transition: opacity 120ms ease-out;
+    }
+    .detail-media img.swipe-out-next,
+    .detail-media img.swipe-out-prev {
+        transform: none;
+    }
+    .detail-media img.swipe-in-next,
+    .detail-media img.swipe-in-prev {
+        transform: none;
+    }
 }
 
 .detail-no-image {
@@ -5774,7 +5809,7 @@ body.modal-open {
     width: 5%;
     background: linear-gradient(90deg, var(--accent), rgba(59, 130, 246, 0.6));
     border-radius: 2px;
-    transition: width 0.6s ease;
+    transition: width 160ms linear, background 0.4s ease;
 }
 
 .ai-progress-pct {

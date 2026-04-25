@@ -43,8 +43,10 @@ def tracker_alert_keyboard(
     rows: list[list[InlineKeyboardButton]] = []
     if first_row:
         rows.append(first_row)
-    rows.append([
-        InlineKeyboardButton(text="В работу", callback_data=f"lead:{event_id}"),
-        InlineKeyboardButton(text="Позже", callback_data=f"later:{event_id}"),
-    ])
+    rows.append(
+        [
+            InlineKeyboardButton(text="В работу", callback_data=f"lead:{event_id}"),
+            InlineKeyboardButton(text="Позже", callback_data=f"later:{event_id}"),
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)

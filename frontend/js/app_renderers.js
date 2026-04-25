@@ -128,7 +128,6 @@ function createAppRenderers(context) {
 
     const {
         renderDetailModal,
-        renderDetailRisks,
         closeDetailModal,
         renderExpensesModal,
         openExpensesModal,
@@ -277,7 +276,6 @@ function createAppRenderers(context) {
         renderExpensesModal,
         openExpensesModal,
         closeExpensesModal,
-        renderDetailRisks,
         destroyChart,
         destroyHistoryChart,
         renderDetailModal,

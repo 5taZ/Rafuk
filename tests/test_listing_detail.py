@@ -6,6 +6,19 @@ from fastapi.testclient import TestClient
 
 from api.services.cache import MemoryCache
 
+CAR_CATEGORY_PARAM = {
+    "p": "category",
+    "pl": "Категория",
+    "v": "2010",
+    "vl": "Легковые авто",
+}
+PART_CATEGORY_PARAM = {
+    "p": "category",
+    "pl": "Категория",
+    "v": "2040",
+    "vl": "Запчасти",
+}
+
 
 class FakeCurrencyService:
     async def get_rates(self) -> dict[str, object]:
@@ -129,7 +142,7 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
             "region_id": 6,
             "category": "2010",
             "body": "Q7",
-            "ad_parameters": [{"p": "category", "pl": "Категория", "v": "2010", "vl": "Легковые авто"}],
+            "ad_parameters": [CAR_CATEGORY_PARAM],
             "account_parameters": [],
         },
         {
@@ -141,7 +154,7 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
             "region_id": 6,
             "category": "2010",
             "body": "Q7",
-            "ad_parameters": [{"p": "category", "pl": "Категория", "v": "2010", "vl": "Легковые авто"}],
+            "ad_parameters": [CAR_CATEGORY_PARAM],
             "account_parameters": [],
         },
         {
@@ -153,7 +166,7 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
             "region_id": 6,
             "category": "2010",
             "body": "Q7",
-            "ad_parameters": [{"p": "category", "pl": "Категория", "v": "2010", "vl": "Легковые авто"}],
+            "ad_parameters": [CAR_CATEGORY_PARAM],
             "account_parameters": [],
         },
         {
@@ -165,7 +178,7 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
             "region_id": 6,
             "category": "2040",
             "body": "part",
-            "ad_parameters": [{"p": "category", "pl": "Категория", "v": "2040", "vl": "Запчасти"}],
+            "ad_parameters": [PART_CATEGORY_PARAM],
             "account_parameters": [],
         },
         {
@@ -177,7 +190,7 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
             "region_id": 6,
             "category": "2040",
             "body": "part",
-            "ad_parameters": [{"p": "category", "pl": "Категория", "v": "2040", "vl": "Запчасти"}],
+            "ad_parameters": [PART_CATEGORY_PARAM],
             "account_parameters": [],
         },
         {
@@ -189,7 +202,7 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
             "region_id": 6,
             "category": "2040",
             "body": "part",
-            "ad_parameters": [{"p": "category", "pl": "Категория", "v": "2040", "vl": "Запчасти"}],
+            "ad_parameters": [PART_CATEGORY_PARAM],
             "account_parameters": [],
         },
     ]
@@ -204,7 +217,7 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
             "region_id": 6,
             "category": "2010",
             "body": "Q7",
-            "ad_parameters": [{"p": "category", "pl": "Категория", "v": "2010", "vl": "Легковые авто"}],
+            "ad_parameters": [CAR_CATEGORY_PARAM],
             "account_parameters": [],
         },
         {
@@ -216,7 +229,7 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
             "region_id": 6,
             "category": "2010",
             "body": "Q7",
-            "ad_parameters": [{"p": "category", "pl": "Категория", "v": "2010", "vl": "Легковые авто"}],
+            "ad_parameters": [CAR_CATEGORY_PARAM],
             "account_parameters": [],
         },
     ]

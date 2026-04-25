@@ -41,7 +41,6 @@ function createAppActions(context) {
         openExpensesModal,
         closeExpensesModal,
         renderProfitDashboard,
-        renderDetailRisks,
         renderMonitoringHeroStats,
         renderDealsHeroStats,
     } = context;
@@ -157,7 +156,6 @@ function createAppActions(context) {
         loadSearchDependencies: listings.loadSearchDependencies,
         clearSearchData: listings.clearSearchData,
         loadHistory: listings.loadHistory,
-        loadDetailRisks: listings.loadDetailRisks,
 
         // From trackers
         loadTrackers: trackers.loadTrackers,
@@ -449,7 +447,6 @@ function createAppActions(context) {
         createExpense,
         deleteExpense,
         exportLeadsCSV,
-        loadDetailRisks: listings.loadDetailRisks,
         loadAIAnalysis: ai.loadAIAnalysis,
         closeAIModal: ai.closeAIModal,
     };

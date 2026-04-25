@@ -90,8 +90,7 @@ def _prune_old_tasks_shadow() -> None:
     """Remove local shadow tasks older than TTL."""
     now = datetime.now(UTC).timestamp()
     ttl = _task_ttl()
-    expired = [tid for tid, t in _tasks.items()
-               if now - t.get("_created_ts", 0) > ttl]
+    expired = [tid for tid, t in _tasks.items() if now - t.get("_created_ts", 0) > ttl]
     for tid in expired:
         _tasks.pop(tid, None)
 
@@ -164,10 +163,7 @@ def _prune_old_exports() -> None:
         return
     now = datetime.now(UTC).timestamp()
     ttl = _export_ttl()
-    expired = [
-        token for token, item in _exports.items()
-        if now - item.get("_created_ts", 0) > ttl
-    ]
+    expired = [token for token, item in _exports.items() if now - item.get("_created_ts", 0) > ttl]
     for token in expired:
         _exports.pop(token, None)
 
@@ -268,7 +264,9 @@ def _build_resale_potential(resale_data: Any) -> AIResalePotential | None:
         return None
 
 
-async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cache, kufar_client: KufarClient) -> None:
+async def _run_analysis(
+    task_id: str, payload: AIAnalysisRequest, settings, cache, kufar_client: KufarClient
+) -> None:
     """Background coroutine: does the full analysis and updates the task store."""
     ai = get_ai_service()
 
@@ -306,16 +304,21 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
 
         async def _search_one(attempt: dict):
             ds = await load_query_dataset(
-                query=payload.query, currency="BYN", settings=settings,
-                client=kufar_client, **attempt,
+                query=payload.query,
+                currency="BYN",
+                settings=settings,
+                client=kufar_client,
+                **attempt,
             )
             target = next(
-                (ad for ad in ds.ads if int(ad.get("ad_id", 0)) == payload.ad_id), None,
+                (ad for ad in ds.ads if int(ad.get("ad_id", 0)) == payload.ad_id),
+                None,
             )
             return ds, target
 
         results = await asyncio.gather(
-            *[_search_one(a) for a in search_attempts], return_exceptions=True,
+            *[_search_one(a) for a in search_attempts],
+            return_exceptions=True,
         )
 
         await _update_task(cache, task_id, progress=30, stage="search_ready")
@@ -415,9 +418,7 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 "title": s["title"],
                 "price_byn": s["price_byn"],
                 "price_delta_byn": (
-                    round(s["price_byn"] - price_byn, 0)
-                    if not is_negotiable_price
-                    else None
+                    round(s["price_byn"] - price_byn, 0) if not is_negotiable_price else None
                 ),
                 "condition": s.get("condition"),
                 "description": s.get("description", ""),
@@ -460,7 +461,9 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
             await _update_task(cache, task_id, progress=40, stage="photo_precheck")
             logger.info("AI task %s stage=photo_precheck images=%d", task_id, len(images))
             try:
-                quick_photo = await asyncio.wait_for(ai.quick_condition(images[:1]), timeout=photo_precheck_timeout)
+                quick_photo = await asyncio.wait_for(
+                    ai.quick_condition(images[:1]), timeout=photo_precheck_timeout
+                )
                 photo_condition_label = str(quick_photo.get("condition") or "").strip()
                 photo_condition_notes = [
                     str(note).strip()
@@ -498,7 +501,10 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
         _t0 = _time.monotonic()
         logger.info(
             "AI async task %s: calling ai.analyze_listing_parallel for '%s' (%d imgs, %d similar)",
-            task_id, title[:50], len(images), len(ai_similar_for_comparison),
+            task_id,
+            title[:50],
+            len(images),
+            len(ai_similar_for_comparison),
         )
         # Wrap the AI call so that httpx transport-level timeouts
         # (ReadTimeout, ConnectTimeout) are converted to TimeoutError.
@@ -559,11 +565,14 @@ async def _run_analysis(task_id: str, payload: AIAnalysisRequest, settings, cach
                 finally:
                     pump_task.cancel()
 
-            result = await asyncio.wait_for(_run_parallel_with_progress(), timeout=analysis_timeout)
+            result = await asyncio.wait_for(
+                _run_parallel_with_progress(), timeout=analysis_timeout
+            )
         except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
             logger.warning(
                 "AI task %s: httpx %s — converting to TimeoutError",
-                task_id, type(exc).__name__,
+                task_id,
+                type(exc).__name__,
             )
             raise TimeoutError(str(exc)) from exc
         result = apply_ai_market_guardrails(
@@ -858,13 +867,31 @@ async def analyze_listing(
 # attributes server-side so that the export remains safe when the CSP is
 # accidentally relaxed (e.g. opened outside the export route).
 _XSS_PAIRED_TAGS = (
-    "script", "iframe", "object", "embed", "applet",
-    "form", "svg", "frame", "frameset", "title", "style",
+    "script",
+    "iframe",
+    "object",
+    "embed",
+    "applet",
+    "form",
+    "svg",
+    "frame",
+    "frameset",
+    "title",
+    "style",
 )
 # Tags that MUST NOT appear in the export at all — including self-closing.
 _XSS_VOID_TAGS = (
-    "script", "iframe", "object", "embed", "applet",
-    "link", "meta", "base", "svg", "frame", "frameset",
+    "script",
+    "iframe",
+    "object",
+    "embed",
+    "applet",
+    "link",
+    "meta",
+    "base",
+    "svg",
+    "frame",
+    "frameset",
 )
 _XSS_PAIRED_TAG_PATTERNS = [
     _re.compile(
@@ -996,7 +1023,9 @@ async def quick_condition(
 
     quick_condition_timeout = getattr(settings, "ai_quick_condition_timeout", 45)
     try:
-        result = await asyncio.wait_for(ai.quick_condition(images), timeout=quick_condition_timeout)
+        result = await asyncio.wait_for(
+            ai.quick_condition(images), timeout=quick_condition_timeout
+        )
     except (TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
         logger.error("Quick condition failed: %s", exc)
         err_msg = "AI сервис недоступен"

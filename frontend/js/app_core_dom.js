@@ -122,8 +122,6 @@ function cacheAppElements(elements) {
     elements.detailParams = document.getElementById("detail-params");
     elements.detailSellerBlock = document.getElementById("detail-seller-block");
     elements.detailSeller = document.getElementById("detail-seller");
-    elements.detailRiskBlock = document.getElementById("detail-risk-block");
-    elements.detailRisks = document.getElementById("detail-risks");
     elements.detailAiBlock = document.getElementById("detail-ai-block");
     elements.detailAiContent = document.getElementById("detail-ai-content");
     elements.detailAiBtn = document.getElementById("detail-ai-btn");

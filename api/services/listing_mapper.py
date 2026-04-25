@@ -93,6 +93,7 @@ def collect_fields(
         fields.append(ListingField(label=label, value=value))
     return fields
 
+
 def extract_seller_rating(ad: dict[str, Any]) -> float | None:
     for param in ad.get("account_parameters", []):
         p = param.get("p", "")

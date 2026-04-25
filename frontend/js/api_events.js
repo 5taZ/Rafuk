@@ -77,7 +77,6 @@ function createApiEvents(context) {
         createExpense,
         deleteExpense,
         exportLeadsCSV,
-        loadDetailRisks,
         loadAIAnalysis,
         closeAIModal,
         startTrackerRefresh,
@@ -747,60 +746,92 @@ function createApiEvents(context) {
             }
         });
 
-        // ── Swipe support for detail modal photos ────────────────────
+        // ── Image carousel — directional slide+fade animation ────────
+        // Single helper used by both touch-swipe and keyboard arrows so
+        // the animation feels identical regardless of input device.
+        // Direction: +1 = next photo, -1 = previous photo.
+        let isAnimating = false;
+        async function navigateDetailImage(direction) {
+            const images = state.detail?.images;
+            if (!images || images.length <= 1) return;
+            if (isAnimating) return;
+
+            const total = images.length;
+            const newIndex = direction > 0
+                ? Math.min(total - 1, state.detailImageIndex + 1)
+                : Math.max(0, state.detailImageIndex - 1);
+            if (newIndex === state.detailImageIndex) return;
+
+            const img = elements.detailMainImage;
+            if (!img) {
+                state.detailImageIndex = newIndex;
+                context.renderDetailModal();
+                return;
+            }
+
+            isAnimating = true;
+            const outClass = direction > 0 ? "swipe-out-next" : "swipe-out-prev";
+            const inClass = direction > 0 ? "swipe-in-next" : "swipe-in-prev";
+
+            // Phase 1: animate current image OUT.
+            img.classList.add(outClass);
+            await new Promise((resolve) => {
+                let done = false;
+                const finish = () => {
+                    if (done) return;
+                    done = true;
+                    img.removeEventListener("transitionend", finish);
+                    resolve();
+                };
+                img.addEventListener("transitionend", finish, { once: true });
+                // Safety net — if the transition never fires (e.g. user
+                // tabs away), free the lock anyway.
+                setTimeout(finish, 360);
+            });
+
+            // Phase 2: swap source and pre-position OFF on the opposite side
+            // (transition: none on .swipe-in-* makes the jump invisible).
+            state.detailImageIndex = newIndex;
+            context.renderDetailModal();
+            img.classList.remove(outClass);
+            img.classList.add(inClass);
+
+            // Phase 3: force layout flush, then animate IN to (0, 0)
+            // by removing the in-class on the next frame.
+            // Reading offsetWidth synchronously commits the styles above.
+            void img.offsetWidth;
+            requestAnimationFrame(() => {
+                img.classList.remove(inClass);
+                // Release the animation lock once the in-transition ends.
+                const release = () => {
+                    img.removeEventListener("transitionend", release);
+                    isAnimating = false;
+                };
+                img.addEventListener("transitionend", release, { once: true });
+                setTimeout(() => { isAnimating = false; }, 360);
+            });
+        }
+
+        // Touch-swipe: track delta on the modal, fire on touchend.
         let touchStartX = 0;
-        let touchEndX = 0;
-        let isSwiping = false;
+        const SWIPE_THRESHOLD_PX = 50;
         elements.detailModal?.addEventListener("touchstart", (e) => {
             touchStartX = e.changedTouches[0].screenX;
-            isSwiping = false;
         }, { passive: true });
         elements.detailModal?.addEventListener("touchend", (e) => {
-            if (isSwiping) return;
-            touchEndX = e.changedTouches[0].screenX;
-            const swipeDistance = touchStartX - touchEndX;
-            if (Math.abs(swipeDistance) > 50 && state.detail?.images?.length > 1) {
-                isSwiping = true;
-                const mediaEl = elements.detailModal?.querySelector(".detail-media");
-                if (mediaEl) {
-                    mediaEl.classList.add("swipe-anim");
-                    setTimeout(() => {
-                        if (swipeDistance > 0) {
-                            state.detailImageIndex = Math.min(state.detail.images.length - 1, state.detailImageIndex + 1);
-                        } else {
-                            state.detailImageIndex = Math.max(0, state.detailImageIndex - 1);
-                        }
-                        context.renderDetailModal();
-                        requestAnimationFrame(() => {
-                            setTimeout(() => {
-                                mediaEl.classList.remove("swipe-anim");
-                                isSwiping = false;
-                            }, 50);
-                        });
-                    }, 150);
-                }
-            }
+            const swipeDistance = touchStartX - e.changedTouches[0].screenX;
+            if (Math.abs(swipeDistance) < SWIPE_THRESHOLD_PX) return;
+            // Positive distance = finger moved LEFT = user wants NEXT photo.
+            void navigateDetailImage(swipeDistance > 0 ? 1 : -1);
         }, { passive: true });
 
-        // ── Keyboard arrow navigation for photos ─────────────────────
+        // Keyboard arrows — only react when the detail modal is open.
         document.addEventListener("keydown", (event) => {
-            if (!state.detail || !(state.detail?.images?.length > 1)) return;
-            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                const mediaEl = elements.detailModal?.querySelector(".detail-media");
-                if (mediaEl) {
-                    mediaEl.classList.add("swipe-anim");
-                    setTimeout(() => {
-                        if (event.key === "ArrowLeft") {
-                            state.detailImageIndex = Math.max(0, state.detailImageIndex - 1);
-                        } else {
-                            state.detailImageIndex = Math.min(state.detail.images.length - 1, state.detailImageIndex + 1);
-                        }
-                        context.renderDetailModal();
-                        requestAnimationFrame(() => {
-                            setTimeout(() => mediaEl.classList.remove("swipe-anim"), 50);
-                        });
-                    }, 150);
-                }
+            if (!state.detail) return;
+            if (event.key === "ArrowLeft") {
+                void navigateDetailImage(-1);
+            } else if (event.key === "ArrowRight") {
+                void navigateDetailImage(1);
             }
         });
 

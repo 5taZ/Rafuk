@@ -12,11 +12,12 @@ function createRenderCardBuilders(context) {
         safeUrl: safeUrl,
     } = context;
 
-    function buildMediaNode(imageClass, placeholderClass, placeholderText, url) {
-        if (url) {
+    function buildMediaNode(imageClass, placeholderClass, placeholderText, url, altText) {
+        const src = safeUrl(url);
+        if (src) {
             return domEl("img", {
                 className: imageClass,
-                attrs: { src: safeUrl(url), alt: "", loading: "lazy" },
+                attrs: { src, alt: altText || "", loading: "lazy", decoding: "async" },
             });
         }
         return domEl("div", { className: placeholderClass, text: placeholderText });
@@ -43,6 +44,12 @@ function createRenderCardBuilders(context) {
             }));
         }
 
+        // The backend always computes price_vs_median against the right
+        // reference (per-category if the category has ≥3 ads, otherwise the
+        // whole query). The fallback below only fires when we have no
+        // backend-supplied delta — and falls back to the query-level median
+        // exposed in state.stats, which is the same reference type as the
+        // backend's "query" scope, so the values stay comparable.
         let delta = item.price_vs_median;
         if (delta == null && item.price && state.stats?.median && Number(state.stats.median) > 0) {
             delta = Math.round(((Number(item.price) - Number(state.stats.median)) / Number(state.stats.median)) * 100 * 100) / 100;
@@ -50,11 +57,24 @@ function createRenderCardBuilders(context) {
         if (delta != null) {
             const absDelta = Math.abs(delta);
             if (absDelta < 0.5) {
-                badges.push(domEl("span", { className: "listing-badge delta-approx", text: "≈" }));
+                badges.push(domEl("span", {
+                    className: "listing-badge delta-approx",
+                    text: "≈",
+                    attrs: { title: item.price_reference_label
+                        ? `По рынку (${item.price_reference_label})`
+                        : "По рынку" },
+                }));
             } else {
+                // Show the reference label as a hover tooltip so the user can
+                // confirm whether the % is vs category or vs the whole query.
+                const tooltipPrefix = delta > 0 ? "Выше" : "Ниже";
+                const refLabel = item.price_reference_scope === "category"
+                    ? (item.price_reference_label || "категории")
+                    : "среднего по запросу";
                 badges.push(domEl("span", {
                     className: `listing-badge ${deltaClass(delta)}`.trim(),
                     text: formatDelta(delta),
+                    attrs: { title: `${tooltipPrefix} ${refLabel}` },
                 }));
             }
         }
@@ -68,7 +88,13 @@ function createRenderCardBuilders(context) {
                 domEl(
                     "div",
                     { className: "listing-top" },
-                    buildMediaNode("listing-thumb", "listing-thumb placeholder", "Нет фото", item.thumbnail),
+                    buildMediaNode(
+                        "listing-thumb",
+                        "listing-thumb placeholder",
+                        "Нет фото",
+                        item.thumbnail,
+                        item.title || item.subject || "",
+                    ),
                     domEl(
                         "div",
                         { className: "listing-body" },
@@ -250,7 +276,7 @@ function createRenderCardBuilders(context) {
             type: "button",
             dataset: { role: "fill-buy-price" },
             text: priceByn ? `${priceByn}` : "Договорная",
-            attrs: !priceByn ? { disabled: true, style: "opacity:0.4;pointer-events:none;" } : {},
+            attrs: !priceByn ? { disabled: true } : {},
         });
         fillBuyPriceButton.addEventListener("click", () => {
             if (priceByn) {
@@ -265,7 +291,13 @@ function createRenderCardBuilders(context) {
                 domEl(
                     "div",
                     { className: `lead-card-top${isMissing ? " is-missing" : ""}` },
-                    buildMediaNode("watchlist-thumb", "watchlist-thumb-placeholder", "Нет фото", lead.thumbnail),
+                    buildMediaNode(
+                        "watchlist-thumb",
+                        "watchlist-thumb-placeholder",
+                        "Нет фото",
+                        lead.thumbnail,
+                        lead.title || "",
+                    ),
                     domEl(
                         "div",
                         { className: "lead-card-body" },
@@ -441,7 +473,13 @@ function createRenderCardBuilders(context) {
                 domEl(
                     "div",
                     { className: `watchlist-card-top${isMissing ? " is-missing" : ""}` },
-                    buildMediaNode("watchlist-thumb", "watchlist-thumb-placeholder", "Нет фото", item.thumbnail),
+                    buildMediaNode(
+                        "watchlist-thumb",
+                        "watchlist-thumb-placeholder",
+                        "Нет фото",
+                        item.thumbnail,
+                        item.title || "",
+                    ),
                     domEl(
                         "div",
                         { className: "watchlist-card-body" },

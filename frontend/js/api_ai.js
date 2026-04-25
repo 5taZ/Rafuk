@@ -7,6 +7,7 @@ function createApiAi(context) {
     let _aiLoading = false;
     let _aiProgress = 0;
     let _lastAiData = null;
+    let _progressFrame = null;
 
     const LOADING_STEPS = [
         "Загружаю данные объявления...",
@@ -16,21 +17,8 @@ function createApiAi(context) {
         "Формирую рекомендации...",
         "Осталось немного...",
     ];
-    const PROGRESS_CAPS = [
-        { server: 0, cap: 12 },
-        { server: 10, cap: 28 },
-        { server: 30, cap: 56 },
-        { server: 50, cap: 72 },
-        { server: 55, cap: 76 },
-        { server: 60, cap: 80 },
-        { server: 65, cap: 83 },
-        { server: 70, cap: 86 },
-        { server: 74, cap: 88 },
-        { server: 78, cap: 90 },
-        { server: 80, cap: 91 },
-        { server: 85, cap: 93 },
-        { server: 95, cap: 97 },
-    ];
+    const AI_PROGRESS_EXPECTED_MS = 26000;
+    const AI_PROGRESS_SOFT_CAP = 96;
     const STAGE_LABELS = {
         queued: "Ставлю задачу в очередь...",
         loading_market_data: "Загружаю данные объявления...",
@@ -45,11 +33,24 @@ function createApiAi(context) {
     };
 
     function _updateProgressDisplay(pct) {
-        _aiProgress = pct;
+        _aiProgress = Math.max(0, Math.min(100, pct));
         const barEl = elements.aiProgressBar;
         const pctEl = elements.aiProgressPct;
-        if (barEl) barEl.style.width = pct + "%";
-        if (pctEl) pctEl.textContent = Math.round(pct) + "%";
+        if (barEl) barEl.style.width = _aiProgress + "%";
+        if (pctEl) pctEl.textContent = Math.round(_aiProgress) + "%";
+    }
+
+    function _updateProgressDisplayInstant(pct) {
+        const barEl = elements.aiProgressBar;
+        if (!barEl) {
+            _updateProgressDisplay(pct);
+            return;
+        }
+        const previousTransition = barEl.style.transition;
+        barEl.style.transition = "none";
+        _updateProgressDisplay(pct);
+        barEl.offsetHeight;
+        barEl.style.transition = previousTransition;
     }
 
     function _setStageLabel(stage) {
@@ -58,78 +59,67 @@ function createApiAi(context) {
         textEl.textContent = STAGE_LABELS[stage];
     }
 
-    /**
-     * Progress model: server sends milestones (10, 30, 50, 85).
-     * Between milestones we creep slowly so the bar never stalls.
-     * When a new server milestone arrives, we jump toward it quickly.
-     * The bar never reaches 100% until analysis is truly done.
-     */
-    let _serverCeiling = 0; // highest server milestone seen
+    let _progressStartedAt = 0;
 
-    function _setServerProgress(serverPct) {
-        if (serverPct > _serverCeiling) {
-            _serverCeiling = serverPct;
-        }
+    function _prefersReducedMotion() {
+        return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     }
 
-    function _getProgressCap(serverPct) {
-        let cap = 12;
-        for (let i = 0; i < PROGRESS_CAPS.length; i++) {
-            if (serverPct >= PROGRESS_CAPS[i].server) {
-                cap = PROGRESS_CAPS[i].cap;
-            }
+    function _cancelProgressFrame() {
+        if (_progressFrame) {
+            cancelAnimationFrame(_progressFrame);
+            _progressFrame = null;
         }
-        return cap;
     }
 
     function _startLoadingAnimation() {
         let step = 0;
         _aiProgress = 0;
-        _serverCeiling = 0;
+        _progressStartedAt = performance.now();
         const textEl = elements.aiLoaderText;
 
-        function tick() {
-            step = (step + 1) % LOADING_STEPS.length;
-            if (textEl) textEl.textContent = LOADING_STEPS[step];
+        if (_prefersReducedMotion()) {
+            if (textEl) textEl.textContent = LOADING_STEPS[0];
+            _updateProgressDisplay(12);
+            return;
+        }
 
-            const maxLocal = _getProgressCap(_serverCeiling);
-            if (_aiProgress < _serverCeiling) {
-                const gap = _serverCeiling - _aiProgress;
-                const jump = Math.max(1.6, gap * 0.45);
-                _aiProgress = Math.min(_aiProgress + jump, _serverCeiling);
-            } else if (_aiProgress < maxLocal) {
-                const remaining = maxLocal - _aiProgress;
-                const minCreep = _serverCeiling >= 85 ? 0.15 : 0.35;
-                const maxCreep = _serverCeiling >= 85 ? 0.35 : 0.75;
-                const creep = Math.min(
-                    remaining,
-                    minCreep + Math.random() * (maxCreep - minCreep),
-                );
-                _aiProgress = Math.min(_aiProgress + creep, maxLocal);
+        function tick(now) {
+            const elapsed = Math.max(0, now - _progressStartedAt);
+            const normalized = Math.min(elapsed / AI_PROGRESS_EXPECTED_MS, 1);
+            const target = 3 + normalized * (AI_PROGRESS_SOFT_CAP - 3);
+            _updateProgressDisplay(Math.max(_aiProgress, target));
+
+            const nextStep = Math.min(
+                LOADING_STEPS.length - 1,
+                Math.floor(normalized * LOADING_STEPS.length),
+            );
+            if (nextStep !== step) {
+                step = nextStep;
+                if (textEl) textEl.textContent = LOADING_STEPS[step];
             }
-            _updateProgressDisplay(_aiProgress);
+
+            _progressFrame = requestAnimationFrame(tick);
         }
 
         if (textEl) textEl.textContent = LOADING_STEPS[0];
-        _updateProgressDisplay(2);
-        state.aiLoadingTimer = setInterval(tick, 800);
+        _updateProgressDisplay(3);
+        _cancelProgressFrame();
+        _progressFrame = requestAnimationFrame(tick);
     }
 
     function _stopLoadingAnimation(success = true) {
-        if (state.aiLoadingTimer) {
-            clearInterval(state.aiLoadingTimer);
-            state.aiLoadingTimer = null;
-        }
+        _cancelProgressFrame();
         if (success) {
             // Smooth transition from current progress to 100%
             const startPct = _aiProgress;
             const targetPct = 100;
-            if (startPct >= targetPct - 1) {
+            if (_prefersReducedMotion() || startPct >= targetPct - 1) {
                 _updateProgressDisplay(targetPct);
                 const barEl = elements.aiProgressBar;
                 if (barEl) barEl.classList.add("ai-progress-bar--done");
             } else {
-                const duration = 400; // ms
+                const duration = Math.min(1800, Math.max(900, (targetPct - startPct) * 24));
                 const startTime = performance.now();
                 function animateStep(now) {
                     const elapsed = now - startTime;
@@ -139,13 +129,14 @@ function createApiAi(context) {
                     const pct = startPct + (targetPct - startPct) * eased;
                     _updateProgressDisplay(pct);
                     if (t < 1) {
-                        requestAnimationFrame(animateStep);
+                        _progressFrame = requestAnimationFrame(animateStep);
                     } else {
+                        _progressFrame = null;
                         const barEl = elements.aiProgressBar;
                         if (barEl) barEl.classList.add("ai-progress-bar--done");
                     }
                 }
-                requestAnimationFrame(animateStep);
+                _progressFrame = requestAnimationFrame(animateStep);
             }
         }
     }
@@ -178,10 +169,11 @@ function createApiAi(context) {
                     );
                 }
             }
-        }, 500);
+        }, _prefersReducedMotion() ? 150 : 950);
     }
 
-    function openAIModal(subtitle) {
+    function openAIModal(subtitle, options = {}) {
+        const { startLoading = true } = options;
         if (elements.aiModalSubtitle && subtitle) {
             elements.aiModalSubtitle.textContent = subtitle;
         }
@@ -197,13 +189,13 @@ function createApiAi(context) {
             if (!notice) {
                 notice = document.createElement("p");
                 notice.className = "ai-time-notice";
-                notice.textContent = "Анализ занимает 2–3 минуты";
                 const loadingEl = elements.aiModalLoading;
                 if (loadingEl) {
                     loadingEl.parentNode.insertBefore(notice, loadingEl.nextSibling);
                 }
             }
-            notice.hidden = false;
+            notice.textContent = "Обычно 20–60 секунд, сложные объявления — дольше";
+            notice.hidden = !startLoading;
         }
 
         // Reset completion classes from previous run
@@ -229,6 +221,8 @@ function createApiAi(context) {
         }
         if (elements.aiModalError) elements.aiModalError.hidden = true;
         if (elements.aiModalResult) elements.aiModalResult.hidden = true;
+        _cancelProgressFrame();
+        _updateProgressDisplayInstant(startLoading ? 3 : 0);
         if (elements.aiModal) elements.aiModal.hidden = false;
         document.body.classList.add("modal-open");
 
@@ -236,11 +230,15 @@ function createApiAi(context) {
         const scrollBody = elements.aiModal?.querySelector(".ai-modal-body");
         if (scrollBody) scrollBody.scrollTop = 0;
 
-        _startLoadingAnimation();
+        if (startLoading) {
+            _startLoadingAnimation();
+        } else if (loadingEl) {
+            loadingEl.hidden = true;
+        }
     }
 
     function closeAIModal() {
-        _stopLoadingAnimation();
+        _stopLoadingAnimation(false);
         if (elements.aiModal) elements.aiModal.hidden = true;
         document.body.classList.remove("modal-open");
     }
@@ -251,9 +249,8 @@ function createApiAi(context) {
 
         const cached = state.detailAi;
         if (cached && cached.adId === adId && cached.result && !cached.error) {
-            openAIModal(state.detail?.title || "");
-            _stopLoadingAnimation();
-            setTimeout(() => _renderAIModalResult(cached.result), 200);
+            openAIModal(state.detail?.title || "", { startLoading: false });
+            _renderAIModalResult(cached.result);
             return;
         }
 
@@ -282,7 +279,8 @@ function createApiAi(context) {
                 console.log("[AI] Cached result received");
                 const result = startResp.result;
                 state.detailAi = { adId, loading: false, result, error: "", source: "ai" };
-                _showCompletionThen(() => _renderAIModalResult(result));
+                _stopLoadingAnimation(false);
+                _renderAIModalResult(result);
                 return;
             }
 
@@ -314,10 +312,6 @@ function createApiAi(context) {
                         if (status.stage) {
                             _setStageLabel(status.stage);
                             console.log("[AI] stage:", status.stage, "progress:", status.progress);
-                        }
-                        // Update server milestone — local timer creeps toward it
-                        if (status.progress > 0) {
-                            _setServerProgress(status.progress);
                         }
                         if (status.status === "done") {
                             resolve(status.result);
@@ -1068,8 +1062,7 @@ ${others.map(s => `    <div class="similar-card">
 <body>
 <div class="print-banner">
   <div class="print-banner-inner">
-    <div class="print-banner-text">Если диалог печати не открылся автоматически, нажмите кнопку и выберите «Сохранить как PDF».</div>
-    <button class="print-banner-btn" type="button" onclick="window.print()">Печать / PDF</button>
+    <div class="print-banner-text">Если диалог печати не открылся автоматически, используйте печать из меню браузера и выберите «Сохранить как PDF».</div>
   </div>
 </div>
 <div class="page-shell">
@@ -1134,13 +1127,6 @@ ${similarHtml}
 </div>
 
 </div>
-<script>
-window.addEventListener("load", function () {
-  setTimeout(function () {
-    try { window.print(); } catch (_) {}
-  }, 600);
-});
-</script>
 </body>
 </html>`;
 

@@ -472,7 +472,10 @@ def test_listings_endpoint_keeps_price_delta_stable_in_category_view(monkeypatch
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
-        broad_response = client.get("/api/v1/listings", params={"query": "audi q7", "currency": "BYN"})
+        broad_response = client.get(
+            "/api/v1/listings",
+            params={"query": "audi q7", "currency": "BYN"},
+        )
         category_response = client.get(
             "/api/v1/listings",
             params={

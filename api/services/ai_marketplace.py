@@ -162,22 +162,56 @@ _AUTO_BRAND_TOKENS = {
 }
 _CATEGORY_GENERIC_TOKENS: dict[str, set[str]] = {
     "headphones": {
-        "наушники", "headphones", "buds", "airpods", "pro", "max", "wireless", "bluetooth",
+        "наушники",
+        "headphones",
+        "buds",
+        "airpods",
+        "pro",
+        "max",
+        "wireless",
+        "bluetooth",
     },
     "watch": {
-        "watch", "часы", "smartwatch", "series", "ultra", "classic", "band",
+        "watch",
+        "часы",
+        "smartwatch",
+        "series",
+        "ultra",
+        "classic",
+        "band",
     },
     "camera": {
-        "camera", "камера", "объектив", "lens", "зеркалка", "беззеркалка", "body",
+        "camera",
+        "камера",
+        "объектив",
+        "lens",
+        "зеркалка",
+        "беззеркалка",
+        "body",
     },
     "phone": {
-        "iphone", "phone", "телефон", "смартфон", "pro", "max", "plus", "mini",
+        "iphone",
+        "phone",
+        "телефон",
+        "смартфон",
+        "pro",
+        "max",
+        "plus",
+        "mini",
     },
     "tablet": {
-        "tablet", "планшет", "ipad", "tab",
+        "tablet",
+        "планшет",
+        "ipad",
+        "tab",
     },
     "laptop": {
-        "laptop", "ноутбук", "macbook", "ультрабук", "gaming", "игровой",
+        "laptop",
+        "ноутбук",
+        "macbook",
+        "ультрабук",
+        "gaming",
+        "игровой",
     },
 }
 
@@ -253,8 +287,7 @@ def _normalized_ad_text(ad: dict[str, Any]) -> str:
     title = str(ad.get("subject", "") or ad.get("title", ""))
     description = str(ad.get("body", "") or ad.get("description", ""))
     param_values = " ".join(
-        str(param.get("vl") or param.get("v") or "")
-        for param in ad.get("ad_parameters", [])
+        str(param.get("vl") or param.get("v") or "") for param in ad.get("ad_parameters", [])
     )
     seller_text = get_param(ad, "seller_type") or ""
     return normalize_search_text(" ".join((title, description, param_values, seller_text)))
@@ -376,7 +409,9 @@ def build_marketplace_risk_context(ad: dict[str, Any]) -> MarketplaceRiskContext
         score += 0.5
 
     desc_len = len(description.strip())
-    if desc_len < 60 and (bool(ad.get("company_ad")) or reseller_words or contains_financing_bait(title, description)):
+    if desc_len < 60 and (
+        bool(ad.get("company_ad")) or reseller_words or contains_financing_bait(title, description)
+    ):
         score += 1.0
         flags.append("Описание малоинформативное и больше похоже на продажный шаблон.")
 
@@ -396,7 +431,7 @@ def merge_marketplace_red_flags(
 ) -> list[str]:
     # Normalize: AI may return dicts instead of strings (e.g. {"point": "...", "why": "..."})
     normalized_flags: list[str] = []
-    for flag in (red_flags or []):
+    for flag in red_flags or []:
         if isinstance(flag, str) and flag.strip():
             normalized_flags.append(flag.strip())
         elif isinstance(flag, dict):
@@ -408,12 +443,17 @@ def merge_marketplace_red_flags(
     if risk_context.score < 2.5:
         return merged
     if (
-        not any(word in risk_context.hot_words for word in (*_HOT_WORD_GROUPS["finance"], *_HOT_WORD_GROUPS["reseller"]))
+        not any(
+            word in risk_context.hot_words
+            for word in (*_HOT_WORD_GROUPS["finance"], *_HOT_WORD_GROUPS["reseller"])
+        )
         and risk_context.score < 3.5
     ):
         return merged
 
-    if any(word in normalized for word in ("автохаус", "кредит", "рассрочка", "перекуп", "площадка")):
+    if any(
+        word in normalized for word in ("автохаус", "кредит", "рассрочка", "перекуп", "площадка")
+    ):
         return merged
 
     synthesized = ""
@@ -491,7 +531,9 @@ def choose_best_alternative(
         return BestAlternativeDecision(item=None, reason="")
 
     if ai_best_pick_ad_id:
-        chosen = next((item for item in similar_listings if item["ad_id"] == ai_best_pick_ad_id), None)
+        chosen = next(
+            (item for item in similar_listings if item["ad_id"] == ai_best_pick_ad_id), None
+        )
         if chosen is not None:
             return BestAlternativeDecision(item=chosen, reason="")
 
@@ -541,24 +583,25 @@ def build_market_context_fallback(
 
     best = similar_listings[0] if similar_listings else None
     parts: list[str] = []
+    median_text = f"{int(round(market_median))} BYN" if market_median else ""
     if is_negotiable_price:
         if market_median:
             parts.append(
-                f"Цена в объявлении не указана, поэтому ориентир по рынку сейчас около {int(round(market_median))} BYN."
+                "Цена в объявлении не указана, поэтому ориентир по рынку "
+                f"сейчас около {median_text}."
             )
     elif market_median:
         delta = ((price_byn - market_median) / market_median) * 100 if market_median else 0.0
+        price_text = f"{int(round(price_byn))} BYN"
         if delta <= -8:
             parts.append(
-                f"Цена {int(round(price_byn))} BYN заметно ниже рынка, медиана по выборке около {int(round(market_median))} BYN."
+                f"Цена {price_text} заметно ниже рынка, медиана по выборке около {median_text}."
             )
         elif delta >= 8:
-            parts.append(
-                f"Цена {int(round(price_byn))} BYN выше рынка, медиана по выборке около {int(round(market_median))} BYN."
-            )
+            parts.append(f"Цена {price_text} выше рынка, медиана по выборке около {median_text}.")
         else:
             parts.append(
-                f"Цена {int(round(price_byn))} BYN близка к рынку, медиана по выборке около {int(round(market_median))} BYN."
+                f"Цена {price_text} близка к рынку, медиана по выборке около {median_text}."
             )
 
     if best is not None:
@@ -567,16 +610,16 @@ def build_market_context_fallback(
             diff = int(round(price_byn - best_price))
             if diff > 0:
                 parts.append(
-                    f"Самый близкий аналог стоит {best_price} BYN, то есть дешевле примерно на {diff} BYN."
+                    f"Самый близкий аналог стоит {best_price} BYN, "
+                    f"то есть дешевле примерно на {diff} BYN."
                 )
             elif diff < 0:
                 parts.append(
-                    f"Самый близкий аналог стоит {best_price} BYN, то есть дороже примерно на {abs(diff)} BYN."
+                    f"Самый близкий аналог стоит {best_price} BYN, "
+                    f"то есть дороже примерно на {abs(diff)} BYN."
                 )
             else:
-                parts.append(
-                    f"Самый близкий аналог стоит примерно столько же: {best_price} BYN."
-                )
+                parts.append(f"Самый близкий аналог стоит примерно столько же: {best_price} BYN.")
         else:
             parts.append(
                 f"Сильный аналог находится в районе {best_price} BYN и задаёт ориентир по рынку."
@@ -592,26 +635,50 @@ def build_market_context_fallback(
 _CATEGORY_WATCH_OUT: dict[str, list[tuple[str, str]]] = {
     "phone": [
         ("Аккумулятор", "Проверь ёмкость батареи и скорость разряда, это главный скрытый расход."),
-        ("Экран и камеры", "Осмотри экран на выгорание и проверь все камеры без ошибок и запотевания."),
-        ("Регион и блокировки", "Уточни модель, регион и отсутствие Activation Lock или операторских ограничений."),
+        (
+            "Экран и камеры",
+            "Осмотри экран на выгорание и проверь все камеры без ошибок и запотевания.",
+        ),
+        (
+            "Регион и блокировки",
+            "Уточни модель, регион и отсутствие Activation Lock или операторских ограничений.",
+        ),
     ],
     "laptop": [
-        ("Батарея и нагрев", "Проверь износ батареи, шум вентиляторов и температуру под нагрузкой."),
+        (
+            "Батарея и нагрев",
+            "Проверь износ батареи, шум вентиляторов и температуру под нагрузкой.",
+        ),
         ("Экран и петли", "Осмотри матрицу на засветы, пиксели и люфт крышки."),
-        ("Порты и SSD", "Проверь все порты и состояние диска, чтобы не получить скрытый ремонт сразу после покупки."),
+        (
+            "Порты и SSD",
+            "Проверь все порты и состояние диска, "
+            "чтобы не получить скрытый ремонт сразу после покупки.",
+        ),
     ],
     "tablet": [
         ("Экран и сенсор", "Проверь сенсор по всей площади и наличие пятен или засветов."),
         ("Батарея", "Спроси про автономность и посмотри, не проседает ли заряд слишком быстро."),
-        ("Комплект", "Уточни, идёт ли оригинальная зарядка, стилус или клавиатура, если это важно для модели."),
+        (
+            "Комплект",
+            "Уточни, идёт ли оригинальная зарядка, стилус или клавиатура, "
+            "если это важно для модели.",
+        ),
     ],
     "auto": [
-        ("Кузов и история", "Проверь VIN, толщиномер и историю ДТП, потому что именно здесь обычно скрывают риски."),
+        (
+            "Кузов и история",
+            "Проверь VIN, толщиномер и историю ДТП, "
+            "потому что именно здесь обычно скрывают риски.",
+        ),
         ("Техника", "Слушай двигатель и коробку на холодную и после короткой поездки."),
         ("Документы", "Уточни владельца, техосмотр и совпадение документов с VIN."),
     ],
     "auto_parts": [
-        ("Совместимость", "Сверь OEM-номер, поколение и модификацию, иначе деталь может не подойти."),
+        (
+            "Совместимость",
+            "Сверь OEM-номер, поколение и модификацию, иначе деталь может не подойти.",
+        ),
         ("Состояние узла", "Попроси крупные фото посадочных мест, разъёмов и следов ремонта."),
         ("Возврат", "Уточни возможность возврата после примерки или проверки на стенде."),
     ],
@@ -623,52 +690,124 @@ _CATEGORY_WATCH_OUT: dict[str, list[tuple[str, str]]] = {
     "headphones": [
         ("Батарея и звук", "Проверь оба канала, микрофон и реальное время работы от батареи."),
         ("Оригинальность", "Для популярных моделей обязательно сверяй серийный номер и упаковку."),
-        ("Амбушюры и кейс", "Износ расходников кажется мелочью, но часто превращается в быстрые траты."),
+        (
+            "Амбушюры и кейс",
+            "Износ расходников кажется мелочью, но часто превращается в быстрые траты.",
+        ),
     ],
     "camera": [
-        ("Матрица и объектив", "Проверь пыль, грибок, царапины и равномерность кадра на закрытой диафрагме."),
+        (
+            "Матрица и объектив",
+            "Проверь пыль, грибок, царапины и равномерность кадра на закрытой диафрагме.",
+        ),
         ("Затвор", "Уточни пробег затвора и сравни его с ресурсом модели."),
         ("Стабилизация и видео", "Проверь автофокус, стабилизацию и запись видео без артефактов."),
     ],
     "animal": [
-        ("Здоровье и документы", "Уточни прививки, чипирование и наличие ветпаспорта или родословной."),
-        ("Условия содержания", "Спроси про питание, режим, причину продажи и текущее самочувствие."),
-        ("Поведение и социализация", "Постарайся посмотреть животное вживую — пугливость и агрессия видны сразу."),
+        (
+            "Здоровье и документы",
+            "Уточни прививки, чипирование и наличие ветпаспорта или родословной.",
+        ),
+        (
+            "Условия содержания",
+            "Спроси про питание, режим, причину продажи и текущее самочувствие.",
+        ),
+        (
+            "Поведение и социализация",
+            "Постарайся посмотреть животное вживую — пугливость и агрессия видны сразу.",
+        ),
     ],
     "clothing": [
         ("Состояние ткани", "Осмотри пятна, катышки, потёртости и швы на изгибах."),
-        ("Размер и посадка", "Сверь размер по бирке с реальными замерами — производители часто врут."),
-        ("Оригинальность", "Для брендовых вещей проверь логотипы, бирки, фурнитуру и упаковку — подделок много."),
+        (
+            "Размер и посадка",
+            "Сверь размер по бирке с реальными замерами — производители часто врут.",
+        ),
+        (
+            "Оригинальность",
+            "Для брендовых вещей проверь логотипы, бирки, фурнитуру и упаковку — подделок много.",
+        ),
     ],
     "baby": [
-        ("Безопасность", "Для колясок и автокресел обязательно проверь год выпуска и историю использования."),
+        (
+            "Безопасность",
+            "Для колясок и автокресел обязательно проверь год выпуска и историю использования.",
+        ),
         ("Износ и комплект", "Осмотри ремни, крепления, стирку и наличие инструкции/документов."),
-        ("Гигиена", "Для предметов личной гигиены (соски, бутылочки) лучше брать новые или в идеальном состоянии."),
+        (
+            "Гигиена",
+            "Для предметов личной гигиены (соски, бутылочки) "
+            "лучше брать новые или в идеальном состоянии.",
+        ),
     ],
     "tools": [
         ("Работоспособность", "Проверь инструмент под нагрузкой, а не только включение."),
-        ("Расходники и комплект", "Уточни состояние батарей, патрона/цепи, наличие зарядки и кейса."),
-        ("История использования", "Спроси, насколько интенсивно использовали — для бытового и профессионального ресурс разный."),
+        (
+            "Расходники и комплект",
+            "Уточни состояние батарей, патрона/цепи, наличие зарядки и кейса.",
+        ),
+        (
+            "История использования",
+            "Спроси, насколько интенсивно использовали — "
+            "для бытового и профессионального ресурс разный.",
+        ),
     ],
     "sports": [
-        ("Состояние под нагрузкой", "Попроси примерить или попробовать — дефекты часто проявляются только в работе."),
-        ("Износ трущихся частей", "Проверь подшипники, лезвия, скользяк, крепления — это первые расходники."),
-        ("Сезон и хранение", "Уточни, как хранили в межсезонье — сырость и солнце убивают спортивный инвентарь."),
+        (
+            "Состояние под нагрузкой",
+            "Попроси примерить или попробовать — дефекты часто проявляются только в работе.",
+        ),
+        (
+            "Износ трущихся частей",
+            "Проверь подшипники, лезвия, скользяк, крепления — это первые расходники.",
+        ),
+        (
+            "Сезон и хранение",
+            "Уточни, как хранили в межсезонье — сырость и солнце убивают спортивный инвентарь.",
+        ),
     ],
     "books": [
-        ("Состояние страниц", "Проверь, нет ли вырванных или загнутых листов, пятен и подчёркиваний."),
+        (
+            "Состояние страниц",
+            "Проверь, нет ли вырванных или загнутых листов, пятен и подчёркиваний.",
+        ),
         ("Переплёт и обложка", "Осмотри корешок и углы — расклеенный переплёт это уже расход."),
-        ("Комплектность", "Для коллекционных изданий уточни наличие суперобложки, футляра и автографа, если он заявлен."),
+        (
+            "Комплектность",
+            "Для коллекционных изданий уточни наличие суперобложки, "
+            "футляра и автографа, если он заявлен.",
+        ),
     ],
     "plants": [
-        ("Здоровье растения", "Осмотри листья и стебель на следы вредителей, плесени и заболеваний."),
-        ("Корневая система", "По возможности попроси аккуратно достать растение из горшка — гниль корней не видна снаружи."),
-        ("Условия и пересадка", "Уточни режим полива, освещение и нужна ли срочная пересадка после переезда."),
+        (
+            "Здоровье растения",
+            "Осмотри листья и стебель на следы вредителей, плесени и заболеваний.",
+        ),
+        (
+            "Корневая система",
+            "По возможности попроси аккуратно достать растение из горшка — "
+            "гниль корней не видна снаружи.",
+        ),
+        (
+            "Условия и пересадка",
+            "Уточни режим полива, освещение и нужна ли срочная пересадка после переезда.",
+        ),
     ],
     "default": [
-        ("Состояние", "Сверь фото, описание и фактические следы износа, чтобы не купить товар хуже заявленного."),
-        ("Комплект и документы", "Уточни, что реально входит в комплект, есть ли документы, чек и оригинальная упаковка."),
-        ("Проверка на месте", "Договорись о демонстрации ключевых функций или примерке/осмотре до оплаты."),
+        (
+            "Состояние",
+            "Сверь фото, описание и фактические следы износа, "
+            "чтобы не купить товар хуже заявленного.",
+        ),
+        (
+            "Комплект и документы",
+            "Уточни, что реально входит в комплект, есть ли документы, "
+            "чек и оригинальная упаковка.",
+        ),
+        (
+            "Проверка на месте",
+            "Договорись о демонстрации ключевых функций или примерке/осмотре до оплаты.",
+        ),
     ],
 }
 
@@ -779,7 +918,11 @@ def _price_anchor_discount(
             return int(round(market_median * 0.08)), "от медианы рынка"
         return None, ""
 
-    anchors = [float(x) for x in [market_median, best_alternative.get("price_byn") if best_alternative else None] if x]
+    anchors = [
+        float(x)
+        for x in [market_median, best_alternative.get("price_byn") if best_alternative else None]
+        if x
+    ]
     if not anchors or price_byn <= 0:
         return None, ""
     reference = min(anchors)
@@ -803,15 +946,23 @@ def _build_fallback_watch_out(
     for point, why in _CATEGORY_WATCH_OUT.get(category, _CATEGORY_WATCH_OUT["default"]):
         items.append({"point": point, "why": why})
     if risk_context.score >= 3.0:
-        items.append({
-            "point": "Профиль продавца",
-            "why": risk_context.summary or "Есть сигналы площадки или перепродажи, поэтому важна дополнительная проверка.",
-        })
+        items.append(
+            {
+                "point": "Профиль продавца",
+                "why": risk_context.summary
+                or "Есть сигналы площадки или перепродажи, поэтому важна дополнительная проверка.",
+            }
+        )
     if best_alternative and float(best_alternative.get("price_byn") or 0) > 0:
-        items.append({
-            "point": "Сравнение с альтернативой",
-            "why": f"Перед покупкой сравни состояние с вариантом за {int(round(float(best_alternative['price_byn'])))} BYN.",
-        })
+        alternative_price = int(round(float(best_alternative["price_byn"])))
+        items.append(
+            {
+                "point": "Сравнение с альтернативой",
+                "why": (
+                    f"Перед покупкой сравни состояние с вариантом за {alternative_price} BYN."
+                ),
+            }
+        )
     seen: set[str] = set()
     result: list[dict[str, str]] = []
     for item in items:
@@ -987,8 +1138,10 @@ def _build_summary_fallback(
         elif diff < 0:
             parts.append(f"Объявление примерно на {abs(diff)} BYN ниже медианного ориентира.")
     if best_alternative and float(best_alternative.get("price_byn") or 0) > 0:
+        alternative_price = int(round(float(best_alternative["price_byn"])))
         parts.append(
-            f"Ближайшая альтернатива находится около {int(round(float(best_alternative['price_byn'])))} BYN, поэтому её стоит держать как ориентир перед оплатой."
+            f"Ближайшая альтернатива находится около {alternative_price} BYN, "
+            "поэтому её стоит держать как ориентир перед оплатой."
         )
     if red_flags:
         parts.append(f"Главный риск сейчас: {red_flags[0].rstrip('.')}.")
@@ -1027,11 +1180,7 @@ def complete_analysis_sections(
         or normalize_condition_label(_clean_text(photo_condition_label))
         or normalize_condition_label(_clean_text(listing_condition))
     )
-    notes = [
-        _clean_text(note)
-        for note in (condition.get("notes") or [])
-        if _clean_text(note)
-    ]
+    notes = [_clean_text(note) for note in (condition.get("notes") or []) if _clean_text(note)]
     notes = _unique_texts(notes + photo_condition_notes, max_items=4)
     if not notes and listing_condition:
         notes = [f"Заявленное состояние: {listing_condition}"]
@@ -1039,8 +1188,7 @@ def complete_analysis_sections(
         completed["condition"] = {
             "label": label or "Удовлетворительное",
             "confidence": float(
-                condition.get("confidence")
-                or (0.72 if photo_condition_notes else 0.64)
+                condition.get("confidence") or (0.72 if photo_condition_notes else 0.64)
             ),
             "notes": notes,
         }
@@ -1159,7 +1307,8 @@ def complete_analysis_sections(
     )
     if len(tips) < 3:
         tips = _unique_texts(
-            tips + _build_fallback_negotiation_tips(
+            tips
+            + _build_fallback_negotiation_tips(
                 category=category,
                 price_byn=price_byn,
                 market_median=market_median,
@@ -1265,17 +1414,25 @@ def _fallback_fair_price(
     best_alternative: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     if market_q1 and market_q3:
-        reasoning = f"Базовый рыночный диапазон по выборке находится около {int(round(market_q1))} — {int(round(market_q3))} BYN."
+        from_price = int(round(market_q1))
+        to_price = int(round(market_q3))
+        reasoning = (
+            f"Базовый рыночный диапазон по выборке находится около {from_price} — {to_price} BYN."
+        )
         if best_alternative and float(best_alternative.get("price_byn") or 0) > 0:
-            reasoning += f" Ближайший сильный аналог стоит около {int(round(float(best_alternative['price_byn'])))} BYN."
-        return {"from": int(round(market_q1)), "to": int(round(market_q3)), "reasoning": reasoning}
+            alternative_price = int(round(float(best_alternative["price_byn"])))
+            reasoning += f" Ближайший сильный аналог стоит около {alternative_price} BYN."
+        return {"from": from_price, "to": to_price, "reasoning": reasoning}
     if market_median:
         low = int(round(market_median * 0.92))
         high = int(round(market_median * 1.08))
         return {
             "from": low,
             "to": high,
-            "reasoning": f"При отсутствии устойчивого квартильного диапазона ориентир взят вокруг медианы рынка {int(round(market_median))} BYN.",
+            "reasoning": (
+                "При отсутствии устойчивого квартильного диапазона ориентир "
+                f"взят вокруг медианы рынка {int(round(market_median))} BYN."
+            ),
         }
     return None
 
@@ -1292,9 +1449,15 @@ def _fallback_recommendation(
     if is_negotiable_price:
         verdict = "think_twice"
         if risk_context.score >= 3.0:
-            text = "Брать стоит только после проверки состояния и жёсткого торга от рыночного ориентира."
+            text = (
+                "Брать стоит только после проверки состояния и жёсткого торга "
+                "от рыночного ориентира."
+            )
         else:
-            text = "Сделка может быть интересной, но итог зависит от цены после торга и фактического состояния."
+            text = (
+                "Сделка может быть интересной, но итог зависит от цены после "
+                "торга и фактического состояния."
+            )
         return {"verdict": verdict, "text": text}
 
     if market_q3 and price_byn > market_q3:
@@ -1305,7 +1468,10 @@ def _fallback_recommendation(
     if market_q1 and price_byn <= market_q1 and risk_context.score < 2.5:
         return {
             "verdict": "worth_it",
-            "text": "По цене это выглядит сильным вариантом, если проверка состояния не выявит скрытых проблем.",
+            "text": (
+                "По цене это выглядит сильным вариантом, если проверка состояния "
+                "не выявит скрытых проблем."
+            ),
         }
     return {
         "verdict": "think_twice",
@@ -1403,7 +1569,6 @@ def build_fallback_analysis_result(
     }
 
 
-
 def _query_similarity_bonus(query_tokens: set[str], candidate_tokens: set[str]) -> float:
     if not query_tokens:
         return 0.0
@@ -1419,7 +1584,9 @@ def _title_similarity_bonus(target_tokens: set[str], candidate_tokens: set[str])
     return overlap / max(len(target_tokens), 1) * TITLE_TOKEN_COVERAGE_BONUS
 
 
-def _parameter_similarity_bonus(target_params: dict[str, str], candidate_params: dict[str, str]) -> float:
+def _parameter_similarity_bonus(
+    target_params: dict[str, str], candidate_params: dict[str, str]
+) -> float:
     if not target_params or not candidate_params:
         return 0.0
     score = 0.0
@@ -1552,21 +1719,21 @@ def _camera_similarity_bonus(target_text: str, candidate_text: str) -> float:
             score -= 2.5
     target_aperture = _APERTURE_RE.findall(target_text)
     candidate_aperture = _APERTURE_RE.findall(candidate_text)
-    if (
-        target_aperture
-        and candidate_aperture
-        and set(target_aperture) & set(candidate_aperture)
-    ):
+    if target_aperture and candidate_aperture and set(target_aperture) & set(candidate_aperture):
         score += 1.5
     return score
 
 
 def _detect_market_segment(ad: dict[str, Any]) -> str:
     text = _normalized_ad_text(ad)
-    if any(keyword in text for keyword in ("запчаст", "запчасти", "деталь", "разбор", "авторазбор")):
+    if any(
+        keyword in text for keyword in ("запчаст", "запчасти", "деталь", "разбор", "авторазбор")
+    ):
         return "auto_parts"
     title = str(ad.get("subject", "") or ad.get("title", ""))
-    parameters = [{"value": param.get("vl") or param.get("v")} for param in ad.get("ad_parameters", [])]
+    parameters = [
+        {"value": param.get("vl") or param.get("v")} for param in ad.get("ad_parameters", [])
+    ]
     return detect_category(title, parameters)
 
 
@@ -1648,7 +1815,9 @@ def _has_auto_generation_conflict(target_text: str, candidate_text: str) -> bool
     )
 
 
-def _price_tiebreaker(target_price: float, candidate_price: float, market_median: float | None) -> float:
+def _price_tiebreaker(
+    target_price: float, candidate_price: float, market_median: float | None
+) -> float:
     if candidate_price <= 0:
         return -10.0
     reference = target_price if target_price > 0 else (market_median or 0.0)

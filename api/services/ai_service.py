@@ -13,12 +13,16 @@ import json
 import logging
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from api.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_KUFAR_IMAGE_HOST_RE = re.compile(r"^rms\d*\.kufar\.by$")
+_MAX_AI_IMAGE_BYTES = 5_000_000
 
 
 def _entry_price_guidance(
@@ -148,7 +152,7 @@ CATEGORY_HINTS: dict[str, dict[str, str]] = {
         "category_hints": (
             "Проверь звук (оба канала, шумы, искажения), микрофон, "
             "Bluetooth (стабильность подключения), батарею (время работы), "
-            "амбушюры (износ кожзи substituting), оголовье (трещины), "
+            "амбушюры (износ кожи/ткани), оголовье (трещины), "
             "оригинальность (подделки Audio-Technica, Sony, Apple, JBL "
             "очень распространены — сравни с официальными фото)."
         ),
@@ -164,7 +168,7 @@ CATEGORY_HINTS: dict[str, dict[str, str]] = {
             "контроллеры (стики без дрифта, триггеры, вибрация), "
             "HDMI (изображение без артефактов), вентилятор (шум), "
             "статус бана онлайн (не забанена ли консоль), "
-            "гарантию (действует ли), прошивку (homedog/CFW — риск бана)."
+            "гарантию (действует ли), прошивку (CFW/homebrew — риск бана)."
         ),
         "bargain_hint": (
             "Поколение консоли: предыдущее — -30-50% от нового. "
@@ -189,7 +193,7 @@ CATEGORY_HINTS: dict[str, dict[str, str]] = {
     "camera": {
         "category_hints": (
             "Проверь матрицу (пыль, битые пиксели — тест на закрытой диафрагме), "
-            "затвор (количество срабатываний — resource), объектив "
+            "затвор (количество срабатываний — ресурс), объектив "
             "(грибок, царапины на линзах, люфт), стабилизацию (работает ли), "
             "карты памяти (слот), вспышку, видео (запись без артефактов)."
         ),
@@ -365,6 +369,47 @@ CATEGORY_HINTS: dict[str, dict[str, str]] = {
             "редких видов (-15-25%). Сравни с ценой в питомнике."
         ),
     },
+    "real_estate": {
+        "category_hints": (
+            "Проверь точный адрес и район, тип дома, год постройки, этаж, "
+            "метраж, планировку, состояние ремонта, коммунальные платежи, "
+            "документы собственности, ограничения/обременения и реальные фото. "
+            "Для аренды уточни срок договора, залог, включены ли коммунальные, "
+            "регистрация, животные, комиссия агентства и кто оплачивает счётчики."
+        ),
+        "bargain_hint": (
+            "Аргументы для торга: старый ремонт, первый/последний этаж, "
+            "шумная локация, отсутствие мебели/техники, высокая коммуналка, "
+            "срочность сделки. Для аренды считай итоговую цену с залогом и "
+            "комиссией, а не только месячный платёж."
+        ),
+    },
+    "auto_parts": {
+        "category_hints": (
+            "Проверь совместимость по VIN/артикулу, сторону установки, год и "
+            "кузов автомобиля, оригинальность детали, состояние креплений, "
+            "трещины, следы ремонта, коррозию, комплектность и возможность "
+            "возврата, если деталь не подошла."
+        ),
+        "bargain_hint": (
+            "Аргументы для торга: нет артикула/VIN-подтверждения, повреждены "
+            "крепления, требуется покраска/ремонт, нет гарантии на проверку. "
+            "Проси скидку минимум на стоимость доработки и риск несовместимости."
+        ),
+    },
+    "construction": {
+        "category_hints": (
+            "Проверь марку и точные характеристики материала, объём/остаток, "
+            "условия хранения, срок годности у смесей/красок/клея, влажность "
+            "древесины, сколы у плитки/кирпича, комплектность и возможность "
+            "доставки/погрузки."
+        ),
+        "bargain_hint": (
+            "Аргументы для торга: остатки после ремонта, самовывоз, нарушенная "
+            "упаковка, истекающий срок годности, разнобой партии/тона. "
+            "Сравни с ценой строительных гипермаркетов в Беларуси."
+        ),
+    },
     "default": {
         "category_hints": (
             "Внимательно сравни фото с описанием — нет ли расхождений. "
@@ -443,6 +488,32 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "ipad pro",
         "ipad mini",
     ],
+    "auto_parts": [
+        "запчаст",
+        "разборка",
+        "двигатель",
+        "кпп",
+        "акпп",
+        "мкпп",
+        "бампер",
+        "фара",
+        "фонарь",
+        "крыло",
+        "дверь",
+        "капот",
+        "багажник",
+        "подвеска",
+        "амортизатор",
+        "суппорт",
+        "стартер",
+        "генератор",
+        "турбина",
+        "диски",
+        "шины",
+        "резина",
+        "колёса",
+        "колеса",
+    ],
     "auto": [
         "автомобиль",
         "седан",
@@ -475,6 +546,29 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "легковой",
         "минивэн",
         "пикап",
+    ],
+    "real_estate": [
+        "квартира",
+        "комната",
+        "дом ",
+        "дача",
+        "коттедж",
+        "таунхаус",
+        "новостройка",
+        "аренда",
+        "сдам",
+        "сниму",
+        "продам квартиру",
+        "метр",
+        "м2",
+        "этаж",
+        "жк ",
+        "недвижимость",
+        "участок",
+        "гараж",
+        "машиноместо",
+        "офис",
+        "помещение",
     ],
     "motorcycle": [
         "мотоцикл",
@@ -595,6 +689,31 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "морозильн",
         "dishwasher",
         "refrigerator",
+    ],
+    "construction": [
+        "стройматериал",
+        "кирпич",
+        "газосиликат",
+        "блоки",
+        "плитка",
+        "ламинат",
+        "линолеум",
+        "доска",
+        "брус",
+        "фанера",
+        "гипсокартон",
+        "штукатурка",
+        "шпаклевка",
+        "шпаклёвка",
+        "цемент",
+        "клей плиточный",
+        "краска",
+        "грунтовка",
+        "утеплитель",
+        "минвата",
+        "профиль",
+        "арматура",
+        "остатки после ремонта",
     ],
     "furniture": [
         "диван",
@@ -1107,7 +1226,10 @@ notes:
 - не используй шаблоны вроде "заметка1"
 Если по фото нельзя уверенно судить, выбирай "Удовлетворительное" и объясняй почему.
 Ответь ТОЛЬКО JSON (без markdown):
-{"condition": "Хорошее", "notes": ["Есть реальные фото устройства", "На корпусе видны лёгкие потёртости"]}
+{
+  "condition": "Хорошее",
+  "notes": ["Есть реальные фото устройства", "На корпусе видны лёгкие потёртости"]
+}
 Никаких личных данных. Отвечай на русском.
 """
 
@@ -1253,7 +1375,10 @@ class AIService:
     @property
     def _is_gemini(self) -> bool:
         """Gemini models served via Google's OpenAI-compatible endpoint."""
-        return self._model.lower().startswith("gemini") or "generativelanguage.googleapis.com" in self._base_url
+        return (
+            self._model.lower().startswith("gemini")
+            or "generativelanguage.googleapis.com" in self._base_url
+        )
 
     @property
     def _is_gemma_legacy(self) -> bool:
@@ -1465,12 +1590,14 @@ class AIService:
         if isinstance(results[0], Exception):
             logger.warning(
                 "AI parallel Call A failed: %s: %s",
-                type(results[0]).__name__, results[0],
+                type(results[0]).__name__,
+                results[0],
             )
         if isinstance(results[1], Exception):
             logger.warning(
                 "AI parallel Call B failed: %s: %s",
-                type(results[1]).__name__, results[1],
+                type(results[1]).__name__,
+                results[1],
             )
         # If BOTH failed, re-raise the first error so the router fallback path kicks in
         if isinstance(results[0], Exception) and isinstance(results[1], Exception):
@@ -1508,7 +1635,7 @@ class AIService:
                 content.append(img)
         if len(content) == 1:
             raise ValueError("Не удалось загрузить фото для анализа")
-        result = await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=400)
+        result = await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=900)
         return {
             "condition": normalize_condition_label(result.get("condition")),
             "notes": _clean_photo_notes(result.get("notes")),
@@ -1632,7 +1759,8 @@ class AIService:
                 parts.append(f"Состояние по фото: {photo_condition_label}")
             if photo_condition_notes:
                 parts.append(
-                    "Наблюдения: " + "; ".join(str(note)[:140] for note in photo_condition_notes[:4])
+                    "Наблюдения: "
+                    + "; ".join(str(note)[:140] for note in photo_condition_notes[:4])
                 )
 
         # Market statistics
@@ -1680,9 +1808,7 @@ class AIService:
             )
             if is_negotiable_price and entry_guidance is not None:
                 entry_from, entry_to = entry_guidance
-                parts.append(
-                    f"Разумный вход после торга: {entry_from} — {entry_to} BYN."
-                )
+                parts.append(f"Разумный вход после торга: {entry_from} — {entry_to} BYN.")
                 parts.append(
                     "Для recommendation и negotiation_tips используй этот диапазон как "
                     "рабочий ориентир цены входа, если нет более сильных аналогов."
@@ -1790,14 +1916,52 @@ class AIService:
 
     async def _fetch_image_bytes(self, url: str) -> bytes | None:
         """Download image bytes using shared httpx client."""
+        if not self._is_allowed_image_url(url):
+            logger.warning("Skipped AI image fetch from unsupported host: %s", url[:80])
+            return None
         try:
             client = self._get_client()
-            resp = await client.get(url, timeout=8, follow_redirects=True)
+            resp = await client.get(url, timeout=8, follow_redirects=False)
+            if resp.is_redirect:
+                location = resp.headers.get("location")
+                if not location:
+                    logger.warning("Skipped AI image fetch with empty redirect")
+                    return None
+                redirect_url = str(resp.url.join(location))
+                if not self._is_allowed_image_url(redirect_url):
+                    logger.warning("Skipped AI image fetch redirect to unsupported host")
+                    return None
+                resp = await client.get(redirect_url, timeout=8, follow_redirects=False)
             if resp.status_code == 200:
+                content_type = resp.headers.get("content-type", "")
+                if not content_type.lower().startswith("image/"):
+                    logger.warning("Skipped AI image fetch with content-type=%s", content_type)
+                    return None
+                content_length = resp.headers.get("content-length")
+                if content_length:
+                    try:
+                        if int(content_length) > _MAX_AI_IMAGE_BYTES:
+                            logger.warning("Skipped AI image fetch larger than byte limit")
+                            return None
+                    except ValueError:
+                        logger.warning("Skipped AI image fetch with invalid content-length")
+                        return None
+                if len(resp.content) > _MAX_AI_IMAGE_BYTES:
+                    logger.warning("Skipped AI image fetch larger than byte limit")
+                    return None
                 return resp.content
         except httpx.HTTPError as e:
             logger.warning("Failed to fetch image %s: %s", url[:80], e)
         return None
+
+    @staticmethod
+    def _is_allowed_image_url(url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return False
+        hostname = parsed.hostname or ""
+        return parsed.scheme == "https" and bool(_KUFAR_IMAGE_HOST_RE.fullmatch(hostname))
 
     @staticmethod
     def _compress_image(data: bytes, max_dim: int = 768, quality: int = 75) -> bytes | None:
@@ -1840,23 +2004,13 @@ class AIService:
         except json.JSONDecodeError:
             pass
 
-        # Strategy 2: find the last balanced JSON object using brace counting
-        # This handles cases where reasoning text precedes the JSON output
-        last_brace = text.rfind("}")
-        if last_brace != -1:
-            # Walk backwards to find the matching opening brace
-            depth = 0
-            for i in range(last_brace, -1, -1):
-                if text[i] == "}":
-                    depth += 1
-                elif text[i] == "{":
-                    depth -= 1
-                    if depth == 0:
-                        candidate = text[i : last_brace + 1]
-                        try:
-                            return json.loads(candidate)
-                        except json.JSONDecodeError:
-                            break
+        # Strategy 2: parse the last balanced JSON object while respecting
+        # braces inside quoted strings.
+        for candidate in reversed(AIService._json_object_candidates(text)):
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
 
         # Strategy 3: greedy regex (original behavior)
         json_match = re.search(r"\{.*\}", text.strip(), flags=re.DOTALL)
@@ -1870,6 +2024,36 @@ class AIService:
         logger.warning("AI returned non-JSON (%d chars): %s", len(text), text[:500])
         # Try to extract partial data from truncated JSON
         return _repair_truncated_json(text)
+
+    @staticmethod
+    def _json_object_candidates(text: str) -> list[str]:
+        candidates: list[str] = []
+        start: int | None = None
+        depth = 0
+        in_string = False
+        escaped = False
+        for index, char in enumerate(text):
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\" and in_string:
+                escaped = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                if depth == 0:
+                    start = index
+                depth += 1
+            elif char == "}" and depth:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    candidates.append(text[start : index + 1])
+                    start = None
+        return candidates
 
     async def close(self) -> None:
         """Close the underlying httpx client, if it was created."""

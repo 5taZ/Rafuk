@@ -185,3 +185,58 @@ def test_filter_deal_ads_uses_category_reference_when_available() -> None:
     )
 
     assert [item["ad_id"] for item in result] == [1, 7]
+
+
+def test_resolve_reference_falls_back_to_query_when_category_too_small() -> None:
+    """A 1-of-1 category must fall back to the global query median —
+    otherwise we'd get a useless reference (median == price → delta 0%).
+    """
+    from api.services.aggregator import resolve_price_reference
+
+    ads = [
+        {"ad_id": 1, "category": "2010", "price_byn": 100000},
+        {"ad_id": 2, "category": "2010", "price_byn": 110000},
+        {"ad_id": 3, "category": "2010", "price_byn": 120000},
+        {"ad_id": 4, "category": "2010", "price_byn": 105000},
+        # Lone outlier in its own category — too few for a useful median
+        {"ad_id": 99, "category": "9999", "price_byn": 50000},
+    ]
+    market_stats = compute_price_stats(extract_prices(ads))
+    category_stats = compute_category_price_stats(ads)
+
+    main_ref = resolve_price_reference(ads[0], market_stats, category_stats)
+    lone_ref = resolve_price_reference(ads[-1], market_stats, category_stats)
+
+    assert main_ref.scope == "category"
+    assert lone_ref.scope == "query"  # fallback because category count == 1
+
+
+def test_iphone_14_scenario_uses_phone_category_not_global() -> None:
+    """User's reported case: query "iPhone 14" mixes phones and accessories.
+    Phone deviation should be vs the phone median, not the global one
+    that's pulled down by the cheaper accessories.
+    """
+    from api.services.aggregator import compute_price_vs_reference
+
+    ads = [
+        # Phones (~1500-1700 BYN, all in category 17010)
+        {"ad_id": 1, "category": 17010, "price_byn": 160000},
+        {"ad_id": 2, "category": 17010, "price_byn": 175000},
+        {"ad_id": 3, "category": 17010, "price_byn": 155000},
+        {"ad_id": 4, "category": 17010, "price_byn": 165000},
+        {"ad_id": 5, "category": 17010, "price_byn": 170000},
+        # Accessories (5-12 BYN, in category 17030) — would crash the global median
+        {"ad_id": 10, "category": 17030, "price_byn": 500},
+        {"ad_id": 11, "category": 17030, "price_byn": 800},
+        {"ad_id": 12, "category": 17030, "price_byn": 1200},
+    ]
+    market_stats = compute_price_stats(extract_prices(ads))
+    category_stats = compute_category_price_stats(ads)
+
+    # An iPhone at 1700 BYN against the global median (~95) would look
+    # like +1700% above market, which is nonsense. With per-category
+    # logic it should be ~+3% (vs phone median of 1650).
+    delta = compute_price_vs_reference(ads[4], market_stats, category_stats)
+    assert -10.0 < delta < 10.0, (
+        f"iPhone deviation should be small vs phone median, got {delta:+.1f}%"
+    )

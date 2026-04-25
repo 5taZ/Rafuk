@@ -62,7 +62,9 @@ def _create_limiter() -> Limiter:
         logger.info("Rate limiter using in-memory storage (Settings unavailable)")
         return Limiter(key_func=_rate_limit_key, storage_uri="memory://")
 
-    if storage_uri.startswith(("redis://", "rediss://", "unix://")) and _redis_reachable(storage_uri):
+    if storage_uri.startswith(("redis://", "rediss://", "unix://")) and _redis_reachable(
+        storage_uri
+    ):
         logger.info("Rate limiter configured with Redis storage URI")
         return Limiter(key_func=_rate_limit_key, storage_uri=storage_uri)
 

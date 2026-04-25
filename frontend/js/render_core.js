@@ -212,6 +212,7 @@ function createRenderCore(context) {
                 const isActive = button.dataset.view === state.activeView;
                 button.classList.toggle("active", isActive);
                 button.setAttribute("aria-selected", String(isActive));
+                button.tabIndex = isActive ? 0 : -1;
             }
         });
     }

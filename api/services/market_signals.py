@@ -42,20 +42,38 @@ def area_label(ad: dict[str, Any]) -> str | None:
     return None
 
 
+# Symmetric thresholds for the fair-price band classification. Numbers are
+# percent deviation of the listing's price from its reference median
+# (per-category if the category has ≥ 3 ads, otherwise the whole query —
+# see resolve_price_reference in aggregator.py).
+#   < -25%   → too cheap (often a flag for scams, but also rare deals)
+#   -25..-10 → below market (genuine discount worth checking)
+#   -10..+10 → at market (fair)
+#   +10..+25 → above market (overpaying a bit)
+#   > +25%   → strongly above market (overpriced)
+FAIR_BAND_DEEP_DISCOUNT = -25.0
+FAIR_BAND_BELOW = -10.0
+FAIR_BAND_ABOVE = 10.0
+FAIR_BAND_DEEP_OVERPRICED = 25.0
+
+
 def fair_price_band(price_vs_median: float | None) -> str | None:
     if price_vs_median is None:
         return None
-    if price_vs_median <= -15:
+    if price_vs_median < FAIR_BAND_DEEP_DISCOUNT:
+        return "deep_discount"
+    if price_vs_median < FAIR_BAND_BELOW:
         return "below_market"
-    if price_vs_median <= 12:
+    if price_vs_median <= FAIR_BAND_ABOVE:
         return "fair"
-    if price_vs_median <= 30:
+    if price_vs_median <= FAIR_BAND_DEEP_OVERPRICED:
         return "above_market"
     return "high"
 
 
 def fair_price_label(band: str | None) -> str | None:
     labels = {
+        "deep_discount": "Сильно ниже рынка",
         "below_market": "Ниже рынка",
         "fair": "По рынку",
         "above_market": "Выше рынка",

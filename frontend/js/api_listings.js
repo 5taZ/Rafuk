@@ -24,7 +24,6 @@ function createApiListings(context) {
         dismissToast,
         buildCommonQuery,
         getJson,
-        postJson,
         deleteJson,
     } = context;
 
@@ -429,25 +428,6 @@ function createApiListings(context) {
         }
     }
 
-    // ── Detail Risk Assessment ───────────────────────────────────────────
-    async function loadDetailRisks(item) {
-        if (!item || !item.price) {
-            context.renderDetailRisks(null);
-            return;
-        }
-        try {
-            const data = await postJson("/api/v1/risk-assessment", {
-                price_byn: item.price_byn || item.price || null,
-                description: item.description || "",
-                photo_count: item.photo_count || 0,
-                market_median: state.stats?.median || null,
-            });
-            context.renderDetailRisks(data);
-        } catch (_) {
-            context.renderDetailRisks(null);
-        }
-    }
-
     return {
         search,
         loadListings,
@@ -459,6 +439,5 @@ function createApiListings(context) {
         clearSearchData,
         resetCategoryFilter,
         loadHistory,
-        loadDetailRisks,
     };
 }

@@ -54,6 +54,10 @@ def _normalize_response_ads(response: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(ads, list) or not ads:
         return response
 
+    has_minor_currency_pair = any(ad.get("price_usd") not in (None, "", 0, 0.0) for ad in ads)
+    if has_minor_currency_pair:
+        return response
+
     raw_prices: list[float] = []
     for ad in ads:
         try:
@@ -67,13 +71,11 @@ def _normalize_response_ads(response: dict[str, Any]) -> dict[str, Any]:
         return response
 
     raw_median = statistics.median(raw_prices)
-    likely_direct_byn = (
-        100 <= raw_median <= MAX_PRICE_BYN and raw_median / 100 < 100 and max(raw_prices) < 10_000
-    )
+    likely_direct_byn = max(raw_prices) <= MAX_PRICE_BYN
     if not likely_direct_byn:
         logger.warning(
             "Price normalization heuristic triggered: raw_median=%.0f, "
-            "max_raw=%.0f — assuming prices are already in BYN (not kopecks)",
+            "max_raw=%.0f — leaving price_byn values unchanged",
             raw_median,
             max(raw_prices),
         )

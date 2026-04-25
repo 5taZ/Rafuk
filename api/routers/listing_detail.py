@@ -41,8 +41,7 @@ async def get_listing_detail(
     kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> ListingDetailResponse:
     cache_key = (
-        f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}:{category}:"
-        f"{reference_context}"
+        f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}:{category}:{reference_context}"
     )
     cached = await cache.get_json(cache_key)
     if cached:
