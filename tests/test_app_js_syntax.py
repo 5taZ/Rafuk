@@ -49,3 +49,39 @@ def test_close_ai_modal_cancels_polling() -> None:
     body = close_block.group(0)
     assert "_aiPollSession" in body, "closeAIModal must invalidate the poll session"
     assert "_aiLoading = false" in body, "closeAIModal must release _aiLoading"
+
+
+def test_load_leads_and_watchlist_have_stale_response_guard() -> None:
+    """Rapid tab toggling (Покупки ↔ Избранное) used to issue overlapping
+    loadLeads()/loadWatchlist() — a stale response could resolve last
+    and overwrite a fresher state. Both loaders must compare the request
+    id captured at start against the latest one before assigning state."""
+    leads_js = (JS_DIR / "api_leads.js").read_text(encoding="utf-8")
+    watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+
+    # state holds the monotonic counters; their names are referenced by the loaders.
+    assert "_leadsRequestId" in leads_js
+    assert "_watchlistRequestId" in watchlist_js
+    # Each loader bumps and then checks the counter before writing state.
+    assert "state._leadsRequestId" in leads_js
+    assert "if (requestId !== state._leadsRequestId)" in leads_js
+    assert "state._watchlistRequestId" in watchlist_js
+    assert "if (requestId !== state._watchlistRequestId)" in watchlist_js
+
+
+def test_lead_and_watchlist_mutations_have_inflight_guard() -> None:
+    """A double-click on "В покупки" / "В избранное" used to fire two
+    POST /api/v1/leads or /api/v1/watchlist round-trips because state
+    hadn't reloaded between clicks. Each mutation must short-circuit
+    when the same ad/row is already mid-flight."""
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+
+    assert "_inflightAdMutations" in actions_js
+    assert "_inflightAdMutations.has(item.ad_id)" in actions_js
+
+    assert "_inflightAd" in watchlist_js
+    assert "_inflightWatchId" in watchlist_js
+    # promoteWatchlistToLead and deleteWatchlistItem both guard by row id.
+    assert "_inflightWatchId.has(item.id)" in watchlist_js
+    assert "_inflightWatchId.has(watchlistId)" in watchlist_js

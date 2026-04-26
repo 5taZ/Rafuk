@@ -35,6 +35,13 @@ function createApiWatchlist(context) {
         if (typeof renderLeads === "function") renderLeads();
     }
 
+    // Tracks ad_ids and watchlist row ids with an in-flight mutation so
+    // a rapid double-click doesn't fire two POST/PATCH/DELETE for the
+    // same row. The backend is race-safe (savepoint + 409), but the
+    // user otherwise sees doubled toasts and one round-trip is wasted.
+    const _inflightAd = new Set();
+    const _inflightWatchId = new Set();
+
     // ── Load watchlist ───────────────────────────────────────────────────
     async function loadWatchlist() {
         if (!hasTelegramInitData()) {
@@ -42,13 +49,21 @@ function createApiWatchlist(context) {
             refreshAfterWatchlistChange();
             return;
         }
+        // Stale-response guard — same pattern as loadLeads(). Watchlist
+        // and leads share the same lead_items table, so a stale
+        // watchlist GET arriving after a promote/delete can resurrect
+        // a row that no longer belongs there.
+        const requestId = (state._watchlistRequestId =
+            (state._watchlistRequestId + 1) % 1_000_000);
+        let nextWatchlist;
         try {
-            state.watchlist = await getJson("/api/v1/watchlist");
+            nextWatchlist = await getJson("/api/v1/watchlist");
         } catch (_) {
-            state.watchlist = [];
-        } finally {
-            refreshAfterWatchlistChange();
+            nextWatchlist = [];
         }
+        if (requestId !== state._watchlistRequestId) return;
+        state.watchlist = nextWatchlist;
+        refreshAfterWatchlistChange();
     }
 
     // ── Clear entire watchlist ───────────────────────────────────────────
@@ -75,6 +90,9 @@ function createApiWatchlist(context) {
         if (!hasTelegramInitData() || !item?.ad_id) {
             return;
         }
+        if (_inflightAd.has(item.ad_id)) {
+            return;
+        }
 
         // Check both surfaces — after the watchlist→leads merge a single
         // ad_id can only be in ONE state at a time.
@@ -98,6 +116,7 @@ function createApiWatchlist(context) {
             return;
         }
 
+        _inflightAd.add(item.ad_id);
         try {
             await postJson("/api/v1/watchlist", {
                 query: queryOverride || state.query || "",
@@ -124,6 +143,8 @@ function createApiWatchlist(context) {
                 return;
             }
             showToast(message || "Не удалось добавить в избранное", "error");
+        } finally {
+            _inflightAd.delete(item.ad_id);
         }
     }
 
@@ -150,6 +171,9 @@ function createApiWatchlist(context) {
         if (!item?.id || !item?.ad_id) {
             return;
         }
+        if (_inflightWatchId.has(item.id)) {
+            return;
+        }
 
         // Watchlist items live in the same lead_items table after the
         // 20260427_0001 merge — promotion is a pure status transition,
@@ -169,6 +193,7 @@ function createApiWatchlist(context) {
             return;
         }
 
+        _inflightWatchId.add(item.id);
         try {
             await requestJson(`/api/v1/leads/${item.id}`, {
                 method: "PATCH",
@@ -186,6 +211,8 @@ function createApiWatchlist(context) {
             ]);
         } catch (error) {
             showToast(error?.message || "Не удалось перевести в покупки", "error");
+        } finally {
+            _inflightWatchId.delete(item.id);
         }
     }
 
@@ -229,12 +256,29 @@ function createApiWatchlist(context) {
 
     // ── Delete single watchlist item ─────────────────────────────────────
     async function deleteWatchlistItem(watchlistId) {
+        if (_inflightWatchId.has(watchlistId)) {
+            return;
+        }
+        _inflightWatchId.add(watchlistId);
+        // Optimistic remove so the card disappears immediately even
+        // when the network is slow. The server-side DELETE is
+        // idempotent (always 204), so a duplicate click later — even
+        // after this guard's TTL — is still safe.
+        const previousWatchlist = state.watchlist;
+        state.watchlist = state.watchlist.filter((w) => w.id !== watchlistId);
+        refreshAfterWatchlistChange();
         try {
             await deleteJson(`/api/v1/watchlist/${watchlistId}`);
             await loadWatchlist();
             renderMonitoringHeroStats();
         } catch (error) {
+            // Rollback the optimistic removal so the user can see the
+            // item didn't actually delete and retry.
+            state.watchlist = previousWatchlist;
+            refreshAfterWatchlistChange();
             showToast(error.message || "Не удалось удалить");
+        } finally {
+            _inflightWatchId.delete(watchlistId);
         }
     }
 

@@ -221,8 +221,18 @@ function createAppActions(context) {
      * @param {string|null} [queryOverride=null] - Override the current query
      * @returns {Promise<void>}
      */
+    // Tracks ad_ids with an in-flight watchlist↔leads transition so a
+    // double-click on "В покупки" / "В избранное" doesn't fire a second
+    // request (the first hasn't reloaded state.leads yet so the
+    // alreadyInLeads guard sees the old empty list).
+    const _inflightAdMutations = new Set();
+
     async function addLeadFromListing(item, source = "manual", queryOverride = null) {
         if (!hasTelegramInitData() || !item?.ad_id) {
+            return;
+        }
+        if (_inflightAdMutations.has(item.ad_id)) {
+            // A previous click for this ad is still mid-flight — ignore.
             return;
         }
 
@@ -250,6 +260,7 @@ function createAppActions(context) {
         // when the user rapid-fires "В избранное" then "В покупки".
         const watchingItem = state.watchlist.find((w) => w.ad_id === item.ad_id);
 
+        _inflightAdMutations.add(item.ad_id);
         try {
             if (watchingItem) {
                 await core.requestJson(`/api/v1/leads/${watchingItem.id}`, {
@@ -281,6 +292,8 @@ function createAppActions(context) {
             await Promise.all([leads.loadLeads(), watchlist.loadWatchlist()]);
         } catch (error) {
             showToast(error.message || "Не удалось добавить в покупки", "error");
+        } finally {
+            _inflightAdMutations.delete(item.ad_id);
         }
     }
 

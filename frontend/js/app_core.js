@@ -44,8 +44,15 @@ function createAppCore() {
         historyChart: null,
         leads: [],
         leadFilter: "all",
+        // Monotonic request id — incremented on every loadLeads() so the
+        // resolver can drop stale responses when the user rapidly toggles
+        // tabs / fires mutations. Mirrors searchRequestId for listings.
+        _leadsRequestId: 0,
         watchlist: [],
         watchlistFilter: "all",
+        // Monotonic request id for loadWatchlist() — same purpose as
+        // _leadsRequestId.
+        _watchlistRequestId: 0,
         itemsFilter: "purchases",
         trackers: [],
         trackerEvents: [],

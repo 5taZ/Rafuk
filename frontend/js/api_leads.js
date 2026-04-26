@@ -33,15 +33,23 @@ function createApiLeads(context) {
             renderProfitDashboard();
             return;
         }
+        // Stale-response guard: rapid tab toggling or mutations followed
+        // by reloads can issue multiple in-flight loadLeads() calls. The
+        // older response can otherwise resolve last and overwrite a
+        // fresher state with outdated rows.
+        const requestId = (state._leadsRequestId = (state._leadsRequestId + 1) % 1_000_000);
+        let nextLeads;
         try {
-            state.leads = await getJson("/api/v1/leads");
+            nextLeads = await getJson("/api/v1/leads");
         } catch (_) {
-            state.leads = [];
-        } finally {
-            renderLeads();
-            renderDealsHeroStats();
-            renderProfitDashboard();
+            nextLeads = [];
         }
+        // Drop the response if a newer loadLeads() has started since.
+        if (requestId !== state._leadsRequestId) return;
+        state.leads = nextLeads;
+        renderLeads();
+        renderDealsHeroStats();
+        renderProfitDashboard();
     }
 
     // ── Clear all leads (active only) ────────────────────────────────────
