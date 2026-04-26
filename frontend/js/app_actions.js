@@ -140,6 +140,9 @@ function createAppActions(context) {
     const listings = createApiListings(context);
     const trackers = createApiTrackers(context);
     const leads = createApiLeads(context);
+    // Expose leads.loadLeads on context so watchlist actions can refresh
+    // both surfaces atomically when promoting a watching item to a lead.
+    context.loadLeads = leads.loadLeads;
     const watchlist = createApiWatchlist(context);
     const ai = createApiAi(context);
     const listingAssistant = (typeof createApiListingAssistant === "function")
@@ -241,21 +244,41 @@ function createAppActions(context) {
             return;
         }
 
+        // If the ad is currently in the watchlist (status='watching'),
+        // promotion is a single PATCH on the same lead_items row — no
+        // need for a fresh POST. This also avoids race-condition 500s
+        // when the user rapid-fires "В избранное" then "В покупки".
+        const watchingItem = state.watchlist.find((w) => w.ad_id === item.ad_id);
+
         try {
-            const marketEstimate = (item.flip_estimates || []).find((entry) => entry.label === "По рынку");
-            await core.postJson("/api/v1/leads", {
-                query: queryOverride || state.query || "",
-                ad_id: item.ad_id,
-                title: item.title,
-                link: item.link,
-                price_byn: item.price_byn,
-                target_resale_byn: marketEstimate?.target_price || null,
-                status: "new",
-                source,
-                thumbnail: item.thumbnail || null,
-            });
+            if (watchingItem) {
+                await core.requestJson(`/api/v1/leads/${watchingItem.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ status: "new" }),
+                });
+                // Optimistic: remove from watchlist immediately.
+                state.watchlist = state.watchlist.filter((w) => w.id !== watchingItem.id);
+            } else {
+                const marketEstimate = (item.flip_estimates || []).find(
+                    (entry) => entry.label === "По рынку",
+                );
+                await core.postJson("/api/v1/leads", {
+                    query: queryOverride || state.query || "",
+                    ad_id: item.ad_id,
+                    title: item.title,
+                    link: item.link,
+                    price_byn: item.price_byn,
+                    target_resale_byn: marketEstimate?.target_price || null,
+                    status: "new",
+                    source,
+                    thumbnail: item.thumbnail || null,
+                });
+            }
             showToast("Добавлено в покупки", "success");
-            await leads.loadLeads();
+            // Refresh both surfaces so a once-watched item disappears
+            // from "Избранное" and shows up in "Покупки" together.
+            await Promise.all([leads.loadLeads(), watchlist.loadWatchlist()]);
         } catch (error) {
             showToast(error.message || "Не удалось добавить в покупки", "error");
         }

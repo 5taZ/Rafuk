@@ -76,9 +76,25 @@ function createApiWatchlist(context) {
             return;
         }
 
+        // Check both surfaces — after the watchlist→leads merge a single
+        // ad_id can only be in ONE state at a time.
+        const ACTIVE_LEAD_STATUSES = new Set([
+            "new",
+            "in_progress",
+            "researching",
+            "bought",
+            "sold",
+        ]);
         const alreadyInWatchlist = state.watchlist.some((w) => w.ad_id === item.ad_id);
         if (alreadyInWatchlist) {
             showToast("Уже в избранном");
+            return;
+        }
+        const alreadyInLeads = state.leads.some(
+            (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
+        );
+        if (alreadyInLeads) {
+            showToast("Уже в покупках");
             return;
         }
 
@@ -95,7 +111,19 @@ function createApiWatchlist(context) {
             showToast("Добавлено в избранное", "success");
             await loadWatchlist();
         } catch (error) {
-            showToast(error.message || "Не удалось добавить в избранное", "error");
+            // Server returns 409 with detail "Этот лот уже в покупках"
+            // when the ad already has a non-watching lead. Surface a
+            // friendly toast instead of the generic "internal error".
+            const message = error?.message || "";
+            if (/уже\s+в\s+покупках/i.test(message)) {
+                showToast("Уже в покупках");
+                // Make sure UI reflects reality.
+                if (typeof context.loadLeads === "function") {
+                    await context.loadLeads();
+                }
+                return;
+            }
+            showToast(message || "Не удалось добавить в избранное", "error");
         }
     }
 
@@ -119,30 +147,46 @@ function createApiWatchlist(context) {
 
     // ── Promote watchlist item to lead ───────────────────────────────────
     async function promoteWatchlistToLead(item) {
-        if (!item?.ad_id) {
+        if (!item?.id || !item?.ad_id) {
             return;
         }
 
-        const alreadyInLeads = state.leads.some((l) => l.ad_id === item.ad_id);
+        // Watchlist items live in the same lead_items table after the
+        // 20260427_0001 merge — promotion is a pure status transition,
+        // no INSERT + DELETE dance needed.
+        const ACTIVE_LEAD_STATUSES = new Set([
+            "new",
+            "in_progress",
+            "researching",
+            "bought",
+            "sold",
+        ]);
+        const alreadyInLeads = state.leads.some(
+            (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
+        );
         if (alreadyInLeads) {
             showToast("Уже в покупках");
             return;
         }
 
-        // Reuse the addLeadFromListing helper from the listings/cross-module pool
-        await context.addLeadFromListing(
-            {
-                ad_id: item.ad_id,
-                title: item.title,
-                link: item.link,
-                price_byn: item.current_price_byn || item.initial_price_byn,
-                thumbnail: item.thumbnail || null,
-                flip_estimates: [],
-            },
-            "watchlist",
-            item.query
-        );
-        await deleteWatchlistItem(item.id);
+        try {
+            await requestJson(`/api/v1/leads/${item.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: "new" }),
+            });
+            showToast("Добавлено в покупки", "success");
+            // Optimistic local state cleanup so the UI reflects the move
+            // immediately, even before the parallel reloads finish.
+            state.watchlist = state.watchlist.filter((w) => w.id !== item.id);
+            refreshAfterWatchlistChange();
+            await Promise.all([
+                loadWatchlist(),
+                typeof context.loadLeads === "function" ? context.loadLeads() : null,
+            ]);
+        } catch (error) {
+            showToast(error?.message || "Не удалось перевести в покупки", "error");
+        }
     }
 
     // ── Open watchlist item detail modal ─────────────────────────────────

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models import LeadItem, User
@@ -67,7 +68,7 @@ async def upsert_lead(
     )
     status_value = status.value if hasattr(status, "value") else status
     if existing is None:
-        existing = LeadItem(
+        new_item = LeadItem(
             user_id=user_id,
             ad_id=ad_id,
             query=query,
@@ -83,8 +84,26 @@ async def upsert_lead(
             initial_price_byn=price_byn if track_initial_price else None,
             last_seen_at=datetime.now(UTC) if update_last_seen else None,
         )
-        session.add(existing)
-        return existing
+        # Race-safe insert: if a concurrent request just created a row
+        # for the same (user_id, ad_id), flush() will raise an
+        # IntegrityError. We rollback the savepoint and fall through to
+        # the update branch below using the row that the other request
+        # committed.
+        try:
+            async with session.begin_nested():
+                session.add(new_item)
+                await session.flush()
+            return new_item
+        except IntegrityError:
+            existing = await session.scalar(
+                select(LeadItem).where(
+                    LeadItem.user_id == user_id, LeadItem.ad_id == ad_id
+                )
+            )
+            if existing is None:
+                # Should not happen — the IntegrityError is *because* a
+                # row exists. Re-raise so the caller sees a real 500.
+                raise
 
     # Idempotent guard: if a user already has an active lead for this ad,
     # don't accidentally demote it to 'watching' from a watchlist add. Just

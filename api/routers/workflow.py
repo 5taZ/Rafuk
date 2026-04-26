@@ -174,8 +174,15 @@ async def create_lead(
             target_resale_byn=payload.target_resale_byn,
             status=payload.status.value,
             source=payload.source,
+            market_median_byn=payload.market_median_byn,
+            notes=payload.notes,
         )
         await session.commit()
+        # Refresh to materialize server-generated columns (created_at,
+        # updated_at, server_default columns) before pydantic walks the
+        # ORM attributes — accessing expired attrs after commit would
+        # otherwise trigger a sync lazy load and raise MissingGreenlet.
+        await session.refresh(lead)
         return LeadRead.model_validate(lead)
 
 
@@ -301,6 +308,20 @@ async def create_watchlist_item(
             telegram_user_id=telegram_user.user_id,
             first_name=telegram_user.first_name,
         )
+        # If the user already has an active lead for this ad, refuse the
+        # "add to watchlist" with a 409 — the frontend treats it as
+        # "уже в покупках" instead of silently no-op'ing in a confusing way.
+        existing = await session.scalar(
+            select(LeadItem).where(
+                LeadItem.user_id == user_id,
+                LeadItem.ad_id == payload.ad_id,
+            )
+        )
+        if existing is not None and existing.status != WATCHING_STATUS:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Этот лот уже в покупках",
+            )
         item = await upsert_lead(
             session,
             user_id=user_id,
@@ -318,6 +339,7 @@ async def create_watchlist_item(
             update_last_seen=True,
         )
         await session.commit()
+        await session.refresh(item)
         return _serialize_watchlist(item)
 
 
@@ -385,6 +407,13 @@ async def delete_watchlist_item(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
+    """Remove a watchlist item.
+
+    Idempotent: returns 204 even if the item was already removed or has
+    been promoted to a non-watching lead status. This avoids confusing
+    "Watchlist item not found" toasts when the user clicks Удалить on a
+    stale UI card whose underlying row is no longer in the watchlist.
+    """
     async with session_factory() as session:
         user_id = await ensure_user(
             session,
@@ -398,13 +427,9 @@ async def delete_watchlist_item(
                 LeadItem.status == WATCHING_STATUS,
             )
         )
-        if item is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Watchlist item not found",
-            )
-        await session.delete(item)
-        await session.commit()
+        if item is not None:
+            await session.delete(item)
+            await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
