@@ -1,0 +1,1315 @@
+/* ===== Detail Modal ===== */
+.detail-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    /* Open state: keyframe animation guarantees the entry plays from the
+       hidden frame every time the modal goes from `display: none` to
+       `display: block` (which `[hidden]` does). Transition-based fade-ins
+       can lag on the first frame because the browser may collapse the
+       display change and the opacity change into a single paint. */
+    animation: modal-overlay-in 200ms ease forwards;
+}
+
+.detail-modal.is-closing {
+    animation: modal-overlay-out 200ms ease forwards;
+}
+
+/* When a modal is open, lock body scroll to prevent double-scroll */
+body.modal-open {
+    overflow: hidden !important;
+    touch-action: none;
+    position: fixed;
+    width: 100%;
+    /* iOS Safari safe area — prevents content shift when URL bar hides */
+    overscroll-behavior: none;
+}
+
+.detail-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+}
+
+[data-theme="light"] .detail-overlay {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.detail-sheet {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: min(92vh, 900px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+    box-shadow: var(--shadow-prominent);
+    border-top: 1px solid var(--border);
+    will-change: transform;
+    animation: modal-sheet-in 280ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+.detail-modal.is-closing .detail-sheet {
+    animation: modal-sheet-out 240ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+@keyframes modal-overlay-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes modal-overlay-out {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+}
+
+@keyframes modal-sheet-in {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+}
+
+@keyframes modal-sheet-out {
+    from { transform: translateY(0); }
+    to   { transform: translateY(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .detail-modal,
+    .detail-modal.is-closing,
+    .detail-sheet,
+    .detail-modal.is-closing .detail-sheet {
+        animation: none !important;
+    }
+}
+
+.detail-sheet .detail-top-bar {
+    flex: 0 0 auto;
+    padding: 12px 14px 0;
+}
+
+/* Generic scrollable body for all sheet modals */
+.detail-sheet-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 0 14px calc(env(safe-area-inset-bottom, 18px) + 18px);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+
+.detail-sheet-content::-webkit-scrollbar {
+    width: 4px;
+}
+
+.detail-sheet-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.detail-sheet-content::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+}
+
+.detail-top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+}
+
+.detail-close {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 20px;
+    cursor: pointer;
+    position: relative;
+    z-index: 2;
+}
+
+.detail-media {
+    border-radius: 18px;
+    overflow: hidden;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    max-height: 340px;
+    display: grid;
+    place-items: center;
+    position: relative;
+    isolation: isolate;
+}
+
+/* Pinch-zoomed photo state: dom_helpers.js / attachPinchZoom adds
+   .is-zoomed while scale > 1 so we can flip touch-action to "none"
+   (capture every touch on the magnified image instead of letting the
+   page pan it) and switch the cursor affordance for desktop testers. */
+.detail-media img.is-zoomed {
+    touch-action: none;
+    cursor: grab;
+    will-change: transform;
+}
+
+.detail-media img.is-zoomed:active {
+    cursor: grabbing;
+}
+
+.detail-media img {
+    width: 100%;
+    max-height: 340px;
+    object-fit: contain;
+    /* Cubic-bezier curve approximating "ease-out-expo" — fast start, gentle
+       settle. Feels natural for swipe-driven carousels. */
+    transition:
+        transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 220ms ease-out;
+    will-change: opacity, transform;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    display: block;
+}
+
+/* Step 1 — outgoing image slides off in the swipe direction and fades out.
+   `next` (user wants the next image): old image moves LEFT.
+   `prev` (user wants the previous image): old image moves RIGHT. */
+.detail-media img.swipe-out-next {
+    transform: translateX(-32px) scale(0.97);
+    opacity: 0;
+}
+.detail-media img.swipe-out-prev {
+    transform: translateX(32px) scale(0.97);
+    opacity: 0;
+}
+
+/* Step 2 — incoming image starts pre-positioned on the OPPOSITE side and
+   then transitions to (0, 0) once the class is removed. */
+.detail-media img.swipe-in-next {
+    transform: translateX(32px) scale(0.97);
+    opacity: 0;
+    transition: none;
+}
+.detail-media img.swipe-in-prev {
+    transform: translateX(-32px) scale(0.97);
+    opacity: 0;
+    transition: none;
+}
+
+/* Respect the user's reduced-motion preference — no slide, just a quick
+   crossfade so the photo still changes visibly. */
+@media (prefers-reduced-motion: reduce) {
+    .detail-media img {
+        transition: opacity 120ms ease-out;
+    }
+    .detail-media img.swipe-out-next,
+    .detail-media img.swipe-out-prev {
+        transform: none;
+    }
+    .detail-media img.swipe-in-next,
+    .detail-media img.swipe-in-prev {
+        transform: none;
+    }
+}
+
+.detail-no-image {
+    color: var(--text-dim);
+    font-size: 13px;
+}
+
+.detail-thumbs {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 8px 0 2px;
+    scrollbar-width: none;
+}
+
+.detail-thumbs::-webkit-scrollbar {
+    display: none;
+}
+
+.detail-thumb {
+    width: 52px;
+    height: 52px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    padding: 0;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+
+.detail-thumb.active {
+    border-color: var(--accent);
+}
+
+.detail-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.detail-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 14px;
+    align-items: flex-start;
+}
+
+.detail-head-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.detail-title {
+    margin: 0;
+    font-size: 17px;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+}
+
+.detail-price {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent);
+    white-space: nowrap;
+}
+
+.detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.detail-pill {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+}
+
+.detail-description {
+    margin: 12px 0 0;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.detail-bottom-actions {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
+
+.detail-bottom-actions .listing-btn {
+    padding: 13px 0;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.detail-block {
+    margin-top: 16px;
+}
+
+.detail-block-title {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.detail-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.detail-field {
+    display: grid;
+    grid-template-columns: minmax(0, 110px) minmax(0, 1fr);
+    gap: var(--space-3);
+    padding: 10px 11px;
+    background: var(--bg-card);
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+}
+
+.detail-field-label {
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+.detail-field-value {
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.bottom-spacer {
+    height: 28px;
+}
+
+/* Offline Banner */
+#offline-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10000;
+    background: var(--red);
+    color: #ffffff;
+    text-align: center;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: var(--font);
+    font-weight: 600;
+    animation: slideDown 0.25s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-100%);
+    }
+    to {
+        transform: translateY(0);
+    }
+}
+
+.toast-container {
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 16px) + 16px);
+    left: 50%;
+    transform: translateX(-50%);
+    /* Toasts must sit above every modal (detail-modal=500, ai-modal=600,
+       modal-overlay=1000). Sharing z-index 600 with the AI modal worked
+       only by accident of DOM order — any transform on the modal would
+       have created a new stacking context and pushed the toast under it. */
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+    max-width: 340px;
+    width: calc(100% - 28px);
+}
+
+.toast {
+    padding: 12px 16px;
+    border-radius: var(--r-lg);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: var(--shadow-prominent);
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    pointer-events: auto;
+    word-break: break-word;
+    backdrop-filter: blur(8px);
+}
+
+.toast.entering {
+    opacity: 0;
+    transform: translateY(12px);
+    animation: toast-in 200ms ease-out forwards;
+}
+
+.toast-exit {
+    animation: toast-out 200ms ease-in forwards;
+}
+
+/* Stagger animation for multiple toasts */
+.toast.entering:nth-child(1) { animation-delay: 0ms; }
+.toast.entering:nth-child(2) { animation-delay: 50ms; }
+.toast.entering:nth-child(3) { animation-delay: 100ms; }
+
+.toast-icon {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.toast-icon.success {
+    color: var(--green);
+}
+
+.toast-icon.error {
+    color: var(--red);
+}
+
+.toast-icon.info {
+    color: var(--accent);
+}
+
+.toast-message {
+    flex: 1;
+    line-height: 1.4;
+}
+
+/* "×N" multiplier that appears when the same (message, type) toast
+   would have stacked. Shows "you got this same notification N times"
+   instead of cluttering the screen with duplicates. */
+.toast-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    padding: 0 6px;
+    margin-left: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    flex-shrink: 0;
+    animation: toastCountPulse 220ms var(--easing-standard, cubic-bezier(0.2, 0.8, 0.2, 1));
+}
+
+@keyframes toastCountPulse {
+    0% { transform: scale(0.6); opacity: 0; }
+    60% { transform: scale(1.1); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .toast-count { animation: none; }
+}
+
+.toast-close {
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    padding: 0;
+    margin: -12px -16px -12px 0;
+    border-radius: 4px;
+    transition: background-color 150ms, color 150ms;
+    cursor: pointer;
+}
+
+.toast-close:hover {
+    background-color: var(--bg-hover);
+    color: var(--text);
+}
+
+.toast-close:active {
+    transform: scale(0.95);
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toast-out {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(-8px); }
+}
+
+/* ===== Error State ===== */
+
+/* ===== Risk Badges ===== */
+.listing-badge.risk-low {
+    color: var(--green);
+    background: var(--green-soft);
+    border-color: rgba(52, 211, 153, 0.2);
+}
+
+.listing-badge.risk-medium {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: var(--accent-glow);
+}
+
+.listing-badge.risk-high {
+    color: var(--red);
+    background: var(--red-soft);
+    border-color: rgba(251, 113, 133, 0.2);
+}
+
+.listing-badge.too_cheap {
+    color: var(--green);
+    background: var(--green-soft);
+    border-color: rgba(52, 211, 153, 0.2);
+}
+
+.listing-badge.too_expensive {
+    color: var(--red);
+    background: var(--red-soft);
+    border-color: rgba(251, 113, 133, 0.2);
+}
+
+.listing-badge.cheap {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: var(--accent-glow);
+}
+
+/* ===== Profit Dashboard ===== */
+.profit-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.dashboard-period-toggle {
+    display: inline-flex;
+    gap: 4px;
+    padding: 3px;
+    background: var(--bg-surface-tint);
+    border-radius: 999px;
+    border: 1px solid var(--border);
+}
+
+.period-chip {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.period-chip.is-active {
+    background: var(--bg-card);
+    color: var(--text);
+    box-shadow: var(--shadow-card);
+}
+
+.dashboard-funnel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: var(--space-3);
+    padding: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+}
+
+.funnel-row {
+    display: grid;
+    grid-template-columns: minmax(80px, 0.9fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.funnel-row.is-empty {
+    opacity: 0.45;
+}
+
+.funnel-label {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.funnel-bar-track {
+    height: 8px;
+    background: var(--bg-surface-tint);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.funnel-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--green));
+    border-radius: 999px;
+    transition: width var(--motion-base) ease;
+}
+
+.funnel-row.is-empty .funnel-bar-fill {
+    background: var(--border);
+}
+
+.funnel-count {
+    font-size: 12px;
+    color: var(--text);
+    font-weight: 700;
+    min-width: 28px;
+    text-align: right;
+}
+
+.profit-card {
+    background: var(--bg-card);
+    box-shadow: var(--shadow-card);
+    border-radius: var(--r-lg);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    border: 1px solid var(--border);
+}
+
+.profit-card.is-accent {
+    background: var(--green-soft);
+    border-color: rgba(52, 211, 153, 0.2);
+}
+
+.profit-card.is-warning {
+    background: var(--accent-soft);
+    border-color: var(--accent-glow);
+}
+
+.profit-card-label {
+    color: var(--text-dim);
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.profit-card-value {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+}
+
+.profit-card.is-accent .profit-card-value {
+    color: var(--green);
+}
+
+.profit-card.is-warning .profit-card-value {
+    color: var(--accent);
+}
+
+.profit-card-sub {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* Profit dashboard skeleton loading */
+.profit-card.skeleton {
+    pointer-events: none;
+    position: relative;
+    overflow: hidden;
+}
+
+.skeleton-profit-row {
+    height: 16px;
+    background: var(--bg-hover);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+.skeleton-profit-row.short {
+    width: 60%;
+    height: 12px;
+    margin-top: 8px;
+}
+
+.profit-chart-box {
+    min-height: 200px;
+}
+
+.lead-actions-wrap {
+    display: flex;
+    gap: 6px;
+}
+
+/* ===== Expenses Modal ===== */
+.expenses-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 12px 0;
+}
+
+.expense-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+}
+
+/* Expenses loading skeleton */
+.expenses-loading {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.skeleton-expense-row {
+    height: 48px;
+    background: var(--bg-hover);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+}
+
+.expense-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.expense-type {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    text-transform: capitalize;
+}
+
+.expense-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.expense-amount {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--red);
+    white-space: nowrap;
+}
+
+.expense-delete-btn {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 6px;
+    /* Mobile tap target — 4+16+4=24px is well below the 44px Apple HIG
+       baseline, so we expand the visual hit-box to 36px and centre the
+       glyph rather than enlarging the padding (which would push the
+       expense row apart). */
+    min-height: 36px;
+    min-width: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
+    flex-shrink: 0;
+}
+
+.expense-delete-btn:hover {
+    color: var(--red);
+    background: var(--red-soft);
+}
+
+.expense-form-wrap {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
+
+.expense-total {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: var(--bg-elevated);
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+    margin-bottom: 8px;
+}
+
+.expense-total-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+.expense-total-value {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--red);
+}
+
+/* ===== Small Button Variants ===== */
+.primary-btn.small,
+.ghost-btn.small {
+    padding: 7px 11px;
+    font-size: 12px;
+}
+
+/* ===== Responsive: 360px ===== */
+@media (max-width: 360px) {
+    .history-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* ===== Subtle entry animation for cards ===== */
+/* Card enter animation only plays once on first insert via .is-new */
+.listing.is-new,
+.tracker-event-card.is-new,
+.tracker-card-enhanced.is-new,
+.lead-card.is-new,
+.watchlist-card.is-new {
+    animation: cardEnter 250ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes cardEnter {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .listing.is-new,
+    .tracker-event-card.is-new,
+    .tracker-card-enhanced.is-new,
+    .lead-card.is-new,
+    .watchlist-card.is-new {
+        animation: none;
+    }
+}
+
+
+@media (max-width: 380px) {
+    html {
+        font-size: 14px;
+    }
+
+    .view-nav {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    /* Listing action buttons: 2x2 grid on very narrow screens */
+    .listing-actions {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+
+    .deal-range-row {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .deal-apply-btn {
+        grid-column: 1 / -1;
+    }
+
+    .compare-bar,
+    .compare-grid,
+    .compare-metrics,
+    .history-summary {
+        grid-template-columns: 1fr;
+    }
+
+    .summary-strip {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .summary-top {
+        flex-direction: column;
+    }
+
+    .summary-metrics {
+        width: 100%;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .summary-pill {
+        flex: 1 1 calc(50% - 4px);
+        min-width: 0;
+    }
+
+    .summary-pill--hero {
+        flex: 1 1 calc(50% - 4px);
+        min-width: 0;
+    }
+
+    .summary-pill-value {
+        white-space: normal;
+        word-break: break-word;
+        font-size: 12px;
+    }
+
+    .stats-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .segs-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .geo-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .sec-head {
+        flex-wrap: wrap;
+    }
+
+    .tracker-row,
+    .detail-head,
+    .detail-field {
+        grid-template-columns: 1fr;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .workflow-fields {
+        grid-template-columns: 1fr;
+    }
+
+    .listing {
+        padding: 10px;
+    }
+
+    .listing-thumb {
+        width: 64px;
+        height: 64px;
+    }
+
+    .watchlist-thumb,
+    .watchlist-thumb-placeholder {
+        width: 64px;
+        height: 64px;
+    }
+
+    .stat-val {
+        font-size: 17px;
+    }
+}
+
+/* ===== Risk Assessment Badges ===== */
+.risk-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: var(--r-sm);
+    font-size: 0.78rem;
+    font-weight: 500;
+    line-height: 1.4;
+    margin: 2px 4px 2px 0;
+}
+
+.risk-badge.risk-low {
+    background: var(--green-soft);
+    color: var(--green);
+    border: 1px solid rgba(16, 185, 105, 0.25);
+}
+
+.risk-badge.risk-medium {
+    background: var(--amber-soft);
+    color: var(--amber);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.risk-badge.risk-high {
+    background: var(--red-soft);
+    color: var(--red);
+    border: 1px solid rgba(244, 63, 94, 0.25);
+}
+
+.risk-badges-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+/* ===== Light Theme Risk Badge Overrides ===== */
+[data-theme="light"] .risk-badge.risk-low {
+    background: rgba(4, 120, 87, 0.08);
+    color: var(--green);
+    border-color: rgba(4, 120, 87, 0.2);
+}
+
+[data-theme="light"] .risk-badge.risk-medium {
+    background: rgba(217, 119, 6, 0.08);
+    color: var(--amber);
+    border-color: rgba(217, 119, 6, 0.2);
+}
+
+[data-theme="light"] .risk-badge.risk-high {
+    background: rgba(190, 18, 60, 0.08);
+    color: var(--red);
+    border-color: rgba(190, 18, 60, 0.2);
+}
+
+/* ===== Long-press action menu =====
+ * Bottom-sheet menu invoked by attachLongPress() on listing cards.
+ * Single shared overlay attached to <body>, hidden by default; the
+ * helper toggles it via [hidden]. Sits above modals (z 1050) so a
+ * long-press inside an open detail-modal would still surface, but
+ * below the toast layer (1100) so a result toast paints on top. */
+.lp-menu-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0 12px calc(env(safe-area-inset-bottom, 12px) + 12px);
+    animation: lp-overlay-in 160ms var(--easing-decelerate, cubic-bezier(0, 0, 0.2, 1));
+}
+
+.lp-menu-sheet {
+    width: 100%;
+    max-width: 420px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: var(--shadow-prominent);
+    display: flex;
+    flex-direction: column;
+    animation: lp-sheet-in 220ms var(--easing-decelerate, cubic-bezier(0, 0, 0.2, 1));
+}
+
+.lp-menu-item {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: 500 15px var(--font);
+    text-align: left;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    min-height: 52px;
+    transition: background var(--t-fast) var(--easing-standard);
+    touch-action: manipulation;
+}
+
+.lp-menu-item:last-child {
+    border-bottom: none;
+}
+
+.lp-menu-item:hover,
+.lp-menu-item:focus-visible {
+    background: var(--bg-hover);
+    outline: none;
+}
+
+.lp-menu-item:active {
+    background: color-mix(in srgb, var(--bg-hover) 80%, var(--accent) 20%);
+}
+
+.lp-menu-item--accent {
+    color: var(--accent);
+}
+
+.lp-menu-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.lp-menu-item--accent .lp-menu-icon {
+    color: var(--accent);
+}
+
+.lp-menu-label {
+    flex: 1;
+}
+
+@keyframes lp-overlay-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes lp-sheet-in {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lp-menu-overlay,
+    .lp-menu-sheet { animation: none; }
+}
+
+body.lp-menu-open {
+    /* Soft scroll lock — don't fight modal-open's heavy scroll lock,
+       just discourage background scrolling while the sheet is up. */
+    overflow: hidden;
+}
+
+/* ===== Pull-to-refresh indicator =====
+ * Sits above the page content (negative top offset), made visible by
+ * setupPullToRefresh as the user drags down at the very top of the
+ * page. The spinner spins while the refresh handler is in flight.
+ * Disabled under prefers-reduced-motion — the helper itself
+ * short-circuits, so this element stays hidden anyway. */
+.ptr-indicator {
+    position: fixed;
+    top: -56px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1200;
+    transition: opacity 200ms var(--easing-standard, cubic-bezier(0.2, 0.8, 0.2, 1));
+    will-change: transform, opacity;
+}
+
+.ptr-indicator-spinner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ptr-indicator[data-stage="ready"] {
+    color: var(--green);
+}
+
+.ptr-indicator[data-stage="refreshing"] .ptr-indicator-spinner {
+    animation: ptrSpin 700ms linear infinite;
+}
+
+@keyframes ptrSpin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ptr-indicator { display: none; }
+}
+
+/* ===== Swipe-to-action gesture (Telegram-style) =====
+ * makeSwipeable wraps the card in `.swipe-wrap` and reveals the colored
+ * `.swipe-bg--*` panels as the user drags. Right-drag (positive dx)
+ * reveals the LEFT background (promote to "Покупки"); left-drag reveals
+ * the RIGHT one (delete). Disabled under prefers-reduced-motion: the
+ * helper short-circuits and returns the card unwrapped. */
+.swipe-wrap {
+    position: relative;
+    border-radius: var(--r-lg);
+    overflow: hidden;
+}
+
+.swipe-bg {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 22px;
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.01em;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.swipe-bg--left {
+    left: 0;
+    right: 50%;
+    justify-content: flex-start;
+}
+
+.swipe-bg--right {
+    right: 0;
+    left: 50%;
+    justify-content: flex-end;
+}
+
+.swipe-bg--accent {
+    background: var(--accent);
+}
+
+.swipe-bg--danger {
+    background: var(--red);
+}
+
+.swipe-target {
+    position: relative;
+    z-index: 1;
+    /* Lets the page keep scrolling vertically while we capture
+       horizontal pans for the gesture. */
+    touch-action: pan-y;
+    transition: transform var(--t-slow) var(--easing-standard);
+}
+
+.swipe-target.swipe-dragging {
+    /* Direct finger-tracking — no easing during the drag itself. */
+    transition: none;
+}
+
+.swipe-target.swipe-completing {
+    transition: transform 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .swipe-target {
+        transition: none !important;
+    }
+}

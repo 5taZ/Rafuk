@@ -7,6 +7,20 @@ from pathlib import Path
 APP_JS = Path("frontend/js/app.js")
 JS_DIR = Path("frontend/js")
 JS_MODULES = sorted(JS_DIR.glob("*.js"))
+CSS_DIR = Path("frontend/css")
+
+
+def _read_all_css() -> str:
+    """Concatenate every CSS file under frontend/css/.
+
+    style.css is now a thin @import loader; the actual rules live
+    under parts/. Tests asserting against rule presence shouldn't
+    care which partial owns a class, so we glob the whole tree.
+    """
+    chunks: list[str] = []
+    for css_path in sorted(CSS_DIR.rglob("*.css")):
+        chunks.append(css_path.read_text(encoding="utf-8"))
+    return "\n".join(chunks)
 
 
 def test_file_is_not_empty() -> None:
@@ -171,7 +185,7 @@ def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:
     ):
         assert label in builder, f"long-press menu missing item {label}"
 
-    css = (Path("frontend/css/style.css")).read_text(encoding="utf-8")
+    css = _read_all_css()
     for cls in (
         ".lp-menu-overlay",
         ".lp-menu-sheet",
@@ -199,7 +213,7 @@ def test_watchlist_renders_price_sparkline_when_history_present() -> None:
     for direction in ('"down"', '"up"', '"flat"'):
         assert direction in text, f"missing direction literal {direction}"
 
-    css_text = (Path("frontend/css/style.css")).read_text(encoding="utf-8")
+    css_text = _read_all_css()
     for cls in (".wl-sparkline--down", ".wl-sparkline--up", ".wl-sparkline--flat"):
         assert cls in css_text, f"sparkline CSS for {cls} missing"
 

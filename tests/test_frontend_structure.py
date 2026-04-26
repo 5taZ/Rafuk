@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 FRONTEND = Path("frontend")
 HTML_FILE = FRONTEND / "index.html"
 CSS_FILE = FRONTEND / "css" / "style.css"
+CSS_PARTS_DIR = FRONTEND / "css" / "parts"
 
 
 @pytest.fixture(scope="module")
@@ -18,8 +19,21 @@ def soup() -> BeautifulSoup:
 
 @pytest.fixture(scope="module")
 def css_text() -> str:
+    """Concatenated CSS — style.css is now a thin @import loader.
+
+    Tests assert against rules that may live in any partial under
+    parts/, so we inline them here. Order follows the @import order
+    in style.css to keep the cascade representation accurate.
+    """
     assert CSS_FILE.exists()
-    return CSS_FILE.read_text(encoding="utf-8")
+    chunks = [CSS_FILE.read_text(encoding="utf-8")]
+    if CSS_PARTS_DIR.is_dir():
+        # Match the @import order in style.css.
+        for name in ("tokens", "layout", "modals", "pipeline", "states", "ai", "brand"):
+            partial = CSS_PARTS_DIR / f"{name}.css"
+            if partial.exists():
+                chunks.append(partial.read_text(encoding="utf-8"))
+    return "\n".join(chunks)
 
 
 def test_html_has_doctype() -> None:
