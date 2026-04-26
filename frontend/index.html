@@ -15,7 +15,10 @@
     >
     <link rel="stylesheet" href="css/style.css?v=20260426-items-tabs">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+    <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
+         on first paint of the price-distribution / price-history
+         charts. Keeps the initial bundle smaller for users who only
+         use the watchlist or trackers. -->
     <script defer src="js/dom_helpers.js?v=20260426-tracker-polish"></script>
     <script defer src="js/app_core_dom.js?v=20260426-unified-items"></script>
     <script defer src="js/app_core.js?v=20260426-items-tabs"></script>

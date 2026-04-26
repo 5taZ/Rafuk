@@ -1,7 +1,39 @@
 /**
  * render_charts.js — Price chart, history chart, profit dashboard, history deals.
+ *
+ * Chart.js is loaded lazily on first chart paint instead of being a
+ * blocking <script> tag in the document head. That's ~80 KB of JS
+ * that the watchlist / trackers / leads users never need.
  */
 /* global Chart */
+
+const CHART_JS_URL =
+    "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js";
+const CHART_JS_INTEGRITY =
+    "sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC";
+
+let _chartLibPromise = null;
+
+function ensureChartLib() {
+    if (typeof window.Chart === "function") return Promise.resolve();
+    if (_chartLibPromise) return _chartLibPromise;
+    _chartLibPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = CHART_JS_URL;
+        script.integrity = CHART_JS_INTEGRITY;
+        script.crossOrigin = "anonymous";
+        script.async = true;
+        script.onload = () => resolve();
+        script.onerror = () => {
+            // Reset so a later retry (e.g. user opens overview again
+            // after a flaky network) can try again from scratch.
+            _chartLibPromise = null;
+            reject(new Error("Chart.js failed to load"));
+        };
+        document.head.appendChild(script);
+    });
+    return _chartLibPromise;
+}
 
 function createRenderCharts(context) {
     const {
@@ -55,6 +87,20 @@ function createRenderCharts(context) {
 
         const canvas = elements.priceChartCanvas;
         if (!canvas) return;
+
+        // Lazy-load Chart.js on demand. If the library hasn't arrived
+        // yet, paint a quiet skeleton (the existing aria-busy state on
+        // .chart-section is enough — we just bail and re-enter once
+        // the lib resolves).
+        if (typeof window.Chart !== "function") {
+            ensureChartLib()
+                .then(() => renderChart())
+                .catch(() => {
+                    /* Network failure surfaces via the regular error
+                       toast on the next render attempt. */
+                });
+            return;
+        }
 
         destroyChart();
 
@@ -163,6 +209,16 @@ function createRenderCharts(context) {
         const canvas = elements.historyChartCanvas;
         if (!canvas || !state.history.length) {
             destroyHistoryChart();
+            return;
+        }
+
+        // Lazy-load Chart.js — mirrors the guard in renderChart().
+        if (typeof window.Chart !== "function") {
+            ensureChartLib()
+                .then(() => renderHistoryChart())
+                .catch(() => {
+                    /* error surfaced via toast on next attempt */
+                });
             return;
         }
 
