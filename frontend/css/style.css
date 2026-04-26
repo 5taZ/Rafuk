@@ -2980,6 +2980,36 @@ body.modal-open {
     line-height: 1.4;
 }
 
+/* "×N" multiplier that appears when the same (message, type) toast
+   would have stacked. Shows "you got this same notification N times"
+   instead of cluttering the screen with duplicates. */
+.toast-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    padding: 0 6px;
+    margin-left: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    flex-shrink: 0;
+    animation: toastCountPulse 220ms var(--easing-standard, cubic-bezier(0.2, 0.8, 0.2, 1));
+}
+
+@keyframes toastCountPulse {
+    0% { transform: scale(0.6); opacity: 0; }
+    60% { transform: scale(1.1); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .toast-count { animation: none; }
+}
+
 .toast-close {
     flex-shrink: 0;
     width: 44px;
@@ -8376,6 +8406,35 @@ body {
 .items-tab.is-active .items-tab-count {
     background: rgba(255, 255, 255, 0.22);
     color: #ffffff;
+}
+
+/* Generic filter-count badge — used on tracker event filter chips
+   ("Все 12", "Упали в цене 7", "Новые лоты 5"). Matches .items-tab-count
+   in shape but doesn't depend on the items-tab parent so other filter
+   rows can opt in by dropping a span.filter-count[data-…-count="…"]
+   inside the trigger. */
+.filter-count {
+    display: inline-flex;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    margin-left: 6px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    transition: background var(--t-fast) var(--easing-standard),
+        color var(--t-fast) var(--easing-standard);
+}
+
+.s-tab.active .filter-count,
+button.active .filter-count {
+    background: color-mix(in srgb, var(--accent) 25%, transparent);
+    color: var(--accent);
 }
 
 .items-clear-row {

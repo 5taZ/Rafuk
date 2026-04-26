@@ -71,6 +71,13 @@ function cacheAppElements(elements) {
     elements.sortButtons = Array.from(document.querySelectorAll("[data-sort]"));
     elements.discountButtons = Array.from(document.querySelectorAll("[data-discount-from]"));
     elements.trackerEventFilterButtons = Array.from(document.querySelectorAll("[data-event-filter]"));
+    // Per-filter count badges, keyed by filter name ("all" | "price_drop" |
+    // "new_listing"). Updated in renderTrackerEventFilters so the user
+    // sees how many alerts each tab represents before tapping it.
+    elements.trackerEventFilterCounts = {};
+    for (const node of document.querySelectorAll("[data-event-filter-count]")) {
+        elements.trackerEventFilterCounts[node.dataset.eventFilterCount] = node;
+    }
     elements.dealFromInput = document.getElementById("deal-from-input");
     elements.dealToInput = document.getElementById("deal-to-input");
     elements.dealApplyButton = document.getElementById("deal-apply-btn");

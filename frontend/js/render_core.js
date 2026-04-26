@@ -48,8 +48,51 @@ function createRenderCore(context) {
 
     /* ===== Toast ===== */
 
+    // Cap on simultaneously-visible toasts. Anything past this count
+    // dismisses the oldest one so the container can never blanket the
+    // bottom of the screen during an error storm.
+    const MAX_VISIBLE_TOASTS = 3;
+
     function showToast(message, type = "info", duration = 3000) {
         if (!elements.toastContainer) return null;
+
+        const messageStr = String(message ?? "");
+
+        // Deduplication: if the same (message, type) is already visible
+        // and not already in the exit animation, just reset its timer
+        // and bump a small "×N" counter on it instead of stacking a
+        // duplicate. Cuts the noise when an action retries quickly.
+        const existing = Array.from(
+            elements.toastContainer.querySelectorAll(`.toast.toast-${type}`)
+        ).find((node) => {
+            if (node.classList.contains("toast-exit")) return false;
+            const msgEl = node.querySelector(".toast-message");
+            return msgEl && msgEl.textContent === messageStr;
+        });
+        if (existing) {
+            const previousCount = Number(existing.dataset.toastCount || 1);
+            const nextCount = previousCount + 1;
+            existing.dataset.toastCount = String(nextCount);
+            let badge = existing.querySelector(".toast-count");
+            if (!badge) {
+                badge = domEl("span", {
+                    className: "toast-count",
+                    attrs: { "aria-hidden": "true" },
+                });
+                existing.insertBefore(
+                    badge,
+                    existing.querySelector(".toast-close"),
+                );
+            }
+            badge.textContent = `×${nextCount}`;
+            // Reset the auto-dismiss timer so the latest occurrence
+            // gets its full duration on screen.
+            const prevTimer = Number(existing.dataset.dismissTimer || 0);
+            if (prevTimer) clearTimeout(prevTimer);
+            const nextTimer = setTimeout(() => dismissToast(existing), duration);
+            existing.dataset.dismissTimer = String(nextTimer);
+            return existing;
+        }
 
         const iconMap = {
             success: "✓",
@@ -64,7 +107,7 @@ function createRenderCore(context) {
                 attrs: { role: "status", "aria-live": "polite" },
             },
             domEl("span", { className: `toast-icon ${type}`, text: iconMap[type] || iconMap.info }),
-            domEl("span", { className: "toast-message", text: message }),
+            domEl("span", { className: "toast-message", text: messageStr }),
             domEl("button", {
                 className: "toast-close",
                 type: "button",
@@ -75,6 +118,22 @@ function createRenderCore(context) {
 
         elements.toastContainer.appendChild(toast);
 
+        // Cap on stacked toasts: if we just exceeded the limit, gently
+        // dismiss the oldest one. We pick the first non-exiting node so
+        // a toast already in its exit animation isn't fast-tracked
+        // through twice.
+        const visible = Array.from(
+            elements.toastContainer.querySelectorAll(".toast:not(.toast-exit)")
+        );
+        if (visible.length > MAX_VISIBLE_TOASTS) {
+            for (const node of visible) {
+                if (node !== toast) {
+                    dismissToast(node);
+                    break;
+                }
+            }
+        }
+
         // Remove entering class after animation completes
         const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         const animationDuration = prefersReducedMotion ? 10 : 200;
@@ -83,10 +142,12 @@ function createRenderCore(context) {
         }, animationDuration);
 
         const dismissTimer = setTimeout(() => dismissToast(toast), duration);
+        toast.dataset.dismissTimer = String(dismissTimer);
 
         const closeBtn = toast.querySelector(".toast-close");
         closeBtn.addEventListener("click", () => {
-            clearTimeout(dismissTimer);
+            const timerId = Number(toast.dataset.dismissTimer || 0);
+            if (timerId) clearTimeout(timerId);
             dismissToast(toast);
         });
 
@@ -102,7 +163,10 @@ function createRenderCore(context) {
     }
 
     function dismissToast(toast) {
-        if (!toast.parentNode) return;
+        if (!toast || !toast.parentNode) return;
+        if (toast.classList.contains("toast-exit")) return;
+        const timerId = Number(toast.dataset.dismissTimer || 0);
+        if (timerId) clearTimeout(timerId);
         const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         const exitDuration = prefersReducedMotion ? 10 : 200;
         toast.classList.add("toast-exit");

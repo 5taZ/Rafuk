@@ -421,8 +421,32 @@ function createRenderTrackers(context) {
     /* ===== Tracker Event Filter Buttons (standalone call) ===== */
 
     function renderTrackerEventFilters() {
+        // Tally events by event_type so each filter chip can show how
+        // many alerts it represents — gives the user a sense of where
+        // the action is before they tap. "all" mirrors the total.
+        const events = state.trackerEvents || [];
+        const total = events.length;
+        let priceDrops = 0;
+        let newListings = 0;
+        for (const event of events) {
+            if (event?.event_type === "price_drop") priceDrops += 1;
+            else if (event?.event_type === "new_listing") newListings += 1;
+        }
+        const counts = {
+            all: total,
+            price_drop: priceDrops,
+            new_listing: newListings,
+        };
+
         for (const button of elements.trackerEventFilterButtons) {
             button.classList.toggle("active", button.dataset.eventFilter === state.trackerEventFilter);
+        }
+        const badges = elements.trackerEventFilterCounts || {};
+        for (const [key, badge] of Object.entries(badges)) {
+            if (!badge) continue;
+            const value = counts[key] ?? 0;
+            badge.textContent = String(value);
+            badge.hidden = value === 0;
         }
     }
 

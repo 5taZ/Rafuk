@@ -498,9 +498,18 @@
             
             <div class="tracker-event-controls">
                 <div class="sort-row" id="tracker-event-filter-row">
-                    <button class="s-tab active" data-event-filter="all" type="button">Все</button>
-                    <button class="s-tab" data-event-filter="price_drop" type="button">Упали в цене</button>
-                    <button class="s-tab" data-event-filter="new_listing" type="button">Новые лоты</button>
+                    <button class="s-tab active" data-event-filter="all" type="button">
+                        Все
+                        <span class="filter-count" data-event-filter-count="all" hidden>0</span>
+                    </button>
+                    <button class="s-tab" data-event-filter="price_drop" type="button">
+                        Упали в цене
+                        <span class="filter-count" data-event-filter-count="price_drop" hidden>0</span>
+                    </button>
+                    <button class="s-tab" data-event-filter="new_listing" type="button">
+                        Новые лоты
+                        <span class="filter-count" data-event-filter-count="new_listing" hidden>0</span>
+                    </button>
                 </div>
                 <div class="tracker-event-tracker-filter">
                     <select id="tracker-event-tracker-select" aria-label="Фильтр по трекеру">
