@@ -9,11 +9,17 @@
     <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260426-solid">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Kufar CDN serves every listing thumbnail. preconnect fires
+         the TLS handshake during HTML parse so the first <img src>
+         doesn't pay for it — saves ~150-300ms on first card paint
+         depending on the user's network RTT. -->
+    <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
+    <link rel="dns-prefetch" href="https://rms.kufar.by">
     <link
         href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
         rel="stylesheet"
     >
-    <link rel="stylesheet" href="css/style.css?v=20260426-items-tabs">
+    <link rel="stylesheet" href="css/style.css?v=20260428-bundle">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history

@@ -192,7 +192,12 @@ function createRenderCards(context) {
                             }
                         }
                     },
-                    { rootMargin: "200px 0px" },
+                    // Trigger the next page well before the user
+                    // hits the bottom — 1200px ≈ 6-7 cards of
+                    // headroom on phone screens, so by the time the
+                    // sentinel actually scrolls into view the next
+                    // batch is usually already rendered.
+                    { rootMargin: "1200px 0px" },
                 );
                 observer.observe(sentinel);
                 sentinel._paginationObserver = observer;

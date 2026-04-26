@@ -22,7 +22,14 @@ class Settings(BaseSettings):
     kufar_request_delay: float = 1.0
     kufar_parallel_semaphore: int = 2
     kufar_timeout: float = 15.0
-    kufar_max_ads_per_query: int = 5000
+    # Lowered from 5000 → 1500 because every analytics endpoint
+    # (price-stats / listings / segments / geography / price-history)
+    # paginates Kufar up to this cap before responding. At size=200
+    # per page that's 25 calls per query × 5-6 parallel endpoints =
+    # 100+ Kufar round-trips on first search. Median quality from
+    # 1500 prices is statistically indistinguishable from 5000, but
+    # the wall-clock saving is roughly 3× on broad queries.
+    kufar_max_ads_per_query: int = 1500
     alert_check_interval: int = 30
     cache_ttl_seconds: int = 300
     auto_remove_missing_days: int = 7
