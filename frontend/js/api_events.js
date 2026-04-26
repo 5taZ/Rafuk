@@ -23,6 +23,7 @@ function createApiEvents(context) {
         renderHistory,
         renderTrackerEventFilters,
         renderTrackerEvents,
+        renderTrackingHeroStats,
         renderLeads,
         renderWatchlist,
         setActiveView,
@@ -578,6 +579,11 @@ function createApiEvents(context) {
                 state.trackerEvents = [];
                 showToast("События очищены");
                 renderTrackerEvents();
+                // Refresh the "N событий" hero badge so the count drops
+                // to 0 immediately instead of waiting for a page reload.
+                if (typeof renderTrackingHeroStats === "function") {
+                    renderTrackingHeroStats();
+                }
             })();
         });
 
