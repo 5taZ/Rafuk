@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re as _re
 import secrets
@@ -32,6 +33,10 @@ from api.schemas import (
 )
 from api.services.aggregator import normalize_price_byn
 from api.services.ai_guardrails import apply_ai_market_guardrails
+from api.services.ai_listing_guardrails import (
+    normalize_listing_pricing,
+    thin_market_warning,
+)
 from api.services.ai_marketplace import (
     BestAlternativeDecision,
     build_fallback_analysis_result,
@@ -1168,6 +1173,34 @@ def _coerce_listing_photos(raw: list[str] | None) -> list[str]:
     return cleaned
 
 
+def _listing_assistant_cache_key(
+    payload: AIListingAssistantRequest,
+    photos: list[str],
+) -> str:
+    """Stable cache key derived from the canonical user input.
+
+    SHA-256 of a normalised tuple — title is lowercased+whitespace-flattened
+    so trivial typing differences ("iPhone 14" vs "iphone  14") still hit
+    the same cache. Photo bytes are hashed so a new photo invalidates.
+    """
+    canonical_title = " ".join((payload.title or "").lower().split())
+    canonical_notes = " ".join((payload.extra_notes or "").lower().split())
+    photo_hashes = [hashlib.sha256(p.encode("utf-8")).hexdigest()[:16] for p in photos]
+    parts = [
+        ("v", "1"),
+        ("title", canonical_title),
+        ("category", str(payload.category or "")),
+        ("condition", (payload.condition or "").strip().lower()),
+        ("price", f"{int(round(payload.draft_price_byn))}" if payload.draft_price_byn else ""),
+        ("negot", "1" if payload.is_negotiable else "0"),
+        ("notes", canonical_notes),
+        ("photos", ",".join(photo_hashes)),
+    ]
+    serialised = "|".join(f"{k}={v}" for k, v in parts)
+    digest = hashlib.sha256(serialised.encode("utf-8")).hexdigest()
+    return f"ai_listing:{digest}"
+
+
 def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pick a diverse, priced subset of ads to use as competitor context."""
     priced = [
@@ -1231,6 +1264,21 @@ async def listing_assistant(
 
     photos = _coerce_listing_photos(payload.photos)
 
+    # Same canonical input → same cached AI response. Sellers commonly
+    # tweak one field and resubmit — without cache that's a fresh Gemini
+    # bill every time. Photos are part of the key (their bytes) so a new
+    # photo invalidates the cache as expected.
+    cache = get_cache(request)
+    cache_key = _listing_assistant_cache_key(payload, photos)
+    cached = await cache.get_json(cache_key)
+    if isinstance(cached, dict):
+        try:
+            return AIListingAssistantResponse.model_validate(cached)
+        except ValidationError:
+            # Stale shape after a deploy — fall through, recompute, and the
+            # set_json at the bottom will overwrite the bad entry.
+            logger.info("Listing assistant cache hit was stale, recomputing")
+
     try:
         dataset = await load_query_dataset(
             query=title,
@@ -1289,8 +1337,27 @@ async def listing_assistant(
             err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
         raise HTTPException(status_code=502, detail=err_msg) from None
 
-    pricing = _coerce_pricing(ai_result.get("pricing"), market_anchors=market_anchors)
-    return AIListingAssistantResponse(
+    # Defence-in-depth: clamp non-monotonic / out-of-bounds tiers and
+    # ensure floor <= fast before the user ever sees the numbers.
+    raw_pricing = ai_result.get("pricing") if isinstance(ai_result.get("pricing"), dict) else {}
+    normalised_pricing = normalize_listing_pricing(
+        raw_pricing,
+        market_median=market_anchors["median"],
+        market_q1=market_anchors["q1"],
+        market_q3=market_anchors["q3"],
+        market_min=market_anchors["min"],
+        market_max=market_anchors["max"],
+        market_count=int(market_anchors["count"] or 0),
+    )
+    pricing = _coerce_pricing(normalised_pricing, market_anchors=market_anchors)
+
+    # If Kufar gave us a thin sample, surface that to the user up front.
+    market_summary = str(ai_result.get("market_summary") or "").strip()
+    warning = thin_market_warning(int(market_anchors["count"] or 0))
+    if warning:
+        market_summary = f"{warning}\n\n{market_summary}".strip() if market_summary else warning
+
+    response = AIListingAssistantResponse(
         title_suggestion=str(ai_result.get("title_suggestion") or "").strip()[:200],
         description=str(ai_result.get("description") or "").strip()[:2000],
         description_short=str(ai_result.get("description_short") or "").strip()[:400],
@@ -1298,5 +1365,9 @@ async def listing_assistant(
         pricing=pricing,
         negotiation_playbook=_coerce_negotiation(ai_result.get("negotiation_playbook")),
         photo_tips=_coerce_string_list(ai_result.get("photo_tips"), limit=5, max_len=140),
-        market_summary=str(ai_result.get("market_summary") or "").strip()[:400],
+        market_summary=market_summary[:600],
     )
+
+    cache_ttl = int(getattr(settings, "ai_listing_assistant_cache_ttl", 3600) or 3600)
+    await cache.set_json(cache_key, response.model_dump(mode="json"), ttl=cache_ttl)
+    return response

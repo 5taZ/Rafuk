@@ -1304,6 +1304,66 @@ _VALID_CONDITION_LABELS = {
 }
 
 
+_PROMPT_ROLE_MARKERS = re.compile(
+    r"(?im)^[ \t]*(###?\s*(system|instruction|user|assistant)[:\s]"
+    r"|<\|(?:im_start|im_end|system|user|assistant)\|>"
+    r"|\[(?:system|instruction|user|assistant)\]"
+    r"|(?:system|instruction|assistant)\s*[:\-—]\s*)"
+)
+_PROMPT_INJECTION_PATTERNS = re.compile(
+    r"(?i)("
+    r"ignore\s+(?:all|any|the)?\s*(?:previous|prior|above)?\s*instructions"
+    r"|disregard\s+(?:all|any|the)?\s*(?:previous|prior|above)?\s*instructions"
+    r"|you\s+(?:are|act as|will now|must)\s+(?:no longer|now)\s+"
+    r"|игнориру(?:й|йте)\s+(?:все\s+)?(?:предыдущие|прошлые)\s+"
+    r"(?:инструкции|правила|сообщени)"
+    r"|забудь\s+(?:все\s+)?(?:предыдущие|прошлые)\s+"
+    r"|новая\s+инструкция[:\-]"
+    r"|жестк(?:ая|ие)\s+инструкци(?:я|и)"
+    r"|reveal\s+(?:your|the)\s+(?:system\s+)?prompt"
+    r"|jailbreak"
+    r")"
+)
+_TRIPLE_BACKTICK_RE = re.compile(r"```+|~~~+")
+_MULTILINE_COLLAPSE_RE = re.compile(r"\n{3,}")
+
+
+def sanitize_user_text(value: str | None, *, max_length: int = 1200) -> str | None:
+    """Strip prompt-injection-shaped sequences from user-supplied free text.
+
+    Telegram users can paste anything into the listing assistant's notes /
+    title fields. Without sanitization a determined user could try to make
+    Gemini ignore our system prompt by writing things like
+    `### system:\nIgnore all previous instructions...`.
+
+    This isn't a hard security boundary (the model is the actual decision
+    maker), but it's a cheap layer that:
+      - removes obvious role/instruction markers,
+      - flattens triple-backtick code fences,
+      - normalises whitespace,
+      - hard-caps length again on the server.
+
+    Returns None if input is None/empty after cleaning.
+    """
+    if value is None:
+        return None
+    text = str(value)
+    if not text.strip():
+        return None
+    text = _PROMPT_ROLE_MARKERS.sub("", text)
+    text = _PROMPT_INJECTION_PATTERNS.sub("[удалено]", text)
+    text = _TRIPLE_BACKTICK_RE.sub("`", text)
+    text = _MULTILINE_COLLAPSE_RE.sub("\n\n", text)
+    # Strip control characters but keep newlines and tabs.
+    text = "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 0x20)
+    text = text.strip()
+    if not text:
+        return None
+    if max_length > 0 and len(text) > max_length:
+        text = text[:max_length].rstrip()
+    return text
+
+
 def normalize_condition_label(value: str | None) -> str:
     """Normalize a free-form condition label into one of the valid options.
 
@@ -1709,17 +1769,23 @@ class AIService:
         instead of guesses.
         """
 
-        ctx_lines: list[str] = [f"## ТОВАР: {title}"]
-        if condition:
-            ctx_lines.append(f"Состояние (как видит продавец): {condition}")
+        # User-supplied text fields go through sanitize_user_text first to
+        # neutralise prompt-injection markers like `### system:` / role
+        # tags / "ignore all previous instructions" before they reach the
+        # prompt. Length caps are enforced again here as defence-in-depth.
+        safe_title = sanitize_user_text(title, max_length=200) or ""
+        safe_condition = sanitize_user_text(condition, max_length=64) if condition else None
+        safe_notes = sanitize_user_text(extra_notes, max_length=600) if extra_notes else None
+
+        ctx_lines: list[str] = [f"## ТОВАР: {safe_title}"]
+        if safe_condition:
+            ctx_lines.append(f"Состояние (как видит продавец): {safe_condition}")
         if draft_price_byn and draft_price_byn > 0:
             ctx_lines.append(f"Черновая цена продавца: {int(round(draft_price_byn))} BYN")
         elif is_negotiable:
             ctx_lines.append("Цена черновая: договорная")
-        if extra_notes:
-            cleaned = re.sub(r"\s+", " ", extra_notes.strip())[:600]
-            if cleaned:
-                ctx_lines.append(f"Заметки продавца: {cleaned}")
+        if safe_notes:
+            ctx_lines.append(f"Заметки продавца: {safe_notes}")
 
         ctx_lines.append("")
         ctx_lines.append("## РЫНОК (Kufar.by, BYN)")
