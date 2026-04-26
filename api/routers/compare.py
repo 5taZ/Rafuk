@@ -19,7 +19,7 @@ from api.services.currency_service import CurrencyService
 from api.services.history_service import load_query_snapshots
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_item
-from api.services.query_pipeline import load_query_dataset
+from api.services.query_pipeline import convert_price_stats, load_query_dataset
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
@@ -101,19 +101,25 @@ async def _build_compare_item(
         trend_percent = round(((latest - oldest) / oldest) * 100.0, 2)
 
     insights = analyze_query_text(query)
+    converted = convert_price_stats(
+        dataset.price_stats,
+        currency=currency,
+        rates=rates_payload["rates"],
+        currency_service=currency_service,
+    )
+    converted.pop("count", None)
     return CompareRequestItem(
         query=query,
         normalized_query=insights.normalized_query,
         config_summary=insights.config_summary,
-        median=currency_service.convert_from_byn(
-            dataset.price_stats.median,
-            currency,
-            rates_payload["rates"],
-        ),
         cheap_count=len(deal_ads),
         total_results=dataset.total_results,
         trend_percent=trend_percent,
         best_listing=listing_items[0] if listing_items else None,
+        analyzed_count=dataset.price_stats.count,
+        fair_price_from=converted.get("q1"),
+        fair_price_to=converted.get("q3"),
+        **converted,
     )
 
 

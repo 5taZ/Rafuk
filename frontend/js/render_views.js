@@ -226,6 +226,20 @@ function createRenderViews(context) {
         };
     }
 
+    function _bestIndex(values, lowerIsBetter) {
+        let bestIdx = -1;
+        let bestVal = lowerIsBetter ? Infinity : -Infinity;
+        for (let i = 0; i < values.length; i += 1) {
+            const v = Number(values[i]);
+            if (!Number.isFinite(v) || v <= 0) continue;
+            if (lowerIsBetter ? v < bestVal : v > bestVal) {
+                bestVal = v;
+                bestIdx = i;
+            }
+        }
+        return bestIdx;
+    }
+
     function renderComparison() {
         return safeRender('renderComparison', () => {
             if (!state.query) {
@@ -267,8 +281,11 @@ function createRenderViews(context) {
             return;
         }
 
-        const [baseItem, ...otherItems] = state.comparisonItems;
+        const items = state.comparisonItems;
+        const baseItem = items[0];
+        const otherItems = items.slice(1);
         const baseMedian = Number(baseItem?.median || 0);
+
         let summary = "Сравнение собрано по медиане, дешёвым лотам, размеру рынка и лучшему текущему офферу.";
         const deltas = otherItems
             .map((item) => {
@@ -286,9 +303,9 @@ function createRenderViews(context) {
         }
         elements.comparisonNote.textContent = summary;
         const compareSummaryItems = [
-            `${state.comparisonItems.length} запроса в работе`,
+            `${items.length} запроса в работе`,
             `${otherItems.reduce((sum, item) => sum + Number(item.cheap_count || 0), 0)} дешёвых лотов в сравнении`,
-            `рынок ${state.comparisonItems.map((item) => item.total_results || 0).join(" / ")}`,
+            `рынок ${items.map((item) => item.total_results || 0).join(" / ")}`,
         ];
         clearChildren(elements.comparisonSummary);
         elements.comparisonSummary.appendChild(
@@ -297,68 +314,142 @@ function createRenderViews(context) {
         elements.comparisonSummary.hidden = false;
 
         clearChildren(elements.comparisonGrid);
-        for (const [index, item] of state.comparisonItems.entries()) {
-            const isBase = index === 0;
-            const bestListing = item.best_listing || null;
-            const medianDelta = isBase
-                ? { text: "база", className: "" }
-                : comparisonDelta(Number(item.median || 0), Number(baseItem?.median || 0));
-            const trend = item.trend_percent == null
-                ? "нет истории"
-                : `${item.trend_percent > 0 ? "+" : ""}${item.trend_percent.toFixed(1)}%`;
-            const metrics = domEl(
+
+        // Side-by-side matrix: rows = metrics, cols = queries. Each
+        // header cell is the query label; each body row highlights
+        // the winning column ("cheaper", "more deals", "larger
+        // market", etc.) with `winner` / `loser` chips relative to
+        // the base query in the first column.
+        const table = domEl("div", {
+            className: `compare-matrix compare-matrix-cols-${items.length}`,
+            attrs: { role: "table", "aria-label": "Сравнение запросов" },
+        });
+
+        // Header row
+        const headerRow = domEl("div", { className: "compare-matrix-row compare-matrix-row--head", attrs: { role: "row" } });
+        headerRow.appendChild(domEl("div", { className: "compare-matrix-cell compare-matrix-metric", attrs: { role: "columnheader" }, text: "Метрика" }));
+        for (const [index, item] of items.entries()) {
+            const cell = domEl(
                 "div",
-                { className: "compare-metrics" },
-                domEl(
-                    "div",
-                    { className: "compare-metric" },
-                    domEl("span", { className: "compare-label", text: "Медиана" }),
-                    domEl("strong", { className: "compare-value mono", text: formatPrice(item.median) }),
-                ),
-                domEl(
-                    "div",
-                    { className: "compare-metric" },
-                    domEl("span", { className: "compare-label", text: "Дешёвые лоты" }),
-                    domEl("strong", { className: "compare-value mono", text: item.cheap_count || 0 }),
-                ),
-                domEl(
-                    "div",
-                    { className: "compare-metric wide" },
-                    domEl("span", { className: "compare-label", text: "Размер рынка" }),
-                    domEl("strong", { className: "compare-value mono", text: item.total_results || 0 }),
-                    domEl(
-                        "span",
-                        {
-                            className: "compare-meta",
-                            text: bestListing
-                                ? `${bestListing.title} · ${formatPrice(bestListing.price)}`
-                                : "Лучший оффер пока не найден",
-                        },
-                    ),
-                ),
+                {
+                    className: `compare-matrix-cell compare-matrix-head ${index === 0 ? "is-base" : ""}`.trim(),
+                    attrs: { role: "columnheader" },
+                },
+                domEl("span", { className: "compare-kicker", text: index === 0 ? "База" : `Сравнение ${index}` }),
+                domEl("strong", { className: "compare-query", text: item.query }),
             );
-            elements.comparisonGrid.appendChild(
-                domEl(
-                    "article",
-                    { className: "compare-card" },
-                    domEl("span", { className: "compare-kicker", text: isBase ? "База" : "Сравнение" }),
-                    domEl("strong", { className: "compare-query", text: item.query }),
-                    domEl(
-                        "div",
-                        { className: "compare-deltas" },
-                        domEl(
-                            "span",
-                            {
-                                className: `compare-delta-chip ${medianDelta?.className || ""}`.trim(),
-                                text: `медиана ${medianDelta?.text || "—"}`,
-                            },
-                        ),
-                        domEl("span", { className: "compare-delta-chip", text: `тренд ${trend}` }),
-                    ),
-                    metrics,
-                )
-            );
+            headerRow.appendChild(cell);
         }
+        table.appendChild(headerRow);
+
+        // Metric rows. Each row is `{ label, get, format, lowerIsBetter, isBase? }`.
+        // `lowerIsBetter` controls which column gets the "winner" highlight;
+        // metrics where direction doesn't matter (e.g. "Размер рынка") set
+        // `null` to skip highlighting.
+        const metricRows = [
+            {
+                label: "Медиана",
+                get: (it) => Number(it.median || 0),
+                format: (v) => formatPrice(v),
+                lowerIsBetter: true,
+                showDelta: true,
+            },
+            {
+                label: "Среднее",
+                get: (it) => Number(it.mean || 0),
+                format: (v) => formatPrice(v),
+                lowerIsBetter: true,
+            },
+            {
+                label: "Минимум",
+                get: (it) => Number(it.min || 0),
+                format: (v) => formatPrice(v),
+                lowerIsBetter: true,
+            },
+            {
+                label: "Максимум",
+                get: (it) => Number(it.max || 0),
+                format: (v) => formatPrice(v),
+                lowerIsBetter: false,
+            },
+            {
+                label: "Справедливая",
+                get: (it) => {
+                    const from = Number(it.fair_price_from || it.q1 || 0);
+                    const to = Number(it.fair_price_to || it.q3 || 0);
+                    return from > 0 && to > 0 ? { from, to } : null;
+                },
+                format: (v) => v ? `${formatPrice(v.from)} — ${formatPrice(v.to)}` : "—",
+                lowerIsBetter: null,
+            },
+            {
+                label: "Тренд 30д",
+                get: (it) => it.trend_percent == null ? null : Number(it.trend_percent),
+                format: (v) => v == null ? "нет истории" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`,
+                lowerIsBetter: true,
+            },
+            {
+                label: "Дешёвые лоты",
+                get: (it) => Number(it.cheap_count || 0),
+                format: (v) => String(v),
+                lowerIsBetter: false,
+            },
+            {
+                label: "Размер рынка",
+                get: (it) => Number(it.total_results || 0),
+                format: (v) => String(v),
+                lowerIsBetter: false,
+            },
+            {
+                label: "Лучший оффер",
+                get: (it) => it.best_listing || null,
+                format: (listing) => listing
+                    ? `${formatPrice(listing.price)} — ${listing.title}`
+                    : "—",
+                lowerIsBetter: null,
+                isWide: true,
+            },
+        ];
+
+        for (const row of metricRows) {
+            const values = items.map((it) => row.get(it));
+            let winnerIdx = -1;
+            if (row.lowerIsBetter !== null && row.lowerIsBetter !== undefined) {
+                const numeric = values.map((v) => (typeof v === "number" ? v : null));
+                winnerIdx = _bestIndex(numeric, row.lowerIsBetter);
+            }
+            const rowEl = domEl(
+                "div",
+                { className: `compare-matrix-row${row.isWide ? " compare-matrix-row--wide" : ""}`, attrs: { role: "row" } },
+                domEl("div", { className: "compare-matrix-cell compare-matrix-metric", attrs: { role: "rowheader" }, text: row.label }),
+            );
+            for (const [index, item] of items.entries()) {
+                const value = values[index];
+                const text = row.format(value);
+                const isWinner = index === winnerIdx;
+                const cellClasses = ["compare-matrix-cell"];
+                if (index === 0) cellClasses.push("is-base");
+                if (isWinner) cellClasses.push("is-winner");
+                const cell = domEl("div", {
+                    className: cellClasses.join(" "),
+                    attrs: { role: "cell" },
+                });
+                cell.appendChild(domEl("span", { className: "compare-matrix-value mono", text }));
+                if (row.showDelta && index > 0) {
+                    const delta = comparisonDelta(Number(item.median || 0), Number(baseItem?.median || 0));
+                    if (delta) {
+                        cell.appendChild(domEl("span", {
+                            className: `compare-matrix-delta ${delta.className}`.trim(),
+                            text: delta.text,
+                        }));
+                    }
+                }
+                rowEl.appendChild(cell);
+            }
+            table.appendChild(rowEl);
+        }
+
+        elements.comparisonGrid.appendChild(table);
         });
     }
 

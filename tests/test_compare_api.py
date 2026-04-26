@@ -175,3 +175,14 @@ def test_compare_endpoint_returns_multi_query_summary(monkeypatch) -> None:
     assert len(payload["items"]) == 3
     assert payload["items"][0]["best_listing"] is not None
     assert payload["items"][0]["cheap_count"] >= 1
+    # B.5 side-by-side enrichment: every item exposes the full price-
+    # stats block + analyzed_count + fair-price IQR so the frontend can
+    # render rows for min/median/max/IQR without extra round-trips.
+    base = payload["items"][0]
+    for field in ("mean", "median", "min", "max", "q1", "q3", "analyzed_count"):
+        assert field in base, f"missing {field} in compare item"
+    assert base["analyzed_count"] >= 0
+    assert base["min"] <= base["median"] <= base["max"]
+    assert base["q1"] <= base["median"] <= base["q3"]
+    assert base["fair_price_from"] == base["q1"]
+    assert base["fair_price_to"] == base["q3"]
