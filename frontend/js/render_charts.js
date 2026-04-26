@@ -378,42 +378,6 @@ function createRenderCharts(context) {
         ];
     }
 
-    function _renderFunnelBars(dashboard) {
-        if (!elements.dashboardFunnel) return;
-        domClear(elements.dashboardFunnel);
-        const stages = Array.isArray(dashboard.funnel) ? dashboard.funnel : [];
-        const populated = stages.filter((s) => Number(s.count || 0) > 0);
-        if (!populated.length) {
-            elements.dashboardFunnel.hidden = true;
-            return;
-        }
-        // Use the global max as the bar-width denominator so the user
-        // sees relative volume across stages (the funnel narrows from
-        // left to right; a lone "watching" with everything else empty
-        // would otherwise pin every other bar to ~0).
-        const maxCount = Math.max(...populated.map((s) => Number(s.count || 0)));
-        for (const stage of stages) {
-            const count = Number(stage.count || 0);
-            const widthPct = maxCount > 0 ? Math.max(2, (count / maxCount) * 100) : 2;
-            const row = domEl(
-                "div",
-                { className: `funnel-row ${count > 0 ? "" : "is-empty"}`.trim() },
-                domEl("span", { className: "funnel-label", text: stage.label }),
-                domEl(
-                    "div",
-                    { className: "funnel-bar-track" },
-                    domEl("div", {
-                        className: "funnel-bar-fill",
-                        attrs: { style: `width: ${widthPct}%` },
-                    }),
-                ),
-                domEl("span", { className: "funnel-count mono", text: String(count) }),
-            );
-            elements.dashboardFunnel.appendChild(row);
-        }
-        elements.dashboardFunnel.hidden = false;
-    }
-
     function renderProfitDashboard() {
         return safeRender('renderProfitDashboard', () => {
         if (!elements.profitCards) return;
@@ -454,7 +418,6 @@ function createRenderCharts(context) {
                     ),
                 );
             }
-            if (elements.dashboardFunnel) elements.dashboardFunnel.hidden = true;
             return;
         }
 
@@ -470,8 +433,6 @@ function createRenderCharts(context) {
                 ),
             );
         }
-
-        _renderFunnelBars(dashboard);
         });
     }
 

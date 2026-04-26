@@ -3446,59 +3446,6 @@ body.modal-open {
     box-shadow: var(--shadow-card);
 }
 
-.dashboard-funnel {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: var(--space-3);
-    padding: 12px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-}
-
-.funnel-row {
-    display: grid;
-    grid-template-columns: minmax(80px, 0.9fr) minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
-}
-
-.funnel-row.is-empty {
-    opacity: 0.45;
-}
-
-.funnel-label {
-    font-size: 12px;
-    color: var(--text-dim);
-}
-
-.funnel-bar-track {
-    height: 8px;
-    background: var(--bg-surface-tint);
-    border-radius: 999px;
-    overflow: hidden;
-}
-
-.funnel-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--green));
-    border-radius: 999px;
-    transition: width var(--motion-base) ease;
-}
-
-.funnel-row.is-empty .funnel-bar-fill {
-    background: var(--border);
-}
-
-.funnel-count {
-    font-size: 12px;
-    color: var(--text);
-    font-weight: 700;
-    min-width: 28px;
-    text-align: right;
-}
-
 .profit-card {
     background: var(--bg-card);
     box-shadow: var(--shadow-card);
@@ -9107,9 +9054,23 @@ button.active .filter-count {
     color: var(--accent);
 }
 
-.items-clear-row {
+/* Footer container for the per-tab "Очистить" button. Sits below
+   the list, centered, with extra top spacing so it doesn't crowd
+   the last card. Only one of the two child buttons is visible at
+   a time, controlled by renderLeads based on the active tab. */
+.items-clear-footer {
     display: flex;
-    justify-content: flex-end;
-    margin-bottom: 10px;
+    justify-content: center;
+    margin-top: 16px;
+}
+
+.items-clear-btn {
+    /* Quieter than the action buttons inside the cards — the user
+       only reaches for it when intentionally wiping the list. */
+    opacity: 0.85;
+}
+
+.items-clear-btn:hover {
+    opacity: 1;
 }
 

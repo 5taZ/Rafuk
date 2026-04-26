@@ -166,7 +166,6 @@ function cacheAppElements(elements) {
     elements.profitDashboardSection = document.getElementById("profit-dashboard-section");
     elements.profitCards = document.getElementById("profit-cards");
     elements.profitChartBox = document.getElementById("profit-chart-box");
-    elements.dashboardFunnel = document.getElementById("dashboard-funnel");
     elements.analyticsPeriodButtons = Array.from(
         document.querySelectorAll("[data-analytics-period]"),
     );

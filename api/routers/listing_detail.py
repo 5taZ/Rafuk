@@ -55,6 +55,7 @@ async def get_listing_detail(
         client=kufar_client,
         reference_context=reference_context,
         category=category,
+        cache=cache,
     )
     visible_dataset = context.visible
     reference_dataset = context.reference

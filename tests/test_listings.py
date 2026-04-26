@@ -619,3 +619,63 @@ def test_listings_pagination_validates_bounds(monkeypatch) -> None:
             params={"query": "iphone", "offset": -1},
         )
         assert response.status_code == 422
+
+
+def test_listings_caches_kufar_dataset_for_repeat_calls(monkeypatch) -> None:
+    """First /listings request paginates Kufar; the second on the same
+    query should hit the dataset cache and skip the upstream entirely.
+
+    This is the cross-endpoint sharing path: when a frontend search
+    fires /price-stats + /listings + /geography in parallel, only the
+    first to land actually pages Kufar — the rest hit the cache.
+    """
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    fetch_calls = 0
+
+    class _CountingClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            nonlocal fetch_calls
+            del kwargs
+            fetch_calls += 1
+            return {"total": len(FAKE_ADS), "ads": FAKE_ADS}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", _CountingClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: _CountingClient(None)
+    # Shared cache across requests — the prod RedisCache is shared too,
+    # so ``lambda: MemoryCache()`` would mis-model the prod behaviour.
+    shared_cache = MemoryCache()
+    app.dependency_overrides[get_cache] = lambda: shared_cache
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        # First call — cold cache, paginates Kufar (1 search_all_ads).
+        first = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "limit": 20, "offset": 0},
+        )
+        assert first.status_code == 200
+        assert fetch_calls == 1, "first call should paginate Kufar exactly once"
+
+        # Different page of the SAME query — must reuse the cached
+        # raw Kufar dataset; the listings response cache is keyed on
+        # offset so it MUST hit the page-cache miss path, fall through
+        # to load_query_dataset, and there hit the dataset cache.
+        second = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "limit": 20, "offset": 20},
+        )
+        assert second.status_code == 200
+        assert fetch_calls == 1, (
+            f"second call hit Kufar {fetch_calls} times — dataset cache "
+            f"should have caught it"
+        )

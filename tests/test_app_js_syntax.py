@@ -114,21 +114,26 @@ def test_unified_item_card_replaces_lead_and_watchlist_builders() -> None:
     assert "buildItemCard," in text
 
 
-def test_make_swipeable_respects_reduced_motion_and_haptics() -> None:
-    """Swipe-to-promote on watching cards must be opt-in by motion
-    preference and trigger Telegram haptics when committing the action."""
+def test_make_swipeable_helper_kept_for_future_surfaces() -> None:
+    """Swipe-to-promote was removed from watching cards because the
+    swipe-bg DOM left thin colored slivers visible at the rounded
+    corners on Telegram WebView. The helper itself stays in
+    dom_helpers.js (still respects reduced-motion + haptics) so
+    future surfaces can opt back in without re-implementing the
+    gesture math from scratch.
+    """
     text = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
     assert "function makeSwipeable" in text
-    # Skip the gesture entirely under reduced-motion.
     assert "(prefers-reduced-motion: reduce)" in text
-    # Haptic feedback when the swipe commits.
     assert "HapticFeedback" in text
     assert "impactOccurred" in text
-    # Wired up in the watching branch of the unified builder.
+    # Watching cards no longer wrap themselves with makeSwipeable —
+    # confirm the call was removed and the explanatory comment stays.
     builder_text = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
-    assert "makeSwipeable(card" in builder_text
-    assert "promoteWatchlistToLead" in builder_text
-    assert "deleteWatchlistItem" in builder_text
+    assert "makeSwipeable(card" not in builder_text, (
+        "swipe wrap re-introduced — re-evaluate the visual artifact "
+        "before shipping"
+    )
 
 
 def test_listing_detail_loaders_share_stale_response_guard() -> None:

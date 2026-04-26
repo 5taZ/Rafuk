@@ -1687,8 +1687,22 @@ button.active .filter-count {
     color: var(--accent);
 }
 
-.items-clear-row {
+/* Footer container for the per-tab "Очистить" button. Sits below
+   the list, centered, with extra top spacing so it doesn't crowd
+   the last card. Only one of the two child buttons is visible at
+   a time, controlled by renderLeads based on the active tab. */
+.items-clear-footer {
     display: flex;
-    justify-content: flex-end;
-    margin-bottom: 10px;
+    justify-content: center;
+    margin-top: 16px;
+}
+
+.items-clear-btn {
+    /* Quieter than the action buttons inside the cards — the user
+       only reaches for it when intentionally wiping the list. */
+    opacity: 0.85;
+}
+
+.items-clear-btn:hover {
+    opacity: 1;
 }

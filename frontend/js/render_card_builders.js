@@ -815,26 +815,13 @@ function createRenderCardBuilders(context) {
 
         _wireCardHandlers(card, item, mode);
 
-        // Watching cards support swipe gestures: left → delete, right →
-        // promote to "Покупки". Lead cards stay tap-only — they have
-        // editable inputs in the middle that would conflict with horizontal
-        // pans. makeSwipeable returns the card unchanged under
-        // prefers-reduced-motion, so the buttons in the action row remain
-        // the canonical interaction in either case.
-        if (isWatching && !isMissing) {
-            return makeSwipeable(card, {
-                onSwipeLeft: {
-                    label: "Удалить",
-                    className: "swipe-bg--danger",
-                    action: () => actions.deleteWatchlistItem(item.id),
-                },
-                onSwipeRight: {
-                    label: "В покупки",
-                    className: "swipe-bg--accent",
-                    action: () => actions.promoteWatchlistToLead(item),
-                },
-            });
-        }
+        // Swipe gestures used to wrap watching cards (left → delete,
+        // right → promote). Removed because the action buttons cover
+        // the same intents and the swipe-bg DOM left thin red/blue
+        // slivers visible at rounded corners on some WebViews —
+        // breaking the clean look of the card. ``makeSwipeable``
+        // remains in the helper bundle for any future surface that
+        // wants it back.
         return card;
     }
 

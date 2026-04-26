@@ -630,7 +630,6 @@
                 </div>
             </div>
             <div class="profit-cards" id="profit-cards"></div>
-            <div class="dashboard-funnel" id="dashboard-funnel" hidden></div>
             <div class="chart-box profit-chart-box" id="profit-chart-box" hidden>
                 <canvas id="profitChart"></canvas>
             </div>
@@ -662,11 +661,16 @@
                     Покупки <span class="items-tab-count" data-items-count="purchases" hidden>0</span>
                 </button>
             </div>
-            <div class="lead-actions-wrap items-clear-row">
-                <button class="ghost-btn small danger" id="clear-all-leads-btn" type="button" hidden>Очистить покупки</button>
-                <button class="ghost-btn small danger" id="delete-all-watchlist-btn" type="button" hidden>Очистить избранное</button>
-            </div>
             <div class="trackers-list" id="lead-inbox-list"></div>
+            <!-- Clear buttons live at the bottom of the list, only one
+                 visible at a time depending on the active tab. The
+                 footer placement keeps them out of the user's primary
+                 reading path while still being one tap away when the
+                 list grows uncomfortably long. -->
+            <div class="items-clear-footer">
+                <button class="ghost-btn small danger items-clear-btn" id="clear-all-leads-btn" type="button" hidden>Очистить покупки</button>
+                <button class="ghost-btn small danger items-clear-btn" id="delete-all-watchlist-btn" type="button" hidden>Очистить избранное</button>
+            </div>
         </section>
         <section class="section" id="history-deals-section">
             <div class="sec-head collapsible-head">

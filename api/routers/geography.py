@@ -46,6 +46,7 @@ async def get_geography(
         settings=settings,
         client=kufar_client,
         category=category,
+        cache=cache,
     )
     grouped: dict[int, list[dict]] = defaultdict(list)
     for ad in dataset.ads:

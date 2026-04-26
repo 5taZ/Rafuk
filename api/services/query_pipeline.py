@@ -137,6 +137,33 @@ class QueryDatasetContext:
     reference: QueryDataset
 
 
+def _dataset_cache_key(
+    query: str,
+    currency: str,
+    category: int | None,
+    extra: dict[str, Any],
+) -> str:
+    """Key for caching the raw Kufar response dict.
+
+    Strict-mode filtering happens AFTER the cache (it's just a Python
+    list comprehension on the already-fetched ads), so the key
+    deliberately omits ``strict_search``. Same goes for sort — Kufar
+    returns the same payload regardless of how the frontend wants
+    it ordered, so multiple sort options share one cache entry.
+    """
+    parts = [
+        f"q={query.strip().casefold()}",
+        f"cur={currency}",
+        f"cat={category if category is not None else ''}",
+    ]
+    for key in sorted(extra):
+        value = extra[key]
+        if value in (None, "", [], {}):
+            continue
+        parts.append(f"{key}={value}")
+    return "kufar:dataset:" + ":".join(parts)
+
+
 async def load_query_dataset(
     *,
     query: str,
@@ -147,7 +174,19 @@ async def load_query_dataset(
     search_kwargs: dict[str, Any] | None = None,
     category: int | None = None,
     client: SupportsSearchAllAds | None = None,
+    cache: Any | None = None,
 ) -> QueryDataset:
+    """Build a QueryDataset for one query.
+
+    When ``cache`` is provided, the raw Kufar response is cached
+    under a key derived from (query, currency, category, extras).
+    The 6 endpoints fired in parallel by a single search request
+    (price-stats, listings, segments, geography, …) all hit the
+    same key, so only the FIRST one pays the Kufar fetch cost —
+    the others see a cache hit. This is the dominant speed-up on
+    a fresh search since Kufar pagination + the 1s rate-limit
+    delay otherwise dominate every response.
+    """
     owns_client = client is None
     if client is None:
         if client_factory is None:
@@ -157,12 +196,30 @@ async def load_query_dataset(
         effective_kwargs = dict(search_kwargs or {})
         if category is not None:
             effective_kwargs["category"] = category
-        response = await client.search_all_ads(
-            query=query,
-            currency=currency,
-            **effective_kwargs,
-        )
-        response = _normalize_response_ads(response)
+
+        cache_key: str | None = None
+        response: dict[str, Any] | None = None
+        if cache is not None:
+            cache_key = _dataset_cache_key(
+                query=query,
+                currency=currency,
+                category=category,
+                extra=effective_kwargs,
+            )
+            response = await cache.get_json(cache_key)
+
+        if response is None:
+            response = await client.search_all_ads(
+                query=query,
+                currency=currency,
+                **effective_kwargs,
+            )
+            response = _normalize_response_ads(response)
+            if cache is not None and cache_key is not None:
+                # 5-minute TTL — long enough for the 6 parallel search
+                # endpoints to share, short enough that fresh ads
+                # show up promptly on the user's next search.
+                await cache.set_json(cache_key, response, ttl=300)
     finally:
         if owns_client:
             await client.aclose()
@@ -187,6 +244,7 @@ async def load_query_dataset_context(
     client: SupportsSearchAllAds | None = None,
     reference_context: str = "current",
     category: int | None = None,
+    cache: Any | None = None,
 ) -> QueryDatasetContext:
     """Build the visible/reference dataset pair for a query.
 
@@ -212,6 +270,7 @@ async def load_query_dataset_context(
                 settings=settings,
                 client=client,
                 category=category,
+                cache=cache,
             )
         finally:
             if owns_client and client is not None:
@@ -225,6 +284,7 @@ async def load_query_dataset_context(
             strict_search=strict_search,
             settings=settings,
             client=client,
+            cache=cache,
         )
         visible_dataset = await load_query_dataset(
             query=query,
@@ -233,6 +293,7 @@ async def load_query_dataset_context(
             settings=settings,
             category=category,
             client=client,
+            cache=cache,
         )
     finally:
         if owns_client and client is not None:

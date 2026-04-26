@@ -63,6 +63,7 @@ async def get_price_stats(
         settings=settings,
         client=kufar_client,
         category=category,
+        cache=cache,
     )
     stats = dataset.price_stats
     rates_payload = await currency_service.get_rates()
