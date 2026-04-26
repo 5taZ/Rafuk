@@ -12,7 +12,7 @@ def mini_app_keyboard(url: str) -> InlineKeyboardMarkup | None:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Open Analytics",
+                    text="Открыть мини-апп",
                     web_app=WebAppInfo(url=url),
                 )
             ]

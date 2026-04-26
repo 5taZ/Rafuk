@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
+from api.database import get_engine, get_session_factory
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import TrackerEvent
+from api.models import Base, Tracker, TrackerEvent, User
+from scheduler.collector import _recent_events_by_tracker
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -100,3 +103,76 @@ def test_tracker_events_endpoint() -> None:
     assert payload[0]["event_type"] == "new_listing"
     assert payload[0]["strict_mode"] is True
     assert payload[0]["ad_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recent_events_by_tracker_groups_by_id_and_skips_old() -> None:
+    """One bulk SELECT for all due trackers — replaces the per-tracker N+1
+    that used to live inside persist_tracker_events.
+
+    Verifies grouping (each tracker only sees its own ad/event pairs) and
+    the recency cutoff (events older than `hours` are filtered out)."""
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(telegram_user_id=999_999, first_name="Test")
+        session.add(user)
+        await session.flush()
+
+        tracker_a = Tracker(user_id=user.id, query="iphone 15", strict_mode=False)
+        tracker_b = Tracker(user_id=user.id, query="iphone 15", strict_mode=True)
+        session.add_all([tracker_a, tracker_b])
+        await session.flush()
+
+        now = datetime.now(UTC)
+        old = now - timedelta(hours=48)
+        session.add_all(
+            [
+                TrackerEvent(
+                    tracker_id=tracker_a.id,
+                    user_id=user.id,
+                    ad_id=1,
+                    query="iphone 15",
+                    strict_mode=False,
+                    event_type="new_listing",
+                    title="A",
+                    link="https://www.kufar.by/item/1",
+                    created_at=now,
+                ),
+                TrackerEvent(
+                    tracker_id=tracker_a.id,
+                    user_id=user.id,
+                    ad_id=2,
+                    query="iphone 15",
+                    strict_mode=False,
+                    event_type="price_drop",
+                    title="A2",
+                    link="https://www.kufar.by/item/2",
+                    created_at=old,  # outside the 24h window
+                ),
+                TrackerEvent(
+                    tracker_id=tracker_b.id,
+                    user_id=user.id,
+                    ad_id=3,
+                    query="iphone 15",
+                    strict_mode=True,
+                    event_type="new_listing",
+                    title="B",
+                    link="https://www.kufar.by/item/3",
+                    created_at=now,
+                ),
+            ]
+        )
+        await session.commit()
+
+        seen = await _recent_events_by_tracker(session, [tracker_a.id, tracker_b.id])
+
+    assert seen[tracker_a.id] == {(1, "new_listing")}, seen
+    assert seen[tracker_b.id] == {(3, "new_listing")}, seen
+    # Tracker A's old (48h ago) event must be filtered out by the cutoff.
+    assert (2, "price_drop") not in seen[tracker_a.id]
+
+    await engine.dispose()

@@ -24,12 +24,12 @@ router = Router(name="tracker_callbacks")
 @router.callback_query(lambda callback: (callback.data or "").startswith(("lead:", "later:")))
 async def handle_tracker_action(callback: CallbackQuery) -> None:
     if callback.from_user is None or not callback.data:
-        await callback.answer("Unknown user.", show_alert=True)
+        await callback.answer("Не удалось определить пользователя.", show_alert=True)
         return
 
     action, _, raw_event_id = callback.data.partition(":")
     if not raw_event_id.isdigit():
-        await callback.answer("Bad action.", show_alert=True)
+        await callback.answer("Некорректное действие.", show_alert=True)
         return
 
     engine = get_bot_engine()

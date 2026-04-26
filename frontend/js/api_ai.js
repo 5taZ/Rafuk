@@ -8,6 +8,11 @@ function createApiAi(context) {
     let _aiProgress = 0;
     let _lastAiData = null;
     let _progressFrame = null;
+    // Bumped on closeAIModal so any in-flight polling loop sees it
+    // changed and silently exits instead of resolving against a closed
+    // modal (or blocking a fresh AI Analysis request for up to 6 minutes
+    // because _aiLoading is still true).
+    let _aiPollSession = 0;
 
     const LOADING_STEPS = [
         "Загружаю данные объявления...",
@@ -237,6 +242,11 @@ function createApiAi(context) {
     }
 
     function closeAIModal() {
+        // Cancel any in-flight polling loop and free the loading slot
+        // so the user can re-open AI Analysis (for the same ad or a
+        // different one) without waiting for the old poll to time out.
+        _aiPollSession += 1;
+        _aiLoading = false;
         _stopLoadingAnimation(false);
         if (elements.aiModal) closeModalAnimated(elements.aiModal);
     }
@@ -254,6 +264,12 @@ function createApiAi(context) {
 
         if (_aiLoading) return;
         _aiLoading = true;
+        // Snapshot the current session so the polling loop below can
+        // detect mid-flight cancellation by closeAIModal (which bumps
+        // _aiPollSession) and exit silently instead of writing into
+        // state.detailAi or rendering against a hidden modal.
+        const pollSession = ++_aiPollSession;
+        const isCancelled = () => pollSession !== _aiPollSession;
         state.detailAi = {
             adId,
             loading: true,
@@ -271,6 +287,7 @@ function createApiAi(context) {
                 query,
                 category: state.category || undefined,
             });
+            if (isCancelled()) return;
 
             // Cached result returned immediately
             if (startResp.cached && startResp.result) {
@@ -297,8 +314,12 @@ function createApiAi(context) {
             let pollCount = 0;
             let consecutivePollErrors = 0;
 
-            await new Promise((resolve, reject) => {
+            const result = await new Promise((resolve, reject) => {
                 const poll = async () => {
+                    if (isCancelled()) {
+                        resolve(null);
+                        return;
+                    }
                     pollCount++;
                     if (pollCount > MAX_POLLS) {
                         reject(new Error("Анализ занял слишком долго. Попробуйте ещё раз."));
@@ -306,6 +327,10 @@ function createApiAi(context) {
                     }
                     try {
                         const status = await getJson(`/api/v1/ai/task/${taskId}`, { timeout: POLL_TIMEOUT });
+                        if (isCancelled()) {
+                            resolve(null);
+                            return;
+                        }
                         consecutivePollErrors = 0;
                         if (status.stage) {
                             _setStageLabel(status.stage);
@@ -320,6 +345,10 @@ function createApiAi(context) {
                             setTimeout(poll, POLL_INTERVAL);
                         }
                     } catch (err) {
+                        if (isCancelled()) {
+                            resolve(null);
+                            return;
+                        }
                         const message = String(err?.message || "");
                         const isTaskMissing = message.includes("не найдена");
                         consecutivePollErrors += 1;
@@ -338,14 +367,17 @@ function createApiAi(context) {
                     }
                 };
                 setTimeout(poll, POLL_INTERVAL);
-            }).then((result) => {
-                console.log("[AI] Analysis complete");
-                state.detailAi = { adId, loading: false, result, error: "", source: "ai" };
-                _showCompletionThen(() => _renderAIModalResult(result));
-            }).catch((err) => {
-                throw err;
+            });
+
+            if (isCancelled() || result == null) return;
+            console.log("[AI] Analysis complete");
+            state.detailAi = { adId, loading: false, result, error: "", source: "ai" };
+            _showCompletionThen(() => {
+                if (isCancelled()) return;
+                _renderAIModalResult(result);
             });
         } catch (err) {
+            if (isCancelled()) return;
             console.error("[AI] Request failed:", err);
             const message = err.message || "Не удалось выполнить анализ. Проверьте интернет-соединение.";
             state.detailAi = {
@@ -357,7 +389,12 @@ function createApiAi(context) {
             };
             _showAIError(message, adId);
         } finally {
-            _aiLoading = false;
+            // Only release the slot if our session is still the active
+            // one. Otherwise closeAIModal already cleared _aiLoading and
+            // a fresh request may have started another session.
+            if (!isCancelled()) {
+                _aiLoading = false;
+            }
         }
     }
 

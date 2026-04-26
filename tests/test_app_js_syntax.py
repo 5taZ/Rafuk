@@ -35,3 +35,17 @@ def test_node_syntax_check() -> None:
     for script in JS_MODULES:
         result = subprocess.run(["node", "--check", str(script)], capture_output=True, text=True)
         assert result.returncode == 0, f"{script}: {result.stderr}"
+
+
+def test_close_ai_modal_cancels_polling() -> None:
+    """closeAIModal used to leave the AI polling loop running for up to 6
+    minutes, blocking re-opening AI Analysis. Verify the cancel-by-session
+    pattern is wired up so a regression here is caught statically."""
+    text = (JS_DIR / "api_ai.js").read_text(encoding="utf-8")
+    assert "_aiPollSession" in text, "session counter for poll cancellation is missing"
+    # closeAIModal must bump the session and release the loading slot.
+    close_block = re.search(r"function closeAIModal\(\)\s*\{[^}]+\}", text, re.DOTALL)
+    assert close_block, "closeAIModal definition not found"
+    body = close_block.group(0)
+    assert "_aiPollSession" in body, "closeAIModal must invalidate the poll session"
+    assert "_aiLoading = false" in body, "closeAIModal must release _aiLoading"

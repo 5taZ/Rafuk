@@ -15,11 +15,14 @@ async def cmd_start(message: Message) -> None:
     settings = get_settings()
     keyboard = mini_app_keyboard(settings.mini_app_url)
     text = (
-        "Rafuk helps you inspect market prices, listings, and tracker alerts.\n"
-        "Use /app to open the mini app or /help to see commands."
+        "Rafuk помогает анализировать цены, объявления и следить за рынком "
+        "на kufar.by.\n"
+        "Открой мини-апп через /app или посмотри список команд: /help"
     )
     if keyboard is None:
-        text += "\nMini app button is disabled locally because Telegram WebApp requires HTTPS."
+        text += (
+            "\nКнопка мини-аппа отключена локально — Telegram WebApp требует HTTPS."
+        )
     await message.answer(text, reply_markup=keyboard)
 
 
@@ -34,10 +37,11 @@ async def cmd_app(message: Message) -> None:
     keyboard = mini_app_keyboard(settings.mini_app_url)
     if keyboard is None:
         await message.answer(
-            "Mini app is disabled locally. Telegram WebApp buttons require HTTPS."
+            "Мини-апп отключён локально. Кнопки Telegram WebApp работают только "
+            "поверх HTTPS."
         )
         return
     await message.answer(
-        "Open Rafuk mini app.",
+        "Открыть мини-апп Rafuk.",
         reply_markup=keyboard,
     )

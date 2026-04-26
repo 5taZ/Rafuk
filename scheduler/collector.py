@@ -127,14 +127,48 @@ async def _recent_event_keys(
     return {(row.ad_id, row.event_type) for row in result if row.ad_id is not None}
 
 
+async def _recent_events_by_tracker(
+    session: AsyncSession,
+    tracker_ids: list[int],
+    hours: int = 24,
+) -> dict[int, set[tuple[int, str]]]:
+    """Bulk-load recently-seen (ad_id, event_type) pairs grouped by tracker_id.
+
+    Replaces the per-tracker N+1 SELECT loop in ``check_trackers`` — loading
+    everything for the tick in one query keeps DB round-trips bounded by the
+    number of query groups instead of by the total tracker count.
+    """
+    if not tracker_ids:
+        return {}
+    cutoff = datetime.now(UTC) - timedelta(hours=hours)
+    result = await session.execute(
+        select(
+            TrackerEvent.tracker_id, TrackerEvent.ad_id, TrackerEvent.event_type
+        ).where(
+            TrackerEvent.tracker_id.in_(tracker_ids),
+            TrackerEvent.created_at >= cutoff,
+        )
+    )
+    out: dict[int, set[tuple[int, str]]] = defaultdict(set)
+    for row in result:
+        if row.ad_id is not None:
+            out[row.tracker_id].add((row.ad_id, row.event_type))
+    return out
+
+
 async def persist_tracker_events(
     session: AsyncSession,
     tracker: Tracker,
     sync_result: QuerySyncResult,
     ads_by_id: dict[int, dict[str, object]] | None = None,
+    seen: set[tuple[int, str]] | None = None,
 ) -> list[TrackerEvent]:
-    # Skip events that were already recorded recently for this tracker + ad
-    seen = await _recent_event_keys(session, tracker.id)
+    # Skip events that were already recorded recently for this tracker + ad.
+    # Callers can pass a pre-computed ``seen`` (from ``_recent_events_by_tracker``)
+    # to avoid an extra SELECT per tracker; falling back keeps the per-tracker
+    # behaviour for any external/test callers.
+    if seen is None:
+        seen = await _recent_event_keys(session, tracker.id)
 
     created: list[TrackerEvent] = []
     for state in sync_result.new_listings[:10]:
@@ -323,6 +357,12 @@ async def check_trackers(
         for tracker in trackers:
             trackers_by_query[(tracker.query, tracker.strict_mode)].append(tracker)
 
+        # Bulk-load recently-seen events for all due trackers in a single
+        # query — avoids N+1 SELECTs inside persist_tracker_events.
+        seen_by_tracker = await _recent_events_by_tracker(
+            session, [t.id for t in trackers]
+        )
+
         logger.info(
             "Tracker check: %d due (of %d total), %d unique query group(s)",
             len(trackers),
@@ -395,7 +435,11 @@ async def check_trackers(
                         message = _build_tracker_message(query, strict_mode, tracker_sync_result)
                         if message:
                             created_events = await persist_tracker_events(
-                                session, tracker, tracker_sync_result, ads_by_id
+                                session,
+                                tracker,
+                                tracker_sync_result,
+                                ads_by_id,
+                                seen=seen_by_tracker.get(tracker.id, set()),
                             )
                             await session.flush()
                             primary_event = created_events[0] if created_events else None
