@@ -143,6 +143,33 @@ def test_listing_detail_loaders_share_stale_response_guard() -> None:
     assert "state._comparisonRequestId" in listings_js
 
 
+def test_detail_modal_supports_pinch_zoom_with_swipe_deferral() -> None:
+    """The listing-detail modal hosts the photo gallery. Two-finger
+    pinch + double-tap zoom on the main image is provided by
+    attachPinchZoom (dom_helpers.js); when the image is zoomed
+    (`.is-zoomed`) the swipe-between-photos handler in api_events.js
+    must defer to the zoom interaction so panning a magnified shot
+    doesn't accidentally jump to the next photo."""
+    helpers = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    events = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    modals = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
+
+    assert "function attachPinchZoom" in helpers
+    # The helper must add an "is-zoomed" marker and provide a reset hook.
+    assert "is-zoomed" in helpers
+    assert "reset" in helpers
+
+    # The swipe-between-photos handler must short-circuit while zoomed
+    # OR while the user has more than one finger on the screen.
+    assert "is-zoomed" in events
+    assert "e.touches.length > 1" in events or "touches.length > 1" in events
+
+    # render_modals.js wires the helper at render time and resets the
+    # transform on close so the next lot opens at 1×.
+    assert "_pinchController" in modals
+    assert "attachPinchZoom" in modals
+
+
 def test_theme_init_does_not_inherit_telegram_palette_colours() -> None:
     """The Mini App keeps its own palette so the brand stays consistent
     across Telegram clients with custom themes / AMOLED / Premium

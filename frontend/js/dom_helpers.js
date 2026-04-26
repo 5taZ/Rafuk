@@ -513,3 +513,189 @@ function setupPullToRefresh(options) {
         document.removeEventListener("touchcancel", reset);
     };
 }
+
+/* ─── Pinch-zoom + pan for a single image ───────────────────────────────
+ * Two-finger pinch scales an image up (1×–4×); a single-finger drag
+ * pans it once it's zoomed; a double-tap toggles between 1× and 2×.
+ * Sets `img.classList.add('is-zoomed')` while scale > 1 so adjacent
+ * gestures (e.g. the swipe-between-photos handler in api_events.js)
+ * can defer to the zoom interaction.
+ *
+ * Returns a small controller with .reset() so the caller can clear the
+ * zoom when navigating to a different photo or closing the modal.
+ */
+function attachPinchZoom(img, options) {
+    if (!img) return { reset: () => {} };
+    const minScale = options?.minScale ?? 1;
+    const maxScale = options?.maxScale ?? 4;
+    const doubleTapScale = options?.doubleTapScale ?? 2;
+
+    let scale = 1;
+    let tx = 0;
+    let ty = 0;
+    let pinchStartDistance = 0;
+    let pinchStartScale = 1;
+    let pinchCenter = { x: 0, y: 0 };
+    let panStartX = 0;
+    let panStartY = 0;
+    let panBaseTx = 0;
+    let panBaseTy = 0;
+    let lastTapTs = 0;
+    let lastTapX = 0;
+    let lastTapY = 0;
+
+    function apply() {
+        img.style.transform =
+            `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
+        img.style.transformOrigin = "center center";
+        if (scale > 1.001) {
+            img.classList.add("is-zoomed");
+        } else {
+            img.classList.remove("is-zoomed");
+        }
+    }
+
+    function reset(animate = true) {
+        scale = 1;
+        tx = 0;
+        ty = 0;
+        if (animate) {
+            img.style.transition =
+                "transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+        } else {
+            img.style.transition = "";
+        }
+        apply();
+        if (animate) {
+            setTimeout(() => {
+                img.style.transition = "";
+            }, 240);
+        }
+    }
+
+    /** Clamp the translate values so the image can't be panned out of
+     *  view at the current scale. Approximate — uses the rendered
+     *  bounding box rather than the natural size. */
+    function clampPan() {
+        if (scale <= 1) {
+            tx = 0;
+            ty = 0;
+            return;
+        }
+        const rect = img.getBoundingClientRect();
+        const overflowX = (rect.width * scale - rect.width) / 2;
+        const overflowY = (rect.height * scale - rect.height) / 2;
+        if (tx > overflowX) tx = overflowX;
+        if (tx < -overflowX) tx = -overflowX;
+        if (ty > overflowY) ty = overflowY;
+        if (ty < -overflowY) ty = -overflowY;
+    }
+
+    function distance(touches) {
+        const [a, b] = touches;
+        const dx = a.clientX - b.clientX;
+        const dy = a.clientY - b.clientY;
+        return Math.hypot(dx, dy);
+    }
+
+    img.addEventListener(
+        "touchstart",
+        (event) => {
+            if (event.touches.length === 2) {
+                event.preventDefault();
+                pinchStartDistance = distance(event.touches);
+                pinchStartScale = scale;
+                pinchCenter = {
+                    x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
+                    y: (event.touches[0].clientY + event.touches[1].clientY) / 2,
+                };
+            } else if (event.touches.length === 1) {
+                const t = event.touches[0];
+                const now = Date.now();
+                const dx = t.clientX - lastTapX;
+                const dy = t.clientY - lastTapY;
+                if (now - lastTapTs < 280 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
+                    // Double-tap → toggle zoom.
+                    event.preventDefault();
+                    if (scale > 1.001) {
+                        reset(true);
+                    } else {
+                        scale = doubleTapScale;
+                        // Centre the zoom around the tap point relative
+                        // to the current view.
+                        const rect = img.getBoundingClientRect();
+                        const cx = t.clientX - (rect.left + rect.width / 2);
+                        const cy = t.clientY - (rect.top + rect.height / 2);
+                        tx = -cx * (scale - 1);
+                        ty = -cy * (scale - 1);
+                        clampPan();
+                        img.style.transition =
+                            "transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+                        apply();
+                        setTimeout(() => {
+                            img.style.transition = "";
+                        }, 240);
+                    }
+                    lastTapTs = 0;
+                    return;
+                }
+                lastTapTs = now;
+                lastTapX = t.clientX;
+                lastTapY = t.clientY;
+                if (scale > 1.001) {
+                    panStartX = t.clientX;
+                    panStartY = t.clientY;
+                    panBaseTx = tx;
+                    panBaseTy = ty;
+                }
+            }
+        },
+        { passive: false },
+    );
+
+    img.addEventListener(
+        "touchmove",
+        (event) => {
+            if (event.touches.length === 2) {
+                event.preventDefault();
+                const d = distance(event.touches);
+                if (pinchStartDistance > 0) {
+                    let next = pinchStartScale * (d / pinchStartDistance);
+                    if (next < minScale) next = minScale;
+                    if (next > maxScale) next = maxScale;
+                    scale = next;
+                    clampPan();
+                    apply();
+                }
+            } else if (event.touches.length === 1 && scale > 1.001) {
+                event.preventDefault();
+                const t = event.touches[0];
+                tx = panBaseTx + (t.clientX - panStartX);
+                ty = panBaseTy + (t.clientY - panStartY);
+                clampPan();
+                apply();
+            }
+        },
+        { passive: false },
+    );
+
+    img.addEventListener(
+        "touchend",
+        (event) => {
+            // If we drop below ~1.05 after a pinch, snap back to 1.
+            if (event.touches.length === 0 && scale < 1.05 && scale !== 1) {
+                reset(true);
+            }
+            pinchStartDistance = 0;
+        },
+        { passive: true },
+    );
+    img.addEventListener("touchcancel", () => reset(true), { passive: true });
+
+    return {
+        reset: (animate = true) => reset(animate),
+        get scale() {
+            return scale;
+        },
+    };
+}

@@ -806,6 +806,12 @@ function createApiEvents(context) {
                 context.renderDetailModal();
                 return;
             }
+            // Reset any pinch-zoom transform so the new photo arrives
+            // at 1× (and so the slide-in animation isn't fighting an
+            // existing translate3d on the element).
+            if (img._pinchController) {
+                img._pinchController.reset(false);
+            }
 
             isAnimating = true;
             const outClass = direction > 0 ? "swipe-out-next" : "swipe-out-prev";
@@ -851,12 +857,29 @@ function createApiEvents(context) {
         }
 
         // Touch-swipe: track delta on the modal, fire on touchend.
+        // We bow out entirely when the user is interacting with the
+        // pinch-zoomed image (.is-zoomed class on the image, or two
+        // fingers down) so the photo navigation doesn't fire while
+        // they're panning around a magnified shot.
         let touchStartX = 0;
+        let touchSkip = false;
         const SWIPE_THRESHOLD_PX = 50;
         elements.detailModal?.addEventListener("touchstart", (e) => {
+            const zoomed = elements.detailMainImage?.classList.contains("is-zoomed");
+            const multiTouch = e.touches && e.touches.length > 1;
+            touchSkip = Boolean(zoomed || multiTouch);
+            if (touchSkip) return;
             touchStartX = e.changedTouches[0].screenX;
         }, { passive: true });
         elements.detailModal?.addEventListener("touchend", (e) => {
+            if (touchSkip) {
+                touchSkip = false;
+                return;
+            }
+            // If the image got zoomed mid-gesture, don't navigate.
+            if (elements.detailMainImage?.classList.contains("is-zoomed")) {
+                return;
+            }
             const swipeDistance = touchStartX - e.changedTouches[0].screenX;
             if (Math.abs(swipeDistance) < SWIPE_THRESHOLD_PX) return;
             // Positive distance = finger moved LEFT = user wants NEXT photo.

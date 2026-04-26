@@ -167,6 +167,24 @@ function createRenderModals(context) {
             scrollContainer.scrollTop = 0;
         }
 
+        // Pinch-zoom: lazy-init once per session and stash the controller
+        // on the image so closeDetailModal / navigateDetailImage can
+        // reset the transform when the user moves on to a different lot
+        // or photo. The helper itself is a no-op on desktop because the
+        // touch events never fire — but it costs nothing to keep wired.
+        if (
+            elements.detailMainImage &&
+            !elements.detailMainImage._pinchController &&
+            typeof attachPinchZoom === "function"
+        ) {
+            elements.detailMainImage._pinchController = attachPinchZoom(
+                elements.detailMainImage,
+            );
+        }
+        if (elements.detailMainImage?._pinchController) {
+            elements.detailMainImage._pinchController.reset(false);
+        }
+
         if (elements.detailModal.hidden) {
             openModalAnimated(elements.detailModal);
         }
@@ -177,6 +195,11 @@ function createRenderModals(context) {
         if (state.modalCleanup) {
             state.modalCleanup();
             state.modalCleanup = null;
+        }
+        // Drop any pinch-zoom transform so the next lot opens at 1×
+        // even if the previous viewer left the photo magnified.
+        if (elements.detailMainImage?._pinchController) {
+            elements.detailMainImage._pinchController.reset(false);
         }
         state.detail = null;
         state.detailImageIndex = 0;

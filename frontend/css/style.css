@@ -2743,6 +2743,20 @@ body.modal-open {
     isolation: isolate;
 }
 
+/* Pinch-zoomed photo state: dom_helpers.js / attachPinchZoom adds
+   .is-zoomed while scale > 1 so we can flip touch-action to "none"
+   (capture every touch on the magnified image instead of letting the
+   page pan it) and switch the cursor affordance for desktop testers. */
+.detail-media img.is-zoomed {
+    touch-action: none;
+    cursor: grab;
+    will-change: transform;
+}
+
+.detail-media img.is-zoomed:active {
+    cursor: grabbing;
+}
+
 .detail-media img {
     width: 100%;
     max-height: 340px;
