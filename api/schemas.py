@@ -14,6 +14,7 @@ class LeadStatusEnum(StrEnum):
     researching = "researching"
     bought = "bought"
     sold = "sold"
+    closed = "closed"
     skipped = "skipped"
 
 

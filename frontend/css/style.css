@@ -384,20 +384,9 @@ body {
     font-weight: 700;
     color: var(--text);
     letter-spacing: -0.015em;
-    /* Match the gradient direction of the logo mark for cohesion. */
-    background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    color: transparent;
+    color: var(--text);
 }
 
-/* Light theme: text gradient stays vibrant; dark theme uses same gradient */
-[data-theme="light"] .logo-name {
-    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-}
 
 /* Theme toggle */
 .theme-toggle {
@@ -2985,7 +2974,7 @@ body.modal-open {
 
 .skeleton-profit-row {
     height: 16px;
-    background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-hover) 50%, var(--bg-card) 75%);
+    background: var(--bg-hover);
     background-size: 200% 100%;
     animation: skeleton-loading 1.5s ease-in-out infinite;
     border-radius: 4px;
@@ -3034,7 +3023,7 @@ body.modal-open {
 
 .skeleton-expense-row {
     height: 48px;
-    background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-hover) 50%, var(--bg-card) 75%);
+    background: var(--bg-hover);
     background-size: 200% 100%;
     animation: skeleton-loading 1.5s ease-in-out infinite;
     border-radius: var(--r-md);
@@ -5117,12 +5106,7 @@ body.modal-open {
 }
 
 .skeleton {
-    background: linear-gradient(
-        90deg,
-        var(--bg-card) 25%,
-        var(--bg-hover) 50%,
-        var(--bg-card) 75%
-    );
+    background: var(--bg-hover);
     background-size: 200% 100%;
     animation: skeleton-loading 1.5s ease-in-out infinite;
     border-radius: var(--r-sm);
@@ -5485,13 +5469,7 @@ body.modal-open {
 /* Apply shimmer to all skeleton elements */
 .skeleton-card .skeleton-text,
 .skeleton-card .skeleton-image {
-    background: linear-gradient(
-        90deg,
-        var(--bg-subtle) 0%,
-        var(--bg-elevated) 40%,
-        var(--bg-subtle) 60%,
-        var(--bg-elevated) 100%
-    );
+    background: var(--bg-elevated);
     background-size: 2000px 100%;
     animation: shimmer 2s ease-in-out infinite;
 }
@@ -5641,7 +5619,7 @@ body.modal-open {
 
 .ai-sheet {
     max-height: 96vh;
-    background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg) 100%);
+    background: var(--bg-card);
 }
 
 /* ── AI Header Bar ── */
@@ -5807,7 +5785,7 @@ body.modal-open {
 .ai-progress-bar {
     height: 100%;
     width: 5%;
-    background: linear-gradient(90deg, var(--accent), rgba(59, 130, 246, 0.6));
+    background: var(--accent);
     border-radius: 2px;
     transition: width 160ms linear, background 0.4s ease;
 }
@@ -5834,7 +5812,7 @@ body.modal-open {
 }
 
 .ai-progress-bar--done {
-    background: linear-gradient(90deg, var(--green), rgba(34, 197, 94, 0.6));
+    background: var(--green);
 }
 
 .ai-progress-pct--done {
@@ -6482,7 +6460,7 @@ body.modal-open {
 }
 
 [data-theme="light"] .ai-sheet {
-    background: linear-gradient(180deg, #ffffff 0%, var(--bg) 100%);
+    background: var(--bg);
 }
 
 [data-theme="light"] .ai-section--best {
@@ -6496,4 +6474,214 @@ body.modal-open {
 
 [data-theme="light"] .ai-flag-item {
     background: rgba(220, 38, 38, 0.05);
+}
+
+/* ===== Visual refresh: scanner brand system ===== */
+body {
+    background: var(--bg);
+}
+
+.header {
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    border-bottom-color: color-mix(in srgb, var(--border) 72%, transparent);
+    backdrop-filter: blur(18px) saturate(1.25);
+}
+
+.logo {
+    gap: 9px;
+    padding: 4px 6px 4px 3px;
+    border-radius: 12px;
+}
+
+.logo:hover,
+.logo:focus-visible {
+    opacity: 1;
+    background: var(--bg-surface-tint);
+}
+
+.logo-mark {
+    width: 32px;
+    height: 32px;
+    border-radius: 11px;
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2), 0 10px 28px rgba(37, 99, 235, 0.18);
+}
+
+.logo-name {
+    color: var(--text);
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+}
+
+[data-theme="light"] .logo-name {
+    background: none;
+}
+
+.search-section {
+    padding-top: 16px;
+}
+
+.search-wrap {
+    min-height: 58px;
+    background: var(--bg-input);
+    border-color: color-mix(in srgb, var(--border) 70%, var(--accent) 30%);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+[data-theme="light"] .search-wrap {
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.search-wrap:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent), 0 18px 42px rgba(37, 99, 235, 0.14);
+}
+
+.search-btn,
+.primary-btn,
+.primary-link,
+.view-tab.active,
+.s-tab.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--white);
+    box-shadow: 0 10px 24px rgba(37, 99, 235, 0.18);
+}
+
+.strict-toggle {
+    color: var(--text-secondary);
+}
+
+.strict-toggle-pill {
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.quick-chip,
+.view-tab,
+.s-tab,
+.listing,
+.summary-strip,
+.stat-card,
+.tracker-card,
+.helper-panel {
+    background: color-mix(in srgb, var(--bg-card) 92%, var(--accent) 8%);
+    border-color: color-mix(in srgb, var(--border) 82%, var(--accent) 18%);
+}
+
+[data-theme="light"] .quick-chip,
+[data-theme="light"] .view-tab,
+[data-theme="light"] .s-tab,
+[data-theme="light"] .listing,
+[data-theme="light"] .summary-strip,
+[data-theme="light"] .stat-card,
+[data-theme="light"] .tracker-card,
+[data-theme="light"] .helper-panel {
+    background: rgba(255, 255, 255, 0.82);
+}
+
+[data-theme="light"] .view-tab.active,
+[data-theme="light"] .s-tab.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--white);
+}
+
+.view-tab {
+    box-shadow: none;
+}
+
+.summary-strip {
+    padding: 15px 16px;
+    box-shadow: var(--shadow-elevated);
+}
+
+.summary-strip::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--accent);
+}
+
+.summary-kicker,
+.sec-title,
+.stat-lbl,
+.summary-pill-label {
+    letter-spacing: 0.09em;
+}
+
+.summary-pill,
+.range-item {
+    background: color-mix(in srgb, var(--bg-elevated) 88%, var(--accent) 12%);
+    border-color: color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
+}
+
+.listing {
+    padding: 13px;
+    gap: 12px;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025), var(--shadow-card);
+}
+
+.listing:hover {
+    background: color-mix(in srgb, var(--bg-hover) 88%, var(--accent) 12%);
+}
+
+.listing-thumb {
+    width: 76px;
+    height: 76px;
+    border-radius: 14px;
+    border-color: color-mix(in srgb, var(--border) 74%, var(--accent) 26%);
+}
+
+.listing-name {
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.listing-price {
+    color: color-mix(in srgb, var(--text) 88%, var(--accent) 12%);
+}
+
+.listing-badge {
+    background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
+}
+
+.listing-btn {
+    background: color-mix(in srgb, var(--bg-card) 84%, var(--accent) 16%);
+}
+
+.listing-btn--ai {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+    background: color-mix(in srgb, var(--bg-card) 82%, var(--accent) 18%);
+}
+
+.ai-sheet {
+    background: color-mix(in srgb, var(--bg-card) 94%, var(--accent) 6%);
+}
+
+.ai-header-bar {
+    background: color-mix(in srgb, var(--bg-card) 76%, transparent);
+    backdrop-filter: blur(14px);
+}
+
+.ai-header-icon {
+    background: color-mix(in srgb, var(--bg-card) 84%, var(--accent) 16%);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.ai-modal-verdict,
+.ai-section {
+    border-color: color-mix(in srgb, var(--border) 80%, var(--accent) 20%);
+    background: color-mix(in srgb, var(--bg-card) 91%, var(--accent) 9%);
+}
+
+[data-theme="light"] .ai-modal-verdict,
+[data-theme="light"] .ai-section {
+    background: rgba(255, 255, 255, 0.88);
+}
+
+.ai-label {
+    color: color-mix(in srgb, var(--accent) 82%, var(--text) 18%);
 }

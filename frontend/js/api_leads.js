@@ -54,9 +54,10 @@ function createApiLeads(context) {
         try {
             await deleteJson("/api/v1/leads/all");
             const count = activeLeads.length;
-            await loadLeads();
-            renderDealsHeroStats();
+            state.leads = state.leads.filter((l) => l.status === "closed");
+            renderLeads();
             showToast(`Удалено ${count} сделок`);
+            await loadLeads();
         } catch (error) {
             showToast(error.message || "Не удалось очистить список");
             await loadLeads();
@@ -139,6 +140,8 @@ function createApiLeads(context) {
     async function cancelLead(leadId) {
         try {
             await deleteJson(`/api/v1/leads/${leadId}`);
+            state.leads = state.leads.filter((l) => l.id !== leadId);
+            renderLeads();
             showToast("✓ Сделка отменена", "info");
             await loadLeads();
         } catch (error) {
@@ -217,6 +220,8 @@ function createApiLeads(context) {
     async function deleteLead(leadId) {
         try {
             await deleteJson(`/api/v1/leads/${leadId}`);
+            state.leads = state.leads.filter((l) => l.id !== leadId);
+            renderLeads();
             showToast("Сделка удалена");
             await loadLeads();
         } catch (error) {

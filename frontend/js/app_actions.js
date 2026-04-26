@@ -253,6 +253,8 @@ function createAppActions(context) {
     async function deleteHistoryDeal(leadId) {
         try {
             await core.deleteJson(`/api/v1/leads/${leadId}`);
+            state.leads = state.leads.filter((l) => l.id !== leadId);
+            renderLeads();
             showToast("✓ Сделка удалена из истории");
             await leads.loadLeads();
         } catch (error) {

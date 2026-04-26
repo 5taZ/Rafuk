@@ -306,6 +306,7 @@ function createRenderCards(context) {
             bought: "Купил",
             reselling: "В продаже",
             sold: "Продано",
+            closed: "Закрыто",
             skipped: "Пропустить",
             deferred: "Позже",
             watching: "Слежу",
@@ -327,6 +328,7 @@ function createRenderCards(context) {
             reselling: 6,
             sold: 7,
             skipped: 8,
+            closed: 9,
         };
         return order[item.status] ?? 99;
     }

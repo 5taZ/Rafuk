@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
+from api.routers.ai_analysis import _sanitize_export_html
 from api.services.ai_marketplace import (
     build_market_context_fallback,
     build_marketplace_risk_context,
@@ -51,6 +52,23 @@ def test_detect_category_covers_belarus_marketplace_categories() -> None:
     assert detect_category("Сдам 1-комнатную квартиру в Минске") == "real_estate"
     assert detect_category("Бампер передний BMW F30 оригинал") == "auto_parts"
     assert detect_category("Остатки плитки и клей плиточный после ремонта") == "construction"
+
+
+def test_export_sanitizer_keeps_report_css_but_strips_active_content() -> None:
+    html = (
+        "<style>@import 'https://evil.test/a.css'; "
+        ".x{background:url(https://evil.test/pixel);color:#111}</style>"
+        "<script>alert(1)</script><div onclick='alert(1)'>Report</div>"
+    )
+
+    sanitized = _sanitize_export_html(html)
+
+    assert "<style>" in sanitized
+    assert "color:#111" in sanitized
+    assert "@import" not in sanitized
+    assert "url(" not in sanitized
+    assert "<script" not in sanitized
+    assert "onclick" not in sanitized
 
 
 class FakeAIService:

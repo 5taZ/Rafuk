@@ -212,8 +212,8 @@ async def delete_all_leads(
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is not None:
-            # Delete expenses for active leads only (not sold/skipped ones)
-            closed_statuses = ("sold", "skipped")
+            # Delete expenses for active leads only; keep closed deals for finance tracking.
+            closed_statuses = ("closed",)
             active_lead_ids = select(LeadItem.id).where(
                 LeadItem.user_id == user_id,
                 LeadItem.status.notin_(closed_statuses),

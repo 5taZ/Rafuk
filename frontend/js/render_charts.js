@@ -289,21 +289,6 @@ function createRenderCharts(context) {
             return;
         }
 
-        // Show loading skeleton while leads are loading
-        if (!state.leads.length) {
-            elements.profitDashboardSection.hidden = false;
-            const buildSkeleton = () => domEl(
-                "div",
-                { className: "profit-card skeleton" },
-                domEl("div", { className: "skeleton-profit-row" }),
-                domEl("div", { className: "skeleton-profit-row short" }),
-            );
-            elements.profitCards.appendChild(
-                domFragment(buildSkeleton(), buildSkeleton(), buildSkeleton())
-            );
-            return;
-        }
-
         elements.profitDashboardSection.hidden = false;
 
         const closedLeads = state.leads.filter(

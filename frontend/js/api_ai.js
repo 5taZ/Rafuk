@@ -927,25 +927,22 @@ function createApiAi(context) {
                 ? data.similar_listings.filter(s => s.ad_id !== data.best_alternative.ad_id)
                 : data.similar_listings;
             if (others.length) {
-                similarHtml = `<div class="section">
+                similarHtml = `<section class="section">
   <div class="section-header">
     <div class="section-dot"></div>
     <div class="section-title">Другие варианты (${others.length})</div>
   </div>
-  <div class="similar-grid">
-${others.map(s => `    <div class="similar-card">
-      ${s.image_url ? `<img class="similar-thumb" src="${_safeXmlUrl(s.image_url)}" alt="" />` : ""}
-      <div class="similar-info">
+  <div class="similar-list">
+${others.slice(0, 8).map(s => `    <div class="similar-row">
+      ${s.image_url ? `<img class="similar-thumb" src="${_safeXmlUrl(s.image_url)}" alt="" />` : `<span></span>`}
+      <div>
         <div class="similar-title">${_escXml(s.title)}</div>
-        <div class="similar-meta">
-          <span class="mono">${Math.round(s.price_byn)} BYN</span>
-          ${s.condition ? `<span>${_escXml(s.condition)}</span>` : ""}
-        </div>
-        ${s.link ? `<a class="similar-link" href="${_safeXmlUrl(s.link)}">Открыть</a>` : ""}
+        <div class="similar-meta">${s.condition ? _escXml(s.condition) : "Состояние не указано"}${s.link ? ` · <a href="${_safeXmlUrl(s.link)}">Открыть</a>` : ""}</div>
       </div>
+      <div class="similar-price mono">${Math.round(s.price_byn)} BYN</div>
     </div>`).join("\n")}
   </div>
-</div>`;
+</section>`;
                 // Remove "Другие варианты" from text sections so it doesn't duplicate
                 const idx = otherSections.findIndex(s => s.title.startsWith("Другие варианты"));
                 if (idx >= 0) otherSections.splice(idx, 1);
@@ -962,170 +959,128 @@ ${others.map(s => `    <div class="similar-card">
 <meta charset="UTF-8">
 <title>${_escXml(title)}</title>
 <style>
-  @page { margin: 0; size: A4; }
-  @page :first { margin-top: 0; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; font-size: 10pt; line-height: 1.6; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .mono { font-family: "SF Mono", "Cascadia Code", "Fira Code", Menlo, Consolas, monospace; }
-  .print-banner { display: none; padding: 14px 18px; background: #eff6ff; border-bottom: 1px solid #bfdbfe; }
-  .print-banner-inner { max-width: 860px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  .print-banner-text { color: #1e3a8a; font-size: 9pt; }
-  .print-banner-btn { appearance: none; border: none; border-radius: 10px; background: #2563eb; color: #fff; padding: 10px 14px; font: inherit; font-size: 9pt; font-weight: 700; cursor: pointer; }
-
-  /* ── Hero ── */
-  .hero { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 28px 32px 24px; position: relative; overflow: hidden; display: flex; gap: 20px; align-items: flex-start; }
-  .hero::after { content: ""; position: absolute; top: -40px; right: -40px; width: 200px; height: 200px; background: rgba(59,130,246,0.15); border-radius: 50%; }
-  .hero-text { flex: 1; min-width: 0; position: relative; z-index: 1; }
-  .hero-badge { display: inline-block; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 3px 10px; font-size: 8pt; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255,255,255,0.8); margin-bottom: 12px; }
-  .hero h1 { font-size: 16pt; font-weight: 800; line-height: 1.25; margin-bottom: 6px; max-width: 95%; }
-  .hero-price { font-size: 16pt; font-weight: 700; color: #60a5fa; margin-bottom: 10px; }
-  .hero-meta { font-size: 8.5pt; color: rgba(255,255,255,0.5); display: flex; gap: 16px; flex-wrap: wrap; }
-  .hero-meta span { display: inline-flex; align-items: center; gap: 4px; }
-  .hero-link { color: rgba(255,255,255,0.7); text-decoration: underline; text-underline-offset: 2px; font-size: 8pt; word-break: break-all; }
-  .hero-link:hover { color: #93c5fd; }
-  .hero-photos { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; position: relative; z-index: 1; }
-  .hero-photos img { width: 90px; height: 90px; object-fit: cover; border-radius: 8px; border: 2px solid rgba(255,255,255,0.15); }
-
-  /* ── Parameters strip ── */
-  .params-strip { padding: 10px 32px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
-  .param-chip { font-size: 8pt; color: #475569; }
-  .param-chip b { color: #1e293b; font-weight: 600; }
-
-  /* ── Verdict strip ── */
-  .verdict-strip { padding: 16px 32px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #e2e8f0; }
-  .verdict-strip.good { background: linear-gradient(90deg, #f0fdf4 0%, #fff 100%); border-left: 4px solid #22c55e; }
-  .verdict-strip.warn { background: linear-gradient(90deg, #fffbeb 0%, #fff 100%); border-left: 4px solid #f59e0b; }
-  .verdict-strip.bad { background: linear-gradient(90deg, #fef2f2 0%, #fff 100%); border-left: 4px solid #ef4444; }
-  .verdict-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16pt; font-weight: 700; flex-shrink: 0; }
+  @page { margin: 14mm; size: A4; }
+  * { box-sizing: border-box; }
+  html { background: #eef2f7; }
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #111827; font-size: 9.6pt; line-height: 1.52; background: #f8fafc; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  a { color: #2563eb; text-decoration: none; word-break: break-word; }
+  .mono { font-family: "Courier New", Courier, monospace; font-variant-numeric: tabular-nums; }
+  .print-banner { display: none; padding: 12px 16px; background: #eff6ff; border-bottom: 1px solid #bfdbfe; color: #1e3a8a; font-size: 9pt; }
+  .page-shell { max-width: 820px; margin: 0 auto; background: #ffffff; min-height: 100vh; }
+  .report-head { padding: 24px 28px 18px; color: #f8fafc; background: #0f172a; border-radius: 0 0 22px 22px; position: relative; overflow: hidden; }
+  .report-head::after { content: ""; position: absolute; right: -72px; top: -92px; width: 220px; height: 220px; border: 1px solid rgba(147, 197, 253, 0.25); border-radius: 999px; box-shadow: 0 0 0 22px rgba(59, 130, 246, 0.055); }
+  .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; position: relative; z-index: 1; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -0.03em; }
+  .brand-mark { width: 32px; height: 32px; border-radius: 11px; display: grid; place-items: center; background: #0b1220; color: #bfdbfe; border: 1px solid rgba(147, 197, 253, 0.35); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); font-size: 11pt; }
+  .report-meta { color: rgba(226, 232, 240, 0.72); font-size: 8.3pt; text-align: right; }
+  .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: start; position: relative; z-index: 1; }
+  .eyebrow { display: inline-flex; margin-bottom: 9px; padding: 3px 9px; border-radius: 999px; background: rgba(59, 130, 246, 0.18); border: 1px solid rgba(147, 197, 253, 0.22); color: #bfdbfe; font-size: 7.8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; }
+  h1 { margin: 0; max-width: 560px; font-size: 18pt; line-height: 1.16; letter-spacing: -0.045em; }
+  .hero-price { margin-top: 10px; font-size: 19pt; line-height: 1; color: #93c5fd; font-weight: 800; }
+  .hero-link { display: block; margin-top: 10px; max-width: 560px; color: rgba(219, 234, 254, 0.82); font-size: 8.2pt; }
+  .photo-strip { display: grid; grid-template-columns: repeat(2, 58px); gap: 7px; }
+  .photo-strip img { width: 58px; height: 58px; object-fit: cover; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); }
+  .verdict-card { margin: -10px 28px 18px; padding: 15px 16px; display: grid; grid-template-columns: 42px 1fr; gap: 13px; align-items: center; border-radius: 17px; background: #ffffff; border: 1px solid #e5e7eb; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.11); position: relative; z-index: 2; break-inside: avoid; }
+  .verdict-card.good { border-left: 5px solid #16a34a; }
+  .verdict-card.warn { border-left: 5px solid #d97706; }
+  .verdict-card.bad { border-left: 5px solid #dc2626; }
+  .verdict-icon { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; font-size: 16pt; font-weight: 900; }
   .good .verdict-icon { background: #dcfce7; color: #15803d; }
   .warn .verdict-icon { background: #fef3c7; color: #b45309; }
   .bad .verdict-icon { background: #fee2e2; color: #dc2626; }
-  .verdict-text { font-size: 13pt; font-weight: 700; }
-  .good .verdict-text { color: #15803d; }
-  .warn .verdict-text { color: #b45309; }
-  .bad .verdict-text { color: #dc2626; }
-  .verdict-summary { font-size: 9.5pt; color: #475569; margin-top: 3px; line-height: 1.5; }
-
-  /* ── Content ── */
-  .content { padding: 20px 32px 32px; }
-  .section { margin-bottom: 18px; page-break-inside: avoid; }
-  .section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .section-dot { width: 6px; height: 6px; border-radius: 50%; background: #3b82f6; flex-shrink: 0; }
-  .section-title { font-size: 9pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #3b82f6; }
-  .section-body { font-size: 10pt; color: #334155; white-space: pre-wrap; padding-left: 14px; border-left: 2px solid #e2e8f0; line-height: 1.6; }
-  .section-body a { color: #2563eb; text-decoration: none; word-break: break-all; }
-  .section-body a:hover { text-decoration: underline; }
-
-  /* ── Price range highlight ── */
-  .section-body.price-highlight { background: #f8fafc; border-left-color: #3b82f6; padding: 8px 12px; border-radius: 0 6px 6px 0; font-weight: 600; font-size: 11pt; }
-
-  /* ── Best alternative card ── */
-  .alt-card { display: flex; gap: 14px; padding: 12px; background: #f0f9ff; border: 1px solid #bfdbfe; border-radius: 10px; margin-left: 14px; }
-  .alt-thumb { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
-  .alt-info { min-width: 0; }
-  .alt-title { font-size: 10pt; font-weight: 700; color: #1e293b; margin-bottom: 3px; }
-  .alt-meta { display: flex; gap: 10px; align-items: baseline; margin-bottom: 4px; }
-  .alt-price { font-size: 12pt; font-weight: 700; color: #15803d; }
-  .alt-cond { font-size: 8.5pt; color: #64748b; }
-  .alt-reason { font-size: 9pt; color: #475569; line-height: 1.4; margin-bottom: 4px; }
-  .alt-link { font-size: 8.5pt; color: #2563eb; text-decoration: none; }
-  .alt-link:hover { text-decoration: underline; }
-
-  /* ── Similar listings grid ── */
-  .similar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; padding-left: 14px; }
-  .similar-card { display: flex; gap: 10px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
-  .similar-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
-  .similar-info { min-width: 0; }
-  .similar-title { font-size: 9pt; font-weight: 600; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
-  .similar-meta { font-size: 8.5pt; color: #64748b; display: flex; gap: 6px; margin-top: 2px; }
-  .similar-link { font-size: 8pt; color: #2563eb; text-decoration: none; display: inline-block; margin-top: 2px; }
-  .similar-link:hover { text-decoration: underline; }
-
-  /* ── Footer ── */
-  .footer { margin-top: 28px; padding: 14px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; }
-  .footer p { font-size: 7.5pt; color: #94a3b8; line-height: 1.5; }
-  .footer-brand { font-weight: 600; color: #64748b; }
-  @media screen {
-    body { background: #e2e8f0; }
-    .page-shell { max-width: 860px; margin: 0 auto; background: #fff; min-height: 100vh; box-shadow: 0 10px 40px rgba(15, 23, 42, 0.16); }
-    .print-banner { display: block; }
-  }
-  @media print {
-    .print-banner { display: none !important; }
-    .page-shell { box-shadow: none; }
-    .hero-photos img { width: 70px; height: 70px; }
-    .alt-thumb { width: 60px; height: 60px; }
-    .similar-thumb { width: 44px; height: 44px; }
-  }
+  .verdict-text { font-size: 14pt; font-weight: 850; letter-spacing: -0.035em; }
+  .verdict-summary { margin-top: 3px; color: #475569; font-size: 9.2pt; }
+  .facts-grid { margin: 0 28px 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; break-inside: avoid; }
+  .fact { padding: 10px 11px; border: 1px solid #e5e7eb; border-radius: 13px; background: #f8fafc; min-width: 0; }
+  .fact-label { display: block; color: #64748b; font-size: 7.3pt; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+  .fact-value { display: block; margin-top: 2px; color: #111827; font-size: 10pt; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .params-strip { margin: 0 28px 18px; display: flex; flex-wrap: wrap; gap: 6px; break-inside: avoid; }
+  .param-chip { padding: 4px 8px; border-radius: 999px; background: #eff6ff; color: #334155; font-size: 7.8pt; border: 1px solid #dbeafe; }
+  .param-chip b { color: #1d4ed8; }
+  .content { padding: 0 28px 28px; display: grid; gap: 11px; }
+  .section { padding: 13px 14px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 15px; break-inside: avoid; }
+  .section--price { background: #eff6ff; border-color: #bfdbfe; }
+  .section--flags { background: #fff1f2; border-color: #fecdd3; }
+  .section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+  .section-dot { width: 7px; height: 7px; border-radius: 99px; background: #2563eb; flex: 0 0 auto; }
+  .section--flags .section-dot { background: #e11d48; }
+  .section--best .section-dot { background: #16a34a; }
+  .section-title { color: #1e3a8a; font-size: 8pt; font-weight: 850; text-transform: uppercase; letter-spacing: 0.08em; }
+  .section--flags .section-title { color: #be123c; }
+  .section--best .section-title { color: #166534; }
+  .section-body { color: #334155; white-space: pre-wrap; }
+  .section--price .section-body { color: #0f172a; font-size: 10.8pt; font-weight: 750; }
+  .alt-card { display: grid; grid-template-columns: 68px 1fr; gap: 11px; padding: 10px; border-radius: 13px; background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .alt-thumb { width: 68px; height: 68px; object-fit: cover; border-radius: 10px; }
+  .alt-title { color: #0f172a; font-weight: 800; line-height: 1.25; }
+  .alt-meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 8px; color: #64748b; font-size: 8.5pt; }
+  .alt-price { color: #15803d; font-size: 11pt; font-weight: 900; }
+  .alt-reason { margin-top: 5px; color: #475569; font-size: 8.6pt; }
+  .alt-link { display: inline-block; margin-top: 5px; font-size: 8.2pt; }
+  .similar-list { display: grid; gap: 6px; }
+  .similar-row { display: grid; grid-template-columns: 42px 1fr auto; gap: 9px; align-items: center; padding: 7px; border-radius: 11px; background: #f8fafc; border: 1px solid #e5e7eb; }
+  .similar-thumb { width: 42px; height: 42px; object-fit: cover; border-radius: 9px; }
+  .similar-title { color: #1f2937; font-weight: 750; font-size: 8.8pt; line-height: 1.25; max-height: 2.5em; overflow: hidden; }
+  .similar-meta { color: #64748b; font-size: 7.8pt; }
+  .similar-price { color: #111827; font-weight: 900; font-size: 9pt; white-space: nowrap; }
+  .footer { padding: 14px 28px 18px; color: #94a3b8; font-size: 7.5pt; border-top: 1px solid #e5e7eb; }
+  .footer-brand { color: #475569; font-weight: 850; }
+  @media screen { body { padding: 24px 0; } .page-shell { box-shadow: 0 24px 80px rgba(15, 23, 42, 0.18); border-radius: 24px; overflow: hidden; } .print-banner { display: block; max-width: 820px; margin: 0 auto; border-radius: 16px 16px 0 0; } }
+  @media print { html, body { background: #ffffff; } .page-shell { max-width: none; } .print-banner { display: none !important; } .report-head { border-radius: 0 0 18px 18px; } .content { gap: 8px; } .section { padding: 10px 11px; } }
 </style>
 </head>
 <body>
-<div class="print-banner">
-  <div class="print-banner-inner">
-    <div class="print-banner-text">Если диалог печати не открылся автоматически, используйте печать из меню браузера и выберите «Сохранить как PDF».</div>
-  </div>
-</div>
+<div class="print-banner">Если диалог печати не открылся автоматически, используйте печать из меню браузера и выберите «Сохранить как PDF».</div>
 <div class="page-shell">
-
-<div class="hero">
-  <div class="hero-text">
-    <div class="hero-badge">Rafuk &middot; AI Report</div>
-    <h1>${_escXml(title)}</h1>
-    ${price ? `<div class="hero-price">${_escXml(price)}</div>` : ""}
-    <div class="hero-meta">
-      <span>${dateStr}</span>
-      ${adId ? `<span>ID ${_escXml(String(adId))}</span>` : ""}
+  <header class="report-head">
+    <div class="brand-row">
+      <div class="brand"><div class="brand-mark">RF</div><span>Rafuk</span></div>
+      <div class="report-meta"><div>AI market memo</div><div>${dateStr}${adId ? ` · ID ${_escXml(String(adId))}` : ""}</div></div>
     </div>
-    ${link ? `<a class="hero-link" href="${_safeXmlUrl(link)}">${_escXml(link)}</a>` : ""}
-  </div>
-  ${listingImages.length ? `<div class="hero-photos">
-    ${listingImages.map(img => `<img src="${_safeXmlUrl(img)}" alt="" />`).join("\n    ")}
-  </div>` : ""}
-</div>
+    <div class="hero-grid">
+      <div>
+        <div class="eyebrow">Kufar buyer intelligence</div>
+        <h1>${_escXml(title)}</h1>
+        ${price ? `<div class="hero-price mono">${_escXml(price)}</div>` : ""}
+        ${link ? `<a class="hero-link" href="${_safeXmlUrl(link)}">${_escXml(link)}</a>` : ""}
+      </div>
+      ${listingImages.length ? `<div class="photo-strip">${listingImages.map(img => `<img src="${_safeXmlUrl(img)}" alt="" />`).join("")}</div>` : ""}
+    </div>
+  </header>
 
-${listingParams.length ? `<div class="params-strip">
-${listingParams.map(p => `<span class="param-chip"><b>${_escXml(p.label)}</b> ${_escXml(p.value)}</span>`).join("\n")}
-</div>` : ""}
+  ${verdictSection ? `<section class="verdict-card ${vInfo.cls}">
+    <div class="verdict-icon">${vInfo.icon}</div>
+    <div><div class="verdict-text">${_escXml(verdictLine)}</div>${verdictSummary ? `<div class="verdict-summary">${_escXml(verdictSummary)}</div>` : ""}</div>
+  </section>` : ""}
 
-${verdictSection ? `
-<div class="verdict-strip ${vInfo.cls}">
-  <div class="verdict-icon">${vInfo.icon}</div>
-  <div>
-    <div class="verdict-text">${_escXml(verdictLine)}</div>
-    ${verdictSummary ? `<div class="verdict-summary">${_escXml(verdictSummary)}</div>` : ""}
-  </div>
-</div>
-` : ""}
+  <section class="facts-grid">
+    <div class="fact"><span class="fact-label">Цена</span><span class="fact-value mono">${price ? _escXml(price) : "—"}</span></div>
+    <div class="fact"><span class="fact-label">Дата отчёта</span><span class="fact-value">${dateStr}</span></div>
+    <div class="fact"><span class="fact-label">Объявление</span><span class="fact-value mono">${adId ? _escXml(String(adId)) : "—"}</span></div>
+  </section>
 
-<div class="content">
+  ${listingParams.length ? `<section class="params-strip">${listingParams.slice(0, 10).map(p => `<span class="param-chip"><b>${_escXml(p.label)}</b> ${_escXml(p.value)}</span>`).join("")}</section>` : ""}
+
+  <main class="content">
 ${otherSections.map(s => {
     const isPrice = s.title === "Справедливая цена" || s.title === "Потенциал перепродажи";
     const isFlags = s.title === "Красные флаги";
-    const bodyCls = isPrice ? " price-highlight" : "";
-    return `<div class="section">
-  <div class="section-header">
-    <div class="section-dot"${isFlags ? ' style="background:#ef4444;"' : ""}></div>
-    <div class="section-title"${isFlags ? ' style="color:#ef4444;"' : ""}>${_escXml(s.title)}</div>
-  </div>
-  <div class="section-body${bodyCls}">${_escXml(s.body)}</div>
-</div>`;
+    const sectionCls = isPrice ? " section--price" : isFlags ? " section--flags" : "";
+    return `    <section class="section${sectionCls}">
+      <div class="section-header"><div class="section-dot"></div><div class="section-title">${_escXml(s.title)}</div></div>
+      <div class="section-body">${_escXml(s.body)}</div>
+    </section>`;
 }).join("\n")}
 
-${data.best_alternative ? `<div class="section">
-  <div class="section-header">
-    <div class="section-dot" style="background:#15803d;"></div>
-    <div class="section-title" style="color:#15803d;">Лучший вариант</div>
-  </div>
-  ${bestAltHtml}
-</div>` : ""}
+${data.best_alternative ? `    <section class="section section--best">
+      <div class="section-header"><div class="section-dot"></div><div class="section-title">Лучший вариант</div></div>
+      ${bestAltHtml}
+    </section>` : ""}
 
 ${similarHtml}
-</div>
+  </main>
 
-<div class="footer">
-  <p><span class="footer-brand">Rafuk</span> &mdash; ${_escXml(data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.")}</p>
-</div>
-
+  <footer class="footer"><span class="footer-brand">Rafuk</span> — ${_escXml(data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.")}</footer>
 </div>
 </body>
 </html>`;

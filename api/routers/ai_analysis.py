@@ -877,7 +877,6 @@ _XSS_PAIRED_TAGS = (
     "frame",
     "frameset",
     "title",
-    "style",
 )
 # Tags that MUST NOT appear in the export at all — including self-closing.
 _XSS_VOID_TAGS = (
@@ -915,6 +914,8 @@ _XSS_DANGEROUS_URL_ATTR_RE = _re.compile(
     r"(\"|')\s*(?:javascript|vbscript|data:(?!image/)|about|file)\s*:[^\"'>]*\2",
     flags=_re.IGNORECASE,
 )
+_XSS_STYLE_IMPORT_RE = _re.compile(r"@import[^;]+;?", flags=_re.IGNORECASE)
+_XSS_STYLE_URL_RE = _re.compile(r"url\s*\([^)]*\)", flags=_re.IGNORECASE)
 
 
 def _sanitize_export_html(html: str) -> str:
@@ -925,6 +926,8 @@ def _sanitize_export_html(html: str) -> str:
     sanitized = _XSS_VOID_TAG_RE.sub("", sanitized)
     sanitized = _XSS_EVENT_HANDLER_RE.sub("", sanitized)
     sanitized = _XSS_DANGEROUS_URL_ATTR_RE.sub(r"\1\2#\2", sanitized)
+    sanitized = _XSS_STYLE_IMPORT_RE.sub("", sanitized)
+    sanitized = _XSS_STYLE_URL_RE.sub("none", sanitized)
     return sanitized
 
 

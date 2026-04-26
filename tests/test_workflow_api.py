@@ -85,9 +85,50 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
         assert update_lead_meta_response.status_code == 200
         assert update_lead_meta_response.json()["target_resale_byn"] is None
 
+        sell_lead_response = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"status": "sold", "buy_price_byn": 1700, "sold_price_byn": 2100},
+        )
+        assert sell_lead_response.status_code == 200
+        assert sell_lead_response.json()["status"] == "sold"
+
+        close_lead_response = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"status": "closed"},
+        )
+        assert close_lead_response.status_code == 200
+        assert close_lead_response.json()["status"] == "closed"
+
         list_leads_response = client.get("/api/v1/leads")
         assert list_leads_response.status_code == 200
         assert len(list_leads_response.json()) == 1
+
+        sold_lead_response = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "iphone 14 pro max",
+                "ad_id": 103,
+                "title": "iPhone 14 Pro Max",
+                "link": "https://www.kufar.by/item/103",
+                "price_byn": 1900,
+                "source": "manual",
+            },
+        )
+        assert sold_lead_response.status_code == 201
+        sold_lead = sold_lead_response.json()
+        assert (
+            client.patch(
+                f"/api/v1/leads/{sold_lead['id']}",
+                json={"status": "sold", "buy_price_byn": 1800, "sold_price_byn": 2200},
+            ).status_code
+            == 200
+        )
+
+        delete_active_leads_response = client.delete("/api/v1/leads/all")
+        assert delete_active_leads_response.status_code == 204
+        remaining_leads = client.get("/api/v1/leads").json()
+        assert len(remaining_leads) == 1
+        assert remaining_leads[0]["status"] == "closed"
 
         watchlist_response = client.post(
             "/api/v1/watchlist",
