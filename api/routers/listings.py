@@ -126,13 +126,26 @@ async def get_listings(
             )
         )
 
-    # `total` reflects the post-filter count (apply_search_mode +
-    # category) — this is what the frontend pill shows alongside the
-    # rendered cards, and it must agree with the chip count from
-    # /price-stats. The raw Kufar `total` is fuzzy and would diverge
-    # under category-scoped queries (e.g. cat=2010 + "Audi Q7 4L 2015"
-    # → Kufar total=11 but only 3 ads pass apply_search_mode).
-    filtered_total = len(visible_dataset.ads)
+    # `total` is what the pill above the cards shows.
+    #  - Broad query (category=None): use Kufar's raw `total` so the
+    #    pill matches kufar.by's header ("Polo → 33 776"), not the
+    #    pagination cap.
+    #  - Category-scoped query: prefer the precise post-filter count
+    #    so refined queries are honest (e.g. cat=2010 + "Audi Q7 4L
+    #    2015": Kufar fuzzy total=11, but only 3 ads pass our filter
+    #    → pill shows 3, matching the cards). When we hit the
+    #    pagination cap (≥200 ads), fall back to Kufar's `total` so
+    #    big categories like "Polo + Легковые авто" still display
+    #    the real number instead of a capped "200".
+    if category is None:
+        filtered_total = visible_dataset.total_results
+    else:
+        filtered_count = len(visible_dataset.ads)
+        kufar_total = visible_dataset.total_results
+        if filtered_count >= 200 and kufar_total > filtered_count:
+            filtered_total = kufar_total
+        else:
+            filtered_total = filtered_count
     payload = ListingsResponse(
         query=query,
         currency=currency,

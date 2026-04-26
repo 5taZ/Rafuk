@@ -130,13 +130,13 @@ function createRenderCards(context) {
             }
 
             if (badge) {
+                // Match kufar.by header behavior: the pill shows the
+                // total number of matching ads on Kufar, not how many
+                // we've actually rendered on the page (we cap at 200
+                // for performance). Falls back to the rendered count
+                // only if no API total is available.
                 const apiTotal = totalOverride != null ? totalOverride : filtered.length;
-                // Always show consistent format: "X объявлений" or just the count
-                if (filtered.length < apiTotal) {
-                    badge.textContent = `${filtered.length} объявлений`;
-                } else {
-                    badge.textContent = `${apiTotal} объявлений`;
-                }
+                badge.textContent = `${apiTotal} объявлений`;
             }
             return true;
         });
@@ -213,13 +213,10 @@ function createRenderCards(context) {
             }
 
             if (elements.dealsTotalBadge) {
+                // Same rule as the listings pill — show Kufar's total
+                // count, not the on-page rendered count.
                 const apiTotal = state.dealsTotal || filtered.length;
-                // Always show consistent format: "X объявлений"
-                if (filtered.length < apiTotal) {
-                    elements.dealsTotalBadge.textContent = `${filtered.length} объявлений`;
-                } else {
-                    elements.dealsTotalBadge.textContent = `${apiTotal} объявлений`;
-                }
+                elements.dealsTotalBadge.textContent = `${apiTotal} объявлений`;
             }
             elements.dealsSection.hidden = !state.query;
         });
