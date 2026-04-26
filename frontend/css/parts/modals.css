@@ -878,6 +878,15 @@ body.modal-open {
         grid-template-columns: 1fr 1fr;
     }
 
+    /* On narrow phones the wide-tab override fights us — it would
+       leave Автопоиск alone on row 2 and push Мои объявления to a
+       third row. Drop the override so the four tabs settle into a
+       clean 2×2 grid. */
+    .view-nav-grid .view-tab--wide {
+        grid-column: auto;
+        justify-content: flex-start;
+    }
+
     /* Listing action buttons: 2x2 grid on very narrow screens */
     .listing-actions {
         grid-template-columns: repeat(2, 1fr);

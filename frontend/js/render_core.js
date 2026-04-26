@@ -79,6 +79,10 @@ function createRenderCore(context) {
         }
     }
 
+    function clearChildren(node) {
+        if (node) node.replaceChildren();
+    }
+
     /* ===== Toast ===== */
 
     // Cap on simultaneously-visible toasts. Anything past this count
@@ -532,6 +536,7 @@ function createRenderCore(context) {
     function renderViews() {
         return safeRender('renderViews', () => {
             for (const [name, panel] of Object.entries(elements.views)) {
+                if (!panel) continue;
                 panel.hidden = state.activeView !== name;
             }
         });

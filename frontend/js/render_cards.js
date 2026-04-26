@@ -248,8 +248,9 @@ function createRenderCards(context) {
     function renderDeals() {
         return safeRender('renderDeals', () => {
             if (state.loading) return;
-            const rangeLabel = `${state.discountFromPercent}-${state.discountToPercent}`;
             const container = elements.dealsList;
+            if (!container) return;
+            const rangeLabel = `${state.discountFromPercent}-${state.discountToPercent}`;
 
             // Destroy existing virtual list if present and reset container
             if (container._virtualList) {
