@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +39,38 @@ async def resolve_user_id(session: AsyncSession, telegram_user_id: int) -> int |
     return row
 
 
+async def load_last_snapshot_prices(
+    session: AsyncSession,
+    lead_item_ids: list[int],
+) -> dict[int, float]:
+    """Bulk-load the latest snapshot price per lead_item_id.
+
+    Used by callers that need to record snapshots for many items in
+    one tick (watchlist refresh) — prevents a per-item SELECT inside
+    ``record_price_snapshot``. Returns ``{}`` when the input list is
+    empty so the caller can blindly pass an empty list.
+
+    Implementation: a window-function row-number over snapped_at desc
+    isn't available on every SQLAlchemy backend without extra work,
+    so we rely on a simple GROUP BY MAX(id) — snapshot ids are
+    monotonically increasing so the row with the max id is the most
+    recent one written, with one round-trip total.
+    """
+    if not lead_item_ids:
+        return {}
+    latest_id_subq = (
+        select(func.max(LeadItemPriceSnapshot.id))
+        .where(LeadItemPriceSnapshot.lead_item_id.in_(lead_item_ids))
+        .group_by(LeadItemPriceSnapshot.lead_item_id)
+        .scalar_subquery()
+    )
+    rows = await session.execute(
+        select(LeadItemPriceSnapshot.lead_item_id, LeadItemPriceSnapshot.price_byn)
+        .where(LeadItemPriceSnapshot.id.in_(latest_id_subq))
+    )
+    return {row.lead_item_id: float(row.price_byn) for row in rows}
+
+
 async def record_price_snapshot(
     session: AsyncSession,
     *,
@@ -46,6 +78,7 @@ async def record_price_snapshot(
     price_byn: float | None,
     snapped_at: datetime | None = None,
     epsilon: float = 0.5,
+    last_known_price: float | None = None,
 ) -> LeadItemPriceSnapshot | None:
     """Append a price snapshot to ``lead_item_price_snapshots`` if the
     price has actually moved since the last recorded point.
@@ -56,6 +89,11 @@ async def record_price_snapshot(
       * |price - last_snapshot_price| < epsilon (default 0.5 BYN — kills
         rounding noise from currency normalisation)
       * the row has no id yet (the caller must flush() first)
+
+    Pass ``last_known_price`` to skip the per-row SELECT — useful when
+    the caller has already bulk-loaded the latest prices via
+    ``load_last_snapshot_prices`` (watchlist refresh does this to
+    avoid an N+1).
 
     Returns the new snapshot, or None when nothing was written.
     """
@@ -70,14 +108,20 @@ async def record_price_snapshot(
     if price_value <= 0:
         return None
 
-    last = await session.scalar(
-        select(LeadItemPriceSnapshot)
-        .where(LeadItemPriceSnapshot.lead_item_id == lead_item.id)
-        .order_by(desc(LeadItemPriceSnapshot.snapped_at))
-        .limit(1)
-    )
-    if last is not None and abs(float(last.price_byn) - price_value) < epsilon:
-        return None
+    if last_known_price is not None:
+        # Caller pre-fetched — sentinel value < 0 means "no prior
+        # snapshot exists for this row", so we always record.
+        if last_known_price >= 0 and abs(last_known_price - price_value) < epsilon:
+            return None
+    else:
+        last = await session.scalar(
+            select(LeadItemPriceSnapshot)
+            .where(LeadItemPriceSnapshot.lead_item_id == lead_item.id)
+            .order_by(desc(LeadItemPriceSnapshot.snapped_at))
+            .limit(1)
+        )
+        if last is not None and abs(float(last.price_byn) - price_value) < epsilon:
+            return None
 
     snapshot = LeadItemPriceSnapshot(
         lead_item_id=lead_item.id,

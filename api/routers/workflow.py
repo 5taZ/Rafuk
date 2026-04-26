@@ -34,6 +34,7 @@ from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import load_query_dataset
 from api.services.workflow_store import (
     ensure_user,
+    load_last_snapshot_prices,
     record_price_snapshot,
     resolve_user_id,
     upsert_lead,
@@ -505,6 +506,14 @@ async def refresh_watchlist(
         for item in items:
             grouped[item.query].append(item)
 
+        # Bulk-load the last snapshot price for every watched item in
+        # one query — avoids an N+1 inside record_price_snapshot below.
+        # Items without a snapshot row aren't in the dict; we treat
+        # those as "always record" by passing -1 as the sentinel.
+        last_prices = await load_last_snapshot_prices(
+            session, [item.id for item in items if item.id is not None]
+        )
+
         # Batch Kufar queries in parallel instead of sequential N+1
         unique_queries = list(grouped.keys())
         datasets = await asyncio.gather(
@@ -555,8 +564,14 @@ async def refresh_watchlist(
                 # Append a sparkline point only when the price moved
                 # (the helper short-circuits on no-op refreshes so we
                 # don't grow the history table for unchanged lots).
+                # The bulk-loaded `last_prices` lookup means each
+                # iteration adds zero round-trips to the snapshots
+                # table — only the final flush/commit hits Postgres.
                 await record_price_snapshot(
-                    session, lead_item=item, price_byn=price
+                    session,
+                    lead_item=item,
+                    price_byn=price,
+                    last_known_price=last_prices.get(item.id, -1.0),
                 )
 
         # Auto-remove watchlist items that have been missing too long
