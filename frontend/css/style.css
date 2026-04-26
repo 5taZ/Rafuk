@@ -8218,3 +8218,81 @@ body {
     background: rgba(255, 255, 255, 0.22);
     color: #ffffff;
 }
+
+/* =====================================================================
+ * "Мои объявления" — segmented tab bar (Избранное / Покупки 50/50).
+ * Replaces the old multi-chip filter row. Two full-width tabs make the
+ * primary choice obvious; closed deals live in the collapsible
+ * "История сделок" block below.
+ * ===================================================================== */
+
+.items-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding: 4px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    margin-bottom: 12px;
+}
+
+[data-theme="light"] .items-tabs {
+    background: rgba(15, 23, 42, 0.04);
+    border-color: rgba(15, 23, 42, 0.06);
+}
+
+.items-tab {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    font: 600 14px var(--font);
+    letter-spacing: -0.01em;
+    padding: 10px 12px;
+    border-radius: calc(var(--r-lg) - 4px);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 40px;
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.items-tab.is-active {
+    background: var(--accent);
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.18);
+}
+
+.items-tab:not(.is-active):hover {
+    color: var(--text);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.items-tab-count {
+    display: inline-flex;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.items-tab.is-active .items-tab-count {
+    background: rgba(255, 255, 255, 0.22);
+    color: #ffffff;
+}
+
+.items-clear-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+}

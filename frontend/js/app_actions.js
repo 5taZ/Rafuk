@@ -223,7 +223,19 @@ function createAppActions(context) {
             return;
         }
 
-        const alreadyInLeads = state.leads.some((l) => l.ad_id === item.ad_id);
+        // Closed/skipped leads stay in history but should NOT block a
+        // re-add — that's how a returning customer or a re-buy reaches
+        // the funnel. Only an actively-tracked lead counts as duplicate.
+        const ACTIVE_LEAD_STATUSES = new Set([
+            "new",
+            "in_progress",
+            "researching",
+            "bought",
+            "sold",
+        ]);
+        const alreadyInLeads = state.leads.some(
+            (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
+        );
         if (alreadyInLeads) {
             showToast("Уже в покупках");
             return;

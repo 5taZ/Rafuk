@@ -436,18 +436,9 @@ function createRenderCardBuilders(context) {
             });
         }
 
-        const statusSelect = domEl(
-            "select",
-            { className: "wl-status-select", dataset: { role: "status" } },
-            domEl("option", { value: "default", text: "Обычное" }),
-            domEl("option", { value: "important", text: "Важное" }),
-            domEl("option", { value: "very_important", text: "Очень важное" }),
-        );
-        statusSelect.value = item.workflow_status || "default";
-        statusSelect.addEventListener("change", () => {
-            if (context._hooks?.showToast) context._hooks.showToast("Важность обновлена");
-            void actions.updateWatchlistStatus(item.id, statusSelect.value);
-        });
+        // "Важность" select removed — the importance levels were never
+        // surfaced anywhere downstream and just added noise to the card.
+        // Only the note input remains as user-editable metadata.
 
         const notesInput = domEl("input", {
             type: "text",
@@ -497,12 +488,6 @@ function createRenderCardBuilders(context) {
                 domEl(
                     "div",
                     { className: "watchlist-card-fields" },
-                    domEl(
-                        "label",
-                        { className: "wl-field" },
-                        domEl("span", { className: "wl-field-label", text: "Важность" }),
-                        statusSelect,
-                    ),
                     domEl(
                         "label",
                         { className: "wl-field wl-field-wide" },
