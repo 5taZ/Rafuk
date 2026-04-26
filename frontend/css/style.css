@@ -3507,6 +3507,56 @@ body.modal-open {
     border-color: rgba(190, 18, 60, 0.2);
 }
 
+/* ===== Pull-to-refresh indicator =====
+ * Sits above the page content (negative top offset), made visible by
+ * setupPullToRefresh as the user drags down at the very top of the
+ * page. The spinner spins while the refresh handler is in flight.
+ * Disabled under prefers-reduced-motion — the helper itself
+ * short-circuits, so this element stays hidden anyway. */
+.ptr-indicator {
+    position: fixed;
+    top: -56px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1200;
+    transition: opacity 200ms var(--easing-standard, cubic-bezier(0.2, 0.8, 0.2, 1));
+    will-change: transform, opacity;
+}
+
+.ptr-indicator-spinner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ptr-indicator[data-stage="ready"] {
+    color: var(--green);
+}
+
+.ptr-indicator[data-stage="refreshing"] .ptr-indicator-spinner {
+    animation: ptrSpin 700ms linear infinite;
+}
+
+@keyframes ptrSpin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ptr-indicator { display: none; }
+}
+
 /* ===== Swipe-to-action gesture (Telegram-style) =====
  * makeSwipeable wraps the card in `.swipe-wrap` and reveals the colored
  * `.swipe-bg--*` panels as the user drags. Right-drag (positive dx)

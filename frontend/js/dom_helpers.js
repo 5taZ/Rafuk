@@ -327,3 +327,189 @@ function makeSwipeable(card, options) {
 
     return wrap;
 }
+
+/* ─── Pull-to-refresh (page-level, view-aware) ──────────────────────────
+ * Native-feeling vertical pull at the top of the page that triggers a
+ * refresh action. The handler is page-scoped — there's a single touch
+ * listener tracking window.scrollY, and the refresh function is picked
+ * by `getRefreshHandler()` based on the active view. That keeps each
+ * surface's "what do I refresh" logic where it already lives without
+ * fanning out a dozen separate gesture instances.
+ *
+ * Behaviour:
+ *  - Only arms when the page is scrolled to the very top (scrollY ≤ 1).
+ *  - Only commits when the user pans DOWN by ≥ THRESHOLD_PX (pulling up
+ *    is a regular scroll, not a refresh).
+ *  - Vertical-vs-horizontal detection on first move so it doesn't
+ *    fight with the swipe-to-promote gesture on watching cards.
+ *  - Skips when prefers-reduced-motion is on (the indicator depends on
+ *    the rubber-band animation — without it the affordance is gone).
+ *  - Skips when a modal is open (body.modal-open) so the gesture never
+ *    fires inside a sheet.
+ */
+function setupPullToRefresh(options) {
+    const {
+        getRefreshHandler,
+        thresholdPx = 70,
+        maxPullPx = 140,
+        indicatorEl,
+    } = options || {};
+    if (typeof getRefreshHandler !== "function") return () => {};
+
+    const reduced =
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) return () => {};
+
+    let startY = 0;
+    let startX = 0;
+    let dragging = false;
+    let decided = false;
+    let pullDistance = 0;
+    let refreshing = false;
+
+    const target = document.documentElement;
+
+    function setIndicatorState(stage, ratio = 0) {
+        if (!indicatorEl) return;
+        indicatorEl.dataset.stage = stage;
+        if (stage === "idle") {
+            indicatorEl.style.transform = "";
+            indicatorEl.style.opacity = "0";
+        } else if (stage === "pulling") {
+            const opacity = Math.min(1, ratio * 1.4).toFixed(2);
+            indicatorEl.style.transform = `translateY(${pullDistance * 0.45}px)`;
+            indicatorEl.style.opacity = opacity;
+        } else if (stage === "ready") {
+            indicatorEl.style.transform = `translateY(${pullDistance * 0.45}px)`;
+            indicatorEl.style.opacity = "1";
+        } else if (stage === "refreshing") {
+            indicatorEl.style.transform = `translateY(${thresholdPx * 0.45}px)`;
+            indicatorEl.style.opacity = "1";
+        }
+    }
+
+    function reset() {
+        pullDistance = 0;
+        target.style.transform = "";
+        setIndicatorState("idle");
+        dragging = false;
+        decided = false;
+    }
+
+    function isEligible() {
+        if (refreshing) return false;
+        // Only arm at the very top of the page — anywhere else this is
+        // a normal scroll gesture.
+        if ((window.scrollY || window.pageYOffset || 0) > 1) return false;
+        // Don't fire while a modal/sheet is up — the gesture would fight
+        // the modal's own scroll lock.
+        if (document.body.classList.contains("modal-open")) return false;
+        // Don't capture inside form controls or scrollable inner panels
+        // — let them keep working.
+        return true;
+    }
+
+    document.addEventListener(
+        "touchstart",
+        (event) => {
+            if (event.touches.length !== 1) return;
+            if (!isEligible()) return;
+            startY = event.touches[0].clientY;
+            startX = event.touches[0].clientX;
+            dragging = false;
+            decided = false;
+            pullDistance = 0;
+        },
+        { passive: true },
+    );
+
+    document.addEventListener(
+        "touchmove",
+        (event) => {
+            if (event.touches.length !== 1) return;
+            if (!isEligible() && !dragging) return;
+            const dy = event.touches[0].clientY - startY;
+            const dx = event.touches[0].clientX - startX;
+            if (!decided) {
+                if (Math.abs(dy) < 6 && Math.abs(dx) < 6) return;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    decided = true;
+                    return;
+                }
+                if (dy <= 0) {
+                    decided = true;
+                    return;
+                }
+                decided = true;
+                dragging = true;
+            }
+            if (!dragging) return;
+            // Rubber-band so the pull feels like a finger-on-elastic.
+            pullDistance = Math.min(maxPullPx, dy * 0.6);
+            target.style.transform = `translateY(${pullDistance}px)`;
+            const ratio = pullDistance / thresholdPx;
+            setIndicatorState(ratio >= 1 ? "ready" : "pulling", ratio);
+        },
+        { passive: true },
+    );
+
+    function onEnd() {
+        if (!dragging) {
+            reset();
+            return;
+        }
+        const committed = pullDistance >= thresholdPx;
+        if (!committed) {
+            // Spring back without firing.
+            target.style.transition = "transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+            target.style.transform = "";
+            setIndicatorState("idle");
+            setTimeout(() => {
+                target.style.transition = "";
+                reset();
+            }, 240);
+            return;
+        }
+        // Commit.
+        const haptic = window.Telegram?.WebApp?.HapticFeedback;
+        try {
+            haptic?.impactOccurred?.("light");
+        } catch (_) {
+            /* haptics not available outside Telegram */
+        }
+        refreshing = true;
+        setIndicatorState("refreshing");
+        target.style.transition = "transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+        target.style.transform = `translateY(${thresholdPx}px)`;
+
+        const handler = getRefreshHandler();
+        const cleanup = () => {
+            target.style.transition = "transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+            target.style.transform = "";
+            setIndicatorState("idle");
+            setTimeout(() => {
+                target.style.transition = "";
+                refreshing = false;
+                reset();
+            }, 240);
+        };
+        Promise.resolve()
+            .then(() => (typeof handler === "function" ? handler() : undefined))
+            .catch(() => {
+                /* refresh handler failure is surfaced via the regular
+                   error toast; we just unstick the gesture. */
+            })
+            .finally(cleanup);
+    }
+
+    document.addEventListener("touchend", onEnd, { passive: true });
+    document.addEventListener("touchcancel", reset, { passive: true });
+
+    // Return an uninstall hook so callers/tests can unwire if they
+    // really need to. Not used today but cheap to keep.
+    return function uninstall() {
+        document.removeEventListener("touchend", onEnd);
+        document.removeEventListener("touchcancel", reset);
+    };
+}

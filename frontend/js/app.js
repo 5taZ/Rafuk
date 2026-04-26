@@ -4,6 +4,40 @@ function analyticsApp() {
     const renderers = createAppRenderers({ ...core, actions });
     Object.assign(actions, createAppActions({ ...core, ...renderers }));
 
+    /**
+     * Pick the right "refresh this view" function based on the active
+     * tab. Returns null for views where pull-to-refresh is meaningless
+     * (e.g. an empty search overview), so the gesture is a no-op
+     * instead of bouncing without doing anything useful.
+     */
+    function getRefreshForActiveView() {
+        const view = core.state.activeView || "overview";
+        const query = (core.state.query || "").trim();
+        if (view === "deals") {
+            return () => Promise.all([
+                actions.loadLeads ? actions.loadLeads() : null,
+                actions.loadWatchlist ? actions.loadWatchlist() : null,
+            ]);
+        }
+        if (view === "tracking") {
+            return () => actions.loadTrackers && actions.loadTrackers();
+        }
+        if (view === "overview" || view === "ads") {
+            // Repeating the current search is the "refresh" everywhere
+            // that depends on Kufar — it re-fetches stats, listings,
+            // history, deals together.
+            return query
+                ? () => actions.search && actions.search(view === "ads" ? "ads" : "overview")
+                : null;
+        }
+        if (view === "cheap") {
+            return query
+                ? () => actions.loadDeals && actions.loadDeals(true)
+                : null;
+        }
+        return null;
+    }
+
     function init() {
         core.cacheElements();
         core.populateRegionSelect(core.elements.trackerRegionSelect);
@@ -22,6 +56,15 @@ function analyticsApp() {
         void actions.loadLeads();
         void actions.loadWatchlist();
         void actions.applyLaunchParams();
+
+        // Pull-to-refresh — page-scoped, picks the right loader by view.
+        // Skipped under prefers-reduced-motion (the helper short-circuits).
+        if (typeof setupPullToRefresh === "function") {
+            setupPullToRefresh({
+                getRefreshHandler: getRefreshForActiveView,
+                indicatorEl: document.getElementById("ptr-indicator"),
+            });
+        }
     }
 
     function search(...args) {
