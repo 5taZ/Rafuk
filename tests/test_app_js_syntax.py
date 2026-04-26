@@ -143,6 +143,44 @@ def test_listing_detail_loaders_share_stale_response_guard() -> None:
     assert "state._comparisonRequestId" in listings_js
 
 
+def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:
+    """A long press on a listing card surfaces a quick-action sheet
+    (Подробнее / В покупки / В избранное / Открыть на Kufar) so the
+    inline buttons stay scannable. The helper must:
+      * cancel on movement past the tolerance (treat as scroll),
+      * suppress the synthetic click after a long press fires,
+      * fire haptics on commit (Telegram-native feel),
+      * be wired into buildListingNode in render_card_builders.js."""
+    helpers = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    assert "function attachLongPress" in helpers
+    assert "function showLongPressMenu" in helpers
+    assert "function hideLongPressMenu" in helpers
+    assert "moveTolerancePx" in helpers
+    assert "suppressClick" in helpers
+    assert "HapticFeedback" in helpers
+
+    builder = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+    assert "attachLongPress(listing" in builder
+    # The four action labels must be present in the menu so a casual
+    # rename here trips the test instead of silently shipping.
+    for label in (
+        '"Подробнее"',
+        '"В покупки"',
+        '"В избранное"',
+        '"Открыть на Kufar"',
+    ):
+        assert label in builder, f"long-press menu missing item {label}"
+
+    css = (Path("frontend/css/style.css")).read_text(encoding="utf-8")
+    for cls in (
+        ".lp-menu-overlay",
+        ".lp-menu-sheet",
+        ".lp-menu-item",
+        ".lp-menu-item--accent",
+    ):
+        assert cls in css, f"missing CSS for {cls}"
+
+
 def test_watchlist_renders_price_sparkline_when_history_present() -> None:
     """Watchlist cards now show a 30-day price-trend sparkline next
     to the current price. The renderer must:

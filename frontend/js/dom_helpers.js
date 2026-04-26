@@ -699,3 +699,174 @@ function attachPinchZoom(img, options) {
         },
     };
 }
+
+/* ─── Long-press action menu ────────────────────────────────────────────
+ * Holding a touch on a target for ≥ THRESHOLD_MS pops a small bottom-
+ * sheet menu with up to a handful of actions. Useful for cluttered
+ * listing cards where dedicating screen space to "В покупки" /
+ * "В избранное" / "Скрыть" buttons would steal too many pixels.
+ *
+ * Behaviour:
+ *  - Cancels the press if the user moves more than ~10 px (treat as a
+ *    pan/scroll, not an intent to invoke the menu).
+ *  - Cancels if a second finger touches down (probably a pinch
+ *    elsewhere on the page).
+ *  - Suppresses the synthetic click that would otherwise fire on
+ *    touchend after a long press, so a card's tap handler doesn't
+ *    also navigate.
+ *  - Single shared overlay <div> attached to <body> on first call —
+ *    avoids creating a fresh menu node per interaction.
+ *  - Closing: tap on backdrop, Escape key, or selecting an item.
+ */
+
+let _longPressOverlay = null;
+let _longPressEscHandler = null;
+
+function _ensureLongPressOverlay() {
+    if (_longPressOverlay) return _longPressOverlay;
+    const overlay = document.createElement("div");
+    overlay.className = "lp-menu-overlay";
+    overlay.setAttribute("hidden", "");
+    overlay.setAttribute("role", "presentation");
+    const sheet = document.createElement("div");
+    sheet.className = "lp-menu-sheet";
+    sheet.setAttribute("role", "menu");
+    overlay.appendChild(sheet);
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) hideLongPressMenu();
+    });
+    _longPressOverlay = overlay;
+    return overlay;
+}
+
+function showLongPressMenu(items) {
+    if (!Array.isArray(items) || !items.length) return;
+    const overlay = _ensureLongPressOverlay();
+    const sheet = overlay.querySelector(".lp-menu-sheet");
+    sheet.replaceChildren();
+    for (const item of items) {
+        if (!item || typeof item.label !== "string") continue;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `lp-menu-item ${item.tone ? `lp-menu-item--${item.tone}` : ""}`.trim();
+        btn.setAttribute("role", "menuitem");
+        if (item.icon) {
+            const iconBox = document.createElement("span");
+            iconBox.className = "lp-menu-icon";
+            iconBox.innerHTML = item.icon;
+            btn.appendChild(iconBox);
+        }
+        const label = document.createElement("span");
+        label.className = "lp-menu-label";
+        label.textContent = item.label;
+        btn.appendChild(label);
+        btn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            hideLongPressMenu();
+            try {
+                if (typeof item.onSelect === "function") item.onSelect();
+            } catch (err) {
+                console.error("long-press menu action failed", err);
+            }
+        });
+        sheet.appendChild(btn);
+    }
+    overlay.removeAttribute("hidden");
+    document.body.classList.add("lp-menu-open");
+    // Esc closes too — reuse the existing modal-close idiom.
+    _longPressEscHandler = (event) => {
+        if (event.key === "Escape") hideLongPressMenu();
+    };
+    document.addEventListener("keydown", _longPressEscHandler);
+}
+
+function hideLongPressMenu() {
+    if (!_longPressOverlay) return;
+    _longPressOverlay.setAttribute("hidden", "");
+    document.body.classList.remove("lp-menu-open");
+    if (_longPressEscHandler) {
+        document.removeEventListener("keydown", _longPressEscHandler);
+        _longPressEscHandler = null;
+    }
+}
+
+function attachLongPress(target, getItems, options) {
+    if (!target || typeof getItems !== "function") return;
+    const thresholdMs = options?.thresholdMs ?? 480;
+    const moveTolerancePx = options?.moveTolerancePx ?? 10;
+
+    let startX = 0;
+    let startY = 0;
+    let timer = null;
+    let suppressClick = false;
+
+    function clear() {
+        if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+        }
+    }
+
+    target.addEventListener(
+        "touchstart",
+        (event) => {
+            if (event.touches.length !== 1) {
+                clear();
+                return;
+            }
+            startX = event.touches[0].clientX;
+            startY = event.touches[0].clientY;
+            suppressClick = false;
+            clear();
+            timer = setTimeout(() => {
+                timer = null;
+                suppressClick = true;
+                const haptic = window.Telegram?.WebApp?.HapticFeedback;
+                try {
+                    haptic?.impactOccurred?.("medium");
+                } catch (_) {
+                    /* haptics not available */
+                }
+                const items = getItems() || [];
+                if (items.length) showLongPressMenu(items);
+            }, thresholdMs);
+        },
+        { passive: true },
+    );
+
+    target.addEventListener(
+        "touchmove",
+        (event) => {
+            if (timer === null) return;
+            if (event.touches.length !== 1) {
+                clear();
+                return;
+            }
+            const dx = event.touches[0].clientX - startX;
+            const dy = event.touches[0].clientY - startY;
+            if (Math.abs(dx) > moveTolerancePx || Math.abs(dy) > moveTolerancePx) {
+                clear();
+            }
+        },
+        { passive: true },
+    );
+
+    target.addEventListener("touchend", clear, { passive: true });
+    target.addEventListener("touchcancel", clear, { passive: true });
+
+    // The synthesised mousedown→mouseup→click sequence still fires
+    // after a touchend, so guard the host element's click handlers
+    // against a long-press that already opened the menu.
+    target.addEventListener(
+        "click",
+        (event) => {
+            if (suppressClick) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                suppressClick = false;
+            }
+        },
+        true, // capture phase so we beat the action handlers below
+    );
+}

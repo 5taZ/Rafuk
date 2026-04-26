@@ -3599,6 +3599,112 @@ body.modal-open {
     border-color: rgba(190, 18, 60, 0.2);
 }
 
+/* ===== Long-press action menu =====
+ * Bottom-sheet menu invoked by attachLongPress() on listing cards.
+ * Single shared overlay attached to <body>, hidden by default; the
+ * helper toggles it via [hidden]. Sits above modals (z 1050) so a
+ * long-press inside an open detail-modal would still surface, but
+ * below the toast layer (1100) so a result toast paints on top. */
+.lp-menu-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0 12px calc(env(safe-area-inset-bottom, 12px) + 12px);
+    animation: lp-overlay-in 160ms var(--easing-decelerate, cubic-bezier(0, 0, 0.2, 1));
+}
+
+.lp-menu-sheet {
+    width: 100%;
+    max-width: 420px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: var(--shadow-prominent);
+    display: flex;
+    flex-direction: column;
+    animation: lp-sheet-in 220ms var(--easing-decelerate, cubic-bezier(0, 0, 0.2, 1));
+}
+
+.lp-menu-item {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: 500 15px var(--font);
+    text-align: left;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    min-height: 52px;
+    transition: background var(--t-fast) var(--easing-standard);
+    touch-action: manipulation;
+}
+
+.lp-menu-item:last-child {
+    border-bottom: none;
+}
+
+.lp-menu-item:hover,
+.lp-menu-item:focus-visible {
+    background: var(--bg-hover);
+    outline: none;
+}
+
+.lp-menu-item:active {
+    background: color-mix(in srgb, var(--bg-hover) 80%, var(--accent) 20%);
+}
+
+.lp-menu-item--accent {
+    color: var(--accent);
+}
+
+.lp-menu-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.lp-menu-item--accent .lp-menu-icon {
+    color: var(--accent);
+}
+
+.lp-menu-label {
+    flex: 1;
+}
+
+@keyframes lp-overlay-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes lp-sheet-in {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lp-menu-overlay,
+    .lp-menu-sheet { animation: none; }
+}
+
+body.lp-menu-open {
+    /* Soft scroll lock — don't fight modal-open's heavy scroll lock,
+       just discourage background scrolling while the sheet is up. */
+    overflow: hidden;
+}
+
 /* ===== Pull-to-refresh indicator =====
  * Sits above the page content (negative top offset), made visible by
  * setupPullToRefresh as the user drags down at the very top of the

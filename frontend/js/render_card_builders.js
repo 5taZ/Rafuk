@@ -128,6 +128,45 @@ function createRenderCardBuilders(context) {
         listing.querySelector('[data-role="watch"]')?.addEventListener("click", () => {
             void actions.addWatchlistFromListing(item);
         });
+
+        // Long-press the card to invoke a quick-action menu — same
+        // actions as the inline buttons plus a direct "Открыть на
+        // Kufar" shortcut, surfaced via a bottom sheet so cluttered
+        // search results stay scannable. Helper falls back to a no-op
+        // on desktop / when touch events never fire.
+        if (typeof attachLongPress === "function") {
+            attachLongPress(listing, () => [
+                {
+                    label: "Подробнее",
+                    icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+                    onSelect: () => actions.openListingDetail(item),
+                },
+                {
+                    label: "В покупки",
+                    tone: "accent",
+                    icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/><polyline points="9 11 12 8 15 11"/><line x1="12" y1="2" x2="12" y2="14"/></svg>',
+                    onSelect: () => actions.addLeadFromListing(item),
+                },
+                {
+                    label: "В избранное",
+                    icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+                    onSelect: () => actions.addWatchlistFromListing(item),
+                },
+                {
+                    label: "Открыть на Kufar",
+                    icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+                    onSelect: () => {
+                        const link = safeUrl(item.link);
+                        if (!link) return;
+                        if (window.Telegram?.WebApp?.openLink) {
+                            window.Telegram.WebApp.openLink(link);
+                        } else {
+                            window.open(link, "_blank", "noopener,noreferrer");
+                        }
+                    },
+                },
+            ]);
+        }
         return listing;
     }
 
