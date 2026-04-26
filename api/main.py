@@ -15,6 +15,7 @@ from api.database import get_engine, get_session_factory
 from api.limiter import limiter
 from api.routers import (
     ai_analysis,
+    analytics,
     compare,
     contacts,
     currency,
@@ -165,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(export.router, prefix="/api/v1")
     app.include_router(ai_analysis.router, prefix="/api/v1")
     app.include_router(image_proxy.router, prefix="/api/v1")
+    app.include_router(analytics.router, prefix="/api/v1")
     return app
 
 

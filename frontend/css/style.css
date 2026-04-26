@@ -3354,9 +3354,91 @@ body.modal-open {
 /* ===== Profit Dashboard ===== */
 .profit-cards {
     display: grid;
-    grid-template-columns: 2fr 3fr 2fr;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: var(--space-2);
     margin-bottom: var(--space-3);
+}
+
+.dashboard-period-toggle {
+    display: inline-flex;
+    gap: 4px;
+    padding: 3px;
+    background: var(--bg-surface-tint);
+    border-radius: 999px;
+    border: 1px solid var(--border);
+}
+
+.period-chip {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.period-chip.is-active {
+    background: var(--bg-card);
+    color: var(--text);
+    box-shadow: var(--shadow-card);
+}
+
+.dashboard-funnel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: var(--space-3);
+    padding: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+}
+
+.funnel-row {
+    display: grid;
+    grid-template-columns: minmax(80px, 0.9fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.funnel-row.is-empty {
+    opacity: 0.45;
+}
+
+.funnel-label {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.funnel-bar-track {
+    height: 8px;
+    background: var(--bg-surface-tint);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.funnel-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--green));
+    border-radius: 999px;
+    transition: width var(--motion-base) ease;
+}
+
+.funnel-row.is-empty .funnel-bar-fill {
+    background: var(--border);
+}
+
+.funnel-count {
+    font-size: 12px;
+    color: var(--text);
+    font-weight: 700;
+    min-width: 28px;
+    text-align: right;
 }
 
 .profit-card {

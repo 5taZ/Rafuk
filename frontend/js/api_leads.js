@@ -50,6 +50,39 @@ function createApiLeads(context) {
         renderLeads();
         renderDealsHeroStats();
         renderProfitDashboard();
+        // Refresh server-side analytics in parallel with the lead list —
+        // the dashboard depends on lead-mutating endpoints (sale, expense)
+        // so any reload of leads should also refresh aggregates.
+        void loadAnalytics();
+    }
+
+    // ── Load lead analytics dashboard ────────────────────────────────────
+    async function loadAnalytics() {
+        if (!hasTelegramInitData()) {
+            state.analyticsDashboard = null;
+            renderProfitDashboard();
+            return;
+        }
+        const requestId = (state._analyticsRequestId =
+            ((state._analyticsRequestId || 0) + 1) % 1_000_000);
+        state.analyticsLoading = true;
+        renderProfitDashboard();
+        try {
+            const days = Number(state.analyticsPeriodDays || 90);
+            const response = await getJson(
+                `/api/v1/analytics/leads?days=${encodeURIComponent(days)}`,
+            );
+            if (requestId !== state._analyticsRequestId) return;
+            state.analyticsDashboard = response;
+        } catch (_) {
+            if (requestId !== state._analyticsRequestId) return;
+            state.analyticsDashboard = null;
+        } finally {
+            if (requestId === state._analyticsRequestId) {
+                state.analyticsLoading = false;
+                renderProfitDashboard();
+            }
+        }
     }
 
     // ── Clear all leads (active only) ────────────────────────────────────
@@ -335,6 +368,7 @@ function createApiLeads(context) {
 
     return {
         loadLeads,
+        loadAnalytics,
         clearAllLeads,
         confirmLead,
         cancelLead,

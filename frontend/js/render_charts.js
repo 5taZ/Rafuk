@@ -336,6 +336,84 @@ function createRenderCharts(context) {
 
     /* ===== Profit Dashboard ===== */
 
+    function _renderDashboardCards(dashboard) {
+        // Hero cards: revenue, profit, ROI, win-rate, days-to-close.
+        // Each card is structurally identical (label/value/sub) so the
+        // CSS scaling is consistent and the user can scan top-to-bottom.
+        const profit = Number(dashboard.total_profit_byn || 0);
+        const revenue = Number(dashboard.total_revenue_byn || 0);
+        const roi = Number(dashboard.average_roi_percent || 0);
+        const winRate = Number(dashboard.win_rate_percent || 0);
+        const avgDays = Number(dashboard.average_days_to_close || 0);
+        const sold = Number(dashboard.sold_leads || 0);
+        const pursued = Number(dashboard.pursued_leads || 0);
+        const period = Number(dashboard.period_days || 90);
+        const expenses = Number(dashboard.total_expenses_byn || 0);
+
+        return [
+            {
+                label: "Прибыль",
+                value: `${profit >= 0 ? "+" : ""}${Math.round(profit)} BYN`,
+                sub: `выручка ${Math.round(revenue)} · расходы ${Math.round(expenses)}`,
+                className: profit >= 0 ? "is-accent" : "is-warning",
+            },
+            {
+                label: "ROI",
+                value: `${roi >= 0 ? "+" : ""}${roi.toFixed(1)}%`,
+                sub: `средний по ${sold} продажам`,
+                className: roi >= 0 ? "is-accent" : "is-warning",
+            },
+            {
+                label: "Win rate",
+                value: `${winRate.toFixed(1)}%`,
+                sub: `${sold} из ${pursued} в работе`,
+                className: winRate >= 50 ? "is-accent" : winRate >= 25 ? "" : "is-warning",
+            },
+            {
+                label: "Цикл сделки",
+                value: avgDays > 0 ? `${avgDays.toFixed(1)} дн` : "—",
+                sub: `медиана ${(dashboard.median_days_to_close || 0).toFixed(1)} дн · ${period} дн период`,
+                className: "",
+            },
+        ];
+    }
+
+    function _renderFunnelBars(dashboard) {
+        if (!elements.dashboardFunnel) return;
+        domClear(elements.dashboardFunnel);
+        const stages = Array.isArray(dashboard.funnel) ? dashboard.funnel : [];
+        const populated = stages.filter((s) => Number(s.count || 0) > 0);
+        if (!populated.length) {
+            elements.dashboardFunnel.hidden = true;
+            return;
+        }
+        // Use the global max as the bar-width denominator so the user
+        // sees relative volume across stages (the funnel narrows from
+        // left to right; a lone "watching" with everything else empty
+        // would otherwise pin every other bar to ~0).
+        const maxCount = Math.max(...populated.map((s) => Number(s.count || 0)));
+        for (const stage of stages) {
+            const count = Number(stage.count || 0);
+            const widthPct = maxCount > 0 ? Math.max(2, (count / maxCount) * 100) : 2;
+            const row = domEl(
+                "div",
+                { className: `funnel-row ${count > 0 ? "" : "is-empty"}`.trim() },
+                domEl("span", { className: "funnel-label", text: stage.label }),
+                domEl(
+                    "div",
+                    { className: "funnel-bar-track" },
+                    domEl("div", {
+                        className: "funnel-bar-fill",
+                        attrs: { style: `width: ${widthPct}%` },
+                    }),
+                ),
+                domEl("span", { className: "funnel-count mono", text: String(count) }),
+            );
+            elements.dashboardFunnel.appendChild(row);
+        }
+        elements.dashboardFunnel.hidden = false;
+    }
+
     function renderProfitDashboard() {
         return safeRender('renderProfitDashboard', () => {
         if (!elements.profitCards) return;
@@ -348,52 +426,52 @@ function createRenderCharts(context) {
 
         elements.profitDashboardSection.hidden = false;
 
-        const closedLeads = state.leads.filter(
-            (l) => l.status === "closed" && l.buy_price_byn && l.sold_price_byn
-        );
-
-        let totalInvested = 0;
-        let totalSoldRevenue = 0;
-
-        closedLeads.forEach((l) => {
-            totalInvested += Number(l.buy_price_byn || 0);
-            totalSoldRevenue += Number(l.sold_price_byn || 0);
-        });
-
-        const displayProfit = totalSoldRevenue - totalInvested;
-        const roi = totalInvested > 0 ? (((totalSoldRevenue - totalInvested) / totalInvested) * 100).toFixed(1) : "0";
-
-        const cards = [
-            {
-                label: "Вложено",
-                value: `${Math.round(totalInvested)} BYN`,
-                sub: `${closedLeads.length} закрытых сделок`,
-                className: "",
-            },
-            {
-                label: "Результат",
-                value: `${displayProfit >= 0 ? "+" : ""}${Math.round(displayProfit)} BYN`,
-                sub: `${closedLeads.length} закрытых`,
-                className: displayProfit >= 0 ? "is-accent" : "is-warning",
-            },
-            {
-                label: "ROI",
-                value: `${roi}%`,
-                sub: "средний",
-                className: Number(roi) >= 0 ? "is-accent" : "is-warning",
-            },
-        ];
-
-        for (const card of cards) {
-            const el = domEl(
-                "div",
-                { className: `profit-card ${card.className}`.trim() },
-                domEl("span", { className: "profit-card-label", text: card.label }),
-                domEl("span", { className: "profit-card-value mono", text: card.value }),
-                domEl("span", { className: "profit-card-sub", text: card.sub }),
-            );
-            elements.profitCards.appendChild(el);
+        // Reflect the active period chip from state (in case the user
+        // toggled it between renders without clicking).
+        for (const button of elements.analyticsPeriodButtons || []) {
+            const days = Number(button.dataset.analyticsPeriod || 0);
+            button.classList.toggle("is-active", days === Number(state.analyticsPeriodDays));
         }
+
+        const dashboard = state.analyticsDashboard;
+        if (!dashboard) {
+            // Loading or no data yet — render placeholder cards so the
+            // layout doesn't jump when the first response lands.
+            const placeholderCards = [
+                { label: "Прибыль", value: "…", sub: state.analyticsLoading ? "загружаю" : "нет данных", className: "" },
+                { label: "ROI", value: "…", sub: state.analyticsLoading ? "загружаю" : "нет данных", className: "" },
+                { label: "Win rate", value: "…", sub: state.analyticsLoading ? "загружаю" : "нет данных", className: "" },
+                { label: "Цикл сделки", value: "…", sub: state.analyticsLoading ? "загружаю" : "нет данных", className: "" },
+            ];
+            for (const card of placeholderCards) {
+                elements.profitCards.appendChild(
+                    domEl(
+                        "div",
+                        { className: `profit-card ${card.className}`.trim() },
+                        domEl("span", { className: "profit-card-label", text: card.label }),
+                        domEl("span", { className: "profit-card-value mono", text: card.value }),
+                        domEl("span", { className: "profit-card-sub", text: card.sub }),
+                    ),
+                );
+            }
+            if (elements.dashboardFunnel) elements.dashboardFunnel.hidden = true;
+            return;
+        }
+
+        const cards = _renderDashboardCards(dashboard);
+        for (const card of cards) {
+            elements.profitCards.appendChild(
+                domEl(
+                    "div",
+                    { className: `profit-card ${card.className}`.trim() },
+                    domEl("span", { className: "profit-card-label", text: card.label }),
+                    domEl("span", { className: "profit-card-value mono", text: card.value }),
+                    domEl("span", { className: "profit-card-sub", text: card.sub }),
+                ),
+            );
+        }
+
+        _renderFunnelBars(dashboard);
         });
     }
 

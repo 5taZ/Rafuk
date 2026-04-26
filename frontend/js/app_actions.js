@@ -179,6 +179,7 @@ function createAppActions(context) {
 
         // From leads
         loadLeads: leads.loadLeads,
+        loadAnalytics: leads.loadAnalytics,
         clearAllLeads: leads.clearAllLeads,
         confirmLead: leads.confirmLead,
         cancelLead: leads.cancelLead,

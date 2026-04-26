@@ -46,6 +46,7 @@ function createApiEvents(context) {
         loadHistory,
         loadTrackers,
         loadLeads,
+        loadAnalytics,
         clearAllLeads,
         loadWatchlist,
         clearAllWatchlist,
@@ -764,6 +765,18 @@ function createApiEvents(context) {
                 state.trackerEventFilter = button.dataset.eventFilter || "all";
                 renderTrackerEventFilters();
                 renderTrackerEvents();
+            });
+        }
+
+        // ── Analytics period chips (30 / 90 / 365 days) ──────────────
+        for (const button of elements.analyticsPeriodButtons || []) {
+            button.addEventListener("click", () => {
+                const days = Number(button.dataset.analyticsPeriod || 90);
+                if (!days || days === state.analyticsPeriodDays) return;
+                state.analyticsPeriodDays = days;
+                if (typeof loadAnalytics === "function") {
+                    void loadAnalytics();
+                }
             });
         }
 

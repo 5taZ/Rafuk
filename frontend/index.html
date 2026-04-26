@@ -617,8 +617,14 @@
         <section class="section" id="profit-dashboard-section">
             <div class="sec-head listings-head">
                 <h2 class="sec-title">Финансы</h2>
+                <div class="dashboard-period-toggle" role="tablist" aria-label="Период">
+                    <button class="period-chip" data-analytics-period="30" type="button">30 дн</button>
+                    <button class="period-chip is-active" data-analytics-period="90" type="button">90 дн</button>
+                    <button class="period-chip" data-analytics-period="365" type="button">Год</button>
+                </div>
             </div>
             <div class="profit-cards" id="profit-cards"></div>
+            <div class="dashboard-funnel" id="dashboard-funnel" hidden></div>
             <div class="chart-box profit-chart-box" id="profit-chart-box" hidden>
                 <canvas id="profitChart"></canvas>
             </div>
