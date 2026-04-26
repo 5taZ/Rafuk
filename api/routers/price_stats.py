@@ -24,7 +24,9 @@ from api.services.currency_service import CurrencyService
 from api.services.history_service import snapshot_bucket, upsert_query_snapshot
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import (
+    KUFAR_CATEGORY_LABELS,
     convert_price_stats,
+    expand_with_known_siblings,
     fetch_category_totals,
     load_query_dataset,
 )
@@ -73,24 +75,44 @@ async def get_price_stats(
     insights = analyze_query_text(query)
     category_distribution = extract_category_distribution(dataset.ads)
 
-    # Override per-category counts with the real `total` Kufar reports
-    # for cat=<id> queries (mirrors what kufar.by sidebar shows).
-    # Skips silently if Kufar is unreachable — chips fall back to the
-    # local distribution count.
-    if category_distribution and category is None:
-        cat_ids = [int(c["id"]) for c in category_distribution if c.get("id") is not None]
+    # Replace per-category counts with the *post-filter* count Kufar
+    # would actually surface for `cat=<id>` (mirrors kufar.by sidebar)
+    # AND add sibling subcategories that didn't appear in the first
+    # 200 ads but are still meaningful for the query (e.g. "Легковые
+    # авто" for a query whose top 200 ads are mostly "Запчасти").
+    if category is None:
+        seed_ids = [int(c["id"]) for c in category_distribution if c.get("id") is not None]
+        cat_ids = expand_with_known_siblings(seed_ids)
         totals_by_id = await fetch_category_totals(
             query=query,
             currency=currency,
+            strict_search=strict_search,
             client=kufar_client,
             category_ids=cat_ids,
         )
-        for entry in category_distribution:
-            real_total = totals_by_id.get(int(entry["id"]))
-            if real_total is not None:
-                entry["count"] = real_total
-        # Re-sort by the (possibly enlarged) counts so the most popular
-        # category stays on top.
+        # Build a lookup of existing chips by id so we can update or
+        # extend in place.
+        by_id: dict[int, dict] = {int(c["id"]): c for c in category_distribution}
+        for cat_id in cat_ids:
+            real_total = totals_by_id.get(cat_id)
+            if real_total is None or real_total <= 0:
+                # Sibling that has no matches for this query — skip;
+                # if it was already in the distribution we keep its
+                # original count rather than zeroing it out.
+                continue
+            existing = by_id.get(cat_id)
+            if existing is not None:
+                existing["count"] = real_total
+            else:
+                # Sibling not present in the first-200 ads → look up
+                # the label in the static KUFAR_CATEGORY_LABELS map.
+                label = KUFAR_CATEGORY_LABELS.get(cat_id, f"Категория {cat_id}")
+                category_distribution.append(
+                    {"id": cat_id, "label": label, "count": real_total}
+                )
+        # Drop chips that ended up with 0 matches under the precise
+        # filter — they're noise.
+        category_distribution = [c for c in category_distribution if c.get("count", 0) > 0]
         category_distribution.sort(key=lambda c: c["count"], reverse=True)
 
     payload = PriceStatsResponse(

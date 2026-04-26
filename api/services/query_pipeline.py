@@ -245,17 +245,19 @@ async def fetch_category_totals(
     *,
     query: str,
     currency: str,
+    strict_search: bool,
     client: SupportsSearchAllAds,
     category_ids: list[int],
 ) -> dict[int, int]:
-    """Fetch the real per-category total from Kufar for each id.
+    """Fetch the per-category total that the listings page will show.
 
-    The kufar.by sidebar shows one count per category and that count
-    is the `total` field returned by /search-rendered-paginated when
-    you pass `cat=<id>` in the query string. We mirror that by hitting
-    the same endpoint with size=1 in parallel — one request per id —
-    and read `total`. Failures degrade to 0 silently so the chip just
-    falls back to the local distribution count.
+    For each id we issue a `cat=<id>&size=200` query to Kufar (in
+    parallel) and count how many ads survive ``apply_search_mode`` —
+    this is the *same* filter the /listings endpoint applies, so the
+    chip count and the listings count line up exactly. Trusting the
+    raw Kufar `total` would diverge for refined queries (e.g. "Audi
+    Q7 4L 2015" + cat=2010: Kufar's total=11, but only 3 ads pass
+    apply_search_mode).
 
     Skips quietly if the client doesn't expose a low-level `.search()`
     method (test fakes that only stub `search_all_ads`).
@@ -270,17 +272,30 @@ async def fetch_category_totals(
         try:
             resp = await search_method(
                 query=query,
-                size=1,
+                size=200,
                 currency=currency,
                 category=cat_id,
             )
         except Exception as exc:  # noqa: BLE001 — log + degrade
             logger.warning("Kufar category-total fetch failed cat=%s: %s", cat_id, exc)
             return cat_id, None
-        total = resp.get("total") if isinstance(resp, dict) else None
-        if isinstance(total, int) and total >= 0:
-            return cat_id, total
-        return cat_id, None
+        if not isinstance(resp, dict):
+            return cat_id, None
+        ads = resp.get("ads") or []
+        # Mirror the listings filter so the chip and the cards agree.
+        filtered = apply_search_mode(ads, query, strict_search)
+        kufar_total = resp.get("total")
+        # When the response hit our 200-ad cap and Kufar reports more,
+        # trust Kufar's total (matches what kufar.by sidebar shows for
+        # large categories like "Запчасти" with thousands of ads).
+        # Otherwise the precise post-filter count is the right number.
+        if (
+            len(ads) >= 200
+            and isinstance(kufar_total, int)
+            and kufar_total > len(filtered)
+        ):
+            return cat_id, kufar_total
+        return cat_id, len(filtered)
 
     results = await asyncio.gather(
         *[_fetch_one(cid) for cid in category_ids],
@@ -290,6 +305,66 @@ async def fetch_category_totals(
     for r in results:
         if isinstance(r, tuple) and r[1] is not None:
             out[r[0]] = r[1]
+    return out
+
+
+# Top-level Kufar category ids → ordered list of known sub-category
+# ids that share the same parent group. Extracted from the kufar.by
+# `__NEXT_DATA__` payload + observed Kufar API responses. Used to
+# expose chips that don't appear in the unfiltered first-200 ads
+# distribution but are still meaningful for the query (e.g.
+# "Легковые авто" — 2010 — for "Audi Q7 4L 2015" where the first 200
+# Kufar ads are all "Запчасти" (2040)).
+KUFAR_CATEGORY_FAMILY: dict[int, tuple[int, ...]] = {
+    # 2000 — Авто и запчасти
+    2000: (2010, 2020, 2030, 2040, 2050, 2060, 2070, 2075, 2080),
+    # 1000 — Недвижимость (rare in mini-app, kept for completeness)
+    1000: (1010, 1020, 1030, 1040, 1050, 1060),
+    # 17000 — Телефоны и планшеты
+    17000: (17010, 17020, 17030, 17040, 17050, 17060),
+    # 5000 — Электроника
+    5000: (5010, 5020, 5030, 5040, 5050, 5060),
+}
+
+
+# Fallback labels for category ids that were added by the family
+# expansion but don't have an ad in the first 200 ads to read the
+# label from. Sourced from kufar.by's `__NEXT_DATA__`.
+KUFAR_CATEGORY_LABELS: dict[int, str] = {
+    2000: "Авто и запчасти",
+    2010: "Легковые авто",
+    2020: "Грузовики и спецтехника",
+    2030: "Мото",
+    2040: "Запчасти",
+    2050: "Спецтехника",
+    2060: "Водный транспорт",
+    2070: "Аксессуары",
+    2075: "Шины, диски",
+    2080: "Инструмент, оборудование",
+}
+
+
+def expand_with_known_siblings(category_ids: list[int]) -> list[int]:
+    """Add known sibling subcategories from the same Kufar parent group.
+
+    For each id in ``category_ids`` whose parent (id // 1000 * 1000)
+    has a hardcoded family in :data:`KUFAR_CATEGORY_FAMILY`, return a
+    list that includes every sibling. Preserves the original order and
+    de-duplicates. If no family is known, the input is returned as-is.
+    """
+    seen: set[int] = set()
+    out: list[int] = []
+    for cid in category_ids:
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append(cid)
+        parent = (cid // 1000) * 1000
+        for sibling in KUFAR_CATEGORY_FAMILY.get(parent, ()):
+            if sibling in seen:
+                continue
+            seen.add(sibling)
+            out.append(sibling)
     return out
 
 

@@ -126,6 +126,13 @@ async def get_listings(
             )
         )
 
+    # `total` reflects the post-filter count (apply_search_mode +
+    # category) — this is what the frontend pill shows alongside the
+    # rendered cards, and it must agree with the chip count from
+    # /price-stats. The raw Kufar `total` is fuzzy and would diverge
+    # under category-scoped queries (e.g. cat=2010 + "Audi Q7 4L 2015"
+    # → Kufar total=11 but only 3 ads pass apply_search_mode).
+    filtered_total = len(visible_dataset.ads)
     payload = ListingsResponse(
         query=query,
         currency=currency,
@@ -134,7 +141,7 @@ async def get_listings(
         storage_gb=insights.storage_gb,
         ram_gb=insights.ram_gb,
         sort=sort,
-        total=visible_dataset.total_results,
+        total=filtered_total,
         returned=len(listings),
         discount_percent=effective_from if sort == "cheap" else None,
         discount_from_percent=effective_from if sort == "cheap" else None,

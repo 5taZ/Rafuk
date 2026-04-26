@@ -409,8 +409,20 @@ function createApiListings(context) {
 
             state.stats = stats;
             state.loading = false;
-            // Cache categories: use unfiltered list when available, keep existing when filtered
-            if (stats.categories && stats.categories.length > 1) {
+            // Categories cache rules:
+            //  - Broad search (state.category == null) ⇒ ALWAYS replace
+            //    the chips with whatever the new query returned, even
+            //    when the new distribution is empty/1-element. This
+            //    prevents stale chips ("Легковые авто (11)") from
+            //    bleeding into a refined query that no longer has
+            //    that category.
+            //  - Narrowed search (a category chip is active) ⇒ keep
+            //    the previous distribution because /price-stats with
+            //    a `category=` filter only returns that one bucket
+            //    and we'd lose the other chips.
+            if (state.category == null) {
+                state.categories = stats.categories || [];
+            } else if (stats.categories && stats.categories.length > 1) {
                 state.categories = stats.categories;
             }
             markDirty('loading', 'stats', 'summary', 'helper', 'categories');
