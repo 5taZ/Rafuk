@@ -42,6 +42,12 @@ function createAppCore() {
         chart: null,
         history: [],
         historyChart: null,
+        // Stale-response guards for the standalone async loaders that
+        // can race when the user rapidly changes the query, range, or
+        // listing they're viewing. Same pattern as _leadsRequestId.
+        _historyRequestId: 0,
+        _comparisonRequestId: 0,
+        _detailRequestId: 0,
         leads: [],
         leadFilter: "all",
         // Monotonic request id — incremented on every loadLeads() so the
@@ -110,20 +116,86 @@ function createAppCore() {
         cacheAppElements(elements);
     }
 
+    /**
+     * Bridge Telegram themeParams onto our CSS custom properties so the
+     * Mini App visually blends into whatever palette the user picked
+     * inside the Telegram client (custom themes, premium gradients,
+     * dark/AMOLED variants). The mapping is conservative: we only set a
+     * variable when Telegram supplies the corresponding value, so our
+     * own --bg / --text / --accent stay as a fallback.
+     *
+     * `bg_color`             → --bg
+     * `secondary_bg_color`   → --bg-elevated
+     * `section_bg_color`     → --bg-card
+     * `text_color`           → --text
+     * `hint_color`           → --text-muted, --text-dim
+     * `button_color`         → --accent
+     * `button_text_color`    → --accent-foreground (and --white in places it
+     *                          stands for "text on accent")
+     * `link_color`           → --link
+     * `destructive_text_color` → --red (when Telegram supplies a brand-
+     *                          consistent destructive colour)
+     */
+    function applyTelegramThemeColors(themeParams) {
+        if (!themeParams || typeof themeParams !== "object") return;
+        const root = document.documentElement;
+        const set = (varName, value) => {
+            if (typeof value === "string" && value.trim()) {
+                root.style.setProperty(varName, value);
+            }
+        };
+        set("--bg", themeParams.bg_color);
+        set("--bg-elevated", themeParams.secondary_bg_color);
+        set("--bg-card", themeParams.section_bg_color || themeParams.secondary_bg_color);
+        set("--text", themeParams.text_color);
+        set("--text-muted", themeParams.hint_color);
+        set("--text-dim", themeParams.hint_color);
+        set("--accent", themeParams.button_color || themeParams.link_color);
+        set("--accent-foreground", themeParams.button_text_color);
+        set("--link", themeParams.link_color);
+        set("--red", themeParams.destructive_text_color);
+    }
+
     function initTelegramTheme() {
         const saved = localStorage.getItem("theme");
+        const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
         if (saved === "light" || saved === "dark") {
             document.documentElement.setAttribute("data-theme", saved);
-        } else if (window.Telegram && window.Telegram.WebApp) {
-            window.Telegram.WebApp.expand();
-            window.Telegram.WebApp.ready();
-            const scheme = window.Telegram.WebApp.colorScheme;
+        } else if (tg) {
+            try {
+                tg.expand();
+                tg.ready();
+            } catch (_) {
+                // ready/expand can throw outside a real Telegram client
+            }
+            const scheme = tg.colorScheme;
             document.documentElement.setAttribute(
                 "data-theme",
                 scheme === "light" ? "light" : "dark"
             );
         } else {
             document.documentElement.setAttribute("data-theme", "dark");
+        }
+
+        if (tg) {
+            applyTelegramThemeColors(tg.themeParams);
+            // Telegram fires themeChanged when the user switches dark/light
+            // in their system or in the Telegram client itself. Track it
+            // live so the Mini App stays aligned without a reload.
+            try {
+                tg.onEvent?.("themeChanged", () => {
+                    const stillUserOverride = localStorage.getItem("theme");
+                    if (!stillUserOverride) {
+                        document.documentElement.setAttribute(
+                            "data-theme",
+                            tg.colorScheme === "light" ? "light" : "dark"
+                        );
+                    }
+                    applyTelegramThemeColors(tg.themeParams);
+                });
+            } catch (_) {
+                // onEvent may not exist on older WebApp versions
+            }
         }
     }
 
@@ -132,6 +204,24 @@ function createAppCore() {
         const next = current === "light" ? "dark" : "light";
         document.documentElement.setAttribute("data-theme", next);
         localStorage.setItem("theme", next);
+        // User picked a theme manually — clear any Telegram colour
+        // overrides so the choice actually shows through. We strip just
+        // the variables we set in applyTelegramThemeColors.
+        const root = document.documentElement;
+        for (const varName of [
+            "--bg",
+            "--bg-elevated",
+            "--bg-card",
+            "--text",
+            "--text-muted",
+            "--text-dim",
+            "--accent",
+            "--accent-foreground",
+            "--link",
+            "--red",
+        ]) {
+            root.style.removeProperty(varName);
+        }
     }
 
     function formatPrice(value) {

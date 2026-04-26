@@ -298,6 +298,11 @@ function createApiLeads(context) {
             showToast("Не удалось открыть: нет привязки к запросу");
             return;
         }
+        // Shared stale-response guard with openListingDetail and
+        // openWatchlistDetail — only the latest tap wins, older
+        // listing-detail responses are dropped.
+        const requestId = (state._detailRequestId =
+            (state._detailRequestId + 1) % 1_000_000);
 
         const loadingToast = showToast("Загружаю...", "info", 1400);
         state.error = null;
@@ -307,6 +312,7 @@ function createApiLeads(context) {
             const fullDetail = await getJson(
                 `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${lead.ad_id}${catParam}`
             );
+            if (requestId !== state._detailRequestId) return;
             state.detail = fullDetail;
             state.detailImageIndex = 0;
             state.detailFromWatchlist = false;
@@ -319,6 +325,7 @@ function createApiLeads(context) {
             };
             renderDetailModal();
         } catch (error) {
+            if (requestId !== state._detailRequestId) return;
             state.error = error.message || "Не удалось загрузить детали";
             renderError();
         } finally {

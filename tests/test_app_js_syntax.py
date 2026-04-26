@@ -115,3 +115,47 @@ def test_make_swipeable_respects_reduced_motion_and_haptics() -> None:
     assert "makeSwipeable(card" in builder_text
     assert "promoteWatchlistToLead" in builder_text
     assert "deleteWatchlistItem" in builder_text
+
+
+def test_listing_detail_loaders_share_stale_response_guard() -> None:
+    """Three loaders open the listing-detail modal: openListingDetail
+    (search results), openLeadDetail, openWatchlistDetail. They share
+    state.detail and state.detailAi, so without a unified guard the
+    older fetch can resolve last and pop the wrong content into the
+    modal. Ensure all three bump the same _detailRequestId."""
+    listings_js = (JS_DIR / "api_listings.js").read_text(encoding="utf-8")
+    leads_js = (JS_DIR / "api_leads.js").read_text(encoding="utf-8")
+    watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+
+    surfaces = (
+        ("api_listings.js", listings_js),
+        ("api_leads.js", leads_js),
+        ("api_watchlist.js", watchlist_js),
+    )
+    for path, text in surfaces:
+        assert "state._detailRequestId" in text, f"{path} missing detail-request-id guard"
+        assert "if (requestId !== state._detailRequestId)" in text, (
+            f"{path} missing stale-response check"
+        )
+
+    # loadHistory and loadComparison have their own dedicated counters.
+    assert "state._historyRequestId" in listings_js
+    assert "state._comparisonRequestId" in listings_js
+
+
+def test_telegram_theme_params_bridged_to_css_variables() -> None:
+    """Telegram exposes the user's client palette via WebApp.themeParams.
+    We bridge those colours onto our CSS custom properties so the Mini
+    App visually blends into the surrounding chat (custom themes,
+    AMOLED, premium gradients), and we listen for themeChanged so the
+    binding updates live."""
+    text = (JS_DIR / "app_core.js").read_text(encoding="utf-8")
+    assert "applyTelegramThemeColors" in text
+    # Required Telegram theme keys must be honoured.
+    for key in ("bg_color", "text_color", "hint_color", "button_color"):
+        assert key in text, f"themeParams.{key} not bridged"
+    # Live updates on theme changes.
+    assert '"themeChanged"' in text
+    # Manual toggle should clear the Telegram-set inline overrides so the
+    # user choice wins.
+    assert "removeProperty" in text

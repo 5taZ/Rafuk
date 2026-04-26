@@ -84,17 +84,23 @@ function createApiListings(context) {
             renderHistory();
             return;
         }
-
+        // Stale-response guard — switching the history range button or
+        // changing the query mid-fetch shouldn't let the older response
+        // overwrite the freshly-requested points.
+        const requestId = (state._historyRequestId =
+            (state._historyRequestId + 1) % 1_000_000);
+        let nextHistory;
         try {
             const payload = await getJson(
                 `/api/v1/price-history?${buildCommonQuery({ days: state.historyDays })}`
             );
-            state.history = payload.points || [];
+            nextHistory = payload.points || [];
         } catch (_) {
-            state.history = [];
-        } finally {
-            renderHistory();
+            nextHistory = [];
         }
+        if (requestId !== state._historyRequestId) return;
+        state.history = nextHistory;
+        renderHistory();
     }
 
     // ── Load parallel search dependencies ────────────────────────────────
@@ -258,6 +264,12 @@ function createApiListings(context) {
             renderComparison();
             return;
         }
+        // Guard against a stale comparison response landing after the
+        // user has already kicked off a new compare with a different
+        // query string. Without this, swapping queries quickly leaves
+        // the panel showing the older comparison.
+        const requestId = (state._comparisonRequestId =
+            (state._comparisonRequestId + 1) % 1_000_000);
 
         state.comparisonLoading = true;
         state.error = null;
@@ -282,16 +294,20 @@ function createApiListings(context) {
                 params.append("compare_query", item);
             }
             const payload = await getJson(`/api/v1/compare?${params.toString()}`);
+            if (requestId !== state._comparisonRequestId) return;
             state.comparisonStats = payload;
             state.comparisonItems = payload.items || [];
         } catch (error) {
+            if (requestId !== state._comparisonRequestId) return;
             state.comparisonStats = null;
             state.comparisonItems = [];
             state.error = error.message || "Не удалось загрузить сравнение";
             renderError();
         } finally {
-            state.comparisonLoading = false;
-            renderComparison();
+            if (requestId === state._comparisonRequestId) {
+                state.comparisonLoading = false;
+                renderComparison();
+            }
         }
     }
 
@@ -322,6 +338,12 @@ function createApiListings(context) {
         if (!item?.ad_id || !queryToUse) {
             return;
         }
+        // Stale-response guard — if the user taps a different listing
+        // before the first detail fetch resolves, the older response
+        // would otherwise overwrite state.detail and pop the wrong
+        // modal contents on screen.
+        const requestId = (state._detailRequestId =
+            (state._detailRequestId + 1) % 1_000_000);
 
         const loadingToast = showToast("Загружаю...", "info", 1400);
         state.error = null;
@@ -340,6 +362,7 @@ function createApiListings(context) {
             const fullDetail = await getJson(
                 `/api/v1/listing-detail?${params.toString()}`
             );
+            if (requestId !== state._detailRequestId) return;
             state.detail = fullDetail;
             state.detailImageIndex = 0;
             state.detailFromWatchlist = false;
@@ -352,6 +375,7 @@ function createApiListings(context) {
             };
             renderDetailModal();
         } catch (error) {
+            if (requestId !== state._detailRequestId) return;
             state.error = error.message || "Не удалось загрузить детали";
             renderError();
         } finally {

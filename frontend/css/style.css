@@ -3216,6 +3216,17 @@ body.modal-open {
     cursor: pointer;
     padding: 4px 6px;
     border-radius: 6px;
+    /* Mobile tap target — 4+16+4=24px is well below the 44px Apple HIG
+       baseline, so we expand the visual hit-box to 36px and centre the
+       glyph rather than enlarging the padding (which would push the
+       expense row apart). */
+    min-height: 36px;
+    min-width: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
     transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
     flex-shrink: 0;
 }
@@ -4265,6 +4276,15 @@ body.modal-open {
     font-size: 14px;
     padding: 6px 10px;
     flex: 0 0 auto;
+    /* Lead-row inline button — same tap-target floor as the other
+       small icon buttons so single-emoji actions stay reachable on
+       small phones. */
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .lead-btn--success {
@@ -7355,6 +7375,15 @@ body {
     border-radius: 999px;
     font: 600 var(--text-xs) var(--font);
     cursor: pointer;
+    /* Pill-button "Копировать" — keep its visual width compact but
+       lift the tap area to a sane mobile floor so the user doesn't
+       have to aim for a 20px-tall target. */
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
     transition: background 0.15s, transform 0.05s;
 }
 
