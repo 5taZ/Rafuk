@@ -1472,12 +1472,13 @@ def _repair_truncated_json(text: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Dedupe helpers — Together AI Gemma sometimes paraphrases the same
-# observation across `condition.notes`, `watch_out`, and `red_flags`,
-# producing visible "Лакокрасочное покрытие без видимых значительных
-# дефектов" / "Лакокрасочное покрытие без видимых значительных
-# дефектов, диски чистые" pairs in the analysis modal. We collapse
-# them server-side so the UI doesn't need to repeat the logic.
+# Dedupe helpers — both Gemini 2.5 Flash and the legacy Gemma fallback
+# sometimes paraphrase the same observation across `condition.notes`,
+# `watch_out`, and `red_flags`, producing visible duplicates in the
+# analysis modal (e.g. "Лакокрасочное покрытие без видимых значительных
+# дефектов" + "Лакокрасочное покрытие без видимых значительных
+# дефектов, диски чистые"). We collapse them server-side so the UI
+# doesn't need to repeat the logic and the behavior is model-agnostic.
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -2050,9 +2051,10 @@ class AIService:
         notes = _clean_photo_notes(result.get("notes"))
         return {
             "condition": normalize_condition_label(result.get("condition")),
-            # Dedupe in case Gemma rephrased the same observation
+            # Dedupe in case the AI rephrased the same observation
             # twice (e.g. "лёгкие потёртости" + "лёгкие потёртости на
-            # корпусе").
+            # корпусе"). Model-agnostic — applies to both Gemini and
+            # the Gemma fallback.
             "notes": _dedupe_text_list(notes) if isinstance(notes, list) else notes,
         }
 
