@@ -4552,16 +4552,17 @@ body.modal-open {
 }
 
 .tracker-card-enhanced.paused::after {
-    content: '⏸️ ПАУЗА';
+    content: 'ПАУЗА';
     position: absolute;
     top: 12px;
     right: 12px;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 700;
+    letter-spacing: 0.08em;
     color: var(--text-muted);
     background: var(--bg-card);
-    padding: 4px 8px;
-    border-radius: var(--r-sm);
+    padding: 3px 8px;
+    border-radius: 999px;
     border: 1px solid var(--border);
 }
 
@@ -7986,9 +7987,29 @@ body {
  * Tracker card action buttons — clean SVG icons + text, no emoji blocks.
  * ===================================================================== */
 
+.tracker-card-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+/* Tracker action buttons fit themselves to text width — `flex: 1` from
+   the legacy stylesheet was forcing every button to 1/3 of the row, so
+   "Возобновить" was getting clipped. Now they grow to content; if the
+   row can't fit all three, flex-wrap drops the trailing button below. */
+.tracker-card-actions .tracker-action-btn {
+    flex: 1 1 auto;
+    min-width: max-content;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
 .tracker-action-btn {
     border-radius: var(--r-md);
-    padding: 8px 12px;
+    padding: 8px 14px;
     font: 600 12px var(--font);
     letter-spacing: -0.01em;
     color: var(--text);
