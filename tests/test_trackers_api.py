@@ -9,7 +9,13 @@ from fastapi.testclient import TestClient
 from api.database import get_engine, get_session_factory
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import Base, Tracker, TrackerEvent, User
-from scheduler.collector import _recent_events_by_tracker
+from api.services.history_service import QuerySyncResult, TrendReversal
+from scheduler.collector import (
+    _build_tracker_message,
+    _recent_events_by_tracker,
+    _recent_trend_event_tracker_ids,
+    persist_tracker_events,
+)
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -175,4 +181,165 @@ async def test_recent_events_by_tracker_groups_by_id_and_skips_old() -> None:
     # Tracker A's old (48h ago) event must be filtered out by the cutoff.
     assert (2, "price_drop") not in seen[tracker_a.id]
 
+    await engine.dispose()
+
+
+def _trend_signal() -> TrendReversal:
+    return TrendReversal(
+        low_byn=700.0,
+        today_byn=770.0,
+        pre_high_byn=1000.0,
+        decline_pct=30.0,
+        rebound_pct=10.0,
+        low_at=datetime(2026, 4, 5, tzinfo=UTC).date(),
+    )
+
+
+def test_build_tracker_message_includes_trend_block_only_when_not_sent_yet() -> None:
+    sync = QuerySyncResult(stats_count=0, total_results=0)
+    msg = _build_tracker_message(
+        "iphone 13",
+        False,
+        sync,
+        trend_signal=_trend_signal(),
+        trend_already_sent=False,
+    )
+    assert msg is not None
+    assert "Цена снова растёт" in msg
+    assert "30.0" in msg
+    assert "10.0" in msg
+    # Already sent → trend block suppressed → message is None when there
+    # are no other events to report.
+    assert (
+        _build_tracker_message(
+            "iphone 13",
+            False,
+            sync,
+            trend_signal=_trend_signal(),
+            trend_already_sent=True,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_tracker_events_creates_trend_reversal_with_query_metadata() -> None:
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(telegram_user_id=11_111, first_name="Trend")
+        session.add(user)
+        await session.flush()
+        tracker = Tracker(user_id=user.id, query="iphone 13", strict_mode=False)
+        session.add(tracker)
+        await session.flush()
+
+        sync = QuerySyncResult(stats_count=0, total_results=0)
+        events = await persist_tracker_events(
+            session,
+            tracker,
+            sync,
+            ads_by_id={},
+            seen=set(),
+            trend_signal=_trend_signal(),
+            trend_already_sent=False,
+        )
+        await session.commit()
+
+        assert len(events) == 1
+        evt = events[0]
+        assert evt.event_type == "trend_reversal"
+        assert evt.ad_id is None
+        assert evt.parameters is not None
+        assert evt.parameters["low_byn"] == 700.0
+        assert evt.parameters["today_byn"] == 770.0
+        assert evt.parameters["decline_pct"] == 30.0
+        assert evt.parameters["rebound_pct"] == 10.0
+        assert evt.parameters["low_at"] == "2026-04-05"
+        # Title hard-truncates to 255 chars but should fit comfortably here.
+        assert "10.0%" in evt.title
+        assert "30.0%" in evt.title
+
+        # 24h debounce: another call with trend_already_sent=True must not
+        # add a duplicate event.
+        more = await persist_tracker_events(
+            session,
+            tracker,
+            sync,
+            ads_by_id={},
+            seen=set(),
+            trend_signal=_trend_signal(),
+            trend_already_sent=True,
+        )
+        assert more == []
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_recent_trend_event_tracker_ids_within_window() -> None:
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(telegram_user_id=22_222, first_name="Window")
+        session.add(user)
+        await session.flush()
+        tracker_recent = Tracker(user_id=user.id, query="ps5", strict_mode=False)
+        tracker_old = Tracker(user_id=user.id, query="macbook", strict_mode=False)
+        tracker_other_event = Tracker(user_id=user.id, query="iphone", strict_mode=False)
+        session.add_all([tracker_recent, tracker_old, tracker_other_event])
+        await session.flush()
+
+        now = datetime.now(UTC)
+        session.add_all(
+            [
+                TrackerEvent(
+                    tracker_id=tracker_recent.id,
+                    user_id=user.id,
+                    ad_id=None,
+                    query="ps5",
+                    strict_mode=False,
+                    event_type="trend_reversal",
+                    title="Цена ↑",
+                    link="",
+                    created_at=now,
+                ),
+                TrackerEvent(
+                    tracker_id=tracker_old.id,
+                    user_id=user.id,
+                    ad_id=None,
+                    query="macbook",
+                    strict_mode=False,
+                    event_type="trend_reversal",
+                    title="Цена ↑",
+                    link="",
+                    created_at=now - timedelta(hours=48),
+                ),
+                TrackerEvent(
+                    tracker_id=tracker_other_event.id,
+                    user_id=user.id,
+                    ad_id=42,
+                    query="iphone",
+                    strict_mode=False,
+                    event_type="price_drop",
+                    title="Drop",
+                    link="https://www.kufar.by/item/42",
+                    created_at=now,
+                ),
+            ]
+        )
+        await session.commit()
+
+        ids = await _recent_trend_event_tracker_ids(
+            session,
+            [tracker_recent.id, tracker_old.id, tracker_other_event.id],
+        )
+
+    assert ids == {tracker_recent.id}
     await engine.dispose()

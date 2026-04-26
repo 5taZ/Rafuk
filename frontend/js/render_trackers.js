@@ -273,17 +273,29 @@ function createRenderTrackers(context) {
 
         const dropCount = trackerScopedEvents.filter((e) => e.event_type === "price_drop").length;
         const newCount = trackerScopedEvents.filter((e) => e.event_type === "new_listing").length;
+        const trendCount = trackerScopedEvents.filter((e) => e.event_type === "trend_reversal").length;
         const totalCount = trackerScopedEvents.length;
 
         if (elements.trackerEventsBadge) {
             elements.trackerEventsBadge.textContent = totalCount > 0 ? `${totalCount} событий` : "чат + Mini App";
         }
 
-        // Update filter button labels and active states
+        const FILTER_LABELS = {
+            all: "Все",
+            price_drop: "Упали в цене",
+            new_listing: "Новые лоты",
+            trend_reversal: "Разворот ↑",
+        };
+        const FILTER_COUNTS = {
+            all: totalCount,
+            price_drop: dropCount,
+            new_listing: newCount,
+            trend_reversal: trendCount,
+        };
         for (const button of elements.trackerEventFilterButtons) {
             const filter = button.dataset.eventFilter;
-            const count = filter === "all" ? totalCount : filter === "price_drop" ? dropCount : newCount;
-            const label = filter === "all" ? "Все" : filter === "price_drop" ? "Упали в цене" : "Новые лоты";
+            const count = FILTER_COUNTS[filter] ?? 0;
+            const label = FILTER_LABELS[filter] ?? filter;
             button.textContent = count > 0 ? `${label} (${count})` : label;
             button.classList.toggle("active", filter === state.trackerEventFilter);
         }
@@ -346,6 +358,10 @@ function createRenderTrackers(context) {
         // Build event card element — extracted for virtual scrolling
         function buildEventNode(event) {
             const isPriceDrop = event.event_type === "price_drop";
+            const isTrend = event.event_type === "trend_reversal";
+            if (isTrend) {
+                return buildTrendReversalNode(event);
+            }
             const thumbnailNode = event.thumbnail
                 ? domEl("img", {
                     className: "event-thumbnail",
@@ -432,6 +448,76 @@ function createRenderTrackers(context) {
             return card;
         }
 
+        // Trend-reversal events have no listing — they describe the
+        // query-level price trajectory. Render a thumbnail-less card
+        // with the rebound and decline figures.
+        function buildTrendReversalNode(event) {
+            const params = (event.parameters && typeof event.parameters === "object")
+                ? event.parameters
+                : {};
+            const lowByn = Number(params.low_byn ?? 0);
+            const todayByn = Number(params.today_byn ?? event.price_byn ?? 0);
+            const declinePct = Number(params.decline_pct ?? 0);
+            const reboundPct = Number(params.rebound_pct ?? event.delta_byn ?? 0);
+            const rangeText = lowByn > 0 && todayByn > 0
+                ? `${Math.round(lowByn)} → ${Math.round(todayByn)} р.`
+                : "—";
+            const card = domEl(
+                "article",
+                { className: "tracker-event-card trend-reversal" },
+                domEl(
+                    "div",
+                    { className: "event-header" },
+                    domEl("div", { className: "event-thumbnail-placeholder trend", text: "📈" }),
+                    domEl(
+                        "div",
+                        { className: "event-body" },
+                        domEl(
+                            "div",
+                            { className: "event-top-row" },
+                            domEl(
+                                "span",
+                                {
+                                    className: "event-type-badge trend",
+                                    text: "📈 Разворот цены ↑",
+                                },
+                            ),
+                            domEl("span", { className: "event-time", text: formatDate(event.created_at) }),
+                        ),
+                        domEl(
+                            "strong",
+                            { className: "event-title" },
+                            domEl("span", { text: `Цена выросла на ${reboundPct.toFixed(1)}% после падения на ${declinePct.toFixed(1)}%` }),
+                        ),
+                        domEl(
+                            "div",
+                            { className: "event-price-row" },
+                            domEl("span", { className: "event-price mono", text: rangeText }),
+                            domEl("span", { className: "event-delta event-delta--up", text: `+${reboundPct.toFixed(1)}%` }),
+                        ),
+                        domEl("span", { className: "event-tracker-source", text: `🔍 ${event.query}` }),
+                    ),
+                ),
+                domEl(
+                    "div",
+                    { className: "event-actions" },
+                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "open-query" }, text: "Открыть запрос" }),
+                ),
+            );
+            card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
+                if (event.query) {
+                    elements.searchInput.value = event.query;
+                    state.query = event.query;
+                }
+                state.strictSearch = Boolean(event.strict_mode);
+                if (context._hooks?.renderStrictSearch) context._hooks.renderStrictSearch();
+                if (typeof actions.search === "function") {
+                    void actions.search("overview");
+                }
+            });
+            return card;
+        }
+
         const VIRTUAL_LIST_THRESHOLD = 50;
         if (filteredEvents.length > VIRTUAL_LIST_THRESHOLD) {
             container._virtualList = createVirtualList(container, {
@@ -458,14 +544,17 @@ function createRenderTrackers(context) {
         const total = events.length;
         let priceDrops = 0;
         let newListings = 0;
+        let trendReversals = 0;
         for (const event of events) {
             if (event?.event_type === "price_drop") priceDrops += 1;
             else if (event?.event_type === "new_listing") newListings += 1;
+            else if (event?.event_type === "trend_reversal") trendReversals += 1;
         }
         const counts = {
             all: total,
             price_drop: priceDrops,
             new_listing: newListings,
+            trend_reversal: trendReversals,
         };
 
         for (const button of elements.trackerEventFilterButtons) {

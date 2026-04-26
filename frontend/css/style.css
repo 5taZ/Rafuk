@@ -5214,6 +5214,27 @@ body.lp-menu-open {
     background: var(--accent);
 }
 
+.tracker-event-card.trend-reversal::before {
+    background: linear-gradient(90deg, var(--green), var(--amber-400));
+}
+
+.event-thumbnail-placeholder.trend {
+    background: var(--amber-soft);
+    color: var(--amber-400);
+}
+
+.event-type-badge.trend {
+    background: var(--amber-soft);
+    color: var(--amber-400);
+    border: 1px solid var(--amber-soft);
+}
+
+.event-delta.event-delta--up {
+    color: var(--amber-400);
+    background: var(--amber-soft);
+    border-color: var(--amber-soft);
+}
+
 .event-header {
     display: flex;
     align-items: center;

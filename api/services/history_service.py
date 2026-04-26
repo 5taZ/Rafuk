@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import statistics
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -10,6 +11,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models import QueryListingState, QuerySnapshot
 from api.services.aggregator import compute_price_stats, extract_prices, normalize_price_byn
+
+
+@dataclass(slots=True, frozen=True)
+class TrendReversal:
+    """Median-price trend reversal signal: price was falling, now rising again.
+
+    All prices are in BYN. ``decline_pct`` is the size of the original
+    drop, ``rebound_pct`` is how far the latest median has bounced back
+    above the recent low. ``low_at`` is the date the recent low was
+    observed. Use these values to compose the user-facing message.
+    """
+    low_byn: float
+    today_byn: float
+    pre_high_byn: float
+    decline_pct: float
+    rebound_pct: float
+    low_at: date
 
 
 @dataclass(slots=True)
@@ -68,6 +86,73 @@ async def upsert_query_snapshot(
     existing.min_byn = stats.min
     existing.max_byn = stats.max
     return existing
+
+
+def detect_trend_reversal_up(
+    snapshots: list[QuerySnapshot],
+    *,
+    min_days: int = 5,
+    window_days: int = 7,
+    min_decline_pct: float = 3.0,
+    min_rebound_pct: float = 3.0,
+) -> TrendReversal | None:
+    """Detect a "price was falling, now bouncing back up" reversal.
+
+    Buckets snapshots by UTC day, takes the median of each day's
+    snapshots, then looks for the recent-low day in the last 4 buckets.
+    The latest day must have rebounded ``min_rebound_pct`` above the
+    low, and the pre-low high must be at least ``min_decline_pct``
+    above the low. Returns ``None`` when there's not enough data or
+    the trend isn't a reversal — caller can suppress a false alarm by
+    checking for ``None``.
+
+    Why median-of-medians per day: tracker ticks may run every 5-30
+    min, so a single day yields multiple snapshots. We collapse them
+    so a noisy one-off snapshot doesn't drive the signal.
+    """
+    if not snapshots:
+        return None
+    by_date: dict[date, list[float]] = {}
+    for snap in snapshots:
+        if snap.median_byn is None or snap.median_byn <= 0:
+            continue
+        day = snap.snapshot_at.astimezone(UTC).date()
+        by_date.setdefault(day, []).append(float(snap.median_byn))
+    if len(by_date) < min_days:
+        return None
+    daily = sorted(by_date.items())[-window_days:]
+    if len(daily) < min_days:
+        return None
+    series = [statistics.median(values) for _, values in daily]
+    low_idx = min(range(len(series)), key=lambda i: series[i])
+    if low_idx >= len(series) - 1:
+        return None
+    if low_idx < len(series) - 4:
+        return None
+    today = series[-1]
+    low = series[low_idx]
+    if today <= low or low <= 0:
+        return None
+    rebound_pct = (today - low) / low * 100.0
+    if rebound_pct < min_rebound_pct:
+        return None
+    pre_low = series[: low_idx + 1]
+    if len(pre_low) < 2:
+        return None
+    pre_high = max(pre_low[:-1])
+    if pre_high <= low:
+        return None
+    decline_pct = (pre_high - low) / pre_high * 100.0
+    if decline_pct < min_decline_pct:
+        return None
+    return TrendReversal(
+        low_byn=round(low, 2),
+        today_byn=round(today, 2),
+        pre_high_byn=round(pre_high, 2),
+        decline_pct=round(decline_pct, 1),
+        rebound_pct=round(rebound_pct, 1),
+        low_at=daily[low_idx][0],
+    )
 
 
 async def load_listing_states(

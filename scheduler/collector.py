@@ -34,6 +34,9 @@ from api.services.aggregator import (
 )
 from api.services.history_service import (
     QuerySyncResult,
+    TrendReversal,
+    detect_trend_reversal_up,
+    load_query_snapshots,
     snapshot_bucket,
     sync_query_listing_states,
     upsert_query_snapshot,
@@ -127,6 +130,30 @@ async def _recent_event_keys(
     return {(row.ad_id, row.event_type) for row in result if row.ad_id is not None}
 
 
+async def _recent_trend_event_tracker_ids(
+    session: AsyncSession,
+    tracker_ids: list[int],
+    hours: int = 24,
+) -> set[int]:
+    """Return tracker_ids that already received a trend_reversal event in the last *hours*.
+
+    trend_reversal events are query-level (ad_id is null) so they can't
+    reuse the ``_recent_events_by_tracker`` lookup, which keys on
+    (ad_id, event_type) and skips null ad_ids.
+    """
+    if not tracker_ids:
+        return set()
+    cutoff = datetime.now(UTC) - timedelta(hours=hours)
+    result = await session.execute(
+        select(TrackerEvent.tracker_id).where(
+            TrackerEvent.tracker_id.in_(tracker_ids),
+            TrackerEvent.event_type == "trend_reversal",
+            TrackerEvent.created_at >= cutoff,
+        )
+    )
+    return {row.tracker_id for row in result}
+
+
 async def _recent_events_by_tracker(
     session: AsyncSession,
     tracker_ids: list[int],
@@ -162,6 +189,8 @@ async def persist_tracker_events(
     sync_result: QuerySyncResult,
     ads_by_id: dict[int, dict[str, object]] | None = None,
     seen: set[tuple[int, str]] | None = None,
+    trend_signal: TrendReversal | None = None,
+    trend_already_sent: bool = False,
 ) -> list[TrackerEvent]:
     # Skip events that were already recorded recently for this tracker + ad.
     # Callers can pass a pre-computed ``seen`` (from ``_recent_events_by_tracker``)
@@ -220,6 +249,34 @@ async def persist_tracker_events(
             thumbnail=thumbnail,
             seller_type=seller_type,
             region_name=region_name,
+        )
+        session.add(event)
+        created.append(event)
+
+    if trend_signal is not None and not trend_already_sent:
+        title = (
+            f"Цена ↑ {trend_signal.rebound_pct:.1f}% после "
+            f"{trend_signal.decline_pct:.1f}% падения"
+        )[:255]
+        event = TrackerEvent(
+            tracker_id=tracker.id,
+            user_id=tracker.user_id,
+            ad_id=None,
+            query=tracker.query,
+            strict_mode=tracker.strict_mode,
+            event_type="trend_reversal",
+            title=title,
+            link="",
+            price_byn=trend_signal.today_byn,
+            delta_byn=trend_signal.rebound_pct,
+            parameters={
+                "low_byn": trend_signal.low_byn,
+                "today_byn": trend_signal.today_byn,
+                "pre_high_byn": trend_signal.pre_high_byn,
+                "decline_pct": trend_signal.decline_pct,
+                "rebound_pct": trend_signal.rebound_pct,
+                "low_at": trend_signal.low_at.isoformat(),
+            },
         )
         session.add(event)
         created.append(event)
@@ -286,6 +343,8 @@ def _build_tracker_message(
     query: str,
     strict_mode: bool,
     sync_result: QuerySyncResult,
+    trend_signal: TrendReversal | None = None,
+    trend_already_sent: bool = False,
 ) -> str | None:
     lines: list[str] = []
     label = f"{query} [строгий]" if strict_mode else query
@@ -315,6 +374,24 @@ def _build_tracker_message(
                 lines.append(state.link)
         if len(sync_result.price_drops) > 3:
             lines.append(f"• и ещё {len(sync_result.price_drops) - 3}")
+
+    if trend_signal is not None and not trend_already_sent:
+        if lines:
+            lines.append("")
+        if not sync_result.new_listings and not sync_result.price_drops:
+            lines.append(f'Запрос "{label}"')
+        lines.append(
+            f"📈 Цена снова растёт после падения на "
+            f"{trend_signal.decline_pct:.1f}%"
+        )
+        lines.append(
+            f"• минимум: {_format_price_byn(trend_signal.low_byn)} "
+            f"→ сейчас: {_format_price_byn(trend_signal.today_byn)} "
+            f"(+{trend_signal.rebound_pct:.1f}%)"
+        )
+        lines.append(
+            "• выкупайте до повторного роста, если ловили это окно"
+        )
 
     if not lines:
         return None
@@ -362,6 +439,11 @@ async def check_trackers(
         seen_by_tracker = await _recent_events_by_tracker(
             session, [t.id for t in trackers]
         )
+        # Trend events live at the query level (ad_id is null) so they
+        # need their own debounce lookup. Bulk-load once per tick.
+        trend_sent_recently = await _recent_trend_event_tracker_ids(
+            session, [t.id for t in trackers]
+        )
 
         logger.info(
             "Tracker check: %d due (of %d total), %d unique query group(s)",
@@ -389,6 +471,13 @@ async def check_trackers(
                         total_results=len(ads),
                         bucket_at=bucket_at,
                     )
+                    # Flush so the just-upserted snapshot is visible to
+                    # the trend detector below.
+                    await session.flush()
+                    snapshots = await load_query_snapshots(
+                        session, query=search_key, days=10
+                    )
+                    trend_signal = detect_trend_reversal_up(snapshots)
                     sync_result = await sync_query_listing_states(
                         session,
                         query=search_key,
@@ -432,7 +521,14 @@ async def check_trackers(
                             sync_result,
                             ads_by_id,
                         )
-                        message = _build_tracker_message(query, strict_mode, tracker_sync_result)
+                        trend_already_sent = tracker.id in trend_sent_recently
+                        message = _build_tracker_message(
+                            query,
+                            strict_mode,
+                            tracker_sync_result,
+                            trend_signal=trend_signal,
+                            trend_already_sent=trend_already_sent,
+                        )
                         if message:
                             created_events = await persist_tracker_events(
                                 session,
@@ -440,8 +536,12 @@ async def check_trackers(
                                 tracker_sync_result,
                                 ads_by_id,
                                 seen=seen_by_tracker.get(tracker.id, set()),
+                                trend_signal=trend_signal,
+                                trend_already_sent=trend_already_sent,
                             )
                             await session.flush()
+                            if trend_signal is not None and not trend_already_sent:
+                                trend_sent_recently.add(tracker.id)
                             primary_event = created_events[0] if created_events else None
                             keyboard = (
                                 tracker_alert_keyboard(
