@@ -428,12 +428,18 @@ function createAppActions(context) {
         }
     }
 
-    // ── CSV Export ────────────────────────────────────────────────────────
-    async function exportLeadsCSV() {
+    // ── Leads export ─────────────────────────────────────────────────────
+    /**
+     * Download the user's leads as a file. `format` is "csv" (default)
+     * or "xlsx" — the backend renders the same row schema in either
+     * shape, with proper Excel number formatting on .xlsx.
+     */
+    async function exportLeads(format = "csv") {
+        const fmt = format === "xlsx" ? "xlsx" : "csv";
         try {
             const initData = window.Telegram?.WebApp?.initData;
             const headers = initData ? { "X-Telegram-Init-Data": initData } : {};
-            const response = await fetch("/api/v1/leads/export?format=csv", {
+            const response = await fetch(`/api/v1/leads/export?format=${fmt}`, {
                 headers,
             });
             if (!response.ok) {
@@ -443,7 +449,7 @@ function createAppActions(context) {
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = "leads_export.csv";
+            a.download = fmt === "xlsx" ? "leads_export.xlsx" : "leads_export.csv";
             a.click();
             URL.revokeObjectURL(url);
             showToast("Файл загружен");
@@ -451,6 +457,10 @@ function createAppActions(context) {
             showToast(error.message || "Не удалось экспортировать");
         }
     }
+    // Backwards-compat name still used by api_events context
+    // destructure list and any external bindings.
+    const exportLeadsCSV = () => exportLeads("csv");
+    const exportLeadsXLSX = () => exportLeads("xlsx");
 
     // ── Public API (every name the original file exported) ───────────────
 
@@ -500,7 +510,9 @@ function createAppActions(context) {
         loadExpenses,
         createExpense,
         deleteExpense,
+        exportLeads,
         exportLeadsCSV,
+        exportLeadsXLSX,
         loadAIAnalysis: ai.loadAIAnalysis,
         closeAIModal: ai.closeAIModal,
     };

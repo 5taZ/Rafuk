@@ -70,19 +70,40 @@ function createRenderTrackers(context) {
         return safeRender('renderTrackers', () => {
         domClear(elements.trackersList);
 
+        const buildEmpty = context.buildEmptyState;
         if (!hasTelegramInitData()) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Откройте Mini App внутри Telegram, чтобы управлять трекерами.";
-            elements.trackersList.appendChild(note);
+            if (typeof buildEmpty === "function") {
+                elements.trackersList.appendChild(
+                    buildEmpty({
+                        icon: "trackers",
+                        title: "Открывайте Mini App в Telegram",
+                        hint: "Автопоиск работает с Telegram-аккаунтом — только так трекер сможет прислать уведомление о новых лотах.",
+                    })
+                );
+            } else {
+                const note = document.createElement("p");
+                note.className = "tracker-empty";
+                note.textContent = "Откройте Mini App внутри Telegram, чтобы управлять трекерами.";
+                elements.trackersList.appendChild(note);
+            }
             return;
         }
 
         if (!state.trackers.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Активных трекеров пока нет.";
-            elements.trackersList.appendChild(note);
+            if (typeof buildEmpty === "function") {
+                elements.trackersList.appendChild(
+                    buildEmpty({
+                        icon: "trackers",
+                        title: "Создайте первый автопоиск",
+                        hint: "Сохраните любой запрос как трекер — и Telegram пришлёт уведомление, когда появятся новые объявления или цена пойдёт вниз.",
+                    })
+                );
+            } else {
+                const note = document.createElement("p");
+                note.className = "tracker-empty";
+                note.textContent = "Активных трекеров пока нет.";
+                elements.trackersList.appendChild(note);
+            }
             return;
         }
 
@@ -297,19 +318,28 @@ function createRenderTrackers(context) {
         });
 
         if (!filteredEvents.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-event-empty";
+            const buildEmpty = context.buildEmptyState;
+            let title;
+            let hint;
             if (state.trackerEventFilterTrackerId) {
                 const tracker = state.trackers.find((t) => t.id === state.trackerEventFilterTrackerId);
-                note.textContent = tracker
-                    ? `Нет событий для "${tracker.query}".`
-                    : "По этому фильтру событий пока нет.";
+                title = tracker ? `Тихо по запросу "${tracker.query}"` : "Тихо по этому трекеру";
+                hint = "Дайте трекеру несколько часов — Kufar обновляется неравномерно.";
             } else if (state.trackerEventFilter === "all") {
-                note.textContent = "Событий пока нет. Они появятся после первой проверки планировщика.";
+                title = "Событий пока нет";
+                hint = "Они появятся после первой проверки планировщика. Свежие лоты и падения цен прилетят в этот раздел и в чат бота.";
             } else {
-                note.textContent = "По этому фильтру событий пока нет.";
+                title = "По этому фильтру пусто";
+                hint = "Переключитесь на «Все», чтобы увидеть остальные сигналы.";
             }
-            container.appendChild(note);
+            if (typeof buildEmpty === "function") {
+                container.appendChild(buildEmpty({ icon: "events", title, hint }));
+            } else {
+                const note = document.createElement("p");
+                note.className = "tracker-event-empty";
+                note.textContent = `${title}. ${hint}`;
+                container.appendChild(note);
+            }
             return;
         }
 
