@@ -143,19 +143,26 @@ def test_listing_detail_loaders_share_stale_response_guard() -> None:
     assert "state._comparisonRequestId" in listings_js
 
 
-def test_telegram_theme_params_bridged_to_css_variables() -> None:
-    """Telegram exposes the user's client palette via WebApp.themeParams.
-    We bridge those colours onto our CSS custom properties so the Mini
-    App visually blends into the surrounding chat (custom themes,
-    AMOLED, premium gradients), and we listen for themeChanged so the
-    binding updates live."""
+def test_theme_init_does_not_inherit_telegram_palette_colours() -> None:
+    """The Mini App keeps its own palette so the brand stays consistent
+    across Telegram clients with custom themes / AMOLED / Premium
+    gradients. We mirror Telegram's coarse dark/light preference at
+    startup but never bridge the per-colour theme params (bg_color,
+    text_color, button_color, …) onto our CSS variables."""
     text = (JS_DIR / "app_core.js").read_text(encoding="utf-8")
-    assert "applyTelegramThemeColors" in text
-    # Required Telegram theme keys must be honoured.
-    for key in ("bg_color", "text_color", "hint_color", "button_color"):
-        assert key in text, f"themeParams.{key} not bridged"
-    # Live updates on theme changes.
+    # We DO honour the binary dark/light hint…
+    assert "colorScheme" in text
     assert '"themeChanged"' in text
-    # Manual toggle should clear the Telegram-set inline overrides so the
-    # user choice wins.
-    assert "removeProperty" in text
+    # …but we DO NOT pull individual palette colours.
+    forbidden_keys = (
+        "themeParams.bg_color",
+        "themeParams.text_color",
+        "themeParams.button_color",
+        "themeParams.hint_color",
+        "applyTelegramThemeColors",
+    )
+    for needle in forbidden_keys:
+        assert needle not in text, (
+            f"theme integration leaked back: {needle} must not be referenced — "
+            "the Mini App keeps its own palette"
+        )

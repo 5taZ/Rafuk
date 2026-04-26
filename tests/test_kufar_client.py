@@ -157,3 +157,34 @@ async def test_search_all_ads_collects_all_pages(mock_settings: MagicMock) -> No
     assert result["total"] == 3
     assert result["fetched_count"] == 3
     assert [ad["ad_id"] for ad in result["ads"]] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_search_respects_request_delay(
+    ok_response: MagicMock, mock_settings: MagicMock
+) -> None:
+    """Two concurrent search() calls used to race on _last_request_time:
+    both could observe the previous timestamp, both decide they didn't
+    need to wait, and fire requests inside the configured rate-limit
+    window. The asyncio.Lock around _enforce_delay serialises the
+    timestamp dance, so a second concurrent call always sleeps for
+    (close to) `kufar_request_delay` after the first."""
+    import asyncio
+    import time
+
+    mock_settings.kufar_request_delay = 0.05  # 50ms — measurable but quick
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=ok_response):
+        client = KufarClient(mock_settings)
+        start = time.monotonic()
+        await asyncio.gather(
+            client.search(query="a"),
+            client.search(query="b"),
+            client.search(query="c"),
+        )
+        elapsed = time.monotonic() - start
+
+    # 3 calls × 50ms spacing = ≥100ms total (first fires immediately,
+    # the other two are spaced 50ms apart). Allow 90ms slack for CI.
+    assert elapsed >= 0.090, (
+        f"concurrent calls completed in {elapsed * 1000:.0f}ms — delay not enforced"
+    )

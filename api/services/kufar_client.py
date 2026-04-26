@@ -26,6 +26,15 @@ class KufarClient:
         self._http_client = http_client
         self._owns_client = http_client is None
         self._last_request_time: float = 0.0
+        # Serialises _enforce_delay so concurrent search() calls (e.g.
+        # the parallel category-totals fan-out) read+write
+        # _last_request_time atomically. Without this two coroutines
+        # could both observe the previous timestamp, both decide they
+        # don't need to wait, and fire requests inside Kufar's
+        # configured rate-limit window. The semaphore in
+        # query_pipeline already caps concurrency to 2, but the lock
+        # makes the spacing correct regardless of how many callers race.
+        self._delay_lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
@@ -37,12 +46,15 @@ class KufarClient:
             await self._http_client.aclose()
 
     async def _enforce_delay(self) -> None:
-        loop = asyncio.get_running_loop()
-        elapsed = loop.time() - self._last_request_time
         delay = self._settings.kufar_request_delay
-        if elapsed < delay:
-            await asyncio.sleep(delay - elapsed)
-        self._last_request_time = loop.time()
+        if delay <= 0:
+            return
+        async with self._delay_lock:
+            loop = asyncio.get_running_loop()
+            elapsed = loop.time() - self._last_request_time
+            if elapsed < delay:
+                await asyncio.sleep(delay - elapsed)
+            self._last_request_time = loop.time()
 
     async def search(
         self,
