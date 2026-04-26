@@ -23,7 +23,11 @@ from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.history_service import snapshot_bucket, upsert_query_snapshot
 from api.services.kufar_client import KufarClient
-from api.services.query_pipeline import convert_price_stats, load_query_dataset
+from api.services.query_pipeline import (
+    convert_price_stats,
+    fetch_category_totals,
+    load_query_dataset,
+)
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
@@ -68,6 +72,27 @@ async def get_price_stats(
     converted.pop("count", None)
     insights = analyze_query_text(query)
     category_distribution = extract_category_distribution(dataset.ads)
+
+    # Override per-category counts with the real `total` Kufar reports
+    # for cat=<id> queries (mirrors what kufar.by sidebar shows).
+    # Skips silently if Kufar is unreachable — chips fall back to the
+    # local distribution count.
+    if category_distribution and category is None:
+        cat_ids = [int(c["id"]) for c in category_distribution if c.get("id") is not None]
+        totals_by_id = await fetch_category_totals(
+            query=query,
+            currency=currency,
+            client=kufar_client,
+            category_ids=cat_ids,
+        )
+        for entry in category_distribution:
+            real_total = totals_by_id.get(int(entry["id"]))
+            if real_total is not None:
+                entry["count"] = real_total
+        # Re-sort by the (possibly enlarged) counts so the most popular
+        # category stays on top.
+        category_distribution.sort(key=lambda c: c["count"], reverse=True)
+
     payload = PriceStatsResponse(
         query=query,
         currency=currency,

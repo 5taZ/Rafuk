@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import statistics
 from dataclasses import dataclass, field
@@ -12,7 +13,6 @@ from api.services.aggregator import (
     apply_search_mode,
     compute_price_stats,
     extract_prices,
-    get_category_id,
 )
 from api.services.currency_service import CurrencyService
 
@@ -39,6 +39,9 @@ SEGMENT_NAMES = ("new_private", "new_shop", "used_private", "used_shop")
 class SupportsSearchAllAds(Protocol):
     async def search_all_ads(self, **kwargs: Any) -> dict[str, Any]: ...
     async def aclose(self) -> None: ...
+    # Optional: per-category totals call. Not all test fakes implement
+    # it — `fetch_category_totals` checks for the attribute at runtime.
+    async def search(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 class SupportsParallelSearch(Protocol):
@@ -187,18 +190,33 @@ async def load_query_dataset_context(
 ) -> QueryDatasetContext:
     """Build the visible/reference dataset pair for a query.
 
-    Important invariant: when a category filter is active, the visible
-    listings are filtered *client-side* from the unfiltered Kufar
-    response. We do NOT re-query Kufar with `category=` because the
-    Kufar API silently widens its match rules under category-scoped
-    queries — that produces, for example, 11 "Audi Q7 4L" ads under
-    "Легковые авто" while the unfiltered dataset has only 5 ads in
-    that category. By filtering locally we keep the category chip
-    count and the listings count in lockstep.
+    When a category filter is active we issue a real `cat=` query to
+    Kufar so the visible listings + total match exactly what the
+    kufar.by sidebar shows for that category. (For example, "Audi Q7
+    4L" in "Легковые авто" → Kufar returns 11 ads, even though only
+    5 ads in the unfiltered response carry that category id.) The
+    reference dataset stays unfiltered when `reference_context` is
+    `base_query` so price comparisons can still use the broader
+    market context.
     """
     owns_client = client is None and client_factory is not None
     if client is None and client_factory is not None:
         client = client_factory(settings)  # type: ignore[misc]
+
+    if reference_context != "base_query" or category is None:
+        try:
+            dataset = await load_query_dataset(
+                query=query,
+                currency=currency,
+                strict_search=strict_search,
+                settings=settings,
+                client=client,
+                category=category,
+            )
+        finally:
+            if owns_client and client is not None:
+                await client.aclose()
+        return QueryDatasetContext(visible=dataset, reference=dataset)
 
     try:
         reference_dataset = await load_query_dataset(
@@ -208,34 +226,71 @@ async def load_query_dataset_context(
             settings=settings,
             client=client,
         )
+        visible_dataset = await load_query_dataset(
+            query=query,
+            currency=currency,
+            strict_search=strict_search,
+            settings=settings,
+            category=category,
+            client=client,
+        )
     finally:
         if owns_client and client is not None:
             await client.aclose()
 
-    if category is None:
-        return QueryDatasetContext(visible=reference_dataset, reference=reference_dataset)
+    return QueryDatasetContext(visible=visible_dataset, reference=reference_dataset)
 
-    # Local filter: keep only ads whose category_id matches the chip
-    # the user picked. Mirror the same numbers the chip badge shows.
-    filtered_ads = [ad for ad in reference_dataset.ads if get_category_id(ad) == category]
-    visible_response = {
-        **reference_dataset.response,
-        "ads": filtered_ads,
-        "total": len(filtered_ads),
-    }
-    visible_dataset = QueryDataset(
-        query=query,
-        currency=currency,
-        strict_search=strict_search,
-        response=visible_response,
-        ads=filtered_ads,
+
+async def fetch_category_totals(
+    *,
+    query: str,
+    currency: str,
+    client: SupportsSearchAllAds,
+    category_ids: list[int],
+) -> dict[int, int]:
+    """Fetch the real per-category total from Kufar for each id.
+
+    The kufar.by sidebar shows one count per category and that count
+    is the `total` field returned by /search-rendered-paginated when
+    you pass `cat=<id>` in the query string. We mirror that by hitting
+    the same endpoint with size=1 in parallel — one request per id —
+    and read `total`. Failures degrade to 0 silently so the chip just
+    falls back to the local distribution count.
+
+    Skips quietly if the client doesn't expose a low-level `.search()`
+    method (test fakes that only stub `search_all_ads`).
+    """
+    if not category_ids:
+        return {}
+    search_method = getattr(client, "search", None)
+    if not callable(search_method):
+        return {}
+
+    async def _fetch_one(cat_id: int) -> tuple[int, int | None]:
+        try:
+            resp = await search_method(
+                query=query,
+                size=1,
+                currency=currency,
+                category=cat_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — log + degrade
+            logger.warning("Kufar category-total fetch failed cat=%s: %s", cat_id, exc)
+            return cat_id, None
+        total = resp.get("total") if isinstance(resp, dict) else None
+        if isinstance(total, int) and total >= 0:
+            return cat_id, total
+        return cat_id, None
+
+    results = await asyncio.gather(
+        *[_fetch_one(cid) for cid in category_ids],
+        return_exceptions=True,
     )
-
-    if reference_context == "base_query":
-        return QueryDatasetContext(visible=visible_dataset, reference=reference_dataset)
-    # `current` keeps reference == visible (price comparisons happen
-    # only inside the chosen category).
-    return QueryDatasetContext(visible=visible_dataset, reference=visible_dataset)
+    out: dict[int, int] = {}
+    for r in results:
+        if isinstance(r, tuple) and r[1] is not None:
+            out[r[0]] = r[1]
+    return out
 
 
 async def load_segment_datasets(
