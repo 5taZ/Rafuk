@@ -170,7 +170,7 @@ cb2d1ba Initial UI-only merge of Watchlist + Покупки
   `meeting_checklist`, `negotiation_tips`, `selling_points`,
   `photo_tips`, `negotiation_playbook`, `quick_condition.notes`.
   Cross-field rule: anything in `condition.notes` is removed from
-  `watch_out`/`red_flags`. See `_dedupe_analysis_payload` in
+  `watch_out`/`red_flags`. See `dedupe_analysis_payload` in
   `api/services/ai_service.py`.
 
 ---
@@ -316,7 +316,7 @@ api/
                                KUFAR_CATEGORY_FAMILY map
     ai_service.py              AIService class (analyze, generate,
                                quick_condition) + dedupe helpers
-                               (_dedupe_analysis_payload etc.)
+                               (dedupe_analysis_payload etc.)
     workflow_store.py          ensure_user, upsert_lead (race-safe)
     kufar_client.py            HTTP client for api.kufar.by
 

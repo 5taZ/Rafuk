@@ -24,6 +24,7 @@ from api.services.ai_service import (
     AIService,
     _clean_photo_notes,
     _normalize_condition_label,
+    dedupe_analysis_payload,
     detect_category,
     sanitize_user_text,
 )
@@ -745,6 +746,46 @@ def test_complete_analysis_sections_restores_full_sections() -> None:
     assert len(result["meeting_checklist"]) >= 4
     assert len(result["negotiation_tips"]) >= 3
     assert len(result["summary"]) > 90
+
+
+def test_dedupe_analysis_payload_collapses_paraphrase_after_photo_merge() -> None:
+    # Reproduces the duplicate "Лакокрасочное покрытие имеет хороший блеск"
+    # bug: AI's condition.notes paraphrase the same observation as the
+    # original photo_condition_notes, and a final dedupe pass should
+    # collapse them.
+    payload = {
+        "condition": {
+            "label": "Хорошее",
+            "confidence": 0.85,
+            "notes": [
+                "Автомобиль выглядит чистым и ухоженным на фотографиях",
+                "Лакокрасочное покрытие имеет хороший блеск, "
+                "видимых крупных повреждений на кузове не обнаружено",
+                "Автомобиль выглядит чистым и ухоженным",
+                "Лакокрасочное покрытие имеет хороший блеск",
+            ],
+        },
+        "watch_out": [
+            {
+                "point": "Нужно перепроверить по фото",
+                "why": "Лакокрасочное покрытие имеет хороший блеск",
+            },
+            {"point": "Профиль продавца", "why": "Магазин, кредит, рассрочка."},
+        ],
+        "red_flags": [],
+    }
+
+    cleaned = dedupe_analysis_payload(payload)
+
+    notes = cleaned["condition"]["notes"]
+    assert len(notes) == 2, notes
+    # Longer, more informative wording wins.
+    assert any("крупных повреждений" in n for n in notes)
+    assert any("на фотографиях" in n for n in notes)
+    # watch_out item that just echoes a condition note is dropped, the
+    # informative seller-profile note stays.
+    assert len(cleaned["watch_out"]) == 1
+    assert cleaned["watch_out"][0]["point"] == "Профиль продавца"
 
 
 def test_complete_analysis_sections_adds_resale_potential_fallback() -> None:

@@ -1172,7 +1172,11 @@ _CONDITION_RISKS_PROMPT_TEMPLATE = """\
 - НЕ пиши общие фразы — каждый пункт — действие или факт.
 - ОБЯЗАТЕЛЬНО заполни ВСЕ секции JSON.
 - condition.notes — МИНИМУМ 2 конкретных наблюдения по фото или описанию.
+  Если в контексте есть БЫСТРЫЙ ФОТО-ОСМОТР с наблюдениями — НЕ повторяй их
+  дословно и не пересказывай чуть длиннее. Добавляй НОВЫЕ детали (углы, фон,
+  комплектация, износ). Один и тот же факт ("ЛКП имеет блеск") — только один раз.
 - watch_out — МИНИМУМ 3 конкретных дефекта/риска с обоснованием. Каждый пункт: point и why.
+  Не повторяй то, что уже стоит в condition.notes.
 - meeting_checklist — МИНИМУМ 5 пошаговых проверок при встрече, специфичных для категории.
 - red_flags — только реальные признаки мошенничества/проблем, не очевидные вещи.
   Максимум 3 коротких пункта, самые важные сначала.
@@ -1495,6 +1499,9 @@ def _is_paraphrase(short: str, longer: str, *, min_prefix: int = 25) -> bool:
     Used to drop "Автомобиль выглядит чистым и ухоженным" when we
     already kept "Автомобиль выглядит чистым и ухоженным на всех 18
     фото" — it's the same observation, just truncated.
+
+    The prefix match must end on a word boundary so we don't collapse
+    different words that share a stem (e.g. "покрытие" vs "покрытием").
     """
     if not short or not longer:
         return False
@@ -1502,7 +1509,14 @@ def _is_paraphrase(short: str, longer: str, *, min_prefix: int = 25) -> bool:
         return False
     if len(short) < min_prefix:
         return short == longer
-    return longer.startswith(short)
+    if not longer.startswith(short):
+        return False
+    if len(longer) == len(short):
+        return True
+    next_char = longer[len(short)]
+    # Allow whitespace, punctuation, and common separators; reject letters/digits
+    # which would mean the prefix cuts a word in half.
+    return not next_char.isalnum()
 
 
 def _dedupe_text_list(items: list, *, seen: set[str] | None = None) -> list:
@@ -1602,7 +1616,7 @@ def _dedupe_listing_payload(result: dict) -> dict:
     return result
 
 
-def _dedupe_analysis_payload(merged: dict) -> dict:
+def dedupe_analysis_payload(merged: dict) -> dict:
     """Collapse paraphrase duplicates inside the AI analysis payload.
 
     Cross-field rule: anything already covered in ``condition.notes``
@@ -1924,7 +1938,7 @@ class AIService:
         merged.setdefault("red_flags", [])
         merged.setdefault("recommendation", None)
         merged.setdefault("summary", "")
-        return _dedupe_analysis_payload(merged)
+        return dedupe_analysis_payload(merged)
 
     async def generate_listing(
         self,

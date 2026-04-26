@@ -49,6 +49,7 @@ from api.services.ai_marketplace import (
 )
 from api.services.ai_service import (
     CATEGORY_HINTS,
+    dedupe_analysis_payload,
     detect_category,
     get_ai_service,
     normalize_condition_label,
@@ -661,6 +662,12 @@ async def _run_analysis(
             market_q1=q1,
             market_q3=q3,
         )
+        # complete_analysis_sections re-merges photo_condition_notes into
+        # condition.notes (and into watch_out via _build_fallback_watch_out)
+        # using only exact-match dedup. The AI often paraphrases the same
+        # observation ("ЛКП имеет блеск" + "ЛКП имеет блеск, без вмятин"),
+        # so we re-run the paraphrase-aware dedupe here as a final pass.
+        result = dedupe_analysis_payload(result)
 
         resale_potential = _build_resale_potential(result.get("resale_potential"))
 
@@ -697,7 +704,7 @@ async def _run_analysis(
         await _update_task(cache, task_id, progress=95, stage="building_response")
 
         # Cache result (use cache passed from endpoint)
-        cache_key = f"ai_analysis:v4:{payload.ad_id}:{payload.query}:cat={payload.category}"
+        cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
         serialized = response.model_dump(by_alias=True)
         await cache.set_json(cache_key, serialized, ttl=_task_ttl())
 
@@ -749,6 +756,9 @@ async def _run_analysis(
                 photo_condition_notes=photo_condition_notes or [],
                 red_flags=fallback_red_flags,
             )
+            # Cross-field dedupe so watch_out items echoing photo_condition_notes
+            # don't render the same observation twice.
+            fallback_result = dedupe_analysis_payload(fallback_result)
             fallback_market_ctx = build_market_context_fallback(
                 price_byn=price_byn,
                 is_negotiable_price=is_negotiable_price,
@@ -779,7 +789,7 @@ async def _run_analysis(
                 fallback_result.get("resale_potential")
             )
             # Cache the fallback result too
-            cache_key = f"ai_analysis:v4:{payload.ad_id}:{payload.query}:cat={payload.category}"
+            cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
             fallback_serialized = response.model_dump(by_alias=True)
             await cache.set_json(cache_key, fallback_serialized, ttl=fallback_cache_ttl)
             await _update_task(
@@ -842,7 +852,7 @@ async def analyze_listing(
 
     # Check cache BEFORE rate limit — cached results return immediately
     cache = get_cache(request)
-    cache_key = f"ai_analysis:v4:{payload.ad_id}:{payload.query}:cat={payload.category}"
+    cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
     cached = await cache.get_json(cache_key)
     if cached:
         return {"task_id": None, "cached": True, "result": cached}
