@@ -85,3 +85,33 @@ def test_lead_and_watchlist_mutations_have_inflight_guard() -> None:
     # promoteWatchlistToLead and deleteWatchlistItem both guard by row id.
     assert "_inflightWatchId.has(item.id)" in watchlist_js
     assert "_inflightWatchId.has(watchlistId)" in watchlist_js
+
+
+def test_unified_item_card_replaces_lead_and_watchlist_builders() -> None:
+    """Roadmap milestone: lead/watchlist surfaces share one builder.
+    The wrappers stay only as thin aliases for the unified function."""
+    text = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+    # The unified entry point exists.
+    assert "function buildItemCard(" in text
+    # The wrappers became thin one-liners delegating to it.
+    assert 'buildItemCard(lead, { mode: "lead" })' in text
+    assert 'buildItemCard(item, { mode: "watching"' in text
+    # buildItemCard is exported alongside the legacy names.
+    assert "buildItemCard," in text
+
+
+def test_make_swipeable_respects_reduced_motion_and_haptics() -> None:
+    """Swipe-to-promote on watching cards must be opt-in by motion
+    preference and trigger Telegram haptics when committing the action."""
+    text = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    assert "function makeSwipeable" in text
+    # Skip the gesture entirely under reduced-motion.
+    assert "(prefers-reduced-motion: reduce)" in text
+    # Haptic feedback when the swipe commits.
+    assert "HapticFeedback" in text
+    assert "impactOccurred" in text
+    # Wired up in the watching branch of the unified builder.
+    builder_text = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+    assert "makeSwipeable(card" in builder_text
+    assert "promoteWatchlistToLead" in builder_text
+    assert "deleteWatchlistItem" in builder_text

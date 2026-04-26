@@ -217,229 +217,174 @@ function createRenderCardBuilders(context) {
         return row;
     }
 
-    function buildLeadNode(lead) {
-        const isSold = lead.status === "sold";
-        const isMissing = lead.market_status === "missing";
-        const card = domEl("article", {
-            className: `lead-card status-${lead.status}`,
-            attrs: { "data-lead-id": lead.id },
-        });
+    /* ─────────────────────────────────────────────────────────────────
+     * Unified item card — watchlist (`mode='watching'`) and lead
+     * (`mode='lead'`) share the same lead_items row after the
+     * 20260427_0001 merge, so they share a single builder. The two
+     * surfaces diverge in three places only:
+     *   1. price source (lead.price_byn vs item.current_price_byn)
+     *   2. middle "fields" section (buy/sold inputs vs note input)
+     *   3. action row (confirm/cancel/close-deal vs detail/promote/delete)
+     * Everything else — outer wrapper, media + title, missing banner,
+     * profit/potential block, Kufar link — is shared via small helpers.
+     * ─────────────────────────────────────────────────────────────────
+     */
 
-        const priceBynRaw = lead.price_byn ? Number(lead.price_byn) : null;
-        const buyPriceBynRaw = lead.buy_price_byn ? Number(lead.buy_price_byn) : null;
-        const soldPriceBynRaw = lead.sold_price_byn ? Number(lead.sold_price_byn) : null;
-        const priceByn = priceBynRaw ? Math.round(priceBynRaw) : null;
+    /** Hash a numeric or null value into rounded int or null. */
+    function _roundOrNull(value) {
+        const n = value != null ? Number(value) : null;
+        return n && n > 0 ? Math.round(n) : null;
+    }
 
-        let profitNode = null;
-        if (buyPriceBynRaw && soldPriceBynRaw) {
-            const profitRaw = soldPriceBynRaw - buyPriceBynRaw;
-            const profitPercent = buyPriceBynRaw > 0 ? ((profitRaw / buyPriceBynRaw) * 100).toFixed(0) : "0";
-            const profitSign = profitRaw >= 0 ? "+" : "";
-            const profitClass = profitRaw >= 0 ? "profit-positive" : "profit-negative";
-            if (isSold) {
-                profitNode = domEl("div", {
-                    className: `lead-financial-item ${profitClass}`,
-                    text: `Результат: ${profitSign}${Math.round(profitRaw)} BYN (${profitSign}${profitPercent}%)`,
-                });
-            } else if (lead.status === "new" || lead.status === "bought") {
-                profitNode = domEl("div", {
-                    className: `lead-financial-item ${profitClass}`,
-                    text: `Потенциал: ${profitSign}${Math.round(profitRaw)} BYN (${profitSign}${profitPercent}%)`,
-                });
-            }
+    /** Build a shared "missing" banner with a mode-appropriate message. */
+    function _buildMissingBanner(mode) {
+        const text =
+            mode === "watching"
+                ? "Объявление снято с продажи. Будет удалено автоматически через несколько дней."
+                : "Объявление снято с продажи";
+        return domEl("div", { className: "watchlist-missing-banner", text });
+    }
+
+    /** Compute and render the price-delta pill ("📉 -120 BYN (-8%)"). */
+    function _buildPriceDeltaNode(item) {
+        if (item.price_delta_byn == null || Math.abs(item.price_delta_byn) <= 0.5) {
+            return null;
         }
+        const deltaNum = Math.round(item.price_delta_byn);
+        const className = deltaNum < 0 ? "down" : deltaNum > 0 ? "up" : "neutral";
+        const sign = deltaNum > 0 ? "+" : "";
+        const arrow = deltaNum < 0 ? "📉" : deltaNum > 0 ? "📈" : "≈";
+        const percent =
+            item.price_delta_percent != null ? ` (${sign}${item.price_delta_percent}%)` : "";
+        return domEl("span", {
+            className: `watchlist-price-delta ${className}`,
+            text: `${arrow} ${sign}${deltaNum} BYN${percent}`,
+        });
+    }
 
-        const buyPriceInput = domEl("input", {
+    /** Watchlist potential profit (median - current) — null in lead mode. */
+    function _buildPotentialProfitNode(item) {
+        const current = item.current_price_byn || item.initial_price_byn;
+        if (!item.market_median_byn || !current || Number(item.market_median_byn) <= 0) {
+            return null;
+        }
+        const profitByn = Number(item.market_median_byn) - Number(current);
+        const profitPercent = current > 0 ? Math.round((profitByn / Number(current)) * 100) : 0;
+        const className = profitByn >= 0 ? "profit-positive" : "profit-negative";
+        const sign = profitByn >= 0 ? "+" : "";
+        return domEl("span", {
+            className: `watchlist-profit ${className}`,
+            text: `Потенциал: ${sign}${Math.round(profitByn)} BYN (${sign}${profitPercent}%)`,
+        });
+    }
+
+    /** Lead profit/potential ("Результат" if sold, "Потенциал" if active). */
+    function _buildLeadProfitNode(lead) {
+        const buy = _roundOrNull(lead.buy_price_byn);
+        const sold = _roundOrNull(lead.sold_price_byn);
+        if (!buy || !sold) return null;
+        const profitRaw = sold - buy;
+        const percent = buy > 0 ? ((profitRaw / buy) * 100).toFixed(0) : "0";
+        const sign = profitRaw >= 0 ? "+" : "";
+        const cls = profitRaw >= 0 ? "profit-positive" : "profit-negative";
+        const isSold = lead.status === "sold";
+        const showPotential = !isSold && (lead.status === "new" || lead.status === "bought");
+        if (!isSold && !showPotential) return null;
+        const label = isSold ? "Результат" : "Потенциал";
+        return domEl("div", {
+            className: `lead-financial-item ${cls}`,
+            text: `${label}: ${sign}${Math.round(profitRaw)} BYN (${sign}${percent}%)`,
+        });
+    }
+
+    /** Market badge ("Падение цены", "Пропало (3д)") — watchlist only. */
+    function _buildMarketBadge(item, marketLabel) {
+        if (!item.market_status || !["price_drop", "missing"].includes(item.market_status)) {
+            return null;
+        }
+        let missingAgeText = "";
+        if (item.market_status === "missing" && item.missing_since_at) {
+            const missingDate = new Date(item.missing_since_at);
+            const diffMs = Date.now() - missingDate.getTime();
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            if (diffDays >= 1) missingAgeText = ` (${diffDays}д)`;
+        }
+        return domEl("span", {
+            className: `market-badge ${item.market_status}`,
+            text: `${marketLabel(item.market_status)}${missingAgeText}`,
+        });
+    }
+
+    /** Lead-specific buy/sold price input fields. */
+    function _buildLeadFields(lead) {
+        const priceByn = _roundOrNull(lead.price_byn);
+        const buyInput = domEl("input", {
             type: "text",
             attrs: { min: "0", placeholder: "цена покупки" },
             dataset: { role: "buy-price" },
         });
-        buyPriceInput.value = lead.buy_price_byn ?? "";
-        buyPriceInput.addEventListener("input", (e) => {
-            const nextValue = e.target.value.replace(/[^\d]/g, "");
-            if (nextValue !== e.target.value) e.target.value = nextValue;
+        buyInput.value = lead.buy_price_byn ?? "";
+        buyInput.addEventListener("input", (e) => {
+            const next = e.target.value.replace(/[^\d]/g, "");
+            if (next !== e.target.value) e.target.value = next;
         });
 
-        const soldPriceInput = domEl("input", {
+        const soldInput = domEl("input", {
             type: "text",
             attrs: { min: "0", placeholder: "цена продажи" },
             dataset: { role: "sold-price" },
         });
-        soldPriceInput.value = lead.sold_price_byn ?? "";
-        soldPriceInput.addEventListener("input", (e) => {
-            const nextValue = e.target.value.replace(/[^\d]/g, "");
-            if (nextValue !== e.target.value) e.target.value = nextValue;
+        soldInput.value = lead.sold_price_byn ?? "";
+        soldInput.addEventListener("input", (e) => {
+            const next = e.target.value.replace(/[^\d]/g, "");
+            if (next !== e.target.value) e.target.value = next;
         });
 
-        const fillBuyPriceButton = domEl("button", {
+        const fillBuy = domEl("button", {
             className: "lead-field-chip",
             type: "button",
             dataset: { role: "fill-buy-price" },
             text: priceByn ? `${priceByn}` : "Договорная",
             attrs: !priceByn ? { disabled: true } : {},
         });
-        fillBuyPriceButton.addEventListener("click", () => {
+        fillBuy.addEventListener("click", () => {
             if (priceByn) {
-                buyPriceInput.value = String(priceByn);
-                buyPriceInput.focus();
+                buyInput.value = String(priceByn);
+                buyInput.focus();
             }
         });
 
-        card.appendChild(
-            domFragment(
-                isMissing ? domEl("div", { className: "watchlist-missing-banner", text: "Объявление снято с продажи" }) : null,
+        return domEl(
+            "div",
+            { className: "lead-card-fields" },
+            domEl(
+                "label",
+                { className: "lead-field" },
+                domEl("span", { className: "lead-field-label", text: "Купил за" }),
                 domEl(
                     "div",
-                    { className: `lead-card-top${isMissing ? " is-missing" : ""}` },
-                    buildMediaNode(
-                        "watchlist-thumb",
-                        "watchlist-thumb-placeholder",
-                        "Нет фото",
-                        lead.thumbnail,
-                        lead.title || "",
-                    ),
-                    domEl(
-                        "div",
-                        { className: "lead-card-body" },
-                        domEl(
-                            "div",
-                            { className: "lead-card-title-row" },
-                            domEl("strong", { className: "lead-card-title", text: lead.title }),
-                        ),
-                        domEl("span", { className: "lead-card-price mono", text: priceByn ? `${priceByn} BYN` : "без цены" }),
-                        isMissing ? domEl("span", { className: "market-badge missing", text: "Пропало" }) : null,
-                        profitNode,
-                    ),
+                    { className: "lead-field-wrap" },
+                    buyInput,
+                    fillBuy,
+                    domEl("span", { className: "unit", text: "BYN" }),
                 ),
+            ),
+            domEl(
+                "label",
+                { className: "lead-field" },
+                domEl("span", { className: "lead-field-label", text: "Продал за" }),
                 domEl(
                     "div",
-                    { className: "lead-card-fields" },
-                    domEl(
-                        "label",
-                        { className: "lead-field" },
-                        domEl("span", { className: "lead-field-label", text: "Купил за" }),
-                        domEl(
-                            "div",
-                            { className: "lead-field-wrap" },
-                            buyPriceInput,
-                            fillBuyPriceButton,
-                            domEl("span", { className: "unit", text: "BYN" }),
-                        ),
-                    ),
-                    domEl(
-                        "label",
-                        { className: "lead-field" },
-                        domEl("span", { className: "lead-field-label", text: "Продал за" }),
-                        domEl(
-                            "div",
-                            { className: "lead-field-wrap" },
-                            soldPriceInput,
-                            domEl("span", { className: "unit", text: "BYN" }),
-                        ),
-                    ),
+                    { className: "lead-field-wrap" },
+                    soldInput,
+                    domEl("span", { className: "unit", text: "BYN" }),
                 ),
-                domEl(
-                    "div",
-                    { className: "lead-card-actions" },
-                    !isSold
-                        ? domEl(
-                            "div",
-                            { className: "lead-btn-row" },
-                            domEl("a", {
-                                className: "lead-btn lead-btn--kufar",
-                                text: "Kufar ↗",
-                                attrs: { href: safeUrl(lead.link), target: "_blank", rel: "noreferrer noopener" },
-                            }),
-                        )
-                        : null,
-                    !isSold
-                        ? domEl(
-                            "div",
-                            { className: "lead-btn-row" },
-                            domEl("button", { className: "lead-btn lead-btn--confirm", type: "button", dataset: { role: "confirm" }, text: "✓" }),
-                            domEl("button", { className: "lead-btn lead-btn--delete", type: "button", dataset: { role: "cancel" }, text: "✕" }),
-                        )
-                        : null,
-                    isSold
-                        ? domEl(
-                            "div",
-                            { className: "lead-btn-row" },
-                            domEl("button", { className: "lead-btn lead-btn--success", type: "button", dataset: { role: "close-deal" }, text: "✓ Готово" }),
-                            domEl("button", { className: "lead-btn lead-btn--revert", type: "button", dataset: { role: "revert" }, text: "↩ Назад" }),
-                        )
-                        : null,
-                ),
-            )
+            ),
         );
-
-        card.querySelector('[data-role="confirm"]')?.addEventListener("click", () => {
-            void actions.confirmLead(lead, card);
-        });
-        card.querySelector('[data-role="cancel"]')?.addEventListener("click", () => {
-            void actions.cancelLead(lead.id);
-        });
-        card.querySelector('[data-role="close-deal"]')?.addEventListener("click", () => {
-            void actions.closeDeal(lead.id);
-        });
-        card.querySelector('[data-role="revert"]')?.addEventListener("click", () => {
-            void actions.revertLeadStage(lead.id, lead.status);
-        });
-        return card;
     }
 
-    function buildWatchlistNode(item, marketLabel) {
-        const card = domEl("article", { className: "watchlist-card" });
-
-        const currentPriceByn = item.current_price_byn || item.initial_price_byn;
-        const hasValidPrice = currentPriceByn && Number(currentPriceByn) > 0;
-        const currentPriceDisplay = hasValidPrice ? Math.round(currentPriceByn) : null;
-        const isMissing = item.market_status === "missing";
-        const isMarketSignal = item.market_status && ["price_drop", "missing"].includes(item.market_status);
-
-        let deltaNode = null;
-        if (item.price_delta_byn != null && Math.abs(item.price_delta_byn) > 0.5) {
-            const deltaNum = Math.round(item.price_delta_byn);
-            const deltaClassName = deltaNum < 0 ? "down" : deltaNum > 0 ? "up" : "neutral";
-            const deltaSign = deltaNum > 0 ? "+" : "";
-            const arrow = deltaNum < 0 ? "📉" : deltaNum > 0 ? "📈" : "≈";
-            const percentText = item.price_delta_percent != null ? ` (${deltaSign}${item.price_delta_percent}%)` : "";
-            deltaNode = domEl("span", {
-                className: `watchlist-price-delta ${deltaClassName}`,
-                text: `${arrow} ${deltaSign}${deltaNum} BYN${percentText}`,
-            });
-        }
-
-        let potentialProfitNode = null;
-        if (item.market_median_byn && currentPriceByn && Number(item.market_median_byn) > 0) {
-            const profitByn = Number(item.market_median_byn) - Number(currentPriceByn);
-            const profitPercent = currentPriceByn > 0 ? Math.round((profitByn / Number(currentPriceByn)) * 100) : 0;
-            const profitClass = profitByn >= 0 ? "profit-positive" : "profit-negative";
-            const profitSign = profitByn >= 0 ? "+" : "";
-            potentialProfitNode = domEl("span", {
-                className: `watchlist-profit ${profitClass}`,
-                text: `Потенциал: ${profitSign}${Math.round(profitByn)} BYN (${profitSign}${profitPercent}%)`,
-            });
-        }
-
-        let marketBadgeNode = null;
-        if (isMarketSignal) {
-            let missingAgeText = "";
-            if (item.market_status === "missing" && item.missing_since_at) {
-                const missingDate = new Date(item.missing_since_at);
-                const diffMs = Date.now() - missingDate.getTime();
-                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-                if (diffDays >= 1) missingAgeText = ` (${diffDays}д)`;
-            }
-            marketBadgeNode = domEl("span", {
-                className: `market-badge ${item.market_status}`,
-                text: `${marketLabel(item.market_status)}${missingAgeText}`,
-            });
-        }
-
-        // "Важность" select removed — the importance levels were never
-        // surfaced anywhere downstream and just added noise to the card.
-        // Only the note input remains as user-editable metadata.
-
+    /** Watchlist-specific note input. */
+    function _buildWatchlistFields(item) {
         const notesInput = domEl("input", {
             type: "text",
             attrs: { placeholder: "заметка к лоту…" },
@@ -452,18 +397,222 @@ function createRenderCardBuilders(context) {
                 notes: notesInput.value.trim() || null,
             });
         });
+        return domEl(
+            "div",
+            { className: "watchlist-card-fields" },
+            domEl(
+                "label",
+                { className: "wl-field wl-field-wide" },
+                domEl("span", { className: "wl-field-label", text: "Заметка" }),
+                domEl("div", { className: "wl-field-input-wrap" }, notesInput),
+            ),
+        );
+    }
+
+    /** Lead action row — depends on `status`. */
+    function _buildLeadActions(lead) {
+        const isSold = lead.status === "sold";
+        return domEl(
+            "div",
+            { className: "lead-card-actions" },
+            !isSold
+                ? domEl(
+                    "div",
+                    { className: "lead-btn-row" },
+                    domEl("a", {
+                        className: "lead-btn lead-btn--kufar",
+                        text: "Kufar ↗",
+                        attrs: {
+                            href: safeUrl(lead.link),
+                            target: "_blank",
+                            rel: "noreferrer noopener",
+                        },
+                    }),
+                )
+                : null,
+            !isSold
+                ? domEl(
+                    "div",
+                    { className: "lead-btn-row" },
+                    domEl("button", {
+                        className: "lead-btn lead-btn--confirm",
+                        type: "button",
+                        dataset: { role: "confirm" },
+                        text: "✓",
+                    }),
+                    domEl("button", {
+                        className: "lead-btn lead-btn--delete",
+                        type: "button",
+                        dataset: { role: "cancel" },
+                        text: "✕",
+                    }),
+                )
+                : null,
+            isSold
+                ? domEl(
+                    "div",
+                    { className: "lead-btn-row" },
+                    domEl("button", {
+                        className: "lead-btn lead-btn--success",
+                        type: "button",
+                        dataset: { role: "close-deal" },
+                        text: "✓ Готово",
+                    }),
+                    domEl("button", {
+                        className: "lead-btn lead-btn--revert",
+                        type: "button",
+                        dataset: { role: "revert" },
+                        text: "↩ Назад",
+                    }),
+                )
+                : null,
+        );
+    }
+
+    /** Watchlist action row — Kufar link is hidden when the listing is missing. */
+    function _buildWatchlistActions(item, isMissing) {
+        return domEl(
+            "div",
+            { className: "watchlist-card-actions" },
+            domEl("button", {
+                className: "wl-btn wl-btn--detail",
+                type: "button",
+                dataset: { role: "detail" },
+                text: "Подробнее",
+            }),
+            !isMissing
+                ? domEl("button", {
+                    className: "wl-btn wl-btn--accent",
+                    type: "button",
+                    dataset: { role: "lead" },
+                    text: "В покупки",
+                })
+                : null,
+            !isMissing
+                ? domEl("a", {
+                    className: "wl-btn",
+                    text: "Kufar ↗",
+                    attrs: {
+                        href: safeUrl(item.link),
+                        target: "_blank",
+                        rel: "noreferrer noopener",
+                    },
+                })
+                : null,
+            domEl("button", {
+                className: "wl-btn wl-btn--danger",
+                type: "button",
+                dataset: { role: "delete" },
+                text: "Удалить",
+            }),
+        );
+    }
+
+    /** Wire DOM-event handlers based on the card's mode. */
+    function _wireCardHandlers(card, item, mode) {
+        if (mode === "lead") {
+            card.querySelector('[data-role="confirm"]')?.addEventListener("click", () => {
+                void actions.confirmLead(item, card);
+            });
+            card.querySelector('[data-role="cancel"]')?.addEventListener("click", () => {
+                void actions.cancelLead(item.id);
+            });
+            card.querySelector('[data-role="close-deal"]')?.addEventListener("click", () => {
+                void actions.closeDeal(item.id);
+            });
+            card.querySelector('[data-role="revert"]')?.addEventListener("click", () => {
+                void actions.revertLeadStage(item.id, item.status);
+            });
+        } else if (mode === "watching") {
+            card.querySelector('[data-role="detail"]')?.addEventListener("click", () => {
+                void actions.openWatchlistDetail(item);
+            });
+            card.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
+                void actions.promoteWatchlistToLead(item);
+            });
+            card.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
+                void actions.deleteWatchlistItem(item.id);
+            });
+        }
+    }
+
+    /**
+     * Single source of truth for both "Покупки" (lead) and "Избранное"
+     * (watching) cards. Pass `mode='lead'` or `mode='watching'`.
+     *
+     * @param {object} item LeadItem-shaped row from /api/v1/{leads,watchlist}.
+     * @param {object} options { mode, marketLabel }
+     */
+    function buildItemCard(item, options = {}) {
+        const { mode = "lead", marketLabel } = options;
+        const isWatching = mode === "watching";
+        const isLead = mode === "lead";
+        const isMissing = item.market_status === "missing";
+
+        const outerClass = isLead
+            ? `lead-card status-${item.status}`
+            : "watchlist-card";
+        const card = domEl("article", {
+            className: outerClass,
+            attrs: isLead ? { "data-lead-id": item.id } : { "data-watchlist-id": item.id },
+        });
+
+        // Price for the header. Lead reads price_byn directly; watchlist
+        // prefers the live current_price_byn, falling back to the price
+        // captured at watchlist-add time.
+        const priceSource = isLead
+            ? item.price_byn
+            : item.current_price_byn || item.initial_price_byn;
+        const priceDisplay = _roundOrNull(priceSource);
+
+        const titleNode = isLead
+            ? domEl(
+                "div",
+                { className: "lead-card-title-row" },
+                domEl("strong", { className: "lead-card-title", text: item.title }),
+            )
+            : domEl("strong", { className: "watchlist-card-title", text: item.title });
+
+        const priceRow = isLead
+            ? domEl("span", {
+                className: "lead-card-price mono",
+                text: priceDisplay ? `${priceDisplay} BYN` : "без цены",
+            })
+            : domEl(
+                "div",
+                { className: "watchlist-card-price-row" },
+                domEl("span", {
+                    className: "watchlist-card-price mono",
+                    text: priceDisplay ? `${priceDisplay} BYN` : "Договорная",
+                }),
+                _buildPriceDeltaNode(item),
+            );
+
+        // Market badge + missing pill (lead shows a single pill, watching
+        // shows the full marketLabel(...) text).
+        const missingMiniBadge = isLead && isMissing
+            ? domEl("span", { className: "market-badge missing", text: "Пропало" })
+            : null;
+        const watchingMarketBadge = isWatching
+            ? domEl("div", { className: "watchlist-card-meta" }, _buildMarketBadge(item, marketLabel))
+            : null;
+
+        const profitNode = isLead ? _buildLeadProfitNode(item) : _buildPotentialProfitNode(item);
+
+        const bodyClass = isLead ? "lead-card-body" : "watchlist-card-body";
+        const topClass = isLead ? "lead-card-top" : "watchlist-card-top";
+
+        const fields = isLead ? _buildLeadFields(item) : _buildWatchlistFields(item);
+        const actionsRow = isLead
+            ? _buildLeadActions(item)
+            : _buildWatchlistActions(item, isMissing);
 
         card.appendChild(
             domFragment(
-                isMissing
-                    ? domEl("div", {
-                        className: "watchlist-missing-banner",
-                        text: "Объявление снято с продажи. Будет удалено автоматически через несколько дней.",
-                    })
-                    : null,
+                isMissing ? _buildMissingBanner(mode) : null,
                 domEl(
                     "div",
-                    { className: `watchlist-card-top${isMissing ? " is-missing" : ""}` },
+                    { className: `${topClass}${isMissing ? " is-missing" : ""}` },
                     buildMediaNode(
                         "watchlist-thumb",
                         "watchlist-thumb-placeholder",
@@ -473,59 +622,56 @@ function createRenderCardBuilders(context) {
                     ),
                     domEl(
                         "div",
-                        { className: "watchlist-card-body" },
-                        domEl("strong", { className: "watchlist-card-title", text: item.title }),
-                        domEl(
-                            "div",
-                            { className: "watchlist-card-price-row" },
-                            domEl("span", { className: "watchlist-card-price mono", text: currentPriceDisplay ? `${currentPriceDisplay} BYN` : "Договорная" }),
-                            deltaNode,
-                        ),
-                        potentialProfitNode,
-                        domEl("div", { className: "watchlist-card-meta" }, marketBadgeNode),
+                        { className: bodyClass },
+                        titleNode,
+                        priceRow,
+                        missingMiniBadge,
+                        profitNode,
+                        watchingMarketBadge,
                     ),
                 ),
-                domEl(
-                    "div",
-                    { className: "watchlist-card-fields" },
-                    domEl(
-                        "label",
-                        { className: "wl-field wl-field-wide" },
-                        domEl("span", { className: "wl-field-label", text: "Заметка" }),
-                        domEl("div", { className: "wl-field-input-wrap" }, notesInput),
-                    ),
-                ),
-                domEl(
-                    "div",
-                    { className: "watchlist-card-actions" },
-                    domEl("button", { className: "wl-btn wl-btn--detail", type: "button", dataset: { role: "detail" }, text: "Подробнее" }),
-                    !isMissing ? domEl("button", { className: "wl-btn wl-btn--accent", type: "button", dataset: { role: "lead" }, text: "В покупки" }) : null,
-                    !isMissing ? domEl("a", {
-                        className: "wl-btn",
-                        text: "Kufar ↗",
-                        attrs: { href: safeUrl(item.link), target: "_blank", rel: "noreferrer noopener" },
-                    }) : null,
-                    domEl("button", { className: "wl-btn wl-btn--danger", type: "button", dataset: { role: "delete" }, text: "Удалить" }),
-                ),
+                fields,
+                actionsRow,
             )
         );
 
-        card.querySelector('[data-role="detail"]')?.addEventListener("click", () => {
-            void actions.openWatchlistDetail(item);
-        });
-        card.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
-            void actions.promoteWatchlistToLead(item);
-        });
-        card.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
-            void actions.deleteWatchlistItem(item.id);
-        });
+        _wireCardHandlers(card, item, mode);
+
+        // Watching cards support swipe gestures: left → delete, right →
+        // promote to "Покупки". Lead cards stay tap-only — they have
+        // editable inputs in the middle that would conflict with horizontal
+        // pans. makeSwipeable returns the card unchanged under
+        // prefers-reduced-motion, so the buttons in the action row remain
+        // the canonical interaction in either case.
+        if (isWatching && !isMissing) {
+            return makeSwipeable(card, {
+                onSwipeLeft: {
+                    label: "Удалить",
+                    className: "swipe-bg--danger",
+                    action: () => actions.deleteWatchlistItem(item.id),
+                },
+                onSwipeRight: {
+                    label: "В покупки",
+                    className: "swipe-bg--accent",
+                    action: () => actions.promoteWatchlistToLead(item),
+                },
+            });
+        }
         return card;
     }
+
+    // Backwards-compat thin wrappers — callers in render_cards.js still
+    // import these names. Keeping them lets us land the unification
+    // without touching every render path.
+    const buildLeadNode = (lead) => buildItemCard(lead, { mode: "lead" });
+    const buildWatchlistNode = (item, marketLabel) =>
+        buildItemCard(item, { mode: "watching", marketLabel });
 
     return {
         buildListingNode,
         buildOpportunityCard,
         buildSignalRow,
+        buildItemCard,
         buildLeadNode,
         buildWatchlistNode,
     };

@@ -166,3 +166,164 @@ function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
         finalize();
     }, 360);
 }
+
+/* ─── Swipe-to-action gesture (Telegram-style) ──────────────────────────
+ * Wraps any card in a swipe track, drags it horizontally with rubber-band
+ * resistance, and triggers an action when released past the threshold.
+ *
+ * Usage:
+ *   const wrapped = makeSwipeable(cardEl, {
+ *       onSwipeLeft:  { label: 'Удалить',   className: 'swipe-bg--danger', action: () => ... },
+ *       onSwipeRight: { label: 'В покупки', className: 'swipe-bg--accent', action: () => ... },
+ *   });
+ *   container.appendChild(wrapped);
+ *
+ * Returns the wrapper element. If the user prefers reduced motion the
+ * card is returned unchanged — interactive buttons inside the card are
+ * still functional, swipe is purely additive.
+ *
+ * `touch-action: pan-y` on the card lets the browser keep doing vertical
+ * scrolling while we capture horizontal gestures, so the page never
+ * feels stuck while a touch is in progress.
+ */
+function makeSwipeable(card, options) {
+    if (!card) return card;
+    const reduced =
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) return card;
+
+    const onSwipeLeft = options?.onSwipeLeft || null;
+    const onSwipeRight = options?.onSwipeRight || null;
+    if (!onSwipeLeft && !onSwipeRight) return card;
+
+    const thresholdPx = options?.thresholdPx ?? 80;
+
+    const wrap = document.createElement("div");
+    wrap.className = "swipe-wrap";
+
+    function buildBg(spec, side) {
+        if (!spec) return null;
+        const bg = document.createElement("div");
+        bg.className = `swipe-bg swipe-bg--${side} ${spec.className || ""}`.trim();
+        const label = document.createElement("span");
+        label.className = "swipe-bg-label";
+        label.textContent = spec.label || "";
+        bg.appendChild(label);
+        return bg;
+    }
+
+    const bgRight = buildBg(onSwipeRight, "right"); // revealed by leftward drag
+    const bgLeft = buildBg(onSwipeLeft, "left"); // revealed by rightward drag
+    if (bgRight) wrap.appendChild(bgRight);
+    if (bgLeft) wrap.appendChild(bgLeft);
+    wrap.appendChild(card);
+    card.classList.add("swipe-target");
+
+    let startX = 0;
+    let startY = 0;
+    let dragging = false;
+    let decided = false; // committed to horizontal vs vertical scroll
+    let deltaX = 0;
+
+    function reset() {
+        card.classList.remove("swipe-dragging");
+        card.style.transform = "";
+        deltaX = 0;
+    }
+
+    function applyTransform(dx) {
+        const limit = thresholdPx * 2;
+        // Rubber-band past the limit so the gesture doesn't feel runaway.
+        const limited =
+            Math.abs(dx) > limit
+                ? Math.sign(dx) * (limit + (Math.abs(dx) - limit) * 0.3)
+                : dx;
+        card.style.transform = `translateX(${limited}px)`;
+    }
+
+    function complete(direction) {
+        const spec = direction === "left" ? onSwipeLeft : onSwipeRight;
+        if (!spec || typeof spec.action !== "function") {
+            reset();
+            return;
+        }
+        // Light haptic so the user feels the action commit.
+        const haptic = window.Telegram?.WebApp?.HapticFeedback;
+        try {
+            haptic?.impactOccurred?.("medium");
+        } catch (_) {
+            /* haptics not available outside Telegram */
+        }
+        // Slide the card off-screen, then call the action. The action is
+        // expected to remove the row from state — the next render drops
+        // the wrapper entirely so we don't need to clean up here.
+        card.classList.add("swipe-completing");
+        const sign = direction === "left" ? -1 : 1;
+        card.style.transform = `translateX(${sign * 110}%)`;
+        setTimeout(() => spec.action(), 180);
+    }
+
+    card.addEventListener(
+        "touchstart",
+        (event) => {
+            if (event.touches.length !== 1) return;
+            startX = event.touches[0].clientX;
+            startY = event.touches[0].clientY;
+            dragging = false;
+            decided = false;
+        },
+        { passive: true },
+    );
+
+    card.addEventListener(
+        "touchmove",
+        (event) => {
+            if (event.touches.length !== 1) return;
+            const dx = event.touches[0].clientX - startX;
+            const dy = event.touches[0].clientY - startY;
+            if (!decided) {
+                if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+                if (Math.abs(dy) > Math.abs(dx)) {
+                    // It's a vertical scroll — bow out so the page can scroll.
+                    decided = true;
+                    return;
+                }
+                decided = true;
+                dragging = true;
+                card.classList.add("swipe-dragging");
+            }
+            if (dragging) {
+                deltaX = dx;
+                // Suppress drag in directions with no configured action.
+                if (dx < 0 && !onSwipeLeft) deltaX = 0;
+                if (dx > 0 && !onSwipeRight) deltaX = 0;
+                applyTransform(deltaX);
+            }
+        },
+        { passive: true },
+    );
+
+    function onEnd() {
+        if (!dragging) {
+            reset();
+            return;
+        }
+        const finalDelta = deltaX;
+        if (Math.abs(finalDelta) >= thresholdPx) {
+            complete(finalDelta < 0 ? "left" : "right");
+        } else {
+            reset();
+        }
+        dragging = false;
+        decided = false;
+    }
+    card.addEventListener("touchend", onEnd);
+    card.addEventListener("touchcancel", () => {
+        reset();
+        dragging = false;
+        decided = false;
+    });
+
+    return wrap;
+}

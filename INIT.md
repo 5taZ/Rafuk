@@ -182,26 +182,22 @@ User originally listed three cleanup tasks ("Делаем все по
 
 1. ✅ **Full DB migration**: watchlist → leads. Done in commit
    `c4a07bf`, hardened in `8038083`.
-2. ⏳ **Unified card builder for watch + lead.** The two surfaces
-   currently still have separate render paths even though the data
-   is now one table. The visual builder should be a single function
-   that takes a `LeadItem`-shaped object plus a `mode`
-   (`'watching'` / `'lead'`) and produces the right card.
-   - Files to refactor: `frontend/js/render_card_builders.js`
-     (`buildListingNode` / `buildWatchlistNode` /
-     `buildLeadCardNode` — these have ~80% overlap).
-   - Goal: one builder, mode-driven action buttons & badges.
-3. ⏳ **Drag-to-promote / swipe actions.** Watching cards should
-   support a swipe gesture (left/right) to promote to "Покупки" or
-   delete — same affordance the user sees in Telegram chats.
-   - Mobile-first, must respect `prefers-reduced-motion`.
-   - Probably reuse the existing `state.watchlist` → leads
-     transition (`PATCH /leads/{id} {status:'new'}`).
-   - Hooks for haptic feedback already exist:
-     `window.Telegram?.WebApp?.HapticFeedback?.impactOccurred()`.
-
-User said in this session "**Продолжай по порядку**" so #2 then #3
-are the next milestones.
+2. ✅ **Unified card builder for watch + lead.** Single
+   `buildItemCard(item, { mode })` in
+   `frontend/js/render_card_builders.js`. Shared helpers extracted
+   for missing banner, price-delta pill, profit/potential block,
+   market badge. `buildLeadNode` / `buildWatchlistNode` are now
+   thin one-line wrappers over the unified builder so existing
+   callsites keep working without churn.
+3. ✅ **Drag-to-promote / swipe actions.** `makeSwipeable(card, …)`
+   in `frontend/js/dom_helpers.js` is a generic helper that wraps
+   any card in a swipe track, drags it with rubber-band
+   resistance, fires haptic feedback on commit, and short-circuits
+   under `prefers-reduced-motion`. Watching cards (mode='watching',
+   not missing) get left=delete / right=promote-to-Покупки wired
+   in by default. Lead cards stay tap-only because their middle
+   row holds buy/sold price inputs that conflict with horizontal
+   pans.
 
 ---
 
