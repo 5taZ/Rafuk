@@ -121,3 +121,43 @@ def test_css_defines_motion_tokens(css_text: str) -> None:
     assert "--t-base:" in css_text
     assert "--t-slow:" in css_text
     assert "--easing-standard:" in css_text
+
+
+def test_service_worker_present_with_safe_strategies() -> None:
+    """The Mini App ships a service worker so the SPA shell + read-only
+    API responses survive flaky networks. Make sure the worker:
+      * is at /sw.js so it can claim the / scope without server config
+        gymnastics,
+      * versions its caches (CACHE_VERSION) so a deploy can invalidate
+        old buckets in activate(),
+      * never caches mutations (POST/PATCH/DELETE) — those need to hit
+        the server,
+      * never caches AI endpoints — results are tied to a specific
+        ad/query and shouldn't bleed across users,
+      * registers from app.js."""
+    sw = (FRONTEND / "sw.js")
+    assert sw.exists(), "frontend/sw.js missing"
+    text = sw.read_text(encoding="utf-8")
+    assert "CACHE_VERSION" in text
+    assert "skipWaiting" in text
+    assert "clients.claim" in text
+    # Mutations must bypass.
+    assert "request.method !== \"GET\"" in text
+    # AI endpoints must bypass.
+    assert "/api/v1/ai/" in text
+    # Registration in app.js, gated on https / localhost.
+    app_js = (FRONTEND / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'serviceWorker.register("/sw.js"' in app_js or \
+        "serviceWorker\n                .register(\"/sw.js\"" in app_js
+    assert "https:" in app_js
+
+
+def test_nginx_serves_sw_js_without_long_cache() -> None:
+    """A 7-day Cache-Control on /sw.js would pin users to the old SW
+    for a week. Ensure the nginx config has an explicit no-cache
+    rule for the worker file plus the Service-Worker-Allowed header
+    that lets it claim the / scope."""
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    assert "location = /sw.js" in nginx_conf
+    assert "no-cache" in nginx_conf
+    assert "Service-Worker-Allowed" in nginx_conf

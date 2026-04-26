@@ -117,4 +117,25 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!navigator.onLine) showOfflineBanner();
     window.addEventListener("offline", showOfflineBanner);
     window.addEventListener("online", hideOfflineBanner);
+
+    // Register the service worker so the shell + read-only API
+    // responses survive flaky networks. Skipped on insecure origins
+    // (browsers reject SW registration over plain http) so local
+    // `python -m http.server` style dev still works without spam in
+    // the console. Telegram Mini Apps are always served over HTTPS,
+    // so production will always register.
+    if (
+        "serviceWorker" in navigator &&
+        (location.protocol === "https:" || location.hostname === "localhost")
+    ) {
+        // Defer to after first paint so registration competes with
+        // nothing visible — saves ~30 ms on the perceived TTI.
+        window.addEventListener("load", () => {
+            navigator.serviceWorker
+                .register("/sw.js", { scope: "/" })
+                .catch((err) => {
+                    console.warn("Service worker registration failed", err);
+                });
+        });
+    }
 });
