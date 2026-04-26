@@ -333,6 +333,33 @@ function createRenderCards(context) {
         return order[item.status] ?? 99;
     }
 
+    /**
+     * Decide which "Мои объявления" bucket a lead belongs to.
+     * Aligns with the filter chips: all / active / sold / closed.
+     */
+    function leadBucket(lead) {
+        if (lead.status === "closed") return "closed";
+        if (lead.status === "sold") return "sold";
+        // skipped goes in "closed" — it's done with, just not won.
+        if (lead.status === "skipped") return "closed";
+        return "active";
+    }
+
+    function emptyMessageForFilter(filter) {
+        switch (filter) {
+            case "watching":
+                return "Здесь будут объявления, за которыми ты следишь. Добавь лот через поиск → «В избранное».";
+            case "active":
+                return "Нет сделок в работе. Добавь лот через поиск → «В покупки».";
+            case "sold":
+                return "Пока нет проданных сделок. Подтверди продажу — она появится здесь.";
+            case "closed":
+                return "Здесь хранится история закрытых сделок.";
+            default:
+                return "Пусто. Добавь объявление через поиск — на отслеживание или в покупки.";
+        }
+    }
+
     function renderLeads() {
         return safeRender('renderLeads', () => {
         const container = elements.leadInboxList;
@@ -353,35 +380,114 @@ function createRenderCards(context) {
         if (context._hooks?.renderProfitDashboard) context._hooks.renderProfitDashboard();
         if (context._hooks?.renderHistoryDeals) context._hooks.renderHistoryDeals();
 
+        // Update filter chip counts and visibility of the "Очистить" buttons
+        // up here so the chrome refreshes even when the list is empty.
+        const counts = {
+            watching: (state.watchlist || []).length,
+            active: (state.leads || []).filter((l) => leadBucket(l) === "active").length,
+            sold: (state.leads || []).filter((l) => leadBucket(l) === "sold").length,
+            closed: (state.leads || []).filter((l) => leadBucket(l) === "closed").length,
+        };
+        counts.all = counts.watching + counts.active + counts.sold + counts.closed;
+
+        if (elements.itemsCountBadges) {
+            for (const [key, badge] of Object.entries(elements.itemsCountBadges)) {
+                if (!badge) continue;
+                const value = counts[key] || 0;
+                badge.textContent = String(value);
+                badge.hidden = value === 0;
+            }
+        }
+        for (const button of elements.itemsFilterButtons || []) {
+            const filter = button.dataset.itemsFilter;
+            const isActive = filter === (state.itemsFilter || "all");
+            button.classList.toggle("active", isActive);
+            button.setAttribute("aria-selected", String(isActive));
+        }
+
+        // Toggle which "Очистить" button is shown based on the active filter.
+        const filter = state.itemsFilter || "all";
+        if (elements.clearAllLeadsButton) {
+            elements.clearAllLeadsButton.hidden = filter === "watching";
+        }
+        if (elements.deleteAllWatchlistButton) {
+            elements.deleteAllWatchlistButton.hidden = filter !== "watching";
+        }
+
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
-            note.textContent = "Сделки доступны внутри Telegram Mini App.";
+            note.textContent = "Раздел «Мои объявления» доступен внутри Telegram Mini App.";
             container.appendChild(note);
             return;
         }
 
-        const filteredLeads = [...state.leads]
-            .filter((l) => l.status !== "closed")
-            .sort((left, right) => {
-                const rankDelta = leadSortValue(left) - leadSortValue(right);
-                if (rankDelta !== 0) {
-                    return rankDelta;
-                }
-                return String(right.updated_at || "").localeCompare(String(left.updated_at || ""));
-            });
+        // Build a unified list: watchlist items + leads, with each side
+        // tagged so card builders know how to render and what actions to
+        // expose (a watchlist card has "Купить" / "Удалить", a lead has
+        // the buy/sell pricing form, etc.).
+        const watchItems = (state.watchlist || []).map((item) => ({
+            kind: "watch",
+            data: item,
+            updatedAt: item.updated_at || item.last_seen_at || item.created_at || "",
+        }));
+        const leadItems = (state.leads || []).map((lead) => ({
+            kind: "lead",
+            data: lead,
+            updatedAt: lead.updated_at || lead.created_at || "",
+            bucket: leadBucket(lead),
+        }));
 
-        if (!filteredLeads.length) {
+        let entries;
+        if (filter === "watching") {
+            entries = watchItems;
+        } else if (filter === "active") {
+            entries = leadItems.filter((e) => e.bucket === "active");
+        } else if (filter === "sold") {
+            entries = leadItems.filter((e) => e.bucket === "sold");
+        } else if (filter === "closed") {
+            entries = leadItems.filter((e) => e.bucket === "closed");
+        } else {
+            // "all": watchlist first, then active leads, then sold, then closed.
+            entries = [
+                ...watchItems,
+                ...leadItems.filter((e) => e.bucket === "active"),
+                ...leadItems.filter((e) => e.bucket === "sold"),
+                ...leadItems.filter((e) => e.bucket === "closed"),
+            ];
+        }
+
+        // Sort within each bucket by recency (descending).
+        const bucketOrder = { watch: 0, active: 1, sold: 2, closed: 3 };
+        entries.sort((a, b) => {
+            const ka = a.kind === "watch" ? "watch" : a.bucket || "active";
+            const kb = b.kind === "watch" ? "watch" : b.bucket || "active";
+            const rankDelta = (bucketOrder[ka] ?? 9) - (bucketOrder[kb] ?? 9);
+            if (rankDelta !== 0) return rankDelta;
+            // Inside a bucket: leads sort by status first (in_progress > new > …).
+            if (a.kind === "lead" && b.kind === "lead") {
+                const statusDelta = leadSortValue(a.data) - leadSortValue(b.data);
+                if (statusDelta !== 0) return statusDelta;
+            }
+            return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+        });
+
+        if (!entries.length) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
-            note.textContent = "Нет сделок в работе. Добавьте лот через поиск.";
+            note.textContent = emptyMessageForFilter(filter);
             container.appendChild(note);
             return;
         }
 
         // Virtual scrolling disabled — cards have variable heights that break with fixed-height virtualization
-        for (const lead of filteredLeads) {
-            container.appendChild(buildLeadNode(lead));
+        const watchlistMarketLabel = (val) => marketLabel(val);
+        for (const entry of entries) {
+            if (entry.kind === "lead") {
+                container.appendChild(buildLeadNode(entry.data));
+            } else {
+                container.appendChild(buildWatchlistNode(entry.data, watchlistMarketLabel));
+            }
         }
         });
     }

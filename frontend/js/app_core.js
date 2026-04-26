@@ -46,6 +46,7 @@ function createAppCore() {
         leadFilter: "all",
         watchlist: [],
         watchlistFilter: "all",
+        itemsFilter: "all",
         trackers: [],
         trackerEvents: [],
         trackerEventFilter: "all",

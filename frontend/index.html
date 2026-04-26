@@ -13,15 +13,15 @@
         href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
         rel="stylesheet"
     >
-    <link rel="stylesheet" href="css/style.css?v=20260426-tracker-fit">
+    <link rel="stylesheet" href="css/style.css?v=20260426-unified-items">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
     <script defer src="js/dom_helpers.js?v=20260426-tracker-polish"></script>
-    <script defer src="js/app_core_dom.js?v=20260426-listing-assistant"></script>
-    <script defer src="js/app_core.js?v=20260426-listing-assistant"></script>
+    <script defer src="js/app_core_dom.js?v=20260426-unified-items"></script>
+    <script defer src="js/app_core.js?v=20260426-unified-items"></script>
     <script defer src="js/render_core.js"></script>
     <script defer src="js/render_card_builders.js"></script>
-    <script defer src="js/render_cards.js?v=20260426-deals-realtime"></script>
+    <script defer src="js/render_cards.js?v=20260426-unified-items"></script>
     <script defer src="js/render_views.js"></script>
     <script defer src="js/render_modals.js?v=20260426-modal-anim"></script>
     <script defer src="js/render_charts.js?v=20260426-deals-realtime"></script>
@@ -33,7 +33,7 @@
     <script defer src="js/api_trackers.js?v=20260426-tracker-polish"></script>
     <script defer src="js/api_leads.js?v=20260426-deals-realtime"></script>
     <script defer src="js/api_watchlist.js"></script>
-    <script defer src="js/api_events.js?v=20260426-listing-assistant"></script>
+    <script defer src="js/api_events.js?v=20260426-unified-items"></script>
     <script defer src="js/api_ai.js?v=20260426-modal-anim"></script>
     <script defer src="js/api_listing_assistant.js?v=20260426-modal-anim"></script>
     <script defer src="js/app_actions.js?v=20260426-modal-anim"></script>
@@ -143,19 +143,13 @@
             </svg>
             <span class="view-tab-label">Выгодно</span>
         </button>
-        <button class="view-tab" data-view="monitoring" type="button" role="tab" aria-selected="false" aria-controls="monitoring-view" id="tab-monitoring">
-            <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-            </svg>
-            <span class="view-tab-label">Избранное</span>
-        </button>
         <button class="view-tab" data-view="deals" type="button" role="tab" aria-selected="false" aria-controls="deals-view" id="tab-deals">
             <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="9" cy="21" r="1"/>
-                <circle cx="20" cy="21" r="1"/>
-                <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                <path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/>
+                <polyline points="9 11 12 8 15 11"/>
+                <line x1="12" y1="2" x2="12" y2="14"/>
             </svg>
-            <span class="view-tab-label">Покупки</span>
+            <span class="view-tab-label">Мои объявления</span>
         </button>
     </nav>
 
@@ -559,33 +553,10 @@
         </section>
     </section>
 
-    <section class="view-panel" id="monitoring-view" hidden role="tabpanel" aria-labelledby="tab-monitoring">
-        <div class="view-hero monitoring-hero">
-            <h2 class="view-hero-title">Избранное</h2>
-            <p class="view-hero-desc">Следите за конкретными объявлениями: падение цены, пропажа из выдачи, дубли</p>
-            <div class="view-hero-stats" id="monitoring-hero-stats"></div>
-        </div>
-        <section class="section" id="watchlist-section">
-            <div class="sec-head listings-head">
-                <h2 class="sec-title">Сохранённые лоты</h2>
-                <div class="lead-actions-wrap">
-                    <button class="ghost-btn small danger" id="delete-all-watchlist-btn" type="button">Очистить</button>
-                </div>
-            </div>
-            <div class="sort-row workflow-filter-row" id="watch-filter-row">
-                <button class="s-tab active" data-watch-filter="all" type="button">Все</button>
-                <button class="s-tab" data-watch-filter="default" type="button">Обычные</button>
-                <button class="s-tab" data-watch-filter="important" type="button">Важные</button>
-                <button class="s-tab" data-watch-filter="very_important" type="button">Очень важные</button>
-            </div>
-            <div class="trackers-list" id="watchlist-list" role="list" aria-live="polite"></div>
-        </section>
-    </section>
-
     <section class="view-panel" id="deals-view" hidden role="tabpanel" aria-labelledby="tab-deals">
         <div class="view-hero deals-hero">
-            <h2 class="view-hero-title">Покупки</h2>
-            <p class="view-hero-desc">Отслеживайте сделки: от поиска до продажи</p>
+            <h2 class="view-hero-title">Мои объявления</h2>
+            <p class="view-hero-desc">Слежу, торгую, продаю — всё в одной воронке</p>
             <div class="view-hero-stats" id="deals-hero-stats"></div>
         </div>
         <section class="section" id="profit-dashboard-section">
@@ -617,10 +588,18 @@
         </section>
         <section class="section" id="lead-inbox-section">
             <div class="sec-head listings-head">
-                <h2 class="sec-title">Мои сделки</h2>
+                <h2 class="sec-title">Список</h2>
                 <div class="lead-actions-wrap">
-                    <button class="ghost-btn small danger" id="clear-all-leads-btn" type="button">Очистить</button>
+                    <button class="ghost-btn small danger" id="clear-all-leads-btn" type="button" hidden>Очистить</button>
+                    <button class="ghost-btn small danger" id="delete-all-watchlist-btn" type="button" hidden>Очистить</button>
                 </div>
+            </div>
+            <div class="sort-row items-filter-row" id="items-filter-row" role="tablist" aria-label="Фильтр по статусу">
+                <button class="s-tab active" data-items-filter="all" type="button" role="tab">Все <span class="s-tab-count" data-items-count="all" hidden>0</span></button>
+                <button class="s-tab" data-items-filter="watching" type="button" role="tab">Слежу <span class="s-tab-count" data-items-count="watching" hidden>0</span></button>
+                <button class="s-tab" data-items-filter="active" type="button" role="tab">В работе <span class="s-tab-count" data-items-count="active" hidden>0</span></button>
+                <button class="s-tab" data-items-filter="sold" type="button" role="tab">Продал <span class="s-tab-count" data-items-count="sold" hidden>0</span></button>
+                <button class="s-tab" data-items-filter="closed" type="button" role="tab">История <span class="s-tab-count" data-items-count="closed" hidden>0</span></button>
             </div>
             <div class="trackers-list" id="lead-inbox-list"></div>
         </section>

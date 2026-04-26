@@ -29,7 +29,6 @@ function cacheAppElements(elements) {
         ads: document.getElementById("ads-view"),
         tracking: document.getElementById("tracking-view"),
         cheap: document.getElementById("cheap-view"),
-        monitoring: document.getElementById("monitoring-view"),
         deals: document.getElementById("deals-view"),
     };
     elements.statsSection = document.getElementById("stats-section");
@@ -92,13 +91,19 @@ function cacheAppElements(elements) {
     elements.leadFilterButtons = Array.from(document.querySelectorAll("[data-lead-filter]"));
     elements.leadInboxList = document.getElementById("lead-inbox-list");
     elements.clearAllLeadsButton = document.getElementById("clear-all-leads-btn");
-    elements.watchlistSection = document.getElementById("watchlist-section");
+    // Watchlist section is gone — its items live inside the unified
+    // "Мои объявления" list now. We keep the deleteAllWatchlistButton
+    // reference so JS can still bind a handler when the chip "Слежу"
+    // is the active filter.
     elements.deleteAllWatchlistButton = document.getElementById("delete-all-watchlist-btn");
-    elements.watchlistFilterButtons = Array.from(document.querySelectorAll("[data-watch-filter]"));
-    elements.watchlistList = document.getElementById("watchlist-list");
+    elements.itemsFilterRow = document.getElementById("items-filter-row");
+    elements.itemsFilterButtons = Array.from(document.querySelectorAll("[data-items-filter]"));
+    elements.itemsCountBadges = {};
+    for (const node of document.querySelectorAll("[data-items-count]")) {
+        elements.itemsCountBadges[node.dataset.itemsCount] = node;
+    }
     elements.trackingHeroStats = document.getElementById("tracking-hero-stats");
     elements.cheapHeroStats = document.getElementById("cheap-hero-stats");
-    elements.monitoringHeroStats = document.getElementById("monitoring-hero-stats");
     elements.dealsHeroStats = document.getElementById("deals-hero-stats");
     elements.detailModal = document.getElementById("detail-modal");
     elements.detailOverlay = document.getElementById("detail-overlay");

@@ -23,8 +23,8 @@ function createApiEvents(context) {
         renderHistory,
         renderTrackerEventFilters,
         renderTrackerEvents,
+        renderLeads,
         renderWatchlist,
-        renderMonitoringHeroStats,
         setActiveView,
         setPanelOpen,
         closeDetailModal,
@@ -212,11 +212,13 @@ function createApiEvents(context) {
                 } else {
                     stopTrackerRefresh();
                 }
-                if (view === "monitoring") {
-                    void loadWatchlist();
-                }
                 if (view === "deals") {
+                    // Unified "Мои объявления" — load both leads and
+                    // watchlist (formerly the Избранное view) in parallel
+                    // so any filter chip ("Слежу" / "В работе" / …)
+                    // has data to render against.
                     void loadLeads();
+                    void loadWatchlist();
                 }
                 if (view === "cheap") {
                     if (state.query.trim()) {
@@ -716,11 +718,11 @@ function createApiEvents(context) {
             });
         }
 
-        // ── Watchlist filter buttons ─────────────────────────────────
-        for (const button of elements.watchlistFilterButtons || []) {
+        // ── Unified "Мои объявления" filter chips (Все/Слежу/В работе/…) ──
+        for (const button of elements.itemsFilterButtons || []) {
             button.addEventListener("click", () => {
-                state.watchlistFilter = button.dataset.watchFilter || "all";
-                renderWatchlist();
+                state.itemsFilter = button.dataset.itemsFilter || "all";
+                renderLeads();
             });
         }
 
