@@ -6874,26 +6874,9 @@ body {
     font-weight: 700;
 }
 
-.la-card-history {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 10px 14px;
-}
-
-.la-card-history-count {
-    display: inline-flex;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    align-items: center;
-    justify-content: center;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
-    color: var(--accent);
-    font-size: 11px;
-    font-weight: 700;
-}
+/* .la-card-history / .la-card-history-count rules removed — the
+   shortcut button on the deals card is gone, history lives inside
+   the modal as a tab. */
 
 /* ── Listing Assistant: modal ─────────────────────────────────────────── */
 
@@ -7794,15 +7777,9 @@ body {
     justify-content: center;
 }
 
-.la-card-history {
-    flex: 0 0 auto;
-    height: 44px;
-    padding: 0 16px;
-    font-size: 13px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
+/* .la-card-history override removed — the button no longer exists
+   on the deals card after the history shortcut moved into the
+   assistant modal. */
 
 /* --- Photo upload inside modal: header + grid stays inline ------- */
 .la-photo-block {
