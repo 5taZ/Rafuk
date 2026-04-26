@@ -90,6 +90,10 @@ async def lifespan(app: FastAPI):
             await ai.close()
         # Close shared KufarClient
         await app.state.kufar_client.aclose()
+        # Drain the image-proxy keep-alive pool — long-lived since
+        # 200-card list views fan out hundreds of thumbnail requests
+        # per session, so we cache the connection across requests.
+        await image_proxy.aclose_http_client()
         # Close Redis connection pool
         if isinstance(cache, RedisCache):
             await cache.aclose()

@@ -48,7 +48,12 @@ def fake_upstream(jpeg_bytes: bytes) -> Iterator[None]:
 @pytest.fixture
 def client() -> Iterator[TestClient]:
     from api.main import create_app
+    from api.routers.image_proxy import _clear_cache_for_tests
 
+    # Each test exercises the proxy from scratch — without this clear
+    # the LRU's "lru hit" path would mask transcode regressions in the
+    # next test that happens to ask for the same (path, w, fmt).
+    _clear_cache_for_tests()
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client
@@ -172,6 +177,65 @@ def test_image_proxy_handles_upstream_failure(
     with patch("api.routers.image_proxy.httpx.AsyncClient", _FailingClient):
         response = client.get("/api/v1/img/ad/abc123.jpg")
     assert response.status_code == 502
+
+
+def test_image_proxy_lru_cache_skips_upstream_on_repeat(
+    client: TestClient,
+    jpeg_bytes: bytes,
+) -> None:
+    """Same (path, w, fmt) within a session must be served from the
+    in-process LRU — that's what keeps a 200-card list view from
+    re-encoding the same thumbnail when it shows up in tracker
+    events + leads + watchlist at once.
+    """
+    upstream_calls = 0
+
+    class _CountingClient:
+        def __init__(self, *_: object, **__: object) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        @property
+        def is_closed(self) -> bool:
+            return False
+
+        async def aclose(self) -> None:
+            return None
+
+        async def get(self, _url: str):
+            nonlocal upstream_calls
+            upstream_calls += 1
+
+            class _Resp:
+                content = jpeg_bytes
+                status_code = 200
+
+            return _Resp()
+
+    with patch("api.routers.image_proxy.httpx.AsyncClient", _CountingClient):
+        # First hit — cache miss, upstream is fetched.
+        first = client.get(
+            "/api/v1/img/ad/abc.jpg?w=100",
+            headers={"Accept": "image/webp"},
+        )
+        assert first.status_code == 200
+        assert first.headers["x-image-cache"] == "miss"
+
+        # Second hit, identical key — must be served from LRU.
+        second = client.get(
+            "/api/v1/img/ad/abc.jpg?w=100",
+            headers={"Accept": "image/webp"},
+        )
+        assert second.status_code == 200
+        assert second.headers["x-image-cache"] == "lru"
+        assert second.content == first.content
+        # Upstream was hit exactly once across the two requests.
+        assert upstream_calls == 1
 
 
 def test_image_proxy_disabled_via_settings(
