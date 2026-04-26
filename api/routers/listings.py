@@ -76,7 +76,26 @@ async def get_listings(
     visible_dataset = context.visible
     reference_dataset = context.reference
     median_byn = visible_dataset.price_stats.median
+    # Build the category reference table.
+    # Default is the unfiltered broad query — that's the same data the
+    # broad view uses, so the per-ad delta % stays stable when the user
+    # toggles the category chip on/off (test_listings_…_stable_in_…).
+    # For refined queries where the first ~5000 ads are dominated by
+    # one bucket (e.g. "Audi Q7 4L 2015": 99% "Запчасти"), the broad
+    # extraction won't have enough samples for the category we're
+    # filtering on — that used to fall back to the broad market median
+    # of parts (≈100 BYN) and produced a bogus "+78539% выше рынка"
+    # badge on a 78 600 BYN car. When that happens, fall through to the
+    # cat-scoped visible_dataset's stats (which always has every ad in
+    # the chosen category).
     category_price_stats = compute_category_price_stats(reference_dataset.ads)
+    if category is not None:
+        broad_cat_stats = category_price_stats.get(category)
+        if broad_cat_stats is None or broad_cat_stats.count < 3:
+            category_price_stats = {
+                **category_price_stats,
+                category: visible_dataset.price_stats,
+            }
     liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats)
     rates_payload = await currency_service.get_rates()
     rates = rates_payload["rates"]
