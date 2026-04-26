@@ -396,6 +396,29 @@ function createRenderCore(context) {
 
     /* ===== Summary ===== */
 
+    function renderRefinementChips() {
+        if (!elements.summaryRefinements || !elements.summaryRefinementsChips) return;
+        const refinements = Array.isArray(state.stats?.suggested_refinements)
+            ? state.stats.suggested_refinements
+            : [];
+        clearChildren(elements.summaryRefinementsChips);
+        if (!refinements.length) {
+            elements.summaryRefinements.hidden = true;
+            return;
+        }
+        for (const token of refinements) {
+            if (typeof token !== "string" || !token.trim()) continue;
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "summary-refinement-chip";
+            chip.dataset.refinement = token;
+            chip.textContent = `+ ${token}`;
+            chip.title = `Добавить «${token}» к запросу`;
+            elements.summaryRefinementsChips.appendChild(chip);
+        }
+        elements.summaryRefinements.hidden = false;
+    }
+
     function renderSummary() {
         return safeRender('renderSummary', () => {
             if (!state.stats || !state.query) {
@@ -405,8 +428,13 @@ function createRenderCore(context) {
                 elements.summaryMedian.textContent = "—";
                 elements.summaryRange.textContent = "—";
                 elements.summaryFair.textContent = "—";
+                if (elements.summaryRefinements) {
+                    elements.summaryRefinements.hidden = true;
+                    clearChildren(elements.summaryRefinementsChips);
+                }
                 return;
             }
+            renderRefinementChips();
 
             const totalResults = Number(state.stats.total_results || 0);
             const analyzedCount = Number(state.stats.analyzed_count || state.stats.count || 0);

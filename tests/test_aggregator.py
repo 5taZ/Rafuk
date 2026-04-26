@@ -13,6 +13,7 @@ from api.services.aggregator import (
     compute_segments,
     extract_category_distribution,
     extract_prices,
+    extract_search_refinements,
     filter_deal_ads,
     is_strict_match,
     normalize_search_text,
@@ -240,3 +241,74 @@ def test_iphone_14_scenario_uses_phone_category_not_global() -> None:
     assert -10.0 < delta < 10.0, (
         f"iPhone deviation should be small vs phone median, got {delta:+.1f}%"
     )
+
+
+def test_extract_search_refinements_returns_top_recurring_tokens() -> None:
+    """Subjects share "Pro" (5x) and "256" (4x) which aren't in the query —
+    those should bubble up. "Айфон" maps via alias to "iphone" which IS in
+    the query, so it's excluded.
+    """
+    ads = [
+        {"subject": "iPhone 13 Pro 256GB"},
+        {"subject": "Айфон 13 Pro Max 256"},
+        {"subject": "iPhone 13 Pro 128GB Серый"},
+        {"subject": "iPhone 13 Pro Max 256GB"},
+        {"subject": "iPhone 13 Pro 256GB Идеал"},
+        {"subject": "iPhone 13 mini 64"},
+        {"subject": "iPhone 13 256GB"},
+    ]
+    refinements = extract_search_refinements(ads, "iphone 13", min_support=2)
+    assert "pro" in refinements
+    assert "256" in refinements
+    assert "iphone" not in refinements
+    assert "13" not in refinements
+
+
+def test_extract_search_refinements_drops_stopwords_and_short_tokens() -> None:
+    ads = [
+        {"subject": "iPhone 13 на запчасти Минск идеал"},
+        {"subject": "iPhone 13 на запчасти Минск торг"},
+        {"subject": "iPhone 13 на запчасти Минск"},
+        {"subject": "iPhone 13 на запчасти оригинал"},
+        {"subject": "iPhone 13 на запчасти Минск"},
+    ]
+    refinements = extract_search_refinements(ads, "iphone 13", min_support=2)
+    assert "запчасти" in refinements
+    # Stop-words and city names are filtered
+    assert "на" not in refinements
+    assert "минск" not in refinements
+    assert "идеал" not in refinements
+    assert "оригинал" not in refinements
+
+
+def test_extract_search_refinements_returns_empty_for_unique_titles() -> None:
+    """No token appears in enough listings to clear the support floor."""
+    ads = [
+        {"subject": "iPhone 13 Pro"},
+        {"subject": "iPhone 13 Max"},
+        {"subject": "iPhone 13 mini"},
+        {"subject": "iPhone 13 SE"},
+    ]
+    assert extract_search_refinements(ads, "iphone 13", min_support=3) == []
+
+
+def test_extract_search_refinements_handles_missing_subjects() -> None:
+    ads = [
+        {"subject": ""},
+        {"ad_id": 1},
+        {"subject": "iPhone 13 Pro Max"},
+        {"subject": "iPhone 13 Pro Max"},
+        {"subject": "iPhone 13 Pro Max"},
+    ]
+    refinements = extract_search_refinements(ads, "iphone 13", min_support=2)
+    assert "pro" in refinements
+    assert "max" in refinements
+
+
+def test_extract_search_refinements_caps_at_limit() -> None:
+    ads = [
+        {"subject": f"item alpha bravo charlie delta echo foxtrot {i}"}
+        for i in range(10)
+    ]
+    refinements = extract_search_refinements(ads, "item", limit=3, min_support=2)
+    assert len(refinements) == 3

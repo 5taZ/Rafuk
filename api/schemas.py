@@ -78,6 +78,11 @@ class PriceStatsResponse(BaseModel):
     fair_price_from: float | None = None
     fair_price_to: float | None = None
     categories: list[CategoryBucket] = Field(default_factory=list)
+    # 3-5 short refinements pulled from the result-set titles —
+    # tokens / phrases that appear most often in the listings'
+    # `subject` but aren't already part of the user's query. The
+    # frontend renders them as tap-to-append chips.
+    suggested_refinements: list[str] = Field(default_factory=list)
 
 
 class FlipEstimate(BaseModel):

@@ -198,6 +198,30 @@ function createApiEvents(context) {
             }
         });
 
+        // ── Refinement chips (summary strip) ─────────────────────────
+        elements.summaryRefinements?.addEventListener("click", (event) => {
+            const chip = event.target.closest("[data-refinement]");
+            if (!chip) return;
+            const token = chip.dataset.refinement || "";
+            if (!token) return;
+            const current = (state.query || "").trim();
+            const lowerCurrent = current.toLowerCase();
+            const lowerToken = token.toLowerCase();
+            // Avoid duplicating the token if it's already in the query.
+            const merged = lowerCurrent.includes(lowerToken)
+                ? current
+                : `${current} ${token}`.trim();
+            if (merged === current) return;
+            elements.searchInput.value = merged;
+            state.query = merged;
+            renderLoading();
+            clearTimeout(searchDebounceTimer);
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred("light");
+            }
+            void search("overview");
+        });
+
         // ── View tabs ────────────────────────────────────────────────
         for (const button of elements.viewTabs || []) {
             button.addEventListener("click", () => {

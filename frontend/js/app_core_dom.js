@@ -23,6 +23,8 @@ function cacheAppElements(elements) {
     elements.summaryRange = document.getElementById("summary-range");
     elements.summaryFair = document.getElementById("summary-fair");
     elements.summaryCoverage = document.getElementById("summary-coverage");
+    elements.summaryRefinements = document.getElementById("summary-refinements");
+    elements.summaryRefinementsChips = document.getElementById("summary-refinements-chips");
     elements.viewTabs = Array.from(document.querySelectorAll("[data-view]"));
     elements.views = {
         overview: document.getElementById("overview-view"),

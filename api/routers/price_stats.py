@@ -18,6 +18,7 @@ from api.schemas import PriceStatsResponse
 from api.services.aggregator import (
     build_query_key,
     extract_category_distribution,
+    extract_search_refinements,
 )
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
@@ -115,6 +116,7 @@ async def get_price_stats(
         category_distribution = [c for c in category_distribution if c.get("count", 0) > 0]
         category_distribution.sort(key=lambda c: c["count"], reverse=True)
 
+    suggested_refinements = extract_search_refinements(dataset.ads, query)
     payload = PriceStatsResponse(
         query=query,
         currency=currency,
@@ -128,6 +130,7 @@ async def get_price_stats(
         fair_price_from=converted.get("q1"),
         fair_price_to=converted.get("q3"),
         categories=category_distribution,
+        suggested_refinements=suggested_refinements,
         **converted,
     )
     async with session_factory() as session:

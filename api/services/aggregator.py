@@ -405,6 +405,152 @@ def extract_category_distribution(ads: list[dict[str, Any]]) -> list[dict[str, A
     return sorted(cat_map.values(), key=lambda x: x["count"], reverse=True)
 
 
+# Tokens that are too generic to suggest as a refinement.
+# Brand names already implied by the query, condition adjectives, units, and
+# stop-words add no signal — we want concrete model qualifiers like "pro",
+# "256", "max", "2024" instead.
+_REFINEMENT_STOPWORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "in",
+        "on",
+        "at",
+        "by",
+        "of",
+        "to",
+        "with",
+        "without",
+        "or",
+        "as",
+        "is",
+        "be",
+        "из",
+        "до",
+        "от",
+        "по",
+        "на",
+        "в",
+        "и",
+        "с",
+        "со",
+        "у",
+        "за",
+        "о",
+        "об",
+        "ни",
+        "не",
+        "но",
+        "то",
+        "же",
+        "бу",
+        "юу",
+        "новый",
+        "новая",
+        "новое",
+        "новые",
+        "новых",
+        "идеал",
+        "торг",
+        "срочно",
+        "продам",
+        "продаю",
+        "продается",
+        "продаётся",
+        "обмен",
+        "куплю",
+        "куплен",
+        "куплена",
+        "состояние",
+        "оригинал",
+        "оригинальный",
+        "комплект",
+        "коробка",
+        "хороший",
+        "отличное",
+        "отличный",
+        "белый",
+        "чёрный",
+        "черный",
+        "синий",
+        "красный",
+        "зелёный",
+        "зеленый",
+        "силиконовый",
+        "силиконовая",
+        "минск",
+        "гомель",
+        "брест",
+        "витебск",
+        "гродно",
+        "могилев",
+        "могилёв",
+        "руб",
+        "byn",
+        "usd",
+        "eur",
+        "$",
+        "руб.",
+        "грн",
+    }
+)
+
+
+def extract_search_refinements(
+    ads: list[dict[str, Any]],
+    query: str,
+    *,
+    limit: int = 5,
+    min_support: int = 3,
+) -> list[str]:
+    """Suggest tap-to-append refinements based on the result set.
+
+    Looks at every listing's `subject`, normalises tokens the same way the
+    search uses, drops tokens already present in the user's query plus
+    obvious stop-words, then returns the top `limit` tokens by frequency
+    that appear in at least `min_support` listings. The frontend renders
+    them as chips: "пробовали X, Y, Z?".
+
+    Returns an empty list when the result set is too small for any token
+    to clear `min_support` — there's no point suggesting refinements
+    backed by a single anecdotal listing.
+    """
+    if not ads:
+        return []
+    query_tokens = set(tokenize_search_text(query))
+    counts: dict[str, int] = {}
+    seen_per_ad: set[tuple[int, str]] = set()
+    for idx, ad in enumerate(ads):
+        title = str(ad.get("subject") or "")
+        if not title:
+            continue
+        for token in tokenize_search_text(title):
+            if token in query_tokens:
+                continue
+            if token in _REFINEMENT_STOPWORDS:
+                continue
+            # Skip 1-char and pure-digit tokens shorter than 3 chars
+            # — they're noise (e.g. "1", "2", lone letters).
+            if len(token) < 3:
+                continue
+            # Skip tokens consisting only of letters from the query
+            # (substring noise).
+            key = (idx, token)
+            if key in seen_per_ad:
+                continue
+            seen_per_ad.add(key)
+            counts[token] = counts.get(token, 0) + 1
+    if not counts:
+        return []
+    # Threshold: at least min_support listings *and* at least 5 % of the
+    # result set so we don't surface long-tail noise on big datasets.
+    floor = max(min_support, int(len(ads) * 0.05))
+    candidates = [(token, n) for token, n in counts.items() if n >= floor]
+    candidates.sort(key=lambda item: (-item[1], item[0]))
+    return [token for token, _ in candidates[:limit]]
+
+
 def compute_segments(ads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     condition_map = {"Новый": "new", "Б/у": "used"}
     seller_map = {"Частное лицо": "private", "Магазин": "shop"}
