@@ -25,12 +25,20 @@ def tracker_alert_keyboard(
     *,
     query: str,
     listing_url: str | None,
-    event_id: int,
-) -> InlineKeyboardMarkup:
+) -> InlineKeyboardMarkup | None:
+    """Build the inline keyboard attached to tracker alert messages.
+
+    Two link-buttons only — "Open mini-app for this query" and the raw
+    Kufar listing. The previous ``В работу`` / ``Позже`` callback
+    buttons were removed: nobody uses the inline workflow (everyone
+    goes through the mini app), and they wrote leads with surprising
+    statuses (`lead:` → researching, `later:` → new) that didn't match
+    the button labels.
+    """
     query_url = f"{mini_app_url}?query={quote_plus(query)}&view=trackers"
-    first_row: list[InlineKeyboardButton] = []
+    row: list[InlineKeyboardButton] = []
     if mini_app_url.startswith("https://"):
-        first_row.append(
+        row.append(
             InlineKeyboardButton(
                 text="Открыть запрос",
                 web_app=WebAppInfo(url=query_url),
@@ -39,14 +47,7 @@ def tracker_alert_keyboard(
     # Telegram requires a non-empty https URL — skip the "Open listing"
     # button when we don't have one rather than crashing the alert.
     if listing_url and listing_url.startswith(("http://", "https://")):
-        first_row.append(InlineKeyboardButton(text="Открыть лот", url=listing_url))
-    rows: list[list[InlineKeyboardButton]] = []
-    if first_row:
-        rows.append(first_row)
-    rows.append(
-        [
-            InlineKeyboardButton(text="В работу", callback_data=f"lead:{event_id}"),
-            InlineKeyboardButton(text="Позже", callback_data=f"later:{event_id}"),
-        ]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        row.append(InlineKeyboardButton(text="Открыть лот", url=listing_url))
+    if not row:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[row])

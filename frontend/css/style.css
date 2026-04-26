@@ -2897,7 +2897,11 @@ body.modal-open {
     bottom: calc(env(safe-area-inset-bottom, 16px) + 16px);
     left: 50%;
     transform: translateX(-50%);
-    z-index: 600;
+    /* Toasts must sit above every modal (detail-modal=500, ai-modal=600,
+       modal-overlay=1000). Sharing z-index 600 with the AI modal worked
+       only by accident of DOM order — any transform on the modal would
+       have created a new stacking context and pushed the toast under it. */
+    z-index: 1100;
     display: flex;
     flex-direction: column;
     gap: 8px;

@@ -448,7 +448,6 @@ async def check_trackers(
                                     settings.mini_app_url,
                                     query=primary_event.query,
                                     listing_url=primary_event.link,
-                                    event_id=primary_event.id,
                                 )
                                 if primary_event is not None
                                 else None

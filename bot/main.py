@@ -9,7 +9,6 @@ from aiogram.types import BotCommand
 from api.config import get_settings
 from bot.database import close_bot_engine, init_bot_engine
 from bot.handlers.start import router as start_router
-from bot.handlers.tracker import router as tracker_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,7 +16,6 @@ logging.basicConfig(level=logging.INFO)
 def build_dispatcher() -> Dispatcher:
     dispatcher = Dispatcher()
     dispatcher.include_router(start_router)
-    dispatcher.include_router(tracker_router)
     return dispatcher
 
 

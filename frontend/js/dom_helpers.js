@@ -111,11 +111,15 @@ function unlockBodyScroll() {
  */
 function openModalAnimated(modalEl, { lockScroll = true } = {}) {
     if (!modalEl) return;
+    // If the modal is already on-screen (e.g. re-render after state update),
+    // don't acquire a second scroll-lock — the matching closeModalAnimated
+    // would only release one count and leave body.modal-open stuck on.
+    const wasHidden = modalEl.hidden;
     // Make sure no leftover closing class from a previous run blocks the
     // entry animation.
     modalEl.classList.remove("is-closing");
     modalEl.hidden = false;
-    if (lockScroll) lockBodyScroll();
+    if (lockScroll && wasHidden) lockBodyScroll();
 }
 
 function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
