@@ -651,3 +651,68 @@ class AIQuickConditionResponse(BaseModel):
     ad_id: int
     condition: str = ""
     notes: list[str] = Field(default_factory=list)
+
+
+# ─── Listing Assistant (seller side) ──────────────────────────────────────
+
+
+class AIListingAssistantRequest(BaseModel):
+    """Draft of an item the user wants to list on Kufar.
+
+    `title` is required — we use it both for the search context and for the
+    generated improved title. `category` is optional but improves market
+    targeting. `draft_price_byn` is what the user *thinks* of asking; the
+    model uses it only as one anchor among several. `photos` is a list of
+    `data:image/...;base64,...` URLs (already compressed on the frontend);
+    we hard-cap count and per-photo size in the router.
+    """
+
+    title: str = Field(min_length=3, max_length=200)
+    category: int | None = None
+    condition: str | None = Field(None, max_length=64)
+    draft_price_byn: float | None = Field(None, ge=0, le=10_000_000)
+    is_negotiable: bool = False
+    extra_notes: str | None = Field(None, max_length=1200)
+    # Hard cap on items is enforced server-side in `_coerce_listing_photos`
+    # so that an extra photo doesn't 422 the whole request — we just drop
+    # the overflow. Per-item byte-cap is also done there.
+    photos: list[str] = Field(default_factory=list, max_length=8)
+
+
+class AIListingPriceTier(BaseModel):
+    label: str = ""
+    price_byn: float = 0.0
+    weeks_to_sell: str = ""
+    reasoning: str = ""
+
+
+class AIListingPricing(BaseModel):
+    fast: AIListingPriceTier | None = None
+    market: AIListingPriceTier | None = None
+    patient: AIListingPriceTier | None = None
+    floor_byn: float | None = None
+    market_median_byn: float | None = None
+    market_q1_byn: float | None = None
+    market_q3_byn: float | None = None
+    competing_count: int = 0
+
+
+class AINegotiationCounter(BaseModel):
+    scenario: str = ""
+    response: str = ""
+
+
+class AIListingAssistantResponse(BaseModel):
+    title_suggestion: str = ""
+    description: str = ""
+    description_short: str = ""
+    selling_points: list[str] = Field(default_factory=list)
+    pricing: AIListingPricing = Field(default_factory=AIListingPricing)
+    negotiation_playbook: list[AINegotiationCounter] = Field(default_factory=list)
+    photo_tips: list[str] = Field(default_factory=list)
+    market_summary: str = ""
+    disclaimer: str = (
+        "Рекомендации носят информационный характер. Финальное решение по цене и тексту "
+        "остаётся за продавцом."
+    )
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

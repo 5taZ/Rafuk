@@ -142,6 +142,10 @@ function createAppActions(context) {
     const leads = createApiLeads(context);
     const watchlist = createApiWatchlist(context);
     const ai = createApiAi(context);
+    const listingAssistant = (typeof createApiListingAssistant === "function")
+        ? createApiListingAssistant(context)
+        : null;
+    void listingAssistant;
 
     // ── Cross-module hooks (actions that modules call into each other) ───
     // These are injected into context so every module can reach them.

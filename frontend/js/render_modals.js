@@ -39,7 +39,10 @@ function createRenderModals(context) {
     function renderDetailModal() {
         return safeRender('renderDetailModal', () => {
             if (!state.detail) {
-            elements.detailModal.hidden = true;
+            // Don't toggle .hidden here — closeDetailModal animates it
+            // out and a stray render call would otherwise abort that
+            // transition. The modal starts hidden in HTML and is only
+            // opened through an explicit openModalAnimated call below.
             return;
         }
 
@@ -164,8 +167,9 @@ function createRenderModals(context) {
             scrollContainer.scrollTop = 0;
         }
 
-        elements.detailModal.hidden = false;
-        document.body.classList.add("modal-open");
+        if (elements.detailModal.hidden) {
+            openModalAnimated(elements.detailModal);
+        }
         });
     }
 
@@ -184,8 +188,9 @@ function createRenderModals(context) {
             error: "",
             source: "",
         };
-        renderDetailModal();
-        document.body.classList.remove("modal-open");
+        // Animate close, THEN renderDetailModal will see state.detail = null
+        // and the modal will already be hidden by the helper.
+        closeModalAnimated(elements.detailModal);
     }
 
     /* ===== Expenses Modal ===== */
@@ -273,7 +278,7 @@ function createRenderModals(context) {
                 state.modalCleanup();
                 state.modalCleanup = null;
             }
-            elements.expensesModal.hidden = false;
+            openModalAnimated(elements.expensesModal);
             state.modalCleanup = trapFocus(elements.expensesModal);
         }
         void actions.loadExpenses(leadId);
@@ -285,7 +290,7 @@ function createRenderModals(context) {
             state.modalCleanup = null;
         }
         if (elements.expensesModal) {
-            elements.expensesModal.hidden = true;
+            closeModalAnimated(elements.expensesModal);
         }
         state.currentExpenseLeadId = null;
         state.expenses = [];

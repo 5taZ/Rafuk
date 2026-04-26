@@ -169,6 +169,34 @@ function createApiEvents(context) {
             }
         });
 
+        // ── Welcome / helper panel chips ─────────────────────────────
+        elements.helperPanel?.addEventListener("click", (event) => {
+            const chip = event.target.closest("[data-recent-query]");
+            if (chip) {
+                const query = chip.dataset.recentQuery || "";
+                if (!query) return;
+                elements.searchInput.value = query;
+                state.query = query;
+                renderLoading();
+                clearTimeout(searchDebounceTimer);
+                void search("overview");
+                return;
+            }
+            const shortcut = event.target.closest("[data-view-shortcut]");
+            if (shortcut) {
+                const view = shortcut.dataset.viewShortcut;
+                if (view) {
+                    setActiveView(view);
+                    renderAll();
+                    requestAnimationFrame(() => {
+                        document
+                            .getElementById("listing-assistant-section")
+                            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    });
+                }
+            }
+        });
+
         // ── View tabs ────────────────────────────────────────────────
         for (const button of elements.viewTabs || []) {
             button.addEventListener("click", () => {

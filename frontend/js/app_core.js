@@ -91,7 +91,9 @@ function createAppCore() {
             segments: false,
             geography: false,
             historyDeals: false,
+            listingAssistant: false,
         },
+        listingAssistantResult: null,
     };
 
     const elements = {};

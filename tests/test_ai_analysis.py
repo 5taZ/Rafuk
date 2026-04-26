@@ -800,3 +800,278 @@ def test_complete_analysis_sections_adds_resale_potential_fallback() -> None:
         best_alternative=None,
     )
     assert empty is None
+
+
+# ─── Listing Assistant ─────────────────────────────────────────────────────
+
+
+def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> None:
+    """End-to-end: market stats from Kufar feed into the AI prompt and the
+    response carries fast/market/patient tiers + anti-lowball playbook."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+
+    captured: dict = {}
+
+    async def fake_load_query_dataset(**kwargs):
+        # The endpoint must search by the user's draft title, not "iphone 14".
+        captured["query"] = kwargs.get("query")
+        return SimpleNamespace(
+            ads=[
+                {
+                    "ad_id": 401,
+                    "subject": "iPhone 14 Pro Max 256",
+                    # Kufar API returns prices in kopecks; normalize_price_byn /100.
+                    "price_byn": 250000,
+                    "ad_parameters": [
+                        {"p": "seller_type", "v": "Частное лицо"},
+                        {"p": "condition", "v": "Б/у"},
+                    ],
+                },
+                {
+                    "ad_id": 402,
+                    "subject": "iPhone 14 Pro Max 256",
+                    "price_byn": 270000,
+                    "ad_parameters": [{"p": "seller_type", "v": "Магазин"}],
+                },
+            ],
+            price_stats=SimpleNamespace(
+                median=2600.0,
+                count=14,
+                q1=2400.0,
+                q3=2800.0,
+                min=2200.0,
+                max=3200.0,
+            ),
+        )
+
+    class FakeAI:
+        available = True
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def generate_listing(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "title_suggestion": "iPhone 14 Pro Max 256GB Space Black, Беларусь, чек",
+                "description": "Состояние отличное, без сколов. Зарядка ~92%. ...",
+                "description_short": "iPhone 14 Pro Max 256GB, отличное состояние.",
+                "selling_points": [
+                    "Аккумулятор 92%",
+                    "Оригинальная коробка и чек",
+                    "Уточни — есть ли AppleCare",
+                ],
+                "pricing": {
+                    "fast": {
+                        "label": "Быстро",
+                        "price_byn": 2450,
+                        "weeks_to_sell": "1-2 недели",
+                        "reasoning": "Чуть ниже Q1 — продастся быстро.",
+                    },
+                    "market": {
+                        "label": "Рынок",
+                        "price_byn": 2600,
+                        "weeks_to_sell": "3-4 недели",
+                        "reasoning": "Около медианы.",
+                    },
+                    "patient": {
+                        "label": "Терпеливо",
+                        "price_byn": 2800,
+                        "weeks_to_sell": "1-2 месяца",
+                        "reasoning": "На уровне Q3 — найдётся покупатель.",
+                    },
+                    "floor_byn": 2300,
+                },
+                "negotiation_playbook": [
+                    {
+                        "scenario": "Предлагают 2200 при медиане 2600",
+                        "response": "На 15% ниже медианы. Можно скинуть до 2500.",
+                    },
+                ],
+                "photo_tips": ["Снимай у окна без вспышки", "Покажи разъём и торцы"],
+                "market_summary": "Рынок iPhone 14 Pro Max стабилен.",
+            }
+
+    fake_ai = FakeAI()
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={
+                "title": "iPhone 14 Pro Max 256GB",
+                "draft_price_byn": 2500,
+                "condition": "Хорошее",
+                "is_negotiable": False,
+                "extra_notes": "Продаю срочно",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    # Search must use the seller's draft title to fetch market data.
+    assert captured["query"] == "iPhone 14 Pro Max 256GB"
+
+    # Market anchors propagate to the response.
+    assert payload["pricing"]["market_median_byn"] == 2600.0
+    assert payload["pricing"]["market_q1_byn"] == 2400.0
+    assert payload["pricing"]["market_q3_byn"] == 2800.0
+    assert payload["pricing"]["competing_count"] == 14
+
+    # AI tiers are coerced into the contract shape.
+    assert payload["pricing"]["fast"]["price_byn"] == 2450.0
+    assert payload["pricing"]["market"]["price_byn"] == 2600.0
+    assert payload["pricing"]["patient"]["price_byn"] == 2800.0
+    assert payload["pricing"]["floor_byn"] == 2300.0
+
+    assert payload["title_suggestion"].startswith("iPhone 14 Pro Max")
+    assert payload["description"]
+    assert len(payload["selling_points"]) >= 1
+    assert payload["negotiation_playbook"][0]["scenario"]
+    assert payload["photo_tips"]
+
+    # The AI got the actual market anchors, not None.
+    call = fake_ai.calls[0]
+    assert call["market_median"] == 2600.0
+    assert call["market_q1"] == 2400.0
+    assert call["market_q3"] == 2800.0
+    assert call["market_count"] == 14
+    # Competitor list is built from dataset ads.
+    assert call["similar_listings"]
+    assert call["similar_listings"][0]["price_byn"] == 2500.0
+
+
+def test_listing_assistant_passes_photos_to_ai_and_drops_invalid_ones(monkeypatch) -> None:
+    """Frontend uploads up to 4 base64 photos. The router must validate each
+    one (data URL + size cap) and forward the survivors to the AI service."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            ads=[],
+            price_stats=SimpleNamespace(median=0.0, count=0, q1=0.0, q3=0.0, min=0.0, max=0.0),
+        )
+
+    class FakeAI:
+        available = True
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def generate_listing(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "title_suggestion": "ok",
+                "description": "...",
+                "selling_points": [],
+                "pricing": {
+                    "fast": {"label": "F", "price_byn": 100, "weeks_to_sell": "1"},
+                    "market": {"label": "M", "price_byn": 110, "weeks_to_sell": "2"},
+                    "patient": {"label": "P", "price_byn": 120, "weeks_to_sell": "3"},
+                    "floor_byn": 90,
+                },
+                "negotiation_playbook": [],
+                "photo_tips": ["ok"],
+            }
+
+    fake_ai = FakeAI()
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    # 1×1 transparent JPEG-ish; the router only validates the data-URL prefix and size,
+    # not whether bytes decode to a real image (that's the AI's problem).
+    real = "data:image/jpeg;base64," + ("A" * 200)
+    invalid_scheme = "javascript:alert(1)"
+    invalid_mime = "data:application/pdf;base64,AAAA"
+    too_big = "data:image/jpeg;base64," + ("A" * 2_000_000)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={
+                "title": "Тестовый товар XYZ",
+                "photos": [real, invalid_scheme, invalid_mime, too_big, real, real, real, real],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    call = fake_ai.calls[0]
+    forwarded = call["photo_data_urls"] or []
+    # All 4 forwarded entries must be the valid one — invalid scheme, wrong mime,
+    # and oversized payloads are filtered out.
+    assert all(p == real for p in forwarded)
+    assert 1 <= len(forwarded) <= 4
+    # And we must never exceed the schema's max-length cap (also 4).
+    assert len(forwarded) <= 4
+
+
+def test_listing_assistant_handles_empty_market_gracefully(monkeypatch) -> None:
+    """If Kufar returns nothing, we still call the AI but with empty anchors."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            ads=[],
+            price_stats=SimpleNamespace(median=0.0, count=0, q1=0.0, q3=0.0, min=0.0, max=0.0),
+        )
+
+    class FakeAI:
+        available = True
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def generate_listing(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "title_suggestion": "Раритетный самовар XIX век, медь",
+                "description": "Описание от продавца...",
+                "selling_points": ["Уточни клеймо мастера"],
+                "pricing": {
+                    "fast": {"label": "Быстро", "price_byn": 800, "weeks_to_sell": "?"},
+                    "market": {"label": "Рынок", "price_byn": 1000, "weeks_to_sell": "?"},
+                    "patient": {"label": "Терпеливо", "price_byn": 1300, "weeks_to_sell": "?"},
+                    "floor_byn": 700,
+                },
+                "negotiation_playbook": [
+                    {"scenario": "Любое предложение", "response": "Аргументируй редкостью."},
+                ],
+                "photo_tips": ["Покажи клеймо крупным планом"],
+            }
+
+    fake_ai = FakeAI()
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={"title": "Самовар медный антикварный"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pricing"]["market_median_byn"] is None
+    assert payload["pricing"]["competing_count"] == 0
+    assert payload["title_suggestion"]
+    # Empty competitors list — AI got no similar_listings.
+    assert fake_ai.calls[0]["similar_listings"] is None

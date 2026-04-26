@@ -932,6 +932,96 @@ body {
     margin: 0 auto 12px;
 }
 
+.helper-panel .helper-headline {
+    margin: 0 0 4px;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.helper-panel .helper-sub {
+    margin: 0 0 14px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.helper-examples {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.helper-chip {
+    appearance: none;
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font: 600 12px var(--font);
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+}
+
+.helper-chip:hover {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.helper-chip:active {
+    transform: scale(0.97);
+}
+
+.helper-cta-row {
+    display: flex;
+    justify-content: center;
+}
+
+.helper-cta {
+    appearance: none;
+    border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--text);
+    padding: 10px 16px;
+    border-radius: var(--r-md);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+    transition: background 0.15s, border-color 0.15s, transform 0.05s;
+    max-width: 360px;
+    width: 100%;
+}
+
+.helper-cta:hover {
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: var(--accent);
+}
+
+.helper-cta:active {
+    transform: scale(0.99);
+}
+
+.helper-cta-kicker {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+}
+
+.helper-cta-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.4;
+}
+
 .view-panel {
     min-height: 120px;
 }
@@ -2418,6 +2508,24 @@ body {
     position: fixed;
     inset: 0;
     z-index: 500;
+    /* Animated entry/exit — see also `.detail-modal[hidden]` below
+       which keeps the modal painted but invisible so transitions run. */
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 220ms ease, visibility 0s linear 0s;
+}
+
+/* Overrides global `[hidden] { display: none !important }` so we can
+   still transition opacity/transform between visible and hidden states. */
+.detail-modal[hidden] {
+    display: block !important;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    /* Delay visibility flip until opacity has finished fading out, so
+       the sheet finishes its slide-down before we strip pointer events. */
+    transition: opacity 220ms ease, visibility 0s linear 220ms;
 }
 
 /* When a modal is open, lock body scroll to prevent double-scroll */
@@ -2455,6 +2563,25 @@ body.modal-open {
     border-top-right-radius: 20px;
     box-shadow: var(--shadow-prominent);
     border-top: 1px solid var(--border);
+    /* Slides up from the bottom on open, down on close. */
+    transform: translateY(0);
+    transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+    will-change: transform;
+}
+
+.detail-modal[hidden] .detail-sheet,
+.detail-modal.is-closing .detail-sheet {
+    transform: translateY(100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .detail-modal,
+    .detail-modal[hidden],
+    .detail-sheet,
+    .detail-modal[hidden] .detail-sheet,
+    .detail-modal.is-closing .detail-sheet {
+        transition: none !important;
+    }
 }
 
 .detail-sheet .detail-top-bar {
@@ -6684,4 +6811,1165 @@ body {
 
 .ai-label {
     color: color-mix(in srgb, var(--accent) 82%, var(--text) 18%);
+}
+
+/* ── Listing Assistant: card on Deals view ────────────────────────────── */
+
+.la-card {
+    background: color-mix(in srgb, var(--bg-card) 92%, var(--accent) 8%);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.la-card-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.la-card-kicker {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+}
+
+.la-card-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text);
+}
+
+.la-card-text {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.la-card-cta-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.la-card-cta {
+    flex: 1 1 220px;
+    min-width: 200px;
+    padding: 12px 16px;
+    font-weight: 700;
+}
+
+.la-card-history {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 14px;
+}
+
+.la-card-history-count {
+    display: inline-flex;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+/* ── Listing Assistant: modal ─────────────────────────────────────────── */
+
+.la-modal-body {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.la-modal-body > * {
+    padding-left: 16px;
+    padding-right: 16px;
+}
+
+.la-modal-body > .la-tabs {
+    padding-top: 14px;
+    padding-bottom: 0;
+}
+
+.la-tabs {
+    display: flex;
+    gap: 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+}
+
+.la-tab {
+    appearance: none;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    padding: 10px 6px;
+    font: 600 13px var(--font);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.la-tab.is-active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+}
+
+.la-tab-count {
+    display: inline-flex;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.la-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-bottom: 24px;
+}
+
+/* ── Listing Assistant: photo upload ──────────────────────────────────── */
+
+.la-photo-upload {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+    border: 1px dashed color-mix(in srgb, var(--accent) 32%, var(--border) 68%);
+    border-radius: var(--r-md);
+    background: color-mix(in srgb, var(--bg-elevated) 84%, transparent);
+}
+
+.la-photo-grid {
+    display: contents;
+}
+
+.la-photo-cell {
+    position: relative;
+    width: 76px;
+    height: 76px;
+    border-radius: var(--r-md);
+    overflow: hidden;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+}
+
+.la-photo-thumb {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.la-photo-remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    border: 0;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.la-photo-add {
+    width: 76px;
+    height: 76px;
+    border-radius: var(--r-md);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border) 72%);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    color: var(--accent);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    padding: 4px;
+    text-align: center;
+    transition: background 0.15s;
+}
+
+.la-photo-add:hover {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.la-photo-add-icon {
+    font-size: 22px;
+    line-height: 1;
+    font-weight: 300;
+}
+
+.la-photo-add-text {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.la-photo-add-hint {
+    font-size: 9px;
+    color: var(--text-dim);
+    line-height: 1.2;
+}
+
+/* ── Listing Assistant: textarea counter ──────────────────────────────── */
+
+.la-textarea-counter {
+    align-self: flex-end;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+/* ── Listing Assistant: form layout (modal stacks single column) ─────── */
+
+.la-form {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+}
+
+.la-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.la-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+.la-field--wide {
+    grid-column: 1 / -1;
+}
+
+.la-field--checkbox {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    grid-column: 1 / -1;
+    color: var(--text-secondary);
+}
+
+.la-field--checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+}
+
+.la-field-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.la-field-hint {
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-dim);
+}
+
+.la-input {
+    appearance: none;
+    width: 100%;
+    padding: 11px 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-input);
+    color: var(--text);
+    font: 500 var(--text-md) var(--font);
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.la-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.la-textarea {
+    resize: vertical;
+    min-height: 52px;
+    line-height: 1.4;
+}
+
+.la-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.la-submit {
+    min-width: 220px;
+}
+
+.la-submit.is-busy {
+    opacity: 0.85;
+    cursor: progress;
+}
+
+.la-result {
+    margin-top: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.la-error {
+    padding: 12px 14px;
+    border-radius: var(--r-md);
+    background: color-mix(in srgb, var(--red, #e11d48) 14%, transparent);
+    color: color-mix(in srgb, var(--red, #e11d48) 80%, var(--text) 20%);
+    font-size: var(--text-sm);
+    border: 1px solid color-mix(in srgb, var(--red, #e11d48) 28%, transparent);
+}
+
+.la-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 28px 12px;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.la-loading-spinner {
+    width: 28px;
+    height: 28px;
+    border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border-top-color: var(--accent);
+    border-radius: 999px;
+    animation: la-spin 1.05s linear infinite;
+}
+
+.la-loading-text {
+    margin: 0;
+    font-weight: 600;
+}
+
+.la-loading-sub {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: var(--text-xs);
+}
+
+@keyframes la-spin {
+    to { transform: rotate(360deg); }
+}
+
+.la-section {
+    padding: 14px;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
+    border-radius: var(--r-lg);
+    background: color-mix(in srgb, var(--bg-card) 94%, var(--accent) 6%);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+[data-theme="light"] .la-section {
+    background: rgba(255, 255, 255, 0.92);
+}
+
+.la-section--summary {
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-card) 90%);
+    border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+[data-theme="light"] .la-section--summary {
+    background: color-mix(in srgb, var(--accent) 8%, white 92%);
+}
+
+.la-section-title {
+    margin: 0;
+    font-size: var(--text-sm);
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.la-section-foot {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: var(--text-xs);
+}
+
+.la-summary {
+    margin: 0;
+    color: var(--text);
+    line-height: 1.45;
+}
+
+.la-copy-block {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-elevated);
+    overflow: hidden;
+}
+
+.la-copy-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: color-mix(in srgb, var(--bg-elevated) 70%, var(--accent) 30%);
+}
+
+[data-theme="light"] .la-copy-head {
+    background: color-mix(in srgb, var(--bg-elevated) 80%, var(--accent) 20%);
+}
+
+.la-copy-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.la-copy-btn {
+    appearance: none;
+    border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent);
+    padding: 4px 10px;
+    border-radius: 999px;
+    font: 600 var(--text-xs) var(--font);
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+}
+
+.la-copy-btn:hover {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.la-copy-btn:active {
+    transform: scale(0.97);
+}
+
+.la-copy-btn:disabled {
+    opacity: 0.7;
+    cursor: default;
+}
+
+.la-copy-body {
+    padding: 12px 14px;
+    color: var(--text);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: var(--text-md);
+}
+
+.la-bullets {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--text);
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.la-bullets li::marker {
+    color: var(--accent);
+}
+
+.la-tier-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.la-tier {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 12px 14px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+}
+
+.la-tier--fast {
+    border-color: color-mix(in srgb, var(--green, #16a34a) 40%, transparent);
+    background: color-mix(in srgb, var(--green, #16a34a) 10%, var(--bg-elevated) 90%);
+}
+
+.la-tier--market {
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated) 90%);
+}
+
+.la-tier--patient {
+    border-color: color-mix(in srgb, var(--orange, #d97706) 38%, transparent);
+    background: color-mix(in srgb, var(--orange, #d97706) 8%, var(--bg-elevated) 92%);
+}
+
+.la-tier-kicker {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.la-tier-price {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+    color: var(--text);
+}
+
+.la-tier-price-num {
+    font-size: 19px;
+    letter-spacing: -0.02em;
+}
+
+.la-tier-price-unit {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.la-tier-weeks {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.la-tier-reason {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.la-floor {
+    margin: 4px 0 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.la-floor strong {
+    color: var(--text);
+}
+
+.la-playbook {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.la-playbook-item {
+    padding: 12px 13px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--r-md);
+    background: var(--bg-elevated);
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 4px 10px;
+}
+
+.la-playbook-kicker {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    align-self: start;
+    padding-top: 2px;
+}
+
+.la-playbook-scenario,
+.la-playbook-response {
+    margin: 0;
+    color: var(--text);
+    line-height: 1.45;
+}
+
+.la-playbook-scenario {
+    color: var(--text-secondary);
+}
+
+.la-short-wrap {
+    margin-top: 8px;
+}
+
+.la-short-wrap summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-size: var(--text-xs);
+    padding: 4px 0;
+}
+
+.la-disclaimer {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.la-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.la-history-empty {
+    margin: 0;
+    padding: 24px 8px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.la-history-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-elevated);
+}
+
+.la-history-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.la-history-title {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.la-history-date {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.la-history-meta {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.la-history-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.la-history-open {
+    appearance: none;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font: 600 12px var(--font);
+    cursor: pointer;
+}
+
+.la-history-open:hover {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.la-history-delete {
+    appearance: none;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.la-history-delete:hover {
+    color: var(--red, #e11d48);
+    border-color: color-mix(in srgb, var(--red, #e11d48) 32%, transparent);
+}
+
+@media (max-width: 480px) {
+    .la-tier-grid {
+        grid-template-columns: 1fr;
+    }
+    .la-playbook-item {
+        grid-template-columns: 1fr;
+    }
+    .la-submit {
+        width: 100%;
+        min-width: 0;
+    }
+    .la-row {
+        grid-template-columns: 1fr;
+    }
+    /* On narrow screens keep CTA dominant but text-only history button
+       compact — no full-width stretch that could trigger flex sizing
+       quirks in older webview engines. */
+}
+
+/* =====================================================================
+ * DESIGN PASS v2 — quiet rhythm, fewer dividers, balanced cards
+ * Overrides earlier accent-heavy rules so every page reads cleanly
+ * in both dark (black + blue) and light (white + blue) themes.
+ * ===================================================================== */
+
+/* --- Section rhythm: replace divider with breathing room ----------- */
+.section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 16px;
+    margin-bottom: var(--space-4);
+}
+
+[data-theme="light"] .section {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.06);
+    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03), 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+/* Sections that don't need a card background (e.g. hero containers,
+   filter rows) keep their previous look via .section--bare. */
+.section.section--bare {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+}
+
+/* --- Cleaner section heads: no underline, balanced spacing -------- */
+.sec-head {
+    margin-bottom: 12px;
+    padding-bottom: 0;
+    border-bottom: none;
+    min-height: 24px;
+}
+
+.sec-title {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+}
+
+/* --- Hero blocks: drop the hard divider, keep generous space ------ */
+.view-hero {
+    padding: 18px 0 14px;
+}
+
+.view-hero::after {
+    display: none;
+}
+
+.view-hero-title {
+    font-size: 22px;
+    letter-spacing: -0.025em;
+}
+
+.view-hero-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.view-hero-stats {
+    margin-top: 4px;
+    gap: 8px;
+}
+
+.hero-stat {
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+}
+
+[data-theme="light"] .hero-stat {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.06);
+}
+
+.hero-stat-val {
+    margin-top: 1px;
+    font-size: 13px;
+}
+
+/* --- Cards: kill the global accent tint, use consistent surface --- */
+.quick-chip,
+.view-tab,
+.s-tab,
+.listing,
+.summary-strip,
+.stat-card,
+.tracker-card,
+.helper-panel,
+.lead-card,
+.watchlist-card {
+    background: var(--bg-card);
+    border-color: var(--border);
+}
+
+[data-theme="light"] .quick-chip,
+[data-theme="light"] .view-tab,
+[data-theme="light"] .s-tab,
+[data-theme="light"] .listing,
+[data-theme="light"] .summary-strip,
+[data-theme="light"] .stat-card,
+[data-theme="light"] .tracker-card,
+[data-theme="light"] .helper-panel,
+[data-theme="light"] .lead-card,
+[data-theme="light"] .watchlist-card {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.06);
+}
+
+/* Active states still get accent — selection should always be obvious. */
+.view-tab.active,
+.s-tab.active,
+.search-btn,
+.primary-btn,
+.primary-link {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.18);
+}
+
+/* --- Summary strip accent reduced to a thin spine ---------------- */
+.summary-strip {
+    padding: 14px 16px;
+}
+
+.summary-strip::before {
+    width: 2px;
+    background: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* --- Listings, leads, watchlist: gentle hover ---------------------- */
+.listing,
+.lead-card,
+.watchlist-card {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .listing,
+[data-theme="light"] .lead-card,
+[data-theme="light"] .watchlist-card {
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.listing:hover,
+.lead-card:hover,
+.watchlist-card:hover {
+    background: var(--bg-hover);
+}
+
+[data-theme="light"] .listing:hover,
+[data-theme="light"] .lead-card:hover,
+[data-theme="light"] .watchlist-card:hover {
+    background: rgba(15, 23, 42, 0.02);
+}
+
+/* --- AI помощник продавцу — quiet outline, не «остров» ----------- */
+.la-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: 16px;
+    gap: 12px;
+    position: relative;
+    align-items: stretch;
+}
+
+[data-theme="light"] .la-card {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.06);
+}
+
+.la-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 2px;
+    background: color-mix(in srgb, var(--accent) 60%, transparent);
+    border-radius: 2px 0 0 2px;
+}
+
+.la-card-kicker {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+}
+
+.la-card-title {
+    font-size: 15px;
+    letter-spacing: -0.01em;
+}
+
+.la-card-text {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.la-card-cta-row {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.la-card-cta {
+    /* Fixed height — flex parents above were stretching it to the
+       full card height when wrapping triggered. */
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 44px;
+    padding: 0 16px;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: -0.01em;
+    box-shadow: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.la-card-history {
+    flex: 0 0 auto;
+    height: 44px;
+    padding: 0 16px;
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* --- Photo upload inside modal: header + grid stays inline ------- */
+.la-photo-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.la-photo-block-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.la-photo-upload {
+    padding: 10px;
+    background: transparent;
+    border: 1px dashed color-mix(in srgb, var(--accent) 26%, var(--border) 74%);
+}
+
+.la-photo-add {
+    width: 84px;
+    height: 84px;
+    gap: 4px;
+    padding: 6px;
+    border-style: dashed;
+}
+
+.la-photo-add-icon {
+    font-size: 26px;
+    line-height: 1;
+}
+
+.la-photo-add-text {
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    font-weight: 600;
+}
+
+.la-photo-cell {
+    width: 84px;
+    height: 84px;
+}
+
+.la-field-help {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    display: block;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+}
+
+.la-textarea-counter {
+    color: var(--text-dim);
+}
+
+/* --- Profit dashboard: cards lighter, label readable -------------- */
+.profit-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+}
+
+[data-theme="light"] .profit-card {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.06);
+}
+
+.profit-card.is-accent {
+    background: color-mix(in srgb, var(--green, #16a34a) 10%, var(--bg-card) 90%);
+    border-color: color-mix(in srgb, var(--green, #16a34a) 30%, var(--border) 70%);
+}
+
+[data-theme="light"] .profit-card.is-accent {
+    background: color-mix(in srgb, var(--green, #16a34a) 8%, #ffffff 92%);
+    border-color: color-mix(in srgb, var(--green, #16a34a) 25%, transparent);
+}
+
+/* --- Helper panel on overview: balanced, less centred ------------- */
+.helper-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-style: solid;
+    text-align: left;
+    padding: 18px 18px 16px;
+}
+
+[data-theme="light"] .helper-panel {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.06);
+}
+
+.helper-panel::before {
+    display: none;
+}
+
+.helper-panel .helper-headline {
+    font-size: 15px;
+}
+
+.helper-examples {
+    justify-content: flex-start;
+}
+
+.helper-cta-row {
+    justify-content: flex-start;
+}
+
+/* --- View nav: tighter spacing, stronger active state ------------- */
+.view-nav {
+    gap: 4px;
+    margin: 6px 0 14px;
+}
+
+.view-tab {
+    padding: 10px 8px;
+    font-size: 12px;
+    letter-spacing: -0.01em;
+}
+
+/* --- Body background: keep it pure, no radial gradients ----------- */
+body {
+    background: var(--bg);
+}
+
+[data-theme="light"] body {
+    background: var(--bg);
+}
+
+/* --- Header: subtle, не мерцает при scroll ----------------------- */
+.header {
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    border-bottom-color: var(--border);
+    backdrop-filter: blur(14px);
+}
+
+/* --- Search wrap: simpler shadow, balanced focus ring ------------ */
+.search-wrap {
+    background: var(--bg-input);
+    border-color: var(--border);
+    box-shadow: none;
+}
+
+.search-wrap:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+[data-theme="light"] .search-wrap {
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+/* --- Misc: badge + summary-pill pure surface --------------------- */
+.summary-pill,
+.range-item {
+    background: var(--bg-elevated);
+    border-color: var(--border);
+}
+
+[data-theme="light"] .summary-pill,
+[data-theme="light"] .range-item {
+    background: #f8fafc;
+    border-color: rgba(15, 23, 42, 0.06);
+}
+
+/* --- Sections that contain a single big stat strip stay flat ----- */
+#summary-strip {
+    margin-bottom: var(--space-4);
 }

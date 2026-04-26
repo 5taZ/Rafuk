@@ -188,6 +188,7 @@ function cacheAppElements(elements) {
         segments: document.getElementById("segments-body"),
         geography: document.getElementById("geography-body"),
         historyDeals: document.getElementById("history-deals-body"),
+        listingAssistant: document.getElementById("listing-assistant-body"),
     };
 }
 

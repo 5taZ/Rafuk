@@ -1214,6 +1214,65 @@ _CONDITION_RISKS_SCHEMA = """{
 }"""
 
 
+LISTING_ASSISTANT_PROMPT = """\
+Ты — Rafuk AI, помощник продавцу на белорусском Kufar. Ты помогаешь
+составить КОНКРЕТНОЕ объявление: заголовок, описание, цену и план торга.
+
+Правила:
+- Аудитория — Беларусь, Kufar. Все цены в BYN.
+- Не выдумывай характеристики, которых нет в исходных данных. Если чего-то
+  не хватает (год, пробег, состояние батареи) — попроси продавца это уточнить
+  через selling_points "Уточни ...".
+- Заголовок: 50-80 символов, без CAPSLOCK, без эмодзи. Основное в начале
+  (модель / марка / ключевая характеристика). Ниша Kufar — поиск
+  по ключевым словам, поэтому модель и параметры важнее эпитетов.
+- Описание: 350-650 символов, абзацы по 1-2 предложения, без рекламной воды,
+  с конкретикой. В конце — условия встречи (район, возможность торга,
+  оплата). Без телефонов и личных данных.
+- selling_points: 3-5 буллетов «что выгодно подсветить покупателю».
+- Цена: ВСЕГДА три tier'a — fast / market / patient — и обязательное
+  floor_byn (минимум, ниже которого нельзя падать). Цены целые, в BYN.
+  Привязывай tier'ы к рыночной медиане и Q1-Q3 из контекста.
+  Если черновая цена продавца сильно занижена/завышена — скажи это явно
+  в reasoning соответствующего tier'a.
+- weeks_to_sell — словами: «1-2 недели», «3-4 недели», «1-2 месяца».
+- Anti-lowball: 3-4 сценария «что отвечать, когда…». Сценарии должны быть
+  конкретными к данному товару (не «отказывайтесь вежливо»). Используй
+  реальные суммы из рыночного контекста: «Если предлагают 1200 при медиане
+  1400 — ответь: ...».
+- photo_tips: 2-4 коротких совета по фото (свет, ракурсы, что обязательно
+  показать). Без банальностей вроде «фотографируйте красиво». Если фото
+  ПРИЛОЖЕНЫ — обязательно прокомментируй их: что снято хорошо, что
+  переснять, чего не хватает (например, нет фото разъёма / VIN / клейма).
+- Если фото приложены — используй их при оценке состояния и selling_points
+  («Видно скол на левом верхнем углу» и т.п.). Если заявленное состояние
+  расходится с фото — отметь это в selling_points через «Уточни …».
+- market_summary: 1-2 предложения, что вообще происходит на рынке.
+
+Отвечай ТОЛЬКО JSON без markdown. Все строки — на русском.
+
+Структура:
+{
+  "title_suggestion": "...",
+  "description": "...",
+  "description_short": "...",
+  "selling_points": ["...", "..."],
+  "pricing": {
+    "fast":    {"label": "Быстро",    "price_byn": 1200, "weeks_to_sell": "1-2 нед"},
+    "market":  {"label": "Рынок",     "price_byn": 1350, "weeks_to_sell": "3-4 нед"},
+    "patient": {"label": "Терпеливо", "price_byn": 1500, "weeks_to_sell": "1-2 мес"},
+    "floor_byn": 1100
+  },
+  "negotiation_playbook": [
+    {"scenario": "Предлагают 1100 при медиане 1350", "response": "..."},
+    ...
+  ],
+  "photo_tips": ["...", "..."],
+  "market_summary": "..."
+}
+"""
+
+
 QUICK_CONDITION_PROMPT = """\
 Ты — Rafuk AI. Оцени состояние товара по фото.
 Выбери РОВНО ОДНО значение condition из списка:
@@ -1623,6 +1682,108 @@ class AIService:
         merged.setdefault("recommendation", None)
         merged.setdefault("summary", "")
         return merged
+
+    async def generate_listing(
+        self,
+        *,
+        title: str,
+        condition: str | None,
+        is_negotiable: bool,
+        draft_price_byn: float | None,
+        extra_notes: str | None,
+        market_median: float | None,
+        market_q1: float | None,
+        market_q3: float | None,
+        market_min: float | None,
+        market_max: float | None,
+        market_count: int,
+        similar_listings: list[dict] | None,
+        category_hint: str | None,
+        category_bargain_hint: str | None,
+        photo_data_urls: list[str] | None = None,
+    ) -> dict:
+        """Generate seller-side listing draft (title, description, pricing, playbook).
+
+        The prompt receives concrete market anchors (median + Q1/Q3) so the
+        model can produce numerically-grounded fast/market/patient tiers
+        instead of guesses.
+        """
+
+        ctx_lines: list[str] = [f"## ТОВАР: {title}"]
+        if condition:
+            ctx_lines.append(f"Состояние (как видит продавец): {condition}")
+        if draft_price_byn and draft_price_byn > 0:
+            ctx_lines.append(f"Черновая цена продавца: {int(round(draft_price_byn))} BYN")
+        elif is_negotiable:
+            ctx_lines.append("Цена черновая: договорная")
+        if extra_notes:
+            cleaned = re.sub(r"\s+", " ", extra_notes.strip())[:600]
+            if cleaned:
+                ctx_lines.append(f"Заметки продавца: {cleaned}")
+
+        ctx_lines.append("")
+        ctx_lines.append("## РЫНОК (Kufar.by, BYN)")
+        if market_median:
+            ctx_lines.append(f"Медиана: {market_median:.0f}")
+        if market_q1 and market_q3:
+            ctx_lines.append(f"Q1-Q3: {market_q1:.0f}-{market_q3:.0f}")
+        if market_min is not None and market_max is not None:
+            ctx_lines.append(f"Min-Max: {market_min:.0f}-{market_max:.0f}")
+        ctx_lines.append(f"Количество объявлений в выборке: {market_count}")
+
+        if similar_listings:
+            ctx_lines.append("")
+            ctx_lines.append("## ТОП КОНКУРЕНТОВ (до 6)")
+            for item in similar_listings[:6]:
+                price = item.get("price_byn") or 0
+                cond = item.get("condition") or item.get("condition_label") or ""
+                seller = item.get("seller_type") or ""
+                title_text = (item.get("title") or "").strip().replace("\n", " ")
+                bits: list[str] = []
+                if price:
+                    bits.append(f"{int(round(float(price)))} BYN")
+                if cond:
+                    bits.append(str(cond))
+                if seller:
+                    bits.append(str(seller))
+                meta = " · ".join(bits)
+                if title_text:
+                    ctx_lines.append(f"- {title_text} ({meta})" if meta else f"- {title_text}")
+                elif meta:
+                    ctx_lines.append(f"- {meta}")
+
+        if category_hint:
+            ctx_lines.append("")
+            ctx_lines.append("## КАТЕГОРИЯ-ПОДСКАЗКИ")
+            ctx_lines.append(category_hint)
+        if category_bargain_hint:
+            ctx_lines.append("")
+            ctx_lines.append("## АРГУМЕНТЫ ТОРГА (категория)")
+            ctx_lines.append(category_bargain_hint)
+
+        user_text = "\n".join(ctx_lines)
+
+        photos = [
+            url
+            for url in (photo_data_urls or [])
+            if isinstance(url, str) and url.startswith("data:image/")
+        ][: self._max_images]
+
+        if photos:
+            content: list[dict] = [{"type": "text", "text": user_text}]
+            for data_url in photos:
+                content.append({"type": "image_url", "image_url": {"url": data_url}})
+            return await self._chat(
+                system=LISTING_ASSISTANT_PROMPT,
+                content=content,
+                max_tokens=2400,
+            )
+
+        return await self._chat(
+            system=LISTING_ASSISTANT_PROMPT,
+            content=user_text,
+            max_tokens=2200,
+        )
 
     async def quick_condition(self, image_urls: list[str]) -> dict:
         """Quick condition assessment from photos only."""

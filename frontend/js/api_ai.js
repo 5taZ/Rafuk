@@ -223,8 +223,7 @@ function createApiAi(context) {
         if (elements.aiModalResult) elements.aiModalResult.hidden = true;
         _cancelProgressFrame();
         _updateProgressDisplayInstant(startLoading ? 3 : 0);
-        if (elements.aiModal) elements.aiModal.hidden = false;
-        document.body.classList.add("modal-open");
+        if (elements.aiModal) openModalAnimated(elements.aiModal);
 
         // Scroll to top
         const scrollBody = elements.aiModal?.querySelector(".ai-modal-body");
@@ -239,8 +238,7 @@ function createApiAi(context) {
 
     function closeAIModal() {
         _stopLoadingAnimation(false);
-        if (elements.aiModal) elements.aiModal.hidden = true;
-        document.body.classList.remove("modal-open");
+        if (elements.aiModal) closeModalAnimated(elements.aiModal);
     }
 
     async function loadAIAnalysis(adId) {

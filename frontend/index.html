@@ -13,17 +13,17 @@
         href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
         rel="stylesheet"
     >
-    <link rel="stylesheet" href="css/style.css?v=20260426-no-gradients">
+    <link rel="stylesheet" href="css/style.css?v=20260426-modal-anim">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
-    <script defer src="js/dom_helpers.js"></script>
-    <script defer src="js/app_core_dom.js"></script>
-    <script defer src="js/app_core.js"></script>
+    <script defer src="js/dom_helpers.js?v=20260426-modal-anim"></script>
+    <script defer src="js/app_core_dom.js?v=20260426-listing-assistant"></script>
+    <script defer src="js/app_core.js?v=20260426-listing-assistant"></script>
     <script defer src="js/render_core.js"></script>
     <script defer src="js/render_card_builders.js"></script>
     <script defer src="js/render_cards.js?v=20260426-deals-realtime"></script>
     <script defer src="js/render_views.js"></script>
-    <script defer src="js/render_modals.js"></script>
+    <script defer src="js/render_modals.js?v=20260426-modal-anim"></script>
     <script defer src="js/render_charts.js?v=20260426-deals-realtime"></script>
     <script defer src="js/render_trackers.js"></script>
     <script defer src="js/virtual_list.js"></script>
@@ -33,9 +33,10 @@
     <script defer src="js/api_trackers.js"></script>
     <script defer src="js/api_leads.js?v=20260426-deals-realtime"></script>
     <script defer src="js/api_watchlist.js"></script>
-    <script defer src="js/api_events.js"></script>
-    <script defer src="js/api_ai.js?v=20260426-no-gradients"></script>
-    <script defer src="js/app_actions.js?v=20260426-deals-realtime"></script>
+    <script defer src="js/api_events.js?v=20260426-listing-assistant"></script>
+    <script defer src="js/api_ai.js?v=20260426-modal-anim"></script>
+    <script defer src="js/api_listing_assistant.js?v=20260426-modal-anim"></script>
+    <script defer src="js/app_actions.js?v=20260426-modal-anim"></script>
     <script defer src="js/app.js"></script>
 </head>
 <body>
@@ -193,7 +194,21 @@
     </div>
 
     <div class="helper-panel" id="helper-panel">
-        Введите запрос или выберите быстрый сценарий выше.
+        <p class="helper-headline">С чего начать?</p>
+        <p class="helper-sub">Введи название товара — Rafuk покажет рынок, аналитику и AI-рекомендации.</p>
+        <div class="helper-examples" id="helper-examples">
+            <button class="helper-chip" type="button" data-recent-query="iPhone 14 Pro">iPhone 14 Pro</button>
+            <button class="helper-chip" type="button" data-recent-query="Volkswagen Polo">Volkswagen Polo</button>
+            <button class="helper-chip" type="button" data-recent-query="MacBook Air M2">MacBook Air M2</button>
+            <button class="helper-chip" type="button" data-recent-query="велосипед взрослый">велосипед взрослый</button>
+            <button class="helper-chip" type="button" data-recent-query="холодильник Atlant">холодильник Atlant</button>
+        </div>
+        <div class="helper-cta-row">
+            <button class="helper-cta" type="button" data-view-shortcut="deals">
+                <span class="helper-cta-kicker">Продаёшь?</span>
+                <span class="helper-cta-text">AI помощник продавцу — заголовок, цена, торг</span>
+            </button>
+        </div>
     </div>
 
     <section class="view-panel" id="overview-view" role="tabpanel" aria-labelledby="tab-overview">
@@ -582,6 +597,24 @@
                 <canvas id="profitChart"></canvas>
             </div>
         </section>
+        <section class="section la-card" id="listing-assistant-section">
+            <div class="la-card-head">
+                <span class="la-card-kicker">AI · ПРОДАВЦУ</span>
+                <h2 class="la-card-title">Помощь с объявлением</h2>
+                <p class="la-card-text">
+                    Загрузи фото и опиши товар — AI подскажет заголовок, описание,
+                    цену по рынку и как отвечать на торг.
+                </p>
+            </div>
+            <div class="la-card-cta-row">
+                <button class="primary-btn la-card-cta" id="listing-assistant-open-btn" type="button">
+                    Открыть помощника
+                </button>
+                <button class="ghost-btn small la-card-history" id="listing-assistant-history-btn" type="button">
+                    История <span class="la-card-history-count" id="la-history-count" hidden>0</span>
+                </button>
+            </div>
+        </section>
         <section class="section" id="lead-inbox-section">
             <div class="sec-head listings-head">
                 <h2 class="sec-title">Мои сделки</h2>
@@ -812,6 +845,112 @@
                         <button class="ghost-btn" id="cancel-edit-btn" type="button">Отмена</button>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Listing Assistant Modal -->
+    <div class="detail-modal ai-modal-overlay" id="la-modal" hidden>
+        <div class="detail-overlay" id="la-overlay"></div>
+        <div class="detail-sheet ai-sheet" role="dialog" aria-modal="true" aria-labelledby="la-modal-title">
+            <div class="ai-header-bar">
+                <div class="ai-header-left">
+                    <div class="ai-header-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M3 7l3-3h12l3 3v3a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0z"/>
+                            <path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="ai-modal-title" id="la-modal-title">AI помощник продавцу</h3>
+                        <p class="ai-modal-subtitle" id="la-modal-subtitle">Заголовок, описание, цена и план торга</p>
+                    </div>
+                </div>
+                <div class="ai-header-actions">
+                    <button class="ai-action-btn ai-action-btn--close" id="la-modal-close" type="button" aria-label="Закрыть">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="ai-modal-body la-modal-body" id="la-modal-body">
+                <div class="la-tabs" role="tablist">
+                    <button class="la-tab is-active" data-la-tab="form" type="button" role="tab" aria-selected="true">Новый запрос</button>
+                    <button class="la-tab" data-la-tab="history" type="button" role="tab" aria-selected="false">История <span class="la-tab-count" id="la-tab-history-count" hidden>0</span></button>
+                </div>
+
+                <section class="la-pane" id="la-pane-form" role="tabpanel">
+                    <form class="la-form la-form--modal" id="listing-assistant-form" autocomplete="off">
+                        <div class="la-photo-block">
+                            <div class="la-photo-block-head">
+                                <span class="la-field-label">Фото</span>
+                                <span class="la-field-help">до 4 шт · ужмём автоматически</span>
+                            </div>
+                            <div class="la-photo-upload" id="la-photo-upload">
+                                <div class="la-photo-grid" id="la-photo-grid"></div>
+                                <label class="la-photo-add" id="la-photo-add">
+                                    <input class="la-photo-input" id="la-photo-input" type="file"
+                                           accept="image/jpeg,image/png,image/webp" multiple hidden>
+                                    <span class="la-photo-add-icon" aria-hidden="true">+</span>
+                                    <span class="la-photo-add-text">Добавить</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <label class="la-field la-field--wide">
+                            <span class="la-field-label">Что продаёшь</span>
+                            <input class="la-input" id="la-title-input" type="text"
+                                   placeholder="iPhone 14 Pro Max 256GB"
+                                   maxlength="200" required>
+                        </label>
+
+                        <div class="la-row">
+                            <label class="la-field">
+                                <span class="la-field-label">Цена, BYN</span>
+                                <input class="la-input" id="la-price-input" type="number" min="0"
+                                       inputmode="numeric" placeholder="2500">
+                            </label>
+                            <label class="la-field">
+                                <span class="la-field-label">Состояние</span>
+                                <select class="la-input" id="la-condition-select">
+                                    <option value="">—</option>
+                                    <option value="Отличное">Отличное</option>
+                                    <option value="Хорошее">Хорошее</option>
+                                    <option value="Удовлетворительное">Удовлетворительное</option>
+                                    <option value="Требует внимания">Требует внимания</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <label class="la-field la-field--checkbox">
+                            <input type="checkbox" id="la-negotiable-checkbox">
+                            <span>Цена договорная</span>
+                        </label>
+
+                        <label class="la-field la-field--wide">
+                            <span class="la-field-label">Характеристики и нюансы</span>
+                            <span class="la-field-help">Чем подробнее напишешь — тем точнее цена.</span>
+                            <textarea class="la-input la-textarea" id="la-notes-input"
+                                      rows="4" maxlength="1200"
+                                      placeholder="Например: батарея 88%, лёгкая царапина на левом боку, оригинальная коробка и кабель, не вскрывался. Минск, Каменная Горка."></textarea>
+                            <span class="la-textarea-counter" id="la-notes-counter">0 / 1200</span>
+                        </label>
+
+                        <div class="la-actions">
+                            <button class="primary-btn la-submit" id="la-submit-btn" type="submit">
+                                <span id="la-submit-label">Подготовить объявление</span>
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="la-result" id="listing-assistant-result" hidden></div>
+                </section>
+
+                <section class="la-pane" id="la-pane-history" role="tabpanel" hidden>
+                    <div class="la-history-list" id="la-history-list"></div>
+                    <p class="la-history-empty" id="la-history-empty" hidden>
+                        Здесь будут сохраняться твои запросы. Открой первый — он появится в списке.
+                    </p>
+                </section>
             </div>
         </div>
     </div>
