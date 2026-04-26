@@ -80,6 +80,17 @@
     --radius-xl: var(--r-xl);
     --radius-full: 999px;
 
+    /* Motion tokens — unify the most-used transition durations.
+       New CSS should reach for these instead of bare ms values. The
+       three buckets correspond to: micro-interactions (focus / hover
+       state changes), standard UI transitions (most things), and
+       sheets / modals where the eye has time to follow. */
+    --t-fast: 120ms;
+    --t-base: 150ms;
+    --t-slow: 280ms;
+    --easing-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --easing-decelerate: cubic-bezier(0, 0, 0.2, 1);
+
     /* Subtle surface for filter chips and secondary inputs */
     --bg-subtle: rgba(255, 255, 255, 0.03);
 
@@ -3499,7 +3510,7 @@ body.modal-open {
 }
 
 .swipe-bg--danger {
-    background: var(--red, #e11d48);
+    background: var(--red);
 }
 
 .swipe-target {
@@ -3508,7 +3519,7 @@ body.modal-open {
     /* Lets the page keep scrolling vertically while we capture
        horizontal pans for the gesture. */
     touch-action: pan-y;
-    transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    transition: transform var(--t-slow) var(--easing-standard);
 }
 
 .swipe-target.swipe-dragging {
@@ -7224,10 +7235,10 @@ body {
 .la-error {
     padding: 12px 14px;
     border-radius: var(--r-md);
-    background: color-mix(in srgb, var(--red, #e11d48) 14%, transparent);
-    color: color-mix(in srgb, var(--red, #e11d48) 80%, var(--text) 20%);
+    background: color-mix(in srgb, var(--red) 14%, transparent);
+    color: color-mix(in srgb, var(--red) 80%, var(--text) 20%);
     font-size: var(--text-sm);
-    border: 1px solid color-mix(in srgb, var(--red, #e11d48) 28%, transparent);
+    border: 1px solid color-mix(in srgb, var(--red) 28%, transparent);
 }
 
 .la-loading {
@@ -7400,8 +7411,8 @@ body {
 }
 
 .la-tier--fast {
-    border-color: color-mix(in srgb, var(--green, #16a34a) 40%, transparent);
-    background: color-mix(in srgb, var(--green, #16a34a) 10%, var(--bg-elevated) 90%);
+    border-color: color-mix(in srgb, var(--green) 40%, transparent);
+    background: color-mix(in srgb, var(--green) 10%, var(--bg-elevated) 90%);
 }
 
 .la-tier--market {
@@ -7410,8 +7421,8 @@ body {
 }
 
 .la-tier--patient {
-    border-color: color-mix(in srgb, var(--orange, #d97706) 38%, transparent);
-    background: color-mix(in srgb, var(--orange, #d97706) 8%, var(--bg-elevated) 92%);
+    border-color: color-mix(in srgb, var(--amber) 38%, transparent);
+    background: color-mix(in srgb, var(--amber) 8%, var(--bg-elevated) 92%);
 }
 
 .la-tier-kicker {
@@ -7608,8 +7619,8 @@ body {
 }
 
 .la-history-delete:hover {
-    color: var(--red, #e11d48);
-    border-color: color-mix(in srgb, var(--red, #e11d48) 32%, transparent);
+    color: var(--red);
+    border-color: color-mix(in srgb, var(--red) 32%, transparent);
 }
 
 @media (max-width: 480px) {
@@ -7928,13 +7939,13 @@ body {
 }
 
 .profit-card.is-accent {
-    background: color-mix(in srgb, var(--green, #16a34a) 10%, var(--bg-card) 90%);
-    border-color: color-mix(in srgb, var(--green, #16a34a) 30%, var(--border) 70%);
+    background: color-mix(in srgb, var(--green) 10%, var(--bg-card) 90%);
+    border-color: color-mix(in srgb, var(--green) 30%, var(--border) 70%);
 }
 
 [data-theme="light"] .profit-card.is-accent {
-    background: color-mix(in srgb, var(--green, #16a34a) 8%, #ffffff 92%);
-    border-color: color-mix(in srgb, var(--green, #16a34a) 25%, transparent);
+    background: color-mix(in srgb, var(--green) 8%, #ffffff 92%);
+    border-color: color-mix(in srgb, var(--green) 25%, transparent);
 }
 
 /* --- Helper panel on overview: balanced, less centred ------------- */
@@ -8081,13 +8092,13 @@ body {
 }
 
 .tracker-action-btn.danger {
-    color: var(--red, #e11d48);
-    border-color: color-mix(in srgb, var(--red, #e11d48) 32%, transparent);
+    color: var(--red);
+    border-color: color-mix(in srgb, var(--red) 32%, transparent);
 }
 
 .tracker-action-btn.danger:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--red, #e11d48) 8%, transparent);
-    border-color: color-mix(in srgb, var(--red, #e11d48) 50%, transparent);
+    background: color-mix(in srgb, var(--red) 8%, transparent);
+    border-color: color-mix(in srgb, var(--red) 50%, transparent);
 }
 
 .tracker-action-icon {

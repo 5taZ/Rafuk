@@ -52,3 +52,52 @@ def test_css_has_required_building_blocks(css_text: str) -> None:
     assert '[data-theme="light"]' in css_text
     assert "@keyframes skeleton-loading" in css_text
     assert "@media" in css_text
+
+
+def test_css_uses_color_tokens_outside_theme_blocks(css_text: str) -> None:
+    """No hard-coded hex colour outside the :root / [data-theme] blocks.
+
+    The codebase used to scatter `var(--red, #e11d48)` fallbacks and
+    raw `#16a34a` greens in dozens of rules; that broke theme switching
+    because the literals didn't shift with the dark/light palette.
+    Lock that down: the palette lives in the theme blocks, every other
+    rule must reach for a CSS variable."""
+    import re as _re
+
+    lines = css_text.split("\n")
+    in_theme_block = False
+    depth = 0
+    offenders: list[tuple[int, str]] = []
+
+    for i, line in enumerate(lines, 1):
+        if ":root" in line or "[data-theme=" in line:
+            in_theme_block = True
+        if in_theme_block and "{" in line:
+            depth += line.count("{")
+        if in_theme_block:
+            if "}" in line:
+                depth -= line.count("}")
+                if depth <= 0:
+                    in_theme_block = False
+                    depth = 0
+            continue
+        for match in _re.findall(r"#[0-9a-fA-F]{6}\b", line):
+            # White / black are intentional on coloured backgrounds where
+            # we want guaranteed contrast regardless of the theme.
+            if match.lower() in {"#ffffff", "#000000"}:
+                continue
+            offenders.append((i, line.strip()[:100]))
+            break
+
+    assert not offenders, "Hex literals outside theme blocks: " + "; ".join(
+        f"L{i}: {snippet}" for i, snippet in offenders
+    )
+
+
+def test_css_defines_motion_tokens(css_text: str) -> None:
+    """Standard transition durations + easing live as variables so future
+    components don't reinvent the timing every time."""
+    assert "--t-fast:" in css_text
+    assert "--t-base:" in css_text
+    assert "--t-slow:" in css_text
+    assert "--easing-standard:" in css_text
