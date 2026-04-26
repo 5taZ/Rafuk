@@ -13,6 +13,7 @@ function createApiWatchlist(context) {
         renderAll,
         renderError,
         renderWatchlist,
+        renderLeads,
         renderMonitoringHeroStats,
         renderDetailModal,
         showToast,
@@ -24,11 +25,21 @@ function createApiWatchlist(context) {
         buildCommonQuery,
     } = context;
 
+    // After watchlist mutations we need to refresh BOTH renders. The
+    // legacy "Избранное" view still binds renderWatchlist, while the
+    // unified "Мои объявления" tab binds renderLeads which itself reads
+    // from state.watchlist for the "Избранное" tab. Without this, a
+    // delete/promote leaves the card visible until the user switches tabs.
+    function refreshAfterWatchlistChange() {
+        if (typeof renderWatchlist === "function") renderWatchlist();
+        if (typeof renderLeads === "function") renderLeads();
+    }
+
     // ── Load watchlist ───────────────────────────────────────────────────
     async function loadWatchlist() {
         if (!hasTelegramInitData()) {
             state.watchlist = [];
-            renderWatchlist();
+            refreshAfterWatchlistChange();
             return;
         }
         try {
@@ -36,7 +47,7 @@ function createApiWatchlist(context) {
         } catch (_) {
             state.watchlist = [];
         } finally {
-            renderWatchlist();
+            refreshAfterWatchlistChange();
         }
     }
 
