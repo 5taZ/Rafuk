@@ -22,17 +22,22 @@
  *     in-flight guards already protect the UI).
  */
 
-const CACHE_VERSION = "rafuk-cache-v2";
+const CACHE_VERSION = "rafuk-cache-v3";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
 // API paths whose GET responses are safe to serve stale while
 // revalidating. Picked because their UI surfaces re-render gracefully
 // on background update (the loaders all bump request-id guards).
+//
+// /leads and /watchlist USED to live here but caused a UX bug:
+// after a DELETE/PATCH the next GET would hit the SW cache and
+// re-show the just-removed item. Background refresh caught up
+// eventually, but the user saw the wrong state and had to reload
+// the app to fix it. They're now in BYPASS_PATHS so writes are
+// always reflected on the next read.
 const STALE_WHILE_REVALIDATE_API = [
     "/api/v1/listings",
-    "/api/v1/leads",
-    "/api/v1/watchlist",
     "/api/v1/trackers",
     "/api/v1/tracker-events",
     "/api/v1/price-stats",
@@ -41,8 +46,9 @@ const STALE_WHILE_REVALIDATE_API = [
     "/api/v1/geography",
 ];
 
-// Hard-bypass: never cache. Either too dynamic (AI) or never returns
-// the same body twice (token-style endpoints).
+// Hard-bypass: never cache. Either too dynamic (AI), never returns
+// the same body twice (token-style endpoints), or write-heavy
+// surfaces where stale-after-mutation would mislead the user.
 const BYPASS_PATHS = [
     "/api/v1/ai/",
     "/api/v1/health",
@@ -51,6 +57,9 @@ const BYPASS_PATHS = [
     "/api/v1/export",
     "/api/v1/risks",
     "/api/v1/saved-searches",
+    "/api/v1/leads",
+    "/api/v1/watchlist",
+    "/api/v1/analytics/",
 ];
 
 self.addEventListener("install", (event) => {

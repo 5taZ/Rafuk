@@ -275,6 +275,9 @@ function createApiWatchlist(context) {
         refreshAfterWatchlistChange();
         try {
             await deleteJson(`/api/v1/watchlist/${watchlistId}`);
+            // Confirmation toast was missing — users couldn't tell
+            // delete actually fired vs the card just animating out.
+            showToast("✓ Удалено из избранного", "info");
             await loadWatchlist();
             renderMonitoringHeroStats();
         } catch (error) {
@@ -282,7 +285,7 @@ function createApiWatchlist(context) {
             // item didn't actually delete and retry.
             state.watchlist = previousWatchlist;
             refreshAfterWatchlistChange();
-            showToast(error.message || "Не удалось удалить");
+            showToast(error.message || "Не удалось удалить", "error");
         } finally {
             _inflightWatchId.delete(watchlistId);
         }

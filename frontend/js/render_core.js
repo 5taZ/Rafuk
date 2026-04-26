@@ -37,21 +37,33 @@ function createRenderCore(context) {
         return "";
     }
 
-    // Re-route Kufar gallery thumbnails through our WebP/AVIF
-    // transcoding proxy. Browsers + Telegram WebView advertise
-    // image/webp via Accept and the proxy returns 25-40 % smaller
-    // bytes than the original JPEG. Anything that's not a Kufar
-    // gallery URL passes through untouched so callers can blindly
-    // wrap every thumbnail src.
+    // Image-proxy router. We had a proxy that transcoded Kufar's
+    // JPEG to WebP/AVIF, but on first paint the user has to wait
+    // for the proxy to fetch + Pillow-encode every thumbnail —
+    // that's worse latency than just letting the browser pull the
+    // original JPEG and rely on its native cache. The original is
+    // ~25-40 % bigger but parses immediately on Telegram WebView.
+    //
+    // ``options.useProxy = true`` opts back into transcoding for
+    // surfaces that legitimately benefit (the listing-detail
+    // gallery, where we serve big photos and the bandwidth
+    // savings outweigh the encode time). Default is pass-through.
     const _KUFAR_GALLERY_PREFIX = "https://rms.kufar.by/v1/gallery/";
     function optimizedImage(url, options) {
         if (!url || typeof url !== "string") return "";
+        const opts = options || {};
+        if (!opts.useProxy) {
+            // Pass-through — direct rms.kufar.by URL. Browser cache
+            // (and the SW image-asset cache on the same path) does
+            // the heavy lifting on repeat hits.
+            return url;
+        }
         if (!url.startsWith(_KUFAR_GALLERY_PREFIX)) return url;
         const path = url.slice(_KUFAR_GALLERY_PREFIX.length);
         if (!path || path.includes("..") || path.includes("?")) {
             return url;
         }
-        const width = options && Number.isFinite(options.width) ? Math.round(options.width) : null;
+        const width = Number.isFinite(opts.width) ? Math.round(opts.width) : null;
         const params = [];
         if (width && width > 0) params.push(`w=${width}`);
         const query = params.length ? `?${params.join("&")}` : "";
