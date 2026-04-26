@@ -99,62 +99,66 @@ function unlockBodyScroll() {
 }
 
 /* ─── Animated modal open/close helpers ────────────────────────────────
- * The base CSS keeps `.detail-modal[hidden]` rendered (display: block) but
- * invisible (opacity:0, sheet translateY 100%). Toggling `[hidden]` then
- * triggers the transitions for free.
+ * The CSS uses pure @keyframes (`modal-overlay-in`, `modal-sheet-in`,
+ * etc.) which always replay from frame 0 when the element transitions
+ * from `display: none` (via `[hidden]`) to `display: block`. That means
+ * we don't have to fight the browser's paint pipeline with reflow tricks
+ * — toggling `hidden` is enough to play the entry animation cleanly.
  *
- * `closeModalAnimated` waits for the transition to finish before flipping
- * `[hidden]` back so the slide-down animation actually plays.
+ * For close we add `.is-closing`, which swaps to the reverse keyframes,
+ * then wait for `animationend` before flipping `[hidden]=true` so the
+ * slide-down actually plays.
  */
 function openModalAnimated(modalEl, { lockScroll = true } = {}) {
     if (!modalEl) return;
+    // Make sure no leftover closing class from a previous run blocks the
+    // entry animation.
+    modalEl.classList.remove("is-closing");
     modalEl.hidden = false;
-    // Force a reflow so `[hidden]→visible` transitions actually start
-    // (otherwise the browser collapses both states into one paint).
-    void modalEl.offsetWidth;
     if (lockScroll) lockBodyScroll();
 }
 
 function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
     if (!modalEl || modalEl.hidden) return;
-    const sheet = modalEl.querySelector(".detail-sheet");
+
+    // Bottom-sheet modals use `.detail-sheet`; centred dialogs use
+    // `.modal-content`. Either way we wait for the inner panel's
+    // animation to finish before flipping `[hidden]` back.
+    const inner =
+        modalEl.querySelector(".detail-sheet") || modalEl.querySelector(".modal-content");
     const prefersReducedMotion =
         window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     const finalize = () => {
         modalEl.hidden = true;
+        modalEl.classList.remove("is-closing");
         if (lockScroll) unlockBodyScroll();
     };
 
-    if (prefersReducedMotion || !sheet) {
+    if (prefersReducedMotion || !inner) {
         finalize();
         return;
     }
 
     let done = false;
     const onEnd = (event) => {
-        if (event && event.target !== sheet) return;
-        if (event && event.propertyName !== "transform") return;
+        if (event && event.target !== inner) return;
         if (done) return;
         done = true;
-        sheet.removeEventListener("transitionend", onEnd);
+        inner.removeEventListener("animationend", onEnd);
         finalize();
     };
-    sheet.addEventListener("transitionend", onEnd);
+    inner.addEventListener("animationend", onEnd);
 
-    // Trigger the close transition by toggling the closing class first;
-    // CSS animates opacity + sheet translate.
     modalEl.classList.add("is-closing");
-    // Belt-and-braces: even if transitionend never fires, finalise after
-    // the longest transition we've defined (320ms) + some slack.
+
+    // Belt-and-braces: even if animationend never fires (e.g. another
+    // CSS animation overrides ours mid-run), finalise after the longest
+    // animation we've defined (~280ms) + some slack.
     setTimeout(() => {
         if (done) return;
         done = true;
-        sheet.removeEventListener("transitionend", onEnd);
+        inner.removeEventListener("animationend", onEnd);
         finalize();
-        modalEl.classList.remove("is-closing");
-    }, 380);
-
-    // Need to wait one frame, then reset the flag once we've animated out.
-    setTimeout(() => modalEl.classList.remove("is-closing"), 380);
+    }, 360);
 }

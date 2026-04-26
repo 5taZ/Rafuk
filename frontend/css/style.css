@@ -2508,24 +2508,16 @@ body {
     position: fixed;
     inset: 0;
     z-index: 500;
-    /* Animated entry/exit — see also `.detail-modal[hidden]` below
-       which keeps the modal painted but invisible so transitions run. */
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transition: opacity 220ms ease, visibility 0s linear 0s;
+    /* Open state: keyframe animation guarantees the entry plays from the
+       hidden frame every time the modal goes from `display: none` to
+       `display: block` (which `[hidden]` does). Transition-based fade-ins
+       can lag on the first frame because the browser may collapse the
+       display change and the opacity change into a single paint. */
+    animation: modal-overlay-in 200ms ease forwards;
 }
 
-/* Overrides global `[hidden] { display: none !important }` so we can
-   still transition opacity/transform between visible and hidden states. */
-.detail-modal[hidden] {
-    display: block !important;
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    /* Delay visibility flip until opacity has finished fading out, so
-       the sheet finishes its slide-down before we strip pointer events. */
-    transition: opacity 220ms ease, visibility 0s linear 220ms;
+.detail-modal.is-closing {
+    animation: modal-overlay-out 200ms ease forwards;
 }
 
 /* When a modal is open, lock body scroll to prevent double-scroll */
@@ -2563,24 +2555,40 @@ body.modal-open {
     border-top-right-radius: 20px;
     box-shadow: var(--shadow-prominent);
     border-top: 1px solid var(--border);
-    /* Slides up from the bottom on open, down on close. */
-    transform: translateY(0);
-    transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
     will-change: transform;
+    animation: modal-sheet-in 280ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
 }
 
-.detail-modal[hidden] .detail-sheet,
 .detail-modal.is-closing .detail-sheet {
-    transform: translateY(100%);
+    animation: modal-sheet-out 240ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+@keyframes modal-overlay-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes modal-overlay-out {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+}
+
+@keyframes modal-sheet-in {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+}
+
+@keyframes modal-sheet-out {
+    from { transform: translateY(0); }
+    to   { transform: translateY(100%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
     .detail-modal,
-    .detail-modal[hidden],
+    .detail-modal.is-closing,
     .detail-sheet,
-    .detail-modal[hidden] .detail-sheet,
     .detail-modal.is-closing .detail-sheet {
-        transition: none !important;
+        animation: none !important;
     }
 }
 
@@ -7972,4 +7980,186 @@ body {
 /* --- Sections that contain a single big stat strip stay flat ----- */
 #summary-strip {
     margin-bottom: var(--space-4);
+}
+
+/* =====================================================================
+ * Tracker card action buttons — clean SVG icons + text, no emoji blocks.
+ * ===================================================================== */
+
+.tracker-action-btn {
+    border-radius: var(--r-md);
+    padding: 8px 12px;
+    font: 600 12px var(--font);
+    letter-spacing: -0.01em;
+    color: var(--text);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+[data-theme="light"] .tracker-action-btn {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.08);
+}
+
+.tracker-action-btn:hover:not(:disabled) {
+    background: var(--bg-hover);
+    border-color: var(--border-hover);
+}
+
+[data-theme="light"] .tracker-action-btn:hover:not(:disabled) {
+    background: rgba(15, 23, 42, 0.03);
+    border-color: rgba(15, 23, 42, 0.16);
+}
+
+.tracker-action-btn.danger {
+    color: var(--red, #e11d48);
+    border-color: color-mix(in srgb, var(--red, #e11d48) 32%, transparent);
+}
+
+.tracker-action-btn.danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--red, #e11d48) 8%, transparent);
+    border-color: color-mix(in srgb, var(--red, #e11d48) 50%, transparent);
+}
+
+.tracker-action-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+}
+
+.tracker-action-icon svg {
+    display: block;
+}
+
+/* Drop the old emoji-style sizing rule so SVG icons aren't enlarged. */
+.tracker-card-actions .ghost-btn .btn-icon {
+    font-size: inherit;
+}
+
+/* =====================================================================
+ * Edit-tracker modal — make every form control look like an input.
+ * Previously `.deal-select` had `border: none; background: transparent`
+ * which on the modal made Продавец / Состояние / Регион look like read-
+ * only labels. Now they share the form-text-input visual.
+ * ===================================================================== */
+
+.edit-tracker-form .deal-select,
+.edit-tracker-form .form-text-input,
+.edit-tracker-form .deal-range-input-wrap {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--text);
+    font: 600 14px var(--font);
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.edit-tracker-form .deal-select {
+    padding: 10px 32px 10px 12px;
+    /* Custom chevron so users see "this is a dropdown" without relying
+       on the platform's native disclosure indicator. */
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2393a4b3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 14px;
+    appearance: none;
+}
+
+.edit-tracker-form .deal-select:focus,
+.edit-tracker-form .form-text-input:focus,
+.edit-tracker-form .deal-range-input-wrap:focus-within {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+[data-theme="light"] .edit-tracker-form .deal-select,
+[data-theme="light"] .edit-tracker-form .form-text-input,
+[data-theme="light"] .edit-tracker-form .deal-range-input-wrap {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.1);
+}
+
+.edit-tracker-form .deal-range-input-wrap {
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+}
+
+.edit-tracker-form .deal-range-input-wrap input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    padding: 0;
+    outline: none;
+}
+
+.edit-tracker-form .deal-range-input-wrap > span {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* Spacing tweaks so the form rows breathe. */
+.edit-tracker-form .form-row {
+    margin-top: 12px;
+}
+
+.edit-tracker-form .form-field-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+/* =====================================================================
+ * Edit-tracker modal — animate the same way as the bottom-sheet modals
+ * so the user gets consistent motion. .modal-overlay isn't a sheet
+ * (it's a centred dialog), so we fade+scale the content instead of
+ * sliding from the bottom.
+ * ===================================================================== */
+
+.modal-overlay {
+    animation: modal-overlay-in 200ms ease forwards;
+}
+
+.modal-overlay.is-closing {
+    animation: modal-overlay-out 200ms ease forwards;
+}
+
+.modal-overlay .modal-content {
+    will-change: transform, opacity;
+    animation: modal-dialog-in 220ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+.modal-overlay.is-closing .modal-content {
+    animation: modal-dialog-out 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+@keyframes modal-dialog-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes modal-dialog-out {
+    from { opacity: 1; transform: translateY(0) scale(1); }
+    to   { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .modal-overlay,
+    .modal-overlay.is-closing,
+    .modal-overlay .modal-content,
+    .modal-overlay.is-closing .modal-content {
+        animation: none !important;
+    }
 }

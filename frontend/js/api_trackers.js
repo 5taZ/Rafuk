@@ -223,7 +223,7 @@ function createApiTrackers(context) {
                 state.modalCleanup();
                 state.modalCleanup = null;
             }
-            elements.editTrackerModal.hidden = false;
+            openModalAnimated(elements.editTrackerModal);
             state.modalCleanup = trapFocus(elements.editTrackerModal);
         }
     }
@@ -234,7 +234,7 @@ function createApiTrackers(context) {
             state.modalCleanup = null;
         }
         state.editingTrackerId = null;
-        if (elements.editTrackerModal) elements.editTrackerModal.hidden = true;
+        if (elements.editTrackerModal) closeModalAnimated(elements.editTrackerModal);
     }
 
     async function saveTracker() {

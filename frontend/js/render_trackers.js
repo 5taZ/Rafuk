@@ -124,14 +124,41 @@ function createRenderTrackers(context) {
             );
 
             const actionRole = tracker.paused ? "resume" : "pause";
-            const actionText = tracker.paused ? "▶ Возобновить" : "⏸ Пауза";
+            const actionLabel = tracker.paused ? "Возобновить" : "Пауза";
+            // SVG icon picked at render time so the button gets a clean
+            // monochrome glyph instead of platform-specific emoji.
+            const actionIconSvg = tracker.paused
+                ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
+                : '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
+            const editIconSvg =
+                '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>';
+            const deleteIconSvg =
+                '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+
+            const buildIconButton = (className, role, label, iconHtml) => {
+                const btn = domEl(
+                    "button",
+                    { className, type: "button", dataset: { role } },
+                );
+                const icon = document.createElement("span");
+                icon.className = "tracker-action-icon";
+                icon.innerHTML = iconHtml;
+                btn.append(icon, document.createTextNode(label));
+                return btn;
+            };
             const card = domEl(
                 "div",
                 { className: `tracker-card-enhanced${tracker.paused ? " paused" : ""}` },
                 domEl(
                     "div",
                     { className: "tracker-header" },
-                    domEl("div", { className: "tracker-icon", text: "🔍" }),
+                    (() => {
+                        const iconWrap = document.createElement("div");
+                        iconWrap.className = "tracker-icon";
+                        iconWrap.innerHTML =
+                            '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+                        return iconWrap;
+                    })(),
                     domEl(
                         "div",
                         { className: "tracker-title-wrap" },
@@ -150,9 +177,9 @@ function createRenderTrackers(context) {
                 domEl(
                     "div",
                     { className: "tracker-card-actions" },
-                    domEl("button", { className: "ghost-btn small", type: "button", dataset: { role: actionRole }, text: actionText }),
-                    domEl("button", { className: "ghost-btn small", type: "button", dataset: { role: "edit" }, text: "✏️ Изменить" }),
-                    domEl("button", { className: "ghost-btn small danger", type: "button", dataset: { role: "delete" }, text: "🗑 Удалить" }),
+                    buildIconButton("ghost-btn small tracker-action-btn", actionRole, actionLabel, actionIconSvg),
+                    buildIconButton("ghost-btn small tracker-action-btn", "edit", "Изменить", editIconSvg),
+                    buildIconButton("ghost-btn small tracker-action-btn danger", "delete", "Удалить", deleteIconSvg),
                 ),
             );
 
