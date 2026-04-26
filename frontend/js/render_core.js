@@ -197,6 +197,73 @@ function createRenderCore(context) {
         });
     }
 
+    /* ===== Empty state ===== */
+
+    // Tiny SVG icon set for the rich empty states. Picked stroke-only
+    // shapes that follow the same Lucide-ish line-weight as the tab
+    // icons so the language stays consistent across the app.
+    const _EMPTY_STATE_ICONS = {
+        watchlist:
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+        leads:
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/><polyline points="9 11 12 8 15 11"/><line x1="12" y1="2" x2="12" y2="14"/></svg>',
+        trackers:
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+        events:
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+        search:
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+    };
+
+    /**
+     * Build a richer empty state — icon, title, hint, optional CTA —
+     * for surfaces where a single dashed paragraph (.tracker-empty)
+     * felt under-served. Returns a freshly-built DOM node ready to
+     * appendChild into the section's container.
+     *
+     * @param {object} opts
+     * @param {string} opts.icon         Key into _EMPTY_STATE_ICONS, or
+     *                                   raw HTML to embed.
+     * @param {string} opts.title        First line, bold.
+     * @param {string} [opts.hint]       Second line, muted.
+     * @param {string} [opts.actionLabel] CTA button label.
+     * @param {Function} [opts.onAction] CTA click handler.
+     */
+    function buildEmptyState(opts) {
+        const { icon, title, hint, actionLabel, onAction } = opts || {};
+        const iconHtml = _EMPTY_STATE_ICONS[icon] || icon || "";
+        const wrap = domEl("div", {
+            className: "empty-state",
+            attrs: { role: "status" },
+        });
+        if (iconHtml) {
+            const iconBox = document.createElement("div");
+            iconBox.className = "empty-state-icon";
+            iconBox.innerHTML = iconHtml;
+            wrap.appendChild(iconBox);
+        }
+        if (title) {
+            wrap.appendChild(
+                domEl("p", { className: "empty-state-title", text: title }),
+            );
+        }
+        if (hint) {
+            wrap.appendChild(
+                domEl("p", { className: "empty-state-hint", text: hint }),
+            );
+        }
+        if (actionLabel && typeof onAction === "function") {
+            const button = domEl("button", {
+                className: "empty-state-action",
+                type: "button",
+                text: actionLabel,
+            });
+            button.addEventListener("click", onAction);
+            wrap.appendChild(button);
+        }
+        return wrap;
+    }
+
     /* ===== Loading ===== */
 
     /**
@@ -423,5 +490,6 @@ function createRenderCore(context) {
         renderSummary,
         renderHelper,
         renderViews,
+        buildEmptyState,
     };
 }

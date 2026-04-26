@@ -31,6 +31,10 @@ function createAppRenderers(context) {
     context.escapeHtml = core.escapeHtml;
     context.safeUrl = core.safeUrl;
     context.safeRender = safeRender;
+    // Empty state factory is invoked by every collection renderer
+    // (watchlist, leads, tracker events) to swap the previous plain
+    // ".tracker-empty" paragraph for a richer iconified block.
+    context.buildEmptyState = core.buildEmptyState;
 
     const cards = createRenderCards(context);
     const views = createRenderViews(context);

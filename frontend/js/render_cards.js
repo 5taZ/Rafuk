@@ -347,6 +347,28 @@ function createRenderCards(context) {
         }
     }
 
+    function buildItemsEmpty(filter) {
+        const buildEmpty = context.buildEmptyState;
+        if (typeof buildEmpty !== "function") {
+            const note = document.createElement("p");
+            note.className = "tracker-empty";
+            note.textContent = emptyMessageForFilter(filter);
+            return note;
+        }
+        if (filter === "watching") {
+            return buildEmpty({
+                icon: "watchlist",
+                title: "Здесь будут отслеживаемые лоты",
+                hint: "Сохрани объявление через «В избранное», и сюда придут уведомления о смене цены и снятии с продажи.",
+            });
+        }
+        return buildEmpty({
+            icon: "leads",
+            title: "Нет сделок в работе",
+            hint: "Найди лот через поиск и нажми «В покупки», чтобы вести его до продажи и считать прибыль.",
+        });
+    }
+
     function renderLeads() {
         return safeRender('renderLeads', () => {
         const container = elements.leadInboxList;
@@ -433,10 +455,7 @@ function createRenderCards(context) {
         }
 
         if (!entries.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = emptyMessageForFilter(filter);
-            container.appendChild(note);
+            container.appendChild(buildItemsEmpty(filter));
             return;
         }
 
@@ -521,12 +540,33 @@ function createRenderCards(context) {
             });
 
         if (!filteredWatchlist.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = state.watchlist.length
-                ? "По текущему фильтру ничего нет. Попробуйте «Все»."
-                : "Сохранённых лотов пока нет. Нажмите «В избранное» в карточке объявления.";
-            container.appendChild(note);
+            const buildEmpty = context.buildEmptyState;
+            if (typeof buildEmpty === "function") {
+                if (state.watchlist.length) {
+                    container.appendChild(
+                        buildEmpty({
+                            icon: "watchlist",
+                            title: "По этому фильтру ничего нет",
+                            hint: "Попробуйте переключиться на «Все», чтобы увидеть весь список.",
+                        })
+                    );
+                } else {
+                    container.appendChild(
+                        buildEmpty({
+                            icon: "watchlist",
+                            title: "Здесь будут ваши избранные лоты",
+                            hint: "Нажмите «В избранное» в карточке объявления, чтобы следить за ценой и снятием с продажи.",
+                        })
+                    );
+                }
+            } else {
+                const note = document.createElement("p");
+                note.className = "tracker-empty";
+                note.textContent = state.watchlist.length
+                    ? "По текущему фильтру ничего нет. Попробуйте «Все»."
+                    : "Сохранённых лотов пока нет. Нажмите «В избранное» в карточке объявления.";
+                container.appendChild(note);
+            }
             return;
         }
 
