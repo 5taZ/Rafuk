@@ -262,6 +262,102 @@ function createRenderCardBuilders(context) {
         });
     }
 
+    /** Build an inline SVG sparkline from a watchlist item's
+     *  price_history. Returns null when the series is too short to be
+     *  meaningful (≤1 data point). The line is coloured by the
+     *  net direction of the trend so a green line = price went down
+     *  (good for a buyer) and a red line = price went up.
+     *
+     *  Pure-SVG, no dependency on Chart.js — keeps the watchlist
+     *  render path off the lazy chart library entirely. */
+    function _buildPriceSparkline(item) {
+        const history = Array.isArray(item.price_history) ? item.price_history : [];
+        if (history.length < 2) return null;
+
+        const prices = history
+            .map((p) => Number(p.price_byn))
+            .filter((n) => Number.isFinite(n) && n > 0);
+        if (prices.length < 2) return null;
+
+        const min = Math.min(...prices);
+        const max = Math.max(...prices);
+        const span = Math.max(1, max - min);
+        const width = 88;
+        const height = 28;
+        const padX = 1;
+        const padY = 2;
+
+        const points = prices.map((p, i) => {
+            const x = padX + (i / (prices.length - 1)) * (width - padX * 2);
+            // Invert Y so higher prices sit higher in the SVG (origin
+            // top-left, but visually we want UP = more expensive).
+            const y = padY + (1 - (p - min) / span) * (height - padY * 2);
+            return `${x.toFixed(2)},${y.toFixed(2)}`;
+        });
+
+        // Direction: net change from first to last. Buyer-friendly:
+        // down = green ("price dropped, deal warming up"), up = red.
+        const first = prices[0];
+        const last = prices[prices.length - 1];
+        const direction =
+            last < first - 0.5 ? "down" : last > first + 0.5 ? "up" : "flat";
+
+        // Build a polyline + area-fill underneath.
+        const linePath = `M ${points.join(" L ")}`;
+        const areaPath =
+            `M ${padX},${height - padY} ` +
+            `L ${points.join(" L ")} ` +
+            `L ${width - padX},${height - padY} Z`;
+
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", `wl-sparkline wl-sparkline--${direction}`);
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        svg.setAttribute("width", String(width));
+        svg.setAttribute("height", String(height));
+        svg.setAttribute("aria-hidden", "true");
+        svg.setAttribute("role", "presentation");
+
+        const area = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "path",
+        );
+        area.setAttribute("class", "wl-sparkline-area");
+        area.setAttribute("d", areaPath);
+        svg.appendChild(area);
+
+        const line = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "path",
+        );
+        line.setAttribute("class", "wl-sparkline-line");
+        line.setAttribute("d", linePath);
+        line.setAttribute("fill", "none");
+        svg.appendChild(line);
+
+        // Last-point dot for emphasis ("here's where you are now").
+        const lastPoint = points[points.length - 1].split(",");
+        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot.setAttribute("class", "wl-sparkline-dot");
+        dot.setAttribute("cx", lastPoint[0]);
+        dot.setAttribute("cy", lastPoint[1]);
+        dot.setAttribute("r", "2");
+        svg.appendChild(dot);
+
+        const wrap = domEl("div", {
+            className: "wl-sparkline-wrap",
+            attrs: {
+                title:
+                    direction === "down"
+                        ? `Цена снижается (${prices.length} точек)`
+                        : direction === "up"
+                          ? `Цена растёт (${prices.length} точек)`
+                          : `Цена стабильна (${prices.length} точек)`,
+            },
+        });
+        wrap.appendChild(svg);
+        return wrap;
+    }
+
     /** Watchlist potential profit (median - current) — null in lead mode. */
     function _buildPotentialProfitNode(item) {
         const current = item.current_price_byn || item.initial_price_byn;
@@ -586,6 +682,11 @@ function createRenderCardBuilders(context) {
                     text: priceDisplay ? `${priceDisplay} BYN` : "Договорная",
                 }),
                 _buildPriceDeltaNode(item),
+                // 30-day price-trend sparkline next to the current price.
+                // Returns null until the row has ≥2 history points so a
+                // freshly-added watchlist item shows the price + delta
+                // alone for the first day or two.
+                _buildPriceSparkline(item),
             );
 
         // Market badge + missing pill (lead shows a single pill, watching

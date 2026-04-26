@@ -181,6 +181,19 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
         assert items[0]["price_delta_byn"] == -200
         assert items[0]["market_status"] == "price_drop"
 
+        # Sparkline source: the watchlist response now inlines a
+        # bounded price-history series so the card can render a
+        # trend SVG without a per-row round-trip. After /watchlist +
+        # one /watchlist/refresh that saw the price move 2000→1800,
+        # we expect at least two distinct points (initial + drop).
+        history = items[0]["price_history"]
+        assert isinstance(history, list)
+        assert len(history) >= 2, history
+        assert {round(p["price_byn"]) for p in history} == {2000, 1800}
+        # Newest-last ordering — the helper expects ascending snapped_at.
+        timestamps = [p["snapped_at"] for p in history]
+        assert timestamps == sorted(timestamps)
+
         delete_response = client.delete(f"/api/v1/watchlist/{watchlist_item['id']}")
         assert delete_response.status_code == 204
         assert client.get("/api/v1/watchlist").json() == []

@@ -143,6 +143,29 @@ def test_listing_detail_loaders_share_stale_response_guard() -> None:
     assert "state._comparisonRequestId" in listings_js
 
 
+def test_watchlist_renders_price_sparkline_when_history_present() -> None:
+    """Watchlist cards now show a 30-day price-trend sparkline next
+    to the current price. The renderer must:
+      * read item.price_history (the inline series the backend
+        returns from /api/v1/watchlist),
+      * skip rendering when the series has fewer than 2 points,
+      * pick a direction (down/up/flat) so CSS can colour the line —
+        green for buyer-friendly drops, red for rises, muted for flat."""
+    text = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+    assert "function _buildPriceSparkline" in text
+    assert "item.price_history" in text
+    # Direction class is built as `wl-sparkline--${direction}` and the
+    # three literal direction values must exist for the CSS selectors
+    # to match. Stylesheet itself is checked separately.
+    assert "wl-sparkline--" in text
+    for direction in ('"down"', '"up"', '"flat"'):
+        assert direction in text, f"missing direction literal {direction}"
+
+    css_text = (Path("frontend/css/style.css")).read_text(encoding="utf-8")
+    for cls in (".wl-sparkline--down", ".wl-sparkline--up", ".wl-sparkline--flat"):
+        assert cls in css_text, f"sparkline CSS for {cls} missing"
+
+
 def test_detail_modal_supports_pinch_zoom_with_swipe_deferral() -> None:
     """The listing-detail modal hosts the photo gallery. Two-finger
     pinch + double-tap zoom on the main image is provided by

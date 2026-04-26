@@ -18,7 +18,7 @@ from api.dependencies import (
 )
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import DealExpense, LeadItem
+from api.models import DealExpense, LeadItem, LeadItemPriceSnapshot
 from api.schemas import (
     LeadCreate,
     LeadRead,
@@ -32,7 +32,12 @@ from api.schemas import (
 from api.services.aggregator import normalize_price_byn
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import load_query_dataset
-from api.services.workflow_store import ensure_user, resolve_user_id, upsert_lead
+from api.services.workflow_store import (
+    ensure_user,
+    record_price_snapshot,
+    resolve_user_id,
+    upsert_lead,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +47,17 @@ router = APIRouter(tags=["workflow"])
 WATCHING_STATUS = "watching"
 
 
-def _serialize_watchlist(item: LeadItem) -> WatchlistRead:
+def _serialize_watchlist(
+    item: LeadItem,
+    *,
+    price_history: list[LeadItemPriceSnapshot] | None = None,
+) -> WatchlistRead:
     """Serialize a LeadItem with status='watching' as a WatchlistRead.
 
     Keeps backward-compatible API contract for the frontend after the
-    watchlist_items table was merged into lead_items.
+    watchlist_items table was merged into lead_items. Optionally
+    inlines a small price-history series so the watchlist sparkline
+    can render without a per-row round-trip.
     """
     current = item.price_byn
     initial = item.initial_price_byn
@@ -79,6 +90,10 @@ def _serialize_watchlist(item: LeadItem) -> WatchlistRead:
         last_seen_at=item.last_seen_at,
         missing_since_at=item.missing_since_at,
         updated_at=item.updated_at,
+        price_history=[
+            {"snapped_at": p.snapped_at, "price_byn": float(p.price_byn)}
+            for p in (price_history or [])
+        ],
     )
 
 
@@ -291,7 +306,30 @@ async def get_watchlist(
             .where(LeadItem.user_id == user_id, LeadItem.status == WATCHING_STATUS)
             .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
         )
-        return [_serialize_watchlist(item) for item in result.scalars()]
+        items = list(result.scalars())
+
+        # Bulk-load the last 30-day price snapshots for every visible
+        # row in a single query, then group by lead_item_id so the
+        # serialiser can attach each row's slice without a per-row
+        # round-trip. Empty lists fall through to "no movement yet".
+        history_by_item: dict[int, list[LeadItemPriceSnapshot]] = {}
+        if items:
+            cutoff = datetime.now(UTC) - timedelta(days=30)
+            history_rows = await session.execute(
+                select(LeadItemPriceSnapshot)
+                .where(
+                    LeadItemPriceSnapshot.lead_item_id.in_([i.id for i in items]),
+                    LeadItemPriceSnapshot.snapped_at >= cutoff,
+                )
+                .order_by(LeadItemPriceSnapshot.snapped_at.asc())
+            )
+            for snap in history_rows.scalars():
+                history_by_item.setdefault(snap.lead_item_id, []).append(snap)
+
+        return [
+            _serialize_watchlist(item, price_history=history_by_item.get(item.id))
+            for item in items
+        ]
 
 
 @router.post("/watchlist", response_model=WatchlistRead, status_code=status.HTTP_201_CREATED)
@@ -337,6 +375,13 @@ async def create_watchlist_item(
             notes=payload.notes,
             track_initial_price=True,
             update_last_seen=True,
+        )
+        # Seed the price-history sparkline with an initial point so the
+        # very first refresh isn't a single dot — flush() to assign an
+        # id before the snapshot's FK validates.
+        await session.flush()
+        await record_price_snapshot(
+            session, lead_item=item, price_byn=payload.price_byn
         )
         await session.commit()
         await session.refresh(item)
@@ -507,6 +552,12 @@ async def refresh_watchlist(
                 if previous is not None and price is not None and price < previous:
                     item.market_status = "price_drop"
                     price_drops += 1
+                # Append a sparkline point only when the price moved
+                # (the helper short-circuits on no-op refreshes so we
+                # don't grow the history table for unchanged lots).
+                await record_price_snapshot(
+                    session, lead_item=item, price_byn=price
+                )
 
         # Auto-remove watchlist items that have been missing too long
         auto_remove_cutoff = datetime.now(UTC) - timedelta(days=settings.auto_remove_missing_days)

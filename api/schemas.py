@@ -398,6 +398,14 @@ class WatchlistUpdate(BaseModel):
     notes: str | None = None
 
 
+class PriceSnapshotPoint(BaseModel):
+    """A single (timestamp, price) pair for the watchlist sparkline."""
+
+    model_config = ConfigDict(from_attributes=True)
+    snapped_at: datetime
+    price_byn: float
+
+
 class WatchlistRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -420,6 +428,10 @@ class WatchlistRead(BaseModel):
     last_seen_at: datetime | None = None
     missing_since_at: datetime | None = None
     updated_at: datetime
+    # Compact 30-day price trend (newest last) so the watchlist card
+    # can render a sparkline without a per-row round-trip. Empty list
+    # means "no movement recorded yet" — frontend renders a flat line.
+    price_history: list[PriceSnapshotPoint] = []
 
 
 class WatchlistRefreshResponse(BaseModel):

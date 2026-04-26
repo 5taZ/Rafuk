@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models import LeadItem, User
+from api.models import LeadItem, LeadItemPriceSnapshot, User
 
 
 async def ensure_user(
@@ -37,6 +37,55 @@ async def resolve_user_id(session: AsyncSession, telegram_user_id: int) -> int |
     """Return ``users.id`` for a Telegram user, or ``None`` if not found."""
     row = await session.scalar(select(User.id).where(User.telegram_user_id == telegram_user_id))
     return row
+
+
+async def record_price_snapshot(
+    session: AsyncSession,
+    *,
+    lead_item: LeadItem,
+    price_byn: float | None,
+    snapped_at: datetime | None = None,
+    epsilon: float = 0.5,
+) -> LeadItemPriceSnapshot | None:
+    """Append a price snapshot to ``lead_item_price_snapshots`` if the
+    price has actually moved since the last recorded point.
+
+    No snapshot is written when:
+      * price is None or non-positive (the listing is missing / had no
+        price at refresh time — those gaps shouldn't pollute the chart)
+      * |price - last_snapshot_price| < epsilon (default 0.5 BYN — kills
+        rounding noise from currency normalisation)
+      * the row has no id yet (the caller must flush() first)
+
+    Returns the new snapshot, or None when nothing was written.
+    """
+    if lead_item is None or lead_item.id is None:
+        return None
+    if price_byn is None:
+        return None
+    try:
+        price_value = float(price_byn)
+    except (TypeError, ValueError):
+        return None
+    if price_value <= 0:
+        return None
+
+    last = await session.scalar(
+        select(LeadItemPriceSnapshot)
+        .where(LeadItemPriceSnapshot.lead_item_id == lead_item.id)
+        .order_by(desc(LeadItemPriceSnapshot.snapped_at))
+        .limit(1)
+    )
+    if last is not None and abs(float(last.price_byn) - price_value) < epsilon:
+        return None
+
+    snapshot = LeadItemPriceSnapshot(
+        lead_item_id=lead_item.id,
+        price_byn=price_value,
+        snapped_at=snapped_at or datetime.now(UTC),
+    )
+    session.add(snapshot)
+    return snapshot
 
 
 async def upsert_lead(

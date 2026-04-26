@@ -3795,9 +3795,74 @@ body.modal-open {
 
 .watchlist-card-price-row {
     display: flex;
-    align-items: baseline;
-    gap: 6px;
+    align-items: center;
+    gap: 8px;
     flex-wrap: wrap;
+}
+
+/* 30-day price-trend sparkline. Pure-SVG, no chart-library dep, so it
+   renders before / without Chart.js. Colour signals direction from the
+   buyer's POV: down = green (price dropped, deal is warming up), up =
+   red, flat = muted. Stays small (88×28) so it fits inline with the
+   price + delta pill on a phone-width card. */
+.wl-sparkline-wrap {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+.wl-sparkline {
+    display: block;
+    overflow: visible;
+}
+
+.wl-sparkline-line {
+    fill: none;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.wl-sparkline-area {
+    opacity: 0.18;
+    stroke: none;
+}
+
+.wl-sparkline-dot {
+    /* The "you are here" anchor at the latest data point. */
+    stroke: var(--bg-card);
+    stroke-width: 1;
+}
+
+.wl-sparkline--down .wl-sparkline-line,
+.wl-sparkline--down .wl-sparkline-dot {
+    stroke: var(--green);
+    fill: var(--green);
+}
+
+.wl-sparkline--down .wl-sparkline-area {
+    fill: var(--green);
+}
+
+.wl-sparkline--up .wl-sparkline-line,
+.wl-sparkline--up .wl-sparkline-dot {
+    stroke: var(--red);
+    fill: var(--red);
+}
+
+.wl-sparkline--up .wl-sparkline-area {
+    fill: var(--red);
+}
+
+.wl-sparkline--flat .wl-sparkline-line,
+.wl-sparkline--flat .wl-sparkline-dot {
+    stroke: var(--text-muted);
+    fill: var(--text-muted);
+}
+
+.wl-sparkline--flat .wl-sparkline-area {
+    fill: var(--text-muted);
 }
 
 .watchlist-card-price {

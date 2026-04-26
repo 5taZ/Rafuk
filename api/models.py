@@ -361,12 +361,50 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     # Relationships
     user = relationship("User", back_populates="lead_items")
     expenses = relationship("DealExpense", back_populates="lead", cascade="all, delete-orphan")
+    price_snapshots = relationship(
+        "LeadItemPriceSnapshot",
+        back_populates="lead_item",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         UniqueConstraint("user_id", "ad_id", name="uq_lead_items_user_ad"),
         Index("idx_lead_items_user", "user_id"),
         Index("idx_lead_items_status", "status"),
         Index("idx_lead_items_market_status", "market_status"),
+    )
+
+
+class LeadItemPriceSnapshot(Base):
+    """Per-row price history for lead_items (covers both watchlist and
+    active leads). One row is appended every time a price refresh sees
+    a change vs. the most recent snapshot, capped to a rolling window
+    so the table stays small and queries cheap.
+
+    Used by the watchlist sparkline in the Mini App and by future
+    price-trend charts on the deal-detail screen."""
+
+    __tablename__ = "lead_item_price_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lead_item_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("lead_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    price_byn: Mapped[float] = mapped_column(Float, nullable=False)
+    snapped_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    lead_item = relationship("LeadItem", back_populates="price_snapshots")
+
+    __table_args__ = (
+        Index("idx_lead_item_price_snapshots_lookup", "lead_item_id", "snapped_at"),
     )
 
 
