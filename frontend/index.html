@@ -132,7 +132,7 @@
         </section>
     </section>
 
-    <nav class="view-nav" role="tablist" aria-label="Разделы Mini App">
+    <nav class="view-nav view-nav-grid" role="tablist" aria-label="Разделы Mini App">
         <button class="view-tab active" data-view="overview" type="button" role="tab" aria-selected="true" aria-controls="overview-view" id="tab-overview">
             <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M3 3v18h18"/>
@@ -158,13 +158,7 @@
             </svg>
             <span class="view-tab-label">Автопоиск</span>
         </button>
-        <button class="view-tab" data-view="cheap" type="button" role="tab" aria-selected="false" aria-controls="cheap-view" id="tab-cheap">
-            <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-            </svg>
-            <span class="view-tab-label">Выгодно</span>
-        </button>
-        <button class="view-tab" data-view="deals" type="button" role="tab" aria-selected="false" aria-controls="deals-view" id="tab-deals">
+        <button class="view-tab view-tab--wide" data-view="deals" type="button" role="tab" aria-selected="false" aria-controls="deals-view" id="tab-deals">
             <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/>
                 <polyline points="9 11 12 8 15 11"/>
@@ -421,10 +415,41 @@
 
             <div class="sort-row">
                 <button class="s-tab active" data-sort="newest" type="button">Новые</button>
-                <button class="s-tab" data-sort="deal_score" type="button">Выгодные</button>
+                <button class="s-tab" data-sort="cheap" type="button">Выгодные</button>
                 <button class="s-tab" data-sort="price_asc" type="button">Дешевле</button>
                 <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
                 <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
+            </div>
+            <!-- Discount-range controls — visible only when sort=cheap.
+                 Used to live in its own "Выгодно" tab; merged here so
+                 listings stay in one place. JS toggles `hidden` on the
+                 wrapper based on state.sort. -->
+            <div class="deals-controls" id="deals-controls" hidden>
+                <p class="section-note">
+                    Объявления ниже текущей рыночной медианы — выбирайте порог скидки.
+                </p>
+                <div class="deal-range-row">
+                    <label class="deal-range-field" for="deal-from-input">
+                        <span>От</span>
+                        <div class="deal-range-input-wrap">
+                            <input id="deal-from-input" type="number" min="0" step="1" inputmode="numeric" value="10">
+                            <span>%</span>
+                        </div>
+                    </label>
+                    <label class="deal-range-field" for="deal-to-input">
+                        <span>До</span>
+                        <div class="deal-range-input-wrap">
+                            <input id="deal-to-input" type="number" min="0" step="1" inputmode="numeric" value="30">
+                            <span>%</span>
+                        </div>
+                    </label>
+                    <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
+                </div>
+                <div class="sort-row" id="deal-threshold-row">
+                    <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button">10-20%</button>
+                    <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
+                    <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
+                </div>
             </div>
             <div class="listings-list" id="listings-list" role="list" aria-live="polite"></div>
         </section>
@@ -573,45 +598,7 @@
         </section>
     </section>
 
-    <section class="view-panel" id="cheap-view" hidden role="tabpanel" aria-labelledby="tab-cheap">
-        <div class="view-hero cheap-hero">
-            <h2 class="view-hero-title">Выгодные предложения</h2>
-            <p class="view-hero-desc">Объявления ниже текущей рыночной медианы — выбирайте порог скидки</p>
-            <div class="view-hero-stats" id="cheap-hero-stats"></div>
-        </div>
-        <section class="section" id="deals-section" hidden>
-            <div class="sec-head listings-head">
-                <h2 class="sec-title">Фильтр скидки</h2>
-                <span class="badge" id="deals-total-badge"></span>
-            </div>
-            <p class="section-note">
-                Порог можно менять без нового полного поиска.
-            </p>
-            <div class="deal-range-row">
-                <label class="deal-range-field" for="deal-from-input">
-                    <span>От</span>
-                    <div class="deal-range-input-wrap">
-                        <input id="deal-from-input" type="number" min="0" step="1" inputmode="numeric" value="10">
-                        <span>%</span>
-                    </div>
-                </label>
-                <label class="deal-range-field" for="deal-to-input">
-                    <span>До</span>
-                    <div class="deal-range-input-wrap">
-                        <input id="deal-to-input" type="number" min="0" step="1" inputmode="numeric" value="30">
-                        <span>%</span>
-                    </div>
-                </label>
-                <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
-            </div>
-            <div class="sort-row" id="deal-threshold-row">
-                <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button">10-20%</button>
-                <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
-                <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
-            </div>
-            <div class="listings-list" id="deals-list" role="list" aria-live="polite"></div>
-        </section>
-    </section>
+
 
     <section class="view-panel" id="deals-view" hidden role="tabpanel" aria-labelledby="tab-deals">
         <div class="view-hero deals-hero">

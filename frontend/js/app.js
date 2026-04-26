@@ -25,14 +25,11 @@ function analyticsApp() {
         if (view === "overview" || view === "ads") {
             // Repeating the current search is the "refresh" everywhere
             // that depends on Kufar — it re-fetches stats, listings,
-            // history, deals together.
+            // history together. Pre-merger this had a separate "cheap"
+            // branch, but the cheap view is gone — sort=cheap inside
+            // the ads view re-uses the same loadListings refresh.
             return query
                 ? () => actions.search && actions.search(view === "ads" ? "ads" : "overview")
-                : null;
-        }
-        if (view === "cheap") {
-            return query
-                ? () => actions.loadDeals && actions.loadDeals(true)
                 : null;
         }
         return null;

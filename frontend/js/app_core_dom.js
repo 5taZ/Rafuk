@@ -30,9 +30,9 @@ function cacheAppElements(elements) {
         overview: document.getElementById("overview-view"),
         ads: document.getElementById("ads-view"),
         tracking: document.getElementById("tracking-view"),
-        cheap: document.getElementById("cheap-view"),
         deals: document.getElementById("deals-view"),
     };
+    elements.dealsControls = document.getElementById("deals-controls");
     elements.statsSection = document.getElementById("stats-section");
     elements.chartSection = document.getElementById("chart-section");
     elements.priceChartCanvas = document.getElementById("priceChart");

@@ -137,6 +137,19 @@ class QueryDatasetContext:
     reference: QueryDataset
 
 
+# Single-flight registry — concurrent callers asking for the SAME
+# (query, currency, category, …) tuple wait on one shared Future
+# instead of each starting its own Kufar pagination. Without this,
+# the 6 parallel endpoints fired by a single search of "samsung"
+# each issue 8+ Kufar calls on cold cache, queue behind the
+# client's 2-concurrency semaphore + 1-second delay, and the user
+# waits ~9 seconds for the slowest endpoint to drain. With it, the
+# first arriver paginates once, the others await the same Future,
+# and the whole search completes in roughly one pagination's worth
+# of time.
+_inflight_dataset_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
+
+
 def _dataset_cache_key(
     query: str,
     currency: str,
@@ -197,29 +210,52 @@ async def load_query_dataset(
         if category is not None:
             effective_kwargs["category"] = category
 
-        cache_key: str | None = None
+        # Even without a Redis cache we singleflight by the same key
+        # — concurrent in-process callers shouldn't each trigger
+        # their own pagination chain.
+        sf_key = _dataset_cache_key(
+            query=query,
+            currency=currency,
+            category=category,
+            extra=effective_kwargs,
+        )
+
         response: dict[str, Any] | None = None
         if cache is not None:
-            cache_key = _dataset_cache_key(
-                query=query,
-                currency=currency,
-                category=category,
-                extra=effective_kwargs,
-            )
-            response = await cache.get_json(cache_key)
+            response = await cache.get_json(sf_key)
 
         if response is None:
-            response = await client.search_all_ads(
-                query=query,
-                currency=currency,
-                **effective_kwargs,
-            )
-            response = _normalize_response_ads(response)
-            if cache is not None and cache_key is not None:
-                # 5-minute TTL — long enough for the 6 parallel search
-                # endpoints to share, short enough that fresh ads
-                # show up promptly on the user's next search.
-                await cache.set_json(cache_key, response, ttl=300)
+            inflight = _inflight_dataset_futures.get(sf_key)
+            if inflight is not None and not inflight.done():
+                # Someone else is already paginating this exact key —
+                # wait for their result instead of starting our own.
+                response = await inflight
+            else:
+                loop = asyncio.get_running_loop()
+                future: asyncio.Future[dict[str, Any]] = loop.create_future()
+                _inflight_dataset_futures[sf_key] = future
+                try:
+                    response = await client.search_all_ads(
+                        query=query,
+                        currency=currency,
+                        **effective_kwargs,
+                    )
+                    response = _normalize_response_ads(response)
+                    if cache is not None:
+                        # 5-minute TTL — long enough for the 6 parallel
+                        # search endpoints to share, short enough that
+                        # fresh ads show up on the user's next search.
+                        await cache.set_json(sf_key, response, ttl=300)
+                    if not future.done():
+                        future.set_result(response)
+                except BaseException as exc:
+                    if not future.done():
+                        future.set_exception(exc)
+                    raise
+                finally:
+                    # Clear AFTER set_result so any awaiter that
+                    # already grabbed the future gets a clean read.
+                    _inflight_dataset_futures.pop(sf_key, None)
     finally:
         if owns_client:
             await client.aclose()

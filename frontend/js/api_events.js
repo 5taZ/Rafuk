@@ -246,11 +246,6 @@ function createApiEvents(context) {
                     void loadLeads();
                     void loadWatchlist();
                 }
-                if (view === "cheap") {
-                    if (state.query.trim()) {
-                        void loadDeals();
-                    }
-                }
             });
         }
 
@@ -337,6 +332,13 @@ function createApiEvents(context) {
                 }
                 state.sort = sort;
                 renderSortButtons();
+                // Discount-range controls live below the sort row in the
+                // ads view. They're only meaningful for sort=cheap; the
+                // hidden attribute toggles their visibility in sync with
+                // the sort selection.
+                if (elements.dealsControls) {
+                    elements.dealsControls.hidden = sort !== "cheap";
+                }
                 if (state.query.trim()) {
                     void loadListings(true);
                 }
@@ -523,6 +525,24 @@ function createApiEvents(context) {
         });
 
         // ── Discount buttons ─────────────────────────────────────────
+        // Discount range presets (10-20%, 10-30%, …) and the manual
+        // From/To inputs both used to live in their own "Выгодно"
+        // view that fired loadDeals(). The view is gone — they now
+        // sit inside the ads view and trigger loadListings(true) with
+        // sort=cheap so the discount filter is applied to the same
+        // listings list the user is already looking at.
+        function _activateCheapSort() {
+            state.sort = "cheap";
+            renderSortButtons();
+            if (elements.dealsControls) {
+                elements.dealsControls.hidden = false;
+            }
+            setActiveView("ads");
+            if (state.query.trim()) {
+                void loadListings(true);
+            }
+        }
+
         for (const button of elements.discountButtons || []) {
             button.addEventListener("click", () => {
                 const from = Number(button.dataset.discountFrom);
@@ -534,10 +554,7 @@ function createApiEvents(context) {
                 state.discountToPercent = Math.max(from, to);
                 renderDiscountButtons();
                 renderDealInputs();
-                setActiveView("cheap");
-                if (state.query.trim()) {
-                    void loadDeals();
-                }
+                _activateCheapSort();
             });
         }
 
@@ -549,10 +566,7 @@ function createApiEvents(context) {
             state.discountToPercent = Math.max(from, to);
             renderDiscountButtons();
             renderDealInputs();
-            setActiveView("cheap");
-            if (state.query.trim()) {
-                void loadDeals();
-            }
+            _activateCheapSort();
         });
 
         // ── Tracker create button ────────────────────────────────────

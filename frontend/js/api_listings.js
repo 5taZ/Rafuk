@@ -197,6 +197,26 @@ function createApiListings(context) {
     }
 
     // ── Load listings (ads view) ─────────────────────────────────────────
+    function _listingsQueryParams(extra) {
+        // Cheap sort folds in the discount-range filters that used to
+        // belong to the standalone "Выгодно" view. Other sorts ignore
+        // the discount params; the backend only honours them when
+        // sort=cheap.
+        const params = { sort: state.sort, ...extra };
+        if (state.sort === "cheap") {
+            params.discount_from_percent = state.discountFromPercent;
+            params.discount_to_percent = state.discountToPercent;
+        }
+        return params;
+    }
+
+    function _sameDiscountRangeAsLast() {
+        return (
+            state._listingsLoadedDiscountFrom === state.discountFromPercent &&
+            state._listingsLoadedDiscountTo === state.discountToPercent
+        );
+    }
+
     async function loadListings(force) {
         if (!state.query) {
             state.listings = [];
@@ -205,8 +225,14 @@ function createApiListings(context) {
             renderAll();
             return;
         }
-        // Skip reload if data is fresh AND sort hasn't changed
-        if (!force && state.listings.length && state._listingsLoadedSort === state.sort && Date.now() - state._listingsLoadedAt < CACHE_TTL) {
+        // Skip reload if data is fresh AND sort + discount range hasn't
+        // changed. Discount range only matters when sort=cheap.
+        const cacheStillValid =
+            state.listings.length &&
+            state._listingsLoadedSort === state.sort &&
+            (state.sort !== "cheap" || _sameDiscountRangeAsLast()) &&
+            Date.now() - state._listingsLoadedAt < CACHE_TTL;
+        if (!force && cacheStillValid) {
             return;
         }
 
@@ -222,11 +248,10 @@ function createApiListings(context) {
 
         try {
             const payload = await getJson(
-                `/api/v1/listings?${buildListingsQuery({
-                    sort: state.sort,
+                `/api/v1/listings?${buildListingsQuery(_listingsQueryParams({
                     limit: PAGE_SIZE,
                     offset: 0,
-                })}`
+                }))}`
             );
             if (requestId !== state._listingsRequestId) return;
             state.listings = payload.listings || [];
@@ -234,6 +259,8 @@ function createApiListings(context) {
             state.listingsHasMore = Boolean(payload.has_more);
             state._listingsLoadedAt = Date.now();
             state._listingsLoadedSort = state.sort;
+            state._listingsLoadedDiscountFrom = state.discountFromPercent;
+            state._listingsLoadedDiscountTo = state.discountToPercent;
             state.error = null;
         } catch (error) {
             if (requestId !== state._listingsRequestId) return;
@@ -266,11 +293,10 @@ function createApiListings(context) {
         const requestId = state._listingsRequestId;
         try {
             const payload = await getJson(
-                `/api/v1/listings?${buildListingsQuery({
-                    sort: state.sort,
+                `/api/v1/listings?${buildListingsQuery(_listingsQueryParams({
                     limit: PAGE_SIZE,
                     offset,
-                })}`
+                }))}`
             );
             // Drop the response if the user re-searched in the
             // meantime — the new query ditched the old cursor.

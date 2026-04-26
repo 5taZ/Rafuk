@@ -89,15 +89,17 @@ function createAppActions(context) {
      * Focuses the appropriate view or panel based on the search target.
      * Routes to overview by default, then scrolls to specific sections if needed.
      *
+     * "cheap" used to be its own view tab; it's now folded into "ads"
+     * with state.sort = "cheap" surfacing the discount-range UI.
+     *
      * @param {string} target - The target context ('ads', 'cheap', 'deals', 'history', 'comparison')
      */
     function focusTarget(target) {
-        if (target === "ads") {
+        if (target === "ads" || target === "cheap") {
+            if (target === "cheap") {
+                state.sort = "cheap";
+            }
             setActiveView("ads");
-            return;
-        }
-        if (target === "cheap") {
-            setActiveView("cheap");
             return;
         }
         if (target === "deals") {

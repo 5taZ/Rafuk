@@ -796,6 +796,14 @@ body {
     margin: 8px 0 12px;
 }
 
+/* Two-row layout: row 1 = Обзор / Объявления / Автопоиск (each
+   1/3 of the row), row 2 = Мои объявления spanning all 3 columns
+   so the user has a generous tap target for the most-used tab. */
+.view-nav-grid .view-tab--wide {
+    grid-column: 1 / -1;
+    justify-content: center;
+}
+
 .view-tab {
     appearance: none;
     border: 1px solid var(--border);
@@ -811,6 +819,32 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+    /* Stop the label from wrapping inside narrow phones — if it
+       doesn't fit we'd rather truncate than ladder onto two rows
+       and stretch every other tab. */
+    white-space: nowrap;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.view-tab .view-tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+@media (max-width: 380px) {
+    /* Very narrow phones: drop horizontal padding and shrink the
+       label so 3 tabs still fit on one row without overflowing. */
+    .view-tab {
+        padding: 10px 6px;
+        font-size: 11px;
+        gap: 4px;
+    }
+    .view-tab-icon {
+        width: 16px;
+        height: 16px;
+    }
 }
 
 .view-tab.active {

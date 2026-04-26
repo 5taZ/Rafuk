@@ -679,3 +679,71 @@ def test_listings_caches_kufar_dataset_for_repeat_calls(monkeypatch) -> None:
             f"second call hit Kufar {fetch_calls} times — dataset cache "
             f"should have caught it"
         )
+
+
+def test_listings_singleflight_collapses_concurrent_kufar_fetches(monkeypatch) -> None:
+    """Six concurrent endpoint requests for the same query should all
+    share ONE Kufar pagination, not each kick off their own.
+
+    Without singleflight, ``cache.get_json`` returned None for every
+    parallel caller before any of them had time to write a result —
+    they all started their own pagination behind the 1s rate-limit
+    delay, summing to ~9 s of wall-clock for "samsung" sort queries.
+    Singleflight makes the second-through-N callers await the same
+    in-flight Future the first arrival created.
+    """
+    import asyncio as _asyncio
+
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    fetch_calls = 0
+
+    class _SlowClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            nonlocal fetch_calls
+            del kwargs
+            fetch_calls += 1
+            # Simulate Kufar's pagination latency — without
+            # singleflight every parallel caller would hit this
+            # path independently.
+            await _asyncio.sleep(0.05)
+            return {"total": len(FAKE_ADS), "ads": FAKE_ADS}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", _SlowClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: _SlowClient(None)
+    shared_cache = MemoryCache()
+    app.dependency_overrides[get_cache] = lambda: shared_cache
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        # Issue 6 parallel requests — same query, different offsets so
+        # the per-page response cache doesn't short-circuit them.
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futures = [
+                pool.submit(
+                    client.get,
+                    "/api/v1/listings",
+                    params={"query": "iphone", "limit": 10, "offset": offset},
+                )
+                for offset in (0, 10, 20, 30, 40, 50)
+            ]
+            responses = [f.result(timeout=10) for f in futures]
+
+    assert all(r.status_code == 200 for r in responses), [r.status_code for r in responses]
+    # Exactly one Kufar pagination across all 6 concurrent calls —
+    # the whole point of singleflight.
+    assert fetch_calls == 1, (
+        f"singleflight failed: 6 concurrent calls triggered {fetch_calls} "
+        f"Kufar paginations; expected exactly 1"
+    )
