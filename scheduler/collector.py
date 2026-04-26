@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -64,6 +65,126 @@ _TRACKER_QUERY_ERRORS = (
     TypeError,
     ValueError,
 )
+
+
+@dataclass(slots=True, frozen=True)
+class ThresholdAlert:
+    """An ad whose price crossed the tracker's hard `alert_price_threshold`.
+
+    Distinct from a price drop: a drop measures a delta against the
+    listing's previous snapshot, this measures the absolute price
+    against the user's "ping me when ANY phone is below 1500 BYN"
+    line. Both the threshold value and the current price travel in
+    so the user-facing message can show the gap.
+    """
+
+    ad_id: int
+    title: str
+    link: str
+    price_byn: float
+    threshold_byn: float
+    thumbnail: str | None = None
+    seller_type: str | None = None
+    region_name: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class DiscountAlert:
+    """An ad sitting at least `alert_discount_percent` below the median.
+
+    Computed against the *unfiltered* market median for the query, so
+    the threshold has the same meaning regardless of which tracker
+    sees it. We carry the median on the alert so the message can
+    show "1450 BYN — на 18 % ниже медианы 1770".
+    """
+
+    ad_id: int
+    title: str
+    link: str
+    price_byn: float
+    discount_pct: float
+    median_byn: float
+    thumbnail: str | None = None
+    seller_type: str | None = None
+    region_name: str | None = None
+
+
+@dataclass(slots=True)
+class TrackerAlertSet:
+    """Lightweight bag of alerts produced for one tracker per tick."""
+
+    threshold_alerts: list[ThresholdAlert] = field(default_factory=list)
+    discount_alerts: list[DiscountAlert] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.threshold_alerts or self.discount_alerts)
+
+
+def _detect_tracker_alerts(
+    tracker: Tracker,
+    ads_by_id: dict[int, dict[str, object]],
+    market_median: float,
+) -> TrackerAlertSet:
+    """Walk the tracker's eligible ads and collect any alert hits.
+
+    `alert_price_threshold` and `alert_discount_percent` can both be
+    set; an ad below the price threshold AND offering a deeper
+    discount than the percentage threshold will surface in BOTH
+    lists, since the user explicitly asked for each signal type.
+    Caps each list at 10 to keep notifications scannable.
+    """
+    alerts = TrackerAlertSet()
+    threshold = tracker.alert_price_threshold
+    discount_threshold = tracker.alert_discount_percent
+    if not threshold and not discount_threshold:
+        return alerts
+    for ad_id, ad in ads_by_id.items():
+        if ad_id <= 0:
+            continue
+        price_byn = normalize_price_byn(ad.get("price_byn"))
+        if price_byn is None or price_byn <= 0:
+            continue
+        title = str(ad.get("subject") or "")
+        link = str(ad.get("ad_link") or "")
+        thumbnail = ad.get("thumbnail")
+        seller_type = ad.get("seller_type")
+        region_name = region_label(ad)
+        if threshold and price_byn <= threshold:
+            alerts.threshold_alerts.append(
+                ThresholdAlert(
+                    ad_id=ad_id,
+                    title=title,
+                    link=link,
+                    price_byn=price_byn,
+                    threshold_byn=float(threshold),
+                    thumbnail=thumbnail if isinstance(thumbnail, str) else None,
+                    seller_type=seller_type if isinstance(seller_type, str) else None,
+                    region_name=region_name,
+                )
+            )
+        if discount_threshold and market_median > 0 and price_byn < market_median:
+            actual_discount = (market_median - price_byn) / market_median * 100.0
+            if actual_discount >= discount_threshold:
+                alerts.discount_alerts.append(
+                    DiscountAlert(
+                        ad_id=ad_id,
+                        title=title,
+                        link=link,
+                        price_byn=price_byn,
+                        discount_pct=round(actual_discount, 1),
+                        median_byn=round(market_median, 2),
+                        thumbnail=thumbnail if isinstance(thumbnail, str) else None,
+                        seller_type=seller_type if isinstance(seller_type, str) else None,
+                        region_name=region_name,
+                    )
+                )
+    # Sort both lists by severity so the top-3 in the message is the
+    # most striking match (lowest absolute price, deepest discount).
+    alerts.threshold_alerts.sort(key=lambda a: a.price_byn)
+    alerts.discount_alerts.sort(key=lambda a: -a.discount_pct)
+    alerts.threshold_alerts[:] = alerts.threshold_alerts[:10]
+    alerts.discount_alerts[:] = alerts.discount_alerts[:10]
+    return alerts
 
 
 async def notify_user(
@@ -191,6 +312,7 @@ async def persist_tracker_events(
     seen: set[tuple[int, str]] | None = None,
     trend_signal: TrendReversal | None = None,
     trend_already_sent: bool = False,
+    alerts: TrackerAlertSet | None = None,
 ) -> list[TrackerEvent]:
     # Skip events that were already recorded recently for this tracker + ad.
     # Callers can pass a pre-computed ``seen`` (from ``_recent_events_by_tracker``)
@@ -253,6 +375,57 @@ async def persist_tracker_events(
         session.add(event)
         created.append(event)
 
+    if alerts is not None:
+        for alert in alerts.threshold_alerts:
+            if (alert.ad_id, "price_threshold_alert") in seen:
+                continue
+            event = TrackerEvent(
+                tracker_id=tracker.id,
+                user_id=tracker.user_id,
+                ad_id=alert.ad_id,
+                query=tracker.query,
+                strict_mode=tracker.strict_mode,
+                event_type="price_threshold_alert",
+                title=alert.title[:255] if alert.title else "Объявление",
+                link=alert.link,
+                price_byn=alert.price_byn,
+                delta_byn=alert.threshold_byn - alert.price_byn,
+                thumbnail=alert.thumbnail,
+                seller_type=alert.seller_type,
+                region_name=alert.region_name,
+                parameters={
+                    "threshold_byn": alert.threshold_byn,
+                    "price_byn": alert.price_byn,
+                },
+            )
+            session.add(event)
+            created.append(event)
+        for alert in alerts.discount_alerts:
+            if (alert.ad_id, "discount_alert") in seen:
+                continue
+            event = TrackerEvent(
+                tracker_id=tracker.id,
+                user_id=tracker.user_id,
+                ad_id=alert.ad_id,
+                query=tracker.query,
+                strict_mode=tracker.strict_mode,
+                event_type="discount_alert",
+                title=alert.title[:255] if alert.title else "Объявление",
+                link=alert.link,
+                price_byn=alert.price_byn,
+                delta_byn=alert.discount_pct,
+                thumbnail=alert.thumbnail,
+                seller_type=alert.seller_type,
+                region_name=alert.region_name,
+                parameters={
+                    "discount_pct": alert.discount_pct,
+                    "price_byn": alert.price_byn,
+                    "median_byn": alert.median_byn,
+                },
+            )
+            session.add(event)
+            created.append(event)
+
     if trend_signal is not None and not trend_already_sent:
         title = (
             f"Цена ↑ {trend_signal.rebound_pct:.1f}% после "
@@ -287,9 +460,14 @@ def _filter_sync_result_for_tracker(
     tracker: Tracker,
     sync_result: QuerySyncResult,
     ads_by_id: dict[int, dict[str, object]],
+    *,
+    market_stats=None,
+    category_price_stats=None,
 ) -> QuerySyncResult:
-    market_stats = compute_price_stats(extract_prices(list(ads_by_id.values())))
-    category_price_stats = compute_category_price_stats(list(ads_by_id.values()))
+    if market_stats is None:
+        market_stats = compute_price_stats(extract_prices(list(ads_by_id.values())))
+    if category_price_stats is None:
+        category_price_stats = compute_category_price_stats(list(ads_by_id.values()))
     new_listings = [
         state
         for state in sync_result.new_listings
@@ -345,6 +523,8 @@ def _build_tracker_message(
     sync_result: QuerySyncResult,
     trend_signal: TrendReversal | None = None,
     trend_already_sent: bool = False,
+    alerts: TrackerAlertSet | None = None,
+    seen_alerts: set[tuple[int, str]] | None = None,
 ) -> str | None:
     lines: list[str] = []
     label = f"{query} [строгий]" if strict_mode else query
@@ -374,6 +554,51 @@ def _build_tracker_message(
                 lines.append(state.link)
         if len(sync_result.price_drops) > 3:
             lines.append(f"• и ещё {len(sync_result.price_drops) - 3}")
+
+    if alerts is not None and alerts:
+        seen = seen_alerts or set()
+        fresh_threshold = [
+            a for a in alerts.threshold_alerts
+            if (a.ad_id, "price_threshold_alert") not in seen
+        ]
+        fresh_discount = [
+            a for a in alerts.discount_alerts
+            if (a.ad_id, "discount_alert") not in seen
+        ]
+        if fresh_threshold:
+            if lines:
+                lines.append("")
+            if not sync_result.new_listings and not sync_result.price_drops:
+                lines.append(f'Запрос "{label}"')
+            lines.append(f"🎯 Под порогом цены: {len(fresh_threshold)}")
+            for alert in fresh_threshold[:3]:
+                lines.append(
+                    f"• {alert.title} — {_format_price_byn(alert.price_byn)} "
+                    f"(порог {_format_price_byn(alert.threshold_byn)})"
+                )
+                if alert.link:
+                    lines.append(alert.link)
+            if len(fresh_threshold) > 3:
+                lines.append(f"• и ещё {len(fresh_threshold) - 3}")
+        if fresh_discount:
+            if lines:
+                lines.append("")
+            if (
+                not sync_result.new_listings
+                and not sync_result.price_drops
+                and not fresh_threshold
+            ):
+                lines.append(f'Запрос "{label}"')
+            lines.append(f"💰 Скидка от медианы: {len(fresh_discount)}")
+            for alert in fresh_discount[:3]:
+                lines.append(
+                    f"• {alert.title} — {_format_price_byn(alert.price_byn)} "
+                    f"(−{alert.discount_pct:.1f}% к медиане {_format_price_byn(alert.median_byn)})"
+                )
+                if alert.link:
+                    lines.append(alert.link)
+            if len(fresh_discount) > 3:
+                lines.append(f"• и ещё {len(fresh_discount) - 3}")
 
     if trend_signal is not None and not trend_already_sent:
         if lines:
@@ -488,6 +713,13 @@ async def check_trackers(
                     ads_by_id = {
                         int(ad.get("ad_id", 0)): ad for ad in ads if int(ad.get("ad_id", 0)) > 0
                     }
+                    # Hoist these out of the per-tracker loop — they
+                    # depend only on the query result, not the tracker.
+                    # Was being recomputed inside _filter_sync_result_for_tracker
+                    # once per tracker sharing the same query.
+                    ads_list = list(ads_by_id.values())
+                    market_stats = compute_price_stats(extract_prices(ads_list))
+                    category_price_stats = compute_category_price_stats(ads_list)
 
                     newest_id = int(ads[0].get("ad_id", 0)) if ads else None
                     newest_price_byn = (
@@ -520,14 +752,22 @@ async def check_trackers(
                             tracker,
                             sync_result,
                             ads_by_id,
+                            market_stats=market_stats,
+                            category_price_stats=category_price_stats,
+                        )
+                        tracker_alerts = _detect_tracker_alerts(
+                            tracker, ads_by_id, market_stats.median
                         )
                         trend_already_sent = tracker.id in trend_sent_recently
+                        seen_for_tracker = seen_by_tracker.get(tracker.id, set())
                         message = _build_tracker_message(
                             query,
                             strict_mode,
                             tracker_sync_result,
                             trend_signal=trend_signal,
                             trend_already_sent=trend_already_sent,
+                            alerts=tracker_alerts,
+                            seen_alerts=seen_for_tracker,
                         )
                         if message:
                             created_events = await persist_tracker_events(
@@ -535,9 +775,10 @@ async def check_trackers(
                                 tracker,
                                 tracker_sync_result,
                                 ads_by_id,
-                                seen=seen_by_tracker.get(tracker.id, set()),
+                                seen=seen_for_tracker,
                                 trend_signal=trend_signal,
                                 trend_already_sent=trend_already_sent,
+                                alerts=tracker_alerts,
                             )
                             await session.flush()
                             if trend_signal is not None and not trend_already_sent:

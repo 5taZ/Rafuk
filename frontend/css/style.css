@@ -5339,6 +5339,14 @@ body.lp-menu-open {
     background: linear-gradient(90deg, var(--green), var(--amber-400));
 }
 
+.tracker-event-card.threshold-alert::before {
+    background: var(--accent);
+}
+
+.tracker-event-card.discount-alert::before {
+    background: var(--green);
+}
+
 .event-thumbnail-placeholder.trend {
     background: var(--amber-soft);
     color: var(--amber-400);
@@ -5350,10 +5358,22 @@ body.lp-menu-open {
     border: 1px solid var(--amber-soft);
 }
 
+.event-type-badge.alert {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid var(--accent-glow);
+}
+
 .event-delta.event-delta--up {
     color: var(--amber-400);
     background: var(--amber-soft);
     border-color: var(--amber-soft);
+}
+
+.event-delta.event-delta--alert {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: var(--accent-glow);
 }
 
 .event-header {

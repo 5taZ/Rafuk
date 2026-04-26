@@ -11,7 +11,11 @@ from api.middleware.telegram_auth import TelegramInitData
 from api.models import Base, Tracker, TrackerEvent, User
 from api.services.history_service import QuerySyncResult, TrendReversal
 from scheduler.collector import (
+    DiscountAlert,
+    ThresholdAlert,
+    TrackerAlertSet,
     _build_tracker_message,
+    _detect_tracker_alerts,
     _recent_events_by_tracker,
     _recent_trend_event_tracker_ids,
     persist_tracker_events,
@@ -342,4 +346,239 @@ async def test_recent_trend_event_tracker_ids_within_window() -> None:
         )
 
     assert ids == {tracker_recent.id}
+    await engine.dispose()
+
+
+def _alert_ad(*, ad_id: int, price_byn: float, subject: str = "iPhone 13") -> dict:
+    """Tiny ad payload with the only fields _detect_tracker_alerts touches.
+
+    Prices on Kufar arrive in kopecks; normalize_price_byn divides by 100,
+    so we feed it that way too.
+    """
+    return {
+        "ad_id": ad_id,
+        "subject": subject,
+        "ad_link": f"https://www.kufar.by/item/{ad_id}",
+        "price_byn": int(price_byn * 100),
+    }
+
+
+def _bare_tracker(
+    *,
+    alert_price_threshold: float | None = None,
+    alert_discount_percent: float | None = None,
+) -> Tracker:
+    return Tracker(
+        id=999,
+        user_id=1,
+        query="iphone 13",
+        strict_mode=False,
+        alert_price_threshold=alert_price_threshold,
+        alert_discount_percent=alert_discount_percent,
+    )
+
+
+def test_detect_tracker_alerts_returns_empty_when_no_thresholds_set() -> None:
+    tracker = _bare_tracker()
+    ads = {1: _alert_ad(ad_id=1, price_byn=1000)}
+    alerts = _detect_tracker_alerts(tracker, ads, market_median=1500.0)
+    assert not alerts
+    assert alerts.threshold_alerts == []
+    assert alerts.discount_alerts == []
+
+
+def test_detect_tracker_alerts_price_threshold_fires_at_or_below() -> None:
+    tracker = _bare_tracker(alert_price_threshold=1500)
+    ads = {
+        1: _alert_ad(ad_id=1, price_byn=1499),
+        2: _alert_ad(ad_id=2, price_byn=1500),
+        3: _alert_ad(ad_id=3, price_byn=1501),
+    }
+    alerts = _detect_tracker_alerts(tracker, ads, market_median=1700.0)
+    fired_ids = {a.ad_id for a in alerts.threshold_alerts}
+    assert fired_ids == {1, 2}
+    # Sorted by lowest price first.
+    assert alerts.threshold_alerts[0].ad_id == 1
+    assert alerts.threshold_alerts[0].threshold_byn == 1500.0
+
+
+def test_detect_tracker_alerts_discount_fires_against_unfiltered_median() -> None:
+    tracker = _bare_tracker(alert_discount_percent=15)
+    ads = {
+        1: _alert_ad(ad_id=1, price_byn=1700),  # at median, no alert
+        2: _alert_ad(ad_id=2, price_byn=1500),  # ~12 % below — under threshold
+        3: _alert_ad(ad_id=3, price_byn=1300),  # ~24 % below — fires
+        4: _alert_ad(ad_id=4, price_byn=1200),  # ~29 % below — fires
+    }
+    alerts = _detect_tracker_alerts(tracker, ads, market_median=1700.0)
+    fired_ids = [a.ad_id for a in alerts.discount_alerts]
+    # Sorted by deepest discount first — ad 4 (29 %) before ad 3 (24 %).
+    assert fired_ids == [4, 3]
+    assert alerts.discount_alerts[0].discount_pct >= 15
+    assert alerts.discount_alerts[0].median_byn == 1700.0
+
+
+def test_detect_tracker_alerts_skips_zero_or_negative_prices() -> None:
+    tracker = _bare_tracker(alert_price_threshold=1500)
+    ads = {
+        1: {"ad_id": 1, "subject": "x", "ad_link": "", "price_byn": 0},
+        2: {"ad_id": 2, "subject": "y", "ad_link": "", "price_byn": -100},
+        3: _alert_ad(ad_id=3, price_byn=1400),
+    }
+    alerts = _detect_tracker_alerts(tracker, ads, market_median=1700.0)
+    assert {a.ad_id for a in alerts.threshold_alerts} == {3}
+
+
+def test_detect_tracker_alerts_caps_at_ten() -> None:
+    tracker = _bare_tracker(alert_price_threshold=2000)
+    ads = {i: _alert_ad(ad_id=i, price_byn=1000 + i) for i in range(1, 25)}
+    alerts = _detect_tracker_alerts(tracker, ads, market_median=2500.0)
+    assert len(alerts.threshold_alerts) == 10
+
+
+def test_build_tracker_message_renders_both_alert_kinds() -> None:
+    sync = QuerySyncResult(stats_count=0, total_results=0)
+    alert_set = TrackerAlertSet(
+        threshold_alerts=[
+            ThresholdAlert(
+                ad_id=1,
+                title="iPhone 13 256",
+                link="https://www.kufar.by/item/1",
+                price_byn=1450,
+                threshold_byn=1500,
+            ),
+        ],
+        discount_alerts=[
+            DiscountAlert(
+                ad_id=2,
+                title="iPhone 13 128",
+                link="https://www.kufar.by/item/2",
+                price_byn=1300,
+                discount_pct=23.5,
+                median_byn=1700,
+            ),
+        ],
+    )
+    msg = _build_tracker_message(
+        "iphone 13", False, sync, alerts=alert_set, seen_alerts=set()
+    )
+    assert msg is not None
+    assert "🎯 Под порогом" in msg
+    assert "💰 Скидка от медианы" in msg
+    assert "iPhone 13 256" in msg
+    assert "iPhone 13 128" in msg
+    # _format_price_byn collapses 1500 → "1.5 тыс. р." for compactness.
+    assert "1.5 тыс. р." in msg
+    assert "23.5" in msg
+
+
+def test_build_tracker_message_skips_already_seen_alerts() -> None:
+    sync = QuerySyncResult(stats_count=0, total_results=0)
+    alert_set = TrackerAlertSet(
+        threshold_alerts=[
+            ThresholdAlert(
+                ad_id=1,
+                title="t",
+                link="",
+                price_byn=1450,
+                threshold_byn=1500,
+            ),
+        ],
+    )
+    seen = {(1, "price_threshold_alert")}
+    msg = _build_tracker_message(
+        "iphone 13", False, sync, alerts=alert_set, seen_alerts=seen
+    )
+    # No new listings, no price drops, no fresh alerts → message is None.
+    assert msg is None
+
+
+@pytest.mark.asyncio
+async def test_persist_tracker_events_creates_threshold_and_discount_events() -> None:
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(telegram_user_id=33_333, first_name="Alert")
+        session.add(user)
+        await session.flush()
+        tracker = Tracker(user_id=user.id, query="iphone 13", strict_mode=False)
+        session.add(tracker)
+        await session.flush()
+
+        sync = QuerySyncResult(stats_count=0, total_results=0)
+        alert_set = TrackerAlertSet(
+            threshold_alerts=[
+                ThresholdAlert(
+                    ad_id=11, title="A", link="https://www.kufar.by/item/11",
+                    price_byn=1450, threshold_byn=1500,
+                ),
+                ThresholdAlert(
+                    ad_id=12, title="B", link="https://www.kufar.by/item/12",
+                    price_byn=1400, threshold_byn=1500,
+                ),
+            ],
+            discount_alerts=[
+                DiscountAlert(
+                    ad_id=21, title="C", link="https://www.kufar.by/item/21",
+                    price_byn=1300, discount_pct=23.5, median_byn=1700,
+                ),
+            ],
+        )
+        events = await persist_tracker_events(
+            session, tracker, sync, ads_by_id={}, seen=set(), alerts=alert_set
+        )
+        await session.commit()
+
+        types = [(e.event_type, e.ad_id) for e in events]
+        assert ("price_threshold_alert", 11) in types
+        assert ("price_threshold_alert", 12) in types
+        assert ("discount_alert", 21) in types
+        # parameters round-tripped intact
+        threshold_evt = next(e for e in events if e.ad_id == 11)
+        assert threshold_evt.parameters["threshold_byn"] == 1500
+        assert threshold_evt.parameters["price_byn"] == 1450
+        discount_evt = next(e for e in events if e.ad_id == 21)
+        assert discount_evt.parameters["discount_pct"] == 23.5
+        assert discount_evt.parameters["median_byn"] == 1700
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_persist_tracker_events_skips_alert_in_24h_seen_set() -> None:
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(telegram_user_id=44_444, first_name="Seen")
+        session.add(user)
+        await session.flush()
+        tracker = Tracker(user_id=user.id, query="iphone 13", strict_mode=False)
+        session.add(tracker)
+        await session.flush()
+
+        sync = QuerySyncResult(stats_count=0, total_results=0)
+        alert_set = TrackerAlertSet(
+            threshold_alerts=[
+                ThresholdAlert(
+                    ad_id=11, title="A", link="",
+                    price_byn=1450, threshold_byn=1500,
+                ),
+            ],
+        )
+        events = await persist_tracker_events(
+            session,
+            tracker,
+            sync,
+            ads_by_id={},
+            seen={(11, "price_threshold_alert")},
+            alerts=alert_set,
+        )
+        assert events == []
+
     await engine.dispose()

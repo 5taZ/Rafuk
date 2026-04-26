@@ -263,6 +263,8 @@ class TrackerCreate(BaseModel):
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
+    alert_price_threshold: float | None = Field(default=None, gt=0)
+    alert_discount_percent: float | None = Field(default=None, ge=0, le=95)
 
 
 class TrackerUpdate(BaseModel):
@@ -276,6 +278,8 @@ class TrackerUpdate(BaseModel):
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
+    alert_price_threshold: float | None = Field(default=None, gt=0)
+    alert_discount_percent: float | None = Field(default=None, ge=0, le=95)
 
 
 class TrackerRead(BaseModel):
@@ -292,6 +296,8 @@ class TrackerRead(BaseModel):
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
+    alert_price_threshold: float | None = None
+    alert_discount_percent: float | None = None
     last_seen_ad_id: int | None = None
     last_seen_price_byn: float | None = None
     last_checked_at: datetime | None = None
@@ -302,6 +308,8 @@ class TrackerRead(BaseModel):
     event_count: int = 0
     new_listings_count: int = 0
     price_drops_count: int = 0
+    threshold_alerts_count: int = 0
+    discount_alerts_count: int = 0
     last_event_at: datetime | None = None
     avg_events_per_day: float = 0.0
     active: bool

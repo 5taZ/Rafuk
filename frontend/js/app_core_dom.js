@@ -91,6 +91,8 @@ function cacheAppElements(elements) {
     elements.trackerConditionSelect = document.getElementById("tracker-condition-select");
     elements.trackerRegionSelect = document.getElementById("tracker-region-select");
     elements.trackerConfigInput = document.getElementById("tracker-config-input");
+    elements.trackerAlertPriceInput = document.getElementById("tracker-alert-price-input");
+    elements.trackerAlertDiscountInput = document.getElementById("tracker-alert-discount-input");
     elements.trackerStatus = document.getElementById("tracker-status");
     elements.trackersList = document.getElementById("trackers-list");
     elements.trackerEventsList = document.getElementById("tracker-events-list");
@@ -191,6 +193,8 @@ function cacheAppElements(elements) {
     elements.editConditionSelect = document.getElementById("edit-condition-select");
     elements.editRegionSelect = document.getElementById("edit-region-select");
     elements.editConfigInput = document.getElementById("edit-config-input");
+    elements.editAlertPriceInput = document.getElementById("edit-alert-price-input");
+    elements.editAlertDiscountInput = document.getElementById("edit-alert-discount-input");
     elements.closeEditModal = document.getElementById("close-edit-modal");
     elements.saveTrackerBtn = document.getElementById("save-tracker-btn");
     elements.cancelEditBtn = document.getElementById("cancel-edit-btn");

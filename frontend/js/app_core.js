@@ -72,6 +72,8 @@ function createAppCore() {
         trackerCondition: "",
         trackerRegionName: "",
         trackerConfigKeyword: "",
+        trackerAlertPriceThreshold: null,
+        trackerAlertDiscountPercent: null,
         editingTrackerId: null,
         creatingTracker: false,
         modalCleanup: null,

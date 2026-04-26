@@ -124,6 +124,14 @@ class TrackerFiltersMixin:
         default=False,
         server_default="false",
     )
+    # Hard alerts: distinct from the soft `min_discount_percent` filter,
+    # which only narrows what counts as a "deal" for this tracker. These
+    # two thresholds escalate the listing into its own event_type
+    # (`price_threshold_alert` / `discount_alert`) so the user can spot
+    # them in a separate filter chip — useful for quick "if any phone
+    # ever drops below 1500 BYN, ping me" workflows.
+    alert_price_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    alert_discount_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class Tracker(

@@ -495,9 +495,23 @@
                                 </select>
                             </div>
                         </label>
+                        <label class="deal-range-field" for="tracker-alert-price-input">
+                            <span>🎯 Алерт ≤ цены</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="tracker-alert-price-input" type="number" min="0" step="1" inputmode="numeric" placeholder="необязательно">
+                                <span>BYN</span>
+                            </div>
+                        </label>
+                        <label class="deal-range-field" for="tracker-alert-discount-input">
+                            <span>💰 Алерт скидки</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="tracker-alert-discount-input" type="number" min="0" max="95" step="1" inputmode="numeric" placeholder="необязательно">
+                                <span>%</span>
+                            </div>
+                        </label>
                     </div>
                 <p class="tracker-form-hint">
-                    Профиль фильтров применяется к создаваемому трекеру.
+                    Профиль фильтров применяется к создаваемому трекеру. Алерты — отдельные сигналы поверх обычных событий.
                 </p>
                 <div class="tracker-status" id="tracker-status" hidden></div>
                 
@@ -532,6 +546,14 @@
                     <button class="s-tab" data-event-filter="trend_reversal" type="button">
                         Разворот ↑
                         <span class="filter-count" data-event-filter-count="trend_reversal" hidden>0</span>
+                    </button>
+                    <button class="s-tab" data-event-filter="price_threshold_alert" type="button">
+                        🎯 Под порогом
+                        <span class="filter-count" data-event-filter-count="price_threshold_alert" hidden>0</span>
+                    </button>
+                    <button class="s-tab" data-event-filter="discount_alert" type="button">
+                        💰 Скидка от медианы
+                        <span class="filter-count" data-event-filter-count="discount_alert" hidden>0</span>
                     </button>
                 </div>
                 <div class="tracker-event-tracker-filter">
@@ -848,6 +870,22 @@
                         <label class="form-field">
                             <span class="form-field-label">Конфиг</span>
                             <input id="edit-config-input" type="text" class="form-text-input" placeholder="pro max 256">
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-field">
+                            <span class="form-field-label">🎯 Алерт ≤ цены</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="edit-alert-price-input" type="number" min="0" step="1" inputmode="numeric" placeholder="необязательно">
+                                <span>BYN</span>
+                            </div>
+                        </label>
+                        <label class="form-field">
+                            <span class="form-field-label">💰 Алерт скидки</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="edit-alert-discount-input" type="number" min="0" max="95" step="1" inputmode="numeric" placeholder="необязательно">
+                                <span>%</span>
+                            </div>
                         </label>
                     </div>
                     <div class="form-actions">
