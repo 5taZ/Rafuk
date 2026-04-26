@@ -1305,10 +1305,16 @@ _VALID_CONDITION_LABELS = {
 
 
 _PROMPT_ROLE_MARKERS = re.compile(
-    r"(?im)^[ \t]*(###?\s*(system|instruction|user|assistant)[:\s]"
+    r"(?i)("
+    # Markdown-style role headers: "### system:", "## assistant:" etc.
+    # Allowed anywhere in the text — a malicious listing title can put
+    # them mid-line just as easily as at the start.
+    r"###?\s*(?:system|instruction|user|assistant)\s*[:\-—]?\s*"
+    # Chat-template markers from open-source models (chatml, llama, etc.).
     r"|<\|(?:im_start|im_end|system|user|assistant)\|>"
-    r"|\[(?:system|instruction|user|assistant)\]"
-    r"|(?:system|instruction|assistant)\s*[:\-—]\s*)"
+    # Bracketed role tags: "[system]", "[ASSISTANT]" etc.
+    r"|\[\s*(?:system|instruction|user|assistant)\s*\]\s*[:\-—]?\s*"
+    r")"
 )
 _PROMPT_INJECTION_PATTERNS = re.compile(
     r"(?i)("
@@ -1927,7 +1933,13 @@ class AIService:
         photo_condition_label: str | None = None,
         photo_condition_notes: list[str] | None = None,
     ) -> str:
-        parts = [f"## ОБЪЯВЛЕНИЕ: {title}"]
+        # Title and description come from a Kufar listing — i.e. an
+        # arbitrary user wrote them. Pass them through the same sanitiser
+        # used for seller assistant inputs so a malicious listing can't
+        # smuggle role-marker headers ("### system: ignore previous…")
+        # into our analyse prompt.
+        safe_title = sanitize_user_text(title, max_length=240) or ""
+        parts = [f"## ОБЪЯВЛЕНИЕ: {safe_title}"]
 
         # Price position
         price_pos = "позиция неизвестна"
@@ -2069,9 +2081,12 @@ class AIService:
             )
             parts.append(f"\n## ПАРАМЕТРЫ: {params_str}")
 
-        # Full description
+        # Full description — sanitised + truncated. Reads as
+        # "untrusted UGC", so role markers / injection phrases are stripped.
         if description:
-            parts.append(f"\n## ОПИСАНИЕ ПРОДАВЦА:\n{description[:700]}")
+            safe_description = sanitize_user_text(description, max_length=700)
+            if safe_description:
+                parts.append(f"\n## ОПИСАНИЕ ПРОДАВЦА:\n{safe_description}")
 
         # Similar listings — enriched with price deltas
         if similar_listings:

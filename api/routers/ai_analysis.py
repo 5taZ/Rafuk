@@ -1039,6 +1039,19 @@ async def quick_condition(
     if not images:
         raise HTTPException(status_code=400, detail="Нет фото для анализа")
 
+    # Quick-condition is cheap to recompute but resellers often re-open the
+    # same listing detail multiple times; cache by (ad_id, image set) so the
+    # second tap is instant. Photos are part of the key so a re-uploaded
+    # listing invalidates correctly.
+    cache = get_cache(request)
+    cache_key = _quick_condition_cache_key(payload.ad_id, images)
+    cached = await cache.get_json(cache_key)
+    if isinstance(cached, dict):
+        try:
+            return AIQuickConditionResponse.model_validate(cached)
+        except ValidationError:
+            logger.info("Quick condition cache hit was stale, recomputing")
+
     quick_condition_timeout = getattr(settings, "ai_quick_condition_timeout", 45)
     try:
         result = await asyncio.wait_for(
@@ -1051,11 +1064,14 @@ async def quick_condition(
             err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
         raise HTTPException(status_code=502, detail=err_msg) from None
 
-    return AIQuickConditionResponse(
+    response = AIQuickConditionResponse(
         ad_id=payload.ad_id,
         condition=result.get("condition", ""),
         notes=result.get("notes", []),
     )
+    cache_ttl = int(getattr(settings, "ai_quick_condition_cache_ttl", 1800) or 1800)
+    await cache.set_json(cache_key, response.model_dump(mode="json"), ttl=cache_ttl)
+    return response
 
 
 def _coerce_price(value: Any) -> float | None:
@@ -1171,6 +1187,18 @@ def _coerce_listing_photos(raw: list[str] | None) -> list[str]:
         if len(cleaned) >= 4:
             break
     return cleaned
+
+
+def _quick_condition_cache_key(ad_id: int, image_urls: list[str]) -> str:
+    """Stable cache key for /ai/quick-condition.
+
+    Sorted image URLs go into the hash so re-ordering the listing's
+    photos doesn't bypass the cache, but a genuinely new photo URL does.
+    """
+    sorted_urls = sorted(image_urls or [])
+    serialised = f"v1|ad={ad_id}|imgs={'|'.join(sorted_urls)}"
+    digest = hashlib.sha256(serialised.encode("utf-8")).hexdigest()
+    return f"ai_quick:{digest}"
 
 
 def _listing_assistant_cache_key(
