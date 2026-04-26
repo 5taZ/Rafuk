@@ -468,9 +468,11 @@ function createApiEvents(context) {
             state.filterDropdownOpen = false;
             renderAll();
 
-            // If category changed, trigger new search (server-side filter)
+            // If category changed, trigger new search keeping the
+            // freshly-applied filters (otherwise search() would wipe
+            // the user's selection).
             if (categoryChanged && state.query.trim()) {
-                void search(state.activeView);
+                void search(state.activeView, { keepFilters: true });
             }
 
             if (window.Telegram?.WebApp?.HapticFeedback) {

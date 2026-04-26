@@ -12,6 +12,7 @@ from api.services.aggregator import (
     apply_search_mode,
     compute_price_stats,
     extract_prices,
+    get_category_id,
 )
 from api.services.currency_service import CurrencyService
 
@@ -184,24 +185,20 @@ async def load_query_dataset_context(
     reference_context: str = "current",
     category: int | None = None,
 ) -> QueryDatasetContext:
+    """Build the visible/reference dataset pair for a query.
+
+    Important invariant: when a category filter is active, the visible
+    listings are filtered *client-side* from the unfiltered Kufar
+    response. We do NOT re-query Kufar with `category=` because the
+    Kufar API silently widens its match rules under category-scoped
+    queries — that produces, for example, 11 "Audi Q7 4L" ads under
+    "Легковые авто" while the unfiltered dataset has only 5 ads in
+    that category. By filtering locally we keep the category chip
+    count and the listings count in lockstep.
+    """
     owns_client = client is None and client_factory is not None
     if client is None and client_factory is not None:
         client = client_factory(settings)  # type: ignore[misc]
-
-    if reference_context != "base_query" or category is None:
-        try:
-            dataset = await load_query_dataset(
-                query=query,
-                currency=currency,
-                strict_search=strict_search,
-                settings=settings,
-                client=client,
-                category=category,
-            )
-        finally:
-            if owns_client and client is not None:
-                await client.aclose()
-        return QueryDatasetContext(visible=dataset, reference=dataset)
 
     try:
         reference_dataset = await load_query_dataset(
@@ -211,19 +208,34 @@ async def load_query_dataset_context(
             settings=settings,
             client=client,
         )
-        visible_dataset = await load_query_dataset(
-            query=query,
-            currency=currency,
-            strict_search=strict_search,
-            settings=settings,
-            category=category,
-            client=client,
-        )
     finally:
         if owns_client and client is not None:
             await client.aclose()
 
-    return QueryDatasetContext(visible=visible_dataset, reference=reference_dataset)
+    if category is None:
+        return QueryDatasetContext(visible=reference_dataset, reference=reference_dataset)
+
+    # Local filter: keep only ads whose category_id matches the chip
+    # the user picked. Mirror the same numbers the chip badge shows.
+    filtered_ads = [ad for ad in reference_dataset.ads if get_category_id(ad) == category]
+    visible_response = {
+        **reference_dataset.response,
+        "ads": filtered_ads,
+        "total": len(filtered_ads),
+    }
+    visible_dataset = QueryDataset(
+        query=query,
+        currency=currency,
+        strict_search=strict_search,
+        response=visible_response,
+        ads=filtered_ads,
+    )
+
+    if reference_context == "base_query":
+        return QueryDatasetContext(visible=visible_dataset, reference=reference_dataset)
+    # `current` keeps reference == visible (price comparisons happen
+    # only inside the chosen category).
+    return QueryDatasetContext(visible=visible_dataset, reference=visible_dataset)
 
 
 async def load_segment_datasets(

@@ -360,9 +360,22 @@ function createApiListings(context) {
     }
 
     // ── Search orchestration ─────────────────────────────────────────────
-    async function search(target = "overview") {
+    /**
+     * Run a search and (re)load all dependent panels.
+     *
+     * @param {string}  target           Active view to focus after search.
+     * @param {object}  [options]
+     * @param {boolean} [options.keepFilters=false]
+     *        If true, do NOT reset the category/condition/price/region
+     *        filters. The filter dropdown's "Применить" button passes
+     *        true so the user-picked category is honored. Every other
+     *        entry point (text input, Enter, search button, recent
+     *        searches, programmatic) uses the default false: every new
+     *        query starts clean — no leftover category from the last
+     *        search bleeding through.
+     */
+    async function search(target = "overview", { keepFilters = false } = {}) {
         const query = elements.searchInput.value.trim();
-        const queryChanged = query !== state.query;
         state.query = query;
         state.error = null;
         state.comparisonStats = null;
@@ -376,8 +389,7 @@ function createApiListings(context) {
             return;
         }
 
-        // Reset category filter when query text changes
-        if (queryChanged) {
+        if (!keepFilters) {
             resetCategoryFilter();
         }
 
