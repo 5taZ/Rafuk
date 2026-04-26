@@ -18,6 +18,7 @@ function createRenderTrackers(context) {
         hasTelegramInitData,
         escapeHtml: escapeHtml,
         safeUrl: safeUrl,
+        optimizedImage,
         safeRender: safeRender,
     } = context;
 
@@ -362,10 +363,17 @@ function createRenderTrackers(context) {
             if (isTrend) {
                 return buildTrendReversalNode(event);
             }
-            const thumbnailNode = event.thumbnail
+            const thumbSrc = (() => {
+                const validated = safeUrl(event.thumbnail);
+                if (!validated) return "";
+                return typeof optimizedImage === "function"
+                    ? optimizedImage(validated, { width: 200 })
+                    : validated;
+            })();
+            const thumbnailNode = thumbSrc
                 ? domEl("img", {
                     className: "event-thumbnail",
-                    attrs: { src: safeUrl(event.thumbnail), alt: "", loading: "lazy" },
+                    attrs: { src: thumbSrc, alt: "", loading: "lazy" },
                 })
                 : domEl("div", { className: "event-thumbnail-placeholder", text: "📱" });
             const eventMeta = domEl("div", { className: "event-meta" });

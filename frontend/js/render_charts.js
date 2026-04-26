@@ -50,6 +50,7 @@ function createRenderCharts(context) {
         hasTelegramInitData,
         escapeHtml: escapeHtml,
         safeUrl: safeUrl,
+        optimizedImage,
         safeRender: safeRender,
     } = context;
 
@@ -437,10 +438,17 @@ function createRenderCharts(context) {
 
             const dateStr = lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("ru-RU") : "";
 
-            const thumbNode = lead.thumbnail
+            const thumbSrc = (() => {
+                const validated = safeUrl(lead.thumbnail);
+                if (!validated) return "";
+                return typeof optimizedImage === "function"
+                    ? optimizedImage(validated, { width: 160 })
+                    : validated;
+            })();
+            const thumbNode = thumbSrc
                 ? domEl("img", {
                     className: "history-deal-thumb",
-                    attrs: { src: safeUrl(lead.thumbnail), alt: "", loading: "lazy" },
+                    attrs: { src: thumbSrc, alt: "", loading: "lazy" },
                 })
                 : domEl("div", { className: "history-deal-thumb-placeholder", text: "📦" });
 

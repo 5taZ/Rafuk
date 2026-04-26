@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     max_saved_searches_for_board: int = 8
     max_recent_tracker_events: int = 6
 
+    # Image proxy (WebP/AVIF transcode of Kufar JPEGs).
+    image_proxy_enabled: bool = True
+    image_proxy_max_width: int = 1024
+    image_proxy_quality: int = 80
+    image_proxy_fetch_timeout: float = 5.0
+    image_proxy_max_bytes: int = 5 * 1024 * 1024
+
     @field_validator("api_base_url", "mini_app_url")
     @classmethod
     def validate_https_url(cls, v: str) -> str:

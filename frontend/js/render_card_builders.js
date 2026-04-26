@@ -10,11 +10,17 @@ function createRenderCardBuilders(context) {
         deltaClass,
         hasTelegramInitData,
         safeUrl: safeUrl,
+        optimizedImage,
     } = context;
 
     function buildMediaNode(imageClass, placeholderClass, placeholderText, url, altText) {
-        const src = safeUrl(url);
-        if (src) {
+        const validated = safeUrl(url);
+        if (validated) {
+            // Route Kufar JPEG thumbnails through the WebP/AVIF
+            // proxy. Non-Kufar URLs pass through untouched.
+            const src = typeof optimizedImage === "function"
+                ? optimizedImage(validated, { width: 320 })
+                : validated;
             return domEl("img", {
                 className: imageClass,
                 attrs: { src, alt: altText || "", loading: "lazy", decoding: "async" },

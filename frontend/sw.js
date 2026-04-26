@@ -22,7 +22,7 @@
  *     in-flight guards already protect the UI).
  */
 
-const CACHE_VERSION = "rafuk-cache-v1";
+const CACHE_VERSION = "rafuk-cache-v2";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 

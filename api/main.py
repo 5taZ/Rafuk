@@ -22,6 +22,7 @@ from api.routers import (
     export,
     geography,
     health,
+    image_proxy,
     listing_detail,
     listings,
     price_history,
@@ -163,6 +164,7 @@ def create_app() -> FastAPI:
     app.include_router(risks.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
     app.include_router(ai_analysis.router, prefix="/api/v1")
+    app.include_router(image_proxy.router, prefix="/api/v1")
     return app
 
 

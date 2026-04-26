@@ -14,6 +14,7 @@ function createRenderModals(context) {
         formatDate,
         trapFocus,
         safeUrl: safeUrl,
+        optimizedImage,
         safeRender: safeRender,
     } = context;
 
@@ -114,8 +115,16 @@ function createRenderModals(context) {
             elements.detailMedia.setAttribute("aria-label", `Фото объявления ${current} из ${total}`);
         }
 
+        const optimizeWith = (url, width) => {
+            const validated = safeUrl(url);
+            if (!validated) return "";
+            return typeof optimizedImage === "function"
+                ? optimizedImage(validated, { width })
+                : validated;
+        };
+
         if (currentImage) {
-            const safeImage = safeUrl(currentImage);
+            const safeImage = optimizeWith(currentImage, 800);
             if (safeImage) {
                 elements.detailMainImage.src = safeImage;
                 elements.detailMainImage.alt = detail.title || "Фото объявления";
@@ -132,7 +141,7 @@ function createRenderModals(context) {
             button.type = "button";
             button.className = `detail-thumb${state.detailImageIndex === index ? " active" : ""}`;
             const img = document.createElement("img");
-            img.src = safeUrl(image);
+            img.src = optimizeWith(image, 120);
             img.alt = "";
             button.appendChild(img);
             button.addEventListener("click", () => {

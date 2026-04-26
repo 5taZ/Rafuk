@@ -37,6 +37,27 @@ function createRenderCore(context) {
         return "";
     }
 
+    // Re-route Kufar gallery thumbnails through our WebP/AVIF
+    // transcoding proxy. Browsers + Telegram WebView advertise
+    // image/webp via Accept and the proxy returns 25-40 % smaller
+    // bytes than the original JPEG. Anything that's not a Kufar
+    // gallery URL passes through untouched so callers can blindly
+    // wrap every thumbnail src.
+    const _KUFAR_GALLERY_PREFIX = "https://rms.kufar.by/v1/gallery/";
+    function optimizedImage(url, options) {
+        if (!url || typeof url !== "string") return "";
+        if (!url.startsWith(_KUFAR_GALLERY_PREFIX)) return url;
+        const path = url.slice(_KUFAR_GALLERY_PREFIX.length);
+        if (!path || path.includes("..") || path.includes("?")) {
+            return url;
+        }
+        const width = options && Number.isFinite(options.width) ? Math.round(options.width) : null;
+        const params = [];
+        if (width && width > 0) params.push(`w=${width}`);
+        const query = params.length ? `?${params.join("&")}` : "";
+        return `/api/v1/img/${path}${query}`;
+    }
+
     function safeRender(name, fn) {
         try {
             return fn();
@@ -507,6 +528,7 @@ function createRenderCore(context) {
     return {
         escapeHtml,
         safeUrl,
+        optimizedImage,
         showToast,
         dismissToast,
         renderError,

@@ -30,6 +30,7 @@ function createAppRenderers(context) {
     // Share escapeHtml and safeRender across sub-modules via context
     context.escapeHtml = core.escapeHtml;
     context.safeUrl = core.safeUrl;
+    context.optimizedImage = core.optimizedImage;
     context.safeRender = safeRender;
     // Empty state factory is invoked by every collection renderer
     // (watchlist, leads, tracker events) to swap the previous plain
