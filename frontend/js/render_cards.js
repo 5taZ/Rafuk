@@ -142,6 +142,72 @@ function createRenderCards(context) {
         });
     }
 
+    /**
+     * Append a pagination sentinel to the bottom of a list container.
+     *
+     * Two roles: the IntersectionObserver-watched element that
+     * triggers ``onLoadMore`` when scrolled into view, AND the
+     * visible "Загрузить ещё / Показано N из M" UI so users can
+     * tap to fetch the next page if scroll-driven loading misses.
+     */
+    function _appendPaginationSentinel(container, options) {
+        if (!container) return;
+        const {
+            renderedCount,
+            totalCount,
+            hasMore,
+            isLoadingMore,
+            onLoadMore,
+            allLoadedText = "Все объявления загружены.",
+        } = options;
+        const sentinel = document.createElement("div");
+        sentinel.className = "list-pagination-sentinel";
+        if (hasMore) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "list-pagination-button";
+            button.disabled = Boolean(isLoadingMore);
+            button.textContent = isLoadingMore
+                ? "Загружаю..."
+                : `Загрузить ещё (${renderedCount} из ${totalCount || "—"})`;
+            button.addEventListener("click", () => {
+                if (typeof onLoadMore === "function") {
+                    onLoadMore();
+                }
+            });
+            sentinel.appendChild(button);
+            // Auto-trigger on visibility — once the user scrolls
+            // close enough to the sentinel, kick off the next page
+            // without waiting for a tap. IntersectionObserver isn't
+            // supported in really old WebViews; the button stays as
+            // a manual fallback.
+            if (typeof IntersectionObserver !== "undefined") {
+                const observer = new IntersectionObserver(
+                    (entries) => {
+                        for (const entry of entries) {
+                            if (entry.isIntersecting && typeof onLoadMore === "function") {
+                                observer.disconnect();
+                                onLoadMore();
+                                break;
+                            }
+                        }
+                    },
+                    { rootMargin: "200px 0px" },
+                );
+                observer.observe(sentinel);
+                sentinel._paginationObserver = observer;
+            }
+        } else if (totalCount && renderedCount > 0) {
+            const note = document.createElement("p");
+            note.className = "list-pagination-note";
+            note.textContent = allLoadedText;
+            sentinel.appendChild(note);
+        }
+        if (sentinel.childNodes.length > 0) {
+            container.appendChild(sentinel);
+        }
+    }
+
     function renderListings() {
         return safeRender('renderListings', () => {
             if (state.loading) return;
@@ -155,6 +221,19 @@ function createRenderCards(context) {
                 "По этому запросу пока нечего показать.",
                 state.listingsTotal || null
             );
+            if (hasContent && elements.listingsList) {
+                _appendPaginationSentinel(elements.listingsList, {
+                    renderedCount: state.listings.length,
+                    totalCount: state.listingsTotal,
+                    hasMore: state.listingsHasMore,
+                    isLoadingMore: state.listingsLoadingMore,
+                    onLoadMore: () => {
+                        if (typeof actions.loadMoreListings === "function") {
+                            void actions.loadMoreListings();
+                        }
+                    },
+                });
+            }
             // Keep section visible if data exists but was filtered out —
             // the empty message inside the container tells the user why.
             elements.listingsSection.hidden = !hasContent && !hasData;
@@ -211,6 +290,19 @@ function createRenderCards(context) {
             for (const item of filtered) {
                 container.appendChild(buildListingNode(item, verdictClassName));
             }
+
+            _appendPaginationSentinel(container, {
+                renderedCount: state.dealListings.length,
+                totalCount: state.dealsTotal,
+                hasMore: state.dealsHasMore,
+                isLoadingMore: state.dealsLoadingMore,
+                onLoadMore: () => {
+                    if (typeof actions.loadMoreDeals === "function") {
+                        void actions.loadMoreDeals();
+                    }
+                },
+                allLoadedText: "Все лоты в этом диапазоне загружены.",
+            });
 
             if (elements.dealsTotalBadge) {
                 // Same rule as the listings pill — show Kufar's total

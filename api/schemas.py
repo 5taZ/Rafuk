@@ -186,6 +186,13 @@ class ListingsResponse(BaseModel):
     sort: str
     total: int
     returned: int = 0
+    # Pagination cursor — frontend keeps appending pages by raising
+    # ``offset`` until ``offset + returned >= total`` (or the server
+    # cap, whichever comes first). ``limit`` mirrors what was asked
+    # for so the client can detect server-side downsizing.
+    offset: int = 0
+    limit: int = 0
+    has_more: bool = False
     discount_percent: float | None = None
     discount_from_percent: float | None = None
     discount_to_percent: float | None = None

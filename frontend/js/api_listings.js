@@ -32,6 +32,13 @@ function createApiListings(context) {
         return requestId === state.searchRequestId;
     }
 
+    // Cache TTL: skip reload if data was fetched within this window (ms)
+    const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+    // Page size — must match the backend's `_DEFAULT_LISTINGS_PAGE`.
+    // Hoisted to module scope so `loadSearchDependencies` can use it.
+    const PAGE_SIZE = 50;
+
     function buildListingsQuery(params = {}) {
         const query = new URLSearchParams(buildCommonQuery(params));
         if (state.category != null) {
@@ -132,10 +139,18 @@ function createApiListings(context) {
                 },
             },
             {
-                request: getJson(`/api/v1/listings?${buildListingsQuery({ sort: state.sort })}`, { signal }),
+                request: getJson(
+                    `/api/v1/listings?${buildListingsQuery({
+                        sort: state.sort,
+                        limit: PAGE_SIZE,
+                        offset: 0,
+                    })}`,
+                    { signal },
+                ),
                 apply(payload) {
                     state.listings = payload.listings || [];
                     state.listingsTotal = payload.total || 0;
+                    state.listingsHasMore = Boolean(payload.has_more);
                     state._listingsLoadedAt = Date.now();
                     state._listingsLoadedSort = state.sort;
                     state._listingsPending = false;
@@ -147,12 +162,15 @@ function createApiListings(context) {
                         sort: "cheap",
                         discount_from_percent: state.discountFromPercent,
                         discount_to_percent: state.discountToPercent,
+                        limit: PAGE_SIZE,
+                        offset: 0,
                     })}`,
                     { signal }
                 ),
                 apply(payload) {
                     state.dealListings = payload.listings || [];
                     state.dealsTotal = payload.total || 0;
+                    state.dealsHasMore = Boolean(payload.has_more);
                 },
             },
         ];
@@ -178,13 +196,11 @@ function createApiListings(context) {
         }
     }
 
-    // Cache TTL: skip reload if data was fetched within this window (ms)
-    const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
-
     // ── Load listings (ads view) ─────────────────────────────────────────
     async function loadListings(force) {
         if (!state.query) {
             state.listings = [];
+            state.listingsHasMore = false;
             markDirty('listings');
             renderAll();
             return;
@@ -194,21 +210,81 @@ function createApiListings(context) {
             return;
         }
 
+        // First page — reset pagination cursor.
+        state.listings = [];
+        state.listingsHasMore = false;
+        state.listingsLoading = true;
+        markDirty('listings');
+        renderAll();
+
+        const requestId = (state._listingsRequestId =
+            ((state._listingsRequestId || 0) + 1) % 1_000_000);
+
         try {
             const payload = await getJson(
-                `/api/v1/listings?${buildListingsQuery({ sort: state.sort })}`
+                `/api/v1/listings?${buildListingsQuery({
+                    sort: state.sort,
+                    limit: PAGE_SIZE,
+                    offset: 0,
+                })}`
             );
+            if (requestId !== state._listingsRequestId) return;
             state.listings = payload.listings || [];
             state.listingsTotal = payload.total || 0;
+            state.listingsHasMore = Boolean(payload.has_more);
             state._listingsLoadedAt = Date.now();
             state._listingsLoadedSort = state.sort;
             state.error = null;
         } catch (error) {
+            if (requestId !== state._listingsRequestId) return;
             state.listings = [];
+            state.listingsHasMore = false;
             state.error = error.message || "Не удалось загрузить объявления";
             renderError();
         } finally {
-            markDirty('listings', 'error');
+            if (requestId === state._listingsRequestId) {
+                state.listingsLoading = false;
+                markDirty('listings', 'error');
+                renderAll();
+            }
+        }
+    }
+
+    async function loadMoreListings() {
+        // Append the next page onto state.listings — trigger from the
+        // IntersectionObserver attached to the bottom sentinel card.
+        // Multiple observer fires while a request is in-flight should
+        // be coalesced via state.listingsLoadingMore.
+        if (!state.query) return;
+        if (!state.listingsHasMore) return;
+        if (state.listingsLoadingMore) return;
+        state.listingsLoadingMore = true;
+        markDirty('listings');
+        scheduleRender();
+
+        const offset = state.listings.length;
+        const requestId = state._listingsRequestId;
+        try {
+            const payload = await getJson(
+                `/api/v1/listings?${buildListingsQuery({
+                    sort: state.sort,
+                    limit: PAGE_SIZE,
+                    offset,
+                })}`
+            );
+            // Drop the response if the user re-searched in the
+            // meantime — the new query ditched the old cursor.
+            if (requestId !== state._listingsRequestId) return;
+            const fresh = payload.listings || [];
+            state.listings = state.listings.concat(fresh);
+            state.listingsTotal = payload.total || state.listingsTotal;
+            state.listingsHasMore = Boolean(payload.has_more);
+        } catch (_) {
+            // On error, surface the chip-style "load more" button by
+            // keeping has_more true. The user can tap to retry.
+        } finally {
+            state.listingsLoadingMore = false;
+            markDirty('listings');
             renderAll();
         }
     }
@@ -217,6 +293,7 @@ function createApiListings(context) {
     async function loadDeals(force) {
         if (!state.query) {
             state.dealListings = [];
+            state.dealsHasMore = false;
             markDirty('deals');
             renderAll();
             return;
@@ -227,26 +304,79 @@ function createApiListings(context) {
             return;
         }
 
+        state.dealListings = [];
+        state.dealsHasMore = false;
+        state.dealsLoading = true;
+        markDirty('deals');
+        renderAll();
+
+        const requestId = (state._dealsRequestId =
+            ((state._dealsRequestId || 0) + 1) % 1_000_000);
+
         try {
             const payload = await getJson(
                 `/api/v1/listings?${buildListingsQuery({
                     sort: "cheap",
                     discount_from_percent: state.discountFromPercent,
                     discount_to_percent: state.discountToPercent,
+                    limit: PAGE_SIZE,
+                    offset: 0,
                 })}`
             );
+            if (requestId !== state._dealsRequestId) return;
             state.dealListings = payload.listings || [];
             state.dealsTotal = payload.total || 0;
+            state.dealsHasMore = Boolean(payload.has_more);
             state._dealsLoadedAt = Date.now();
             state._dealsLoadedFrom = state.discountFromPercent;
             state._dealsLoadedTo = state.discountToPercent;
             state.error = null;
         } catch (error) {
+            if (requestId !== state._dealsRequestId) return;
             state.dealListings = [];
+            state.dealsHasMore = false;
             state.error = error.message || "Не удалось загрузить дешёвые объявления";
             renderError();
         } finally {
-            markDirty('deals', 'error');
+            if (requestId === state._dealsRequestId) {
+                state.dealsLoading = false;
+                markDirty('deals', 'error');
+                renderAll();
+            }
+        }
+    }
+
+    async function loadMoreDeals() {
+        if (!state.query) return;
+        if (!state.dealsHasMore) return;
+        if (state.dealsLoadingMore) return;
+        state.dealsLoadingMore = true;
+        markDirty('deals');
+        scheduleRender();
+
+        const offset = state.dealListings.length;
+        const requestId = state._dealsRequestId;
+        try {
+            const payload = await getJson(
+                `/api/v1/listings?${buildListingsQuery({
+                    sort: "cheap",
+                    discount_from_percent: state.discountFromPercent,
+                    discount_to_percent: state.discountToPercent,
+                    limit: PAGE_SIZE,
+                    offset,
+                })}`
+            );
+            if (requestId !== state._dealsRequestId) return;
+            const fresh = payload.listings || [];
+            state.dealListings = state.dealListings.concat(fresh);
+            state.dealsTotal = payload.total || state.dealsTotal;
+            state.dealsHasMore = Boolean(payload.has_more);
+        } catch (_) {
+            // Same behaviour as loadMoreListings — keep has_more so
+            // the user can retry via the visible "load more" chip.
+        } finally {
+            state.dealsLoadingMore = false;
+            markDirty('deals');
             renderAll();
         }
     }
@@ -479,7 +609,9 @@ function createApiListings(context) {
     return {
         search,
         loadListings,
+        loadMoreListings,
         loadDeals,
+        loadMoreDeals,
         loadComparison,
         swapComparisonQueries,
         openListingDetail,

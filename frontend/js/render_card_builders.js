@@ -13,18 +13,48 @@ function createRenderCardBuilders(context) {
         optimizedImage,
     } = context;
 
-    function buildMediaNode(imageClass, placeholderClass, placeholderText, url, altText) {
+    /**
+     * Build an <img> for a card thumbnail with native lazy-load and
+     * display-aware proxy sizing.
+     *
+     * The proxy width is set to roughly 3× the rendered display width
+     * so retina screens still get a sharp image without forcing the
+     * server to transcode huge originals. Explicit width/height
+     * attributes give the browser a layout box BEFORE the bytes
+     * arrive — that's what makes ``loading="lazy"`` actually defer
+     * off-screen fetches instead of fetching everything eagerly.
+     */
+    function buildMediaNode(
+        imageClass,
+        placeholderClass,
+        placeholderText,
+        url,
+        altText,
+        options,
+    ) {
         const validated = safeUrl(url);
         if (validated) {
-            // Route Kufar JPEG thumbnails through the WebP/AVIF
-            // proxy. Non-Kufar URLs pass through untouched.
+            const opts = options || {};
+            const displayPx = Number(opts.displayPx) > 0 ? Number(opts.displayPx) : 80;
+            const proxyWidth = Math.min(640, Math.max(120, displayPx * 3));
             const src = typeof optimizedImage === "function"
-                ? optimizedImage(validated, { width: 320 })
+                ? optimizedImage(validated, { width: proxyWidth })
                 : validated;
-            return domEl("img", {
-                className: imageClass,
-                attrs: { src, alt: altText || "", loading: "lazy", decoding: "async" },
-            });
+            const attrs = {
+                src,
+                alt: altText || "",
+                loading: "lazy",
+                decoding: "async",
+                width: String(displayPx),
+                height: String(displayPx),
+            };
+            // Modern browsers honour ``fetchpriority="low"`` on
+            // off-screen lazy images so the network queue doesn't
+            // starve the on-screen ones.
+            if (opts.fetchPriority) {
+                attrs.fetchpriority = opts.fetchPriority;
+            }
+            return domEl("img", { className: imageClass, attrs });
         }
         return domEl("div", { className: placeholderClass, text: placeholderText });
     }
@@ -100,6 +130,7 @@ function createRenderCardBuilders(context) {
                         "Нет фото",
                         item.thumbnail,
                         item.title || item.subject || "",
+                        { displayPx: 76 },
                     ),
                     domEl(
                         "div",
@@ -765,6 +796,7 @@ function createRenderCardBuilders(context) {
                         "Нет фото",
                         item.thumbnail,
                         item.title || "",
+                        { displayPx: 72 },
                     ),
                     domEl(
                         "div",

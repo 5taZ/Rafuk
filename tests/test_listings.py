@@ -494,3 +494,128 @@ def test_listings_endpoint_keeps_price_delta_stable_in_category_view(monkeypatch
     category_item = next(item for item in category_payload["listings"] if item["ad_id"] == 10)
 
     assert broad_item["price_vs_median"] == category_item["price_vs_median"]
+
+
+def test_listings_pagination_returns_first_page_only(monkeypatch) -> None:
+    """With 60 fake ads and limit=20, the first page must carry 20
+    items, ``has_more=True``, and ``offset=0``. Subsequent pages
+    pick up where the previous one left off without re-issuing
+    Kufar fetches (cache key includes offset/limit).
+    """
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    big_ads = [
+        {
+            "ad_id": 1000 + i,
+            "subject": f"iPhone 15 {i}",
+            "price_byn": 1500 + i * 10,
+            "ad_link": f"https://www.kufar.by/item/{1000 + i}",
+            "list_time": f"2026-04-01T{i % 24:02d}:00:00",
+            "region_id": 6,
+            "category": "1000",
+            "ad_parameters": [
+                {"p": "condition", "v": "Б/у"},
+                {"p": "category", "v": "1000", "vl": "Телефоны"},
+            ],
+        }
+        for i in range(60)
+    ]
+
+    class _BigClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            return {"total": len(big_ads), "ads": big_ads}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", _BigClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: _BigClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        first = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "limit": 20, "offset": 0},
+        )
+        second = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "limit": 20, "offset": 20},
+        )
+
+    assert first.status_code == 200
+    p1 = first.json()
+    assert len(p1["listings"]) == 20
+    assert p1["offset"] == 0
+    assert p1["limit"] == 20
+    assert p1["has_more"] is True
+    # Total reflects the full server-side count, not the page slice.
+    assert p1["total"] >= 60
+
+    assert second.status_code == 200
+    p2 = second.json()
+    assert len(p2["listings"]) == 20
+    assert p2["offset"] == 20
+    # No overlap between pages — different ad_ids in each slice.
+    page1_ids = {item["ad_id"] for item in p1["listings"]}
+    page2_ids = {item["ad_id"] for item in p2["listings"]}
+    assert page1_ids.isdisjoint(page2_ids)
+
+
+def test_listings_pagination_signals_no_more_on_last_page(monkeypatch) -> None:
+    """When ``offset + returned >= cap``, ``has_more`` flips to False
+    so the frontend's IntersectionObserver stops asking for more.
+    """
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        # The fixture set has only 3 ads — even at limit=10 there's
+        # nothing else to serve, so has_more must be False.
+        response = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "limit": 10, "offset": 0},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["has_more"] is False
+    assert payload["offset"] == 0
+
+
+def test_listings_pagination_validates_bounds(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        # limit=0 — below the ge=1 floor.
+        response = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "limit": 0},
+        )
+        assert response.status_code == 422
+        # offset=-1 — below the ge=0 floor.
+        response = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "offset": -1},
+        )
+        assert response.status_code == 422

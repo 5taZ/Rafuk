@@ -903,6 +903,47 @@
     border: 1px dashed var(--border);
 }
 
+/* Pagination sentinel — appended below listing collections. Doubles
+   as the IntersectionObserver target ("auto-load when scrolled near
+   bottom") and the manual "Загрузить ещё" button. */
+.list-pagination-sentinel {
+    display: flex;
+    justify-content: center;
+    padding: 12px 0 6px;
+}
+
+.list-pagination-button {
+    appearance: none;
+    border: 1px solid var(--border-hover);
+    background: var(--bg-card);
+    color: var(--text);
+    padding: 10px 18px;
+    border-radius: var(--r-md);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.list-pagination-button:hover {
+    background: var(--bg-elevated);
+    border-color: var(--accent-glow);
+}
+
+.list-pagination-button:disabled {
+    opacity: 0.55;
+    cursor: progress;
+}
+
+.list-pagination-note {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: 12px;
+    text-align: center;
+}
+
 /* Richer empty state used on the main collection surfaces (watchlist,
    leads, tracker events). Built by buildEmptyState() in render_core.js
    — a thin SVG icon, a concise title, a single hint line and an

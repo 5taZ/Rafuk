@@ -30,8 +30,17 @@ from api.validators import MAX_QUERY_LENGTH
 router = APIRouter(tags=["analytics"])
 
 
+# Server-side cap on a single page. Even at 200 cards the frontend
+# struggles on slow connections because every card pulls a thumbnail
+# through the image proxy. The default `limit` is intentionally lower
+# (50) so the initial paint shows up quickly and subsequent pages
+# come in as the user scrolls.
+_MAX_LISTINGS_PAGE = 200
+_DEFAULT_LISTINGS_PAGE = 50
+
+
 @router.get("/listings", response_model=ListingsResponse)
-@limiter.limit("30/minute")
+@limiter.limit("60/minute")
 async def get_listings(
     request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
@@ -43,6 +52,8 @@ async def get_listings(
     discount_to_percent: float | None = None,
     category: int | None = None,
     reference_context: Literal["current", "base_query"] = "current",
+    limit: int = Query(default=_DEFAULT_LISTINGS_PAGE, ge=1, le=_MAX_LISTINGS_PAGE),
+    offset: int = Query(default=0, ge=0, le=_MAX_LISTINGS_PAGE * 10),
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
@@ -58,7 +69,8 @@ async def get_listings(
 
     cache_key = (
         f"listings:{query}:{sort}:{currency}:{discount_percent}:"
-        f"{effective_from}:{effective_to}:{strict_search}:{category}:{reference_context}"
+        f"{effective_from}:{effective_to}:{strict_search}:{category}:"
+        f"{reference_context}:{limit}:{offset}"
     )
     cached = await cache.get_json(cache_key)
     if cached:
@@ -121,9 +133,18 @@ async def get_listings(
         market_stats=reference_dataset.price_stats,
         category_price_stats=category_price_stats,
     )
-    listings = []
-    for ad in sorted_ads[:200]:
-        listings.append(
+    # Build ListingItem only for the slice the client is going to
+    # actually render — saves several ms per skipped ad on big
+    # result sets, since build_listing_item normalises params,
+    # computes deal_score, fetches flip_estimates, etc.
+    #
+    # For sorts where the order changes after build_listing_item
+    # (cheap / deal_score depend on item.deal_score which is
+    # computed inside build_listing_item), we still need to build
+    # the full result-set first, sort, then slice.
+    page_capped_total = min(len(sorted_ads), _MAX_LISTINGS_PAGE)
+    if sort in {"cheap", "deal_score"}:
+        listings = [
             build_listing_item(
                 ad,
                 query=query,
@@ -135,8 +156,8 @@ async def get_listings(
                 category_price_stats=category_price_stats,
                 liquidity=liquidity,
             )
-        )
-    if sort in {"cheap", "deal_score"}:
+            for ad in sorted_ads[:_MAX_LISTINGS_PAGE]
+        ]
         listings.sort(
             key=lambda item: (
                 -float(item.deal_score or 0.0),
@@ -144,6 +165,31 @@ async def get_listings(
                 item.title,
             )
         )
+        listings = listings[offset : offset + limit]
+    else:
+        # newest / nearest_to_median etc. — sort_listings already
+        # ordered the underlying ads, so we can slice before
+        # building items.
+        page_slice = sorted_ads[offset : offset + limit]
+        # Don't extend past the cap.
+        if offset >= _MAX_LISTINGS_PAGE:
+            page_slice = []
+        elif offset + limit > _MAX_LISTINGS_PAGE:
+            page_slice = sorted_ads[offset:_MAX_LISTINGS_PAGE]
+        listings = [
+            build_listing_item(
+                ad,
+                query=query,
+                currency=currency,
+                rates=rates,
+                currency_service=currency_service,
+                median_byn=median_byn,
+                market_stats=reference_dataset.price_stats,
+                category_price_stats=category_price_stats,
+                liquidity=liquidity,
+            )
+            for ad in page_slice
+        ]
 
     # `total` is what the pill above the cards shows.
     #  - Broad query (category=None): use Kufar's raw `total` so the
@@ -165,6 +211,13 @@ async def get_listings(
             filtered_total = kufar_total
         else:
             filtered_total = filtered_count
+    # `has_more` mirrors the obvious "is there a next page?" question
+    # the frontend asks before triggering its IntersectionObserver.
+    # We compare against the page-cap so we don't promise pages that
+    # the server will refuse to serve anyway.
+    served_so_far = offset + len(listings)
+    has_more = served_so_far < min(filtered_total, page_capped_total)
+
     payload = ListingsResponse(
         query=query,
         currency=currency,
@@ -175,6 +228,9 @@ async def get_listings(
         sort=sort,
         total=filtered_total,
         returned=len(listings),
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
         discount_percent=effective_from if sort == "cheap" else None,
         discount_from_percent=effective_from if sort == "cheap" else None,
         discount_to_percent=effective_to if sort == "cheap" else None,
