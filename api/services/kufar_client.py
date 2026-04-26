@@ -67,6 +67,7 @@ class KufarClient:
         condition: str | None = None,
         seller_type: str | None = None,
         category: int | None = None,
+        bypass_delay: bool = False,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "query": query,
@@ -94,7 +95,8 @@ class KufarClient:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                await self._enforce_delay()
+                if not bypass_delay:
+                    await self._enforce_delay()
                 client = await self._get_client()
                 response = await client.get(KUFAR_BASE_URL, params=params, headers=headers)
                 response.raise_for_status()

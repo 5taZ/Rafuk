@@ -35,17 +35,26 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
     from api.main import create_app
     from api.routers import segments
 
-    # load_segment_datasets does 2 parallel searches (condition=new + condition=used)
-    async def fake_parallel_search(client, tasks, settings):
-        del client, tasks, settings
-        # Return exactly 2 responses matching the 2 _API_CONDITION_TASKS
-        return [
-            {"ads": [{"price_byn": 2000}, {"price_byn": 2500}]},
-            {"ads": [{"price_byn": 1800}, {"price_byn": 2200}]},
+    # Segments now derive from the singleflighted dataset (no extra
+    # Kufar fan-out). Stub load_query_dataset to return a mixed
+    # batch of new/used + private/shop ads and verify the router
+    # splits them into all 4 baskets correctly.
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        from api.services.query_pipeline import QueryDataset
+        ads = [
+            {"price_byn": 2000, "company_ad": False, "ad_parameters": [{"p": "condition", "v": "Новый"}]},
+            {"price_byn": 2500, "company_ad": True, "ad_parameters": [{"p": "condition", "v": "Новый"}]},
+            {"price_byn": 1800, "company_ad": False, "ad_parameters": [{"p": "condition", "v": "Б/у"}]},
+            {"price_byn": 2200, "company_ad": True, "ad_parameters": [{"p": "condition", "v": "Б/у"}]},
         ]
+        return QueryDataset(
+            query="iphone", currency="USD", strict_search=False,
+            response={"ads": ads, "total": 4}, ads=ads,
+        )
 
     monkeypatch.setattr(segments, "KufarClient", FakeKufarClient)
-    monkeypatch.setattr(segments, "parallel_search_all", fake_parallel_search)
+    monkeypatch.setattr(segments, "load_query_dataset", fake_load_query_dataset)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
@@ -53,9 +62,8 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
         response = client.get("/api/v1/segments", params={"query": "iphone", "currency": "USD"})
     assert response.status_code == 200
     payload = response.json()
-    # All 4 segments exist; private/shop split is client-side via company_ad flag
-    assert "new_private" in payload
-    assert "used_shop" in payload
-    # Since no ad has company_ad=True, all go to *_private segments
-    assert payload["new_private"]["count"] >= 1
-    assert payload["used_private"]["count"] >= 1
+    # All 4 segments exist (new/used × private/shop) and each has 1 ad.
+    assert payload["new_private"]["count"] == 1
+    assert payload["new_shop"]["count"] == 1
+    assert payload["used_private"]["count"] == 1
+    assert payload["used_shop"]["count"] == 1

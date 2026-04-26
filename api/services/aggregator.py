@@ -552,8 +552,13 @@ def extract_search_refinements(
 
 
 def compute_segments(ads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    condition_map = {"Новый": "new", "Б/у": "used"}
-    seller_map = {"Частное лицо": "private", "Магазин": "shop"}
+    # Kufar's `condition` param flipped from text labels ("Новый",
+    # "Б/у") to numeric codes ("1"=used, "2"=new) some time after
+    # 2026 — the old map silently produced 0-count segments for
+    # every query. Numeric codes restore segmentation. Seller type
+    # comes from the top-level ``company_ad`` flag because the API
+    # no longer surfaces a "seller_type" ad parameter.
+    condition_map = {"1": "used", "2": "new", "Новый": "new", "Б/у": "used"}
     grouped: dict[str, list[float]] = {}
 
     for ad in ads:
@@ -561,8 +566,9 @@ def compute_segments(ads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         if price_byn is None:
             continue
         condition = condition_map.get(get_param(ad, "condition") or "")
-        seller_type = seller_map.get(get_param(ad, "seller_type") or "")
-        if condition and seller_type:
-            grouped.setdefault(f"{condition}_{seller_type}", []).append(price_byn)
+        if not condition:
+            continue
+        seller_type = "shop" if ad.get("company_ad") else "private"
+        grouped.setdefault(f"{condition}_{seller_type}", []).append(price_byn)
 
     return {name: compute_price_stats(prices).model_dump() for name, prices in grouped.items()}

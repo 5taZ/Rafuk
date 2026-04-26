@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import statistics
 from dataclasses import dataclass, field
@@ -22,9 +23,13 @@ PRICE_STATS_FIELDS = ("mean", "median", "q1", "q3", "min", "max")
 
 # Condition-based API tasks — seller_type filtering is done client-side
 # because Kufar API no longer accepts the "otype" parameter.
+#
+# Kufar's `cnd` parameter switched from string ("new"/"used") to numeric
+# codes (2=new, 1=used) some time after 2026 — the string variants now
+# silently return 0 results. Sending the int codes restores segments.
 _API_CONDITION_TASKS = (
-    ("new", {"condition": "new"}),
-    ("used", {"condition": "used"}),
+    ("new", {"condition": "2"}),
+    ("used", {"condition": "1"}),
 )
 
 
@@ -345,6 +350,7 @@ async def fetch_category_totals(
     strict_search: bool,
     client: SupportsSearchAllAds,
     category_ids: list[int],
+    cache: Any | None = None,
 ) -> dict[int, int]:
     """Fetch the per-category total that the listings page will show.
 
@@ -356,6 +362,12 @@ async def fetch_category_totals(
     Q7 4L 2015" + cat=2010: Kufar's total=11, but only 3 ads pass
     apply_search_mode).
 
+    When ``cache`` is provided, the {cat_id -> total} map is cached
+    under a key that includes the query + the sorted ids the caller
+    asked about. On a warm hit this skips the 2-3 second Kufar
+    fan-out entirely, which dominates price-stats latency on cold
+    Kufar dataset hits.
+
     Skips quietly if the client doesn't expose a low-level `.search()`
     method (test fakes that only stub `search_all_ads`).
     """
@@ -365,13 +377,43 @@ async def fetch_category_totals(
     if not callable(search_method):
         return {}
 
+    cache_key: str | None = None
+    if cache is not None:
+        ids_sig = ",".join(str(cid) for cid in sorted(set(category_ids)))
+        cache_key = f"cat-totals:{query}:{currency}:{int(strict_search)}:{ids_sig}"
+        cached = await cache.get_json(cache_key)
+        if isinstance(cached, dict):
+            # Redis serialises ints as JSON strings; coerce back.
+            try:
+                return {int(k): int(v) for k, v in cached.items()}
+            except (TypeError, ValueError):
+                pass
+
+    # Bound concurrent fan-out so we don't open too many sockets to
+    # Kufar at once — they occasionally time out under burst load
+    # (a single timed-out call adds 3+ seconds via the retry/backoff
+    # in client.search). Three is the tested sweet spot: enough
+    # parallelism that 10 cats finish in ~1.5 s, conservative enough
+    # that we don't trigger Kufar's connection limits.
+    sem = asyncio.Semaphore(3)
+
     async def _fetch_one(cat_id: int) -> tuple[int, int | None]:
+        async with sem:
+            return await _fetch_one_inner(cat_id)
+
+    async def _fetch_one_inner(cat_id: int) -> tuple[int, int | None]:
         try:
+            # bypass_delay=True: skip the 0.3s rate-limit lock so the
+            # cat-totals fan-out runs truly concurrently. Each call is
+            # an independent HTTP request to Kufar; sharing a token
+            # bucket with the main pagination would force them to
+            # serialise and dominate cold-cache latency.
             resp = await search_method(
                 query=query,
                 size=200,
                 currency=currency,
                 category=cat_id,
+                bypass_delay=True,
             )
         except Exception as exc:  # noqa: BLE001 — log + degrade
             logger.warning("Kufar category-total fetch failed cat=%s: %s", cat_id, exc)
@@ -402,6 +444,12 @@ async def fetch_category_totals(
     for r in results:
         if isinstance(r, tuple) and r[1] is not None:
             out[r[0]] = r[1]
+    if cache is not None and cache_key is not None and out:
+        # 5-minute TTL aligns with the dataset cache; chip totals
+        # don't need to lead the dataset by much, and a stale chip
+        # count for ~5 min is harmless next to the latency win.
+        with contextlib.suppress(Exception):
+            await cache.set_json(cache_key, out, ttl=300)
     return out
 
 

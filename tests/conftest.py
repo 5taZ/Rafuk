@@ -91,9 +91,9 @@ def sample_ads() -> list[dict[str, object]]:
             "ad_link": "https://www.kufar.by/item/1",
             "list_time": "2026-04-01T10:00:00",
             "region_id": 6,
+            "company_ad": False,
             "ad_parameters": [
                 {"p": "condition", "v": "Новый"},
-                {"p": "seller_type", "v": "Частное лицо"},
             ],
         },
         {
@@ -104,9 +104,9 @@ def sample_ads() -> list[dict[str, object]]:
             "ad_link": "https://www.kufar.by/item/2",
             "list_time": "2026-04-01T12:00:00",
             "region_id": 6,
+            "company_ad": True,
             "ad_parameters": [
                 {"p": "condition", "v": "Б/у"},
-                {"p": "seller_type", "v": "Магазин"},
             ],
         },
         {
@@ -117,9 +117,9 @@ def sample_ads() -> list[dict[str, object]]:
             "ad_link": "https://www.kufar.by/item/3",
             "list_time": "2026-04-01T09:00:00",
             "region_id": 6,
+            "company_ad": True,
             "ad_parameters": [
                 {"p": "condition", "v": "Новый"},
-                {"p": "seller_type", "v": "Магазин"},
             ],
         },
         {
@@ -130,9 +130,9 @@ def sample_ads() -> list[dict[str, object]]:
             "ad_link": "https://www.kufar.by/item/4",
             "list_time": "2026-03-31T18:00:00",
             "region_id": 6,
+            "company_ad": False,
             "ad_parameters": [
                 {"p": "condition", "v": "Б/у"},
-                {"p": "seller_type", "v": "Частное лицо"},
             ],
         },
         {
