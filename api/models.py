@@ -59,9 +59,8 @@ class User(Base):
         "TrackerEvent", back_populates="user", cascade="all, delete-orphan"
     )
     lead_items = relationship("LeadItem", back_populates="user", cascade="all, delete-orphan")
-    watchlist_items = relationship(
-        "WatchlistItem", back_populates="user", cascade="all, delete-orphan"
-    )
+    # Watchlist items (status='watching') now live in lead_items — see
+    # migration 20260427_0001. The legacy `watchlist_items` table is gone.
 
     __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
 
@@ -342,6 +341,17 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     missing_since_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Watchlist-merged columns (status='watching' uses these)
+    initial_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_median_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    duplicate_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         nullable=False,
         server_default=func.now(),
@@ -357,57 +367,6 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         Index("idx_lead_items_user", "user_id"),
         Index("idx_lead_items_status", "status"),
         Index("idx_lead_items_market_status", "market_status"),
-    )
-
-
-class WatchlistItem(Base, UserIDMixin, TimestampMixin):
-    __tablename__ = "watchlist_items"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    ad_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    query: Mapped[str] = mapped_column(String(255), nullable=False)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    link: Mapped[str] = mapped_column(String(512), nullable=False)
-    thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    initial_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
-    current_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
-    workflow_status: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="default",
-        server_default="default",
-    )
-    market_status: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="active",
-        server_default="active",
-    )
-    duplicate_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default="0",
-    )
-    market_median_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
-    notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    missing_since_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    # Relationships
-    user = relationship("User", back_populates="watchlist_items")
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "ad_id", name="uq_watchlist_items_user_ad"),
-        Index("idx_watchlist_items_user", "user_id"),
-        Index("idx_watchlist_items_market_status", "market_status"),
     )
 
 

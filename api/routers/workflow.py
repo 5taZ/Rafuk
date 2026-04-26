@@ -18,7 +18,7 @@ from api.dependencies import (
 )
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import DealExpense, LeadItem, WatchlistItem
+from api.models import DealExpense, LeadItem
 from api.schemas import (
     LeadCreate,
     LeadRead,
@@ -32,15 +32,23 @@ from api.schemas import (
 from api.services.aggregator import normalize_price_byn
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import load_query_dataset
-from api.services.workflow_store import ensure_user, resolve_user_id, upsert_lead, upsert_watchlist
+from api.services.workflow_store import ensure_user, resolve_user_id, upsert_lead
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["workflow"])
 
+# Status used internally for watchlist items (merged-in from old watchlist_items).
+WATCHING_STATUS = "watching"
 
-def _serialize_watchlist(item: WatchlistItem) -> WatchlistRead:
-    current = item.current_price_byn
+
+def _serialize_watchlist(item: LeadItem) -> WatchlistRead:
+    """Serialize a LeadItem with status='watching' as a WatchlistRead.
+
+    Keeps backward-compatible API contract for the frontend after the
+    watchlist_items table was merged into lead_items.
+    """
+    current = item.price_byn
     initial = item.initial_price_byn
     delta_byn = None
     delta_percent = None
@@ -57,10 +65,13 @@ def _serialize_watchlist(item: WatchlistItem) -> WatchlistRead:
         link=item.link,
         thumbnail=item.thumbnail,
         initial_price_byn=item.initial_price_byn,
-        current_price_byn=item.current_price_byn,
+        current_price_byn=item.price_byn,
         price_delta_byn=delta_byn,
         price_delta_percent=delta_percent,
-        workflow_status=item.workflow_status,
+        # workflow_status was a UI priority chip that the dropdown UI no
+        # longer surfaces. Keep the field for API stability with constant
+        # default value.
+        workflow_status="default",
         market_status=item.market_status,
         market_median_byn=item.market_median_byn,
         notes=item.notes,
@@ -80,9 +91,11 @@ async def get_leads(
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is None:
             return []
+        # Exclude `watching` items here — those are exposed via /watchlist
+        # endpoints to keep the frontend contract unchanged.
         result = await session.execute(
             select(LeadItem)
-            .where(LeadItem.user_id == user_id)
+            .where(LeadItem.user_id == user_id, LeadItem.status != WATCHING_STATUS)
             .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
         )
         leads = list(result.scalars())
@@ -212,11 +225,12 @@ async def delete_all_leads(
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is not None:
-            # Delete expenses for active leads only; keep closed deals for finance tracking.
-            closed_statuses = ("closed",)
+            # Keep closed deals for finance tracking and watching items
+            # (they belong to the watchlist surface, not deals).
+            preserved_statuses = ("closed", WATCHING_STATUS)
             active_lead_ids = select(LeadItem.id).where(
                 LeadItem.user_id == user_id,
-                LeadItem.status.notin_(closed_statuses),
+                LeadItem.status.notin_(preserved_statuses),
             )
             await session.execute(
                 delete(DealExpense).where(DealExpense.lead_id.in_(active_lead_ids))
@@ -225,7 +239,7 @@ async def delete_all_leads(
             await session.execute(
                 delete(LeadItem).where(
                     LeadItem.user_id == user_id,
-                    LeadItem.status.notin_(closed_statuses),
+                    LeadItem.status.notin_(preserved_statuses),
                 )
             )
         await session.commit()
@@ -266,9 +280,9 @@ async def get_watchlist(
         if user_id is None:
             return []
         result = await session.execute(
-            select(WatchlistItem)
-            .where(WatchlistItem.user_id == user_id)
-            .order_by(WatchlistItem.updated_at.desc(), WatchlistItem.id.desc())
+            select(LeadItem)
+            .where(LeadItem.user_id == user_id, LeadItem.status == WATCHING_STATUS)
+            .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
         )
         return [_serialize_watchlist(item) for item in result.scalars()]
 
@@ -287,7 +301,7 @@ async def create_watchlist_item(
             telegram_user_id=telegram_user.user_id,
             first_name=telegram_user.first_name,
         )
-        item = await upsert_watchlist(
+        item = await upsert_lead(
             session,
             user_id=user_id,
             ad_id=payload.ad_id,
@@ -296,8 +310,12 @@ async def create_watchlist_item(
             link=payload.link,
             price_byn=payload.price_byn,
             thumbnail=payload.thumbnail,
+            status=WATCHING_STATUS,
+            source="watchlist",
             market_median_byn=payload.market_median_byn,
             notes=payload.notes,
+            track_initial_price=True,
+            update_last_seen=True,
         )
         await session.commit()
         return _serialize_watchlist(item)
@@ -319,9 +337,10 @@ async def update_watchlist_item(
             first_name=telegram_user.first_name,
         )
         item = await session.scalar(
-            select(WatchlistItem).where(
-                WatchlistItem.id == watchlist_id,
-                WatchlistItem.user_id == user_id,
+            select(LeadItem).where(
+                LeadItem.id == watchlist_id,
+                LeadItem.user_id == user_id,
+                LeadItem.status == WATCHING_STATUS,
             )
         )
         if item is None:
@@ -329,8 +348,8 @@ async def update_watchlist_item(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Watchlist item not found",
             )
-        if "workflow_status" in payload.model_fields_set:
-            item.workflow_status = payload.workflow_status.value
+        # `workflow_status` is intentionally a no-op now (priority chip removed
+        # from the UI). Notes update is the only real mutation.
         if "notes" in payload.model_fields_set:
             item.notes = payload.notes
         await session.commit()
@@ -348,7 +367,12 @@ async def delete_all_watchlist_items(
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is not None:
-            await session.execute(delete(WatchlistItem).where(WatchlistItem.user_id == user_id))
+            await session.execute(
+                delete(LeadItem).where(
+                    LeadItem.user_id == user_id,
+                    LeadItem.status == WATCHING_STATUS,
+                )
+            )
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -368,9 +392,10 @@ async def delete_watchlist_item(
             first_name=telegram_user.first_name,
         )
         item = await session.scalar(
-            select(WatchlistItem).where(
-                WatchlistItem.id == watchlist_id,
-                WatchlistItem.user_id == user_id,
+            select(LeadItem).where(
+                LeadItem.id == watchlist_id,
+                LeadItem.user_id == user_id,
+                LeadItem.status == WATCHING_STATUS,
             )
         )
         if item is None:
@@ -397,13 +422,16 @@ async def refresh_watchlist(
         if user_id is None:
             return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, auto_removed=0)
         result = await session.execute(
-            select(WatchlistItem).where(WatchlistItem.user_id == user_id)
+            select(LeadItem).where(
+                LeadItem.user_id == user_id,
+                LeadItem.status == WATCHING_STATUS,
+            )
         )
         items = list(result.scalars())
         if not items:
             return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, auto_removed=0)
 
-        grouped: dict[str, list[WatchlistItem]] = defaultdict(list)
+        grouped: dict[str, list[LeadItem]] = defaultdict(list)
         for item in items:
             grouped[item.query].append(item)
 
@@ -443,10 +471,10 @@ async def refresh_watchlist(
                     missing += 1
                     continue
                 price = normalize_price_byn(ad.get("price_byn"))
-                previous = item.current_price_byn
+                previous = item.price_byn
                 item.title = str(ad.get("subject", item.title))
                 item.link = str(ad.get("ad_link", item.link))
-                item.current_price_byn = price
+                item.price_byn = price
                 item.last_seen_at = datetime.now(UTC)
                 item.market_status = "active"
                 item.missing_since_at = None
@@ -496,7 +524,7 @@ async def refresh_leads(
         result = await session.execute(
             select(LeadItem).where(
                 LeadItem.user_id == user_id,
-                LeadItem.status.notin_(["sold", "skipped"]),
+                LeadItem.status.notin_(["sold", "skipped", WATCHING_STATUS]),
             )
         )
         leads = list(result.scalars())

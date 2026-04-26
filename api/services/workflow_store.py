@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models import LeadItem, User, WatchlistItem
+from api.models import LeadItem, User
 
 
 async def ensure_user(
@@ -51,10 +51,21 @@ async def upsert_lead(
     target_resale_byn: float | None = None,
     status: str = "new",
     source: str = "manual",
+    market_median_byn: float | None = None,
+    notes: str | None = None,
+    track_initial_price: bool = False,
+    update_last_seen: bool = False,
 ) -> LeadItem:
+    """Upsert a LeadItem row.
+
+    Watchlist semantics (``status='watching'``) is reached via the
+    ``track_initial_price`` and ``update_last_seen`` flags — they ensure
+    the item gets a baseline price snapshot and last-seen timestamp.
+    """
     existing = await session.scalar(
         select(LeadItem).where(LeadItem.user_id == user_id, LeadItem.ad_id == ad_id)
     )
+    status_value = status.value if hasattr(status, "value") else status
     if existing is None:
         existing = LeadItem(
             user_id=user_id,
@@ -65,11 +76,21 @@ async def upsert_lead(
             price_byn=price_byn,
             thumbnail=thumbnail,
             target_resale_byn=target_resale_byn,
-            status=status,
+            status=status_value,
             source=source,
+            market_median_byn=market_median_byn,
+            notes=notes,
+            initial_price_byn=price_byn if track_initial_price else None,
+            last_seen_at=datetime.now(UTC) if update_last_seen else None,
         )
         session.add(existing)
         return existing
+
+    # Idempotent guard: if a user already has an active lead for this ad,
+    # don't accidentally demote it to 'watching' from a watchlist add. Just
+    # update the freshness fields and keep the existing pipeline status.
+    is_watchlist_add = status_value == "watching"
+    keep_existing_status = is_watchlist_add and existing.status != "watching"
 
     existing.query = query
     existing.title = title
@@ -78,54 +99,15 @@ async def upsert_lead(
     existing.thumbnail = thumbnail or existing.thumbnail
     if target_resale_byn is not None:
         existing.target_resale_byn = target_resale_byn
-    existing.status = (status.value if hasattr(status, "value") else status) or existing.status
-    existing.source = source or existing.source
-    return existing
-
-
-async def upsert_watchlist(
-    session: AsyncSession,
-    *,
-    user_id: int,
-    ad_id: int,
-    query: str,
-    title: str,
-    link: str,
-    price_byn: float | None,
-    thumbnail: str | None = None,
-    market_median_byn: float | None = None,
-    notes: str | None = None,
-) -> WatchlistItem:
-    existing = await session.scalar(
-        select(WatchlistItem).where(WatchlistItem.user_id == user_id, WatchlistItem.ad_id == ad_id)
-    )
-    if existing is None:
-        existing = WatchlistItem(
-            user_id=user_id,
-            ad_id=ad_id,
-            query=query,
-            title=title,
-            link=link,
-            thumbnail=thumbnail,
-            initial_price_byn=price_byn,
-            current_price_byn=price_byn,
-            market_median_byn=market_median_byn,
-            notes=notes,
-            last_seen_at=datetime.now(UTC),
-        )
-        session.add(existing)
-        return existing
-
-    existing.query = query
-    existing.title = title
-    existing.link = link
-    existing.thumbnail = thumbnail or existing.thumbnail
-    existing.current_price_byn = price_byn
-    existing.last_seen_at = datetime.now(UTC)
     if market_median_byn is not None:
         existing.market_median_byn = market_median_byn
     if notes is not None:
         existing.notes = notes
-    if existing.initial_price_byn is None:
+    if track_initial_price and existing.initial_price_byn is None:
         existing.initial_price_byn = price_byn
+    if update_last_seen:
+        existing.last_seen_at = datetime.now(UTC)
+    if not keep_existing_status:
+        existing.status = status_value or existing.status
+        existing.source = source or existing.source
     return existing

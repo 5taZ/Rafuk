@@ -7,8 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class LeadStatusEnum(StrEnum):
-    """Allowed lead statuses."""
+    """Allowed lead statuses.
 
+    `watching` is the merged-in watchlist state — items the user is
+    monitoring but hasn't promoted to active deal pipeline yet.
+    """
+
+    watching = "watching"
     new = "new"
     in_progress = "in_progress"
     researching = "researching"
@@ -328,6 +333,8 @@ class LeadCreate(BaseModel):
     price_byn: float | None = None
     thumbnail: str | None = None
     target_resale_byn: float | None = None
+    market_median_byn: float | None = None
+    notes: str | None = None
     status: LeadStatusEnum = LeadStatusEnum.new
     source: str = "manual"
 
@@ -337,6 +344,7 @@ class LeadUpdate(BaseModel):
     target_resale_byn: float | None = None
     buy_price_byn: float | None = None
     sold_price_byn: float | None = None
+    notes: str | None = None
 
 
 class LeadRead(BaseModel):
@@ -358,10 +366,18 @@ class LeadRead(BaseModel):
     sold_at: datetime | None = None
     market_status: str = "active"
     missing_since_at: datetime | None = None
+    # Watchlist-merged fields
+    initial_price_byn: float | None = None
+    market_median_byn: float | None = None
+    duplicate_count: int = 0
+    last_seen_at: datetime | None = None
+    notes: str | None = None
     # Computed fields (not in DB)
     total_expenses: float = 0.0
     actual_profit: float | None = None
     roi_percent: float | None = None
+    price_delta_byn: float | None = None
+    price_delta_percent: float | None = None
     created_at: datetime
     updated_at: datetime
 

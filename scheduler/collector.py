@@ -23,7 +23,7 @@ from sqlalchemy.orm import joinedload
 
 from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
-from api.models import QueryListingState, Tracker, TrackerEvent, WatchlistItem
+from api.models import LeadItem, QueryListingState, Tracker, TrackerEvent
 from api.services.aggregator import (
     apply_search_mode,
     build_query_key,
@@ -534,13 +534,15 @@ async def cleanup_inactive_listing_states(session: AsyncSession, days: int = 90)
 
 
 async def cleanup_stale_missing_watchlist(session: AsyncSession, days: int = 7) -> int:
-    """Auto-remove watchlist items that have been missing for longer than the threshold."""
+    """Auto-remove watchlist items (lead_items with status='watching')
+    that have been missing for longer than the threshold."""
     cutoff = datetime.now(UTC) - timedelta(days=days)
     result = await session.execute(
-        delete(WatchlistItem).where(
-            WatchlistItem.market_status == "missing",
-            WatchlistItem.missing_since_at.isnot(None),
-            WatchlistItem.missing_since_at < cutoff,
+        delete(LeadItem).where(
+            LeadItem.status == "watching",
+            LeadItem.market_status == "missing",
+            LeadItem.missing_since_at.isnot(None),
+            LeadItem.missing_since_at < cutoff,
         )
     )
     deleted_count = result.rowcount

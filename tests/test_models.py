@@ -10,7 +10,9 @@ def test_tracker_table_exists() -> None:
     assert "tracker_events" in Base.metadata.tables
     assert "saved_searches" in Base.metadata.tables
     assert "lead_items" in Base.metadata.tables
-    assert "watchlist_items" in Base.metadata.tables
+    # `watchlist_items` was merged into `lead_items` (status='watching')
+    # in migration 20260427_0001.
+    assert "watchlist_items" not in Base.metadata.tables
 
 
 def test_tracker_columns_and_types() -> None:
@@ -87,13 +89,16 @@ def test_history_tables_have_indexes() -> None:
     assert "idx_lead_items_user" in lead_item_indexes
     assert "idx_lead_items_status" in lead_item_indexes
     assert "uq_lead_items_user_ad" in lead_item_constraints
-
-    watchlist_items = Base.metadata.tables["watchlist_items"]
-    watchlist_item_indexes = {index.name for index in watchlist_items.indexes}
-    watchlist_item_constraints = {constraint.name for constraint in watchlist_items.constraints}
-    assert "idx_watchlist_items_user" in watchlist_item_indexes
-    assert "idx_watchlist_items_market_status" in watchlist_item_indexes
-    assert "uq_watchlist_items_user_ad" in watchlist_item_constraints
+    # Watchlist-merged columns live on lead_items now.
+    lead_item_columns = {column.name for column in lead_items.columns}
+    for col in (
+        "initial_price_byn",
+        "market_median_byn",
+        "duplicate_count",
+        "last_seen_at",
+        "notes",
+    ):
+        assert col in lead_item_columns, f"missing watchlist-merged column: {col}"
 
 
 def test_get_engine_returns_async_engine() -> None:

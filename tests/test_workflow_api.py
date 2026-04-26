@@ -16,7 +16,7 @@ class FakeKufarClient:
     async def search_all_ads(self, **kwargs) -> dict:
         del kwargs
         return {
-            "total": 2,
+            "total": 3,
             "ads": [
                 {
                     "ad_id": 101,
@@ -35,6 +35,15 @@ class FakeKufarClient:
                     "list_time": "2026-04-05T10:00:00",
                     "region_id": 6,
                     "ad_parameters": [{"p": "seller_type", "v": "Магазин"}],
+                },
+                {
+                    "ad_id": 201,
+                    "subject": "iPhone 15 128GB",
+                    "price_byn": 1800,
+                    "ad_link": "https://www.kufar.by/item/201",
+                    "list_time": "2026-04-06T10:00:00",
+                    "region_id": 6,
+                    "ad_parameters": [{"p": "seller_type", "v": "Частное лицо"}],
                 },
             ],
         }
@@ -130,19 +139,24 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
         assert len(remaining_leads) == 1
         assert remaining_leads[0]["status"] == "closed"
 
+        # Use a fresh ad_id (201) for watchlist — the leads/watchlist tables
+        # were merged in 20260427_0001 so (user_id, ad_id) is unique. Trying
+        # to add ad_id=101 to watchlist would collide with the closed lead
+        # we kept above.
         watchlist_response = client.post(
             "/api/v1/watchlist",
             json={
                 "query": "iphone 15 128",
-                "ad_id": 101,
+                "ad_id": 201,
                 "title": "iPhone 15 128GB",
-                "link": "https://www.kufar.by/item/101",
+                "link": "https://www.kufar.by/item/201",
                 "price_byn": 2000,
             },
         )
         assert watchlist_response.status_code == 201
         watchlist_item = watchlist_response.json()
         assert watchlist_item["initial_price_byn"] == 2000
+        # workflow_status is now a no-op constant after watchlist→leads merge.
         assert watchlist_item["workflow_status"] == "default"
 
         update_watchlist_response = client.patch(
@@ -150,7 +164,8 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
             json={"workflow_status": "reviewing", "notes": "сравнить вечером"},
         )
         assert update_watchlist_response.status_code == 200
-        assert update_watchlist_response.json()["workflow_status"] == "reviewing"
+        # workflow_status is intentionally fixed at "default"; only notes mutates.
+        assert update_watchlist_response.json()["workflow_status"] == "default"
         assert update_watchlist_response.json()["notes"] == "сравнить вечером"
 
         refresh_response = client.post("/api/v1/watchlist/refresh", json={})
