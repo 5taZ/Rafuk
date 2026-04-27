@@ -59,6 +59,7 @@ async def create_expense(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Failed to create expense",
             ) from exc
+        await session.refresh(expense)
         return DealExpenseRead.model_validate(expense)
 
 
