@@ -4,9 +4,8 @@ body {
 }
 
 .header {
-    background: color-mix(in srgb, var(--bg) 88%, transparent);
-    border-bottom-color: color-mix(in srgb, var(--border) 72%, transparent);
-    backdrop-filter: blur(18px) saturate(1.25);
+    background: var(--bg);
+    border-bottom-color: var(--border);
 }
 
 .logo {
@@ -47,17 +46,18 @@ body {
 .search-wrap {
     min-height: 58px;
     background: var(--bg-input);
-    border-color: color-mix(in srgb, var(--border) 70%, var(--accent) 30%);
-    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
 }
 
 [data-theme="light"] .search-wrap {
-    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    background: #ffffff;
+    box-shadow: var(--shadow-sm);
 }
 
 .search-wrap:focus-within {
     border-color: var(--accent);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent), 0 18px 42px rgba(37, 99, 235, 0.14);
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .search-btn,
@@ -1015,8 +1015,9 @@ body {
 }
 
 .view-hero-title {
-    font-size: 22px;
-    letter-spacing: -0.025em;
+    font-size: var(--text-2xl);
+    letter-spacing: -0.03em;
+    line-height: 1.1;
 }
 
 .view-hero-desc {
@@ -1043,7 +1044,8 @@ body {
 
 .hero-stat-val {
     margin-top: 1px;
-    font-size: 13px;
+    font-size: var(--text-sm);
+    letter-spacing: -0.01em;
 }
 
 /* --- Cards: kill the global accent tint, use consistent surface --- */
@@ -1093,8 +1095,7 @@ body {
 }
 
 .summary-strip::before {
-    width: 2px;
-    background: color-mix(in srgb, var(--accent) 70%, transparent);
+    display: none;
 }
 
 /* --- Listings, leads, watchlist: gentle hover ---------------------- */

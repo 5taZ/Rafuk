@@ -25,7 +25,7 @@
     --border-hover: rgba(255, 255, 255, 0.1);
     --text: #e8e8e8;
     --text-muted: #858585;
-    --text-dim: #6a6a6a;
+    --text-dim: #787878;
     --text-secondary: #858585;
     --accent: #3b82f6;
     --accent-soft: rgba(59, 130, 246, 0.08);
@@ -56,6 +56,8 @@
     --text-lg: 17px;
     --text-xl: 20px;
     --text-2xl: 24px;
+    --text-3xl: 28px;
+    --text-display: 32px;
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;
@@ -67,11 +69,11 @@
     --r-md: 10px;
     --r-lg: 14px;
     --r-xl: 18px;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
-    --shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.5);
-    --shadow-prominent: 0 8px 24px rgba(0, 0, 0, 0.6);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.15);
+    --shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.35);
+    --shadow-prominent: 0 8px 24px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.3);
 
     /* Radius aliases — consistent naming */
     --radius-sm: var(--r-sm);
@@ -250,7 +252,7 @@ button:focus-visible,
     --border-hover: rgba(0, 0, 0, 0.1);
     --text: #1a1a1a;
     --text-muted: #6b6b6b;
-    --text-dim: #8a8a8a;
+    --text-dim: #737373;
     --text-secondary: #6b6b6b;
     --accent: #2563eb;
     --accent-soft: rgba(37, 99, 235, 0.06);
@@ -699,13 +701,14 @@ body {
     max-width: fit-content;
 }
 
-.quick-chip:hover,
-.quick-chip:active {
+.quick-chip:hover {
     background: var(--bg-hover);
     border-color: var(--border-hover);
     color: var(--text);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
 }
 
 .quick-chip:active {
-    transform: scale(0.97);
+    transform: scale(0.97) translateY(0);
 }

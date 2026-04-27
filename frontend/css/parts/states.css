@@ -214,15 +214,20 @@
 
 /* ===== Skeleton Loading Animations ===== */
 
-@keyframes skeleton-loading {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+@keyframes skeleton-shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
 }
 
 .skeleton {
-    background: var(--bg-hover);
+    background: linear-gradient(
+        90deg,
+        var(--bg-hover) 0%,
+        color-mix(in srgb, var(--bg-elevated) 70%, var(--text) 5%) 50%,
+        var(--bg-hover) 100%
+    );
     background-size: 200% 100%;
-    animation: skeleton-loading 1.5s ease-in-out infinite;
+    animation: skeleton-shimmer 1.5s ease-in-out infinite;
     border-radius: var(--r-sm);
 }
 

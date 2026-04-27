@@ -253,10 +253,11 @@ body.modal-open {
 }
 
 .detail-price {
-    font-size: 20px;
+    font-size: var(--text-2xl);
     font-weight: 700;
     color: var(--accent);
     white-space: nowrap;
+    letter-spacing: -0.02em;
 }
 
 .detail-meta {
@@ -622,7 +623,7 @@ body.modal-open {
 
 .profit-card-value {
     font-family: var(--font-mono);
-    font-size: 18px;
+    font-size: var(--text-xl);
     font-weight: 700;
     color: var(--text);
     letter-spacing: -0.03em;
@@ -727,7 +728,7 @@ body.modal-open {
 
 .expense-amount {
     font-family: var(--font-mono);
-    font-size: 14px;
+    font-size: var(--text-md);
     font-weight: 700;
     color: var(--red);
     white-space: nowrap;
@@ -786,7 +787,7 @@ body.modal-open {
 
 .expense-total-value {
     font-family: var(--font-mono);
-    font-size: 16px;
+    font-size: var(--text-lg);
     font-weight: 700;
     color: var(--red);
 }
