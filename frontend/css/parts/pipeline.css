@@ -1335,27 +1335,12 @@
     background: var(--accent);
 }
 
-.tracker-event-card.trend-reversal::before {
-    background: linear-gradient(90deg, var(--green), var(--amber-400));
-}
-
 .tracker-event-card.threshold-alert::before {
     background: var(--accent);
 }
 
 .tracker-event-card.discount-alert::before {
     background: var(--green);
-}
-
-.event-thumbnail-placeholder.trend {
-    background: var(--amber-soft);
-    color: var(--amber-400);
-}
-
-.event-type-badge.trend {
-    background: var(--amber-soft);
-    color: var(--amber-400);
-    border: 1px solid var(--amber-soft);
 }
 
 .event-type-badge.alert {

@@ -2596,11 +2596,15 @@ body {
     border-color: rgba(251, 191, 36, 0.2);
 }
 
-/* Action buttons — uniform row */
+/* Action buttons — top row: 2 equal, bottom row: Kufar full width */
 .listing-actions {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     gap: 6px;
+}
+
+.listing-btn--kufar {
+    grid-column: 1 / -1;
 }
 
 .listing-top {
@@ -5240,27 +5244,12 @@ body.lp-menu-open {
     background: var(--accent);
 }
 
-.tracker-event-card.trend-reversal::before {
-    background: linear-gradient(90deg, var(--green), var(--amber-400));
-}
-
 .tracker-event-card.threshold-alert::before {
     background: var(--accent);
 }
 
 .tracker-event-card.discount-alert::before {
     background: var(--green);
-}
-
-.event-thumbnail-placeholder.trend {
-    background: var(--amber-soft);
-    color: var(--amber-400);
-}
-
-.event-type-badge.trend {
-    background: var(--amber-soft);
-    color: var(--amber-400);
-    border: 1px solid var(--amber-soft);
 }
 
 .event-type-badge.alert {

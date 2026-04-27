@@ -1859,11 +1859,15 @@
     border-color: rgba(251, 191, 36, 0.2);
 }
 
-/* Action buttons — uniform row */
+/* Action buttons — top row: 2 equal, bottom row: Kufar full width */
 .listing-actions {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     gap: 6px;
+}
+
+.listing-btn--kufar {
+    grid-column: 1 / -1;
 }
 
 .listing-top {

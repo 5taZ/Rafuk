@@ -553,8 +553,6 @@ function attachPinchZoom(img, options) {
     let pinchStartScale = 1;
     let pinchAnchorPx = 0;   // image-local X of the pinch center
     let pinchAnchorPy = 0;   // image-local Y of the pinch center
-    let pinchAnchorVx = 0;   // viewport X where anchor should stay
-    let pinchAnchorVy = 0;   // viewport Y where anchor should stay
 
     // Pan gesture state
     let panStartX = 0;
@@ -567,8 +565,23 @@ function attachPinchZoom(img, options) {
     let lastTapX = 0;
     let lastTapY = 0;
 
-    // Cached base rect (before transform) — computed once on touchstart
+    // Cached base rect (before transform) — computed lazily once
     let baseRect = null;
+
+    // Active gesture type to prevent pinch→pan jump
+    let activeGesture = null; // "pinch" | "pan" | null
+
+    function ensureBaseRect() {
+        if (baseRect) return baseRect;
+        // Temporarily strip transform to measure natural size.
+        // Use CSS class to avoid visual flash: set a will-change hint
+        // so the browser batches the layout change.
+        const saved = img.style.transform;
+        img.style.transform = "none";
+        baseRect = img.getBoundingClientRect();
+        img.style.transform = saved;
+        return baseRect;
+    }
 
     function apply() {
         img.style.transformOrigin = "0 0";
@@ -586,6 +599,8 @@ function attachPinchZoom(img, options) {
         s = 1;
         tx = 0;
         ty = 0;
+        activeGesture = null;
+        baseRect = null; // Invalidate cached rect for next interaction
         if (animate) {
             img.style.transition = "transform 220ms cubic-bezier(0.2,0.8,0.2,1)";
         } else {
@@ -611,10 +626,16 @@ function attachPinchZoom(img, options) {
             ty = 0;
             return;
         }
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-        const iw = baseRect.width * s;
-        const ih = baseRect.height * s;
+        const rect = ensureBaseRect();
+        // Use the scrollable parent (detail-sheet-content or ai-modal-body)
+        // as the viewport boundary instead of window, so clamping works
+        // correctly inside a modal.
+        const parent = img.closest(".detail-sheet-content, .ai-modal-body")
+            || img.parentElement;
+        const vw = parent ? parent.clientWidth : window.innerWidth;
+        const vh = parent ? parent.clientHeight : window.innerHeight;
+        const iw = rect.width * s;
+        const ih = rect.height * s;
 
         // The image rectangle in viewport coords is (tx, ty, iw, ih).
         // Require at least 40px of the image to remain visible on each side.
@@ -652,15 +673,8 @@ function attachPinchZoom(img, options) {
     img.addEventListener("touchstart", (e) => {
         if (e.touches.length === 2) {
             e.preventDefault();
-            // Snapshot the base rect (no transform) for clamp calculations.
-            // Temporarily remove transform to get the natural size.
-            const savedTransform = img.style.transform;
-            const savedOrigin = img.style.transformOrigin;
-            img.style.transform = "none";
-            img.style.transformOrigin = "0 0";
-            baseRect = img.getBoundingClientRect();
-            img.style.transform = savedTransform;
-            img.style.transformOrigin = savedOrigin;
+            activeGesture = "pinch";
+            ensureBaseRect();
 
             pinchStartDist = dist(e.touches);
             pinchStartScale = s;
@@ -673,8 +687,6 @@ function attachPinchZoom(img, options) {
             const local = viewportToImage(cvx, cvy);
             pinchAnchorPx = local.x;
             pinchAnchorPy = local.y;
-            pinchAnchorVx = cvx;
-            pinchAnchorVy = cvy;
 
         } else if (e.touches.length === 1) {
             const t = e.touches[0];
@@ -687,15 +699,7 @@ function attachPinchZoom(img, options) {
                 if (s > 1.001) {
                     reset(true);
                 } else {
-                    // Snapshot base rect
-                    const savedTransform = img.style.transform;
-                    const savedOrigin = img.style.transformOrigin;
-                    img.style.transform = "none";
-                    img.style.transformOrigin = "0 0";
-                    baseRect = img.getBoundingClientRect();
-                    img.style.transform = savedTransform;
-                    img.style.transformOrigin = savedOrigin;
-
+                    ensureBaseRect();
                     // Zoom towards the tap point
                     const local = viewportToImage(t.clientX, t.clientY);
                     s = DOUBLE_TAP;
@@ -715,6 +719,7 @@ function attachPinchZoom(img, options) {
             lastTapY = t.clientY;
 
             if (s > 1.001) {
+                activeGesture = "pan";
                 panStartX = t.clientX;
                 panStartY = t.clientY;
                 panBaseTx = tx;
@@ -725,7 +730,7 @@ function attachPinchZoom(img, options) {
 
     // ── touchmove ───────────────────────────────────────────────────────
     img.addEventListener("touchmove", (e) => {
-        if (e.touches.length === 2) {
+        if (e.touches.length === 2 && activeGesture === "pinch") {
             e.preventDefault();
             if (pinchStartDist <= 0) return;
 
@@ -746,7 +751,7 @@ function attachPinchZoom(img, options) {
             clampTranslate();
             apply();
 
-        } else if (e.touches.length === 1 && s > 1.001) {
+        } else if (e.touches.length === 1 && activeGesture === "pan" && s > 1.001) {
             e.preventDefault();
             tx = panBaseTx + (e.touches[0].clientX - panStartX);
             ty = panBaseTy + (e.touches[0].clientY - panStartY);
@@ -757,8 +762,20 @@ function attachPinchZoom(img, options) {
 
     // ── touchend ────────────────────────────────────────────────────────
     img.addEventListener("touchend", (e) => {
-        if (e.touches.length === 0 && s < 1.05 && s !== 1) {
-            reset(true);
+        // If one finger lifted from a pinch and one remains, switch to pan
+        if (e.touches.length === 1 && activeGesture === "pinch") {
+            activeGesture = "pan";
+            panStartX = e.touches[0].clientX;
+            panStartY = e.touches[0].clientY;
+            panBaseTx = tx;
+            panBaseTy = ty;
+        }
+        // All fingers lifted — snap back if barely zoomed
+        if (e.touches.length === 0) {
+            if (s < 1.05 && s !== 1) {
+                reset(true);
+            }
+            activeGesture = null;
         }
         pinchStartDist = 0;
     }, { passive: true });
