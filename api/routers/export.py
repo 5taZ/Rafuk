@@ -65,7 +65,7 @@ def _empty_csv_response() -> Response:
 
 def _row_for_lead(lead: LeadItem, lead_expenses: dict[int, float]) -> list[Any]:
     """Build the per-lead row payload shared by the CSV and XLSX writers."""
-    buy_price = float(lead.price_byn or 0)
+    buy_price = float(lead.buy_price_byn) if lead.buy_price_byn is not None else 0.0
     sold_price = float(lead.sold_price_byn or 0)
     total_expenses = lead_expenses.get(lead.id, 0.0)
     total_cost = buy_price + total_expenses

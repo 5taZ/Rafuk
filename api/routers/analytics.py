@@ -189,10 +189,8 @@ async def get_lead_analytics(
         bucket = monthly_buckets[bucket_key]
         bucket["sold_count"] += 1
         sold_price = float(lead.sold_price_byn or 0)
-        cost = (
-            float(lead.buy_price_byn or lead.price_byn or 0)
-            + expenses_by_lead.get(lead.id, 0.0)
-        )
+        buy_price = float(lead.buy_price_byn) if lead.buy_price_byn is not None else 0.0
+        cost = buy_price + expenses_by_lead.get(lead.id, 0.0)
         bucket["revenue_byn"] += sold_price
         bucket["profit_byn"] += sold_price - cost
 
