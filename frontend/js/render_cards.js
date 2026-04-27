@@ -1,6 +1,6 @@
 /**
  * render_cards.js — buildListingNode, renderListings, renderDeals,
- * opportunity board, lead cards, watchlist cards.
+ * lead cards, watchlist cards.
  */
 
 function createRenderCards(context) {
@@ -14,8 +14,6 @@ function createRenderCards(context) {
     const builders = createRenderCardBuilders(context);
     const {
         buildListingNode,
-        buildOpportunityCard,
-        buildSignalRow,
         buildLeadNode,
         buildWatchlistNode,
     } = builders;
@@ -320,76 +318,6 @@ function createRenderCards(context) {
         });
     }
 
-    /* ===== Opportunity Board ===== */
-
-    function renderOpportunityBoard() {
-        return safeRender('renderOpportunityBoard', () => {
-        domClear(elements.opportunityBoardList);
-        domClear(elements.opportunityBoardDrops);
-        domClear(elements.opportunityBoardRare);
-        domClear(elements.opportunityBoardSignals);
-        if (elements.opportunityBoardNote) {
-            elements.opportunityBoardNote.textContent =
-                "Показываем лучшие дешёвые лоты по сохранённым поискам.";
-        }
-
-        if (!hasTelegramInitData()) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Доска возможностей доступна внутри Telegram Mini App.";
-            elements.opportunityBoardList.appendChild(note);
-            return;
-        }
-
-        if (!(state.opportunityBoard.items || []).length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Добавьте сохранённые поиски, чтобы увидеть лучшие лоты.";
-            elements.opportunityBoardList.appendChild(note);
-            return;
-        }
-
-        elements.opportunityBoardNote.textContent = `${(state.opportunityBoard.items || []).length} кандидатов на выкуп, ${(state.opportunityBoard.top_price_drops || []).length} падений цены, ${(state.opportunityBoard.rare_opportunities || []).length} редких офферов.`;
-
-        for (const item of state.opportunityBoard.items || []) {
-            elements.opportunityBoardList.appendChild(buildOpportunityCard(item, "", verdictClassName));
-        }
-
-        if (!(state.opportunityBoard.rare_opportunities || []).length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Редких офферов пока нет.";
-            elements.opportunityBoardRare.appendChild(note);
-        } else {
-            for (const item of state.opportunityBoard.rare_opportunities || []) {
-                elements.opportunityBoardRare.appendChild(buildOpportunityCard(item, "Редкий оффер", verdictClassName));
-            }
-        }
-
-        if (!(state.opportunityBoard.top_price_drops || []).length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Пока нет свежих падений цены.";
-            elements.opportunityBoardDrops.appendChild(note);
-        } else {
-            for (const signal of state.opportunityBoard.top_price_drops || []) {
-                elements.opportunityBoardDrops.appendChild(buildSignalRow(signal, true));
-            }
-        }
-
-        if (!(state.opportunityBoard.market_signals || []).length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Сигналы рынка появятся, когда накопится больше сохранённых поисков и истории.";
-            elements.opportunityBoardSignals.appendChild(note);
-        } else {
-            for (const signal of state.opportunityBoard.market_signals || []) {
-                elements.opportunityBoardSignals.appendChild(buildSignalRow(signal, false));
-            }
-        }
-        });
-    }
-
     /* ===== Leads (Deals) ===== */
 
     function workflowLabel(value) {
@@ -682,7 +610,6 @@ function createRenderCards(context) {
         renderListingsCollection,
         renderListings,
         renderDeals,
-        renderOpportunityBoard,
         renderLeads,
         renderWatchlist,
     };

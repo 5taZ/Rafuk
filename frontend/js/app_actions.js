@@ -335,50 +335,6 @@ function createAppActions(context) {
         }
     }
 
-    async function openOpportunityQuery(item) {
-        if (!item) {
-            return;
-        }
-
-        state.strictSearch = Boolean(item.strict_mode);
-        state.discountFromPercent = Math.round(item.target_discount_percent || 10);
-        state.trackerMinDiscountPercent = Math.round(item.target_discount_percent || 10);
-        state.trackerMaxPriceByn = item.max_price_byn ?? null;
-        state.trackerExcludeDuplicates = Boolean(item.exclude_duplicates);
-        state.trackerSellerType = item.seller_type || "";
-        state.trackerCondition = item.condition || "";
-        state.trackerRegionName = item.region_name || "";
-        state.trackerConfigKeyword = item.config_keyword || "";
-        elements.searchInput.value = item.query;
-        state.query = item.query;
-        renderStrictSearch();
-        renderDealInputs();
-        renderTrackerInputs();
-        await listings.search("overview");
-    }
-
-    async function openOpportunityDetail(item) {
-        if (!item?.listing) {
-            return;
-        }
-
-        state.strictSearch = Boolean(item.strict_mode);
-        state.discountFromPercent = Math.round(item.target_discount_percent || 10);
-        state.trackerMinDiscountPercent = Math.round(item.target_discount_percent || 10);
-        state.trackerMaxPriceByn = item.max_price_byn ?? null;
-        state.trackerExcludeDuplicates = Boolean(item.exclude_duplicates);
-        state.trackerSellerType = item.seller_type || "";
-        state.trackerCondition = item.condition || "";
-        state.trackerRegionName = item.region_name || "";
-        state.trackerConfigKeyword = item.config_keyword || "";
-        elements.searchInput.value = item.query;
-        state.query = item.query;
-        renderStrictSearch();
-        renderDealInputs();
-        renderTrackerInputs();
-        await listings.openListingDetail(item.listing);
-    }
-
     /**
      * Parses URL launch parameters (?query=...&view=...) and initializes the app state.
      * Called on app startup to handle deep linking.
@@ -510,8 +466,6 @@ function createAppActions(context) {
         openEditTracker: trackers.openEditTracker,
         closeEditTracker: trackers.closeEditTracker,
         saveTracker: trackers.saveTracker,
-        openOpportunityQuery,
-        openOpportunityDetail,
         openListingDetail: listings.openListingDetail,
         applyLaunchParams,
         loadExpenses,

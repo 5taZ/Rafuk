@@ -218,13 +218,6 @@ class SegmentsResponse(BaseModel):
     used_shop: SegmentStats
 
 
-class CurrencyRatesResponse(BaseModel):
-    base: str = "BYN"
-    rates: dict[str, float]
-    source: str
-    fetched_at: datetime
-
-
 class PriceHistoryPoint(BaseModel):
     snapshot_at: datetime
     mean: float
@@ -459,77 +452,6 @@ class LeadsRefreshResponse(BaseModel):
     missing: int
 
 
-class SavedSearchCreate(BaseModel):
-    name: str | None = None
-    group_name: str | None = None
-    query: str
-    strict_mode: bool = False
-    target_discount_percent: float = 10.0
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
-    exclude_duplicates: bool = False
-
-
-class SavedSearchRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    user_id: int
-    name: str
-    group_name: str | None = None
-    query: str
-    normalized_query: str = ""
-    config_summary: str | None = None
-    storage_gb: int | None = None
-    ram_gb: int | None = None
-    strict_mode: bool = False
-    target_discount_percent: float
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
-    exclude_duplicates: bool = False
-    active: bool
-    created_at: datetime
-
-
-class OpportunityItem(BaseModel):
-    saved_search_id: int
-    saved_search_name: str
-    query: str
-    normalized_query: str = ""
-    config_summary: str | None = None
-    strict_mode: bool = False
-    target_discount_percent: float = 10.0
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
-    exclude_duplicates: bool = False
-    signal_label: str | None = None
-    listing: ListingItem
-
-
-class OpportunitySignal(BaseModel):
-    title: str
-    subtitle: str
-    query: str
-    metric: str
-
-
-class OpportunityBoardResponse(BaseModel):
-    currency: str
-    items: list[OpportunityItem]
-    top_price_drops: list[OpportunitySignal] = Field(default_factory=list)
-    rare_opportunities: list[OpportunityItem] = Field(default_factory=list)
-    market_signals: list[OpportunitySignal] = Field(default_factory=list)
-
-
 class LeadFunnelStage(BaseModel):
     """One bar in the lead-pipeline funnel chart."""
 
@@ -596,47 +518,10 @@ class DealExpenseRead(BaseModel):
     created_at: datetime
 
 
-# Contacts schemas
-class ContactCreate(BaseModel):
-    phone: str | None = None
-    seller_name: str | None = None
-    kufar_profile: str | None = None
-
-
-class ContactRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    user_id: int
-    phone: str | None = None
-    seller_name: str | None = None
-    kufar_profile: str | None = None
-    saved_at: datetime
-
-
-# Risk assessment schemas
-class RiskItem(BaseModel):
-    type: str  # too_cheap, suspicious_words, duplicates
-    level: str  # low, medium, high
-    message: str
-
-
-class RiskAssessmentResponse(BaseModel):
-    risks: list[RiskItem] = Field(default_factory=list)
-    overall_risk: str  # low, medium, high
-    overall_emoji: str  # 🟢, 🟡, 🔴
-
-
 # ── AI Analysis ──────────────────────────────────────────────────────────
 
 
 class AIAnalysisRequest(BaseModel):
-    ad_id: int
-    query: str = Field(min_length=1, max_length=200)
-    category: int | None = None
-
-
-class AIQuickConditionRequest(BaseModel):
     ad_id: int
     query: str = Field(min_length=1, max_length=200)
     category: int | None = None
@@ -706,12 +591,6 @@ class AIAnalysisResponse(BaseModel):
     summary: str = ""
     disclaimer: str = "Анализ носит информационный характер. Результаты не являются гарантией."
     analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class AIQuickConditionResponse(BaseModel):
-    ad_id: int
-    condition: str = ""
-    notes: list[str] = Field(default_factory=list)
 
 
 # ─── Listing Assistant (seller side) ──────────────────────────────────────

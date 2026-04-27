@@ -83,7 +83,6 @@ Scheduler (every N minutes)
 - `QueryListingState` — tracks individual listing lifecycle per query
 - `LeadItem` — deal pipeline items (status: new → researching → bought → sold)
 - `WatchlistItem` — monitored listings with price tracking and workflow status
-- `SavedSearch` — saved search groups with filter config
 - `DealExpense` — expense tracking per lead (delivery, repair, other)
 
 ### Key Services (`api/services/`)
@@ -92,17 +91,17 @@ Scheduler (every N minutes)
 - `aggregator.py` — price stats computation (`PriceStats` dataclass), search mode filtering (strict vs loose via `STRICT_VARIANT_TOKENS`), query key building, currency normalization
 - `history_service.py` — query snapshot upsert, listing state sync, price change detection
 - `reseller_tools.py` — flip estimates, duplicate detection, tracker filter matching, deal score/verdict (verdict is purely price-vs-median based)
-- `market_signals.py` — market signal computation for opportunity board, anomaly detection
+- `market_signals.py` — anomaly detection and market signal computation
 - `deal_workflow.py` — lead/watchlist CRUD, status transitions, per-item liquidity scoring
 - `query_pipeline.py` — `QueryDataset` dataclass and `load_query_dataset()` / `load_segment_datasets()` — shared query parameter parsing across routers
 - `listing_mapper.py` — transforms raw Kufar ad dicts into `ListingItem`/`ListingDetailResponse` schemas. Image base URL: `https://rms.kufar.by/v1/gallery/`
-- `ai_service.py` — OpenAI-compatible API client (Together AI). Gemma 4 uses internal reasoning tokens; `response_format` must NOT be used (causes empty `content`). Reads from `reasoning` field as fallback. Temperature 0.2, max_tokens 2800. 1 image (prefers 2nd/3rd photo over hero shot for better condition assessment). `_parse_json()` handles reasoning chains with balanced-brace extraction.
+- `ai_service.py` — OpenAI-compatible API client (Google Gemini). Gemma 4 uses internal reasoning tokens; `response_format` must NOT be used (causes empty `content`). Reads from `reasoning` field as fallback. Temperature 0.2, max_tokens 2800. 1 image (prefers 2nd/3rd photo over hero shot for better condition assessment). `_parse_json()` handles reasoning chains with balanced-brace extraction.
 - `cache.py` — `RedisCache` (primary) and `MemoryCache` (OrderedDict with TTL + LRU eviction, max 500 entries). Both have `get_json`/`set_json` helpers.
 - `currency_service.py` — BYN↔USD conversion. All DB prices in BYN.
 
 ### Key Routers (`api/routers/`)
 
-- `ai_analysis.py` — `/ai/analyze` (full AI analysis with images + market context), `/ai/quick-condition` (photo-only condition check). Rate-limited, cached, uses `asyncio.wait_for(timeout=240)`.
+- `ai_analysis.py` — `/ai/analyze` (full AI analysis with images + market context). Rate-limited, cached, uses `asyncio.wait_for(timeout=240)`.
 - `listings.py` — search listings, cheap deals
 - `listing_detail.py` — single listing detail
 - `trackers.py` — CRUD for tracker queries
@@ -112,7 +111,6 @@ Scheduler (every N minutes)
 - `segments.py` — price segmentation
 - `geography.py` — geographic distribution
 - `compare.py` — side-by-side query comparison
-- `risks.py` — listing risk assessment
 
 ### Frontend Architecture
 
@@ -127,7 +125,7 @@ app.js
 
 **Renderer modules** (all instantiated by `createAppRenderers` in `app_renderers.js`):
 - `render_core.js` — toast, error bar, loading skeletons, view tabs, panels, summary, helper
-- `render_cards.js` — listing cards, deal cards, watchlist cards, opportunity board
+- `render_cards.js` — listing cards, deal cards, watchlist cards
 - `render_views.js` — view switching, history range buttons, deals hero stats, deal inputs, tracker inputs
 - `render_modals.js` — detail modal, expenses modal
 - `render_charts.js` — price distribution chart, history chart, profit dashboard, history deals
@@ -181,8 +179,8 @@ Environment variables loaded from `.env` via pydantic-settings (`api/config.py`)
 - `KUFAR_REQUEST_DELAY` — delay between Kufar API calls (default 1.0s)
 - `KUFAR_PARALLEL_SEMAPHORE` — max parallel Kufar requests (default 3)
 - `ALERT_CHECK_INTERVAL` — scheduler tracker check interval in minutes (default 30)
-- `AI_API_KEY` — Together AI API key (SecretStr)
-- `AI_BASE_URL` — OpenAI-compatible API base URL (default: `https://api.together.xyz/v1`)
+- `AI_API_KEY` — Google Gemini API key (SecretStr)
+- `AI_BASE_URL` — OpenAI-compatible API base URL (default: `https://generativelanguage.googleapis.com/v1beta/openai`)
 - `AI_MODEL` — model ID (default: `google/gemma-4-31B-it`)
 - `AI_PROXY_URL` — optional HTTP proxy for AI API calls
 
@@ -206,5 +204,5 @@ Docker Compose maps PostgreSQL `5432→5433` and Redis `6379→6380` to avoid co
 ## Known Issues
 
 - `ruff UP017` suggests `datetime.UTC` but this does not exist on the `datetime` class — use `timezone.utc` and ignore UP017
-- Gemma 4 on Together AI uses internal reasoning tokens that consume output budget — `max_tokens` must be ≥2800 for analysis prompts
+- Gemma 4 on Google Gemini uses internal reasoning tokens that consume output budget — `max_tokens` must be ≥2800 for analysis prompts
 - CSS `display: flex/grid` overrides HTML `hidden` attribute — always add `[hidden] { display: none !important }` rules for elements that use both flex layout and `hidden`

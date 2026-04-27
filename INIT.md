@@ -1,76 +1,78 @@
-# INIT.md — quick onboarding for the next AI session
+# INIT.md — Rafuks project onboarding
 
-> **Read this file first.** It captures the current state of the
-> Rafuks/Kufar Mini App project, what was just done, what's pending,
-> and the gotchas that will bite you if you skip them. Companion to
-> `CLAUDE.md` (more granular conventions / architecture detail).
+> **Read this first.** Current state, what works, what's broken,
+> architecture, conventions. Companion to `CLAUDE.md` (granular
+> code-level detail).
 
 ---
 
 ## 1. What this project is
 
-**Rafuks** — a Telegram Mini App for Belarusian marketplace
-analytics on **kufar.by**. The app fetches Kufar's public JSON API,
-computes price stats (median, IQR, segments), tracks queries for
-new listings & price drops, and runs an AI assistant for buyers
-(deal analysis) and sellers (listing draft generator).
+**Rafuks** — Telegram Mini App for Belarusian marketplace analytics
+on **kufar.by**. Fetches Kufar's public JSON API, computes price
+stats (median, IQR, segments, geography), tracks queries for new
+listings & price drops, runs an AI assistant for buyers (deal
+analysis) and sellers (listing draft generator), and manages a deal
+pipeline (leads, watchlist, expenses, contacts).
 
 Users open it inside Telegram. The UI is a single-page vanilla JS
 app served by Nginx. Backend is FastAPI + PostgreSQL + Redis.
 
-**Working branch right now:** `bad-app` (off `main`). All recent
-fixes since 2026-04 sit here.
+**Working branch:** `bad-app` (off `main`). All work since 2026-04
+sits here.
 
 ---
 
 ## 2. Stack & versions
 
-- **Python 3.12** with `uv` package manager (`uv sync --extra dev`,
-  `uv run …`)
-- **FastAPI** (async) + **SQLAlchemy 2.x async** (asyncpg) +
-  **Alembic** for migrations
-- **PostgreSQL 16** on `localhost:5433` (Docker maps `5432→5433`)
-- **Redis 7** on `localhost:6380` (Docker maps `6379→6380`)
-- **aiogram 3** for the Telegram bot (`/app`, `/start`, callbacks)
-- **APScheduler** for the tracker collector loop
-- **Vanilla JS, no build step** — module pattern with factory
-  functions (`createXxx(context)`)
-- **Nginx 1.27 alpine** serves frontend on `:8081`, proxies `/api/`
-  to backend on `:8010`
-- **Cloudflared tunnel** for exposing `:8081` to Telegram during dev
-- **AI**: OpenAI-compatible API. Currently `AI_MODEL=gemini-2.5-flash`
-  in `.env` (the code default is `google/gemma-4-31B-it` — that's
-  the fallback path; the live deployment uses Gemini 2.5 Flash).
-  Code branches on `_is_gemini` / `_is_gemma_legacy`.
+| Layer | Tech | Notes |
+|-------|------|-------|
+| Runtime | Python 3.12, `uv` package manager | `uv sync --extra dev` |
+| Backend | FastAPI (async) + SQLAlchemy 2.x async (asyncpg) | Alembic migrations |
+| DB | PostgreSQL 16 on `:5433` | Docker maps 5432→5433 |
+| Cache | Redis 7 on `:6380` | Docker maps 6379→6380; falls back to MemoryCache |
+| Bot | aiogram 3 | `/app`, `/start`, tracker notification callbacks |
+| Scheduler | APScheduler | Tracker collector loop every N minutes |
+| Frontend | Vanilla JS, no build step | Module pattern, factory functions |
+| Server | Nginx 1.27 alpine on `:8081` | Proxies `/api/` → backend `:8010` |
+| Tunnel | Cloudflared | Exposes `:8081` to Telegram during dev |
+| AI | OpenAI-compatible API (Together AI) | Gemini 2.5 Flash (production), Gemma 4 (legacy fallback) |
+| CSS | 7 partials → `style.css` via `scripts/rebuild_css.py` | ~8900 lines total |
 
 ---
 
 ## 3. Run / test / lint
 
 ```bash
-# Infra
-docker compose up -d redis            # postgres runs as a host
-                                      # container `marketplace_postgres`
-                                      # on :5433 (already up usually)
+# Infra (Postgres usually runs as host container on :5433)
+docker compose up -d redis
 
-# Backend + bot + scheduler + frontend (one terminal each, or:)
-./start-local.sh                      # everything local
-./start-local.sh --with-tunnel        # adds cloudflared tunnel
+# All services local
+./start-local.sh
+./start-local.sh --with-tunnel    # adds cloudflared tunnel
 
 # Stop
 ./stop-local.sh
 
 # Migrations
 uv run alembic -c migrations/alembic.ini upgrade head
-uv run alembic -c migrations/alembic.ini heads
 
-# Tests (151 currently passing)
+# Tests (215 currently passing)
 uv run pytest
-uv run pytest tests/test_workflow_api.py -k watchlist
+uv run pytest tests/test_specific.py -k "test_name"
 
 # Lint
 uv run ruff check .
 uv run ruff check --fix .
+
+# JS syntax check
+node --check frontend/js/dom_helpers.js
+
+# CSS rebuild (after editing any partial)
+uv run python scripts/rebuild_css.py
+
+# Cache-bust: bump ?v= in index.html for all CSS/JS references
+# e.g. ?v=20260427-v2 → ?v=20260427-v3
 ```
 
 `API_BASE_URL=http://127.0.0.1:8010`, frontend at
@@ -78,7 +80,7 @@ uv run ruff check --fix .
 
 ---
 
-## 4. Architecture cheat-sheet
+## 4. Architecture
 
 ```
 Frontend (Vanilla JS, Nginx :8081)
@@ -98,304 +100,530 @@ Redis (Kufar response cache, AI cache; falls back to MemoryCache)
 1. **API** — `uv run uvicorn api.main:app --port 8010`
 2. **Bot** — `uv run python -m bot.main` (aiogram)
 3. **Scheduler** — `uv run python -m scheduler.collector`
-   (APScheduler tracker loop)
+   (APScheduler tracker loop, checks every `ALERT_CHECK_INTERVAL` min)
 
-### Frontend module map
+### Frontend module map (~11,400 lines JS)
 
-`app.js` → `createAppCore()` (state, DOM, formatters)
-       → `createAppRenderers()` (composition hub)
-       → `createAppActions()` (API calls + event binding)
+```
+app.js                          entry point (138 lines)
+  → createAppCore()             state, DOM cache, formatters (414 lines)
+  → createAppRenderers()        composition hub (291 lines)
+      render_core.js            toast, error, skeletons, panels (562 lines)
+      render_card_builders.js   listing/deal/watchlist/opportunity cards (839 lines)
+      render_cards.js           render dispatchers (689 lines)
+      render_views.js           view switching, inputs (409 lines)
+      render_modals.js          detail modal, expenses modal (341 lines)
+      render_charts.js          distribution, history, profit charts (548 lines)
+      render_trackers.js        tracker cards, events, virtual scroll (599 lines)
+  → createAppActions()          API calls + event binding (526 lines)
+      api_core.js               HTTP primitives, Telegram headers (127 lines)
+      api_listings.js           search, listings, detail, segments, etc (558 lines)
+      api_trackers.js           tracker CRUD, event loading (283 lines)
+      api_events.js             all DOM event binding (1015 lines)
+      api_watchlist.js          watchlist CRUD (357 lines)
+      api_leads.js              lead/deal CRUD (383 lines)
+      api_ai.js                 AI analysis modal with progress (1192 lines)
+      api_listing_assistant.js  seller-side listing draft (736 lines)
 
-Key JS files (all factories):
-- `api_core.js` — fetch primitives, Telegram init-data header
-- `api_listings.js` — search orchestrator (`search()` is the entry
-  point for ALL user-driven queries)
-- `api_watchlist.js` — watchlist proxy over leads (see §6.1)
-- `api_leads.js` — deal/lead CRUD
-- `api_events.js` — DOM event binding (huge file, watch it)
-- `api_ai.js` — AI analysis modal
-- `api_listing_assistant.js` — seller-side listing draft modal
-- `render_card_builders.js` — `buildListingNode()` etc.
-- `render_cards.js` — listings/deals/watchlist render dispatchers
+dom_helpers.js                 shared utilities: escapeHtml, safeUrl,
+                               attachPinchZoom, attachLongPress,
+                               makeSwipeable, showLongPressMenu (943 lines)
+virtual_list.js                virtual scrolling for tracker events (209 lines)
+app_core_dom.js                DOM element cache (218 lines)
+```
+
+### CSS partials (~8,900 lines)
+
+| Partial | Lines | Scope |
+|---------|-------|-------|
+| `tokens.css` | 720 | CSS custom properties, theme tokens, motion, spacing |
+| `brand.css` | 1,720 | Cards, badges, AI assistant, listing assistant, buttons |
+| `layout.css` | 1,927 | Grid, forms, status badges, action buttons, tabs |
+| `modals.css` | 1,237 | Detail sheet, expenses modal, toasts, badges |
+| `pipeline.css` | 1,683 | Deal pipeline, lead cards, tracker cards, events |
+| `states.css` | 687 | Skeletons, loading, hidden, filter dropdown, AI block |
+| `ai.css` | 910 | AI analysis modal layout, verdict, tiers, playbook |
 
 ---
 
-## 5. What was JUST done (last sprint)
+## 5. Data model
 
-The branch `bad-app` accumulates these fixes since the merge
-work started. **Read commit messages for full context.**
+### SQLAlchemy models (`api/models.py`)
+
+| Model | Purpose |
+|-------|---------|
+| `User` | Telegram user (auto-created on first request) |
+| `Tracker` | Saved query with filter config, alert thresholds |
+| `TrackerEvent` | new_listing / price_drop events per tracker |
+| `SavedSearch` | Saved search groups with filter config |
+| `QuerySnapshot` | Periodic price stats snapshot per query |
+| `QueryListingState` | Individual listing lifecycle per query |
+| `LeadItem` | Deal pipeline items (status: new → researching → watching → negotiating → bought → reselling → sold) |
+| `LeadItemPriceSnapshot` | Per-item price history for sparklines |
+| `DealExpense` | Expense tracking per lead (delivery, repair, other) |
+| `Contact` | Seller/buyer contacts per lead |
+
+**Key:** `watchlist_items` table no longer exists. Watchlist rows
+live in `lead_items` with `status='watching'`. Migration:
+`20260427_0001_merge_watchlist_into_leads.py`. `/api/v1/watchlist/*`
+endpoints remain as a proxy layer over `LeadItem`.
+
+### Allowed lead statuses (DB constraint)
 
 ```
-5e845d7 Doc fix: Gemma → Gemini 2.5 Flash in comments
-12c32a3 Fix +78539% bug + collapse paraphrase duplicates in AI
-a757a12 Listings pill: show Kufar's true total, not the render cap
-c9ef6ce Categories: chip count = listings count, family expansion
-cee10e5 Mirror kufar.by sidebar: real per-category totals
-747eab8 Filters: client-side category filter + reset on every search
-b15f0bb AI helper card: drop "История" shortcut
-aff02f3 UI cleanup: drop empty "0 сделок", tracker events refresh
-8038083 Fix watchlist↔leads transitions: race-safe + idempotent
+new → researching → watching → negotiating → bought → reselling → sold
+```
+
+`upsert_lead` refuses to demote an existing active/closed lead to
+`watching` (returns 409). `DELETE /watchlist/{id}` is idempotent
+(204 even if already promoted/deleted).
+
+---
+
+## 6. API surface
+
+### Routers (`api/routers/`)
+
+| Router | Endpoints | Auth |
+|--------|-----------|------|
+| `listings.py` | `/listings`, search, cheap deals | Public + user |
+| `listing_detail.py` | `/listings/{ad_id}` | Public + user |
+| `price_stats.py` | `/price-stats` | Public |
+| `price_history.py` | `/price-history` | Public |
+| `segments.py` | `/segments` | Public |
+| `geography.py` | `/geography` | Public |
+| `analytics.py` | `/analytics` | Public |
+| `ai_analysis.py` | `/ai/analyze`, `/ai/quick-condition` | User, rate-limited |
+| `trackers.py` | Tracker CRUD | User |
+| `workflow.py` | `/leads`, `/watchlist` CRUD + transitions | User |
+| `expenses.py` | `/expenses` CRUD | User |
+| `contacts.py` | `/contacts` CRUD | User |
+| `export.py` | `/export/leads` (Excel) | User |
+| `currency.py` | `/currency-rates` | Public |
+| `image_proxy.py` | `/img/{path}` (WebP/AVIF) | Public |
+| `health.py` | `/health`, `/health/ready` | Public |
+| `saved_searches.py` | `/saved-searches` | User |
+| `risks.py` | `/risks/{ad_id}` | Public + user |
+
+### Services (`api/services/`)
+
+| Service | Purpose |
+|---------|---------|
+| `kufar_client.py` | HTTP client for Kufar API with retry/backoff, rate limiting |
+| `aggregator.py` | Price stats computation, search mode filtering, query key building |
+| `query_pipeline.py` | `QueryDataset`, `load_query_dataset()`, `fetch_category_totals()`, `KUFAR_CATEGORY_FAMILY` map |
+| `ai_service.py` | `AIService` class: analyze, generate, quick_condition + dedupe helpers |
+| `ai_guardrails.py` | Input/output validation for AI calls |
+| `ai_listing_guardrails.py` | Validation for listing assistant |
+| `ai_marketplace.py` | Marketplace-specific AI prompt construction |
+| `cache.py` | `RedisCache` + `MemoryCache` (OrderedDict with TTL + LRU) |
+| `currency_service.py` | BYN↔USD conversion |
+| `deal_workflow.py` | Lead/watchlist CRUD, status transitions, liquidity scoring |
+| `history_service.py` | Query snapshot upsert, listing state sync, price change detection |
+| `listing_mapper.py` | Raw Kufar ad dicts → `ListingItem`/`ListingDetailResponse` schemas |
+| `market_signals.py` | Market signal computation for opportunity board |
+| `parallel_kufar.py` | Parallel Kufar fetch with semaphore |
+| `reseller_tools.py` | Flip estimates, duplicate detection, tracker filter matching, deal score/verdict |
+| `risk_detector.py` | Listing risk assessment |
+| `workflow_store.py` | `ensure_user`, `upsert_lead` (race-safe with SAVEPOINT retry) |
+
+---
+
+## 7. Frontend views & interactions
+
+### Views (6 tabs)
+
+| Tab | ID | Content |
+|-----|----|---------|
+| Обзор | `overview-view` | Summary strip, price distribution chart, segments |
+| Объявления | `ads-view` | Listing cards, filter dropdown, category chips |
+| Отслеживание | `tracking-view` | Tracker cards, tracker events with virtual scroll |
+| Выгодно | `cheap-view` | Cheap deals (discount-filtered listings) |
+| Мониторинг | `monitoring-view` | Watchlist cards with price sparklines |
+| Покупки | `deals-view` | Deal pipeline, profit dashboard, hero stats |
+
+### Key interactions
+
+- **Tap on listing card** → opens detail modal (`.listing-top` click handler)
+- **Long-press on listing card** → bottom-sheet menu (В покупки / В избранное / Открыть на Kufar)
+- **Pinch-zoom on detail photos** → `attachPinchZoom()` with anchor-point model
+- **Swipe between photos** → opacity-crossfade (not live drag)
+- **Filter dropdown** → keyframe animation open/close (no max-height thrashing)
+- **Double-tap on photo** → toggle 1×/2× zoom centered on tap point
+- **Swipe on watching cards** → left=delete, right=promote-to-Покупки (via `makeSwipeable`)
+
+---
+
+## 8. What's done (recent sprint, `bad-app` branch)
+
+```
+b43dae6 Rewrite pinch-zoom, tap card for detail, kill blue tint on listings
+6e3dd06 UI depth: Geist font, accent-secondary for AI, fix pinch-zoom lag
+a6a47ef UI/UX refresh: typography scale, kill glassmorphism, micro-interactions, polish
+f7c835d Flatten visual nesting: remove box-in-box-in-box across all views
+a566262 Remove comparison feature from Обзор and entire codebase
+11a866c Trackers: fix new-tracker invisible-until-refresh + remove alert feature
+220a628 Photo swipe: drop live drag, use simple opacity-crossfade
+4e20a38 Photo swipe: rAF-coalesced touchmove + GPU layer hint
+e0582ea Photo modal: scoped finger-follow swipe + sturdier snapshot persist
+6736d10 Fix view-flash on discount preset clicks
+6d9a65e Search perf overhaul: 6s "iphone 13" → ~1s wall-clock
+91623bc Fix tabs render crashes + 2x2 layout on narrow screens
+1892e17 Singleflight Kufar fetch + fold "Выгодно" into "Объявления"
+c618ca0 Strip pipeline funnel + fix watchlist visual + share Kufar dataset cache
+90ddece Search perf: collapse CSS waterfall, preconnect Kufar, lower fetch cap
+cd4c17e Fast-path images + bypass SW cache for /leads & /watchlist
+27530f8 Paginate /listings + display-aware thumbnail sizing
+210bf48 Image proxy perf: thread-pool transcode, semaphore, LRU, keep-alive
+3952b13 Modularize style.css: 7 topical partials behind a thin @import shell
+5132847 N+1 fix: bulk-load last snapshot prices in watchlist refresh
+553889b ROI / win-rate dashboard: server-side aggregation + funnel
+41f1bd1 Tracker hard alerts: price threshold + discount threshold
+12497b3 WebP/AVIF image proxy for Kufar JPEG thumbnails
+4221f2b Side-by-side comparison: metric matrix + winner highlight
+139f281 Tracker trend-reversal alerts: "цена опять растёт после падения"
+5266e4c Smart re-search suggestions: top-N tokens from result set as chips
+8649774 Excel export for leads + richer empty states on tracker surfaces
+c4bcfb4 Service worker: stale-while-revalidate for read-only API + offline shell
+512ac82 Long-press menu: bottom-sheet quick actions on listing cards
+15556b9 Watchlist sparkline: per-row price history + inline SVG trend
 c4a07bf Merge watchlist_items into lead_items (status='watching')
-6e9fdd4 Watchlist mutations refresh unified Мои объявления list
-a088bf6 Fix Мои объявления: 50/50 tabs, drop importance, dedupe
-cb2d1ba Initial UI-only merge of Watchlist + Покупки
 ```
 
-### High-impact changes you must remember
+### High-impact changes to remember
 
-- **`watchlist_items` table no longer exists.** Its rows live in
-  `lead_items` with `status='watching'`. Migration:
-  `migrations/versions/20260427_0001_merge_watchlist_into_leads.py`.
-  `WatchlistItem` model is gone. `/api/v1/watchlist/*` endpoints
-  remain as a *proxy layer* over `LeadItem` for frontend
-  back-compat — see `api/routers/workflow.py`.
-- **`upsert_lead`** now race-safe (SAVEPOINT + IntegrityError
-  retry) and refuses to demote an existing active/closed lead to
-  `watching` from a watchlist add (returns 409 instead).
-- **`DELETE /watchlist/{id}` is idempotent** (204 even if the row
-  was already promoted/deleted).
-- **`promoteWatchlistToLead`** is now `PATCH /leads/{id} {status:
-  "new"}` instead of POST + DELETE — same row, no race.
-- **Category filter overhaul** — chip counts mirror what kufar.by's
-  sidebar shows (one parallel `cat=<id>&size=200` request per chip,
-  see `query_pipeline.fetch_category_totals` and
-  `KUFAR_CATEGORY_FAMILY` map). Listings pill = Kufar raw total
-  (broad) or post-filter count (cat-scoped, with fallback to Kufar
-  total when paginated cap is hit).
-- **Filter reset semantics**: `search(target, { keepFilters })` —
-  default `false`. Every text-input/Enter/recent-search resets. Only
-  the dropdown's "Применить" button passes `keepFilters: true`.
-- **AI dedupe**: server-side paraphrase collapse for
-  `condition.notes`, `watch_out`, `red_flags`,
-  `meeting_checklist`, `negotiation_tips`, `selling_points`,
-  `photo_tips`, `negotiation_playbook`, `quick_condition.notes`.
-  Cross-field rule: anything in `condition.notes` is removed from
-  `watch_out`/`red_flags`. See `dedupe_analysis_payload` in
-  `api/services/ai_service.py`.
+- **`watchlist_items` table gone.** Rows in `lead_items` with
+  `status='watching'`. `/api/v1/watchlist/*` is a proxy layer.
+- **Comparison feature removed.** `api/routers/compare.py` deleted,
+  frontend cleaned up (-1389 lines).
+- **Category filter overhaul.** Chip counts mirror kufar.by sidebar
+  (parallel `cat=<id>&size=200` per chip). Listings pill = Kufar
+  raw total (broad) or post-filter count (cat-scoped).
+- **Filter reset semantics.** `search(target, { keepFilters })` —
+  default `false`. Only "Применить" passes `keepFilters: true`.
+- **AI dedupe.** Server-side paraphrase collapse for all list
+  fields. Cross-field: `condition.notes` removed from
+  `watch_out`/`red_flags`.
+- **Pinch-zoom rewritten.** Anchor-point model with
+  `transformOrigin: 0 0`. No `getBoundingClientRect` on touchmove.
+  `baseRect` snapshotted once on touchstart.
+- **Tap card = detail.** Click on `.listing-top` opens detail.
+  "Подробнее" button removed. 3 action buttons: В покупки,
+  В избранное, Kufar.
+- **Blue tint killed on listings.** All accent color-mix tints
+  removed from listing cards, buttons, price, hover, thumb border.
+  Buttons are neutral transparent+border style.
 
 ---
 
-## 6. What's pending (user's roadmap)
+## 9. Known issues & rough edges
 
-User originally listed three cleanup tasks ("Делаем все по
-порядку"):
+### Backend
 
-1. ✅ **Full DB migration**: watchlist → leads. Done in commit
-   `c4a07bf`, hardened in `8038083`.
-2. ✅ **Unified card builder for watch + lead.** Single
-   `buildItemCard(item, { mode })` in
-   `frontend/js/render_card_builders.js`. Shared helpers extracted
-   for missing banner, price-delta pill, profit/potential block,
-   market badge. `buildLeadNode` / `buildWatchlistNode` are now
-   thin one-line wrappers over the unified builder so existing
-   callsites keep working without churn.
-3. ✅ **Drag-to-promote / swipe actions.** `makeSwipeable(card, …)`
-   in `frontend/js/dom_helpers.js` is a generic helper that wraps
-   any card in a swipe track, drags it with rubber-band
-   resistance, fires haptic feedback on commit, and short-circuits
-   under `prefers-reduced-motion`. Watching cards (mode='watching',
-   not missing) get left=delete / right=promote-to-Покупки wired
-   in by default. Lead cards stay tap-only because their middle
-   row holds buy/sold price inputs that conflict with horizontal
-   pans.
+- **Kufar API has no `otype` param since 2026.** Seller type
+  filtering is client-side only. If Kufar adds it back, the
+  client-side filter becomes redundant.
+- **Kufar kopeck heuristic.** Prices sometimes come in kopecks×100
+  (7,863,900 for 78639 BYN). `_normalize_response_ads` divides by
+  100 if it detects kopeck-scale numbers — fragile but works in
+  practice.
+- **AI model branching.** `_is_gemini` / `_is_gemma_legacy` in
+  `ai_service.py`. Gemini 2.5 Flash supports `response_format`;
+  Gemma 4 does not. If a third model is added, this branching
+  needs refactoring.
+- **AI analysis timeout.** Can take 30-90s. Nginx
+  `proxy_read_timeout: 300s` must not be lowered.
+- **No pagination on `/leads` or `/watchlist`.** Returns all items.
+  Will be a problem if a user has hundreds of leads.
+- **`kufar_max_ads_per_query = 1500`.** Lowered from 5000 for perf.
+  Statistically indistinguishable median, but rare edge cases
+  (very broad queries) may miss long-tail listings.
 
----
+### Frontend
 
-## 7. Gotchas & tribal knowledge
+- **`api_events.js` is 1015 lines.** Largest JS file. Handles all
+  DOM event binding. Hard to navigate. Could benefit from splitting
+  by view, but the delegation pattern makes it tricky.
+- **`api_ai.js` is 1192 lines.** Second largest. AI modal with
+  progress animation, polling, template rendering. Complex state
+  machine.
+- **No TypeScript.** Vanilla JS with no type checking. Factory
+  pattern makes cross-module dependencies implicit — if
+  `createAppRenderers` doesn't return a function, downstream
+  modules get `undefined` silently.
+- **CSS is ~8,900 lines.** 7 partials help, but `brand.css` alone
+  is 1,720 lines. Some redundancy between partials.
+- **Service worker cache version.** Must be bumped manually in
+  `sw.js` when deploying new builds. If forgotten, users see stale
+  content for up to 24h.
+- **`?v=` cache-bust param.** Must be bumped in `index.html` for
+  every CSS/JS reference when any file changes. Easy to forget.
+- **No responsive breakpoints for tablets.** Layout is mobile-first
+  (Telegram Mini App) but breaks awkwardly on wider screens.
 
-### Kufar API quirks
-- Endpoint: `https://api.kufar.by/search-api/v2/search/rendered-paginated`
-- Param names: `cur` (not `currency`), `cat`, `rgn`, `cnd`, `size`,
-  `sort`. **No `otype` since 2026** — seller_type filtering is
-  client-side.
-- `cat=<id>` queries silently widen Kufar's matching rules: e.g.
-  query="Audi Q7 4L 2015" + cat=2010 returns Kufar `total=11` but
-  only 3 ads survive our `apply_search_mode`. We trust the post-
-  filter count for cat-scoped pills, fall back to Kufar total only
-  when paginated cap (≥200) is hit.
-- Prices come in **kopecks × 100** (i.e. 78639 BYN appears as
-  7,863,900 in raw response). `query_pipeline._normalize_response_ads`
-  divides by 100 if the heuristic detects kopeck-scale numbers.
-- Pagination: 25 pages × 200 ads = 5000 cap (`kufar_max_ads_per_query`).
+### Infrastructure
 
-### Currency
-- All DB prices in **BYN** (`Float` or `Numeric(10,2)`).
-- API returns whatever `currency` param the user picked, conversion
-  via `currency_service.get_rates()`.
-- Frontend has `state.usdRateByn` for client-side toggle.
-
-### Telegram auth
-- `X-Telegram-Init-Data` header → `api/middleware/telegram_auth.py`
-  HMAC-verifies with `BOT_TOKEN`.
-- **Debug mode**: in `.env` set `debug=true` and the auth
-  middleware lets requests through with `user_id=0` (only useful
-  for local curl). CORS also opens up for `localhost:8081`.
-
-### AI service
-- **Gemini 2.5 Flash** (current production model) honours
-  `response_format: {"type":"json_object"}` — the code uses it via
-  `_is_gemini` branch in `ai_service.py`.
-- **Gemma 4 (legacy fallback)** does NOT — using
-  `response_format` produces empty `content`. The code reads from
-  `reasoning` field as fallback. `max_tokens` must be ≥2200 for
-  analysis prompts.
-- Two-call analysis: `analyze_listing_parallel` runs Call A (price
-  & market) and Call B (condition & risks) staggered by 1s to avoid
-  Together AI 429 rate limits, then merges. Final dedupe step
-  collapses paraphrase duplicates across all list fields.
-- `nginx/default.conf` has `proxy_read_timeout: 300s` — AI requests
-  often take 30-60s. Don't lower it.
-
-### Modal & scroll lock
-- `body.modal-open` locks page scroll.
-- Modal content scrolls inside `.detail-sheet-content` /
-  `.ai-modal-body` via flex + `overflow-y: auto;
-  -webkit-overflow-scrolling: touch`.
-- `[hidden] { display: none !important; }` is REQUIRED in CSS for
-  any flex/grid container that uses HTML `hidden` — flex/grid
-  silently overrides it otherwise.
-
-### Frontend factory pattern pitfalls
-- `createApiActions` destructures from `context`. If a function
-  isn't returned by `createAppRenderers`, it's `undefined` in
-  downstream modules even if it's defined.
-- `context._hooks` is the cross-module bridge for renderers to call
-  each other. E.g. `render_core.js` calls
-  `context._hooks.renderChart()`.
+- **Postgres runs as a host container** (not in docker-compose).
+  `marketplace_postgres` on `:5433`. If it's not running, the API
+  won't start.
+- **No CI/CD.** Manual deploy via docker-compose on a VPS.
+- **No automated browser tests.** Only Python unit/integration
+  tests + JS syntax checks. No Playwright/Cypress for the frontend.
+- **Cloudflared tunnel required for Telegram.** Without it, the
+  Mini App can't load (Telegram requires HTTPS).
 
 ---
 
-## 8. Frontend state shape (the important bits)
+## 10. Frontend state shape
 
 ```js
 state = {
   query: "",                     // current text in search input
-  category: null | number,       // active cat=X filter (or null)
-  pendingCategory: null,         // dropdown's pending value
-  categories: [],                // [{ id, label, count }, ...] for chips
-  stats: { ... },                // /price-stats response
-  listings: [],                  // /listings response.listings
-  listingsTotal: 0,              // /listings response.total (Kufar
-                                 // raw for broad, post-filter for cat)
+  strictSearch: false,           // strict mode toggle
+  category: null | number,       // active cat=X filter
+  categories: [],                 // [{ id, label, count }] for chips
+  condition: "",                  // filter: "", "new", "used"
+  sellerType: "",                 // filter: "", "private", "shop"
+  minPrice: null, maxPrice: null, // price range filter
+  regionName: "",                 // region filter
+  pendingCategory/Condition/etc,  // dropdown pending values
+  filterDropdownOpen: false,
+  searchRequestId: 0,            // stale-response guard
+  sort: "newest",
+  discountFromPercent: 10,
+  discountToPercent: 30,
+  loading: false,
+  error: null,
+  stats: null,                   // /price-stats response
+  listings: [],                  // /listings response
+  listingsTotal: 0,
+  listingsHasMore: false,
+  dealListings: [],              // cheap deals
+  segments: null,                // /segments response
+  geography: [],                 // /geography response
+  history: [],                   // /price-history response
   leads: [],                     // /leads response (excludes watching)
-  watchlist: [],                 // /watchlist response (= LeadItem
-                                 // status='watching' under the hood)
-  trackerEvents: [],             // tracker_events
-  // … many more in app_core.js
+  leadFilter: "all",
+  watchlist: [],                 // /watchlist response (= LeadItem watching)
+  trackerEvents: [],
+  // Monotonic request IDs for stale-response guards:
+  _leadsRequestId: 0,
+  _watchlistRequestId: 0,
+  _detailRequestId: 0,
+  _historyRequestId: 0,
+  _listingsRequestId: 0,
+  _dealsRequestId: 0,
+  // ... more in app_core.js
 }
 ```
 
-`render_cards.js` reads from `state.*` exclusively — never mutate
+`render_*.js` reads from `state.*` exclusively — never mutate
 state inside a render function.
 
 ---
 
-## 9. Files that will likely matter
+## 11. CSS design system
+
+### Token architecture (`tokens.css`)
 
 ```
-api/
-  config.py                    pydantic-settings env loader
-  models.py                    SQLAlchemy ORM (LeadItem now holds
-                               watchlist columns)
-  schemas.py                   Pydantic IO models
-  routers/
-    workflow.py                /api/v1/leads + /api/v1/watchlist
-                               (watchlist routes proxy to LeadItem)
-    listings.py                /api/v1/listings — pill total logic
-    price_stats.py             /api/v1/price-stats — categories
-                               enrichment via fetch_category_totals
-    ai_analysis.py             /api/v1/ai/analyze + quick-condition
-  services/
-    aggregator.py              price stats, search filtering,
-                               apply_search_mode
-    query_pipeline.py          QueryDataset, fetch_category_totals,
-                               KUFAR_CATEGORY_FAMILY map
-    ai_service.py              AIService class (analyze, generate,
-                               quick_condition) + dedupe helpers
-                               (dedupe_analysis_payload etc.)
-    workflow_store.py          ensure_user, upsert_lead (race-safe)
-    kufar_client.py            HTTP client for api.kufar.by
+--font: "Geist", sans-serif
+--font-mono: "JetBrains Mono", monospace
 
-migrations/
-  alembic.ini
-  versions/
-    20260427_0001_merge_watchlist_into_leads.py     ← critical recent
+--text-xs/sm/base/lg/xl/2xl/3xl/display  (11px → 32px scale)
+--space-1..5, --r-sm/md/lg/xl
 
-frontend/
-  index.html
-  css/style.css                ~8000 lines, search before adding
-  js/                           see §4 module map
+--t-fast/mid/slow  (120/200/350ms)
+--easing-standard/deceleration
 
-tests/
-  test_workflow_api.py         leads & watchlist CRUD smoke
-  test_listings.py             includes price_vs_median stability
-                               test (don't break this — it covers
-                               the +78539% regression)
-  test_ai_analysis.py          AI service mocked; 34 tests
-  ... 151 tests total
+Colors (dark/light themes via [data-theme]):
+  --bg, --bg-card, --bg-elevated, --bg-hover, --bg-surface-tint
+  --text, --text-muted, --text-dim, --text-secondary
+  --accent (#3b82f6 dark / #2563eb light) — primary UI
+  --accent-secondary (#8b5cf6 / #7c3aed) — AI features
+  --green, --red, --amber, --violet, --cyan
+  --border, --border-hover
 ```
+
+### Key design decisions
+
+- **Primary accent (blue)** — tabs, primary buttons, search focus,
+  stat highlights, active states
+- **Accent-secondary (violet)** — AI features only: AI button,
+  AI sheet, AI sections, la-* components, AI history
+- **No accent tint on listing cards** — pure bg-card, neutral
+  borders, no blue color-mix anywhere on listings
+- **Listing action buttons** — neutral transparent+border (not
+  filled blue). Kufar link uses `listing-btn--kufar` (same style)
+- **Cards** — `var(--bg-card)` + `var(--border)`, no accent tint
+- **Skeleton shimmer** — `@keyframes skeleton-shimmer` gradient
+- **Micro-interactions** — card hover translateY(-2px), chip hover
+  translateY(-1px), all using `--t-fast` + `--easing-standard`
 
 ---
 
-## 10. Conventions to respect
+## 12. Pinch-zoom implementation notes
+
+The zoom uses an **anchor-point model** (rewritten from scratch):
+
+```
+transform: translate3d(tx, ty, 0) scale(s)
+transform-origin: 0 0
+```
+
+Core invariant: the image point `(px, py)` in image-local coords
+stays at viewport position `(vx, vy)`:
+
+```
+tx = vx - px * s
+ty = vy - py * s
+```
+
+- `viewportToImage(vx, vy)` converts viewport → image-local
+- On pinch-start: anchor `(px, py)` = pinch center in image-local
+- On touchmove: `tx = cvx - pinchAnchorPx * nextS` — anchor
+  tracks the moving pinch center
+- `baseRect` snapshotted once on touchstart (temporarily removes
+  transform to get natural size). No `getBoundingClientRect` on
+  touchmove.
+- `clampTranslate()` uses `window.innerWidth/Height` + `baseRect`
+  dimensions. Requires 40px margin visible on each side.
+- `will-change: transform` added when zoomed, removed at scale=1
+- Double-tap toggles 1×↔2×, zooming toward tap point
+
+---
+
+## 13. Kufar API quirks
+
+- Endpoint: `https://api.kufar.by/search-api/v2/search/rendered-paginated`
+- Params: `cur` (not `currency`), `cat`, `rgn`, `cnd`, `size`,
+  `sort`, `cursor`. **No `otype`** — seller_type is client-side.
+- `cat=<id>` widens Kufar's matching rules. Post-filter count may
+  differ significantly from Kufar `total`.
+- Prices in **kopecks × 100** (heuristic normalization).
+- Pagination: 25 pages × 200 ads = 5000 cap, but
+  `kufar_max_ads_per_query = 1500` (3× faster, same median quality).
+- Image base URL: `https://rms.kufar.by/v1/gallery/`
+
+---
+
+## 14. AI service details
+
+- **Gemini 2.5 Flash** (production): supports
+  `response_format: {"type":"json_object"}`, uses it via
+  `_is_gemini` branch.
+- **Gemma 4** (legacy fallback): does NOT support `response_format`
+  (causes empty `content`). Reads from `reasoning` field as
+  fallback. `max_tokens` ≥ 2200.
+- **Two-call analysis**: `analyze_listing_parallel` runs Call A
+  (price & market) and Call B (condition & risks) staggered by 1s
+  to avoid 429 rate limits, then merges + dedupes.
+- **Dedupe**: `dedupe_analysis_payload` collapses paraphrase
+  duplicates across all list fields. Cross-field rule: anything in
+  `condition.notes` is removed from `watch_out`/`red_flags`.
+- **Rate limit**: `ai_hourly_limit = 10` per user.
+- **Cache**: AI results cached for `ai_cache_hours = 1` hour.
+- **Timeout**: `ai_analysis_timeout = 150s`,
+  `ai_quick_condition_timeout = 45s`.
+
+---
+
+## 15. Configuration (`api/config.py`)
+
+| Env var | Default | Notes |
+|---------|---------|-------|
+| `BOT_TOKEN` | required | Telegram bot token + HMAC key |
+| `DATABASE_URL` | required | asyncpg connection string |
+| `REDIS_URL` | required | Redis connection string |
+| `API_BASE_URL` | required | Public API URL |
+| `MINI_APP_URL` | required | Public frontend URL |
+| `KUFAR_REQUEST_DELAY` | 1.0 | Delay between Kufar API calls |
+| `KUFAR_PARALLEL_SEMAPHORE` | 2 | Max parallel Kufar requests |
+| `KUFAR_TIMEOUT` | 15.0 | Kufar HTTP timeout |
+| `KUFAR_MAX_ADS_PER_QUERY` | 1500 | Pagination cap |
+| `ALERT_CHECK_INTERVAL` | 30 | Scheduler check interval (min) |
+| `CACHE_TTL_SECONDS` | 300 | Redis cache TTL |
+| `AUTO_REMOVE_MISSING_DAYS` | 7 | Auto-remove missing listings |
+| `MAX_TRACKERS_PER_USER` | 50 | Tracker limit |
+| `DEBUG` | false | Bypasses Telegram auth, opens CORS |
+| `DB_POOL_SIZE` | 10 | SQLAlchemy pool size |
+| `DB_MAX_OVERFLOW` | 20 | SQLAlchemy max overflow |
+| `AI_API_KEY` | None | Together AI API key |
+| `AI_BASE_URL` | `https://api.together.xyz/v1` | OpenAI-compatible base |
+| `AI_MODEL` | `google/gemma-4-31B-it` | Model ID |
+| `AI_MAX_IMAGES` | 3 | Max images per analysis |
+| `AI_CACHE_HOURS` | 1 | AI result cache duration |
+| `AI_HOURLY_LIMIT` | 10 | Rate limit per user |
+| `AI_PROXY_URL` | None | HTTP proxy for AI calls |
+| `AI_ANALYSIS_TIMEOUT` | 150 | Full analysis timeout (s) |
+| `AI_QUICK_CONDITION_TIMEOUT` | 45 | Quick condition timeout (s) |
+
+---
+
+## 16. Migrations
+
+21 migrations in `migrations/versions/`. Key ones:
+
+| Migration | Purpose |
+|-----------|---------|
+| `20260405_0001` | Create trackers |
+| `20260406_0002` | History and price tracking |
+| `20260406_0006` | Workflow items (leads + watchlist) |
+| `20260407_0009` | Users table + FK constraints |
+| `20260407_0010` | Expenses, contacts, sold fields |
+| `20260427_0001` | **Merge watchlist into leads** (critical) |
+| `20260428_0001` | Lead item price snapshots |
+| `20260428_0002` | Tracker alert thresholds |
+
+---
+
+## 17. Conventions
 
 - **Ruff**: `E/W/F/I/N/UP/B/SIM/TCH`, line length 99, isort
-  known-first-party `[api, bot, scheduler]`. `UP017` is ignored
+  known-first-party `[api, bot, scheduler]`. `UP017` ignored
   (`datetime.UTC` doesn't exist on the `datetime` class — use
-  `from datetime import UTC, datetime` and `datetime.now(UTC)`).
+  `from datetime import UTC`).
 - **Async everywhere**: SQLAlchemy async sessions, httpx async,
   aiogram 3.
 - **No frontend build step.** Don't add bundlers. Vanilla JS only.
 - **XSS prevention**: `escapeHtml()` for text, `safeUrl()` for
   href/src (blocks `javascript:` / `data:`).
 - **Currency**: BYN in DB always.
-- **Don't add comments unless asked** — that's a project rule from
-  `CLAUDE.md`. (Doc strings on new helpers are fine.)
-- **Dont add documentation files describing your changes** — but
-  this `INIT.md` is an exception, it's an onboarding handover.
+- **No comments unless asked.** Docstrings on new helpers are fine.
+- **Hex colors only inside theme blocks** (tokens.css dark/light).
+  Use CSS vars elsewhere.
+- **CSS rebuild**: `uv run python scripts/rebuild_css.py` after
+  editing any partial.
+- **`?v=` cache-bust**: must be bumped in `index.html` for all
+  CSS/JS references after any change.
 
 ---
 
-## 11. How to verify your work
+## 18. How to verify your work
 
-Before saying "done":
-1. `uv run ruff check .` clean.
-2. `uv run pytest` — 151+ passing (don't break existing tests).
-3. For backend changes affecting Kufar: hit `/api/v1/health`,
-   `/api/v1/price-stats?query=…`, `/api/v1/listings?query=…`
-   with curl. The dev API listens on `127.0.0.1:8010`. Use
-   `--noproxy '*'` with curl when there's a proxy in `.env`.
-4. For frontend: open the Mini App via Telegram tunnel
-   (`./start-local.sh --with-tunnel`) and walk the touched flow.
-5. Commit messages: imperative mood, "why" not "what". Use the
-   project's `git commit -m "$(cat <<'EOF' …` heredoc pattern with
-   the Devin co-author trailer.
+1. `uv run ruff check .` — clean.
+2. `uv run pytest` — 215 passing.
+3. `node --check frontend/js/<changed-file>.js` — syntax OK.
+4. Backend: `curl http://127.0.0.1:8010/api/v1/health`.
+5. Frontend: open via Telegram tunnel (`./start-local.sh --with-tunnel`).
+6. CSS: `uv run python scripts/rebuild_css.py` + bump `?v=`.
 
 ---
 
-## 12. Common debug recipes
+## 19. Debug recipes
 
-- **"Внутренняя ошибка сервера"** — check `tail -50 /tmp/rafuk-api.log`
-  for the FastAPI traceback.
-- **MissingGreenlet on a Pydantic field** — you forgot
-  `await session.refresh(obj)` after `session.commit()`. The ORM
-  attribute lazy-loads in a sync context and explodes.
-- **Kufar 422 with `details: "translation not found for X"`** —
-  param name typo. Their API only knows `cur`, `cat`, `rgn`, `cnd`,
-  `size`, `sort`, `cursor`. No `otype`, no `aggregations`, no
-  `currency` (the long form).
-- **`unique constraint chk_lead_items_status` violation** — you
-  added a status the DB constraint doesn't know about. Check
-  `migrations/versions/20260427_0001_merge_watchlist_into_leads.py`
-  for the allowed enum and add a migration if you need a new state.
-- **Frontend tab counter stale** — make sure you call both
-  `loadLeads()` and `loadWatchlist()` in parallel after a mutation,
-  the surfaces share the same row but are queried separately.
-
----
-
-**TL;DR for the impatient**: read commits `c4a07bf` →
-`a757a12` to see the recent direction. The DB merge is done; the
-two pending milestones are (a) one shared card builder for both
-surfaces, (b) swipe-to-promote gesture on watching cards. Don't
-bring back `watchlist_items` table.
+- **"Внутренняя ошибка сервера"** — `tail -50 /tmp/rafuk-api.log`
+- **MissingGreenlet** — forgot `await session.refresh(obj)` after
+  `session.commit()`.
+- **Kufar 422 "translation not found"** — param name typo. Only
+  `cur`, `cat`, `rgn`, `cnd`, `size`, `sort`, `cursor` are valid.
+- **`unique constraint chk_lead_items_status`** — you added a
+  status the DB constraint doesn't know. Check migration
+  `20260427_0001` for the allowed enum.
+- **Frontend tab counter stale** — call both `loadLeads()` and
+  `loadWatchlist()` after a mutation.
+- **AI returns empty content** — you used `response_format` with
+  Gemma 4. Only Gemini supports it.
+- **Pinch-zoom jumps on start** — check that `transformOrigin` is
+  `"0 0"` and anchor point is computed from `viewportToImage()`.
+- **CSS changes not showing** — rebuild CSS + bump `?v=`.

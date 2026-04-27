@@ -82,7 +82,6 @@ function createAppCore() {
         creatingTracker: false,
         modalCleanup: null,
         searchAbortController: null,
-        opportunityBoard: { items: [], top_price_drops: [], rare_opportunities: [], market_signals: [] },
         dirtyViews: new Set(),
         _allDirty: true,
         detail: null,

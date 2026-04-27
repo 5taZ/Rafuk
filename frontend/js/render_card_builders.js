@@ -203,92 +203,6 @@ function createRenderCardBuilders(context) {
         return listing;
     }
 
-    function buildOpportunityCard(item, extraBadge, verdictClassName) {
-        const reasons = (item.listing.deal_reasons || []).join(" · ");
-        const badge = item.signal_label || extraBadge;
-        const meta = domEl(
-            "div",
-            { className: "opportunity-meta" },
-            domEl("span", { className: "mono", text: formatPrice(item.listing.price) }),
-            domEl("span", { text: item.listing.region_name || "Без региона" }),
-        );
-        if (badge) meta.appendChild(domEl("span", { className: "board-inline-flag", text: badge }));
-
-        const card = domEl(
-            "article",
-            { className: "opportunity-card" },
-            domEl(
-                "div",
-                { className: "opportunity-top" },
-                domEl("span", { className: "badge", text: item.saved_search_name }),
-                domEl("span", {
-                    className: `listing-signal verdict verdict-${verdictClassName(item.listing.deal_verdict || "Смотреть")}`,
-                    text: `${item.listing.deal_verdict || "Смотреть"} · ${Math.round(item.listing.deal_score || 0)}`,
-                }),
-            ),
-            domEl("strong", { className: "opportunity-title", text: item.listing.title }),
-            meta,
-            reasons ? domEl("p", { className: "opportunity-copy", text: reasons }) : null,
-            domEl(
-                "div",
-                { className: "listing-actions" },
-                domEl("button", { className: "ghost-btn small", type: "button", dataset: { role: "open-query" }, text: "Открыть запрос" }),
-                domEl("button", { className: "ghost-btn small", type: "button", dataset: { role: "open-detail" }, text: "Подробнее" }),
-                domEl("button", { className: "ghost-btn small", type: "button", dataset: { role: "lead" }, text: "В покупки" }),
-                domEl("button", { className: "ghost-btn small", type: "button", dataset: { role: "watch" }, text: "В избранное" }),
-                domEl("a", {
-                    className: "primary-link small",
-                    text: "Kufar",
-                    attrs: { href: safeUrl(item.listing.link), target: "_blank", rel: "noreferrer noopener" },
-                }),
-            ),
-        );
-        card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
-            if (context._hooks?.showToast) context._hooks.showToast("Загружаю...");
-            void actions.openOpportunityQuery(item);
-        });
-        card.querySelector('[data-role="open-detail"]')?.addEventListener("click", () => {
-            if (context._hooks?.showToast) context._hooks.showToast("Открываю...");
-            void actions.openOpportunityDetail(item);
-        });
-        card.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
-            void actions.addLeadFromListing(item.listing, "opportunity_board", item.query);
-        });
-        card.querySelector('[data-role="watch"]')?.addEventListener("click", () => {
-            void actions.addWatchlistFromListing(item.listing, item.query);
-        });
-        return card;
-    }
-
-    function buildSignalRow(signal, clickable) {
-        const row = domEl(
-            "div",
-            { className: "tracker-row signal-row" },
-            domEl(
-                "div",
-                { className: "tracker-row-main" },
-                domEl("strong", { className: "tracker-query", text: signal.title }),
-                domEl("span", { className: "tracker-meta mono", text: `${signal.subtitle} • ${signal.metric}` }),
-            ),
-            clickable
-                ? domEl(
-                    "div",
-                    { className: "tracker-row-actions" },
-                    domEl("button", { className: "ghost-btn small", type: "button", text: "Открыть" }),
-                )
-                : null,
-        );
-        if (clickable) {
-            row.querySelector("button")?.addEventListener("click", () => {
-                if (context._hooks?.showToast) context._hooks.showToast("Загружаю...");
-                elements.searchInput.value = signal.query;
-                state.query = signal.query;
-                void actions.search("overview");
-            });
-        }
-        return row;
-    }
-
     /* ─────────────────────────────────────────────────────────────────
      * Unified item card — watchlist (`mode='watching'`) and lead
      * (`mode='lead'`) share the same lead_items row after the
@@ -830,8 +744,6 @@ function createRenderCardBuilders(context) {
 
     return {
         buildListingNode,
-        buildOpportunityCard,
-        buildSignalRow,
         buildItemCard,
         buildLeadNode,
         buildWatchlistNode,

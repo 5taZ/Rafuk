@@ -207,13 +207,6 @@ def analyze_query_text(value: str) -> QueryInsights:
     )
 
 
-def default_saved_search_name(query: str) -> str:
-    insights = analyze_query_text(query)
-    if insights.config_summary:
-        return f"{query.strip()} · {insights.config_summary}"[:128]
-    return query.strip()[:128]
-
-
 def default_config_keyword(query: str) -> str:
     return analyze_query_text(query).normalized_query[:128]
 

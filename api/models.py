@@ -52,15 +52,10 @@ class User(Base):
 
     # Relationships
     trackers = relationship("Tracker", back_populates="user", cascade="all, delete-orphan")
-    saved_searches = relationship(
-        "SavedSearch", back_populates="user", cascade="all, delete-orphan"
-    )
     tracker_events = relationship(
         "TrackerEvent", back_populates="user", cascade="all, delete-orphan"
     )
     lead_items = relationship("LeadItem", back_populates="user", cascade="all, delete-orphan")
-    # Watchlist items (status='watching') now live in lead_items — see
-    # migration 20260427_0001. The legacy `watchlist_items` table is gone.
 
     __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
 
@@ -174,41 +169,6 @@ class Tracker(
         kwargs.setdefault("active", True)
         kwargs.setdefault("strict_mode", False)
         kwargs.setdefault("paused", False)
-        super().__init__(**kwargs)
-
-
-class SavedSearch(
-    Base,
-    UserIDMixin,
-    QueryTrackingMixin,
-    TrackerFiltersMixin,
-    ActiveMixin,
-    TimestampMixin,
-):
-    __tablename__ = "saved_searches"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
-    group_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    target_discount_percent: Mapped[float] = mapped_column(
-        Float,
-        nullable=False,
-        default=10.0,
-        server_default="10",
-    )
-
-    # Relationships
-    user = relationship("User", back_populates="saved_searches")
-
-    __table_args__ = (
-        Index("idx_saved_searches_user", "user_id"),
-        Index("idx_saved_searches_active", "active"),
-    )
-
-    def __init__(self, **kwargs: object) -> None:
-        kwargs.setdefault("strict_mode", False)
-        kwargs.setdefault("target_discount_percent", 10.0)
-        kwargs.setdefault("active", True)
         super().__init__(**kwargs)
 
 
@@ -447,34 +407,4 @@ class DealExpense(Base):
     __table_args__ = (
         Index("idx_deal_expenses_lead", "lead_id"),
         Index("idx_deal_expenses_user", "user_id"),
-    )
-
-
-class Contact(Base):
-    """Seller contacts extracted from listings."""
-
-    __tablename__ = "contacts"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    seller_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    kufar_profile: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    saved_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-    )
-
-    # Relationships
-    user = relationship("User")
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "phone", name="uq_contacts_user_phone"),
-        Index("idx_contacts_user", "user_id"),
     )

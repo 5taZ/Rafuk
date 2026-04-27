@@ -16,8 +16,6 @@ from api.limiter import limiter
 from api.routers import (
     ai_analysis,
     analytics,
-    contacts,
-    currency,
     expenses,
     export,
     geography,
@@ -27,8 +25,6 @@ from api.routers import (
     listings,
     price_history,
     price_stats,
-    risks,
-    saved_searches,
     segments,
     trackers,
     workflow,
@@ -156,15 +152,11 @@ def create_app() -> FastAPI:
     app.include_router(listings.router, prefix="/api/v1")
     app.include_router(segments.router, prefix="/api/v1")
     app.include_router(geography.router, prefix="/api/v1")
-    app.include_router(currency.router, prefix="/api/v1")
     app.include_router(listing_detail.router, prefix="/api/v1")
     app.include_router(trackers.router, prefix="/api/v1")
-    app.include_router(saved_searches.router, prefix="/api/v1")
     app.include_router(workflow.router, prefix="/api/v1")
-    app.include_router(contacts.router, prefix="/api/v1")
     app.include_router(expenses.router, prefix="/api/v1")
     app.include_router(health.router, prefix="/api/v1")
-    app.include_router(risks.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
     app.include_router(ai_analysis.router, prefix="/api/v1")
     app.include_router(image_proxy.router, prefix="/api/v1")

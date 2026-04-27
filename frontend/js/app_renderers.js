@@ -108,7 +108,6 @@ function createAppRenderers(context) {
         renderListingsCollection,
         renderListings,
         renderDeals,
-        renderOpportunityBoard,
         renderLeads,
         renderWatchlist,
     } = cards;
@@ -266,7 +265,6 @@ function createAppRenderers(context) {
         renderListingsCollection,
         renderListings,
         renderDeals,
-        renderOpportunityBoard,
         renderTrackerStatus,
         renderTrackers,
         renderTrackerEvents,

@@ -1,4 +1,4 @@
-"""AI Analysis router — listing analysis and quick condition assessment."""
+"""AI Analysis router — listing analysis and listing assistant."""
 
 from __future__ import annotations
 
@@ -26,8 +26,6 @@ from api.schemas import (
     AIListingPriceTier,
     AIListingPricing,
     AINegotiationCounter,
-    AIQuickConditionRequest,
-    AIQuickConditionResponse,
     AIResalePotential,
     AIResalePrice,
 )
@@ -1003,81 +1001,6 @@ async def get_export_report(token: str):
     )
 
 
-@router.post("/quick-condition", response_model=AIQuickConditionResponse)
-async def quick_condition(
-    payload: AIQuickConditionRequest,
-    request: Request,
-    _user=Depends(get_telegram_user),
-    kufar_client: KufarClient = Depends(get_kufar_client),
-):
-    """Quick condition assessment from listing photos."""
-    ai = _check_ai_available()
-    await _check_rate_limit(request, _user.user_id)
-
-    settings = getattr(request.app.state, "settings", None)
-    if settings is None:
-        settings = get_settings()
-
-    dataset = await load_query_dataset(
-        query=payload.query,
-        currency="BYN",
-        strict_search=False,
-        settings=settings,
-        client=kufar_client,
-        category=payload.category,
-    )
-
-    target_ad = next(
-        (ad for ad in dataset.ads if int(ad.get("ad_id", 0)) == payload.ad_id),
-        None,
-    )
-    if not target_ad:
-        raise HTTPException(status_code=404, detail="Объявление не найдено")
-
-    images = []
-    for img in (target_ad.get("images") or [])[:3]:
-        path = img.get("path", "")
-        if path:
-            images.append(f"https://rms.kufar.by/v1/gallery/{path}")
-
-    if not images:
-        raise HTTPException(status_code=400, detail="Нет фото для анализа")
-
-    # Quick-condition is cheap to recompute but resellers often re-open the
-    # same listing detail multiple times; cache by (ad_id, image set) so the
-    # second tap is instant. Photos are part of the key so a re-uploaded
-    # listing invalidates correctly.
-    cache = get_cache(request)
-    cache_key = _quick_condition_cache_key(payload.ad_id, images)
-    cached = await cache.get_json(cache_key)
-    if isinstance(cached, dict):
-        try:
-            return AIQuickConditionResponse.model_validate(cached)
-        except ValidationError:
-            logger.info("Quick condition cache hit was stale, recomputing")
-
-    quick_condition_timeout = getattr(settings, "ai_quick_condition_timeout", 45)
-    try:
-        result = await asyncio.wait_for(
-            ai.quick_condition(images), timeout=quick_condition_timeout
-        )
-    except (TimeoutError, httpx.HTTPError, RuntimeError, ValueError) as exc:
-        logger.error("Quick condition failed: %s", exc)
-        err_msg = "AI сервис недоступен"
-        if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
-            err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
-        raise HTTPException(status_code=502, detail=err_msg) from None
-
-    response = AIQuickConditionResponse(
-        ad_id=payload.ad_id,
-        condition=result.get("condition", ""),
-        notes=result.get("notes", []),
-    )
-    cache_ttl = int(getattr(settings, "ai_quick_condition_cache_ttl", 1800) or 1800)
-    await cache.set_json(cache_key, response.model_dump(mode="json"), ttl=cache_ttl)
-    return response
-
-
 def _coerce_price(value: Any) -> float | None:
     if value is None:
         return None
@@ -1191,18 +1114,6 @@ def _coerce_listing_photos(raw: list[str] | None) -> list[str]:
         if len(cleaned) >= 4:
             break
     return cleaned
-
-
-def _quick_condition_cache_key(ad_id: int, image_urls: list[str]) -> str:
-    """Stable cache key for /ai/quick-condition.
-
-    Sorted image URLs go into the hash so re-ordering the listing's
-    photos doesn't bypass the cache, but a genuinely new photo URL does.
-    """
-    sorted_urls = sorted(image_urls or [])
-    serialised = f"v1|ad={ad_id}|imgs={'|'.join(sorted_urls)}"
-    digest = hashlib.sha256(serialised.encode("utf-8")).hexdigest()
-    return f"ai_quick:{digest}"
 
 
 def _listing_assistant_cache_key(

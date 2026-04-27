@@ -8,7 +8,6 @@ def test_tracker_table_exists() -> None:
     assert "query_snapshots" in Base.metadata.tables
     assert "query_listing_states" in Base.metadata.tables
     assert "tracker_events" in Base.metadata.tables
-    assert "saved_searches" in Base.metadata.tables
     assert "lead_items" in Base.metadata.tables
     # `watchlist_items` was merged into `lead_items` (status='watching')
     # in migration 20260427_0001.
@@ -74,14 +73,6 @@ def test_history_tables_have_indexes() -> None:
     assert "idx_tracker_events_created" in tracker_event_indexes
     tracker_event_columns = {column.name for column in tracker_events.columns}
     assert "ad_id" in tracker_event_columns
-
-    saved_searches = Base.metadata.tables["saved_searches"]
-    saved_search_indexes = {index.name for index in saved_searches.indexes}
-    assert "idx_saved_searches_user" in saved_search_indexes
-    assert "idx_saved_searches_active" in saved_search_indexes
-    saved_search_columns = {column.name for column in saved_searches.columns}
-    assert "group_name" in saved_search_columns
-    assert "exclude_duplicates" in saved_search_columns
 
     lead_items = Base.metadata.tables["lead_items"]
     lead_item_indexes = {index.name for index in lead_items.indexes}

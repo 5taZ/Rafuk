@@ -69,8 +69,6 @@ function createApiEvents(context) {
         deleteAllWatchlist,
         refreshWatchlist,
         refreshLeads,
-        openOpportunityQuery,
-        openOpportunityDetail,
         applyLaunchParams,
         loadExpenses,
         createExpense,
