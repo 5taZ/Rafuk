@@ -2599,8 +2599,16 @@ body {
 /* Action buttons — uniform row */
 .listing-actions {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 6px;
+}
+
+.listing-top {
+    cursor: pointer;
+}
+
+.listing-top:active {
+    opacity: 0.85;
 }
 
 .listing-btn {
@@ -2634,17 +2642,24 @@ body {
     transform: scale(0.98);
 }
 
-.listing-btn--accent {
-    color: var(--white);
-    background: var(--accent);
-    border-color: var(--accent);
+.listing-btn--accent,
+.listing-btn--kufar {
+    color: var(--text-muted);
+    background: transparent;
+    border-color: var(--border);
     font-weight: 600;
 }
 
-.listing-btn--accent:hover {
-    background: var(--accent-dark);
-    border-color: var(--accent-dark);
-    color: var(--white);
+.listing-btn--accent:hover,
+.listing-btn--kufar:hover {
+    border-color: var(--border-hover);
+    color: var(--text);
+    background: var(--bg-elevated);
+}
+
+.listing-btn--accent:active,
+.listing-btn--kufar:active {
+    transform: scale(0.98);
 }
 
 
@@ -7263,8 +7278,8 @@ body {
 .stat-card,
 .tracker-card,
 .helper-panel {
-    background: color-mix(in srgb, var(--bg-card) 92%, var(--accent) 8%);
-    border-color: color-mix(in srgb, var(--border) 82%, var(--accent) 18%);
+    background: var(--bg-card);
+    border-color: var(--border);
 }
 
 [data-theme="light"] .quick-chip,
@@ -7311,8 +7326,8 @@ body {
 
 .summary-pill,
 .range-item {
-    background: color-mix(in srgb, var(--bg-elevated) 88%, var(--accent) 12%);
-    border-color: color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
+    background: var(--bg-elevated);
+    border-color: var(--border);
 }
 
 .listing {
@@ -7322,14 +7337,14 @@ body {
 }
 
 .listing:hover {
-    background: color-mix(in srgb, var(--bg-hover) 88%, var(--accent) 12%);
+    background: var(--bg-hover);
 }
 
 .listing-thumb {
     width: 76px;
     height: 76px;
     border-radius: 14px;
-    border-color: color-mix(in srgb, var(--border) 74%, var(--accent) 26%);
+    border-color: var(--border);
 }
 
 .listing-name {
@@ -7338,7 +7353,7 @@ body {
 }
 
 .listing-price {
-    color: color-mix(in srgb, var(--text) 88%, var(--accent) 12%);
+    color: var(--text);
 }
 
 .listing-badge {
@@ -7346,7 +7361,7 @@ body {
 }
 
 .listing-btn {
-    background: color-mix(in srgb, var(--bg-card) 84%, var(--accent) 16%);
+    background: var(--bg-card);
 }
 
 .listing-btn--ai {

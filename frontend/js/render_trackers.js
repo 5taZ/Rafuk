@@ -431,7 +431,7 @@ function createRenderTrackers(context) {
                     domEl("button", { className: "listing-btn", type: "button", dataset: { role: "open-query" }, text: "Открыть" }),
                     domEl("button", { className: "listing-btn", type: "button", dataset: { role: "lead" }, text: "В покупки" }),
                     domEl("a", {
-                        className: "listing-btn listing-btn--accent",
+                        className: "listing-btn listing-btn--kufar",
                         text: "Kufar →",
                         attrs: { href: safeUrl(event.link), target: "_blank", rel: "noreferrer noopener" },
                     }),

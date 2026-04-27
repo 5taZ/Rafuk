@@ -144,11 +144,10 @@ function createRenderCardBuilders(context) {
                 domEl(
                     "div",
                     { className: "listing-actions" },
-                    domEl("button", { className: "listing-btn", type: "button", text: "Подробнее" }),
                     domEl("button", { className: "listing-btn", type: "button", dataset: { role: "lead" }, text: "В покупки" }),
                     domEl("button", { className: "listing-btn", type: "button", dataset: { role: "watch" }, text: "В избранное" }),
                     domEl("a", {
-                        className: "listing-btn listing-btn--accent",
+                        className: "listing-btn listing-btn--kufar",
                         text: "Kufar",
                         attrs: { href: safeUrl(item.link), target: "_blank", rel: "noreferrer noopener" },
                     }),
@@ -156,28 +155,25 @@ function createRenderCardBuilders(context) {
             )
         );
 
-        listing.querySelector("button")?.addEventListener("click", () => {
+        listing.querySelector(".listing-top")?.addEventListener("click", () => {
             void actions.openListingDetail(item);
         });
-        listing.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
+        listing.querySelector('[data-role="lead"]')?.addEventListener("click", (e) => {
+            e.stopPropagation();
             void actions.addLeadFromListing(item);
         });
-        listing.querySelector('[data-role="watch"]')?.addEventListener("click", () => {
+        listing.querySelector('[data-role="watch"]')?.addEventListener("click", (e) => {
+            e.stopPropagation();
             void actions.addWatchlistFromListing(item);
         });
 
-        // Long-press the card to invoke a quick-action menu — same
-        // actions as the inline buttons plus a direct "Открыть на
+        // Long-press the card to invoke a quick-action menu —
+        // actions beyond the inline buttons plus a direct "Открыть на
         // Kufar" shortcut, surfaced via a bottom sheet so cluttered
         // search results stay scannable. Helper falls back to a no-op
         // on desktop / when touch events never fire.
         if (typeof attachLongPress === "function") {
             attachLongPress(listing, () => [
-                {
-                    label: "Подробнее",
-                    icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
-                    onSelect: () => actions.openListingDetail(item),
-                },
                 {
                     label: "В покупки",
                     tone: "accent",

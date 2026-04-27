@@ -523,210 +523,251 @@ function setupPullToRefresh(options) {
  *
  * Returns a small controller with .reset() so the caller can clear the
  * zoom when navigating to a different photo or closing the modal.
+ *
+ * Transform model:
+ *   transform: translate3d(tx, ty, 0) scale(s)
+ *   transform-origin: 0 0
+ *
+ * The image is positioned so that the point (px, py) in image-local
+ * coordinates stays at the same viewport position when scale changes.
+ * This gives a natural "zoom towards the pinch center" feel.
+ *
+ *   tx = viewportX - px * s
+ *   ty = viewportY - py * s
+ *
+ * where (viewportX, viewportY) is the desired viewport position and
+ * (px, py) is the point in the image's own coordinate system.
  */
 function attachPinchZoom(img, options) {
     if (!img) return { reset: () => {} };
-    const minScale = options?.minScale ?? 1;
-    const maxScale = options?.maxScale ?? 4;
-    const doubleTapScale = options?.doubleTapScale ?? 2;
+    const MIN = options?.minScale ?? 1;
+    const MAX = options?.maxScale ?? 4;
+    const DOUBLE_TAP = options?.doubleTapScale ?? 2;
 
-    let scale = 1;
-    let tx = 0;
-    let ty = 0;
-    let pinchStartDistance = 0;
+    let s = 1;       // current scale
+    let tx = 0;      // current translate X (viewport px)
+    let ty = 0;      // current translate Y (viewport px)
+
+    // Pinch gesture state
+    let pinchStartDist = 0;
     let pinchStartScale = 1;
-    let pinchCenter = { x: 0, y: 0 };
+    let pinchAnchorPx = 0;   // image-local X of the pinch center
+    let pinchAnchorPy = 0;   // image-local Y of the pinch center
+    let pinchAnchorVx = 0;   // viewport X where anchor should stay
+    let pinchAnchorVy = 0;   // viewport Y where anchor should stay
+
+    // Pan gesture state
     let panStartX = 0;
     let panStartY = 0;
     let panBaseTx = 0;
     let panBaseTy = 0;
+
+    // Double-tap detection
     let lastTapTs = 0;
     let lastTapX = 0;
     let lastTapY = 0;
 
-    let cachedRect = null;
-    let rectDirty = true;
-
-    function markRectDirty() {
-        rectDirty = true;
-    }
-
-    function getRect() {
-        if (rectDirty || !cachedRect) {
-            cachedRect = img.getBoundingClientRect();
-            rectDirty = false;
-        }
-        return cachedRect;
-    }
+    // Cached base rect (before transform) — computed once on touchstart
+    let baseRect = null;
 
     function apply() {
-        img.style.transform =
-            `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
-        if (scale > 1.001) {
+        img.style.transformOrigin = "0 0";
+        img.style.transform = `translate3d(${tx}px,${ty}px,0) scale(${s})`;
+        if (s > 1.001) {
             img.classList.add("is-zoomed");
             img.style.willChange = "transform";
         } else {
             img.classList.remove("is-zoomed");
             img.style.willChange = "";
         }
-        markRectDirty();
     }
 
-    function reset(animate = true) {
-        scale = 1;
+    function reset(animate) {
+        s = 1;
         tx = 0;
         ty = 0;
         if (animate) {
-            img.style.transition =
-                "transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+            img.style.transition = "transform 220ms cubic-bezier(0.2,0.8,0.2,1)";
         } else {
             img.style.transition = "";
         }
         apply();
         if (animate) {
-            setTimeout(() => {
-                img.style.transition = "";
-            }, 240);
+            setTimeout(() => { img.style.transition = ""; }, 240);
         }
     }
 
-    /** Clamp the translate values so the image can't be panned out of
-     *  view at the current scale. Uses cached bounding rect to avoid
-     *  forced layout recalc on every touchmove. */
-    function clampPan() {
-        if (scale <= 1) {
+    /** Convert viewport coords to image-local coords using current state. */
+    function viewportToImage(vx, vy) {
+        return { x: (vx - tx) / s, y: (vy - ty) / s };
+    }
+
+    /** Clamp translate so the image cannot be dragged entirely off-screen.
+     *  Uses baseRect (the element's un-transformed bounding box) so the
+     *  calculation is independent of the current transform. */
+    function clampTranslate() {
+        if (s <= 1) {
             tx = 0;
             ty = 0;
             return;
         }
-        const rect = getRect();
-        const overflowX = (rect.width * scale - rect.width) / 2;
-        const overflowY = (rect.height * scale - rect.height) / 2;
-        if (tx > overflowX) tx = overflowX;
-        if (tx < -overflowX) tx = -overflowX;
-        if (ty > overflowY) ty = overflowY;
-        if (ty < -overflowY) ty = -overflowY;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const iw = baseRect.width * s;
+        const ih = baseRect.height * s;
+
+        // The image rectangle in viewport coords is (tx, ty, iw, ih).
+        // Require at least 40px of the image to remain visible on each side.
+        const margin = 40;
+        const left = tx;
+        const right = tx + iw;
+        const top = ty;
+        const bottom = ty + ih;
+
+        if (iw <= vw) {
+            // Image narrower than viewport — center it
+            tx = (vw - iw) / 2;
+        } else if (left > margin) {
+            tx = margin;
+        } else if (right < vw - margin) {
+            tx = vw - margin - iw;
+        }
+
+        if (ih <= vh) {
+            ty = (vh - ih) / 2;
+        } else if (top > margin) {
+            ty = margin;
+        } else if (bottom < vh - margin) {
+            ty = vh - margin - ih;
+        }
     }
 
-    function distance(touches) {
-        const [a, b] = touches;
-        const dx = a.clientX - b.clientX;
-        const dy = a.clientY - b.clientY;
+    function dist(touches) {
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
         return Math.hypot(dx, dy);
     }
 
-    img.addEventListener(
-        "touchstart",
-        (event) => {
-            if (event.touches.length === 2) {
-                event.preventDefault();
-                pinchStartDistance = distance(event.touches);
-                pinchStartScale = scale;
-                pinchCenter = {
-                    x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
-                    y: (event.touches[0].clientY + event.touches[1].clientY) / 2,
-                };
-                markRectDirty();
-            } else if (event.touches.length === 1) {
-                const t = event.touches[0];
-                const now = Date.now();
-                const dx = t.clientX - lastTapX;
-                const dy = t.clientY - lastTapY;
-                if (now - lastTapTs < 280 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
-                    event.preventDefault();
-                    if (scale > 1.001) {
-                        reset(true);
-                    } else {
-                        scale = doubleTapScale;
-                        const rect = getRect();
-                        const cx = t.clientX - (rect.left + rect.width / 2);
-                        const cy = t.clientY - (rect.top + rect.height / 2);
-                        tx = -cx * (scale - 1);
-                        ty = -cy * (scale - 1);
-                        clampPan();
-                        img.style.transition =
-                            "transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)";
-                        apply();
-                        setTimeout(() => {
-                            img.style.transition = "";
-                        }, 240);
-                    }
-                    lastTapTs = 0;
-                    return;
-                }
-                lastTapTs = now;
-                lastTapX = t.clientX;
-                lastTapY = t.clientY;
-                if (scale > 1.001) {
-                    panStartX = t.clientX;
-                    panStartY = t.clientY;
-                    panBaseTx = tx;
-                    panBaseTy = ty;
-                    markRectDirty();
-                }
-            }
-        },
-        { passive: false },
-    );
+    // ── touchstart ──────────────────────────────────────────────────────
+    img.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            // Snapshot the base rect (no transform) for clamp calculations.
+            // Temporarily remove transform to get the natural size.
+            const savedTransform = img.style.transform;
+            const savedOrigin = img.style.transformOrigin;
+            img.style.transform = "none";
+            img.style.transformOrigin = "0 0";
+            baseRect = img.getBoundingClientRect();
+            img.style.transform = savedTransform;
+            img.style.transformOrigin = savedOrigin;
 
-    img.addEventListener(
-        "touchmove",
-        (event) => {
-            if (event.touches.length === 2) {
-                event.preventDefault();
-                const d = distance(event.touches);
-                if (pinchStartDistance > 0) {
-                    const newCenter = {
-                        x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
-                        y: (event.touches[0].clientY + event.touches[1].clientY) / 2,
-                    };
-                    let next = pinchStartScale * (d / pinchStartDistance);
-                    if (next < minScale) next = minScale;
-                    if (next > maxScale) next = maxScale;
+            pinchStartDist = dist(e.touches);
+            pinchStartScale = s;
 
-                    const scaleDelta = next - scale;
-                    if (Math.abs(scaleDelta) > 0.001) {
-                        const rect = getRect();
-                        const cx = pinchCenter.x - (rect.left + rect.width / 2);
-                        const cy = pinchCenter.y - (rect.top + rect.height / 2);
-                        tx -= cx * scaleDelta / scale;
-                        ty -= cy * scaleDelta / scale;
-                    }
+            // Pinch center in viewport coords
+            const cvx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            const cvy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
 
-                    scale = next;
-                    clampPan();
+            // Convert to image-local coords — this is the anchor point
+            const local = viewportToImage(cvx, cvy);
+            pinchAnchorPx = local.x;
+            pinchAnchorPy = local.y;
+            pinchAnchorVx = cvx;
+            pinchAnchorVy = cvy;
+
+        } else if (e.touches.length === 1) {
+            const t = e.touches[0];
+            const now = Date.now();
+            const dx = t.clientX - lastTapX;
+            const dy = t.clientY - lastTapY;
+
+            if (now - lastTapTs < 300 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
+                e.preventDefault();
+                if (s > 1.001) {
+                    reset(true);
+                } else {
+                    // Snapshot base rect
+                    const savedTransform = img.style.transform;
+                    const savedOrigin = img.style.transformOrigin;
+                    img.style.transform = "none";
+                    img.style.transformOrigin = "0 0";
+                    baseRect = img.getBoundingClientRect();
+                    img.style.transform = savedTransform;
+                    img.style.transformOrigin = savedOrigin;
+
+                    // Zoom towards the tap point
+                    const local = viewportToImage(t.clientX, t.clientY);
+                    s = DOUBLE_TAP;
+                    tx = t.clientX - local.x * s;
+                    ty = t.clientY - local.y * s;
+                    clampTranslate();
+                    img.style.transition = "transform 220ms cubic-bezier(0.2,0.8,0.2,1)";
                     apply();
+                    setTimeout(() => { img.style.transition = ""; }, 240);
                 }
-            } else if (event.touches.length === 1 && scale > 1.001) {
-                event.preventDefault();
-                const t = event.touches[0];
-                tx = panBaseTx + (t.clientX - panStartX);
-                ty = panBaseTy + (t.clientY - panStartY);
-                clampPan();
-                apply();
+                lastTapTs = 0;
+                return;
             }
-        },
-        { passive: false },
-    );
 
-    img.addEventListener(
-        "touchend",
-        (event) => {
-            if (event.touches.length === 0 && scale < 1.05 && scale !== 1) {
-                reset(true);
+            lastTapTs = now;
+            lastTapX = t.clientX;
+            lastTapY = t.clientY;
+
+            if (s > 1.001) {
+                panStartX = t.clientX;
+                panStartY = t.clientY;
+                panBaseTx = tx;
+                panBaseTy = ty;
             }
-            pinchStartDistance = 0;
-            markRectDirty();
-        },
-        { passive: true },
-    );
+        }
+    }, { passive: false });
+
+    // ── touchmove ───────────────────────────────────────────────────────
+    img.addEventListener("touchmove", (e) => {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            if (pinchStartDist <= 0) return;
+
+            const d = dist(e.touches);
+            let nextS = pinchStartScale * (d / pinchStartDist);
+            nextS = Math.max(MIN, Math.min(MAX, nextS));
+
+            // Recompute the viewport position of the pinch center
+            // so it tracks the moving fingers
+            const cvx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            const cvy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+
+            // Keep the anchor image point under the pinch center
+            tx = cvx - pinchAnchorPx * nextS;
+            ty = cvy - pinchAnchorPy * nextS;
+            s = nextS;
+
+            clampTranslate();
+            apply();
+
+        } else if (e.touches.length === 1 && s > 1.001) {
+            e.preventDefault();
+            tx = panBaseTx + (e.touches[0].clientX - panStartX);
+            ty = panBaseTy + (e.touches[0].clientY - panStartY);
+            clampTranslate();
+            apply();
+        }
+    }, { passive: false });
+
+    // ── touchend ────────────────────────────────────────────────────────
+    img.addEventListener("touchend", (e) => {
+        if (e.touches.length === 0 && s < 1.05 && s !== 1) {
+            reset(true);
+        }
+        pinchStartDist = 0;
+    }, { passive: true });
+
     img.addEventListener("touchcancel", () => reset(true), { passive: true });
 
     return {
         reset: (animate = true) => reset(animate),
-        get scale() {
-            return scale;
-        },
+        get scale() { return s; },
     };
 }
 

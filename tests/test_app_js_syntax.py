@@ -163,8 +163,10 @@ def test_listing_detail_loaders_share_stale_response_guard() -> None:
 
 def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:
     """A long press on a listing card surfaces a quick-action sheet
-    (Подробнее / В покупки / В избранное / Открыть на Kufar) so the
-    inline buttons stay scannable. The helper must:
+    (В покупки / В избранное / Открыть на Kufar) so the inline
+    buttons stay scannable. Tapping the card itself opens the detail
+    view, so "Подробнее" is no longer in the long-press menu. The
+    helper must:
       * cancel on movement past the tolerance (treat as scroll),
       * suppress the synthetic click after a long press fires,
       * fire haptics on commit (Telegram-native feel),
@@ -179,15 +181,17 @@ def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:
 
     builder = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
     assert "attachLongPress(listing" in builder
-    # The four action labels must be present in the menu so a casual
+    # The three action labels must be present in the menu so a casual
     # rename here trips the test instead of silently shipping.
     for label in (
-        '"Подробнее"',
         '"В покупки"',
         '"В избранное"',
         '"Открыть на Kufar"',
     ):
         assert label in builder, f"long-press menu missing item {label}"
+
+    # Tapping .listing-top opens the detail view
+    assert 'listing.querySelector(".listing-top")' in builder
 
     css = _read_all_css()
     for cls in (
@@ -228,15 +232,29 @@ def test_detail_modal_supports_pinch_zoom_with_swipe_deferral() -> None:
     attachPinchZoom (dom_helpers.js); when the image is zoomed
     (`.is-zoomed`) the swipe-between-photos handler in api_events.js
     must defer to the zoom interaction so panning a magnified shot
-    doesn't accidentally jump to the next photo."""
+    doesn't accidentally jump to the next photo.
+
+    The zoom uses a transform-origin: 0 0 model with anchor-point
+    math so the zoom focuses on the pinch center, not the image
+    center. No getBoundingClientRect() is called on touchmove —
+    the base rect is snapshotted once on touchstart."""
     helpers = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
     events = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
     modals = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
 
     assert "function attachPinchZoom" in helpers
-    # The helper must add an "is-zoomed" marker and provide a reset hook.
     assert "is-zoomed" in helpers
     assert "reset" in helpers
+
+    # Anchor-point model: transform-origin 0 0, viewportToImage helper
+    assert 'transformOrigin = "0 0"' in helpers or "transformOrigin: '0 0'" in helpers
+    assert "viewportToImage" in helpers
+    assert "pinchAnchorPx" in helpers
+    assert "pinchAnchorPy" in helpers
+
+    # Base rect is snapshotted on touchstart, not recalculated on move
+    assert "baseRect" in helpers
+    assert "clampTranslate" in helpers
 
     # The swipe-between-photos handler must short-circuit while zoomed
     # OR while the user has more than one finger on the screen.

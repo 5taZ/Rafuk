@@ -87,8 +87,8 @@ body {
 .stat-card,
 .tracker-card,
 .helper-panel {
-    background: color-mix(in srgb, var(--bg-card) 92%, var(--accent) 8%);
-    border-color: color-mix(in srgb, var(--border) 82%, var(--accent) 18%);
+    background: var(--bg-card);
+    border-color: var(--border);
 }
 
 [data-theme="light"] .quick-chip,
@@ -135,8 +135,8 @@ body {
 
 .summary-pill,
 .range-item {
-    background: color-mix(in srgb, var(--bg-elevated) 88%, var(--accent) 12%);
-    border-color: color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
+    background: var(--bg-elevated);
+    border-color: var(--border);
 }
 
 .listing {
@@ -146,14 +146,14 @@ body {
 }
 
 .listing:hover {
-    background: color-mix(in srgb, var(--bg-hover) 88%, var(--accent) 12%);
+    background: var(--bg-hover);
 }
 
 .listing-thumb {
     width: 76px;
     height: 76px;
     border-radius: 14px;
-    border-color: color-mix(in srgb, var(--border) 74%, var(--accent) 26%);
+    border-color: var(--border);
 }
 
 .listing-name {
@@ -162,7 +162,7 @@ body {
 }
 
 .listing-price {
-    color: color-mix(in srgb, var(--text) 88%, var(--accent) 12%);
+    color: var(--text);
 }
 
 .listing-badge {
@@ -170,7 +170,7 @@ body {
 }
 
 .listing-btn {
-    background: color-mix(in srgb, var(--bg-card) 84%, var(--accent) 16%);
+    background: var(--bg-card);
 }
 
 .listing-btn--ai {

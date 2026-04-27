@@ -1862,8 +1862,16 @@
 /* Action buttons — uniform row */
 .listing-actions {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 6px;
+}
+
+.listing-top {
+    cursor: pointer;
+}
+
+.listing-top:active {
+    opacity: 0.85;
 }
 
 .listing-btn {
@@ -1897,16 +1905,23 @@
     transform: scale(0.98);
 }
 
-.listing-btn--accent {
-    color: var(--white);
-    background: var(--accent);
-    border-color: var(--accent);
+.listing-btn--accent,
+.listing-btn--kufar {
+    color: var(--text-muted);
+    background: transparent;
+    border-color: var(--border);
     font-weight: 600;
 }
 
-.listing-btn--accent:hover {
-    background: var(--accent-dark);
-    border-color: var(--accent-dark);
-    color: var(--white);
+.listing-btn--accent:hover,
+.listing-btn--kufar:hover {
+    border-color: var(--border-hover);
+    color: var(--text);
+    background: var(--bg-elevated);
+}
+
+.listing-btn--accent:active,
+.listing-btn--kufar:active {
+    transform: scale(0.98);
 }
 
