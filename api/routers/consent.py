@@ -56,6 +56,10 @@ async def get_consent_status(
         consent = (await session.execute(stmt)).scalar_one_or_none()
 
     if consent:
+        # Consent is only valid if it matches the current policy version.
+        # When CURRENT_POLICY_VERSION is bumped, users must re-consent.
+        if consent.version != CURRENT_POLICY_VERSION:
+            return ConsentStatusResponse(consent_type=consent_type, granted=False)
         return ConsentStatusResponse(
             consent_type=consent_type,
             granted=True,
@@ -68,6 +72,7 @@ async def get_consent_status(
 @router.post("/consent", response_model=ConsentStatusResponse, status_code=201)
 async def grant_consent(
     payload: ConsentGrantRequest,
+    request: Request,
     _user=Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(
         get_session_factory_dependency
@@ -113,10 +118,18 @@ async def grant_consent(
         if existing:
             existing.revoked_at = datetime.now(UTC)
 
+        # Capture client IP for audit trail (Belarus Law No. 91-Z)
+        client_ip = request.client.host if request.client else None
+        # Trust X-Forwarded-For when behind nginx
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+
         consent = UserConsent(
             user_id=uid,
             consent_type=payload.consent_type,
             version=payload.version,
+            ip_address=client_ip,
         )
         session.add(consent)
         await session.commit()
@@ -209,6 +222,14 @@ async def delete_account(
         for prefix in (f"ai_rate:{_user.user_id}",):
             with contextlib.suppress(Exception):
                 await cache.delete(prefix)
+    except Exception:
+        pass
+
+    # Clear in-memory AI task/export shadow stores
+    try:
+        from api.routers.ai_analysis import clear_user_ai_data
+
+        clear_user_ai_data(_user.user_id)
     except Exception:
         pass
 

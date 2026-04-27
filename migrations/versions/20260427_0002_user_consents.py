@@ -34,6 +34,7 @@ def upgrade() -> None:
             nullable=False,
             server_default="2026.1",
         ),
+        sa.Column("ip_address", sa.String(45), nullable=True),
         sa.Column(
             "granted_at",
             sa.DateTime(timezone=True),

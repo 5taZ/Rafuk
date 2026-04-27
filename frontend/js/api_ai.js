@@ -501,6 +501,75 @@ function createApiAi(context) {
             );
         }
 
+        // ── Scam analysis ──────────────────────────────────────────────
+        if (data.scam_analysis) {
+            const scam = data.scam_analysis;
+            const riskMap = {
+                low: { text: "Низкий риск", cls: "ai-badge--good" },
+                medium: { text: "Средний риск", cls: "ai-badge--warn" },
+                high: { text: "Высокий риск", cls: "ai-badge--bad" },
+            };
+            const riskInfo = riskMap[scam.risk_level] || { text: scam.risk_level || "—", cls: "ai-badge--ok" };
+            const scamChildren = [
+                domEl("span", { className: `ai-badge ${riskInfo.cls}`, text: riskInfo.text }),
+            ];
+            if (scam.indicators?.length) {
+                scamChildren.push(
+                    domEl("ul", { className: "ai-scam-indicators" },
+                        scam.indicators.map((ind) => domEl("li", { text: ind })))
+                );
+            }
+            if (scam.seller_warnings?.length) {
+                scamChildren.push(
+                    domEl("div", { className: "ai-scam-seller-warnings" },
+                        domEl("span", { className: "ai-label-sub", text: "Продавец:" }),
+                        domEl("ul", { className: "ai-notes" },
+                            scam.seller_warnings.map((w) => domEl("li", { text: w }))))
+                );
+            }
+            if (scam.advice) {
+                scamChildren.push(
+                    domEl("p", { className: "ai-scam-advice", text: scam.advice })
+                );
+            }
+            nodes.push(
+                _buildAiSection("Безопасность сделки", domFragment(...scamChildren), "ai-section--scam")
+            );
+        }
+
+        // ── Photo authenticity ─────────────────────────────────────────
+        if (data.photo_authenticity) {
+            const photo = data.photo_authenticity;
+            const photoIssues = [];
+            if (photo.stock_photo_detected) photoIssues.push("Стоковое фото");
+            if (photo.duplicate_image_detected) photoIssues.push("Дубликат изображения");
+            if (photo.watermark_detected) photoIssues.push("Водяной знак");
+            if (photo.screenshot_detected) photoIssues.push("Скриншот вместо фото");
+            if (photo.issues?.length) {
+                photo.issues.forEach((iss) => { if (!photoIssues.includes(iss)) photoIssues.push(iss); });
+            }
+
+            const photoChildren = [];
+            if (photoIssues.length) {
+                photoChildren.push(
+                    domEl("ul", { className: "ai-photo-issues" },
+                        photoIssues.map((iss) => domEl("li", { className: "ai-photo-issue-item", text: iss })))
+                );
+            } else {
+                photoChildren.push(
+                    domEl("span", { className: "ai-badge ai-badge--good", text: "Фото выглядит подлинным" })
+                );
+            }
+            if (photo.confidence != null) {
+                photoChildren.push(
+                    domEl("span", { className: "ai-confidence", text: `уверенность ${Math.round(photo.confidence * 100)}%` })
+                );
+            }
+            nodes.push(
+                _buildAiSection("Аутентичность фото", domFragment(...photoChildren), "ai-section--photo-auth")
+            );
+        }
+
         if (data.condition) {
             const cond = data.condition;
             // Defensive: condition might be a string from cached/poll result

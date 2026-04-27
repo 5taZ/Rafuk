@@ -542,6 +542,7 @@ class ConsentRead(BaseModel):
     user_id: int
     consent_type: str
     version: str
+    ip_address: str | None = None
     granted_at: datetime
     revoked_at: datetime | None = None
 
@@ -602,6 +603,76 @@ class AISimilarListing(BaseModel):
     ai_note: str = ""
 
 
+class AIScamAnalysis(BaseModel):
+    """AI scam/fraud detection result."""
+
+    risk_level: str = ""  # "low" | "medium" | "high"
+    indicators: list[str] = Field(default_factory=list)
+    photo_issues: list[str] = Field(default_factory=list)
+    seller_warnings: list[str] = Field(default_factory=list)
+    advice: str = ""
+
+
+class AIPhotoAuthenticity(BaseModel):
+    """AI photo authenticity check result."""
+
+    stock_photo_detected: bool = False
+    duplicate_image_detected: bool = False
+    watermark_detected: bool = False
+    screenshot_detected: bool = False
+    issues: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+
+
+class AINegotiateRequest(BaseModel):
+    """Buyer negotiation request — generate counter-offer text."""
+
+    ad_id: int
+    asking_price_byn: float
+    my_offer_byn: float
+    query: str = Field(min_length=1, max_length=200)
+    condition: str | None = None
+    market_context: str | None = None
+
+
+class AINegotiateResponse(BaseModel):
+    """AI-generated negotiation text for buyer."""
+
+    opening_line: str = ""
+    counter_offer_text: str = ""
+    fallback_text: str = ""
+    tips: list[str] = Field(default_factory=list)
+    disclaimer: str = (
+        "Сгенерированный текст носит информационный характер. "
+        "Решение о цене и условиях сделки пользователь принимает самостоятельно. "
+        "AI не является представителем покупателя и не гарантирует результат переговоров."
+    )
+
+
+class AIPriceAdviceRequest(BaseModel):
+    """Price monitoring advice request — should I buy now or wait?"""
+
+    query: str = Field(min_length=1, max_length=200)
+    current_price_byn: float
+    category: int | None = None
+
+
+class AIPriceAdviceResponse(BaseModel):
+    """AI price timing advice — not an investment recommendation."""
+
+    advice: str = ""  # "buy_now" | "wait" | "neutral"
+    reasoning: str = ""
+    price_trend: str = ""  # "rising" | "stable" | "declining" | "volatile"
+    historical_context: str = ""
+    confidence: float = 0.0
+    disclaimer: str = (
+        "Данная оценка НЕ является инвестиционной или финансовой рекомендацией. "
+        "Рыночные цены могут изменяться непредсказуемо. Решение о покупке "
+        "пользователь принимает самостоятельно на свой страх и риск. "
+        "Прошлые ценовые тренды не гарантируют будущее поведение рынка."
+    )
+
+
 class AIAnalysisResponse(BaseModel):
     ad_id: int
     condition: AIConditionAssessment | None = None
@@ -614,6 +685,8 @@ class AIAnalysisResponse(BaseModel):
     meeting_checklist: list[str] = Field(default_factory=list)
     negotiation_tips: list[str] = Field(default_factory=list)
     red_flags: list[str] = Field(default_factory=list)
+    scam_analysis: AIScamAnalysis | None = None
+    photo_authenticity: AIPhotoAuthenticity | None = None
     market_context: str = ""
     best_pick_reason: str = ""
     summary: str = ""
