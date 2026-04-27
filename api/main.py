@@ -16,7 +16,6 @@ from api.limiter import limiter
 from api.routers import (
     ai_analysis,
     analytics,
-    compare,
     contacts,
     currency,
     expenses,
@@ -158,7 +157,6 @@ def create_app() -> FastAPI:
     app.include_router(segments.router, prefix="/api/v1")
     app.include_router(geography.router, prefix="/api/v1")
     app.include_router(currency.router, prefix="/api/v1")
-    app.include_router(compare.router, prefix="/api/v1")
     app.include_router(listing_detail.router, prefix="/api/v1")
     app.include_router(trackers.router, prefix="/api/v1")
     app.include_router(saved_searches.router, prefix="/api/v1")

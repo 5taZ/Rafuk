@@ -1,8 +1,8 @@
 /**
- * api_listings.js — Search, listings, deals, comparison, and detail loading.
+ * api_listings.js — Search, listings, deals, and detail loading.
  *
- * All functions that fetch and manage listing data, search orchestration,
- * and price comparison belong here.
+ * All functions that fetch and manage listing data and search
+ * orchestration belong here.
  */
 
 function createApiListings(context) {
@@ -15,7 +15,6 @@ function createApiListings(context) {
         markDirty,
         renderLoading,
         renderError,
-        renderComparison,
         renderHistory,
         setPanelOpen,
         renderDetailModal,
@@ -59,8 +58,6 @@ function createApiListings(context) {
         state.dealListings = [];
         state._dealsLoadedAt = 0;
         state.dealsTotal = 0;
-        state.comparisonStats = null;
-        state.comparisonItems = [];
         state.detail = null;
         state.detailImageIndex = 0;
         state._listingsPending = true;
@@ -182,7 +179,7 @@ function createApiListings(context) {
                         return;
                     }
                     dependency.apply(payload);
-                    markDirty('stats', 'history', 'comparison', 'segments', 'geography', 'listings', 'deals');
+                    markDirty('stats', 'history', 'segments', 'geography', 'listings', 'deals');
                     scheduleRender();
                 })
                 .catch((err) => {
@@ -190,7 +187,7 @@ function createApiListings(context) {
                         return;
                     }
                     state._listingsPending = false;
-                    markDirty('stats', 'history', 'comparison', 'segments', 'geography', 'listings', 'deals');
+                    markDirty('stats', 'history', 'segments', 'geography', 'listings', 'deals');
                     scheduleRender();
                 });
         }
@@ -407,87 +404,6 @@ function createApiListings(context) {
         }
     }
 
-    // ── Comparison helpers ───────────────────────────────────────────────
-    function normalizedQuery(value) {
-        return String(value || "").trim().toLocaleLowerCase("ru-RU");
-    }
-
-    async function loadComparison() {
-        const comparisonQuery = state.comparisonQuery.trim();
-        if (!state.query || !comparisonQuery) {
-            state.comparisonStats = null;
-            state.comparisonItems = [];
-            renderComparison();
-            return;
-        }
-        // Guard against a stale comparison response landing after the
-        // user has already kicked off a new compare with a different
-        // query string. Without this, swapping queries quickly leaves
-        // the panel showing the older comparison.
-        const requestId = (state._comparisonRequestId =
-            (state._comparisonRequestId + 1) % 1_000_000);
-
-        state.comparisonLoading = true;
-        state.error = null;
-        setPanelOpen("comparison", true);
-        renderComparison();
-        renderError();
-        try {
-            const compareQueries = parseComparisonQueries(comparisonQuery)
-                .filter((item) => normalizedQuery(item) !== normalizedQuery(state.query));
-            if (!compareQueries.length) {
-                state.comparisonStats = null;
-                state.comparisonItems = [];
-                renderComparison();
-                return;
-            }
-            const params = new URLSearchParams({
-                base_query: state.query,
-                currency: state.currency,
-                strict_search: String(state.strictSearch),
-            });
-            for (const item of compareQueries) {
-                params.append("compare_query", item);
-            }
-            const payload = await getJson(`/api/v1/compare?${params.toString()}`);
-            if (requestId !== state._comparisonRequestId) return;
-            state.comparisonStats = payload;
-            state.comparisonItems = payload.items || [];
-        } catch (error) {
-            if (requestId !== state._comparisonRequestId) return;
-            state.comparisonStats = null;
-            state.comparisonItems = [];
-            state.error = error.message || "Не удалось загрузить сравнение";
-            renderError();
-        } finally {
-            if (requestId === state._comparisonRequestId) {
-                state.comparisonLoading = false;
-                renderComparison();
-            }
-        }
-    }
-
-    async function swapComparisonQueries() {
-        const comparisonQuery = state.comparisonQuery.trim();
-        if (!state.query || !comparisonQuery) {
-            return;
-        }
-
-        const compareQueries = parseComparisonQueries(comparisonQuery);
-        if (!compareQueries.length) {
-            return;
-        }
-        const previousBase = state.query;
-        const [nextBase, ...rest] = compareQueries;
-        elements.searchInput.value = nextBase;
-        state.query = nextBase;
-        state.comparisonQuery = [previousBase, ...rest].join(", ");
-        elements.compareInput.value = state.comparisonQuery;
-        setPanelOpen("comparison", true);
-        renderComparison();
-        await search("overview");
-    }
-
     // ── Open listing detail modal ────────────────────────────────────────
     async function openListingDetail(item) {
         const queryToUse = (item?.query || state.query || "").trim();
@@ -558,7 +474,6 @@ function createApiListings(context) {
         const query = elements.searchInput.value.trim();
         state.query = query;
         state.error = null;
-        state.comparisonStats = null;
 
         if (!query) {
             clearSearchData();
@@ -626,10 +541,6 @@ function createApiListings(context) {
             markDirty('loading', 'error', 'summary', 'helper');
             renderAll();
         }
-
-        if (!state.error && state.comparisonQuery.trim()) {
-            await loadComparison();
-        }
     }
 
     return {
@@ -638,8 +549,6 @@ function createApiListings(context) {
         loadMoreListings,
         loadDeals,
         loadMoreDeals,
-        loadComparison,
-        swapComparisonQueries,
         openListingDetail,
         loadSearchDependencies,
         clearSearchData,

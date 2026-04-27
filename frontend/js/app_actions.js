@@ -100,7 +100,7 @@ function createAppActions(context) {
      * "cheap" used to be its own view tab; it's now folded into "ads"
      * with state.sort = "cheap" surfacing the discount-range UI.
      *
-     * @param {string} target - The target context ('ads', 'cheap', 'deals', 'history', 'comparison')
+     * @param {string} target - The target context ('ads', 'cheap', 'deals', 'history')
      */
     function focusTarget(target) {
         if (target === "ads" || target === "cheap") {
@@ -120,9 +120,6 @@ function createAppActions(context) {
         if (target === "history") {
             setPanelOpen("history", true);
             scrollSectionIntoView(elements.historySection);
-        } else if (target === "comparison") {
-            setPanelOpen("comparison", true);
-            scrollSectionIntoView(elements.comparisonSection);
         }
     }
 
@@ -144,7 +141,6 @@ function createAppActions(context) {
         postJson: core.postJson,
         deleteJson: core.deleteJson,
         buildCommonQuery: core.buildCommonQuery,
-        parseComparisonQueries: core.parseComparisonQueries,
     });
     
     const listings = createApiListings(context);
@@ -169,8 +165,6 @@ function createAppActions(context) {
         loadMoreListings: listings.loadMoreListings,
         loadDeals: listings.loadDeals,
         loadMoreDeals: listings.loadMoreDeals,
-        loadComparison: listings.loadComparison,
-        swapComparisonQueries: listings.swapComparisonQueries,
         openListingDetail: listings.openListingDetail,
         loadSearchDependencies: listings.loadSearchDependencies,
         clearSearchData: listings.clearSearchData,
@@ -485,8 +479,6 @@ function createAppActions(context) {
         loadDeals: listings.loadDeals,
         loadMoreDeals: listings.loadMoreDeals,
         loadHistory: listings.loadHistory,
-        loadComparison: listings.loadComparison,
-        swapComparisonQueries: listings.swapComparisonQueries,
         loadTrackers: trackers.loadTrackers,
         loadLeads: leads.loadLeads,
         clearAllLeads: leads.clearAllLeads,

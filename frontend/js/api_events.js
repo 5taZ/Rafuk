@@ -19,7 +19,6 @@ function createApiEvents(context) {
         renderDiscountButtons,
         renderDealInputs,
         renderTrackerInputs,
-        renderComparison,
         renderHistory,
         renderTrackerEventFilters,
         renderTrackerEvents,
@@ -41,8 +40,6 @@ function createApiEvents(context) {
         search,
         loadListings,
         loadDeals,
-        loadComparison,
-        swapComparisonQueries,
         loadHistory,
         loadTrackers,
         loadLeads,
@@ -83,7 +80,6 @@ function createApiEvents(context) {
         closeAIModal,
         startTrackerRefresh,
         stopTrackerRefresh,
-        parseComparisonQueries,
     } = context;
 
     // ── Event binding ────────────────────────────────────────────────────
@@ -270,56 +266,6 @@ function createApiEvents(context) {
                 state.historyDays = nextDays;
                 renderHistory();
                 void loadHistory();
-            });
-        }
-
-        // ── Comparison input ─────────────────────────────────────────
-        elements.compareInput?.addEventListener("input", () => {
-            state.comparisonQuery = elements.compareInput.value;
-            renderComparison();
-        });
-
-        elements.compareInput?.addEventListener("keydown", (event) => {
-            if (event.key === "Enter") {
-                event.preventDefault();
-                state.comparisonQuery = elements.compareInput.value;
-                void loadComparison();
-            }
-        });
-
-        elements.compareButton?.addEventListener("click", () => {
-            state.comparisonQuery = elements.compareInput.value;
-            const button = elements.compareButton;
-            button.disabled = true;
-            button.classList.add('is-loading');
-            const originalText = button.textContent;
-            button.textContent = 'Сравниваю...';
-            void (async () => {
-                try {
-                    await loadComparison();
-                } finally {
-                    button.disabled = false;
-                    button.classList.remove('is-loading');
-                    button.textContent = originalText;
-                }
-            })();
-        });
-
-        elements.compareSwapButton?.addEventListener("click", () => {
-            void swapComparisonQueries();
-        });
-
-        // ── Compare quick chips ──────────────────────────────────────
-        for (const chip of elements.compareQuickChips || []) {
-            chip.addEventListener("click", () => {
-                const query = chip.dataset.compareQuery || "";
-                const existing = parseComparisonQueries(state.comparisonQuery);
-                const nextValues = Array.from(new Set([...existing, query])).slice(0, 2);
-                state.comparisonQuery = nextValues.join(", ");
-                elements.compareInput.value = state.comparisonQuery;
-                setPanelOpen("comparison", true);
-                renderComparison();
-                void loadComparison();
             });
         }
 

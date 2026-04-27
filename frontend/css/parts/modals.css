@@ -871,9 +871,6 @@ body.modal-open {
         grid-column: 1 / -1;
     }
 
-    .compare-bar,
-    .compare-grid,
-    .compare-metrics,
     .history-summary {
         grid-template-columns: 1fr;
     }

@@ -116,18 +116,6 @@ function createApiCore(context) {
         return query.toString();
     }
 
-    // ── Comparison query parser ─────────────────────────────────────────
-    function parseComparisonQueries(value) {
-        const items = String(value || "")
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean);
-        return Array.from(new Set(items.map((item) => item.toLocaleLowerCase("ru-RU"))))
-            .map((key) => items.find((item) => item.toLocaleLowerCase("ru-RU") === key))
-            .filter(Boolean)
-            .slice(0, 2);
-    }
-
     return {
         telegramHeaders,
         requestJson,
@@ -135,6 +123,5 @@ function createApiCore(context) {
         postJson,
         deleteJson,
         buildCommonQuery,
-        parseComparisonQueries,
     };
 }

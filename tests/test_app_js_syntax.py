@@ -157,9 +157,8 @@ def test_listing_detail_loaders_share_stale_response_guard() -> None:
             f"{path} missing stale-response check"
         )
 
-    # loadHistory and loadComparison have their own dedicated counters.
+    # loadHistory has its own dedicated counter.
     assert "state._historyRequestId" in listings_js
-    assert "state._comparisonRequestId" in listings_js
 
 
 def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:

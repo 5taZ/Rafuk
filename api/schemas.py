@@ -530,35 +530,6 @@ class OpportunityBoardResponse(BaseModel):
     market_signals: list[OpportunitySignal] = Field(default_factory=list)
 
 
-class CompareRequestItem(BaseModel):
-    query: str
-    normalized_query: str = ""
-    config_summary: str | None = None
-    median: float
-    cheap_count: int
-    total_results: int
-    trend_percent: float | None = None
-    best_listing: ListingItem | None = None
-    # Full price-stats block in the response currency. The frontend
-    # uses these for the side-by-side metric grid (min/mean/max
-    # plus the IQR band) so users can compare distributions, not
-    # only medians.
-    mean: float = 0.0
-    min: float = 0.0
-    max: float = 0.0
-    q1: float = 0.0
-    q3: float = 0.0
-    analyzed_count: int = 0
-    fair_price_from: float | None = None
-    fair_price_to: float | None = None
-
-
-class CompareResponse(BaseModel):
-    currency: str
-    base_query: str
-    items: list[CompareRequestItem]
-
-
 class LeadFunnelStage(BaseModel):
     """One bar in the lead-pipeline funnel chart."""
 

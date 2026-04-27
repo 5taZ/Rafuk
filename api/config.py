@@ -54,7 +54,6 @@ class Settings(BaseSettings):
     ai_fallback_cache_ttl: int = 1800
 
     # Result size limits
-    max_compare_queries: int = 2
     max_deal_ads_per_query: int = 20
     max_opportunity_items: int = 12
     max_opportunity_signals: int = 4

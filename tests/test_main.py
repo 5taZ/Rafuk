@@ -25,7 +25,6 @@ def test_create_app_has_expected_routes() -> None:
     assert "/api/v1/segments" in paths
     assert "/api/v1/geography" in paths
     assert "/api/v1/currency-rates" in paths
-    assert "/api/v1/compare" in paths
     assert "/api/v1/saved-searches" in paths
     assert "/api/v1/opportunity-board" in paths
     assert "/api/v1/leads" in paths

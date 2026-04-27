@@ -178,7 +178,6 @@ a,
 
 /* Smooth focus transitions for inputs */
 .search-input:focus,
-.compare-input:focus,
 .deal-range-field input:focus,
 .tracker-card input:focus {
     border-color: var(--border-focus);

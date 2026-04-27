@@ -2,10 +2,6 @@ function createAppCore() {
     const state = {
         query: "",
         strictSearch: false,
-        comparisonQuery: "",
-        comparisonStats: null,
-        comparisonItems: [],
-        comparisonLoading: false,
         historyDays: 7,
         currency: "BYN",
         category: null, // selected category id (int or null)
@@ -54,7 +50,6 @@ function createAppCore() {
         // can race when the user rapidly changes the query, range, or
         // listing they're viewing. Same pattern as _leadsRequestId.
         _historyRequestId: 0,
-        _comparisonRequestId: 0,
         _detailRequestId: 0,
         leads: [],
         leadFilter: "all",
@@ -112,7 +107,6 @@ function createAppCore() {
         panels: {
             distribution: false,
             history: true,
-            comparison: false,
             segments: false,
             geography: false,
             historyDeals: false,
@@ -359,7 +353,7 @@ function createAppCore() {
      * Views: 'error','loading','currency','strict','tabs','panels','summary',
      * 'helper','views','trackingHero','cheapHero','monitoringHero','dealsHero',
      * 'sort','discount','eventFilters','dealInputs','trackerInputs','stats',
-     * 'history','comparison','segments','geography','recent','listings','deals',
+     * 'history','segments','geography','recent','listings','deals',
      * 'rates','trackerStatus','trackers','trackerEvents','leads','watchlist',
      * 'profit'.
      * Call without args or with 'all' to mark everything dirty.

@@ -42,14 +42,6 @@ function cacheAppElements(elements) {
     elements.historyBadge = document.getElementById("history-badge");
     elements.historySummary = document.getElementById("history-summary");
     elements.historyRangeButtons = Array.from(document.querySelectorAll("[data-history-days]"));
-    elements.comparisonSection = document.getElementById("comparison-section");
-    elements.compareInput = document.getElementById("compare-input");
-    elements.compareButton = document.getElementById("compare-btn");
-    elements.compareSwapButton = document.getElementById("compare-swap-btn");
-    elements.comparisonNote = document.getElementById("comparison-note");
-    elements.comparisonSummary = document.getElementById("comparison-summary");
-    elements.comparisonGrid = document.getElementById("comparison-grid");
-    elements.compareQuickChips = Array.from(document.querySelectorAll("[data-compare-query]"));
     elements.segmentsSection = document.getElementById("segments-section");
     elements.geographySection = document.getElementById("geography-section");
     elements.geographyGrid = document.getElementById("geography-grid");
@@ -201,7 +193,6 @@ function cacheAppElements(elements) {
     elements.panelBodies = {
         distribution: document.getElementById("distribution-body"),
         history: document.getElementById("history-body"),
-        comparison: document.getElementById("comparison-body"),
         segments: document.getElementById("segments-body"),
         geography: document.getElementById("geography-body"),
         historyDeals: document.getElementById("history-deals-body"),
