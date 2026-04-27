@@ -1353,7 +1353,6 @@ body {
     line-height: 1.45;
     background: var(--bg-elevated);
     color: var(--text-muted);
-    border: 1px solid var(--border);
 }
 
 .tracker-status.is-visible {
@@ -2006,6 +2005,7 @@ body {
     padding: var(--space-4) var(--space-3) var(--space-3);
     min-height: 175px;
     position: relative;
+    border: 1px solid var(--border);
 }
 
 .history-chart-box {
@@ -2031,6 +2031,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    border: 1px solid var(--border);
 }
 
 .history-summary-label {
@@ -2139,6 +2140,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+    border: 1px solid var(--border);
 }
 
 .seg-head {
@@ -2224,6 +2226,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+    border: 1px solid var(--border);
 }
 
 .geo-head {
@@ -2861,8 +2864,7 @@ body.modal-open {
     color: var(--text-muted);
     padding: 4px 8px;
     border-radius: 999px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--bg-surface-tint);
 }
 
 .detail-description {
@@ -2913,10 +2915,11 @@ body.modal-open {
     display: grid;
     grid-template-columns: minmax(0, 110px) minmax(0, 1fr);
     gap: var(--space-3);
-    padding: 10px 11px;
-    background: var(--bg-card);
-    border-radius: var(--r-md);
-    border: 1px solid var(--border);
+    padding: 10px 0;
+}
+
+.detail-field + .detail-field {
+    border-top: 1px solid var(--border);
 }
 
 .detail-field-label {
@@ -3276,8 +3279,7 @@ body.modal-open {
     justify-content: space-between;
     gap: var(--space-3);
     padding: 10px 12px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--bg-surface-tint-soft);
     border-radius: var(--r-md);
 }
 
@@ -3366,7 +3368,6 @@ body.modal-open {
     padding: 10px 12px;
     background: var(--bg-elevated);
     border-radius: var(--r-md);
-    border: 1px solid var(--border);
     margin-bottom: 8px;
 }
 
@@ -7686,8 +7687,9 @@ body {
 
 .la-section {
     padding: 14px;
-    border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
-    border-radius: var(--r-lg);
+    border: 0;
+    border-left: 3px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius: 0 var(--r-lg) var(--r-lg) 0;
     background: color-mix(in srgb, var(--bg-card) 94%, var(--accent) 6%);
     display: flex;
     flex-direction: column;
@@ -7700,7 +7702,7 @@ body {
 
 .la-section--summary {
     background: color-mix(in srgb, var(--accent) 10%, var(--bg-card) 90%);
-    border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+    border-left-color: var(--accent);
 }
 
 [data-theme="light"] .la-section--summary {
@@ -7823,23 +7825,24 @@ body {
     flex-direction: column;
     gap: 4px;
     padding: 12px 12px 14px;
-    border-radius: var(--r-md);
-    border: 1px solid var(--border);
+    border-radius: 0 var(--r-md) var(--r-md) 0;
+    border: 0;
+    border-left: 3px solid var(--border);
     background: var(--bg-elevated);
 }
 
 .la-tier--fast {
-    border-color: color-mix(in srgb, var(--green) 40%, transparent);
+    border-left-color: var(--green);
     background: color-mix(in srgb, var(--green) 10%, var(--bg-elevated) 90%);
 }
 
 .la-tier--market {
-    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    border-left-color: var(--accent);
     background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated) 90%);
 }
 
 .la-tier--patient {
-    border-color: color-mix(in srgb, var(--amber) 38%, transparent);
+    border-left-color: var(--amber);
     background: color-mix(in srgb, var(--amber) 8%, var(--bg-elevated) 92%);
 }
 
@@ -7898,9 +7901,9 @@ body {
 
 .la-playbook-item {
     padding: 12px 13px;
-    border: 1px solid var(--border);
+    border: 0;
     border-left: 3px solid var(--accent);
-    border-radius: var(--r-md);
+    border-radius: 0 var(--r-md) var(--r-md) 0;
     background: var(--bg-elevated);
     display: grid;
     grid-template-columns: 64px 1fr;
@@ -7966,9 +7969,9 @@ body {
     flex-direction: column;
     gap: 6px;
     padding: 12px;
-    border: 1px solid var(--border);
+    border: 0;
     border-radius: var(--r-md);
-    background: var(--bg-elevated);
+    background: var(--bg-surface-tint-soft);
 }
 
 .la-history-head {
@@ -8066,23 +8069,31 @@ body {
  * in both dark (black + blue) and light (white + blue) themes.
  * ===================================================================== */
 
-/* --- Section rhythm: replace divider with breathing room ----------- */
+/* --- Section rhythm: spacing-only containers, NOT cards --------------
+ * Sections are structural grouping elements — the inner cards (stat-card,
+ * listing, tracker-card, etc.) provide the visual containment.  Making
+ * .section itself a card created 2-3 levels of nested frames ("рамка в
+ * рамке"), which felt cluttered.  Now sections are flat spacers; only
+ * .section--card brings back the old card treatment when truly needed. */
 .section {
+    margin-bottom: var(--space-4);
+}
+
+.section--card {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
     padding: 16px;
-    margin-bottom: var(--space-4);
 }
 
-[data-theme="light"] .section {
+[data-theme="light"] .section--card {
     background: #ffffff;
     border-color: rgba(15, 23, 42, 0.06);
     box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03), 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
-/* Sections that don't need a card background (e.g. hero containers,
-   filter rows) keep their previous look via .section--bare. */
+/* .section--bare is now a no-op (section is bare by default) but kept
+   for backwards compatibility with any existing HTML references. */
 .section.section--bare {
     background: transparent;
     border: 0;
@@ -8441,17 +8452,18 @@ body {
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
-/* --- Misc: badge + summary-pill pure surface --------------------- */
+/* --- Nested pills/items: drop the border so they don't read as -----
+ * "frame inside a frame" inside summary-strip / stat-card. Background
+ * contrast alone is enough to set them apart from the parent card. */
 .summary-pill,
 .range-item {
     background: var(--bg-elevated);
-    border-color: var(--border);
+    border: 0;
 }
 
 [data-theme="light"] .summary-pill,
 [data-theme="light"] .range-item {
     background: #f8fafc;
-    border-color: rgba(15, 23, 42, 0.06);
 }
 
 /* --- Sections that contain a single big stat strip stay flat ----- */

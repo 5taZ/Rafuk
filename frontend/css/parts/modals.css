@@ -271,8 +271,7 @@ body.modal-open {
     color: var(--text-muted);
     padding: 4px 8px;
     border-radius: 999px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--bg-surface-tint);
 }
 
 .detail-description {
@@ -323,10 +322,11 @@ body.modal-open {
     display: grid;
     grid-template-columns: minmax(0, 110px) minmax(0, 1fr);
     gap: var(--space-3);
-    padding: 10px 11px;
-    background: var(--bg-card);
-    border-radius: var(--r-md);
-    border: 1px solid var(--border);
+    padding: 10px 0;
+}
+
+.detail-field + .detail-field {
+    border-top: 1px solid var(--border);
 }
 
 .detail-field-label {
@@ -686,8 +686,7 @@ body.modal-open {
     justify-content: space-between;
     gap: var(--space-3);
     padding: 10px 12px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--bg-surface-tint-soft);
     border-radius: var(--r-md);
 }
 
@@ -776,7 +775,6 @@ body.modal-open {
     padding: 10px 12px;
     background: var(--bg-elevated);
     border-radius: var(--r-md);
-    border: 1px solid var(--border);
     margin-bottom: 8px;
 }
 
