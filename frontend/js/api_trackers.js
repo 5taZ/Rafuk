@@ -136,8 +136,6 @@ function createApiTrackers(context) {
                 condition: state.trackerCondition || null,
                 region_name: state.trackerRegionName || null,
                 config_keyword: state.trackerConfigKeyword || null,
-                alert_price_threshold: state.trackerAlertPriceThreshold,
-                alert_discount_percent: state.trackerAlertDiscountPercent,
             });
             showToast("Трекер добавлен", "success");
             await loadTrackers();
@@ -219,8 +217,6 @@ function createApiTrackers(context) {
         if (elements.editConditionSelect) elements.editConditionSelect.value = tracker.condition || "";
         if (elements.editRegionSelect) elements.editRegionSelect.value = tracker.region_name || "";
         if (elements.editConfigInput) elements.editConfigInput.value = tracker.config_keyword || "";
-        if (elements.editAlertPriceInput) elements.editAlertPriceInput.value = tracker.alert_price_threshold ?? "";
-        if (elements.editAlertDiscountInput) elements.editAlertDiscountInput.value = tracker.alert_discount_percent ?? "";
 
         if (elements.editTrackerModal) {
             if (state.modalCleanup) {
@@ -259,8 +255,6 @@ function createApiTrackers(context) {
                     condition: elements.editConditionSelect?.value || null,
                     region_name: elements.editRegionSelect?.value || null,
                     config_keyword: elements.editConfigInput?.value || null,
-                    alert_price_threshold: elements.editAlertPriceInput?.value ? Number(elements.editAlertPriceInput.value) : null,
-                    alert_discount_percent: elements.editAlertDiscountInput?.value ? Number(elements.editAlertDiscountInput.value) : null,
                 }),
             });
 

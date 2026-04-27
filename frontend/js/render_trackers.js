@@ -275,8 +275,6 @@ function createRenderTrackers(context) {
         const dropCount = trackerScopedEvents.filter((e) => e.event_type === "price_drop").length;
         const newCount = trackerScopedEvents.filter((e) => e.event_type === "new_listing").length;
         const trendCount = trackerScopedEvents.filter((e) => e.event_type === "trend_reversal").length;
-        const thresholdCount = trackerScopedEvents.filter((e) => e.event_type === "price_threshold_alert").length;
-        const discountCount = trackerScopedEvents.filter((e) => e.event_type === "discount_alert").length;
         const totalCount = trackerScopedEvents.length;
 
         if (elements.trackerEventsBadge) {
@@ -288,16 +286,12 @@ function createRenderTrackers(context) {
             price_drop: "Упали в цене",
             new_listing: "Новые лоты",
             trend_reversal: "Разворот ↑",
-            price_threshold_alert: "🎯 Под порогом",
-            discount_alert: "💰 Скидка от медианы",
         };
         const FILTER_COUNTS = {
             all: totalCount,
             price_drop: dropCount,
             new_listing: newCount,
             trend_reversal: trendCount,
-            price_threshold_alert: thresholdCount,
-            discount_alert: discountCount,
         };
         for (const button of elements.trackerEventFilterButtons) {
             const filter = button.dataset.eventFilter;
@@ -366,8 +360,6 @@ function createRenderTrackers(context) {
         function buildEventNode(event) {
             const isPriceDrop = event.event_type === "price_drop";
             const isTrend = event.event_type === "trend_reversal";
-            const isThresholdAlert = event.event_type === "price_threshold_alert";
-            const isDiscountAlert = event.event_type === "discount_alert";
             if (isTrend) {
                 return buildTrendReversalNode(event);
             }
@@ -392,26 +384,7 @@ function createRenderTrackers(context) {
                 { className: "event-price-row" },
                 domEl("span", { className: "event-price mono", text: event.price_byn ? `${Math.round(event.price_byn)} р.` : "без цены" }),
             );
-            if (isThresholdAlert) {
-                const params = event.parameters || {};
-                const threshold = Number(params.threshold_byn ?? 0);
-                if (threshold > 0) {
-                    priceRow.appendChild(domEl("span", {
-                        className: "event-delta event-delta--alert",
-                        text: `≤ ${Math.round(threshold)} р.`,
-                    }));
-                }
-            } else if (isDiscountAlert) {
-                const params = event.parameters || {};
-                const pct = Number(params.discount_pct ?? event.delta_byn ?? 0);
-                const median = Number(params.median_byn ?? 0);
-                if (pct > 0) {
-                    priceRow.appendChild(domEl("span", {
-                        className: "event-delta event-delta--alert",
-                        text: `−${pct.toFixed(1)}% ${median > 0 ? `(мед. ${Math.round(median)})` : ""}`.trim(),
-                    }));
-                }
-            } else if (event.delta_byn) {
+            if (event.delta_byn) {
                 priceRow.appendChild(domEl("span", { className: "event-delta", text: `-${Math.round(event.delta_byn)} р.` }));
             }
 
@@ -422,14 +395,6 @@ function createRenderTrackers(context) {
                 badgeClass = "drop";
                 badgeText = "🔽 Падение цены";
                 cardModifier = " price-drop";
-            } else if (isThresholdAlert) {
-                badgeClass = "alert";
-                badgeText = "🎯 Под порогом";
-                cardModifier = " threshold-alert";
-            } else if (isDiscountAlert) {
-                badgeClass = "alert";
-                badgeText = "💰 Скидка от медианы";
-                cardModifier = " discount-alert";
             }
 
             const card = domEl(
@@ -600,22 +565,16 @@ function createRenderTrackers(context) {
         let priceDrops = 0;
         let newListings = 0;
         let trendReversals = 0;
-        let thresholdAlerts = 0;
-        let discountAlerts = 0;
         for (const event of events) {
             if (event?.event_type === "price_drop") priceDrops += 1;
             else if (event?.event_type === "new_listing") newListings += 1;
             else if (event?.event_type === "trend_reversal") trendReversals += 1;
-            else if (event?.event_type === "price_threshold_alert") thresholdAlerts += 1;
-            else if (event?.event_type === "discount_alert") discountAlerts += 1;
         }
         const counts = {
             all: total,
             price_drop: priceDrops,
             new_listing: newListings,
             trend_reversal: trendReversals,
-            price_threshold_alert: thresholdAlerts,
-            discount_alert: discountAlerts,
         };
 
         for (const button of elements.trackerEventFilterButtons) {

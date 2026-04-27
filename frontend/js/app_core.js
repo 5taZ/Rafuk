@@ -80,8 +80,6 @@ function createAppCore() {
         trackerCondition: "",
         trackerRegionName: "",
         trackerConfigKeyword: "",
-        trackerAlertPriceThreshold: null,
-        trackerAlertDiscountPercent: null,
         analyticsPeriodDays: 90,
         analyticsDashboard: null,
         analyticsLoading: false,

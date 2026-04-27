@@ -22,7 +22,7 @@
  *     in-flight guards already protect the UI).
  */
 
-const CACHE_VERSION = "rafuk-cache-v4";
+const CACHE_VERSION = "rafuk-cache-v5";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -38,8 +38,6 @@ const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 // always reflected on the next read.
 const STALE_WHILE_REVALIDATE_API = [
     "/api/v1/listings",
-    "/api/v1/trackers",
-    "/api/v1/tracker-events",
     "/api/v1/price-stats",
     "/api/v1/price-history",
     "/api/v1/segments",
@@ -49,6 +47,12 @@ const STALE_WHILE_REVALIDATE_API = [
 // Hard-bypass: never cache. Either too dynamic (AI), never returns
 // the same body twice (token-style endpoints), or write-heavy
 // surfaces where stale-after-mutation would mislead the user.
+//
+// /trackers and /tracker-events are write-heavy: clicking "Следить"
+// POSTs and immediately GETs the list back; with stale-while-revalidate
+// the GET returned the cached list (without the new tracker) and the
+// fresh response only landed on the *next* page reload. Same shape of
+// bug as we hit on /leads and /watchlist before.
 const BYPASS_PATHS = [
     "/api/v1/ai/",
     "/api/v1/health",
@@ -59,6 +63,8 @@ const BYPASS_PATHS = [
     "/api/v1/saved-searches",
     "/api/v1/leads",
     "/api/v1/watchlist",
+    "/api/v1/trackers",
+    "/api/v1/tracker-events",
     "/api/v1/analytics/",
 ];
 

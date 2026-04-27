@@ -92,12 +92,6 @@ async def get_trackers(
                 func.count(TrackerEvent.id)
                 .filter(TrackerEvent.event_type == "price_drop")
                 .label("price_drops"),
-                func.count(TrackerEvent.id)
-                .filter(TrackerEvent.event_type == "price_threshold_alert")
-                .label("threshold_alerts"),
-                func.count(TrackerEvent.id)
-                .filter(TrackerEvent.event_type == "discount_alert")
-                .label("discount_alerts"),
                 func.max(TrackerEvent.created_at).label("last_event_at"),
             )
             .where(TrackerEvent.tracker_id.in_(tracker_ids))
@@ -112,8 +106,6 @@ async def get_trackers(
             total_events = stats.total_events if stats else 0
             new_listings = stats.new_listings if stats else 0
             price_drops = stats.price_drops if stats else 0
-            threshold_alerts = stats.threshold_alerts if stats else 0
-            discount_alerts = stats.discount_alerts if stats else 0
             last_event_at = stats.last_event_at if stats else None
 
             days_active = 1
@@ -131,8 +123,6 @@ async def get_trackers(
             tracker_dict.event_count = total_events
             tracker_dict.new_listings_count = new_listings
             tracker_dict.price_drops_count = price_drops
-            tracker_dict.threshold_alerts_count = threshold_alerts
-            tracker_dict.discount_alerts_count = discount_alerts
             tracker_dict.last_event_at = last_event_at
             tracker_dict.avg_events_per_day = avg_events_per_day
             enriched_trackers.append(tracker_dict)
@@ -188,8 +178,6 @@ async def create_tracker(
             condition=payload.condition,
             region_name=payload.region_name,
             config_keyword=payload.config_keyword or default_config_keyword(query),
-            alert_price_threshold=payload.alert_price_threshold,
-            alert_discount_percent=payload.alert_discount_percent,
         )
         session.add(tracker)
         try:

@@ -208,12 +208,6 @@ function createRenderViews(context) {
         if (elements.trackerConfigInput) {
             elements.trackerConfigInput.value = state.trackerConfigKeyword || "";
         }
-        if (elements.trackerAlertPriceInput) {
-            elements.trackerAlertPriceInput.value = state.trackerAlertPriceThreshold ?? "";
-        }
-        if (elements.trackerAlertDiscountInput) {
-            elements.trackerAlertDiscountInput.value = state.trackerAlertDiscountPercent ?? "";
-        }
     }
 
     /* ===== Comparison ===== */

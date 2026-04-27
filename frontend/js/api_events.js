@@ -717,32 +717,6 @@ function createApiEvents(context) {
             state.trackerConfigKeyword = elements.trackerConfigInput.value.trim();
         });
 
-        elements.trackerAlertPriceInput?.addEventListener("input", () => {
-            const raw = elements.trackerAlertPriceInput.value.trim();
-            if (!raw) {
-                state.trackerAlertPriceThreshold = null;
-                return;
-            }
-            const parsed = Number(raw);
-            state.trackerAlertPriceThreshold =
-                Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-        });
-
-        elements.trackerAlertDiscountInput?.addEventListener("input", () => {
-            const raw = elements.trackerAlertDiscountInput.value.trim();
-            if (!raw) {
-                state.trackerAlertDiscountPercent = null;
-                return;
-            }
-            const parsed = Number(raw);
-            // Match the backend validator: 0 ≤ x ≤ 95.
-            if (!Number.isFinite(parsed) || parsed < 0 || parsed > 95) {
-                state.trackerAlertDiscountPercent = null;
-                return;
-            }
-            state.trackerAlertDiscountPercent = parsed;
-        });
-
         // ── Edit tracker modal ───────────────────────────────────────
         elements.closeEditModal?.addEventListener("click", () => {
             closeEditTrackerAction();

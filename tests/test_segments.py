@@ -42,11 +42,13 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
     async def fake_load_query_dataset(**kwargs):
         del kwargs
         from api.services.query_pipeline import QueryDataset
+        new = [{"p": "condition", "v": "Новый"}]
+        used = [{"p": "condition", "v": "Б/у"}]
         ads = [
-            {"price_byn": 2000, "company_ad": False, "ad_parameters": [{"p": "condition", "v": "Новый"}]},
-            {"price_byn": 2500, "company_ad": True, "ad_parameters": [{"p": "condition", "v": "Новый"}]},
-            {"price_byn": 1800, "company_ad": False, "ad_parameters": [{"p": "condition", "v": "Б/у"}]},
-            {"price_byn": 2200, "company_ad": True, "ad_parameters": [{"p": "condition", "v": "Б/у"}]},
+            {"price_byn": 2000, "company_ad": False, "ad_parameters": new},
+            {"price_byn": 2500, "company_ad": True, "ad_parameters": new},
+            {"price_byn": 1800, "company_ad": False, "ad_parameters": used},
+            {"price_byn": 2200, "company_ad": True, "ad_parameters": used},
         ]
         return QueryDataset(
             query="iphone", currency="USD", strict_search=False,
