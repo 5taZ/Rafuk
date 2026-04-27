@@ -972,9 +972,19 @@ function createApiEvents(context) {
         }
 
         // ── Live finger-follow drag on the hero image ────────────────
-        // Scoped to detail-media so swiping the thumbnail row doesn't
-        // page the hero. We use pan-y via CSS so vertical scroll still
-        // bubbles up to the modal body.
+        // Performance notes:
+        //  • touchmove fires at up to 120 Hz on Telegram WebView. We
+        //    coalesce updates via requestAnimationFrame so we paint
+        //    at most 60 fps regardless of finger sample rate.
+        //  • The transition string is set ONCE on touchstart (to
+        //    "none") and ONCE on commit/spring-back. Writing it on
+        //    every move was forcing a style invalidation per frame
+        //    on top of the cheap transform composite — that was the
+        //    source of the lag.
+        //  • Edge-rubber-band flags (canPaneLeft/Right) are captured
+        //    once on touchstart so the move handler is pure math.
+        //  • Scoped to .detail-media so swiping the thumbnail row
+        //    doesn't page the hero.
         const SWIPE_NAV_PX = 60;
         const SWIPE_VELOCITY_PX_MS = 0.4;
         let touchStartX = 0;
@@ -984,21 +994,25 @@ function createApiEvents(context) {
         let touchActive = false;
         let touchSkip = false;
         let lockedHorizontal = false;
+        let touchCanPanLeft = false;   // dragging right (dx > 0) navigates to prev
+        let touchCanPanRight = false;  // dragging left  (dx < 0) navigates to next
+        let pendingDx = null;
+        let rafId = null;
 
-        function _setLiveOffset(dx) {
+        function _flushOffset() {
+            rafId = null;
+            if (pendingDx === null) return;
             const img = elements.detailMainImage;
-            if (!img) return;
-            const images = state.detail?.images || [];
-            const idx = state.detailImageIndex;
-            // Rubber-band at the edges — at index 0 a positive (rightward)
-            // drag resists, at the last index a negative (leftward) drag
-            // resists. The "/3" feels close to iOS Photos.
-            if ((idx === 0 && dx > 0) || (idx === images.length - 1 && dx < 0)) {
-                dx *= 0.3;
+            if (img) {
+                let dx = pendingDx;
+                // iOS-style rubber-band at edges (1/3 resistance).
+                if ((!touchCanPanLeft && dx > 0) || (!touchCanPanRight && dx < 0)) {
+                    dx *= 0.3;
+                }
+                img.style.transform = `translate3d(${dx}px, 0, 0)`;
+                touchCurrentDx = dx;
             }
-            img.style.transition = "none";
-            img.style.transform = `translate3d(${dx}px, 0, 0)`;
-            touchCurrentDx = dx;
+            pendingDx = null;
         }
 
         elements.detailMedia?.addEventListener("touchstart", (e) => {
@@ -1010,7 +1024,8 @@ function createApiEvents(context) {
                 touchSkip = true;
                 return;
             }
-            if (elements.detailMainImage?.classList.contains("is-zoomed")) {
+            const img = elements.detailMainImage;
+            if (img?.classList.contains("is-zoomed")) {
                 touchSkip = true;
                 return;
             }
@@ -1021,6 +1036,15 @@ function createApiEvents(context) {
             touchStartY = e.touches[0].clientY;
             touchStartT = performance.now();
             touchCurrentDx = 0;
+            const total = state.detail?.images?.length || 0;
+            const idx = state.detailImageIndex || 0;
+            touchCanPanLeft = idx > 0;
+            touchCanPanRight = idx < total - 1;
+            // Disable any active transition once at the start of the
+            // drag so the live transform updates are immediate.
+            if (img) {
+                img.style.transition = "none";
+            }
         }, { passive: true });
 
         elements.detailMedia?.addEventListener("touchmove", (e) => {
@@ -1040,12 +1064,24 @@ function createApiEvents(context) {
                     return;
                 }
             }
-            _setLiveOffset(dx);
+            // Coalesce — newest dx wins on the next animation frame.
+            pendingDx = dx;
+            if (rafId === null) {
+                rafId = requestAnimationFrame(_flushOffset);
+            }
         }, { passive: true });
 
         elements.detailMedia?.addEventListener("touchend", (e) => {
             const wasActive = touchActive;
             touchActive = false;
+            // Drain any pending rAF synchronously so the dx we read
+            // reflects the user's last finger position, not the value
+            // from the previous frame.
+            if (rafId !== null) {
+                cancelAnimationFrame(rafId);
+                rafId = null;
+                _flushOffset();
+            }
             if (touchSkip) {
                 touchSkip = false;
                 return;
@@ -1071,6 +1107,11 @@ function createApiEvents(context) {
         }, { passive: true });
 
         elements.detailMedia?.addEventListener("touchcancel", () => {
+            if (rafId !== null) {
+                cancelAnimationFrame(rafId);
+                rafId = null;
+                pendingDx = null;
+            }
             if (touchActive && lockedHorizontal) {
                 _springBack();
             }

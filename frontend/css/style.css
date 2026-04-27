@@ -3032,7 +3032,11 @@ body.modal-open {
     /* Transform/opacity are driven by JS (finger-follow drag + commit
        slide). The transition is set inline in api_events.js so that
        it can be flipped between "none" (live drag) and the eased
-       commit/spring-back curves without fighting CSS specificity. */
+       commit/spring-back curves without fighting CSS specificity.
+       translateZ(0) + will-change promote the image into its own
+       compositor layer so dragging only triggers a cheap composite,
+       not a full layout/paint cycle on every frame. */
+    transform: translateZ(0);
     will-change: opacity, transform;
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
