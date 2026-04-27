@@ -544,15 +544,32 @@ function attachPinchZoom(img, options) {
     let lastTapX = 0;
     let lastTapY = 0;
 
+    let cachedRect = null;
+    let rectDirty = true;
+
+    function markRectDirty() {
+        rectDirty = true;
+    }
+
+    function getRect() {
+        if (rectDirty || !cachedRect) {
+            cachedRect = img.getBoundingClientRect();
+            rectDirty = false;
+        }
+        return cachedRect;
+    }
+
     function apply() {
         img.style.transform =
             `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
-        img.style.transformOrigin = "center center";
         if (scale > 1.001) {
             img.classList.add("is-zoomed");
+            img.style.willChange = "transform";
         } else {
             img.classList.remove("is-zoomed");
+            img.style.willChange = "";
         }
+        markRectDirty();
     }
 
     function reset(animate = true) {
@@ -574,15 +591,15 @@ function attachPinchZoom(img, options) {
     }
 
     /** Clamp the translate values so the image can't be panned out of
-     *  view at the current scale. Approximate — uses the rendered
-     *  bounding box rather than the natural size. */
+     *  view at the current scale. Uses cached bounding rect to avoid
+     *  forced layout recalc on every touchmove. */
     function clampPan() {
         if (scale <= 1) {
             tx = 0;
             ty = 0;
             return;
         }
-        const rect = img.getBoundingClientRect();
+        const rect = getRect();
         const overflowX = (rect.width * scale - rect.width) / 2;
         const overflowY = (rect.height * scale - rect.height) / 2;
         if (tx > overflowX) tx = overflowX;
@@ -609,21 +626,19 @@ function attachPinchZoom(img, options) {
                     x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
                     y: (event.touches[0].clientY + event.touches[1].clientY) / 2,
                 };
+                markRectDirty();
             } else if (event.touches.length === 1) {
                 const t = event.touches[0];
                 const now = Date.now();
                 const dx = t.clientX - lastTapX;
                 const dy = t.clientY - lastTapY;
                 if (now - lastTapTs < 280 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
-                    // Double-tap → toggle zoom.
                     event.preventDefault();
                     if (scale > 1.001) {
                         reset(true);
                     } else {
                         scale = doubleTapScale;
-                        // Centre the zoom around the tap point relative
-                        // to the current view.
-                        const rect = img.getBoundingClientRect();
+                        const rect = getRect();
                         const cx = t.clientX - (rect.left + rect.width / 2);
                         const cy = t.clientY - (rect.top + rect.height / 2);
                         tx = -cx * (scale - 1);
@@ -647,6 +662,7 @@ function attachPinchZoom(img, options) {
                     panStartY = t.clientY;
                     panBaseTx = tx;
                     panBaseTy = ty;
+                    markRectDirty();
                 }
             }
         },
@@ -660,9 +676,23 @@ function attachPinchZoom(img, options) {
                 event.preventDefault();
                 const d = distance(event.touches);
                 if (pinchStartDistance > 0) {
+                    const newCenter = {
+                        x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
+                        y: (event.touches[0].clientY + event.touches[1].clientY) / 2,
+                    };
                     let next = pinchStartScale * (d / pinchStartDistance);
                     if (next < minScale) next = minScale;
                     if (next > maxScale) next = maxScale;
+
+                    const scaleDelta = next - scale;
+                    if (Math.abs(scaleDelta) > 0.001) {
+                        const rect = getRect();
+                        const cx = pinchCenter.x - (rect.left + rect.width / 2);
+                        const cy = pinchCenter.y - (rect.top + rect.height / 2);
+                        tx -= cx * scaleDelta / scale;
+                        ty -= cy * scaleDelta / scale;
+                    }
+
                     scale = next;
                     clampPan();
                     apply();
@@ -682,11 +712,11 @@ function attachPinchZoom(img, options) {
     img.addEventListener(
         "touchend",
         (event) => {
-            // If we drop below ~1.05 after a pinch, snap back to 1.
             if (event.touches.length === 0 && scale < 1.05 && scale !== 1) {
                 reset(true);
             }
             pinchStartDistance = 0;
+            markRectDirty();
         },
         { passive: true },
     );

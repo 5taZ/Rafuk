@@ -109,10 +109,9 @@
     gap: var(--space-2);
     padding: 0;
     margin: var(--space-2) 0 0;
-    /* Smooth disappear animation when cleared */
     transition: opacity 0.15s ease-out, max-height 0.2s ease-out;
     overflow: hidden;
-    max-height: 60px; /* Allow space for content */
+    max-height: 60px;
 }
 
 /* Override [hidden] to allow transition animation — must use !important to beat global [hidden] rule */
@@ -312,18 +311,10 @@
     margin-bottom: var(--space-3);
     box-shadow: var(--shadow-lg);
     animation: dropdownSlideIn 0.2s ease-out;
-    transition: opacity 0.15s ease, transform 0.15s ease, max-height 0.2s ease;
-    max-height: 600px;
-    overflow: hidden;
 }
 
 .filter-dropdown.closing {
-    opacity: 0;
-    transform: translateY(-8px);
-    max-height: 0;
-    padding-top: 0;
-    padding-bottom: 0;
-    border-width: 0;
+    animation: dropdownSlideOut 0.15s ease-in forwards;
 }
 
 @keyframes dropdownSlideIn {
@@ -334,6 +325,17 @@
     to {
         opacity: 1;
         transform: translateY(0);
+    }
+}
+
+@keyframes dropdownSlideOut {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-8px);
     }
 }
 
@@ -674,12 +676,12 @@
 /* ── AI Analysis Block ───────────────────────────────────────────────── */
 
 .listing-btn--ai {
-    color: var(--violet);
-    border-color: var(--violet-soft);
+    color: var(--accent-secondary);
+    border-color: var(--accent-secondary-soft);
 }
 
 .listing-btn--ai:hover {
-    background: var(--violet-soft);
-    border-color: var(--violet);
-    color: var(--violet);
+    background: var(--accent-secondary-soft);
+    border-color: var(--accent-secondary);
+    color: var(--accent-secondary);
 }
