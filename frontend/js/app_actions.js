@@ -60,6 +60,14 @@ function createAppActions(context) {
         if (!(view in elements.views)) {
             return;
         }
+        // No-op when the view is already active. Otherwise an in-page
+        // action that happens to re-call setActiveView (e.g. picking a
+        // discount preset inside the Объявления view) would run a full
+        // renderAll + replay the slide-in animation, making the page
+        // look like it's reloading.
+        if (state.activeView === view) {
+            return;
+        }
         state.activeView = view;
         markDirty('tabs', 'views');
         renderAll();
