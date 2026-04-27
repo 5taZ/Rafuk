@@ -518,6 +518,34 @@ class DealExpenseRead(BaseModel):
     created_at: datetime
 
 
+# ── User Consent ──────────────────────────────────────────────────────────
+
+
+class ConsentStatusResponse(BaseModel):
+    """Whether the user has granted a specific consent type."""
+
+    consent_type: str
+    granted: bool
+    version: str = ""
+    granted_at: datetime | None = None
+
+
+class ConsentGrantRequest(BaseModel):
+    consent_type: str  # "ai_analysis" | "pd_processing" | "cross_border"
+    version: str = "2026.1"
+
+
+class ConsentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    consent_type: str
+    version: str
+    granted_at: datetime
+    revoked_at: datetime | None = None
+
+
 # ── AI Analysis ──────────────────────────────────────────────────────────
 
 
@@ -589,7 +617,14 @@ class AIAnalysisResponse(BaseModel):
     market_context: str = ""
     best_pick_reason: str = ""
     summary: str = ""
-    disclaimer: str = "Анализ носит информационный характер. Результаты не являются гарантией."
+    disclaimer: str = (
+        "AI-анализ носит исключительно информационно-справочный характер и не является "
+        "финансовой, инвестиционной или юридической консультацией; гарантией прибыли, "
+        "рыночной стоимости или ликвидности товара; рекомендацией к совершению или отказу "
+        "от сделки; профессиональной оценкой товара. Все решения пользователь принимает "
+        "самостоятельно на свой страх и риск. Рыночные данные основаны на открытых "
+        "объявлениях kufar.by и могут не отражать реальные цены сделок."
+    )
     analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -652,7 +687,9 @@ class AIListingAssistantResponse(BaseModel):
     photo_tips: list[str] = Field(default_factory=list)
     market_summary: str = ""
     disclaimer: str = (
-        "Рекомендации носят информационный характер. Финальное решение по цене и тексту "
-        "остаётся за продавцом."
+        "Рекомендации AI носят информационно-справочный характер и не являются "
+        "гарантией продажи или рыночной стоимости. Финальное решение по цене и тексту "
+        "остаётся за продавцом. Рыночные данные основаны на открытых объявлениях kufar.by "
+        "и могут не отражать реальные цены сделок."
     )
     analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -89,6 +89,9 @@
                     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
                 </svg>
             </button>
+            <button class="ghost-btn small header-privacy-btn" id="privacy-btn" type="button" aria-label="Политика конфиденциальности" title="Политика конфиденциальности">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </button>
         </div>
     </header>
 
@@ -931,6 +934,93 @@
     </div>
 
     <div class="toast-container" id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- AI Consent Modal -->
+    <div class="modal-overlay" id="consent-modal" hidden>
+        <div class="modal-content consent-modal-content" role="dialog" aria-modal="true" aria-labelledby="consent-modal-title">
+            <div class="modal-header">
+                <h3 class="modal-title" id="consent-modal-title">Согласие на AI-обработку</h3>
+            </div>
+            <div class="modal-body consent-body">
+                <p class="consent-intro">AI-анализ выполняется облачным сервисом <strong>Google Gemini (США)</strong>.</p>
+                <p class="consent-detail">Для анализа отправляются: текст объявления, фотографии, параметры товара и рыночная статистика.</p>
+                <p class="consent-highlight">Ваши персональные данные (имя, контакты, финансовые записи) <strong>НЕ</strong> отправляются в AI-сервис.</p>
+                <label class="consent-check">
+                    <input type="checkbox" id="consent-ai-checkbox">
+                    <span>Я понимаю и согласен на обработку данных AI-сервисом</span>
+                </label>
+                <label class="consent-check">
+                    <input type="checkbox" id="consent-cross-border-checkbox">
+                    <span>Я ознакомлен, что данные обрабатываются в США</span>
+                </label>
+                <label class="consent-check">
+                    <input type="checkbox" id="consent-pd-checkbox">
+                    <span>Я ознакомился с <a href="#" id="consent-privacy-link" class="primary-link">политикой конфиденциальности</a></span>
+                </label>
+                <div class="modal-actions consent-actions">
+                    <button class="primary-btn" id="consent-accept-btn" type="button" disabled>Согласен</button>
+                    <button class="ghost-btn" id="consent-cancel-btn" type="button">Отмена</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Privacy Policy Modal -->
+    <div class="detail-modal" id="privacy-modal" hidden>
+        <div class="detail-overlay" id="privacy-overlay"></div>
+        <div class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="privacy-modal-title">
+            <div class="modal-header">
+                <h3 class="modal-title" id="privacy-modal-title">Политика конфиденциальности</h3>
+                <button class="modal-close" id="privacy-modal-close" type="button" aria-label="Закрыть">&times;</button>
+            </div>
+            <div class="detail-sheet-content privacy-content" id="privacy-content">
+                <section class="privacy-section">
+                    <h4>1. Оператор персональных данных</h4>
+                    <p>Оператором персональных данных является разработчик приложения Rafuk. Контакты: через Telegram-бота @rafuk_bot.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>2. Какие данные мы собираем</h4>
+                    <table class="privacy-table">
+                        <thead><tr><th>Категория</th><th>Данные</th><th>Источник</th></tr></thead>
+                        <tbody>
+                            <tr><td>Идентификация</td><td>telegram_user_id, first_name, username</td><td>Telegram initData</td></tr>
+                            <tr><td>Поисковая активность</td><td>поисковые запросы, фильтры</td><td>Пользователь</td></tr>
+                            <tr><td>Финансовые</td><td>цены покупки/продажи, расходы</td><td>Пользователь</td></tr>
+                            <tr><td>Поведенческие</td><td>заметки к лидам, запросы трекеров</td><td>Пользователь</td></tr>
+                        </tbody>
+                    </table>
+                </section>
+                <section class="privacy-section">
+                    <h4>3. Цели обработки</h4>
+                    <p>Данные используются для: аналитики рынка Kufar, уведомлений о ценах, AI-рекомендаций по перепродаже, управления сделками.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>4. Трансграничная передача</h4>
+                    <p>Данные объявлений (текст, фото, параметры) передаются в Google Gemini (США) для AI-анализа. Персональные данные пользователя (имя, контакты, финансы) <strong>НЕ</strong> передаются в AI-сервис.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>5. AI-обработка</h4>
+                    <p>В AI-сервис отправляются: текст объявления, фотографии, параметры товара, рыночная статистика. Возвращаются: оценка состояния, справедливая цена, рекомендации, риски.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>6. Хранение данных</h4>
+                    <p>Данные хранятся на сервере в Республике Беларусь. AI-кэш хранится до 30 минут. Данные пользователя хранятся до удаления аккаунта.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>7. Ваши права</h4>
+                    <ul>
+                        <li><strong>Доступ</strong> — вы можете экспортировать все свои данные</li>
+                        <li><strong>Удаление</strong> — вы можете удалить аккаунт и все данные</li>
+                        <li><strong>Отзыв согласия</strong> — вы можете отозвать согласие на AI-обработку</li>
+                    </ul>
+                </section>
+                <section class="privacy-section">
+                    <h4>8. Изменения политики</h4>
+                    <p>При изменении политики мы запросим повторное согласие. Версия: 2026.1</p>
+                </section>
+            </div>
+        </div>
+    </div>
 
     <div class="bottom-spacer"></div>
 </div>

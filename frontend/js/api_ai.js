@@ -262,6 +262,16 @@ function createApiAi(context) {
             return;
         }
 
+        // Check AI consent before proceeding
+        if (typeof context.checkAiConsent === "function") {
+            try {
+                await context.checkAiConsent();
+            } catch (_) {
+                // User denied consent — don't proceed
+                return;
+            }
+        }
+
         if (_aiLoading) return;
         _aiLoading = true;
         // Snapshot the current session so the polling loop below can
@@ -743,7 +753,7 @@ function createApiAi(context) {
         nodes.push(
             domEl("p", {
                 className: "ai-disclaimer",
-                text: data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.",
+                text: data.disclaimer || "AI-анализ носит информационно-справочный характер и не является финансовой или инвестиционной консультацией.",
             })
         );
         return nodes;
@@ -1115,7 +1125,7 @@ ${data.best_alternative ? `    <section class="section section--best">
 ${similarHtml}
   </main>
 
-  <footer class="footer"><span class="footer-brand">Rafuk</span> — ${_escXml(data.disclaimer || "Анализ носит информационный характер. Результаты не являются гарантией.")}</footer>
+  <footer class="footer"><span class="footer-brand">Rafuk</span> — ${_escXml(data.disclaimer || "AI-анализ носит информационно-справочный характер и не является финансовой или инвестиционной консультацией.")}</footer>
 </div>
 </body>
 </html>`;

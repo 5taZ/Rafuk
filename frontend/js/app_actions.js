@@ -427,6 +427,143 @@ function createAppActions(context) {
 
     // ── Public API (every name the original file exported) ───────────────
 
+    // ── Consent & Privacy ──────────────────────────────────────────────────
+
+    /**
+     * Check if user has granted AI consent. Returns true if consent exists.
+     * If not, shows the consent modal and returns a Promise that resolves
+     * when the user grants consent (or rejects on cancel).
+     */
+    function checkAiConsent() {
+        return new Promise(async (resolve, reject) => {
+            try {
+                const status = await core.getJson("/api/v1/account/consent/ai_analysis");
+                if (status.granted) {
+                    resolve(true);
+                    return;
+                }
+            } catch (_) {
+                // Not logged in or error — proceed anyway (debug mode)
+                resolve(true);
+                return;
+            }
+            // Show consent modal
+            _showConsentModal(resolve, reject);
+        });
+    }
+
+    function _showConsentModal(resolve, reject) {
+        const modal = document.getElementById("consent-modal");
+        const aiCb = document.getElementById("consent-ai-checkbox");
+        const crossCb = document.getElementById("consent-cross-border-checkbox");
+        const pdCb = document.getElementById("consent-pd-checkbox");
+        const acceptBtn = document.getElementById("consent-accept-btn");
+        const cancelBtn = document.getElementById("consent-cancel-btn");
+        const privacyLink = document.getElementById("consent-privacy-link");
+
+        if (!modal) { resolve(true); return; }
+
+        // Reset checkboxes
+        aiCb.checked = false;
+        crossCb.checked = false;
+        pdCb.checked = false;
+        acceptBtn.disabled = true;
+        modal.hidden = false;
+
+        function updateAcceptBtn() {
+            acceptBtn.disabled = !(aiCb.checked && crossCb.checked && pdCb.checked);
+        }
+        aiCb.addEventListener("change", updateAcceptBtn);
+        crossCb.addEventListener("change", updateAcceptBtn);
+        pdCb.addEventListener("change", updateAcceptBtn);
+
+        async function onAccept() {
+            try {
+                await core.postJson("/api/v1/account/consent", { consent_type: "ai_analysis", version: "2026.1" });
+                await core.postJson("/api/v1/account/consent", { consent_type: "cross_border", version: "2026.1" });
+                await core.postJson("/api/v1/account/consent", { consent_type: "pd_processing", version: "2026.1" });
+            } catch (err) {
+                showToast(err.message || "Не удалось сохранить согласие");
+            }
+            cleanup();
+            modal.hidden = true;
+            resolve(true);
+        }
+
+        function onCancel() {
+            cleanup();
+            modal.hidden = true;
+            reject(new Error("consent_denied"));
+        }
+
+        function onPrivacyLink(e) {
+            e.preventDefault();
+            openPrivacyModal();
+        }
+
+        function cleanup() {
+            acceptBtn.removeEventListener("click", onAccept);
+            cancelBtn.removeEventListener("click", onCancel);
+            if (privacyLink) privacyLink.removeEventListener("click", onPrivacyLink);
+        }
+
+        acceptBtn.addEventListener("click", onAccept);
+        cancelBtn.addEventListener("click", onCancel);
+        if (privacyLink) privacyLink.addEventListener("click", onPrivacyLink);
+    }
+
+    function openPrivacyModal() {
+        const modal = document.getElementById("privacy-modal");
+        const overlay = document.getElementById("privacy-overlay");
+        const closeBtn = document.getElementById("privacy-modal-close");
+        if (!modal) return;
+        modal.hidden = false;
+        document.body.classList.add("modal-open");
+
+        function close() {
+            modal.hidden = true;
+            document.body.classList.remove("modal-open");
+            closeBtn?.removeEventListener("click", close);
+            overlay?.removeEventListener("click", close);
+        }
+        closeBtn?.addEventListener("click", close);
+        overlay?.addEventListener("click", close);
+    }
+
+    async function deleteAccount() {
+        if (!confirm("Все ваши данные будут безвозвратно удалены. Продолжить?")) return;
+        try {
+            await core.deleteJson("/api/v1/account");
+            showToast("Аккаунт удалён. Данные стёрты.");
+            setTimeout(() => window.location.reload(), 1500);
+        } catch (err) {
+            showToast(err.message || "Не удалось удалить аккаунт");
+        }
+    }
+
+    async function exportAccountData() {
+        try {
+            const resp = await fetch("/api/v1/account/export", {
+                headers: core.telegramHeaders(),
+            });
+            if (!resp.ok) throw new Error("Экспорт не удался");
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "rafuks_data_export.json";
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast("Данные экспортированы");
+        } catch (err) {
+            showToast(err.message || "Не удалось экспортировать данные");
+        }
+    }
+
+    // Expose consent function on context so api_ai.js can call it
+    context.checkAiConsent = checkAiConsent;
+    context.openPrivacyModal = openPrivacyModal;
+
     return {
         bindEvents: events.bindEvents,
         search: listings.search,
@@ -476,5 +613,9 @@ function createAppActions(context) {
         exportLeadsXLSX,
         loadAIAnalysis: ai.loadAIAnalysis,
         closeAIModal: ai.closeAIModal,
+        checkAiConsent,
+        openPrivacyModal,
+        deleteAccount,
+        exportAccountData,
     };
 }

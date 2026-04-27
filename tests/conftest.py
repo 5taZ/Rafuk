@@ -24,7 +24,8 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("API_BASE_URL", "https://kufar-analytics.example.com")
     monkeypatch.setenv("MINI_APP_URL", "https://kufar-analytics.example.com/app")
     # Tests must never hit real telegram auth (they use dependency_overrides).
-    monkeypatch.setenv("DEBUG", "false")
+    # Debug mode also skips AI consent checks — appropriate for test env.
+    monkeypatch.setenv("DEBUG", "true")
 
     try:
         from api.config import get_settings

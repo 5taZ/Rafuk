@@ -56,6 +56,7 @@ class User(Base):
         "TrackerEvent", back_populates="user", cascade="all, delete-orphan"
     )
     lead_items = relationship("LeadItem", back_populates="user", cascade="all, delete-orphan")
+    consents = relationship("UserConsent", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
 
@@ -407,4 +408,73 @@ class DealExpense(Base):
     __table_args__ = (
         Index("idx_deal_expenses_lead", "lead_id"),
         Index("idx_deal_expenses_user", "user_id"),
+    )
+
+
+class UserConsent(Base):
+    """User consent records for PD processing and AI analysis."""
+
+    __tablename__ = "user_consents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    consent_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        comment="ai_analysis | pd_processing | cross_border",
+    )
+    version: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="2026.1",
+        server_default="2026.1",
+    )
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    user = relationship("User", back_populates="consents")
+
+    __table_args__ = (
+        Index("idx_user_consents_user", "user_id"),
+        Index("idx_user_consents_type", "consent_type"),
+    )
+
+
+class AIAuditLog(Base):
+    """Audit trail for AI-assisted decisions (Belarus Law No. 91-Z requirement)."""
+
+    __tablename__ = "ai_audit_log"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    endpoint: Mapped[str] = mapped_column(String(64), nullable=False)
+    ad_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    query: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_ai_audit_user", "user_id"),
+        Index("idx_ai_audit_created", "created_at"),
     )

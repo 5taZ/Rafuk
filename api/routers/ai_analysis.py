@@ -200,7 +200,14 @@ async def get_task_status(task_id: str, request: Request):
     return resp
 
 
-DISCLAIMER = "Анализ носит информационный характер. Результаты не являются гарантией."
+DISCLAIMER = (
+    "AI-анализ носит исключительно информационно-справочный характер и не является "
+    "финансовой, инвестиционной или юридической консультацией; гарантией прибыли, "
+    "рыночной стоимости или ликвидности товара; рекомендацией к совершению или отказу "
+    "от сделки; профессиональной оценкой товара. Все решения пользователь принимает "
+    "самостоятельно на свой страх и риск. Рыночные данные основаны на открытых "
+    "объявлениях kufar.by и могут не отражать реальные цены сделок."
+)
 
 
 class AIExportReportRequest(BaseModel):
@@ -228,6 +235,103 @@ async def _check_rate_limit(request: Request, user_id: int) -> None:
             status_code=429,
             detail=f"Превышен лимит AI-анализов ({hourly_limit} в час)",
         )
+
+
+async def _check_ai_consent(request: Request, user_id: int) -> None:
+    """Verify the user has granted AI analysis and cross-border consent.
+
+    Skipped in debug mode — same as Telegram auth bypass.
+    """
+    from api.config import get_settings
+
+    if get_settings().debug:
+        return
+
+    from sqlalchemy import select
+
+    from api.models import UserConsent
+
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        from api.services.workflow_store import resolve_user_id
+
+        uid = await resolve_user_id(session, user_id)
+        if uid is None:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "consent_required",
+                    "consent_type": "ai_analysis",
+                    "message": (
+                        "Для использования AI-анализа необходимо"
+                        " согласие на обработку данных. "
+                        "Нажмите «Согласен» в модале согласия."
+                    ),
+                },
+            )
+
+        for consent_type in ("ai_analysis", "cross_border"):
+            stmt = (
+                select(UserConsent)
+                .where(
+                    UserConsent.user_id == uid,
+                    UserConsent.consent_type == consent_type,
+                    UserConsent.revoked_at.is_(None),
+                )
+                .limit(1)
+            )
+            consent = (await session.execute(stmt)).scalar_one_or_none()
+            if not consent:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "consent_required",
+                        "consent_type": consent_type,
+                        "message": (
+                            "Для использования AI-анализа необходимо"
+                            " согласие на обработку данных. "
+                            "Нажмите «Согласен» в модале согласия."
+                        ),
+                    },
+                )
+
+
+async def _log_ai_audit(
+    session_factory: Any,
+    *,
+    telegram_user_id: int,
+    endpoint: str,
+    ad_id: str | None = None,
+    query: str | None = None,
+    result_summary: str | None = None,
+    model: str = "",
+    latency_ms: int | None = None,
+) -> None:
+    """Write an AI audit log entry (Belarus Law No. 91-Z requirement).
+
+    Best-effort: errors are logged but never propagated.
+    """
+    try:
+        from api.models import AIAuditLog
+        from api.services.workflow_store import resolve_user_id
+
+        async with session_factory() as session:
+            uid = await resolve_user_id(session, telegram_user_id)
+            if uid is None:
+                return
+            entry = AIAuditLog(
+                user_id=uid,
+                endpoint=endpoint,
+                ad_id=ad_id,
+                query=(query or "")[:256] if query else None,
+                result_summary=(result_summary or "")[:512] if result_summary else None,
+                model=model,
+                latency_ms=latency_ms,
+            )
+            session.add(entry)
+            await session.commit()
+    except Exception:
+        logger.warning("Failed to write AI audit log", exc_info=True)
 
 
 def _parse_list_age_days(list_time_str: str | None) -> int | None:
@@ -849,7 +953,18 @@ async def analyze_listing(
     if cached:
         return {"task_id": None, "cached": True, "result": cached}
 
+    await _check_ai_consent(request, _user.user_id)
     await _check_rate_limit(request, _user.user_id)
+
+    # AI audit trail (Belarus Law No. 91-Z)
+    await _log_ai_audit(
+        request.app.state.session_factory,
+        telegram_user_id=_user.user_id,
+        endpoint="analyze",
+        ad_id=str(payload.ad_id),
+        query=payload.query,
+        model=get_settings().ai_model,
+    )
 
     settings = getattr(request.app.state, "settings", None)
     if settings is None:
@@ -1195,7 +1310,17 @@ async def listing_assistant(
     rather than model guesses.
     """
     ai = _check_ai_available()
+    await _check_ai_consent(request, _user.user_id)
     await _check_rate_limit(request, _user.user_id)
+
+    # AI audit trail (Belarus Law No. 91-Z)
+    await _log_ai_audit(
+        request.app.state.session_factory,
+        telegram_user_id=_user.user_id,
+        endpoint="listing_assistant",
+        query=payload.title,
+        model=get_settings().ai_model,
+    )
 
     settings = getattr(request.app.state, "settings", None)
     if settings is None:
