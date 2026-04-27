@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -66,6 +66,7 @@ async def _persist_snapshot_safe(
 @limiter.limit("30/minute")
 async def get_price_stats(
     request: Request,
+    background_tasks: BackgroundTasks,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: str = "BYN",
     strict_search: bool = False,
@@ -217,18 +218,19 @@ async def get_price_stats(
         suggested_refinements=suggested_refinements,
         **converted,
     )
-    # Persist snapshot in the background — it feeds the price-history
-    # chart but is irrelevant for *this* response. Detaching it from
-    # the request task drops ~80-150 ms off the user-perceived latency
-    # on cold queries.
-    asyncio.create_task(
-        _persist_snapshot_safe(
-            session_factory,
-            query_key=build_query_key(query, strict_search),
-            ads=dataset.ads,
-            total_results=payload.total_results,
-            bucket_at=snapshot_bucket(datetime.now(UTC)),
-        )
+    # Persist snapshot via FastAPI BackgroundTasks — runs after the
+    # response is sent but is awaited by the framework before the
+    # request fully tears down. That keeps cold-cache latency down
+    # without leaking pending writes into pytest fixture teardowns
+    # (which previously deadlocked on "database is locked" with the
+    # bare asyncio.create_task variant).
+    background_tasks.add_task(
+        _persist_snapshot_safe,
+        session_factory,
+        query_key=build_query_key(query, strict_search),
+        ads=dataset.ads,
+        total_results=payload.total_results,
+        bucket_at=snapshot_bucket(datetime.now(UTC)),
     )
     await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
     return payload
