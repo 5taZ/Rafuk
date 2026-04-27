@@ -161,7 +161,7 @@ start_api() {
     nohup uv run uvicorn api.main:app --host 0.0.0.0 --port 8010 >"$API_LOG" 2>&1 &
     echo $! >"$RUN_DIR/api.pid"
 
-    if ! wait_for_http "http://127.0.0.1:8010/api/v1/currency-rates" 30; then
+    if ! wait_for_http "http://127.0.0.1:8010/api/v1/health" 30; then
         echo "API did not become healthy."
         echo "Check log: $API_LOG"
         exit 1

@@ -165,7 +165,7 @@ FastAPI dependencies in `api/dependencies.py`:
 - `get_telegram_user` — validates `X-Telegram-Init-Data` header, returns `TelegramInitData` with `user_id`. In debug mode (`debug=true` in `.env`), allows requests without Telegram initData (returns mock user with `user_id=0`). CORS also allows `localhost:8081`/`localhost:8010` in debug mode.
 - `get_cache` / `get_currency_service` — from `app.state`
 
-All user-scoped endpoints require `get_telegram_user`; public endpoints (price-stats, listings, currency-rates, health) do not. Debug mode bypasses Telegram auth for browser testing.
+All user-scoped endpoints require `get_telegram_user`; public endpoints (price-stats, listings, health) do not. Debug mode bypasses Telegram auth for browser testing.
 
 ## Configuration
 
