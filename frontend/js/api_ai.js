@@ -527,6 +527,14 @@ function createApiAi(context) {
                             scam.seller_warnings.map((w) => domEl("li", { text: w }))))
                 );
             }
+            if (scam.photo_issues?.length) {
+                scamChildren.push(
+                    domEl("div", { className: "ai-scam-photo-warnings" },
+                        domEl("span", { className: "ai-label-sub", text: "Фото:" }),
+                        domEl("ul", { className: "ai-notes" },
+                            scam.photo_issues.map((iss) => domEl("li", { text: iss }))))
+                );
+            }
             if (scam.advice) {
                 scamChildren.push(
                     domEl("p", { className: "ai-scam-advice", text: scam.advice })

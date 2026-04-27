@@ -542,7 +542,6 @@ class ConsentRead(BaseModel):
     user_id: int
     consent_type: str
     version: str
-    ip_address: str | None = None
     granted_at: datetime
     revoked_at: datetime | None = None
 
@@ -628,8 +627,8 @@ class AINegotiateRequest(BaseModel):
     """Buyer negotiation request — generate counter-offer text."""
 
     ad_id: int
-    asking_price_byn: float
-    my_offer_byn: float
+    asking_price_byn: float = Field(gt=0)
+    my_offer_byn: float = Field(gt=0)
     query: str = Field(min_length=1, max_length=200)
     condition: str | None = None
     market_context: str | None = None
@@ -653,7 +652,7 @@ class AIPriceAdviceRequest(BaseModel):
     """Price monitoring advice request — should I buy now or wait?"""
 
     query: str = Field(min_length=1, max_length=200)
-    current_price_byn: float
+    current_price_byn: float = Field(gt=0)
     category: int | None = None
 
 

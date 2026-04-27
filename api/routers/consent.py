@@ -84,6 +84,13 @@ async def grant_consent(
             status_code=400, detail=f"Неизвестный тип согласия: {payload.consent_type}"
         )
 
+    # Reject stale consent versions — forces re-consent when policy changes
+    if payload.version != CURRENT_POLICY_VERSION:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Устаревшая версия политики. Текущая: {CURRENT_POLICY_VERSION}",
+        )
+
     async with session_factory() as session:
         from api.services.workflow_store import ensure_user
 
@@ -200,12 +207,16 @@ async def delete_account(
     """
     from api.models import User
 
+    user_internal_id: int | None = None
     async with session_factory() as session:
         # Find the internal user id
         stmt = select(User).where(User.telegram_user_id == _user.user_id)
         user = (await session.execute(stmt)).scalar_one_or_none()
         if not user:
             return  # Already gone
+
+        # Save id before deletion — object becomes detached after commit
+        user_internal_id = user.id
 
         # Cascade deletes happen via ORM relationships + DB ON DELETE CASCADE
         await session.delete(user)
@@ -233,7 +244,7 @@ async def delete_account(
     except Exception:
         pass
 
-    logger.info("User %d (telegram_id=%d) deleted their account", user.id, _user.user_id)
+    logger.info("User %d (telegram_id=%d) deleted their account", user_internal_id, _user.user_id)
 
 
 @router.get("/export")
