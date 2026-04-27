@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import contextlib
 from typing import Any
+
+from api.services.aggregator import normalize_price_byn
 
 
 def assess_listing_risks(ad: dict[str, Any], market_median: float | None = None) -> dict:
     """Analyze a listing for potential risks (scams, too-good-to-be-true deals)."""
     risks: list[dict[str, str]] = []
 
-    raw_price = ad.get("price_byn")
-    price_byn = None
-    if raw_price is not None:
-        with contextlib.suppress(TypeError, ValueError):
-            price_byn = float(raw_price)
+    price_byn = normalize_price_byn(ad.get("price_byn"))
     description = (ad.get("description") or ad.get("subject") or "").lower()
     photo_count = len(ad.get("images") or ad.get("photos") or [])
 

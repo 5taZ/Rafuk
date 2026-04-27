@@ -95,7 +95,9 @@ async def create_contact(
     response_model=list[ContactRead],
     summary="List all contacts for the authenticated user",
 )
+@limiter.limit("30/minute")
 async def list_contacts(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[ContactRead]:

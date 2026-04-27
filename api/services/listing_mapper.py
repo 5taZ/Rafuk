@@ -155,7 +155,10 @@ def build_listing_detail(
         area_name=area_label(ad),
         category=get_category_label(ad),
         condition=get_param(ad, "condition"),
-        seller_type=get_param(ad, "seller_type"),
+        seller_type=(
+            get_param(ad, "seller_type")
+            or ("shop" if ad.get("company_ad") else "private")
+        ),
         price_vs_median=price_delta,
         price_reference_scope=reference.scope,
         price_reference_label=reference.label,
@@ -213,7 +216,10 @@ def build_listing_item(
         region_name=region_label(ad),
         area_name=area_label(ad),
         condition=get_param(ad, "condition"),
-        seller_type=get_param(ad, "seller_type"),
+        seller_type=(
+            get_param(ad, "seller_type")
+            or ("shop" if ad.get("company_ad") else "private")
+        ),
         company_ad=bool(ad.get("company_ad")),
         price_vs_median=price_delta,
         price_reference_scope=reference.scope,

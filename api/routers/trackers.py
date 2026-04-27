@@ -20,7 +20,9 @@ router = APIRouter(tags=["trackers"])
 
 
 @router.get("/tracker-events", response_model=list[TrackerEventRead])
+@limiter.limit("30/minute")
 async def get_tracker_events(
+    request: Request,
     limit: int = 20,
     tracker_id: int | None = None,
     event_type: str | None = None,
@@ -120,11 +122,15 @@ async def get_trackers(
             avg_events_per_day = round(total_events / days_active, 2) if total_events > 0 else 0.0
 
             tracker_dict = TrackerRead.model_validate(tracker)
-            tracker_dict.event_count = total_events
-            tracker_dict.new_listings_count = new_listings
-            tracker_dict.price_drops_count = price_drops
-            tracker_dict.last_event_at = last_event_at
-            tracker_dict.avg_events_per_day = avg_events_per_day
+            tracker_dict = tracker_dict.model_copy(
+                update={
+                    "event_count": total_events,
+                    "new_listings_count": new_listings,
+                    "price_drops_count": price_drops,
+                    "last_event_at": last_event_at,
+                    "avg_events_per_day": avg_events_per_day,
+                }
+            )
             enriched_trackers.append(tracker_dict)
 
         return enriched_trackers
@@ -188,6 +194,7 @@ async def create_tracker(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A tracker with this configuration already exists",
             ) from exc
+        await session.refresh(tracker)
         return TrackerRead.model_validate(tracker)
 
 

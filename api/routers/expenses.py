@@ -63,7 +63,9 @@ async def create_expense(
 
 
 @router.get("/leads/{lead_id}/expenses", response_model=list[DealExpenseRead])
+@limiter.limit("30/minute")
 async def get_expenses(
+    request: Request,
     lead_id: int,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),

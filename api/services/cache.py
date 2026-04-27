@@ -17,6 +17,7 @@ class CacheBackend(Protocol):
     async def set(self, key: str, value: str, ttl: int | None = None) -> None: ...
     async def get_json(self, key: str) -> Any: ...
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None: ...
+    async def incr(self, key: str, ttl: int | None = None) -> int: ...
     async def ping(self) -> bool: ...
 
 
@@ -63,6 +64,28 @@ class MemoryCache:
 
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
         await self.set(key, json.dumps(value, default=str), ttl)
+
+    async def incr(self, key: str, ttl: int | None = None) -> int:
+        """Atomically increment a counter. Returns the new value."""
+        entry = self._storage.get(key)
+        if entry is not None:
+            value, expires_at = entry
+            if expires_at > 0 and time.monotonic() >= expires_at:
+                del self._storage[key]
+                count = 1
+            else:
+                try:
+                    count = int(value) + 1
+                except (TypeError, ValueError):
+                    count = 1
+        else:
+            count = 1
+        new_expires = (
+            expires_at if entry else (time.monotonic() + ttl if ttl else 0.0)
+        )
+        self._storage[key] = (str(count), new_expires)
+        self._storage.move_to_end(key)
+        return count
 
     async def ping(self) -> bool:
         return True
@@ -113,6 +136,17 @@ class RedisCache:
 
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
         await self.set(key, json.dumps(value, default=str), ttl)
+
+    async def incr(self, key: str, ttl: int | None = None) -> int:
+        """Atomically increment a counter using Redis INCR. Returns the new value."""
+        try:
+            count = await self._client.incr(key)
+            if count == 1 and ttl:
+                await self._client.expire(key, ttl)
+            return count
+        except RedisError:
+            logger.warning("Redis incr failed for key=%s", key, exc_info=True)
+            return 0
 
     async def ping(self) -> bool:
         try:

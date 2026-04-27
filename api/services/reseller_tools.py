@@ -306,11 +306,17 @@ def compute_deal_score(
         score -= min(delta * SCORING.premium_penalty_multiplier, SCORING.premium_penalty_cap)
         reasons.append(f"+{delta:.0f}% к медиане")
 
-    seller_type = get_param(ad, "seller_type")
-    if seller_type == "Частное лицо":
+    seller_type_param = get_param(ad, "seller_type")
+    is_private = seller_type_param == "Частное лицо" or (
+        not seller_type_param and not ad.get("company_ad")
+    )
+    is_shop = seller_type_param == "Магазин" or (
+        not seller_type_param and ad.get("company_ad")
+    )
+    if is_private:
         score += SCORING.private_seller_bonus
         reasons.append("частник")
-    elif seller_type == "Магазин":
+    elif is_shop:
         score -= SCORING.shop_seller_penalty
 
     freshness_score, freshness_reason = _freshness_bonus(ad.get("list_time"))
@@ -368,8 +374,13 @@ def matches_tracker_filters(
             return False
         if seller_type == "private" and is_shop:
             return False
-    if condition and get_param(ad, "condition") != condition:
-        return False
+    if condition:
+        ad_condition = get_param(ad, "condition")
+        # Map tracker values to Kufar numeric codes for comparison
+        condition_map = {"new": "2", "used": "1"}
+        expected = condition_map.get(condition, condition)
+        if ad_condition != expected:
+            return False
     if region_name:
         ad_region = region_label(ad)
         ad_area = area_label(ad)

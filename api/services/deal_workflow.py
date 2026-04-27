@@ -129,12 +129,15 @@ def compute_liquidity_insight(
             reasons.append("нет фото")
 
         # Condition bonus (0-10 points)
-        condition = (get_param(ad, "condition") or "").lower()
-        if condition in ("новый", "new"):
+        condition = get_param(ad, "condition") or ""
+        # Kufar uses numeric codes: "1" = used, "2" = new
+        is_new = condition in ("2", "новый", "new")
+        is_used = condition in ("1", "б/у", "used")
+        if is_new:
             item_score += 10
             if "новый" not in " ".join(reasons).lower():
                 reasons.append("новый товар")
-        elif condition in ("б/у", "used"):
+        elif is_used:
             item_score += 3
 
         score = round(max(0.0, min(100.0, 25.0 + market_score + item_score)), 1)

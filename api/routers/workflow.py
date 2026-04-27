@@ -31,6 +31,7 @@ from api.schemas import (
 )
 from api.services.aggregator import normalize_price_byn
 from api.services.kufar_client import KufarClient
+from api.services.listing_mapper import first_image_url
 from api.services.query_pipeline import load_query_dataset
 from api.services.workflow_store import (
     ensure_user,
@@ -140,26 +141,18 @@ async def get_leads(
 
             if lead.sold_price_byn is not None:
                 sold_price = float(lead.sold_price_byn)
-                total_cost = (lead.price_byn or 0.0) + total_expenses
+                buy_price = float(lead.buy_price_byn) if lead.buy_price_byn is not None else 0.0
+                total_cost = buy_price + total_expenses
                 actual_profit = round(sold_price - total_cost, 2)
                 if total_cost > 0:
                     roi_percent = round((actual_profit / total_cost) * 100, 2)
 
-            lead_dict = lead.__dict__.copy()
-            # Remove _sa_instance_state if present
-            lead_dict.pop("_sa_instance_state", None)
-            # Convert Decimal fields to float for JSON serialization
-            lead_dict["buy_price_byn"] = (
-                float(lead.buy_price_byn) if lead.buy_price_byn is not None else None
-            )
-            lead_dict["sold_price_byn"] = (
-                float(lead.sold_price_byn) if lead.sold_price_byn is not None else None
-            )
-            lead_dict["total_expenses"] = total_expenses
-            lead_dict["actual_profit"] = actual_profit
-            lead_dict["roi_percent"] = roi_percent
+            lead_read = LeadRead.model_validate(lead)
+            lead_read.total_expenses = total_expenses
+            lead_read.actual_profit = actual_profit
+            lead_read.roi_percent = roi_percent
 
-            output.append(LeadRead.model_validate(lead_dict))
+            output.append(lead_read)
 
         return output
 
@@ -557,6 +550,10 @@ async def refresh_watchlist(
                 item.last_seen_at = datetime.now(UTC)
                 item.market_status = "active"
                 item.missing_since_at = None
+                # Update thumbnail if Kufar returned a new one
+                new_thumb = first_image_url(ad)
+                if new_thumb:
+                    item.thumbnail = new_thumb
                 updated += 1
                 if previous is not None and price is not None and price < previous:
                     item.market_status = "price_drop"

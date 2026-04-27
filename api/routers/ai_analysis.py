@@ -223,19 +223,13 @@ async def _check_rate_limit(request: Request, user_id: int) -> None:
     hourly_limit = int(getattr(settings, "ai_hourly_limit", 10) or 10)
 
     key = f"ai_rate:{user_id}"
-    raw_count = await cache.get(key)
-    try:
-        count = int(raw_count or 0)
-    except (TypeError, ValueError):
-        count = 0
+    count = await cache.incr(key, ttl=3600)
 
-    if count >= hourly_limit:
+    if count > hourly_limit:
         raise HTTPException(
             status_code=429,
             detail=f"Превышен лимит AI-анализов ({hourly_limit} в час)",
         )
-
-    await cache.set(key, str(count + 1), ttl=3600)
 
 
 def _parse_list_age_days(list_time_str: str | None) -> int | None:

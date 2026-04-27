@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -10,6 +10,7 @@ from api.dependencies import (
     get_session_factory_dependency,
     get_settings_dependency,
 )
+from api.limiter import limiter
 from api.schemas import PriceHistoryPoint, PriceHistoryResponse
 from api.services.aggregator import build_query_key
 from api.services.cache import CacheBackend
@@ -21,7 +22,9 @@ router = APIRouter(tags=["analytics"])
 
 
 @router.get("/price-history", response_model=PriceHistoryResponse)
+@limiter.limit("30/minute")
 async def get_price_history(
+    request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: str = "BYN",
     days: int = 7,

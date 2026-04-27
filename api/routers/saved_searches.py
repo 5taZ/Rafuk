@@ -66,7 +66,9 @@ def _serialize_saved_search(saved_search: SavedSearch) -> SavedSearchRead:
 
 
 @router.get("/saved-searches", response_model=list[SavedSearchRead])
+@limiter.limit("30/minute")
 async def get_saved_searches(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[SavedSearchRead]:
@@ -269,7 +271,9 @@ async def _load_price_drop_signals(
 
 
 @router.get("/opportunity-board", response_model=OpportunityBoardResponse)
+@limiter.limit("20/minute")
 async def get_opportunity_board(
+    request: Request,
     currency: str = "BYN",
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),

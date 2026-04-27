@@ -158,7 +158,7 @@ async def get_lead_analytics(
 
     for lead in won:
         sold_price = float(lead.sold_price_byn or 0)
-        buy_price = float(lead.buy_price_byn or lead.price_byn or 0)
+        buy_price = float(lead.buy_price_byn) if lead.buy_price_byn is not None else 0.0
         expenses = expenses_by_lead.get(lead.id, 0.0)
         cost = buy_price + expenses
         profit = sold_price - cost

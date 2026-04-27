@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from api.config import Settings
 from api.dependencies import (
@@ -11,6 +11,7 @@ from api.dependencies import (
     get_kufar_client,
     get_settings_dependency,
 )
+from api.limiter import limiter
 from api.schemas import GeographyRegionPoint, GeographyResponse
 from api.services.aggregator import compute_price_stats, extract_prices
 from api.services.cache import CacheBackend
@@ -24,7 +25,9 @@ router = APIRouter(tags=["analytics"])
 
 
 @router.get("/geography", response_model=GeographyResponse)
+@limiter.limit("30/minute")
 async def get_geography(
+    request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: str = "BYN",
     strict_search: bool = False,

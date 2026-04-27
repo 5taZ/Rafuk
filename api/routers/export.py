@@ -5,11 +5,12 @@ import io
 from collections import defaultdict
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
+from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import DealExpense, LeadItem
 from api.services.workflow_store import resolve_user_id
@@ -155,7 +156,9 @@ _FORMAT = Literal["csv", "xlsx"]
 
 
 @router.get("/leads/export")
+@limiter.limit("10/minute")
 async def export_leads(
+    request: Request,
     fmt: _FORMAT = Query("csv", alias="format"),
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
