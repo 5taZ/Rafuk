@@ -179,33 +179,34 @@ body {
     background: color-mix(in srgb, var(--bg-card) 82%, var(--accent-secondary) 18%);
 }
 
+/* AI modal: clean neutral background — no purple tint */
 .ai-sheet {
-    background: color-mix(in srgb, var(--bg-card) 94%, var(--accent-secondary) 6%);
+    background: var(--bg);
 }
 
 .ai-header-bar {
-    background: color-mix(in srgb, var(--bg-card) 76%, transparent);
+    background: var(--bg);
     backdrop-filter: blur(14px);
 }
 
 .ai-header-icon {
-    background: color-mix(in srgb, var(--bg-card) 84%, var(--accent-secondary) 16%);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-secondary) 22%, transparent);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
 }
 
 .ai-modal-verdict,
 .ai-section {
-    border-color: color-mix(in srgb, var(--border) 80%, var(--accent-secondary) 20%);
-    background: color-mix(in srgb, var(--bg-card) 91%, var(--accent-secondary) 9%);
+    border-color: var(--border);
+    background: none;
 }
 
 [data-theme="light"] .ai-modal-verdict,
 [data-theme="light"] .ai-section {
-    background: rgba(255, 255, 255, 0.88);
+    background: none;
 }
 
 .ai-label {
-    color: color-mix(in srgb, var(--accent-secondary) 82%, var(--text) 18%);
+    color: var(--text-dim);
 }
 
 /* ── Listing Assistant: card on Deals view ────────────────────────────── */

@@ -13,7 +13,6 @@ function createApiAi(context) {
     // modal (or blocking a fresh AI Analysis request for up to 6 minutes
     // because _aiLoading is still true).
     let _aiPollSession = 0;
-    let _sectionObserver = null;
 
     // Section IDs for scroll navigation
     const SECTION_IDS = {
@@ -266,11 +265,6 @@ function createApiAi(context) {
         _aiPollSession += 1;
         _aiLoading = false;
         _stopLoadingAnimation(false);
-        // Disconnect section observer
-        if (_sectionObserver) {
-            _sectionObserver.disconnect();
-            _sectionObserver = null;
-        }
         if (elements.aiModal) closeModalAnimated(elements.aiModal);
     }
 
@@ -442,83 +436,6 @@ function createApiAi(context) {
             domEl("div", { className: "ai-error", text: message }),
             retryBtn,
         );
-    }
-
-    // Section metadata for nav rail dots — label + color accent per key
-    const SECTION_META = {
-        [SECTION_IDS.red_flags]:    { label: "Флаги",          color: "var(--ai-dot-flags, #ef4444)" },
-        [SECTION_IDS.scam]:         { label: "Скам",           color: "var(--ai-dot-flags, #ef4444)" },
-        [SECTION_IDS.photo_auth]:   { label: "Фото",           color: "var(--ai-dot-photo, #f59e0b)" },
-        [SECTION_IDS.condition]:    { label: "Состояние",      color: "var(--ai-dot-neutral, #94a3b8)" },
-        [SECTION_IDS.fair_price]:   { label: "Цена",           color: "var(--ai-dot-price, #3b82f6)" },
-        [SECTION_IDS.resale]:       { label: "Перепродажа",    color: "var(--ai-dot-resale, #8b5cf6)" },
-        [SECTION_IDS.market]:       { label: "Рынок",          color: "var(--ai-dot-market, #3b82f6)" },
-        [SECTION_IDS.best_alt]:     { label: "Лучший",         color: "var(--ai-dot-best, #22c55e)" },
-        [SECTION_IDS.similar]:      { label: "Аналоги",        color: "var(--ai-dot-neutral, #94a3b8)" },
-        [SECTION_IDS.watch_out]:    { label: "Внимание",       color: "var(--ai-dot-flags, #ef4444)" },
-        [SECTION_IDS.checklist]:    { label: "Чек-лист",       color: "var(--ai-dot-neutral, #94a3b8)" },
-        [SECTION_IDS.tips]:         { label: "Торговаться",    color: "var(--ai-dot-neutral, #94a3b8)" },
-        [SECTION_IDS.recommendation]: { label: "Вердикт",      color: "var(--ai-dot-best, #22c55e)" },
-    };
-
-    /**
-     * Build the slim dot navigation rail.
-     * @param {HTMLElement} contentArea — the scrollable content area to target for smooth scrolling
-     */
-    function _buildNavRail(contentArea) {
-        const existingSections = contentArea.querySelectorAll("[data-section-key]");
-        const nav = domEl("nav", { className: "ai-nav-rail", attrs: { "aria-label": "Разделы анализа" } });
-
-        existingSections.forEach((sec) => {
-            const key = sec.dataset.sectionKey;
-            const meta = SECTION_META[key];
-            const dot = domEl("button", {
-                className: "ai-nav-dot",
-                attrs: {
-                    "data-nav-target": key,
-                    title: meta?.label || "",
-                    "aria-label": meta?.label || "Раздел",
-                },
-            });
-            dot.style.setProperty("--dot-color", meta?.color || "var(--text-secondary)");
-            dot.addEventListener("click", () => {
-                sec.scrollIntoView({ behavior: "smooth", block: "start" });
-            });
-            nav.appendChild(dot);
-        });
-
-        return nav;
-    }
-
-    /**
-     * Set up IntersectionObserver to highlight the active nav dot
-     * as the user scrolls through sections.
-     */
-    function _setupActiveSectionTracker(contentArea) {
-        if (_sectionObserver) {
-            _sectionObserver.disconnect();
-            _sectionObserver = null;
-        }
-
-        const modalBody = contentArea.closest(".ai-modal-body");
-        if (!modalBody) return;
-
-        const dots = contentArea.querySelectorAll("[data-nav-target]");
-        const sections = contentArea.querySelectorAll("[data-section-key]");
-        if (!sections.length) return;
-
-        _sectionObserver = new IntersectionObserver(
-            (entries) => {
-                for (const entry of entries) {
-                    if (!entry.isIntersecting) continue;
-                    const key = entry.target.dataset.sectionKey;
-                    dots.forEach((d) => d.classList.toggle("ai-nav-dot--active", d.dataset.navTarget === key));
-                }
-            },
-            { root: modalBody, threshold: 0.2, rootMargin: "-10% 0px -60% 0px" },
-        );
-
-        sections.forEach((sec) => _sectionObserver.observe(sec));
     }
 
     function _buildAiSection(label, children, extraClass = "", sectionId = "") {
@@ -990,12 +907,6 @@ function createApiAi(context) {
         console.log("[AI] Rendering result, data keys:", data ? Object.keys(data).join(",") : "null");
         _lastAiData = data;
 
-        // Disconnect any previous observer
-        if (_sectionObserver) {
-            _sectionObserver.disconnect();
-            _sectionObserver = null;
-        }
-
         if (elements.aiModalLoading) elements.aiModalLoading.hidden = true;
         if (elements.aiModalError) elements.aiModalError.hidden = true;
 
@@ -1018,16 +929,10 @@ function createApiAi(context) {
             contentArea.appendChild(node);
         }
 
-        // Build nav rail from rendered sections
-        const navRail = _buildNavRail(contentArea);
-
-        // Wrap in layout: rail + content
-        const layout = domEl("div", { className: "ai-result-layout" }, navRail, contentArea);
+        // Simple single-column layout
+        const layout = domEl("div", { className: "ai-result-layout" }, contentArea);
 
         container.replaceChildren(layout);
-
-        // Set up scroll-based active dot tracking
-        _setupActiveSectionTracker(contentArea);
     }
 
     /* ===== PDF Export ===== */
