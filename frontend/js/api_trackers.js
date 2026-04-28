@@ -43,18 +43,18 @@ function createApiTrackers(context) {
 
     async function refreshTrackerEvents() {
         if (!hasTelegramInitData()) return;
-        if (state.activeView !== "tracking") return;
+        if (state.ui.activeView !== "tracking") return;
         try {
             const [trackersResult, eventsResult] = await Promise.allSettled([
                 getJson("/api/v1/trackers"),
                 getJson("/api/v1/tracker-events"),
             ]);
             if (trackersResult.status === "fulfilled") {
-                state.trackers = trackersResult.value;
+                state.trackers.items = trackersResult.value;
                 renderTrackers();
             }
             if (eventsResult.status === "fulfilled") {
-                state.trackerEvents = eventsResult.value;
+                state.trackers.events = eventsResult.value;
                 renderTrackerEvents();
                 renderTrackerEventFilters();
             }
@@ -66,9 +66,9 @@ function createApiTrackers(context) {
     // ── Load trackers + events ───────────────────────────────────────────
     async function loadTrackers() {
         if (!hasTelegramInitData()) {
-            state.trackers = [];
-            state.trackerEvents = [];
-            state.trackerStatus = "";
+            state.trackers.items = [];
+            state.trackers.events = [];
+            state.trackers.status = "";
             renderTrackers();
             renderTrackerEvents();
             renderTrackerStatus();
@@ -80,8 +80,8 @@ function createApiTrackers(context) {
             getJson("/api/v1/tracker-events"),
         ]);
 
-        state.trackers = trackersResult.status === "fulfilled" ? trackersResult.value : [];
-        state.trackerEvents = eventsResult.status === "fulfilled" ? eventsResult.value : [];
+        state.trackers.items = trackersResult.status === "fulfilled" ? trackersResult.value : [];
+        state.trackers.events = eventsResult.status === "fulfilled" ? eventsResult.value : [];
 
         const failures = [trackersResult, eventsResult].filter((r) => r.status === "rejected");
         if (failures.length > 0 && context.showToast) {
@@ -89,11 +89,11 @@ function createApiTrackers(context) {
         }
 
         if (trackersResult.status === "rejected") {
-            state.trackerStatus = trackersResult.reason?.message || "Не удалось загрузить трекеры.";
-            state.trackerStatusKind = "error";
+            state.trackers.status = trackersResult.reason?.message || "Не удалось загрузить трекеры.";
+            state.trackers.statusKind = "error";
         } else {
-            state.trackerStatus = "";
-            state.trackerStatusKind = "info";
+            state.trackers.status = "";
+            state.trackers.statusKind = "info";
         }
 
         renderTrackers();
@@ -108,14 +108,14 @@ function createApiTrackers(context) {
             return;
         }
 
-        const query = state.query.trim();
+        const query = state.search.query.trim();
         if (!query) {
             showToast("Сначала введите запрос");
             return;
         }
 
         const normalizedQuery = query.toLocaleLowerCase("ru-RU");
-        const duplicate = state.trackers.find(
+        const duplicate = state.trackers.items.find(
             (t) => t.query.trim().toLocaleLowerCase("ru-RU") === normalizedQuery
         );
         if (duplicate) {
@@ -124,28 +124,28 @@ function createApiTrackers(context) {
         }
 
         try {
-            state.creatingTracker = true;
+            state.trackers.creating = true;
             if (context.renderAll) context.renderAll();
             await postJson("/api/v1/trackers", {
                 query,
-                strict_mode: state.strictSearch,
+                strict_mode: state.search.strictSearch,
                 interval_min: 15,
-                min_discount_percent: state.trackerMinDiscountPercent,
-                max_price_byn: state.trackerMaxPriceByn,
-                seller_type: state.trackerSellerType || null,
-                condition: state.trackerCondition || null,
-                region_name: state.trackerRegionName || null,
-                config_keyword: state.trackerConfigKeyword || null,
+                min_discount_percent: state.trackers.minDiscountPercent,
+                max_price_byn: state.trackers.maxPriceByn,
+                seller_type: state.trackers.sellerType || null,
+                condition: state.trackers.condition || null,
+                region_name: state.trackers.regionName || null,
+                config_keyword: state.trackers.configKeyword || null,
             });
             showToast("Трекер добавлен", "success");
             await loadTrackers();
             renderAll();
         } catch (error) {
-            state.trackerStatus = error.message || "Не удалось создать трекер.";
-            state.trackerStatusKind = "error";
+            state.trackers.status = error.message || "Не удалось создать трекер.";
+            state.trackers.statusKind = "error";
             renderTrackerStatus();
         } finally {
-            state.creatingTracker = false;
+            state.trackers.creating = false;
             if (context.renderAll) context.renderAll();
         }
     }
@@ -162,8 +162,8 @@ function createApiTrackers(context) {
             await loadTrackers();
             renderAll();
         } catch (error) {
-            state.trackerStatus = error.message || "Не удалось удалить трекер.";
-            state.trackerStatusKind = "error";
+            state.trackers.status = error.message || "Не удалось удалить трекер.";
+            state.trackers.statusKind = "error";
             renderTrackerStatus();
         }
     }
@@ -201,13 +201,13 @@ function createApiTrackers(context) {
 
     // ── Edit tracker modal ───────────────────────────────────────────────
     function openEditTracker(trackerId) {
-        const tracker = state.trackers.find((t) => t.id === trackerId);
+        const tracker = state.trackers.items.find((t) => t.id === trackerId);
         if (!tracker) {
             showToast("Трекер не найден");
             return;
         }
 
-        state.editingTrackerId = trackerId;
+        state.trackers.editingId = trackerId;
 
         if (elements.editTrackerQuery) elements.editTrackerQuery.value = tracker.query;
         if (elements.editStrictModeToggle) elements.editStrictModeToggle.checked = Boolean(tracker.strict_mode);
@@ -219,32 +219,32 @@ function createApiTrackers(context) {
         if (elements.editConfigInput) elements.editConfigInput.value = tracker.config_keyword || "";
 
         if (elements.editTrackerModal) {
-            if (state.modalCleanup) {
-                state.modalCleanup();
-                state.modalCleanup = null;
+            if (state.misc.modalCleanup) {
+                state.misc.modalCleanup();
+                state.misc.modalCleanup = null;
             }
             openModalAnimated(elements.editTrackerModal);
-            state.modalCleanup = trapFocus(elements.editTrackerModal);
+            state.misc.modalCleanup = trapFocus(elements.editTrackerModal);
         }
     }
 
     function closeEditTracker() {
-        if (state.modalCleanup) {
-            state.modalCleanup();
-            state.modalCleanup = null;
+        if (state.misc.modalCleanup) {
+            state.misc.modalCleanup();
+            state.misc.modalCleanup = null;
         }
-        state.editingTrackerId = null;
+        state.trackers.editingId = null;
         if (elements.editTrackerModal) closeModalAnimated(elements.editTrackerModal);
     }
 
     async function saveTracker() {
-        if (!hasTelegramInitData() || !state.editingTrackerId) {
+        if (!hasTelegramInitData() || !state.trackers.editingId) {
             showToast("Ошибка");
             return;
         }
 
         try {
-            await requestJson(`/api/v1/trackers/${state.editingTrackerId}`, {
+            await requestJson(`/api/v1/trackers/${state.trackers.editingId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

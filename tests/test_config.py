@@ -12,6 +12,7 @@ def test_settings_loads_from_env_vars() -> None:
     env = {
         "BOT_TOKEN": "7123456789:AAFtesttoken",
         "DATABASE_URL": "postgresql+asyncpg://user:pass@db:5432/kufar",
+        "DEBUG": "false",
         "REDIS_URL": "redis://redis:6379/0",
         "API_BASE_URL": "https://kufar-analytics.example.com",
         "MINI_APP_URL": "https://kufar-analytics.example.com/app",

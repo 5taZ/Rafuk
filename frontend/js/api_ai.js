@@ -13,6 +13,24 @@ function createApiAi(context) {
     // modal (or blocking a fresh AI Analysis request for up to 6 minutes
     // because _aiLoading is still true).
     let _aiPollSession = 0;
+    let _sectionObserver = null;
+
+    // Section IDs for scroll navigation
+    const SECTION_IDS = {
+        red_flags: "ai-sec-flags",
+        scam: "ai-sec-scam",
+        photo_auth: "ai-sec-photo",
+        condition: "ai-sec-condition",
+        fair_price: "ai-sec-price",
+        resale: "ai-sec-resale",
+        market: "ai-sec-market",
+        best_alt: "ai-sec-best",
+        similar: "ai-sec-similar",
+        watch_out: "ai-sec-watch",
+        checklist: "ai-sec-checklist",
+        tips: "ai-sec-tips",
+        recommendation: "ai-sec-rec",
+    };
 
     const LOADING_STEPS = [
         "Загружаю данные объявления...",
@@ -248,16 +266,21 @@ function createApiAi(context) {
         _aiPollSession += 1;
         _aiLoading = false;
         _stopLoadingAnimation(false);
+        // Disconnect section observer
+        if (_sectionObserver) {
+            _sectionObserver.disconnect();
+            _sectionObserver = null;
+        }
         if (elements.aiModal) closeModalAnimated(elements.aiModal);
     }
 
     async function loadAIAnalysis(adId) {
-        const query = (state.detail?.query || state.query || "").trim();
+        const query = (state.detail.data?.query || state.search.query || "").trim();
         if (!adId || !query) return;
 
-        const cached = state.detailAi;
+        const cached = state.detail.ai;
         if (cached && cached.adId === adId && cached.result && !cached.error) {
-            openAIModal(state.detail?.title || "", { startLoading: false });
+            openAIModal(state.detail.data?.title || "", { startLoading: false });
             _renderAIModalResult(cached.result);
             return;
         }
@@ -277,10 +300,10 @@ function createApiAi(context) {
         // Snapshot the current session so the polling loop below can
         // detect mid-flight cancellation by closeAIModal (which bumps
         // _aiPollSession) and exit silently instead of writing into
-        // state.detailAi or rendering against a hidden modal.
+        // state.detail.ai or rendering against a hidden modal.
         const pollSession = ++_aiPollSession;
         const isCancelled = () => pollSession !== _aiPollSession;
-        state.detailAi = {
+        state.detail.ai = {
             adId,
             loading: true,
             result: null,
@@ -288,14 +311,14 @@ function createApiAi(context) {
             source: "ai",
         };
 
-        openAIModal(state.detail?.title || "");
+        openAIModal(state.detail.data?.title || "");
 
         try {
             // POST starts async analysis, returns task_id immediately
             const startResp = await postJson("/api/v1/ai/analyze", {
                 ad_id: adId,
                 query,
-                category: state.category || undefined,
+                category: state.filters.category || undefined,
             });
             if (isCancelled()) return;
 
@@ -303,7 +326,7 @@ function createApiAi(context) {
             if (startResp.cached && startResp.result) {
                 console.log("[AI] Cached result received");
                 const result = startResp.result;
-                state.detailAi = { adId, loading: false, result, error: "", source: "ai" };
+                state.detail.ai = { adId, loading: false, result, error: "", source: "ai" };
                 _stopLoadingAnimation(false);
                 _renderAIModalResult(result);
                 return;
@@ -381,7 +404,7 @@ function createApiAi(context) {
 
             if (isCancelled() || result == null) return;
             console.log("[AI] Analysis complete");
-            state.detailAi = { adId, loading: false, result, error: "", source: "ai" };
+            state.detail.ai = { adId, loading: false, result, error: "", source: "ai" };
             _showCompletionThen(() => {
                 if (isCancelled()) return;
                 _renderAIModalResult(result);
@@ -390,7 +413,7 @@ function createApiAi(context) {
             if (isCancelled()) return;
             console.error("[AI] Request failed:", err);
             const message = err.message || "Не удалось выполнить анализ. Проверьте интернет-соединение.";
-            state.detailAi = {
+            state.detail.ai = {
                 adId,
                 loading: false,
                 result: null,
@@ -421,10 +444,92 @@ function createApiAi(context) {
         );
     }
 
-    function _buildAiSection(label, children, extraClass = "") {
+    // Section metadata for nav rail dots — label + color accent per key
+    const SECTION_META = {
+        [SECTION_IDS.red_flags]:    { label: "Флаги",          color: "var(--ai-dot-flags, #ef4444)" },
+        [SECTION_IDS.scam]:         { label: "Скам",           color: "var(--ai-dot-flags, #ef4444)" },
+        [SECTION_IDS.photo_auth]:   { label: "Фото",           color: "var(--ai-dot-photo, #f59e0b)" },
+        [SECTION_IDS.condition]:    { label: "Состояние",      color: "var(--ai-dot-neutral, #94a3b8)" },
+        [SECTION_IDS.fair_price]:   { label: "Цена",           color: "var(--ai-dot-price, #3b82f6)" },
+        [SECTION_IDS.resale]:       { label: "Перепродажа",    color: "var(--ai-dot-resale, #8b5cf6)" },
+        [SECTION_IDS.market]:       { label: "Рынок",          color: "var(--ai-dot-market, #3b82f6)" },
+        [SECTION_IDS.best_alt]:     { label: "Лучший",         color: "var(--ai-dot-best, #22c55e)" },
+        [SECTION_IDS.similar]:      { label: "Аналоги",        color: "var(--ai-dot-neutral, #94a3b8)" },
+        [SECTION_IDS.watch_out]:    { label: "Внимание",       color: "var(--ai-dot-flags, #ef4444)" },
+        [SECTION_IDS.checklist]:    { label: "Чек-лист",       color: "var(--ai-dot-neutral, #94a3b8)" },
+        [SECTION_IDS.tips]:         { label: "Торговаться",    color: "var(--ai-dot-neutral, #94a3b8)" },
+        [SECTION_IDS.recommendation]: { label: "Вердикт",      color: "var(--ai-dot-best, #22c55e)" },
+    };
+
+    /**
+     * Build the slim dot navigation rail.
+     * @param {HTMLElement} contentArea — the scrollable content area to target for smooth scrolling
+     */
+    function _buildNavRail(contentArea) {
+        const existingSections = contentArea.querySelectorAll("[data-section-key]");
+        const nav = domEl("nav", { className: "ai-nav-rail", attrs: { "aria-label": "Разделы анализа" } });
+
+        existingSections.forEach((sec) => {
+            const key = sec.dataset.sectionKey;
+            const meta = SECTION_META[key];
+            const dot = domEl("button", {
+                className: "ai-nav-dot",
+                attrs: {
+                    "data-nav-target": key,
+                    title: meta?.label || "",
+                    "aria-label": meta?.label || "Раздел",
+                },
+            });
+            dot.style.setProperty("--dot-color", meta?.color || "var(--text-secondary)");
+            dot.addEventListener("click", () => {
+                sec.scrollIntoView({ behavior: "smooth", block: "start" });
+            });
+            nav.appendChild(dot);
+        });
+
+        return nav;
+    }
+
+    /**
+     * Set up IntersectionObserver to highlight the active nav dot
+     * as the user scrolls through sections.
+     */
+    function _setupActiveSectionTracker(contentArea) {
+        if (_sectionObserver) {
+            _sectionObserver.disconnect();
+            _sectionObserver = null;
+        }
+
+        const modalBody = contentArea.closest(".ai-modal-body");
+        if (!modalBody) return;
+
+        const dots = contentArea.querySelectorAll("[data-nav-target]");
+        const sections = contentArea.querySelectorAll("[data-section-key]");
+        if (!sections.length) return;
+
+        _sectionObserver = new IntersectionObserver(
+            (entries) => {
+                for (const entry of entries) {
+                    if (!entry.isIntersecting) continue;
+                    const key = entry.target.dataset.sectionKey;
+                    dots.forEach((d) => d.classList.toggle("ai-nav-dot--active", d.dataset.navTarget === key));
+                }
+            },
+            { root: modalBody, threshold: 0.2, rootMargin: "-10% 0px -60% 0px" },
+        );
+
+        sections.forEach((sec) => _sectionObserver.observe(sec));
+    }
+
+    function _buildAiSection(label, children, extraClass = "", sectionId = "") {
+        const attrs = {};
+        if (sectionId) {
+            attrs.id = sectionId;
+            attrs["data-section-key"] = sectionId;
+        }
         return domEl(
             "div",
-            { className: `ai-section${extraClass ? ` ${extraClass}` : ""}` },
+            { className: `ai-section${extraClass ? ` ${extraClass}` : ""}`, ...attrs },
             domEl("span", { className: "ai-label", text: label }),
             children,
         );
@@ -497,6 +602,7 @@ function createApiAi(context) {
                         )),
                     ),
                     "ai-section--flags",
+                    SECTION_IDS.red_flags,
                 )
             );
         }
@@ -541,7 +647,7 @@ function createApiAi(context) {
                 );
             }
             nodes.push(
-                _buildAiSection("Безопасность сделки", domFragment(...scamChildren), "ai-section--scam")
+                _buildAiSection("Безопасность сделки", domFragment(...scamChildren), "ai-section--scam", SECTION_IDS.scam)
             );
         }
 
@@ -574,7 +680,7 @@ function createApiAi(context) {
                 );
             }
             nodes.push(
-                _buildAiSection("Аутентичность фото", domFragment(...photoChildren), "ai-section--photo-auth")
+                _buildAiSection("Аутентичность фото", domFragment(...photoChildren), "ai-section--photo-auth", SECTION_IDS.photo_auth)
             );
         }
 
@@ -606,6 +712,8 @@ function createApiAi(context) {
                             ? domEl("ul", { className: "ai-notes" }, condObj.notes.map((note) => domEl("li", { text: note })))
                             : null,
                     ),
+                    "",
+                    SECTION_IDS.condition,
                 )
             );
         }
@@ -627,6 +735,8 @@ function createApiAi(context) {
                         priceText ? domEl("div", { className: "ai-fair-price", text: priceText }) : null,
                         fairPrice.reasoning ? domEl("p", { className: "ai-reasoning", text: fairPrice.reasoning }) : null,
                     ),
+                    "",
+                    SECTION_IDS.fair_price,
                 )
             );
         }
@@ -652,6 +762,8 @@ function createApiAi(context) {
                             ),
                             resale.reasoning ? domEl("p", { className: "ai-reasoning", text: resale.reasoning }) : null,
                         ),
+                        "",
+                        SECTION_IDS.resale,
                     )
                 );
             }
@@ -685,6 +797,7 @@ function createApiAi(context) {
                             : null,
                     ),
                     "ai-section--market",
+                    SECTION_IDS.market,
                 )
             );
         }
@@ -730,6 +843,7 @@ function createApiAi(context) {
                         ),
                     ),
                     "ai-section--best",
+                    SECTION_IDS.best_alt,
                 )
             );
         }
@@ -771,6 +885,8 @@ function createApiAi(context) {
                                 ),
                             ))
                         ),
+                        "",
+                        SECTION_IDS.similar,
                     )
                 );
             }
@@ -795,6 +911,8 @@ function createApiAi(context) {
                             );
                         })
                     ),
+                    "",
+                    SECTION_IDS.watch_out,
                 )
             );
         }
@@ -804,6 +922,8 @@ function createApiAi(context) {
                 _buildAiSection(
                     "Чек-лист для встречи",
                     _buildAiList("ol", "ai-checklist", data.meeting_checklist),
+                    "",
+                    SECTION_IDS.checklist,
                 )
             );
         }
@@ -813,6 +933,8 @@ function createApiAi(context) {
                 _buildAiSection(
                     "Как торговаться",
                     _buildAiList("ul", "ai-tips", data.negotiation_tips),
+                    "",
+                    SECTION_IDS.tips,
                 )
             );
         }
@@ -823,6 +945,7 @@ function createApiAi(context) {
                     "Рекомендация",
                     domEl("p", { className: "ai-recommendation-text", text: data.recommendation.text }),
                     "ai-section--recommendation",
+                    SECTION_IDS.recommendation,
                 )
             );
         }
@@ -867,6 +990,12 @@ function createApiAi(context) {
         console.log("[AI] Rendering result, data keys:", data ? Object.keys(data).join(",") : "null");
         _lastAiData = data;
 
+        // Disconnect any previous observer
+        if (_sectionObserver) {
+            _sectionObserver.disconnect();
+            _sectionObserver = null;
+        }
+
         if (elements.aiModalLoading) elements.aiModalLoading.hidden = true;
         if (elements.aiModalError) elements.aiModalError.hidden = true;
 
@@ -882,7 +1011,23 @@ function createApiAi(context) {
         const notice = elements.aiModal?.querySelector(".ai-time-notice");
         if (notice) notice.hidden = true;
 
-        container.replaceChildren(domFragment(_buildAiResultNodes(data)));
+        // Build content area with all sections
+        const contentArea = domEl("div", { className: "ai-content-area" });
+        const resultNodes = _buildAiResultNodes(data);
+        for (const node of resultNodes) {
+            contentArea.appendChild(node);
+        }
+
+        // Build nav rail from rendered sections
+        const navRail = _buildNavRail(contentArea);
+
+        // Wrap in layout: rail + content
+        const layout = domEl("div", { className: "ai-result-layout" }, navRail, contentArea);
+
+        container.replaceChildren(layout);
+
+        // Set up scroll-based active dot tracking
+        _setupActiveSectionTracker(contentArea);
     }
 
     /* ===== PDF Export ===== */
@@ -1002,7 +1147,7 @@ function createApiAi(context) {
         const data = _lastAiData;
         if (!data) return;
 
-        const detail = state.detail || {};
+        const detail = state.detail.data || {};
         const title = detail.title || "Объявление";
         const price = detail.price ? formatPrice(detail.price) : "";
         const adId = data.ad_id || "";

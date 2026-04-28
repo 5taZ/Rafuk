@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import re as _re
 import secrets
@@ -21,24 +20,11 @@ from api.dependencies import get_cache, get_kufar_client, get_telegram_user
 from api.schemas import (
     AIAnalysisRequest,
     AIAnalysisResponse,
-    AIListingAssistantRequest,
-    AIListingAssistantResponse,
-    AIListingPriceTier,
-    AIListingPricing,
-    AINegotiateRequest,
-    AINegotiateResponse,
-    AINegotiationCounter,
-    AIPriceAdviceRequest,
-    AIPriceAdviceResponse,
     AIResalePotential,
     AIResalePrice,
 )
 from api.services.aggregator import normalize_price_byn
 from api.services.ai_guardrails import apply_ai_market_guardrails
-from api.services.ai_listing_guardrails import (
-    normalize_listing_pricing,
-    thin_market_warning,
-)
 from api.services.ai_marketplace import (
     BestAlternativeDecision,
     build_fallback_analysis_result,
@@ -50,9 +36,7 @@ from api.services.ai_marketplace import (
     finalize_red_flags,
 )
 from api.services.ai_service import (
-    CATEGORY_HINTS,
     dedupe_analysis_payload,
-    detect_category,
     get_ai_service,
     normalize_condition_label,
 )
@@ -136,10 +120,13 @@ async def periodic_prune_shadow_stores() -> None:
     Called from the API lifespan so that _tasks and _exports dicts
     don't grow unbounded between task creation events.
     """
-    while True:
-        await asyncio.sleep(300)  # every 5 minutes
-        _prune_old_tasks_shadow()
-        _prune_old_exports()
+    try:
+        while True:
+            await asyncio.sleep(300)  # every 5 minutes
+            _prune_old_tasks_shadow()
+            _prune_old_exports()
+    except asyncio.CancelledError:
+        pass  # Graceful shutdown
 
 
 def _task_cache_key(task_id: str) -> str:
@@ -204,10 +191,16 @@ def _prune_old_exports() -> None:
 
 
 @router.get("/task/{task_id}")
-async def get_task_status(task_id: str, request: Request):
+async def get_task_status(
+    task_id: str,
+    request: Request,
+    _user=Depends(get_telegram_user),
+):
     """Poll AI analysis task status."""
     task = await _get_task(get_cache(request), task_id)
     if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if task.get("_telegram_user_id") != _user.user_id:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     resp: dict = {
         "status": task["status"],
@@ -1104,6 +1097,7 @@ async def create_export_report(
     token = secrets.token_urlsafe(18)
     _exports[token] = {
         "html": html,
+        "_telegram_user_id": _user.user_id,
         "_created_ts": datetime.now(UTC).timestamp(),
     }
     return {"url": str(request.url_for("get_export_report", token=token))}
@@ -1114,11 +1108,16 @@ async def create_export_report(
     name="get_export_report",
     response_class=HTMLResponse,
 )
-async def get_export_report(token: str):
+async def get_export_report(
+    token: str,
+    _user=Depends(get_telegram_user),
+):
     """Return previously created short-lived HTML export."""
     _prune_old_exports()
     item = _exports.get(token)
     if not item:
+        raise HTTPException(status_code=404, detail="Экспорт не найден или истёк")
+    if item.get("_telegram_user_id") != _user.user_id:
         raise HTTPException(status_code=404, detail="Экспорт не найден или истёк")
     return HTMLResponse(
         item["html"],
@@ -1138,71 +1137,11 @@ async def get_export_report(token: str):
     )
 
 
-def _coerce_price(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        num = float(value)
-    except (TypeError, ValueError):
-        return None
-    if num <= 0:
-        return None
-    return round(num, 2)
-
-
-def _coerce_price_tier(raw: Any) -> AIListingPriceTier | None:
-    if not isinstance(raw, dict):
-        return None
-    price = _coerce_price(raw.get("price_byn") or raw.get("price"))
-    if price is None:
-        return None
-    label = str(raw.get("label") or "").strip()[:64]
-    weeks = str(raw.get("weeks_to_sell") or raw.get("weeks") or "").strip()[:32]
-    reasoning = str(raw.get("reasoning") or "").strip()[:600]
-    return AIListingPriceTier(
-        label=label,
-        price_byn=price,
-        weeks_to_sell=weeks,
-        reasoning=reasoning,
-    )
-
-
-def _coerce_pricing(
-    raw: Any, *, market_anchors: dict[str, float | int | None]
-) -> AIListingPricing:
-    pricing = AIListingPricing(
-        market_median_byn=market_anchors.get("median"),  # type: ignore[arg-type]
-        market_q1_byn=market_anchors.get("q1"),  # type: ignore[arg-type]
-        market_q3_byn=market_anchors.get("q3"),  # type: ignore[arg-type]
-        competing_count=int(market_anchors.get("count") or 0),
-    )
-    if not isinstance(raw, dict):
-        return pricing
-    pricing.fast = _coerce_price_tier(raw.get("fast"))
-    pricing.market = _coerce_price_tier(raw.get("market"))
-    pricing.patient = _coerce_price_tier(raw.get("patient"))
-    pricing.floor_byn = _coerce_price(raw.get("floor_byn") or raw.get("floor"))
-    return pricing
-
-
-def _coerce_negotiation(raw: Any) -> list[AINegotiationCounter]:
-    items: list[AINegotiationCounter] = []
-    if not isinstance(raw, list):
-        return items
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        scenario = str(entry.get("scenario") or "").strip()
-        response = str(entry.get("response") or "").strip()
-        if not scenario or not response:
-            continue
-        items.append(AINegotiationCounter(scenario=scenario[:200], response=response[:600]))
-        if len(items) >= 6:
-            break
-    return items
+# ── Shared helpers re-exported for ai_listing_assistant / ai_tools ────────
 
 
 def _coerce_string_list(raw: Any, *, limit: int, max_len: int) -> list[str]:
+    """Deduplicating string-list coercer shared with sub-routers."""
     items: list[str] = []
     if not isinstance(raw, list):
         return items
@@ -1220,437 +1159,3 @@ def _coerce_string_list(raw: Any, *, limit: int, max_len: int) -> list[str]:
         if len(items) >= limit:
             break
     return items
-
-
-# A single user-uploaded photo capped at ~1.5MB of base64 (~1MB binary).
-# 4 photos × 1.5MB plus the rest of the request keeps us under nginx's
-# default body limit comfortably.
-_LISTING_PHOTO_MAX_BYTES = 1_500_000
-_LISTING_PHOTO_RE = _re.compile(
-    r"^data:image/(jpeg|png|webp|jpg);base64,[A-Za-z0-9+/=]+$",
-)
-
-
-def _coerce_listing_photos(raw: list[str] | None) -> list[str]:
-    """Validate seller-uploaded photos: keep only well-formed data URLs.
-
-    The frontend already compresses images via canvas, but we re-check on
-    the server to defend against malformed or oversized payloads.
-    """
-    if not raw:
-        return []
-    cleaned: list[str] = []
-    for entry in raw:
-        if not isinstance(entry, str):
-            continue
-        if not _LISTING_PHOTO_RE.match(entry):
-            continue
-        if len(entry) > _LISTING_PHOTO_MAX_BYTES:
-            continue
-        cleaned.append(entry)
-        if len(cleaned) >= 4:
-            break
-    return cleaned
-
-
-def _listing_assistant_cache_key(
-    payload: AIListingAssistantRequest,
-    photos: list[str],
-) -> str:
-    """Stable cache key derived from the canonical user input.
-
-    SHA-256 of a normalised tuple — title is lowercased+whitespace-flattened
-    so trivial typing differences ("iPhone 14" vs "iphone  14") still hit
-    the same cache. Photo bytes are hashed so a new photo invalidates.
-    """
-    canonical_title = " ".join((payload.title or "").lower().split())
-    canonical_notes = " ".join((payload.extra_notes or "").lower().split())
-    photo_hashes = [hashlib.sha256(p.encode("utf-8")).hexdigest()[:16] for p in photos]
-    parts = [
-        ("v", "1"),
-        ("title", canonical_title),
-        ("category", str(payload.category or "")),
-        ("condition", (payload.condition or "").strip().lower()),
-        ("price", f"{int(round(payload.draft_price_byn))}" if payload.draft_price_byn else ""),
-        ("negot", "1" if payload.is_negotiable else "0"),
-        ("notes", canonical_notes),
-        ("photos", ",".join(photo_hashes)),
-    ]
-    serialised = "|".join(f"{k}={v}" for k, v in parts)
-    digest = hashlib.sha256(serialised.encode("utf-8")).hexdigest()
-    return f"ai_listing:{digest}"
-
-
-def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Pick a diverse, priced subset of ads to use as competitor context."""
-    priced = [
-        ad
-        for ad in dataset_ads
-        if normalize_price_byn(ad.get("price_byn")) and normalize_price_byn(ad.get("price_byn"))
-    ]
-    # Keep order from Kufar but cap to 8
-    out: list[dict[str, Any]] = []
-    for ad in priced[:24]:
-        price = normalize_price_byn(ad.get("price_byn"))
-        if price is None:
-            continue
-        title_text = str(ad.get("subject") or ad.get("title") or "").strip()
-        params = ad.get("ad_parameters") or []
-        seller_label = ""
-        condition = ""
-        for p in params:
-            label = str(p.get("p") or "").lower()
-            value = str(p.get("v") or p.get("vl") or "").strip()
-            if label == "seller_type" and value:
-                seller_label = value
-            elif label in {"condition", "cond"} and value:
-                condition = value
-        out.append(
-            {
-                "title": title_text[:120],
-                "price_byn": price,
-                "seller_type": seller_label,
-                "condition": condition,
-            }
-        )
-        if len(out) >= 8:
-            break
-    return out
-
-
-@router.post("/listing-assistant", response_model=AIListingAssistantResponse)
-async def listing_assistant(
-    payload: AIListingAssistantRequest,
-    request: Request,
-    _user=Depends(get_telegram_user),
-    kufar_client: KufarClient = Depends(get_kufar_client),
-):
-    """Help a seller draft a listing — title, description, price tiers, anti-lowball playbook.
-
-    Uses the same Kufar market data that powers buyer research, so the
-    suggested price tiers are grounded in real Q1/median/Q3 numbers
-    rather than model guesses.
-    """
-    ai = _check_ai_available()
-    await _check_ai_consent(request, _user.user_id)
-    await _check_rate_limit(request, _user.user_id)
-
-    # AI audit trail (Belarus Law No. 91-Z)
-    await _log_ai_audit(
-        request.app.state.session_factory,
-        telegram_user_id=_user.user_id,
-        endpoint="listing_assistant",
-        query=payload.title,
-        model=get_settings().ai_model,
-    )
-
-    settings = getattr(request.app.state, "settings", None)
-    if settings is None:
-        settings = get_settings()
-
-    title = payload.title.strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="Введите название товара")
-
-    photos = _coerce_listing_photos(payload.photos)
-
-    # Same canonical input → same cached AI response. Sellers commonly
-    # tweak one field and resubmit — without cache that's a fresh Gemini
-    # bill every time. Photos are part of the key (their bytes) so a new
-    # photo invalidates the cache as expected.
-    cache = get_cache(request)
-    cache_key = _listing_assistant_cache_key(payload, photos)
-    cached = await cache.get_json(cache_key)
-    if isinstance(cached, dict):
-        try:
-            return AIListingAssistantResponse.model_validate(cached)
-        except ValidationError:
-            # Stale shape after a deploy — fall through, recompute, and the
-            # set_json at the bottom will overwrite the bad entry.
-            logger.info("Listing assistant cache hit was stale, recomputing")
-
-    try:
-        dataset = await load_query_dataset(
-            query=title,
-            currency="BYN",
-            strict_search=False,
-            settings=settings,
-            client=kufar_client,
-            category=payload.category,
-        )
-    except KufarAPIError as exc:
-        logger.warning("Listing assistant: Kufar fetch failed: %s", exc)
-        dataset = None
-
-    market_stats = dataset.price_stats if dataset is not None else None
-    competitors = _build_listing_competitors(dataset.ads) if dataset is not None else []
-
-    market_anchors: dict[str, float | int | None] = {
-        "median": market_stats.median if market_stats and market_stats.count else None,
-        "q1": market_stats.q1 if market_stats and market_stats.count else None,
-        "q3": market_stats.q3 if market_stats and market_stats.count else None,
-        "min": market_stats.min if market_stats and market_stats.count else None,
-        "max": market_stats.max if market_stats and market_stats.count else None,
-        "count": market_stats.count if market_stats else 0,
-    }
-
-    category_key = detect_category(title)
-    category_meta = CATEGORY_HINTS.get(category_key) or {}
-
-    timeout_s = int(getattr(settings, "ai_listing_assistant_timeout", 120) or 120)
-    try:
-        ai_result = await asyncio.wait_for(
-            ai.generate_listing(
-                title=title,
-                condition=normalize_condition_label(payload.condition) or payload.condition,
-                is_negotiable=payload.is_negotiable,
-                draft_price_byn=payload.draft_price_byn,
-                extra_notes=payload.extra_notes,
-                market_median=market_anchors["median"],
-                market_q1=market_anchors["q1"],
-                market_q3=market_anchors["q3"],
-                market_min=market_anchors["min"],
-                market_max=market_anchors["max"],
-                market_count=int(market_anchors["count"] or 0),
-                similar_listings=competitors or None,
-                category_hint=category_meta.get("category_hints"),
-                category_bargain_hint=category_meta.get("bargain_hint"),
-                photo_data_urls=photos or None,
-            ),
-            timeout=timeout_s,
-        )
-    except (TimeoutError, *_AI_ANALYSIS_ERRORS) as exc:
-        logger.error("Listing assistant failed: %s", exc)
-        err_msg = "AI сервис недоступен"
-        text = str(exc)
-        if "429" in text or "RESOURCE_EXHAUSTED" in text:
-            err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
-        raise HTTPException(status_code=502, detail=err_msg) from None
-
-    # Defence-in-depth: clamp non-monotonic / out-of-bounds tiers and
-    # ensure floor <= fast before the user ever sees the numbers.
-    raw_pricing = ai_result.get("pricing") if isinstance(ai_result.get("pricing"), dict) else {}
-    normalised_pricing = normalize_listing_pricing(
-        raw_pricing,
-        market_median=market_anchors["median"],
-        market_q1=market_anchors["q1"],
-        market_q3=market_anchors["q3"],
-        market_min=market_anchors["min"],
-        market_max=market_anchors["max"],
-        market_count=int(market_anchors["count"] or 0),
-    )
-    pricing = _coerce_pricing(normalised_pricing, market_anchors=market_anchors)
-
-    # If Kufar gave us a thin sample, surface that to the user up front.
-    market_summary = str(ai_result.get("market_summary") or "").strip()
-    warning = thin_market_warning(int(market_anchors["count"] or 0))
-    if warning:
-        market_summary = f"{warning}\n\n{market_summary}".strip() if market_summary else warning
-
-    response = AIListingAssistantResponse(
-        title_suggestion=str(ai_result.get("title_suggestion") or "").strip()[:200],
-        description=str(ai_result.get("description") or "").strip()[:2000],
-        description_short=str(ai_result.get("description_short") or "").strip()[:400],
-        selling_points=_coerce_string_list(ai_result.get("selling_points"), limit=6, max_len=160),
-        pricing=pricing,
-        negotiation_playbook=_coerce_negotiation(ai_result.get("negotiation_playbook")),
-        photo_tips=_coerce_string_list(ai_result.get("photo_tips"), limit=5, max_len=140),
-        market_summary=market_summary[:600],
-    )
-
-    cache_ttl = int(getattr(settings, "ai_listing_assistant_cache_ttl", 3600) or 3600)
-    await cache.set_json(cache_key, response.model_dump(mode="json"), ttl=cache_ttl)
-    return response
-
-
-# ── AI Negotiator (buyer side) ────────────────────────────────────────────
-
-
-_NEGOTIATE_SYSTEM = """\
-Ты — Rafuk AI, помощник покупателя на белорусском Kufar. Ты помогаешь
-сформулировать текст для торга с продавцом.
-
-Правила:
-- Аудитория — Беларусь, Kufar. Все цены в BYN.
-- Будь вежлив, но настойчив. Цель — получить скидку или обосновать цену.
-- Упоминай конкретные аргументы: рыночную цену, состояние, аналоги.
-- Не выдумывай факты — опирайся только на предоставленные данные.
-- Генерируй текст на русском, готовый для копирования в чат Kufar.
-
-Ответь строго JSON:
-{
-  "opening_line": "приветствие с указанием интереса к товару",
-  "counter_offer_text": "текст предложения со скидкой и обоснованием",
-  "fallback_text": "текст если продавец отказал — компромисс",
-  "tips": ["конкретный совет по переговорам"]
-}
-"""
-
-
-@router.post("/negotiate", response_model=AINegotiateResponse)
-async def negotiate_price(
-    payload: AINegotiateRequest,
-    request: Request,
-    _user=Depends(get_telegram_user),
-):
-    """Generate negotiation text for a buyer — counter-offer and tips."""
-    ai = _check_ai_available()
-    await _check_ai_consent(request, _user.user_id)
-    await _check_rate_limit(request, _user.user_id)
-
-    # AI audit trail
-    await _log_ai_audit(
-        request.app.state.session_factory,
-        telegram_user_id=_user.user_id,
-        endpoint="negotiate",
-        ad_id=str(payload.ad_id),
-        query=payload.query,
-        model=get_settings().ai_model,
-    )
-
-    cache = get_cache(request)
-    cache_key = f"ai_negotiate:{payload.ad_id}:{payload.my_offer_byn}:{payload.asking_price_byn}"
-    cached = await cache.get_json(cache_key)
-    if isinstance(cached, dict):
-        try:
-            return AINegotiateResponse.model_validate(cached)
-        except ValidationError:
-            pass
-
-    # Build context
-    user_content = (
-        f"Товар: {payload.query}\n"
-        f"Цена продавца: {payload.asking_price_byn} BYN\n"
-        f"Моя цена: {payload.my_offer_byn} BYN\n"
-    )
-    if payload.condition:
-        user_content += f"Состояние: {payload.condition}\n"
-    if payload.market_context:
-        user_content += f"Рыночный контекст: {payload.market_context}\n"
-
-    result = await ai._chat(
-        system=_NEGOTIATE_SYSTEM,
-        content=user_content,
-        max_tokens=800,
-    )
-
-    response = AINegotiateResponse(
-        opening_line=str(result.get("opening_line") or "")[:300],
-        counter_offer_text=str(result.get("counter_offer_text") or "")[:600],
-        fallback_text=str(result.get("fallback_text") or "")[:400],
-        tips=_coerce_string_list(result.get("tips"), limit=4, max_len=140),
-    )
-
-    await cache.set_json(cache_key, response.model_dump(mode="json"), ttl=1800)
-    return response
-
-
-# ── AI Price Advice (wait or buy?) ────────────────────────────────────────
-
-
-_PRICE_ADVICE_SYSTEM = """\
-Ты — Rafuk AI, аналитик цен на белорусском Kufar. Ты помогаешь покупателю
-решить: купить сейчас или подождать снижения цены.
-
-КРИТИЧЕСКИ ВАЖНО: Твоя оценка НЕ является инвестиционной рекомендацией.
-Ты анализируешь только исторические данные объявлений Kufar.
-Рыночные цены могут изменяться непредсказуемо.
-
-Правила:
-- Аудитория — Беларусь, Kufar. Все цены в BYN.
-- Опирайся на предоставленные рыночные данные (медиана, тренд, количество).
-- Если данных недостаточно для вывода — честно скажи "neutral".
-- advice — строго одно из: "buy_now" (цена выгодная, редкий товар),
-  "wait" (есть шанс снижения), "neutral" (недостаточно данных).
-- Будь конкретен: указывай суммы, сроки, проценты.
-- НЕ гарантируй снижение или рост цены.
-
-Ответь строго JSON:
-{
-  "advice": "buy_now или wait или neutral",
-  "reasoning": "обоснование с конкретными данными",
-  "price_trend": "rising или stable или declining или volatile",
-  "historical_context": "2-3 предложения о динамике цен",
-  "confidence": 0.0-1.0
-}
-"""
-
-
-@router.post("/price-advice", response_model=AIPriceAdviceResponse)
-async def price_advice(
-    payload: AIPriceAdviceRequest,
-    request: Request,
-    _user=Depends(get_telegram_user),
-):
-    """Price timing advice — should I buy now or wait? NOT an investment recommendation."""
-    ai = _check_ai_available()
-    await _check_ai_consent(request, _user.user_id)
-    await _check_rate_limit(request, _user.user_id)
-
-    # AI audit trail
-    await _log_ai_audit(
-        request.app.state.session_factory,
-        telegram_user_id=_user.user_id,
-        endpoint="price_advice",
-        query=payload.query,
-        model=get_settings().ai_model,
-    )
-
-    cache = get_cache(request)
-    cache_key = f"ai_price_advice:{payload.query}:{payload.current_price_byn}:{payload.category}"
-    cached = await cache.get_json(cache_key)
-    if isinstance(cached, dict):
-        try:
-            return AIPriceAdviceResponse.model_validate(cached)
-        except ValidationError:
-            pass
-
-    # Fetch market data for context
-    kufar_client = get_kufar_client(request)
-    from api.services.query_pipeline import load_query_dataset
-
-    dataset = await load_query_dataset(
-        query=payload.query,
-        currency="byn",
-        strict_search=True,
-        settings=get_settings(),
-        client=kufar_client,
-        category=payload.category,
-    )
-
-    # Build context with market data
-    stats = dataset.price_stats if dataset else None
-    market_info = ""
-    if stats:
-        market_info = (
-            f"Медиана рынка: {stats.median:.0f} BYN\n"
-            f"Q1 (25%): {stats.q1:.0f} BYN\n"
-            f"Q3 (75%): {stats.q3:.0f} BYN\n"
-            f"Количество объявлений: {stats.count}\n"
-            f"Минимальная цена: {stats.min_price:.0f} BYN\n"
-            f"Максимальная цена: {stats.max_price:.0f} BYN\n"
-        )
-
-    user_content = (
-        f"Запрос: {payload.query}\n"
-        f"Текущая цена: {payload.current_price_byn} BYN\n"
-    )
-    if market_info:
-        user_content += f"\nРыночные данные:\n{market_info}"
-
-    result = await ai._chat(
-        system=_PRICE_ADVICE_SYSTEM,
-        content=user_content,
-        max_tokens=800,
-    )
-
-    response = AIPriceAdviceResponse(
-        advice=str(result.get("advice") or "neutral")[:20],
-        reasoning=str(result.get("reasoning") or "")[:500],
-        price_trend=str(result.get("price_trend") or "")[:20],
-        historical_context=str(result.get("historical_context") or "")[:400],
-        confidence=float(result.get("confidence") or 0.0),
-    )
-
-    await cache.set_json(cache_key, response.model_dump(mode="json"), ttl=3600)
-    return response

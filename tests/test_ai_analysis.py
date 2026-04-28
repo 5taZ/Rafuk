@@ -246,6 +246,7 @@ def test_ai_task_status_reads_from_cache_backend() -> None:
                     "progress": 100,
                     "result": {"ad_id": 42, "summary": "ok"},
                     "error": None,
+                    "_telegram_user_id": 0,
                     "_created_ts": monotonic(),
                 },
                 ttl=3600,
@@ -943,6 +944,10 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    import api.routers.ai_listing_assistant as _la_mod
+
+    monkeypatch.setattr(_la_mod, "_check_ai_available", lambda: fake_ai)
+    monkeypatch.setattr(_la_mod, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
@@ -1104,6 +1109,10 @@ def test_listing_assistant_handles_empty_market_gracefully(monkeypatch) -> None:
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    import api.routers.ai_listing_assistant as _la_mod2
+
+    monkeypatch.setattr(_la_mod2, "_check_ai_available", lambda: fake_ai)
+    monkeypatch.setattr(_la_mod2, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user

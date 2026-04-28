@@ -39,7 +39,7 @@ function createRenderModals(context) {
 
     function renderDetailModal() {
         return safeRender('renderDetailModal', () => {
-            if (!state.detail) {
+            if (!state.detail.data) {
             // Don't toggle .hidden here — closeDetailModal animates it
             // out and a stray render call would otherwise abort that
             // transition. The modal starts hidden in HTML and is only
@@ -47,16 +47,16 @@ function createRenderModals(context) {
             return;
         }
 
-        const detail = state.detail;
+        const detail = state.detail.data;
         const images = detail.images || [];
         const hasImages = images.length > 0;
-        const currentImage = hasImages ? images[state.detailImageIndex] || images[0] : null;
+        const currentImage = hasImages ? images[state.detail.imageIndex] || images[0] : null;
 
         elements.detailTitle.textContent = detail.title || "Объявление";
         elements.detailPrice.textContent = formatPrice(detail.price);
         elements.detailLink.href = safeUrl(detail.link) || "#";
 
-        const aiState = state.detailAi || {};
+        const aiState = state.detail.ai || {};
         if (elements.detailAiBlock && elements.detailAiContent) {
             elements.detailAiBlock.hidden = true;
             clearChildren(elements.detailAiContent);
@@ -111,7 +111,7 @@ function createRenderModals(context) {
         // Update gallery aria-label with current image index
         if (elements.detailMedia) {
             const total = images.length || 1;
-            const current = images.length ? (state.detailImageIndex + 1) : 1;
+            const current = images.length ? (state.detail.imageIndex + 1) : 1;
             elements.detailMedia.setAttribute("aria-label", `Фото объявления ${current} из ${total}`);
         }
 
@@ -139,13 +139,13 @@ function createRenderModals(context) {
         for (const [index, image] of images.entries()) {
             const button = document.createElement("button");
             button.type = "button";
-            button.className = `detail-thumb${state.detailImageIndex === index ? " active" : ""}`;
+            button.className = `detail-thumb${state.detail.imageIndex === index ? " active" : ""}`;
             const img = document.createElement("img");
             img.src = optimizeWith(image, 120);
             img.alt = "";
             button.appendChild(img);
             button.addEventListener("click", () => {
-                state.detailImageIndex = index;
+                state.detail.imageIndex = index;
                 renderDetailModal();
             });
             elements.detailThumbs.appendChild(button);
@@ -167,7 +167,7 @@ function createRenderModals(context) {
 
         // Hide "Следить" button if item is already in watchlist
         if (elements.detailAddWatchlistButton) {
-            elements.detailAddWatchlistButton.hidden = state.detailFromWatchlist || false;
+            elements.detailAddWatchlistButton.hidden = state.detail.fromWatchlist || false;
         }
 
         // Reset scroll position to top when modal opens
@@ -201,19 +201,19 @@ function createRenderModals(context) {
     }
 
     function closeDetailModal() {
-        if (state.modalCleanup) {
-            state.modalCleanup();
-            state.modalCleanup = null;
+        if (state.misc.modalCleanup) {
+            state.misc.modalCleanup();
+            state.misc.modalCleanup = null;
         }
         // Drop any pinch-zoom transform so the next lot opens at 1×
         // even if the previous viewer left the photo magnified.
         if (elements.detailMainImage?._pinchController) {
             elements.detailMainImage._pinchController.reset(false);
         }
-        state.detail = null;
-        state.detailImageIndex = 0;
-        state.detailFromWatchlist = false;
-        state.detailAi = {
+        state.detail.data = null;
+        state.detail.imageIndex = 0;
+        state.detail.fromWatchlist = false;
+        state.detail.ai = {
             adId: null,
             loading: false,
             result: null,
@@ -233,7 +233,7 @@ function createRenderModals(context) {
             clearChildren(elements.expensesList);
 
         // Show loading state
-        if (state.expensesLoading) {
+        if (state.expenses.loading) {
             const loader = document.createElement("div");
             loader.className = "expenses-loading";
             for (let i = 0; i < 3; i++) {
@@ -245,7 +245,7 @@ function createRenderModals(context) {
             return;
         }
 
-        if (!state.expenses.length) {
+        if (!state.expenses.items.length) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
             note.textContent = "Расходов пока нет.";
@@ -254,7 +254,7 @@ function createRenderModals(context) {
         }
 
         let totalExpenses = 0;
-        for (const expense of state.expenses) {
+        for (const expense of state.expenses.items) {
             const amount = Number(expense.amount_byn || 0);
             totalExpenses += amount;
             const row = document.createElement("div");
@@ -278,7 +278,7 @@ function createRenderModals(context) {
             deleteBtn.setAttribute("aria-label", "Удалить расход");
             deleteBtn.textContent = "✕";
             deleteBtn.addEventListener("click", () => {
-                void actions.deleteExpense(state.currentExpenseLeadId, expense.id);
+                void actions.deleteExpense(state.expenses.currentLeadId, expense.id);
             });
             row.append(main, amountEl, deleteBtn);
             elements.expensesList.appendChild(row);
@@ -299,33 +299,33 @@ function createRenderModals(context) {
     }
 
     function openExpensesModal(leadId, leadTitle) {
-        state.currentExpenseLeadId = leadId;
-        state.expenses = [];
+        state.expenses.currentLeadId = leadId;
+        state.expenses.items = [];
         if (elements.expensesSubtitle) {
             elements.expensesSubtitle.textContent = leadTitle;
             elements.expensesSubtitle.hidden = false;
         }
         if (elements.expensesModal) {
-            if (state.modalCleanup) {
-                state.modalCleanup();
-                state.modalCleanup = null;
+            if (state.misc.modalCleanup) {
+                state.misc.modalCleanup();
+                state.misc.modalCleanup = null;
             }
             openModalAnimated(elements.expensesModal);
-            state.modalCleanup = trapFocus(elements.expensesModal);
+            state.misc.modalCleanup = trapFocus(elements.expensesModal);
         }
         void actions.loadExpenses(leadId);
     }
 
     function closeExpensesModal() {
-        if (state.modalCleanup) {
-            state.modalCleanup();
-            state.modalCleanup = null;
+        if (state.misc.modalCleanup) {
+            state.misc.modalCleanup();
+            state.misc.modalCleanup = null;
         }
         if (elements.expensesModal) {
             closeModalAnimated(elements.expensesModal);
         }
-        state.currentExpenseLeadId = null;
-        state.expenses = [];
+        state.expenses.currentLeadId = null;
+        state.expenses.items = [];
         if (elements.expenseTypeSelect) elements.expenseTypeSelect.value = "delivery";
         if (elements.expenseAmountInput) elements.expenseAmountInput.value = "";
         if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";

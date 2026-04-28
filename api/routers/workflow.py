@@ -248,6 +248,13 @@ async def delete_all_leads(
                 LeadItem.user_id == user_id,
                 LeadItem.status.notin_(preserved_statuses),
             )
+            # Bulk DELETE bypasses ORM cascade — remove snapshots and
+            # expenses explicitly before the parent rows disappear.
+            await session.execute(
+                delete(LeadItemPriceSnapshot).where(
+                    LeadItemPriceSnapshot.lead_item_id.in_(active_lead_ids)
+                )
+            )
             await session.execute(
                 delete(DealExpense).where(DealExpense.lead_id.in_(active_lead_ids))
             )
@@ -281,6 +288,16 @@ async def delete_lead(
         )
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        # Explicit pre-delete for bulk-style safety (ORM cascade may
+        # not fire for all relationship configurations).
+        await session.execute(
+            delete(LeadItemPriceSnapshot).where(
+                LeadItemPriceSnapshot.lead_item_id == lead.id
+            )
+        )
+        await session.execute(
+            delete(DealExpense).where(DealExpense.lead_id == lead.id)
+        )
         await session.delete(lead)
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -428,6 +445,20 @@ async def delete_all_watchlist_items(
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is not None:
+            watching_ids = select(LeadItem.id).where(
+                LeadItem.user_id == user_id,
+                LeadItem.status == WATCHING_STATUS,
+            )
+            # Bulk DELETE bypasses ORM cascade — remove snapshots and
+            # expenses explicitly before the parent rows disappear.
+            await session.execute(
+                delete(LeadItemPriceSnapshot).where(
+                    LeadItemPriceSnapshot.lead_item_id.in_(watching_ids)
+                )
+            )
+            await session.execute(
+                delete(DealExpense).where(DealExpense.lead_id.in_(watching_ids))
+            )
             await session.execute(
                 delete(LeadItem).where(
                     LeadItem.user_id == user_id,

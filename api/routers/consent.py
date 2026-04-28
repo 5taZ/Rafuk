@@ -127,10 +127,16 @@ async def grant_consent(
 
         # Capture client IP for audit trail (Belarus Law No. 91-Z)
         client_ip = request.client.host if request.client else None
-        # Trust X-Forwarded-For when behind nginx
+        # Trust X-Forwarded-For when behind nginx — take the last
+        # trusted entry (set by our nginx) rather than the first
+        # which could be spoofed by the client.
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
-            client_ip = forwarded.split(",")[0].strip()
+            # Last entry is set by our reverse proxy; earlier entries
+            # may be client-injected. Strip whitespace and validate.
+            parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+            if parts:
+                client_ip = parts[-1]
 
         consent = UserConsent(
             user_id=uid,
@@ -168,6 +174,7 @@ async def revoke_consent(
             status_code=400, detail=f"Неизвестный тип согласия: {consent_type}"
         )
 
+    revoked_count = 0
     async with session_factory() as session:
         from api.services.workflow_store import resolve_user_id
 
@@ -187,9 +194,10 @@ async def revoke_consent(
         now = datetime.now(UTC)
         for consent in results:
             consent.revoked_at = now
+        revoked_count = len(results)
         await session.commit()
 
-    if results:
+    if revoked_count:
         logger.info("User %d revoked consent %s", _user.user_id, consent_type)
 
 
@@ -320,9 +328,11 @@ async def export_account_data(
             for e in tracker_events
         ]
 
-        # Leads
+        # Leads (excluding watching — those are in watchlist_data)
         leads = (
-            await session.execute(select(LeadItem).where(LeadItem.user_id == uid))
+            await session.execute(
+                select(LeadItem).where(LeadItem.user_id == uid, LeadItem.status != "watching")
+            )
         ).scalars().all()
         leads_data = [
             {

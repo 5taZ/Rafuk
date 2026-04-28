@@ -28,7 +28,7 @@ function createApiListings(context) {
 
     // ── Stale-request guard ──────────────────────────────────────────────
     function isActiveRequest(requestId) {
-        return requestId === state.searchRequestId;
+        return requestId === state.search.searchRequestId;
     }
 
     // Cache TTL: skip reload if data was fetched within this window (ms)
@@ -40,7 +40,7 @@ function createApiListings(context) {
 
     function buildListingsQuery(params = {}) {
         const query = new URLSearchParams(buildCommonQuery(params));
-        if (state.category != null) {
+        if (state.filters.category != null) {
             query.set("reference_context", "base_query");
         }
         return query.toString();
@@ -48,126 +48,126 @@ function createApiListings(context) {
 
     // ── Clear search-dependent state ─────────────────────────────────────
     function clearSearchData() {
-        state.stats = null;
-        state.history = [];
-        state.segments = null;
-        state.geography = [];
-        state.listings = [];
-        state._listingsLoadedAt = 0;
-        state.listingsTotal = 0;
-        state.dealListings = [];
-        state._dealsLoadedAt = 0;
-        state.dealsTotal = 0;
-        state.detail = null;
-        state.detailImageIndex = 0;
-        state._listingsPending = true;
+        state.misc.stats = null;
+        state.charts.historyData = [];
+        state.misc.segments = null;
+        state.misc.geography = [];
+        state.listings.items = [];
+        state.listings._loadedAt = 0;
+        state.listings.total = 0;
+        state.deals.items = [];
+        state.deals._loadedAt = 0;
+        state.deals.total = 0;
+        state.detail.data = null;
+        state.detail.imageIndex = 0;
+        state.listings._pending = true;
     }
 
     function resetCategoryFilter() {
-        state.category = null;
-        state.categories = [];
+        state.filters.category = null;
+        state.filters.categories = [];
         // Reset all filter state when query changes
-        state.condition = "";
-        state.sellerType = "";
-        state.minPrice = null;
-        state.maxPrice = null;
-        state.regionName = "";
+        state.filters.condition = "";
+        state.filters.sellerType = "";
+        state.filters.minPrice = null;
+        state.filters.maxPrice = null;
+        state.filters.regionName = "";
         // Also reset pending values
-        state.pendingCategory = null;
-        state.pendingCondition = "";
-        state.pendingSellerType = "";
-        state.pendingMinPrice = null;
-        state.pendingMaxPrice = null;
-        state.pendingRegionName = "";
+        state.filters.pendingCategory = null;
+        state.filters.pendingCondition = "";
+        state.filters.pendingSellerType = "";
+        state.filters.pendingMinPrice = null;
+        state.filters.pendingMaxPrice = null;
+        state.filters.pendingRegionName = "";
     }
 
     // ── Load price history (standalone) ──────────────────────────────────
     async function loadHistory() {
-        if (!state.query) {
-            state.history = [];
+        if (!state.search.query) {
+            state.charts.historyData = [];
             renderHistory();
             return;
         }
         // Stale-response guard — switching the history range button or
         // changing the query mid-fetch shouldn't let the older response
         // overwrite the freshly-requested points.
-        const requestId = (state._historyRequestId =
-            (state._historyRequestId + 1) % 1_000_000);
+        const requestId = (state.charts._historyRequestId =
+            (state.charts._historyRequestId + 1) % 1_000_000);
         let nextHistory;
         try {
             const payload = await getJson(
-                `/api/v1/price-history?${buildCommonQuery({ days: state.historyDays })}`
+                `/api/v1/price-history?${buildCommonQuery({ days: state.misc.historyDays })}`
             );
             nextHistory = payload.points || [];
         } catch (_) {
             nextHistory = [];
         }
-        if (requestId !== state._historyRequestId) return;
-        state.history = nextHistory;
+        if (requestId !== state.charts._historyRequestId) return;
+        state.charts.historyData = nextHistory;
         renderHistory();
     }
 
     // ── Load parallel search dependencies ────────────────────────────────
     function loadSearchDependencies(requestId) {
         // Abort previous in-flight search dependencies
-        if (state.searchAbortController) {
-            state.searchAbortController.abort();
+        if (state.search.searchAbortController) {
+            state.search.searchAbortController.abort();
         }
-        state.searchAbortController = new AbortController();
-        const signal = state.searchAbortController.signal;
+        state.search.searchAbortController = new AbortController();
+        const signal = state.search.searchAbortController.signal;
 
         const dependencies = [
             {
-                request: getJson(`/api/v1/price-history?${buildCommonQuery({ days: state.historyDays })}`, { signal }),
+                request: getJson(`/api/v1/price-history?${buildCommonQuery({ days: state.misc.historyDays })}`, { signal }),
                 apply(payload) {
-                    state.history = payload.points || [];
+                    state.charts.historyData = payload.points || [];
                 },
             },
             {
                 request: getJson(`/api/v1/segments?${buildCommonQuery()}`, { signal }),
                 apply(payload) {
-                    state.segments = payload;
+                    state.misc.segments = payload;
                 },
             },
             {
                 request: getJson(`/api/v1/geography?${buildCommonQuery()}`, { signal }),
                 apply(payload) {
-                    state.geography = payload.regions || [];
+                    state.misc.geography = payload.regions || [];
                 },
             },
             {
                 request: getJson(
                     `/api/v1/listings?${buildListingsQuery({
-                        sort: state.sort,
+                        sort: state.search.sort,
                         limit: PAGE_SIZE,
                         offset: 0,
                     })}`,
                     { signal },
                 ),
                 apply(payload) {
-                    state.listings = payload.listings || [];
-                    state.listingsTotal = payload.total || 0;
-                    state.listingsHasMore = Boolean(payload.has_more);
-                    state._listingsLoadedAt = Date.now();
-                    state._listingsLoadedSort = state.sort;
-                    state._listingsPending = false;
+                    state.listings.items = payload.listings || [];
+                    state.listings.total = payload.total || 0;
+                    state.listings.hasMore = Boolean(payload.has_more);
+                    state.listings._loadedAt = Date.now();
+                    state.listings._loadedSort = state.search.sort;
+                    state.listings._pending = false;
                 },
             },
             {
                 request: getJson(
                     `/api/v1/listings?${buildListingsQuery({
                         sort: "cheap",
-                        discount_from_percent: state.discountFromPercent,
-                        discount_to_percent: state.discountToPercent,
+                        discount_from_percent: state.filters.discountFromPercent,
+                        discount_to_percent: state.filters.discountToPercent,
                         limit: PAGE_SIZE,
                         offset: 0,
                     })}`,
                     { signal }
                 ),
                 apply(payload) {
-                    state.dealListings = payload.listings || [];
-                    state.dealsTotal = payload.total || 0;
-                    state.dealsHasMore = Boolean(payload.has_more);
+                    state.deals.items = payload.listings || [];
+                    state.deals.total = payload.total || 0;
+                    state.deals.hasMore = Boolean(payload.has_more);
                 },
             },
         ];
@@ -186,7 +186,7 @@ function createApiListings(context) {
                     if (err.name === "AbortError" || !isActiveRequest(requestId)) {
                         return;
                     }
-                    state._listingsPending = false;
+                    state.listings._pending = false;
                     markDirty('stats', 'history', 'segments', 'geography', 'listings', 'deals');
                     scheduleRender();
                 });
@@ -199,25 +199,25 @@ function createApiListings(context) {
         // belong to the standalone "Выгодно" view. Other sorts ignore
         // the discount params; the backend only honours them when
         // sort=cheap.
-        const params = { sort: state.sort, ...extra };
-        if (state.sort === "cheap") {
-            params.discount_from_percent = state.discountFromPercent;
-            params.discount_to_percent = state.discountToPercent;
+        const params = { sort: state.search.sort, ...extra };
+        if (state.search.sort === "cheap") {
+            params.discount_from_percent = state.filters.discountFromPercent;
+            params.discount_to_percent = state.filters.discountToPercent;
         }
         return params;
     }
 
     function _sameDiscountRangeAsLast() {
         return (
-            state._listingsLoadedDiscountFrom === state.discountFromPercent &&
-            state._listingsLoadedDiscountTo === state.discountToPercent
+            state._listingsLoadedDiscountFrom === state.filters.discountFromPercent &&
+            state._listingsLoadedDiscountTo === state.filters.discountToPercent
         );
     }
 
     async function loadListings(force) {
-        if (!state.query) {
-            state.listings = [];
-            state.listingsHasMore = false;
+        if (!state.search.query) {
+            state.listings.items = [];
+            state.listings.hasMore = false;
             markDirty('listings');
             renderAll();
             return;
@@ -225,23 +225,23 @@ function createApiListings(context) {
         // Skip reload if data is fresh AND sort + discount range hasn't
         // changed. Discount range only matters when sort=cheap.
         const cacheStillValid =
-            state.listings.length &&
-            state._listingsLoadedSort === state.sort &&
-            (state.sort !== "cheap" || _sameDiscountRangeAsLast()) &&
-            Date.now() - state._listingsLoadedAt < CACHE_TTL;
+            state.listings.items.length &&
+            state.listings._loadedSort === state.search.sort &&
+            (state.search.sort !== "cheap" || _sameDiscountRangeAsLast()) &&
+            Date.now() - state.listings._loadedAt < CACHE_TTL;
         if (!force && cacheStillValid) {
             return;
         }
 
         // First page — reset pagination cursor.
-        state.listings = [];
-        state.listingsHasMore = false;
-        state.listingsLoading = true;
+        state.listings.items = [];
+        state.listings.hasMore = false;
+        state.listings.loading = true;
         markDirty('listings');
         renderAll();
 
-        const requestId = (state._listingsRequestId =
-            ((state._listingsRequestId || 0) + 1) % 1_000_000);
+        const requestId = (state.listings._requestId =
+            ((state.listings._requestId || 0) + 1) % 1_000_000);
 
         try {
             const payload = await getJson(
@@ -250,24 +250,24 @@ function createApiListings(context) {
                     offset: 0,
                 }))}`
             );
-            if (requestId !== state._listingsRequestId) return;
-            state.listings = payload.listings || [];
-            state.listingsTotal = payload.total || 0;
-            state.listingsHasMore = Boolean(payload.has_more);
-            state._listingsLoadedAt = Date.now();
-            state._listingsLoadedSort = state.sort;
-            state._listingsLoadedDiscountFrom = state.discountFromPercent;
-            state._listingsLoadedDiscountTo = state.discountToPercent;
-            state.error = null;
+            if (requestId !== state.listings._requestId) return;
+            state.listings.items = payload.listings || [];
+            state.listings.total = payload.total || 0;
+            state.listings.hasMore = Boolean(payload.has_more);
+            state.listings._loadedAt = Date.now();
+            state.listings._loadedSort = state.search.sort;
+            state._listingsLoadedDiscountFrom = state.filters.discountFromPercent;
+            state._listingsLoadedDiscountTo = state.filters.discountToPercent;
+            state.ui.error = null;
         } catch (error) {
-            if (requestId !== state._listingsRequestId) return;
-            state.listings = [];
-            state.listingsHasMore = false;
-            state.error = error.message || "Не удалось загрузить объявления";
+            if (requestId !== state.listings._requestId) return;
+            state.listings.items = [];
+            state.listings.hasMore = false;
+            state.ui.error = error.message || "Не удалось загрузить объявления";
             renderError();
         } finally {
-            if (requestId === state._listingsRequestId) {
-                state.listingsLoading = false;
+            if (requestId === state.listings._requestId) {
+                state.listings.loading = false;
                 markDirty('listings', 'error');
                 renderAll();
             }
@@ -278,16 +278,16 @@ function createApiListings(context) {
         // Append the next page onto state.listings — trigger from the
         // IntersectionObserver attached to the bottom sentinel card.
         // Multiple observer fires while a request is in-flight should
-        // be coalesced via state.listingsLoadingMore.
-        if (!state.query) return;
-        if (!state.listingsHasMore) return;
-        if (state.listingsLoadingMore) return;
-        state.listingsLoadingMore = true;
+        // be coalesced via state.listings.loadingMore.
+        if (!state.search.query) return;
+        if (!state.listings.hasMore) return;
+        if (state.listings.loadingMore) return;
+        state.listings.loadingMore = true;
         markDirty('listings');
         scheduleRender();
 
-        const offset = state.listings.length;
-        const requestId = state._listingsRequestId;
+        const offset = state.listings.items.length;
+        const requestId = state.listings._requestId;
         try {
             const payload = await getJson(
                 `/api/v1/listings?${buildListingsQuery(_listingsQueryParams({
@@ -297,16 +297,16 @@ function createApiListings(context) {
             );
             // Drop the response if the user re-searched in the
             // meantime — the new query ditched the old cursor.
-            if (requestId !== state._listingsRequestId) return;
+            if (requestId !== state.listings._requestId) return;
             const fresh = payload.listings || [];
-            state.listings = state.listings.concat(fresh);
-            state.listingsTotal = payload.total || state.listingsTotal;
-            state.listingsHasMore = Boolean(payload.has_more);
+            state.listings.items = state.listings.items.concat(fresh);
+            state.listings.total = payload.total || state.listings.total;
+            state.listings.hasMore = Boolean(payload.has_more);
         } catch (_) {
             // On error, surface the chip-style "load more" button by
             // keeping has_more true. The user can tap to retry.
         } finally {
-            state.listingsLoadingMore = false;
+            state.listings.loadingMore = false;
             markDirty('listings');
             renderAll();
         }
@@ -314,55 +314,55 @@ function createApiListings(context) {
 
     // ── Load deals (cheap view) ──────────────────────────────────────────
     async function loadDeals(force) {
-        if (!state.query) {
-            state.dealListings = [];
-            state.dealsHasMore = false;
+        if (!state.search.query) {
+            state.deals.items = [];
+            state.deals.hasMore = false;
             markDirty('deals');
             renderAll();
             return;
         }
         // Skip reload if data is fresh and same discount range
-        const sameRange = state._dealsLoadedFrom === state.discountFromPercent && state._dealsLoadedTo === state.discountToPercent;
-        if (!force && state.dealListings.length && sameRange && Date.now() - state._dealsLoadedAt < CACHE_TTL) {
+        const sameRange = state.deals._loadedFrom === state.filters.discountFromPercent && state.deals._loadedTo === state.filters.discountToPercent;
+        if (!force && state.deals.items.length && sameRange && Date.now() - state.deals._loadedAt < CACHE_TTL) {
             return;
         }
 
-        state.dealListings = [];
-        state.dealsHasMore = false;
-        state.dealsLoading = true;
+        state.deals.items = [];
+        state.deals.hasMore = false;
+        state.deals.loading = true;
         markDirty('deals');
         renderAll();
 
-        const requestId = (state._dealsRequestId =
-            ((state._dealsRequestId || 0) + 1) % 1_000_000);
+        const requestId = (state.deals._requestId =
+            ((state.deals._requestId || 0) + 1) % 1_000_000);
 
         try {
             const payload = await getJson(
                 `/api/v1/listings?${buildListingsQuery({
                     sort: "cheap",
-                    discount_from_percent: state.discountFromPercent,
-                    discount_to_percent: state.discountToPercent,
+                    discount_from_percent: state.filters.discountFromPercent,
+                    discount_to_percent: state.filters.discountToPercent,
                     limit: PAGE_SIZE,
                     offset: 0,
                 })}`
             );
-            if (requestId !== state._dealsRequestId) return;
-            state.dealListings = payload.listings || [];
-            state.dealsTotal = payload.total || 0;
-            state.dealsHasMore = Boolean(payload.has_more);
-            state._dealsLoadedAt = Date.now();
-            state._dealsLoadedFrom = state.discountFromPercent;
-            state._dealsLoadedTo = state.discountToPercent;
-            state.error = null;
+            if (requestId !== state.deals._requestId) return;
+            state.deals.items = payload.listings || [];
+            state.deals.total = payload.total || 0;
+            state.deals.hasMore = Boolean(payload.has_more);
+            state.deals._loadedAt = Date.now();
+            state.deals._loadedFrom = state.filters.discountFromPercent;
+            state.deals._loadedTo = state.filters.discountToPercent;
+            state.ui.error = null;
         } catch (error) {
-            if (requestId !== state._dealsRequestId) return;
-            state.dealListings = [];
-            state.dealsHasMore = false;
-            state.error = error.message || "Не удалось загрузить дешёвые объявления";
+            if (requestId !== state.deals._requestId) return;
+            state.deals.items = [];
+            state.deals.hasMore = false;
+            state.ui.error = error.message || "Не удалось загрузить дешёвые объявления";
             renderError();
         } finally {
-            if (requestId === state._dealsRequestId) {
-                state.dealsLoading = false;
+            if (requestId === state.deals._requestId) {
+                state.deals.loading = false;
                 markDirty('deals', 'error');
                 renderAll();
             }
@@ -370,35 +370,35 @@ function createApiListings(context) {
     }
 
     async function loadMoreDeals() {
-        if (!state.query) return;
-        if (!state.dealsHasMore) return;
-        if (state.dealsLoadingMore) return;
-        state.dealsLoadingMore = true;
+        if (!state.search.query) return;
+        if (!state.deals.hasMore) return;
+        if (state.deals.loadingMore) return;
+        state.deals.loadingMore = true;
         markDirty('deals');
         scheduleRender();
 
-        const offset = state.dealListings.length;
-        const requestId = state._dealsRequestId;
+        const offset = state.deals.items.length;
+        const requestId = state.deals._requestId;
         try {
             const payload = await getJson(
                 `/api/v1/listings?${buildListingsQuery({
                     sort: "cheap",
-                    discount_from_percent: state.discountFromPercent,
-                    discount_to_percent: state.discountToPercent,
+                    discount_from_percent: state.filters.discountFromPercent,
+                    discount_to_percent: state.filters.discountToPercent,
                     limit: PAGE_SIZE,
                     offset,
                 })}`
             );
-            if (requestId !== state._dealsRequestId) return;
+            if (requestId !== state.deals._requestId) return;
             const fresh = payload.listings || [];
-            state.dealListings = state.dealListings.concat(fresh);
-            state.dealsTotal = payload.total || state.dealsTotal;
-            state.dealsHasMore = Boolean(payload.has_more);
+            state.deals.items = state.deals.items.concat(fresh);
+            state.deals.total = payload.total || state.deals.total;
+            state.deals.hasMore = Boolean(payload.has_more);
         } catch (_) {
             // Same behaviour as loadMoreListings — keep has_more so
             // the user can retry via the visible "load more" chip.
         } finally {
-            state.dealsLoadingMore = false;
+            state.deals.loadingMore = false;
             markDirty('deals');
             renderAll();
         }
@@ -406,7 +406,7 @@ function createApiListings(context) {
 
     // ── Open listing detail modal ────────────────────────────────────────
     async function openListingDetail(item) {
-        const queryToUse = (item?.query || state.query || "").trim();
+        const queryToUse = (item?.query || state.search.query || "").trim();
         if (!item?.ad_id || !queryToUse) {
             return;
         }
@@ -414,31 +414,31 @@ function createApiListings(context) {
         // before the first detail fetch resolves, the older response
         // would otherwise overwrite state.detail and pop the wrong
         // modal contents on screen.
-        const requestId = (state._detailRequestId =
-            (state._detailRequestId + 1) % 1_000_000);
+        const requestId = (state.detail._requestId =
+            (state.detail._requestId + 1) % 1_000_000);
 
         const loadingToast = showToast("Загружаю...", "info", 1400);
-        state.error = null;
+        state.ui.error = null;
         renderError();
         try {
             const params = new URLSearchParams({
                 query: queryToUse,
-                currency: state.currency,
-                strict_search: String(state.strictSearch),
+                currency: state.misc.currency,
+                strict_search: String(state.search.strictSearch),
                 ad_id: String(item.ad_id),
             });
-            if (state.category != null) {
-                params.set("category", String(state.category));
+            if (state.filters.category != null) {
+                params.set("category", String(state.filters.category));
                 params.set("reference_context", "base_query");
             }
             const fullDetail = await getJson(
                 `/api/v1/listing-detail?${params.toString()}`
             );
-            if (requestId !== state._detailRequestId) return;
-            state.detail = fullDetail;
-            state.detailImageIndex = 0;
-            state.detailFromWatchlist = false;
-            state.detailAi = {
+            if (requestId !== state.detail._requestId) return;
+            state.detail.data = fullDetail;
+            state.detail.imageIndex = 0;
+            state.detail.fromWatchlist = false;
+            state.detail.ai = {
                 adId: fullDetail.ad_id || item.ad_id,
                 loading: false,
                 result: null,
@@ -447,8 +447,8 @@ function createApiListings(context) {
             };
             renderDetailModal();
         } catch (error) {
-            if (requestId !== state._detailRequestId) return;
-            state.error = error.message || "Не удалось загрузить детали";
+            if (requestId !== state.detail._requestId) return;
+            state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
         } finally {
             if (loadingToast) dismissToast(loadingToast);
@@ -472,13 +472,13 @@ function createApiListings(context) {
      */
     async function search(target = "overview", { keepFilters = false } = {}) {
         const query = elements.searchInput.value.trim();
-        state.query = query;
-        state.error = null;
+        state.search.query = query;
+        state.ui.error = null;
 
         if (!query) {
             clearSearchData();
             resetCategoryFilter();
-            state.loading = false;
+            state.ui.loading = false;
             context.focusTarget("overview");
             renderAll();
             return;
@@ -490,9 +490,9 @@ function createApiListings(context) {
 
         context.focusTarget(target);
         clearSearchData();
-        state.loading = true;
-        state.searchRequestId = (state.searchRequestId + 1) % 1_000_000;
-        const requestId = state.searchRequestId;
+        state.ui.loading = true;
+        state.search.searchRequestId = (state.search.searchRequestId + 1) % 1_000_000;
+        const requestId = state.search.searchRequestId;
         markDirty('loading', 'error', 'summary', 'helper', 'stats');
         renderAll();
 
@@ -502,10 +502,10 @@ function createApiListings(context) {
                 return;
             }
 
-            state.stats = stats;
-            state.loading = false;
+            state.misc.stats = stats;
+            state.ui.loading = false;
             // Categories cache rules:
-            //  - Broad search (state.category == null) ⇒ ALWAYS replace
+            //  - Broad search (state.filters.category == null) ⇒ ALWAYS replace
             //    the chips with whatever the new query returned, even
             //    when the new distribution is empty/1-element. This
             //    prevents stale chips ("Легковые авто (11)") from
@@ -515,10 +515,10 @@ function createApiListings(context) {
             //    the previous distribution because /price-stats with
             //    a `category=` filter only returns that one bucket
             //    and we'd lose the other chips.
-            if (state.category == null) {
-                state.categories = stats.categories || [];
+            if (state.filters.category == null) {
+                state.filters.categories = stats.categories || [];
             } else if (stats.categories && stats.categories.length > 1) {
-                state.categories = stats.categories;
+                state.filters.categories = stats.categories;
             }
             markDirty('loading', 'stats', 'summary', 'helper', 'categories');
             renderAll();
@@ -536,8 +536,8 @@ function createApiListings(context) {
                 return;
             }
             clearSearchData();
-            state.error = error.message || "Не удалось загрузить аналитику.";
-            state.loading = false;
+            state.ui.error = error.message || "Не удалось загрузить аналитику.";
+            state.ui.loading = false;
             markDirty('loading', 'error', 'summary', 'helper');
             renderAll();
         }

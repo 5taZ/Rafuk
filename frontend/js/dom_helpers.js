@@ -842,7 +842,16 @@ function showLongPressMenu(items) {
         if (item.icon) {
             const iconBox = document.createElement("span");
             iconBox.className = "lp-menu-icon";
-            iconBox.innerHTML = item.icon;
+            // Sanitize: only allow safe SVG markup, reject anything with
+            // script tags or event-handler attributes.
+            const svg = String(item.icon);
+            if (
+                svg.startsWith("<svg") &&
+                !/<script[\s>]/i.test(svg) &&
+                !/\bon\w+\s*=/i.test(svg)
+            ) {
+                iconBox.innerHTML = svg;
+            }
             btn.appendChild(iconBox);
         }
         const label = document.createElement("span");

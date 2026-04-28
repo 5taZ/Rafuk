@@ -31,8 +31,8 @@ function createRenderCore(context) {
     function safeUrl(url) {
         if (!url || typeof url !== "string") return "";
         const trimmed = url.trim().toLowerCase();
-        if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) {
-            return url;
+        if (trimmed.startsWith("https://") || trimmed.startsWith("http://") || trimmed.startsWith("/")) {
+            return url.trim();
         }
         return "";
     }
@@ -221,7 +221,7 @@ function createRenderCore(context) {
 
     function renderError() {
         return safeRender('renderError', () => {
-            const message = typeof state.error === "string" ? state.error.trim() : "";
+            const message = typeof state.ui.error === "string" ? state.ui.error.trim() : "";
             if (!message) {
                 elements.errorBar.hidden = true;
                 elements.errorBar.classList.remove("is-visible");
@@ -268,7 +268,7 @@ function createRenderCore(context) {
      */
     function buildEmptyState(opts) {
         const { icon, title, hint, actionLabel, onAction } = opts || {};
-        const iconHtml = _EMPTY_STATE_ICONS[icon] || icon || "";
+        const iconHtml = _EMPTY_STATE_ICONS[icon] || "";
         const wrap = domEl("div", {
             className: "empty-state",
             attrs: { role: "status" },
@@ -327,23 +327,23 @@ function createRenderCore(context) {
 
     function renderLoading() {
         return safeRender('renderLoading', () => {
-            elements.searchButton.disabled = state.loading || !state.query.trim();
-            elements.searchInput.disabled = state.loading;
-            if (state.loading) {
+            elements.searchButton.disabled = state.ui.loading || !state.search.query.trim();
+            elements.searchInput.disabled = state.ui.loading;
+            if (state.ui.loading) {
                 elements.searchButtonLabel.replaceChildren(domEl("span", { className: "spin" }));
                 elements.listingsSection?.setAttribute('aria-busy', 'true');
                 elements.dealsSection?.setAttribute('aria-busy', 'true');
                 elements.statsSection?.setAttribute('aria-busy', 'true');
 
                 // Show skeleton cards in listing containers during initial load
-                if (!state.listings.length && elements.listingsList) {
+                if (!state.listings.items.length && elements.listingsList) {
                     domClear(elements.listingsList);
                     for (let i = 0; i < 3; i++) {
                         elements.listingsList.appendChild(buildSkeletonCard());
                     }
                     elements.listingsSection.hidden = false;
                 }
-                if (!state.dealListings.length && elements.dealsList) {
+                if (!state.deals.items.length && elements.dealsList) {
                     domClear(elements.dealsList);
                     for (let i = 0; i < 3; i++) {
                         elements.dealsList.appendChild(buildSkeletonCard());
@@ -367,7 +367,7 @@ function createRenderCore(context) {
     function renderStrictSearch() {
         return safeRender('renderStrictSearch', () => {
             if (elements.strictSearchToggle) {
-                elements.strictSearchToggle.checked = state.strictSearch;
+                elements.strictSearchToggle.checked = state.search.strictSearch;
             }
         });
     }
@@ -377,7 +377,7 @@ function createRenderCore(context) {
     function renderViewTabs() {
         return safeRender('renderViewTabs', () => {
             for (const button of elements.viewTabs) {
-                const isActive = button.dataset.view === state.activeView;
+                const isActive = button.dataset.view === state.ui.activeView;
                 button.classList.toggle("active", isActive);
                 button.setAttribute("aria-selected", String(isActive));
                 button.tabIndex = isActive ? 0 : -1;
@@ -435,8 +435,8 @@ function createRenderCore(context) {
 
     function renderRefinementChips() {
         if (!elements.summaryRefinements || !elements.summaryRefinementsChips) return;
-        const refinements = Array.isArray(state.stats?.suggested_refinements)
-            ? state.stats.suggested_refinements
+        const refinements = Array.isArray(state.misc.stats?.suggested_refinements)
+            ? state.misc.stats.suggested_refinements
             : [];
         clearChildren(elements.summaryRefinementsChips);
         if (!refinements.length) {
@@ -458,7 +458,7 @@ function createRenderCore(context) {
 
     function renderSummary() {
         return safeRender('renderSummary', () => {
-            if (!state.stats || !state.query) {
+            if (!state.misc.stats || !state.search.query) {
                 elements.summaryStrip.hidden = true;
                 elements.summaryQuery.textContent = "—";
                 elements.summarySignal.textContent = "—";
@@ -473,14 +473,14 @@ function createRenderCore(context) {
             }
             renderRefinementChips();
 
-            const totalResults = Number(state.stats.total_results || 0);
-            const analyzedCount = Number(state.stats.analyzed_count || state.stats.count || 0);
-            const marketMedian = Number(state.stats.median || 0);
-            const marketMean = Number(state.stats.mean || 0);
-            const marketMin = Number(state.stats.min || 0);
-            const marketMax = Number(state.stats.max || 0);
-            const fairFrom = state.stats.fair_price_from != null ? Number(state.stats.fair_price_from) : null;
-            const fairTo = state.stats.fair_price_to != null ? Number(state.stats.fair_price_to) : null;
+            const totalResults = Number(state.misc.stats.total_results || 0);
+            const analyzedCount = Number(state.misc.stats.analyzed_count || state.misc.stats.count || 0);
+            const marketMedian = Number(state.misc.stats.median || 0);
+            const marketMean = Number(state.misc.stats.mean || 0);
+            const marketMin = Number(state.misc.stats.min || 0);
+            const marketMax = Number(state.misc.stats.max || 0);
+            const fairFrom = state.misc.stats.fair_price_from != null ? Number(state.misc.stats.fair_price_from) : null;
+            const fairTo = state.misc.stats.fair_price_to != null ? Number(state.misc.stats.fair_price_to) : null;
             const spreadRatio = marketMedian > 0 ? (marketMax - marketMin) / marketMedian : 0;
             const meanDeltaRatio = marketMedian > 0 ? Math.abs(marketMean - marketMedian) / marketMedian : 0;
             let signal = "Рынок читается ровно, медиана подходит как главный ориентир.";
@@ -492,7 +492,7 @@ function createRenderCore(context) {
                 signal = "Часть рынка без цены, ориентируйтесь на медиану и полный список объявлений.";
             }
 
-            elements.summaryQuery.textContent = state.query;
+            elements.summaryQuery.textContent = state.search.query;
             elements.summarySignal.textContent = signal;
             function shortPrice(v) {
                 if (v == null || v === 0) return "—";
@@ -505,7 +505,7 @@ function createRenderCore(context) {
                 return `${Math.round(n)} р.`;
             }
 
-            elements.summaryMedian.textContent = shortPrice(state.stats.median);
+            elements.summaryMedian.textContent = shortPrice(state.misc.stats.median);
             elements.summaryRange.textContent = marketMin > 0 && marketMax > 0
                 ? `${shortPrice(marketMin)} — ${shortPrice(marketMax)}`
                 : "—";
@@ -521,12 +521,12 @@ function createRenderCore(context) {
     function renderHelper() {
         return safeRender('renderHelper', () => {
             const shouldShow =
-                !state.loading &&
-                !state.error &&
-                !state.stats &&
-                state.activeView !== "tracking" &&
-                state.activeView !== "monitoring" &&
-                state.activeView !== "deals";
+                !state.ui.loading &&
+                !state.ui.error &&
+                !state.misc.stats &&
+                state.ui.activeView !== "tracking" &&
+                state.ui.activeView !== "monitoring" &&
+                state.ui.activeView !== "deals";
             elements.helperPanel.hidden = !shouldShow;
         });
     }
@@ -537,7 +537,7 @@ function createRenderCore(context) {
         return safeRender('renderViews', () => {
             for (const [name, panel] of Object.entries(elements.views)) {
                 if (!panel) continue;
-                panel.hidden = state.activeView !== name;
+                panel.hidden = state.ui.activeView !== name;
             }
         });
     }

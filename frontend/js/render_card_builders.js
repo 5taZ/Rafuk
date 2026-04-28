@@ -84,11 +84,11 @@ function createRenderCardBuilders(context) {
         // reference (per-category if the category has ≥3 ads, otherwise the
         // whole query). The fallback below only fires when we have no
         // backend-supplied delta — and falls back to the query-level median
-        // exposed in state.stats, which is the same reference type as the
+        // exposed in state.misc.stats, which is the same reference type as the
         // backend's "query" scope, so the values stay comparable.
         let delta = item.price_vs_median;
-        if (delta == null && item.price && state.stats?.median && Number(state.stats.median) > 0) {
-            delta = Math.round(((Number(item.price) - Number(state.stats.median)) / Number(state.stats.median)) * 100 * 100) / 100;
+        if (delta == null && item.price && state.misc.stats?.median && Number(state.misc.stats.median) > 0) {
+            delta = Math.round(((Number(item.price) - Number(state.misc.stats.median)) / Number(state.misc.stats.median)) * 100 * 100) / 100;
         }
         if (delta != null) {
             const absDelta = Math.abs(delta);

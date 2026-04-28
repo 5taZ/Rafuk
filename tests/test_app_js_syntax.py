@@ -74,13 +74,13 @@ def test_load_leads_and_watchlist_have_stale_response_guard() -> None:
     watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
 
     # state holds the monotonic counters; their names are referenced by the loaders.
-    assert "_leadsRequestId" in leads_js
-    assert "_watchlistRequestId" in watchlist_js
+    assert "_requestId" in leads_js
+    assert "_requestId" in watchlist_js
     # Each loader bumps and then checks the counter before writing state.
-    assert "state._leadsRequestId" in leads_js
-    assert "if (requestId !== state._leadsRequestId)" in leads_js
-    assert "state._watchlistRequestId" in watchlist_js
-    assert "if (requestId !== state._watchlistRequestId)" in watchlist_js
+    assert "state.leads._requestId" in leads_js
+    assert "if (requestId !== state.leads._requestId)" in leads_js
+    assert "state.watchlist._requestId" in watchlist_js
+    assert "if (requestId !== state.watchlist._requestId)" in watchlist_js
 
 
 def test_lead_and_watchlist_mutations_have_inflight_guard() -> None:
@@ -152,13 +152,13 @@ def test_listing_detail_loaders_share_stale_response_guard() -> None:
         ("api_watchlist.js", watchlist_js),
     )
     for path, text in surfaces:
-        assert "state._detailRequestId" in text, f"{path} missing detail-request-id guard"
-        assert "if (requestId !== state._detailRequestId)" in text, (
+        assert "state.detail._requestId" in text, f"{path} missing detail-request-id guard"
+        assert "if (requestId !== state.detail._requestId)" in text, (
             f"{path} missing stale-response check"
         )
 
     # loadHistory has its own dedicated counter.
-    assert "state._historyRequestId" in listings_js
+    assert "state.charts._historyRequestId" in listings_js
 
 
 def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:

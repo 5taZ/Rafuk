@@ -45,7 +45,7 @@ function createApiWatchlist(context) {
     // ── Load watchlist ───────────────────────────────────────────────────
     async function loadWatchlist() {
         if (!hasTelegramInitData()) {
-            state.watchlist = [];
+            state.watchlist.items = [];
             refreshAfterWatchlistChange();
             return;
         }
@@ -53,29 +53,29 @@ function createApiWatchlist(context) {
         // and leads share the same lead_items table, so a stale
         // watchlist GET arriving after a promote/delete can resurrect
         // a row that no longer belongs there.
-        const requestId = (state._watchlistRequestId =
-            (state._watchlistRequestId + 1) % 1_000_000);
+        const requestId = (state.watchlist._requestId =
+            (state.watchlist._requestId + 1) % 1_000_000);
         let nextWatchlist;
         try {
             nextWatchlist = await getJson("/api/v1/watchlist");
         } catch (_) {
             nextWatchlist = [];
         }
-        if (requestId !== state._watchlistRequestId) return;
-        state.watchlist = nextWatchlist;
+        if (requestId !== state.watchlist._requestId) return;
+        state.watchlist.items = nextWatchlist;
         refreshAfterWatchlistChange();
     }
 
     // ── Clear entire watchlist ───────────────────────────────────────────
     async function clearAllWatchlist() {
-        if (!state.watchlist.length) {
+        if (!state.watchlist.items.length) {
             showToast("Список уже пуст");
             return;
         }
         try {
             await deleteJson("/api/v1/watchlist/all");
-            const count = state.watchlist.length;
-            state.watchlist = [];
+            const count = state.watchlist.items.length;
+            state.watchlist.items = [];
             await loadWatchlist();
             renderMonitoringHeroStats();
             showToast(`Удалено ${count} лотов`);
@@ -103,12 +103,12 @@ function createApiWatchlist(context) {
             "bought",
             "sold",
         ]);
-        const alreadyInWatchlist = state.watchlist.some((w) => w.ad_id === item.ad_id);
+        const alreadyInWatchlist = state.watchlist.items.some((w) => w.ad_id === item.ad_id);
         if (alreadyInWatchlist) {
             showToast("Уже в избранном");
             return;
         }
-        const alreadyInLeads = state.leads.some(
+        const alreadyInLeads = state.leads.items.some(
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
@@ -119,13 +119,13 @@ function createApiWatchlist(context) {
         _inflightAd.add(item.ad_id);
         try {
             await postJson("/api/v1/watchlist", {
-                query: queryOverride || state.query || "",
+                query: queryOverride || state.search.query || "",
                 ad_id: item.ad_id,
                 title: item.title,
                 link: item.link,
                 price_byn: item.price_byn,
                 thumbnail: item.thumbnail || null,
-                market_median_byn: state.stats?.median ? Number(state.stats.median) : null,
+                market_median_byn: state.misc.stats?.median ? Number(state.misc.stats.median) : null,
             });
             showToast("Добавлено в избранное", "success");
             await loadWatchlist();
@@ -185,7 +185,7 @@ function createApiWatchlist(context) {
             "bought",
             "sold",
         ]);
-        const alreadyInLeads = state.leads.some(
+        const alreadyInLeads = state.leads.items.some(
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
@@ -203,7 +203,7 @@ function createApiWatchlist(context) {
             showToast("Добавлено в покупки", "success");
             // Optimistic local state cleanup so the UI reflects the move
             // immediately, even before the parallel reloads finish.
-            state.watchlist = state.watchlist.filter((w) => w.id !== item.id);
+            state.watchlist.items = state.watchlist.items.filter((w) => w.id !== item.id);
             refreshAfterWatchlistChange();
             await Promise.all([
                 loadWatchlist(),
@@ -221,29 +221,29 @@ function createApiWatchlist(context) {
         if (!item?.ad_id) {
             return;
         }
-        const queryToUse = item.query || state.query || "";
+        const queryToUse = item.query || state.search.query || "";
         if (!queryToUse) {
             showToast("Не удалось открыть: нет привязки к запросу");
             return;
         }
         // Shared stale-response guard with openListingDetail and
         // openLeadDetail — older detail responses are dropped.
-        const requestId = (state._detailRequestId =
-            (state._detailRequestId + 1) % 1_000_000);
+        const requestId = (state.detail._requestId =
+            (state.detail._requestId + 1) % 1_000_000);
 
         const loadingToast = showToast("Загружаю...", "info", 1400);
-        state.error = null;
+        state.ui.error = null;
         renderError();
         try {
-            const catParam = state.category != null ? `&category=${state.category}` : "";
+            const catParam = state.filters.category != null ? `&category=${state.filters.category}` : "";
             const fullDetail = await getJson(
-                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${item.ad_id}${catParam}`
+                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.misc.currency}&strict_search=${state.search.strictSearch}&ad_id=${item.ad_id}${catParam}`
             );
-            if (requestId !== state._detailRequestId) return;
-            state.detail = fullDetail;
-            state.detailImageIndex = 0;
-            state.detailFromWatchlist = true;
-            state.detailAi = {
+            if (requestId !== state.detail._requestId) return;
+            state.detail.data = fullDetail;
+            state.detail.imageIndex = 0;
+            state.detail.fromWatchlist = true;
+            state.detail.ai = {
                 adId: fullDetail.ad_id || item.ad_id,
                 loading: false,
                 result: null,
@@ -252,8 +252,8 @@ function createApiWatchlist(context) {
             };
             renderDetailModal();
         } catch (error) {
-            if (requestId !== state._detailRequestId) return;
-            state.error = error.message || "Не удалось загрузить детали";
+            if (requestId !== state.detail._requestId) return;
+            state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
         } finally {
             if (loadingToast) dismissToast(loadingToast);
@@ -270,8 +270,8 @@ function createApiWatchlist(context) {
         // when the network is slow. The server-side DELETE is
         // idempotent (always 204), so a duplicate click later — even
         // after this guard's TTL — is still safe.
-        const previousWatchlist = state.watchlist;
-        state.watchlist = state.watchlist.filter((w) => w.id !== watchlistId);
+        const previousWatchlist = state.watchlist.items;
+        state.watchlist.items = state.watchlist.items.filter((w) => w.id !== watchlistId);
         refreshAfterWatchlistChange();
         try {
             await deleteJson(`/api/v1/watchlist/${watchlistId}`);
@@ -283,7 +283,7 @@ function createApiWatchlist(context) {
         } catch (error) {
             // Rollback the optimistic removal so the user can see the
             // item didn't actually delete and retry.
-            state.watchlist = previousWatchlist;
+            state.watchlist.items = previousWatchlist;
             refreshAfterWatchlistChange();
             showToast(error.message || "Не удалось удалить", "error");
         } finally {
@@ -293,14 +293,14 @@ function createApiWatchlist(context) {
 
     // ── Delete all watchlist ─────────────────────────────────────────────
     async function deleteAllWatchlist() {
-        if (!state.watchlist.length) {
+        if (!state.watchlist.items.length) {
             showToast("Список уже пуст");
             return;
         }
-        const count = state.watchlist.length;
+        const count = state.watchlist.items.length;
         try {
             await deleteJson("/api/v1/watchlist/all");
-            state.watchlist = [];
+            state.watchlist.items = [];
             await loadWatchlist();
             renderMonitoringHeroStats();
             showToast(`Удалено ${count} лотов`);

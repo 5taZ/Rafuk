@@ -31,8 +31,8 @@ function createRenderViews(context) {
 
     function renderTrackingHeroStats() {
         if (!elements.trackingHeroStats) return;
-        const trackerCount = state.trackers.length;
-        const eventCount = state.trackerEvents.length;
+        const trackerCount = state.trackers.items.length;
+        const eventCount = state.trackers.events.length;
         clearChildren(elements.trackingHeroStats);
         appendHeroStat(elements.trackingHeroStats, String(trackerCount), "трекеров");
         appendHeroStat(elements.trackingHeroStats, String(eventCount), "событий");
@@ -40,10 +40,10 @@ function createRenderViews(context) {
 
     function renderCheapHeroStats() {
         if (!elements.cheapHeroStats) return;
-        const cheapCount = state.dealListings.length;
-        const range = state.discountFromPercent === state.discountToPercent
-            ? `${state.discountFromPercent}%`
-            : `${state.discountFromPercent}-${state.discountToPercent}%`;
+        const cheapCount = state.deals.items.length;
+        const range = state.filters.discountFromPercent === state.filters.discountToPercent
+            ? `${state.filters.discountFromPercent}%`
+            : `${state.filters.discountFromPercent}-${state.filters.discountToPercent}%`;
         clearChildren(elements.cheapHeroStats);
         appendHeroStat(elements.cheapHeroStats, String(cheapCount), "лотов дешевле рынка");
         const rangeStat = document.createElement("span");
@@ -58,14 +58,14 @@ function createRenderViews(context) {
 
     function renderMonitoringHeroStats() {
         if (!elements.monitoringHeroStats) return;
-        const watchCount = state.watchlist.length;
+        const watchCount = state.watchlist.items.length;
         clearChildren(elements.monitoringHeroStats);
         appendHeroStat(elements.monitoringHeroStats, String(watchCount), "объявлений");
     }
 
     function renderDealsHeroStats() {
         if (!elements.dealsHeroStats) return;
-        const activeLeads = state.leads.filter((l) => l.status !== "closed");
+        const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
         clearChildren(elements.dealsHeroStats);
         appendHeroStat(elements.dealsHeroStats, String(activeLeads.length), "сделок");
     }
@@ -77,17 +77,17 @@ function createRenderViews(context) {
             if (!elements.filterDropdown || !elements.filterCategories) return;
 
             // Toggle visibility
-            elements.filterDropdown.hidden = !state.filterDropdownOpen;
+            elements.filterDropdown.hidden = !state.filters.filterDropdownOpen;
 
             // Hide category group when strict search is on
             const categoryGroup = elements.filterCategories?.closest(".filter-group");
             if (categoryGroup) {
-                categoryGroup.hidden = !!state.strictSearch;
+                categoryGroup.hidden = !!state.search.strictSearch;
             }
 
             // Render category chips
             clearChildren(elements.filterCategories);
-            if (!state.categories.length || state.categories.length <= 1) {
+            if (!state.filters.categories.length || state.filters.categories.length <= 1) {
                 const empty = document.createElement("span");
                 empty.className = "filter-empty";
                 empty.textContent = "Нет категорий";
@@ -95,13 +95,13 @@ function createRenderViews(context) {
             } else {
                 // Use total_results from stats instead of sum of categories
                 // because not all ads have category data
-                const totalResults = Number(state.stats?.total_results || 0);
-                const totalCount = state.categories.reduce((sum, cat) => sum + cat.count, 0);
+                const totalResults = Number(state.misc.stats?.total_results || 0);
+                const totalCount = state.filters.categories.reduce((sum, cat) => sum + cat.count, 0);
                 // Show the larger of: total results from Kufar, or sum of categories
                 const displayTotal = Math.max(totalResults, totalCount);
                 
                 // Use pendingCategory for display, fall back to applied category
-                const displayCategory = state.pendingCategory !== undefined ? state.pendingCategory : state.category;
+                const displayCategory = state.filters.pendingCategory !== undefined ? state.filters.pendingCategory : state.filters.category;
                 
                 const allButton = document.createElement("button");
                 allButton.className = `filter-chip ${displayCategory == null ? 'active' : ''}`;
@@ -109,7 +109,7 @@ function createRenderViews(context) {
                 allButton.type = "button";
                 allButton.textContent = `Все (${displayTotal})`;
                 elements.filterCategories.appendChild(allButton);
-                for (const cat of state.categories) {
+                for (const cat of state.filters.categories) {
                     const button = document.createElement("button");
                     button.className = `filter-chip ${displayCategory === cat.id ? 'active' : ''}`;
                     button.dataset.category = String(cat.id);
@@ -121,26 +121,26 @@ function createRenderViews(context) {
 
             // Update price range inputs with PENDING values
             if (elements.filterMinPrice) {
-                elements.filterMinPrice.value = state.pendingMinPrice != null ? state.pendingMinPrice : "";
+                elements.filterMinPrice.value = state.filters.pendingMinPrice != null ? state.filters.pendingMinPrice : "";
             }
             if (elements.filterMaxPrice) {
-                elements.filterMaxPrice.value = state.pendingMaxPrice != null ? state.pendingMaxPrice : "";
+                elements.filterMaxPrice.value = state.filters.pendingMaxPrice != null ? state.filters.pendingMaxPrice : "";
             }
 
             // Update region dropdown with PENDING value
             if (elements.filterRegion) {
-                elements.filterRegion.value = state.pendingRegionName || "";
+                elements.filterRegion.value = state.filters.pendingRegionName || "";
             }
 
             // Update condition/seller chip states with PENDING values
             if (elements.filterConditions) {
                 for (const chip of elements.filterConditions.querySelectorAll("[data-condition]")) {
-                    chip.classList.toggle("active", chip.dataset.condition === state.pendingCondition);
+                    chip.classList.toggle("active", chip.dataset.condition === state.filters.pendingCondition);
                 }
             }
             if (elements.filterSellers) {
                 for (const chip of elements.filterSellers.querySelectorAll("[data-seller]")) {
-                    chip.classList.toggle("active", chip.dataset.seller === state.pendingSellerType);
+                    chip.classList.toggle("active", chip.dataset.seller === state.filters.pendingSellerType);
                 }
             }
         });
@@ -148,7 +148,7 @@ function createRenderViews(context) {
 
     function renderSortButtons() {
         for (const button of elements.sortButtons) {
-            button.classList.toggle("active", button.dataset.sort === state.sort);
+            button.classList.toggle("active", button.dataset.sort === state.search.sort);
         }
     }
 
@@ -158,19 +158,19 @@ function createRenderViews(context) {
             const to = Number(button.dataset.discountTo);
             button.classList.toggle(
                 "active",
-                from === state.discountFromPercent && to === state.discountToPercent
+                from === state.filters.discountFromPercent && to === state.filters.discountToPercent
             );
         }
     }
 
     function renderHistoryRangeButtons() {
         if (elements.historyBadge) {
-            elements.historyBadge.textContent = `${state.historyDays} дней`;
+            elements.historyBadge.textContent = `${state.misc.historyDays} дней`;
         }
         for (const button of elements.historyRangeButtons) {
             button.classList.toggle(
                 "active",
-                Number(button.dataset.historyDays) === state.historyDays
+                Number(button.dataset.historyDays) === state.misc.historyDays
             );
         }
     }
@@ -179,34 +179,34 @@ function createRenderViews(context) {
 
     function renderDealInputs() {
         if (elements.dealFromInput) {
-            elements.dealFromInput.value = String(state.discountFromPercent);
+            elements.dealFromInput.value = String(state.filters.discountFromPercent);
         }
         if (elements.dealToInput) {
-            elements.dealToInput.value = String(state.discountToPercent);
+            elements.dealToInput.value = String(state.filters.discountToPercent);
         }
     }
 
     function renderTrackerInputs() {
         if (elements.trackerMinDiscountInput) {
-            elements.trackerMinDiscountInput.value = String(state.trackerMinDiscountPercent ?? 10);
+            elements.trackerMinDiscountInput.value = String(state.trackers.minDiscountPercent ?? 10);
         }
         if (elements.trackerMaxPriceInput) {
-            elements.trackerMaxPriceInput.value = state.trackerMaxPriceByn ?? "";
+            elements.trackerMaxPriceInput.value = state.trackers.maxPriceByn ?? "";
         }
         if (elements.trackerExcludeDuplicatesToggle) {
-            elements.trackerExcludeDuplicatesToggle.checked = Boolean(state.trackerExcludeDuplicates);
+            elements.trackerExcludeDuplicatesToggle.checked = Boolean(state.trackers.excludeDuplicates);
         }
         if (elements.trackerSellerSelect) {
-            elements.trackerSellerSelect.value = state.trackerSellerType || "";
+            elements.trackerSellerSelect.value = state.trackers.sellerType || "";
         }
         if (elements.trackerConditionSelect) {
-            elements.trackerConditionSelect.value = state.trackerCondition || "";
+            elements.trackerConditionSelect.value = state.trackers.condition || "";
         }
         if (elements.trackerRegionSelect) {
-            elements.trackerRegionSelect.value = state.trackerRegionName || "";
+            elements.trackerRegionSelect.value = state.trackers.regionName || "";
         }
         if (elements.trackerConfigInput) {
-            elements.trackerConfigInput.value = state.trackerConfigKeyword || "";
+            elements.trackerConfigInput.value = state.trackers.configKeyword || "";
         }
     }
 
@@ -214,34 +214,34 @@ function createRenderViews(context) {
 
     function renderStats() {
         return safeRender('renderStats', () => {
-            if (!state.stats) {
+            if (!state.misc.stats) {
             elements.statsSection.hidden = true;
             elements.chartSection.hidden = true;
             if (context._hooks?.destroyChart) context._hooks.destroyChart();
             return;
         }
 
-        elements.stats.median.textContent = formatPrice(state.stats.median);
-        elements.stats.mean.textContent = formatPrice(state.stats.mean);
-        elements.stats.min.textContent = formatPrice(state.stats.min);
-        elements.stats.max.textContent = formatPrice(state.stats.max);
-        if (state.stats.fair_price_from != null && state.stats.fair_price_to != null) {
+        elements.stats.median.textContent = formatPrice(state.misc.stats.median);
+        elements.stats.mean.textContent = formatPrice(state.misc.stats.mean);
+        elements.stats.min.textContent = formatPrice(state.misc.stats.min);
+        elements.stats.max.textContent = formatPrice(state.misc.stats.max);
+        if (state.misc.stats.fair_price_from != null && state.misc.stats.fair_price_to != null) {
             elements.stats.fairRange.replaceChildren(
-                domEl("span", { className: "stat-range-item", text: formatPrice(state.stats.fair_price_from) }),
+                domEl("span", { className: "stat-range-item", text: formatPrice(state.misc.stats.fair_price_from) }),
                 domEl("span", { className: "stat-range-sep", text: "-" }),
-                domEl("span", { className: "stat-range-item", text: formatPrice(state.stats.fair_price_to) }),
+                domEl("span", { className: "stat-range-item", text: formatPrice(state.misc.stats.fair_price_to) }),
             );
         } else {
             elements.stats.fairRange.textContent = "—";
         }
-        const totalResults = Number(state.stats.total_results || 0);
-        const analyzedCount = Number(state.stats.analyzed_count || state.stats.count || 0);
+        const totalResults = Number(state.misc.stats.total_results || 0);
+        const analyzedCount = Number(state.misc.stats.analyzed_count || state.misc.stats.count || 0);
         elements.stats.coverage.textContent =
             `${analyzedCount} с ценой / ${totalResults}`;
         // Show total with priced count in badge for better clarity
         elements.marketTotalBadge.textContent = `${totalResults} (${analyzedCount} с ценой)`;
         elements.statsSection.hidden = false;
-        elements.chartSection.hidden = state.stats.count <= 0;
+        elements.chartSection.hidden = state.misc.stats.count <= 0;
         if (elements.chartSection.hidden || !state.panels.distribution) {
             if (context._hooks?.destroyChart) context._hooks.destroyChart();
         }
@@ -253,7 +253,7 @@ function createRenderViews(context) {
     function renderSegments() {
         return safeRender('renderSegments', () => {
         clearChildren(elements.segmentsGrid);
-        if (!state.segments) {
+        if (!state.misc.segments) {
             elements.segmentsSection.hidden = true;
             return;
         }
@@ -263,25 +263,25 @@ function createRenderViews(context) {
                 type: "new",
                 typeLabel: "Новый",
                 sellerLabel: "Частное лицо",
-                data: state.segments.new_private,
+                data: state.misc.segments.new_private,
             },
             {
                 type: "new",
                 typeLabel: "Новый",
                 sellerLabel: "Магазин",
-                data: state.segments.new_shop,
+                data: state.misc.segments.new_shop,
             },
             {
                 type: "used",
                 typeLabel: "Б/у",
                 sellerLabel: "Частное лицо",
-                data: state.segments.used_private,
+                data: state.misc.segments.used_private,
             },
             {
                 type: "used",
                 typeLabel: "Б/у",
                 sellerLabel: "Магазин",
-                data: state.segments.used_shop,
+                data: state.misc.segments.used_shop,
             },
         ].filter((segment) => segment.data && segment.data.count > 0);
 
@@ -291,11 +291,11 @@ function createRenderViews(context) {
         }
 
         for (const segment of segments) {
-            const totalAnalyzed = Number(state.stats?.analyzed_count || state.stats?.count || 0);
+            const totalAnalyzed = Number(state.misc.stats?.analyzed_count || state.misc.stats?.count || 0);
             const share = totalAnalyzed
                 ? Math.round((Number(segment.data.count || 0) / totalAnalyzed) * 100)
                 : 0;
-            const marketMedian = Number(state.stats?.median || 0);
+            const marketMedian = Number(state.misc.stats?.median || 0);
             const segmentMedian = Number(segment.data.median || 0);
             const delta = marketMedian && segmentMedian
                 ? ((segmentMedian - marketMedian) / marketMedian) * 100
@@ -334,12 +334,12 @@ function createRenderViews(context) {
     function renderGeography() {
         return safeRender('renderGeography', () => {
         clearChildren(elements.geographyGrid);
-        if (!state.geography.length) {
+        if (!state.misc.geography.length) {
             elements.geographySection.hidden = true;
             return;
         }
 
-        for (const region of state.geography) {
+        for (const region of state.misc.geography) {
             const card = domEl(
                 "div",
                 { className: "geo-card" },
@@ -369,7 +369,7 @@ function createRenderViews(context) {
     function renderRecentSearches() {
         return safeRender('renderRecentSearches', () => {
             if (!elements.recentSection || !elements.recentList) return;
-            const searches = state.recentSearches || [];
+            const searches = state.search.recentSearches || [];
             if (!searches.length) {
                 elements.recentSection.hidden = true;
                 clearChildren(elements.recentList);

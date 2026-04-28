@@ -98,12 +98,12 @@ function createApiCore(context) {
     // ── Query builder ────────────────────────────────────────────────────
     function buildCommonQuery(params = {}) {
         const query = new URLSearchParams({
-            query: state.query,
-            currency: state.currency,
-            strict_search: String(state.strictSearch),
+            query: state.search.query,
+            currency: state.misc.currency,
+            strict_search: String(state.search.strictSearch),
         });
-        if (state.category != null) {
-            query.set("category", String(state.category));
+        if (state.filters.category != null) {
+            query.set("category", String(state.filters.category));
         }
 
         for (const [key, value] of Object.entries(params)) {

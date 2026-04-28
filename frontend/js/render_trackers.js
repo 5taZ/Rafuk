@@ -26,7 +26,7 @@ function createRenderTrackers(context) {
 
     function renderTrackerStatus() {
         return safeRender('renderTrackerStatus', () => {
-            const message = typeof state.trackerStatus === "string" ? state.trackerStatus.trim() : "";
+            const message = typeof state.trackers.status === "string" ? state.trackers.status.trim() : "";
         if (!message) {
             elements.trackerStatus.hidden = true;
             elements.trackerStatus.textContent = "";
@@ -35,7 +35,7 @@ function createRenderTrackers(context) {
         }
 
         elements.trackerStatus.textContent = message;
-        elements.trackerStatus.className = `tracker-status is-visible ${state.trackerStatusKind}`;
+        elements.trackerStatus.className = `tracker-status is-visible ${state.trackers.statusKind}`;
         elements.trackerStatus.hidden = false;
         });
     }
@@ -44,7 +44,7 @@ function createRenderTrackers(context) {
 
     function renderWatchlistFilters() {
         for (const button of elements.watchlistFilterButtons || []) {
-            button.classList.toggle("active", button.dataset.watchFilter === state.watchlistFilter);
+            button.classList.toggle("active", button.dataset.watchFilter === state.watchlist.filter);
         }
     }
 
@@ -90,7 +90,7 @@ function createRenderTrackers(context) {
             return;
         }
 
-        if (!state.trackers.length) {
+        if (!state.trackers.items.length) {
             if (typeof buildEmpty === "function") {
                 elements.trackersList.appendChild(
                     buildEmpty({
@@ -108,7 +108,7 @@ function createRenderTrackers(context) {
             return;
         }
 
-        for (const tracker of state.trackers) {
+        for (const tracker of state.trackers.items) {
             let lastCheckedLabel = "";
             if (tracker.last_checked_at) {
                 const checkedDate = new Date(tracker.last_checked_at);
@@ -215,8 +215,8 @@ function createRenderTrackers(context) {
                 actions.openEditTracker(tracker.id);
             });
             card.querySelector('[data-role="view-events"]')?.addEventListener("click", () => {
-                state.trackerEvents = state.trackerEvents || [];
-                state.trackerEventFilterTrackerId = tracker.id;
+                state.trackers.events = state.trackers.events || [];
+                state.trackers.eventFilterTrackerId = tracker.id;
                 if (context._hooks?.renderTrackerEvents) context._hooks.renderTrackerEvents();
             });
             card.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
@@ -225,14 +225,14 @@ function createRenderTrackers(context) {
             card.querySelector('[data-role="open"]')?.addEventListener("click", () => {
                 if (context._hooks?.showToast) context._hooks.showToast("Загружаю...");
                 elements.searchInput.value = tracker.query;
-                state.query = tracker.query;
-                state.strictSearch = Boolean(tracker.strict_mode);
-                state.trackerMinDiscountPercent = Math.round(tracker.min_discount_percent || 10);
-                state.trackerMaxPriceByn = tracker.max_price_byn ?? null;
-                state.trackerSellerType = tracker.seller_type || "";
-                state.trackerCondition = tracker.condition || "";
-                state.trackerRegionName = tracker.region_name || "";
-                state.trackerConfigKeyword = tracker.config_keyword || "";
+                state.search.query = tracker.query;
+                state.search.strictSearch = Boolean(tracker.strict_mode);
+                state.trackers.minDiscountPercent = Math.round(tracker.min_discount_percent || 10);
+                state.trackers.maxPriceByn = tracker.max_price_byn ?? null;
+                state.trackers.sellerType = tracker.seller_type || "";
+                state.trackers.condition = tracker.condition || "";
+                state.trackers.regionName = tracker.region_name || "";
+                state.trackers.configKeyword = tracker.config_keyword || "";
                 if (context._hooks?.renderStrictSearch) context._hooks.renderStrictSearch();
                 if (context._hooks?.renderTrackerInputs) context._hooks.renderTrackerInputs();
                 if (context._hooks?.renderLoading) context._hooks.renderLoading();
@@ -268,9 +268,9 @@ function createRenderTrackers(context) {
             return;
         }
 
-        const trackerScopedEvents = state.trackerEventFilterTrackerId
-            ? state.trackerEvents.filter((event) => event.tracker_id === state.trackerEventFilterTrackerId)
-            : state.trackerEvents.slice();
+        const trackerScopedEvents = state.trackers.eventFilterTrackerId
+            ? state.trackers.events.filter((event) => event.tracker_id === state.trackers.eventFilterTrackerId)
+            : state.trackers.events.slice();
 
         const dropCount = trackerScopedEvents.filter((e) => e.event_type === "price_drop").length;
         const newCount = trackerScopedEvents.filter((e) => e.event_type === "new_listing").length;
@@ -295,7 +295,7 @@ function createRenderTrackers(context) {
             const count = FILTER_COUNTS[filter] ?? 0;
             const label = FILTER_LABELS[filter] ?? filter;
             button.textContent = count > 0 ? `${label} (${count})` : label;
-            button.classList.toggle("active", filter === state.trackerEventFilter);
+            button.classList.toggle("active", filter === state.trackers.eventFilter);
         }
 
         // Populate tracker dropdown filter
@@ -303,7 +303,7 @@ function createRenderTrackers(context) {
             const select = elements.trackerEventTrackerSelect;
             const prevValue = select.value;
             const uniqueTrackers = new Map();
-            for (const evt of state.trackerEvents) {
+            for (const evt of state.trackers.events) {
                 if (!uniqueTrackers.has(evt.tracker_id)) {
                     uniqueTrackers.set(evt.tracker_id, evt.query);
                 }
@@ -316,26 +316,26 @@ function createRenderTrackers(context) {
             }
             select.replaceChildren(...options);
             // Restore selection from state
-            select.value = state.trackerEventFilterTrackerId || "";
+            select.value = state.trackers.eventFilterTrackerId || "";
         }
 
         // Filter events by selected tracker first, then by event type
         let filteredEvents = trackerScopedEvents.filter((event) => {
-            if (state.trackerEventFilter === "all") {
+            if (state.trackers.eventFilter === "all") {
                 return true;
             }
-            return event.event_type === state.trackerEventFilter;
+            return event.event_type === state.trackers.eventFilter;
         });
 
         if (!filteredEvents.length) {
             const buildEmpty = context.buildEmptyState;
             let title;
             let hint;
-            if (state.trackerEventFilterTrackerId) {
-                const tracker = state.trackers.find((t) => t.id === state.trackerEventFilterTrackerId);
+            if (state.trackers.eventFilterTrackerId) {
+                const tracker = state.trackers.items.find((t) => t.id === state.trackers.eventFilterTrackerId);
                 title = tracker ? `Тихо по запросу "${tracker.query}"` : "Тихо по этому трекеру";
                 hint = "Дайте трекеру несколько часов — Kufar обновляется неравномерно.";
-            } else if (state.trackerEventFilter === "all") {
+            } else if (state.trackers.eventFilter === "all") {
                 title = "Событий пока нет";
                 hint = "Они появятся после первой проверки планировщика. Свежие лоты и падения цен прилетят в этот раздел и в чат бота.";
             } else {
@@ -434,9 +434,9 @@ function createRenderTrackers(context) {
             card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
                 if (event.query) {
                     elements.searchInput.value = event.query;
-                    state.query = event.query;
+                    state.search.query = event.query;
                 }
-                state.strictSearch = Boolean(event.strict_mode);
+                state.search.strictSearch = Boolean(event.strict_mode);
                 if (context._hooks?.renderStrictSearch) context._hooks.renderStrictSearch();
                 void actions.openListingDetail({
                     ad_id: event.ad_id,
@@ -483,7 +483,7 @@ function createRenderTrackers(context) {
         // Tally events by event_type so each filter chip can show how
         // many alerts it represents — gives the user a sense of where
         // the action is before they tap. "all" mirrors the total.
-        const events = state.trackerEvents || [];
+        const events = state.trackers.events || [];
         const total = events.length;
         let priceDrops = 0;
         let newListings = 0;
@@ -498,7 +498,7 @@ function createRenderTrackers(context) {
         };
 
         for (const button of elements.trackerEventFilterButtons) {
-            button.classList.toggle("active", button.dataset.eventFilter === state.trackerEventFilter);
+            button.classList.toggle("active", button.dataset.eventFilter === state.trackers.eventFilter);
         }
         const badges = elements.trackerEventFilterCounts || {};
         for (const [key, badge] of Object.entries(badges)) {

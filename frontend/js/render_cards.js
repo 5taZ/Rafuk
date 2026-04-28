@@ -32,18 +32,18 @@ function createRenderCards(context) {
     function matchesFilters(item) {
         // Price range filter
         const itemPrice = item.price ? Number(item.price) : null;
-        const hasPriceRange = state.minPrice != null || state.maxPrice != null;
+        const hasPriceRange = state.filters.minPrice != null || state.filters.maxPrice != null;
         // Exclude "Договорная" (price 0/null) when a price range is set
         if (hasPriceRange && (!itemPrice || itemPrice <= 0)) return false;
-        if (state.minPrice != null && itemPrice != null && itemPrice < state.minPrice) return false;
-        if (state.maxPrice != null && itemPrice != null && itemPrice > state.maxPrice) return false;
+        if (state.filters.minPrice != null && itemPrice != null && itemPrice < state.filters.minPrice) return false;
+        if (state.filters.maxPrice != null && itemPrice != null && itemPrice > state.filters.maxPrice) return false;
 
         // Condition filter - handle various formats from API
-        if (state.condition) {
+        if (state.filters.condition) {
             const itemCondition = item.condition || "";
             // Normalize condition values for comparison
             const normalizedItemCondition = itemCondition.toLowerCase();
-            const normalizedStateCondition = state.condition.toLowerCase();
+            const normalizedStateCondition = state.filters.condition.toLowerCase();
             
             // Map state condition to possible API values
             const conditionMap = {
@@ -56,15 +56,15 @@ function createRenderCards(context) {
         }
         
         // Seller type filter
-        if (state.sellerType) {
+        if (state.filters.sellerType) {
             const isShop = item.company_ad || item.seller_type === "Магазин" || item.seller_type === "shop" || item.seller_type?.toLowerCase() === "shop";
-            if (state.sellerType === "private" && isShop) return false;
-            if (state.sellerType === "shop" && !isShop) return false;
+            if (state.filters.sellerType === "private" && isShop) return false;
+            if (state.filters.sellerType === "shop" && !isShop) return false;
         }
         
         // Region filter — matches region_name or area_name exactly
-        if (state.regionName) {
-            const filterRegion = state.regionName.toLowerCase().trim();
+        if (state.filters.regionName) {
+            const filterRegion = state.filters.regionName.toLowerCase().trim();
             if (!filterRegion) return true;
             const itemRegion = (item.region_name || "").toLowerCase().trim();
             const itemArea = (item.area_name || "").toLowerCase().trim();
@@ -77,7 +77,7 @@ function createRenderCards(context) {
     }
 
     function applyFilters(items) {
-        if (!state.condition && !state.sellerType && state.minPrice == null && state.maxPrice == null && !state.regionName) return items;
+        if (!state.filters.condition && !state.filters.sellerType && state.filters.minPrice == null && state.filters.maxPrice == null && !state.filters.regionName) return items;
         return items.filter(matchesFilters);
     }
 
@@ -150,6 +150,14 @@ function createRenderCards(context) {
      */
     function _appendPaginationSentinel(container, options) {
         if (!container) return;
+        // Disconnect any previous observer on this container to prevent
+        // orphaned IntersectionObserver callbacks from stale renders.
+        const oldSentinels = container.querySelectorAll(".list-pagination-sentinel");
+        for (const old of oldSentinels) {
+            if (old._paginationObserver) {
+                old._paginationObserver.disconnect();
+            }
+        }
         const {
             renderedCount,
             totalCount,
@@ -213,23 +221,23 @@ function createRenderCards(context) {
 
     function renderListings() {
         return safeRender('renderListings', () => {
-            if (state.loading) return;
+            if (state.ui.loading) return;
             // Keep skeletons while listings request is in flight
-            if (state._listingsPending) return;
-            const hasData = state.listings.length > 0 || state.listingsTotal > 0;
+            if (state.listings._pending) return;
+            const hasData = state.listings.items.length > 0 || state.listings.total > 0;
             const hasContent = renderListingsCollection(
-                state.listings,
+                state.listings.items,
                 elements.listingsList,
                 elements.listingsTotalBadge,
                 "По этому запросу пока нечего показать.",
-                state.listingsTotal || null
+                state.listings.total || null
             );
             if (hasContent && elements.listingsList) {
                 _appendPaginationSentinel(elements.listingsList, {
-                    renderedCount: state.listings.length,
-                    totalCount: state.listingsTotal,
-                    hasMore: state.listingsHasMore,
-                    isLoadingMore: state.listingsLoadingMore,
+                    renderedCount: state.listings.items.length,
+                    totalCount: state.listings.total,
+                    hasMore: state.listings.hasMore,
+                    isLoadingMore: state.listings.loadingMore,
                     onLoadMore: () => {
                         if (typeof actions.loadMoreListings === "function") {
                             void actions.loadMoreListings();
@@ -245,10 +253,10 @@ function createRenderCards(context) {
 
     function renderDeals() {
         return safeRender('renderDeals', () => {
-            if (state.loading) return;
+            if (state.ui.loading) return;
             const container = elements.dealsList;
             if (!container) return;
-            const rangeLabel = `${state.discountFromPercent}-${state.discountToPercent}`;
+            const rangeLabel = `${state.filters.discountFromPercent}-${state.filters.discountToPercent}`;
 
             // Destroy existing virtual list if present and reset container
             if (container._virtualList) {
@@ -259,7 +267,7 @@ function createRenderCards(context) {
             container.style.maxHeight = "";
 
             domClear(container);
-            if (!state.dealListings.length) {
+            if (!state.deals.items.length) {
                 const note = document.createElement("p");
                 note.className = "tracker-empty";
                 note.textContent = `Нет лотов в диапазоне ${rangeLabel}% ниже медианы. Попробуйте расширить диапазон или другой запрос.`;
@@ -267,15 +275,15 @@ function createRenderCards(context) {
                 if (elements.dealsTotalBadge) {
                     elements.dealsTotalBadge.textContent = "0";
                 }
-                elements.dealsSection.hidden = !state.query;
-                if (!state.query) return;
+                elements.dealsSection.hidden = !state.search.query;
+                if (!state.search.query) return;
                 elements.dealsSection.hidden = false;
                 return;
             }
 
-            const hasData = state.dealListings.length > 0 || state.dealsTotal > 0;
+            const hasData = state.deals.items.length > 0 || state.deals.total > 0;
             // Virtual scrolling disabled — cards have variable heights
-            const filtered = applyFilters(state.dealListings);
+            const filtered = applyFilters(state.deals.items);
             if (!filtered.length) {
                 const note = document.createElement("p");
                 note.className = "tracker-empty";
@@ -288,7 +296,7 @@ function createRenderCards(context) {
                 if (elements.dealsTotalBadge) {
                     elements.dealsTotalBadge.textContent = "0";
                 }
-                elements.dealsSection.hidden = !state.query;
+                elements.dealsSection.hidden = !state.search.query;
                 return;
             }
             for (const item of filtered) {
@@ -296,10 +304,10 @@ function createRenderCards(context) {
             }
 
             _appendPaginationSentinel(container, {
-                renderedCount: state.dealListings.length,
-                totalCount: state.dealsTotal,
-                hasMore: state.dealsHasMore,
-                isLoadingMore: state.dealsLoadingMore,
+                renderedCount: state.deals.items.length,
+                totalCount: state.deals.total,
+                hasMore: state.deals.hasMore,
+                isLoadingMore: state.deals.loadingMore,
                 onLoadMore: () => {
                     if (typeof actions.loadMoreDeals === "function") {
                         void actions.loadMoreDeals();
@@ -311,10 +319,10 @@ function createRenderCards(context) {
             if (elements.dealsTotalBadge) {
                 // Same rule as the listings pill — show Kufar's total
                 // count, not the on-page rendered count.
-                const apiTotal = state.dealsTotal || filtered.length;
+                const apiTotal = state.deals.total || filtered.length;
                 elements.dealsTotalBadge.textContent = `${apiTotal} объявлений`;
             }
-            elements.dealsSection.hidden = !state.query;
+            elements.dealsSection.hidden = !state.search.query;
         });
     }
 
@@ -416,10 +424,9 @@ function createRenderCards(context) {
         if (context._hooks?.renderHistoryDeals) context._hooks.renderHistoryDeals();
 
         // Update tab counts and visibility of the "Очистить" buttons.
-        const activeLeads = (state.leads || []).filter(isActiveLead);
+        const activeLeads = (state.leads.items || []).filter(isActiveLead);
         const counts = {
-            watching: (state.watchlist || []).length,
-            purchases: activeLeads.length,
+            watching: (state.watchlist.items || []).length,            purchases: activeLeads.length,
         };
 
         if (elements.itemsCountBadges) {
@@ -430,7 +437,7 @@ function createRenderCards(context) {
                 badge.hidden = value === 0;
             }
         }
-        const filter = state.itemsFilter === "watching" ? "watching" : "purchases";
+        const filter = state.leads.itemsFilter === "watching" ? "watching" : "purchases";
         for (const button of elements.itemsFilterButtons || []) {
             const isActive = button.dataset.itemsFilter === filter;
             button.classList.toggle("is-active", isActive);
@@ -458,7 +465,7 @@ function createRenderCards(context) {
         // in "История сделок" below the list.
         let entries;
         if (filter === "watching") {
-            entries = (state.watchlist || []).map((item) => ({
+            entries = (state.watchlist.items || []).map((item) => ({
                 kind: "watch",
                 data: item,
                 updatedAt: item.updated_at || item.last_seen_at || item.created_at || "",
@@ -508,10 +515,10 @@ function createRenderCards(context) {
     }
 
     function watchlistMatchesFilter(item) {
-        if (state.watchlistFilter === "all") {
+        if (state.watchlist.filter === "all") {
             return true;
         }
-        return item.workflow_status === state.watchlistFilter;
+        return item.workflow_status === state.watchlist.filter;
     }
 
     function watchlistSortValue(item) {
@@ -555,7 +562,7 @@ function createRenderCards(context) {
             return;
         }
 
-        const filteredWatchlist = [...state.watchlist]
+        const filteredWatchlist = [...state.watchlist.items]
             .filter(watchlistMatchesFilter)
             .sort((left, right) => {
                 const rankDelta = watchlistSortValue(left).localeCompare(watchlistSortValue(right));
@@ -568,7 +575,7 @@ function createRenderCards(context) {
         if (!filteredWatchlist.length) {
             const buildEmpty = context.buildEmptyState;
             if (typeof buildEmpty === "function") {
-                if (state.watchlist.length) {
+                if (state.watchlist.items.length) {
                     container.appendChild(
                         buildEmpty({
                             icon: "watchlist",
@@ -588,7 +595,7 @@ function createRenderCards(context) {
             } else {
                 const note = document.createElement("p");
                 note.className = "tracker-empty";
-                note.textContent = state.watchlist.length
+                note.textContent = state.watchlist.items.length
                     ? "По текущему фильтру ничего нет. Попробуйте «Все»."
                     : "Сохранённых лотов пока нет. Нажмите «В избранное» в карточке объявления.";
                 container.appendChild(note);

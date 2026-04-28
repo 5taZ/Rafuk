@@ -199,12 +199,12 @@ function createAppRenderers(context) {
     };
 
     function renderAll() {
-        const hasSelectiveFlags = state.dirtyViews.size > 0 && !state._allDirty;
+        const hasSelectiveFlags = state.ui.dirtyViews.size > 0 && !state.ui._allDirty;
         try {
             if (hasSelectiveFlags) {
                 // Selective render — only flagged views
                 for (const [key, fn] of Object.entries(_renderMap)) {
-                    if (state.dirtyViews.has(key)) fn();
+                    if (state.ui.dirtyViews.has(key)) fn();
                 }
             } else {
                 // Full render — no specific flags or _allDirty is set
@@ -216,8 +216,8 @@ function createAppRenderers(context) {
                 core.showToast('Ошибка отображения', 'error');
             }
         }
-        state._allDirty = false;
-        state.dirtyViews.clear();
+        state.ui._allDirty = false;
+        state.ui.dirtyViews.clear();
     }
 
     // Batch multiple renderAll calls into a single requestAnimationFrame.

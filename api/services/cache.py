@@ -18,6 +18,7 @@ class CacheBackend(Protocol):
     async def get_json(self, key: str) -> Any: ...
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None: ...
     async def incr(self, key: str, ttl: int | None = None) -> int: ...
+    async def delete(self, key: str) -> None: ...
     async def ping(self) -> bool: ...
 
 
@@ -87,6 +88,10 @@ class MemoryCache:
         self._storage.move_to_end(key)
         return count
 
+    async def delete(self, key: str) -> None:
+        """Remove a key from the cache. No-op if the key does not exist."""
+        self._storage.pop(key, None)
+
     async def ping(self) -> bool:
         return True
 
@@ -147,6 +152,13 @@ class RedisCache:
         except RedisError:
             logger.warning("Redis incr failed for key=%s", key, exc_info=True)
             return 0
+
+    async def delete(self, key: str) -> None:
+        """Remove a key from Redis. No-op if the key does not exist."""
+        try:
+            await self._client.delete(key)
+        except RedisError:
+            logger.warning("Redis delete failed for key=%s", key, exc_info=True)
 
     async def ping(self) -> bool:
         try:

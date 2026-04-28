@@ -65,10 +65,10 @@ function createAppActions(context) {
         // discount preset inside the Объявления view) would run a full
         // renderAll + replay the slide-in animation, making the page
         // look like it's reloading.
-        if (state.activeView === view) {
+        if (state.ui.activeView === view) {
             return;
         }
-        state.activeView = view;
+        state.ui.activeView = view;
         markDirty('tabs', 'views');
         renderAll();
 
@@ -98,14 +98,14 @@ function createAppActions(context) {
      * Routes to overview by default, then scrolls to specific sections if needed.
      *
      * "cheap" used to be its own view tab; it's now folded into "ads"
-     * with state.sort = "cheap" surfacing the discount-range UI.
+     * with state.search.sort = "cheap" surfacing the discount-range UI.
      *
      * @param {string} target - The target context ('ads', 'cheap', 'deals', 'history')
      */
     function focusTarget(target) {
         if (target === "ads" || target === "cheap") {
             if (target === "cheap") {
-                state.sort = "cheap";
+                state.search.sort = "cheap";
             }
             setActiveView("ads");
             return;
@@ -253,7 +253,7 @@ function createAppActions(context) {
             "bought",
             "sold",
         ]);
-        const alreadyInLeads = state.leads.some(
+        const alreadyInLeads = state.leads.items.some(
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
@@ -265,7 +265,7 @@ function createAppActions(context) {
         // promotion is a single PATCH on the same lead_items row — no
         // need for a fresh POST. This also avoids race-condition 500s
         // when the user rapid-fires "В избранное" then "В покупки".
-        const watchingItem = state.watchlist.find((w) => w.ad_id === item.ad_id);
+        const watchingItem = state.watchlist.items.find((w) => w.ad_id === item.ad_id);
 
         _inflightAdMutations.add(item.ad_id);
         try {
@@ -276,13 +276,13 @@ function createAppActions(context) {
                     body: JSON.stringify({ status: "new" }),
                 });
                 // Optimistic: remove from watchlist immediately.
-                state.watchlist = state.watchlist.filter((w) => w.id !== watchingItem.id);
+                state.watchlist.items = state.watchlist.items.filter((w) => w.id !== watchingItem.id);
             } else {
                 const marketEstimate = (item.flip_estimates || []).find(
                     (entry) => entry.label === "По рынку",
                 );
                 await core.postJson("/api/v1/leads", {
-                    query: queryOverride || state.query || "",
+                    query: queryOverride || state.search.query || "",
                     ad_id: item.ad_id,
                     title: item.title,
                     link: item.link,
@@ -312,7 +312,7 @@ function createAppActions(context) {
     async function deleteHistoryDeal(leadId) {
         try {
             await core.deleteJson(`/api/v1/leads/${leadId}`);
-            state.leads = state.leads.filter((l) => l.id !== leadId);
+            state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
             renderLeads();
             showToast("✓ Сделка удалена из истории");
             await leads.loadLeads();
@@ -353,20 +353,20 @@ function createAppActions(context) {
             return;
         }
         elements.searchInput.value = query;
-        state.query = query;
+        state.search.query = query;
         await listings.search(view);
     }
 
     // ── Expenses ──────────────────────────────────────────────────────────
     async function loadExpenses(leadId) {
-        state.expensesLoading = true;
+        state.expenses.loading = true;
         renderExpensesModal();
         try {
-            state.expenses = await core.getJson(`/api/v1/leads/${leadId}/expenses`);
+            state.expenses.items = await core.getJson(`/api/v1/leads/${leadId}/expenses`);
         } catch (_) {
-            state.expenses = [];
+            state.expenses.items = [];
         } finally {
-            state.expensesLoading = false;
+            state.expenses.loading = false;
         }
         renderExpensesModal();
     }

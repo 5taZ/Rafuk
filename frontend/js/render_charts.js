@@ -57,16 +57,16 @@ function createRenderCharts(context) {
     /* ===== Chart lifecycle ===== */
 
     function destroyChart() {
-        if (state.chart) {
-            state.chart.destroy();
-            state.chart = null;
+        if (state.charts.distribution) {
+            state.charts.distribution.destroy();
+            state.charts.distribution = null;
         }
     }
 
     function destroyHistoryChart() {
-        if (state.historyChart) {
-            state.historyChart.destroy();
-            state.historyChart = null;
+        if (state.charts.history) {
+            state.charts.history.destroy();
+            state.charts.history = null;
         }
     }
 
@@ -74,11 +74,11 @@ function createRenderCharts(context) {
 
     function renderChart(stats) {
         if (stats) {
-            state.stats = stats;
+            state.misc.stats = stats;
         }
         if (
-            !state.stats ||
-            state.stats.count === 0 ||
+            !state.misc.stats ||
+            state.misc.stats.count === 0 ||
             elements.chartSection.hidden ||
             !state.panels.distribution
         ) {
@@ -112,18 +112,18 @@ function createRenderCharts(context) {
         const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
         const accentColor = isDark ? "#3B82F6" : "#2563EB";
         const values = [
-            state.stats.min,
-            state.stats.q1,
-            state.stats.median,
-            state.stats.q3,
-            state.stats.max,
+            state.misc.stats.min,
+            state.misc.stats.q1,
+            state.misc.stats.median,
+            state.misc.stats.q3,
+            state.misc.stats.max,
         ];
         const alphas = [0.22, 0.4, 0.9, 0.4, 0.22];
 
         // Canvas is marked aria-hidden; the wrapper div carries the accessible label
         canvas.setAttribute("aria-hidden", "true");
 
-        state.chart = new Chart(canvas, {
+        state.charts.distribution = new Chart(canvas, {
             type: "bar",
             data: {
                 labels: ["Мин", "Q1", "Медиана", "Q3", "Макс"],
@@ -187,13 +187,13 @@ function createRenderCharts(context) {
 
     function renderHistory() {
         return safeRender('renderHistory', () => {
-            const hasHistory = state.history.length > 0;
-        elements.historySection.hidden = !state.query;
+            const hasHistory = state.charts.historyData.length > 0;
+        elements.historySection.hidden = !state.search.query;
         if (context._hooks?.renderHistoryRangeButtons) context._hooks.renderHistoryRangeButtons();
         elements.historyEmpty.hidden = hasHistory;
         elements.historySummary.hidden = !hasHistory;
         domClear(elements.historySummary);
-        if (!state.query) {
+        if (!state.search.query) {
             destroyHistoryChart();
             return;
         }
@@ -208,7 +208,7 @@ function createRenderCharts(context) {
     function renderHistoryChart() {
         return safeRender('renderHistoryChart', () => {
         const canvas = elements.historyChartCanvas;
-        if (!canvas || !state.history.length) {
+        if (!canvas || !state.charts.historyData.length) {
             destroyHistoryChart();
             return;
         }
@@ -223,8 +223,8 @@ function createRenderCharts(context) {
             return;
         }
 
-        const firstPoint = state.history[0];
-        const lastPoint = state.history[state.history.length - 1];
+        const firstPoint = state.charts.historyData[0];
+        const lastPoint = state.charts.historyData[state.charts.historyData.length - 1];
         const delta = firstPoint && lastPoint && firstPoint.median
             ? ((lastPoint.median - firstPoint.median) / firstPoint.median) * 100
             : 0;
@@ -232,16 +232,16 @@ function createRenderCharts(context) {
             {
                 label: "Сейчас",
                 value: formatPrice(lastPoint?.median),
-                meta: `${state.history.length} точек`,
+                meta: `${state.charts.historyData.length} точек`,
             },
             {
                 label: "Тренд",
                 value: `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%`,
-                meta: `${state.historyDays} дней`,
+                meta: `${state.misc.historyDays} дней`,
             },
             {
                 label: "Диапазон",
-                value: `${formatPrice(state.history.reduce((min, p) => Math.min(min, p.median), Infinity))} - ${formatPrice(state.history.reduce((max, p) => Math.max(max, p.median), -Infinity))}`,
+                value: `${formatPrice(state.charts.historyData.reduce((min, p) => Math.min(min, p.median), Infinity))} - ${formatPrice(state.charts.historyData.reduce((max, p) => Math.max(max, p.median), -Infinity))}`,
                 meta: "по медиане",
             },
         ];
@@ -270,14 +270,14 @@ function createRenderCharts(context) {
         // Canvas is marked aria-hidden; the wrapper div carries the accessible label
         canvas.setAttribute("aria-hidden", "true");
 
-        state.historyChart = new Chart(canvas, {
+        state.charts.history = new Chart(canvas, {
             type: "line",
             data: {
-                labels: state.history.map((point) => formatDate(point.snapshot_at) || ""),
+                labels: state.charts.historyData.map((point) => formatDate(point.snapshot_at) || ""),
                 datasets: [
                     {
                         label: "Медиана",
-                        data: state.history.map((point) => point.median),
+                        data: state.charts.historyData.map((point) => point.median),
                         borderColor: lineColor,
                         backgroundColor: fillColor,
                         fill: true,
@@ -394,18 +394,18 @@ function createRenderCharts(context) {
         // toggled it between renders without clicking).
         for (const button of elements.analyticsPeriodButtons || []) {
             const days = Number(button.dataset.analyticsPeriod || 0);
-            button.classList.toggle("is-active", days === Number(state.analyticsPeriodDays));
+            button.classList.toggle("is-active", days === Number(state.analytics.periodDays));
         }
 
-        const dashboard = state.analyticsDashboard;
+        const dashboard = state.analytics.dashboard;
         if (!dashboard) {
             // Loading or no data yet — render placeholder cards so the
             // layout doesn't jump when the first response lands.
             const placeholderCards = [
-                { label: "Прибыль", value: "…", sub: state.analyticsLoading ? "загружаю" : "нет данных", className: "" },
-                { label: "ROI", value: "…", sub: state.analyticsLoading ? "загружаю" : "нет данных", className: "" },
-                { label: "Win rate", value: "…", sub: state.analyticsLoading ? "загружаю" : "нет данных", className: "" },
-                { label: "Цикл сделки", value: "…", sub: state.analyticsLoading ? "загружаю" : "нет данных", className: "" },
+                { label: "Прибыль", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
+                { label: "ROI", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
+                { label: "Win rate", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
+                { label: "Цикл сделки", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
             ];
             for (const card of placeholderCards) {
                 elements.profitCards.appendChild(
@@ -443,7 +443,7 @@ function createRenderCharts(context) {
         if (!elements.historyDealsList) return;
         domClear(elements.historyDealsList);
 
-        const closedLeads = state.leads.filter((l) => l.status === "closed");
+        const closedLeads = state.leads.items.filter((l) => l.status === "closed");
 
         if (elements.historyDealsCount) {
             elements.historyDealsCount.textContent = String(closedLeads.length);

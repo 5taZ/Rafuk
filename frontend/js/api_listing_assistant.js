@@ -118,7 +118,7 @@ function createApiListingAssistant(context) {
         renderPhotoGrid();
         resultBox.replaceChildren();
         resultBox.hidden = true;
-        state.listingAssistantResult = null;
+        state.misc.listingAssistantResult = null;
         updateNotesCounter();
     }
 
@@ -584,7 +584,7 @@ function createApiListingAssistant(context) {
                 text: "Открыть",
             });
             openBtnEl.addEventListener("click", () => {
-                state.listingAssistantResult = entry.output;
+                state.misc.listingAssistantResult = entry.output;
                 renderResult(entry.output);
                 if (entry.input) {
                     titleInput.value = entry.input.title || "";
@@ -664,7 +664,7 @@ function createApiListingAssistant(context) {
         try {
             const data = await postJson("/api/v1/ai/listing-assistant", payload);
             renderResult(data || {});
-            state.listingAssistantResult = data;
+            state.misc.listingAssistantResult = data;
 
             // Save to history (we keep input + count of photos, NOT the photo
             // bytes themselves to keep localStorage under quota).

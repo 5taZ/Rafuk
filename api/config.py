@@ -35,6 +35,23 @@ class Settings(BaseSettings):
     auto_remove_missing_days: int = 7
     max_trackers_per_user: int = 50
     debug: bool = False
+
+    @field_validator("debug")
+    @classmethod
+    def _force_debug_off_in_production(cls, v: bool, info) -> bool:
+        """Prevent debug=True when connected to a non-localhost database."""
+        if not v:
+            return False
+        db_url = info.data.get("database_url", "")
+        if db_url and not any(
+            h in db_url
+            for h in ("localhost", "127.0.0.1", "10.0.2.2", "::1", "sqlite")
+        ):
+            raise ValueError(
+                "debug=True is not allowed with a non-localhost DATABASE_URL. "
+                "All requests would share user_id=0."
+            )
+        return v
     db_pool_size: int = 10
     db_max_overflow: int = 20
 

@@ -1,108 +1,112 @@
 function createAppCore() {
     const state = {
-        query: "",
-        strictSearch: false,
-        historyDays: 7,
-        currency: "BYN",
-        category: null, // selected category id (int or null)
-        categories: [], // category distribution from last search [{id, label, count}]
-        condition: "", // filter by condition: "", "new", "used"
-        sellerType: "", // filter by seller: "", "private", "shop"
-        minPrice: null, // filter by min price (number or null)
-        maxPrice: null, // filter by max price (number or null)
-        regionName: "", // filter by region name
-        // Pending filter values (before Apply is clicked)
-        pendingCategory: null,
-        pendingCondition: "",
-        pendingSellerType: "",
-        pendingMinPrice: null,
-        pendingMaxPrice: null,
-        pendingRegionName: "",
-        filterDropdownOpen: false,
-        searchRequestId: 0,
-        sort: "newest",
-        discountFromPercent: 10,
-        discountToPercent: 30,
-        loading: false,
-        error: null,
-        stats: null,
-        listings: [],
-        _listingsLoadedAt: 0,
-        _listingsLoadedSort: null,
-        listingsTotal: 0,
-        listingsHasMore: false,
-        listingsLoading: false,
-        listingsLoadingMore: false,
-        _listingsRequestId: 0,
-        dealListings: [],
-        _dealsLoadedAt: 0,
-        dealsTotal: 0,
-        dealsHasMore: false,
-        dealsLoading: false,
-        dealsLoadingMore: false,
-        _dealsRequestId: 0,
-        segments: null,
-        geography: [],
-        chart: null,
-        history: [],
-        historyChart: null,
-        // Stale-response guards for the standalone async loaders that
-        // can race when the user rapidly changes the query, range, or
-        // listing they're viewing. Same pattern as _leadsRequestId.
-        _historyRequestId: 0,
-        _detailRequestId: 0,
-        leads: [],
-        leadFilter: "all",
-        // Monotonic request id — incremented on every loadLeads() so the
-        // resolver can drop stale responses when the user rapidly toggles
-        // tabs / fires mutations. Mirrors searchRequestId for listings.
-        _leadsRequestId: 0,
-        watchlist: [],
-        watchlistFilter: "all",
-        // Monotonic request id for loadWatchlist() — same purpose as
-        // _leadsRequestId.
-        _watchlistRequestId: 0,
-        itemsFilter: "purchases",
-        trackers: [],
-        trackerEvents: [],
-        trackerEventFilter: "all",
-        trackerEventFilterTrackerId: null,
-        trackerStatus: "",
-        trackerStatusKind: "info",
-        trackerMinDiscountPercent: 10,
-        trackerMaxPriceByn: null,
-        trackerSellerType: "",
-        trackerCondition: "",
-        trackerRegionName: "",
-        trackerConfigKeyword: "",
-        analyticsPeriodDays: 90,
-        analyticsDashboard: null,
-        analyticsLoading: false,
-        editingTrackerId: null,
-        creatingTracker: false,
-        modalCleanup: null,
-        searchAbortController: null,
-        dirtyViews: new Set(),
-        _allDirty: true,
-        detail: null,
-        detailImageIndex: 0,
-        detailFromWatchlist: false,
-        detailAi: {
-            adId: null,
+        ui: {
             loading: false,
-            result: null,
-            error: "",
-            source: "",
+            error: null,
+            activeView: "overview",
+            dirtyViews: new Set(),
+            _allDirty: true,
         },
-        aiLoadingTimer: null,
-        activeView: "overview",
-        expenses: [],
-        expensesLoading: false,
-        currentExpenseLeadId: null,
-        profitData: null,
-        profitChart: null,
-        pipelineStep: "active",
-        recentSearches: [],
+        search: {
+            query: "",
+            strictSearch: false,
+            searchRequestId: 0,
+            sort: "newest",
+            recentSearches: [],
+            searchAbortController: null,
+        },
+        filters: {
+            category: null, // selected category id (int or null)
+            categories: [], // category distribution from last search [{id, label, count}]
+            condition: "", // filter by condition: "", "new", "used"
+            sellerType: "", // filter by seller: "", "private", "shop"
+            minPrice: null, // filter by min price (number or null)
+            maxPrice: null, // filter by max price (number or null)
+            regionName: "", // filter by region name
+            // Pending filter values (before Apply is clicked)
+            pendingCategory: null,
+            pendingCondition: "",
+            pendingSellerType: "",
+            pendingMinPrice: null,
+            pendingMaxPrice: null,
+            pendingRegionName: "",
+            filterDropdownOpen: false,
+            discountFromPercent: 10,
+            discountToPercent: 30,
+        },
+        listings: {
+            items: [],
+            _loadedAt: 0,
+            _loadedSort: null,
+            total: 0,
+            hasMore: false,
+            loading: false,
+            loadingMore: false,
+            _requestId: 0,
+        },
+        deals: {
+            items: [],
+            _loadedAt: 0,
+            total: 0,
+            hasMore: false,
+            loading: false,
+            loadingMore: false,
+            _requestId: 0,
+        },
+        trackers: {
+            items: [],
+            events: [],
+            eventFilter: "all",
+            eventFilterTrackerId: null,
+            status: "",
+            statusKind: "info",
+            editingId: null,
+            creating: false,
+            minDiscountPercent: 10,
+            maxPriceByn: null,
+            sellerType: "",
+            condition: "",
+            regionName: "",
+            configKeyword: "",
+        },
+        leads: {
+            items: [],
+            filter: "all",
+            _requestId: 0,
+            pipelineStep: "active",
+            itemsFilter: "purchases",
+        },
+        watchlist: {
+            items: [],
+            filter: "all",
+            _requestId: 0,
+        },
+        detail: {
+            data: null,
+            imageIndex: 0,
+            fromWatchlist: false,
+            _requestId: 0,
+            ai: {
+                adId: null,
+                loading: false,
+                result: null,
+                error: "",
+                source: "",
+            },
+            aiLoadingTimer: null,
+        },
+        expenses: {
+            items: [],
+            loading: false,
+            currentLeadId: null,
+        },
+        analytics: {
+            periodDays: 90,
+            dashboard: null,
+            loading: false,
+            profitData: null,
+            profitChart: null,
+        },
         panels: {
             distribution: false,
             history: true,
@@ -111,7 +115,21 @@ function createAppCore() {
             historyDeals: false,
             listingAssistant: false,
         },
-        listingAssistantResult: null,
+        charts: {
+            distribution: null,
+            history: null,
+            historyData: [],
+            _historyRequestId: 0,
+        },
+        misc: {
+            historyDays: 7,
+            currency: "BYN",
+            segments: null,
+            geography: [],
+            listingAssistantResult: null,
+            modalCleanup: null,
+            stats: null,
+        },
     };
 
     const elements = {};
@@ -260,16 +278,16 @@ function createAppCore() {
         try {
             const stored = localStorage.getItem("recentSearches");
             if (stored) {
-                state.recentSearches = JSON.parse(stored).slice(0, 10);
+                state.search.recentSearches = JSON.parse(stored).slice(0, 10);
             }
         } catch (_) {
-            state.recentSearches = [];
+            state.search.recentSearches = [];
         }
     }
 
     function saveRecentSearches() {
         try {
-            localStorage.setItem("recentSearches", JSON.stringify(state.recentSearches));
+            localStorage.setItem("recentSearches", JSON.stringify(state.search.recentSearches));
         } catch (_) {
             // ignore
         }
@@ -279,16 +297,16 @@ function createAppCore() {
         if (!query || query.trim().length < 2) return;
         const trimmed = query.trim();
         // Remove if already exists
-        state.recentSearches = state.recentSearches.filter((q) => q !== trimmed);
+        state.search.recentSearches = state.search.recentSearches.filter((q) => q !== trimmed);
         // Add to front
-        state.recentSearches.unshift(trimmed);
+        state.search.recentSearches.unshift(trimmed);
         // Keep only last 10
-        state.recentSearches = state.recentSearches.slice(0, 10);
+        state.search.recentSearches = state.search.recentSearches.slice(0, 10);
         saveRecentSearches();
     }
 
     function clearRecentSearches() {
-        state.recentSearches = [];
+        state.search.recentSearches = [];
         saveRecentSearches();
     }
 
@@ -361,24 +379,24 @@ function createAppCore() {
         const args = Array.prototype.slice.call(arguments);
         if (args.length === 0 || args.includes('all')) {
             // Mark all known views dirty
-            state._allDirty = true;
-            state.dirtyViews.clear();
+            state.ui._allDirty = true;
+            state.ui.dirtyViews.clear();
         } else {
-            state._allDirty = false;
+            state.ui._allDirty = false;
             for (const v of args) {
-                state.dirtyViews.add(v);
+                state.ui.dirtyViews.add(v);
             }
         }
     }
 
     function isDirty(view) {
-        if (state._allDirty) return true;
-        return state.dirtyViews.has(view);
+        if (state.ui._allDirty) return true;
+        return state.ui.dirtyViews.has(view);
     }
 
     function clearDirty() {
-        state._allDirty = false;
-        state.dirtyViews.clear();
+        state.ui._allDirty = false;
+        state.ui.dirtyViews.clear();
     }
 
     function populateRegionSelect(selectEl, currentValue) {

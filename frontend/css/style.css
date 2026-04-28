@@ -61,6 +61,13 @@
     --violet: #8b5cf6;
     --violet-soft: rgba(139, 92, 246, 0.08);
     --cyan: #06b6d4;
+    --ai-dot-flags: #ef4444;
+    --ai-dot-photo: #f59e0b;
+    --ai-dot-price: #3b82f6;
+    --ai-dot-resale: #8b5cf6;
+    --ai-dot-market: #3b82f6;
+    --ai-dot-best: #22c55e;
+    --ai-dot-neutral: #94a3b8;
     --cyan-soft: rgba(6, 182, 212, 0.08);
     --white: #e8e8e8;
     --font: "Geist", system-ui, -apple-system, sans-serif;
@@ -292,6 +299,13 @@ button:focus-visible,
     --violet-soft: rgba(124, 58, 237, 0.06);
     --cyan: #0891b2;
     --cyan-soft: rgba(8, 145, 178, 0.06);
+    --ai-dot-flags: #dc2626;
+    --ai-dot-photo: #d97706;
+    --ai-dot-price: #2563eb;
+    --ai-dot-resale: #7c3aed;
+    --ai-dot-market: #2563eb;
+    --ai-dot-best: #16a34a;
+    --ai-dot-neutral: #64748b;
     --white: #ffffff;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06);
@@ -376,6 +390,13 @@ body {
     justify-content: space-between;
     height: 52px;
     gap: 12px;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
 }
 
 .logo {
@@ -1089,7 +1110,9 @@ body {
 
 .helper-chip {
     appearance: none;
+    border: 1px solid transparent;
     border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--accent);
     padding: 6px 12px;
@@ -1100,6 +1123,7 @@ body {
 }
 
 .helper-chip:hover {
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
@@ -1114,7 +1138,9 @@ body {
 
 .helper-cta {
     appearance: none;
+    border: 1px solid transparent;
     border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--text);
     padding: 10px 16px;
@@ -1131,6 +1157,7 @@ body {
 }
 
 .helper-cta:hover {
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 20%, transparent);
     border-color: var(--accent);
 }
@@ -3130,6 +3157,7 @@ body.modal-open {
     padding: 0 6px;
     margin-left: 4px;
     border-radius: 999px;
+    background: transparent;
     background: color-mix(in srgb, var(--text) 12%, transparent);
     color: var(--text);
     font-size: 11px;
@@ -3739,6 +3767,7 @@ body.modal-open {
 }
 
 .lp-menu-item:active {
+    background: transparent;
     background: color-mix(in srgb, var(--bg-hover) 80%, var(--accent) 20%);
 }
 
@@ -3968,6 +3997,23 @@ body.lp-menu-open {
     text-decoration: underline;
     text-decoration-color: var(--accent-glow);
     text-underline-offset: 2px;
+}
+
+/* Override .primary-link button styles inside consent checkboxes */
+.consent-check a.primary-link {
+    background: none;
+    border: none;
+    padding: 0;
+    border-radius: 0;
+    color: var(--accent);
+    box-shadow: none;
+    font-weight: 600;
+}
+
+.consent-check a.primary-link:hover {
+    background: none;
+    transform: none;
+    color: var(--accent-dark);
 }
 
 .consent-check a:hover {
@@ -6202,6 +6248,7 @@ body.lp-menu-open {
     outline: none;
     border-color: var(--accent);
     background: var(--bg-elevated);
+    box-shadow: 0 0 0 3px none;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
@@ -6248,6 +6295,7 @@ body.lp-menu-open {
     outline: none;
     border-color: var(--accent);
     background-color: var(--bg-elevated);
+    box-shadow: 0 0 0 3px none;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
@@ -6517,7 +6565,7 @@ body.lp-menu-open {
     align-items: center;
     justify-content: space-between;
     padding: 14px 16px 12px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: none;
     flex-shrink: 0;
 }
 
@@ -6775,15 +6823,7 @@ body.lp-menu-open {
 }
 
 .ai-modal-verdict::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 40px;
-    height: 2px;
-    border-radius: 1px;
-    background: var(--border);
+    display: none;
 }
 
 .ai-modal-summary {
@@ -6841,11 +6881,73 @@ body.lp-menu-open {
     margin-left: 8px;
 }
 
+/* ── AI Result Layout: nav rail + content ── */
+.ai-result-layout {
+    display: flex;
+    min-height: 0;
+}
+
+.ai-nav-rail {
+    position: sticky;
+    top: 0;
+    width: 28px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 16px 0;
+    z-index: 2;
+}
+
+.ai-nav-dot {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
+}
+
+.ai-nav-dot::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--dot-color, var(--text-dim));
+    opacity: 0.35;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.ai-nav-dot--active::after {
+    transform: scale(1.6);
+    opacity: 1;
+}
+
+.ai-nav-dot--active {
+    opacity: 1;
+}
+
+.ai-content-area {
+    flex: 1;
+    min-width: 0;
+}
+
 /* ── AI Sections (card style) ── */
 .ai-section {
-    padding: 14px 0;
-    border-bottom: 1px solid var(--border);
+    padding: 16px 0;
+    border-bottom: none;
     animation: aiSlideUp 0.35s ease both;
+}
+
+.ai-section + .ai-section {
+    border-top: 1px solid var(--border);
 }
 
 .ai-section:nth-child(1) { animation-delay: 0.02s; }
@@ -6873,6 +6975,25 @@ body.lp-menu-open {
     letter-spacing: 0.08em;
     margin-bottom: 8px;
 }
+
+/* Label dot accent — colored per section type */
+.ai-label::before {
+    content: "";
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    flex-shrink: 0;
+}
+
+[data-section-key="ai-sec-flags"] .ai-label::before { background: var(--ai-dot-flags); }
+[data-section-key="ai-sec-scam"] .ai-label::before { background: var(--ai-dot-flags); }
+[data-section-key="ai-sec-photo"] .ai-label::before { background: var(--ai-dot-photo); }
+[data-section-key="ai-sec-price"] .ai-label::before { background: var(--ai-dot-price); }
+[data-section-key="ai-sec-resale"] .ai-label::before { background: var(--ai-dot-resale); }
+[data-section-key="ai-sec-market"] .ai-label::before { background: var(--ai-dot-market); }
+[data-section-key="ai-sec-best"] .ai-label::before { background: var(--ai-dot-best); }
+[data-section-key="ai-sec-rec"] .ai-label::before { background: var(--ai-dot-best); }
 
 /* ── AI: Condition notes ── */
 .ai-notes {
@@ -6923,11 +7044,10 @@ body.lp-menu-open {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 12px;
-    border-radius: var(--r-md);
-    background: var(--bg-elevated);
+    padding: 8px 0;
     font-size: var(--text-sm);
-    border: 1px solid var(--border);
+    border: none;
+    background: none;
 }
 
 .ai-resale-label {
@@ -6955,11 +7075,12 @@ body.lp-menu-open {
 }
 
 .ai-risk {
-    padding: 10px 12px;
-    border-radius: var(--r-md);
+    padding: 8px 0;
     font-size: var(--text-sm);
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
+    border: none;
+    background: none;
+    border-left: 3px solid var(--border);
+    border-radius: 0;
 }
 
 .ai-risk strong {
@@ -6973,21 +7094,15 @@ body.lp-menu-open {
 }
 
 .ai-risk--high {
-    border-left: 3px solid var(--red);
-    border-color: var(--border);
     border-left-color: var(--red);
 }
 
 .ai-risk--medium {
-    border-left: 3px solid var(--amber);
-    border-color: var(--border);
     border-left-color: var(--amber);
 }
 
 .ai-risk--low,
 .ai-risk--info {
-    border-left: 3px solid var(--accent);
-    border-color: var(--border);
     border-left-color: var(--accent);
 }
 
@@ -6999,11 +7114,9 @@ body.lp-menu-open {
 }
 
 .ai-watch-item {
-    padding: 10px 12px;
-    border-radius: var(--r-md);
+    padding: 8px 0;
     font-size: var(--text-sm);
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
+    border: none;
     border-left: 3px solid var(--amber);
 }
 
@@ -7029,18 +7142,16 @@ body.lp-menu-open {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px;
-    border-radius: var(--r-md);
-    background: var(--bg-elevated);
+    padding: 8px 0;
     text-decoration: none;
     color: var(--text);
-    border: 1px solid var(--border);
-    transition: border-color 0.15s, background 0.15s;
+    border: none;
+    background: none;
+    transition: opacity 0.15s;
 }
 
 .ai-similar-item:hover {
-    border-color: var(--border-hover);
-    background: var(--bg-hover);
+    opacity: 0.75;
 }
 
 .ai-similar-thumb {
@@ -7077,16 +7188,15 @@ body.lp-menu-open {
     font-size: var(--text-sm);
     color: var(--text);
     line-height: 1.6;
-    border-bottom: 1px solid var(--border);
+    border-bottom: none;
 }
 
 /* ── AI: Market context ── */
 .ai-section--market {
-    background: rgba(59, 130, 246, 0.045);
-    border-radius: var(--r-lg);
-    padding: 12px;
-    border: 1px solid rgba(59, 130, 246, 0.11);
-    border-bottom: none;
+    background: none;
+    border-radius: 0;
+    padding: 0;
+    border: none;
 }
 
 .ai-market-context {
@@ -7157,11 +7267,10 @@ body.lp-menu-open {
 
 /* ── AI: Best alternative (prominent card) ── */
 .ai-section--best {
-    background: rgba(34, 197, 94, 0.04);
-    border-radius: var(--r-lg);
-    padding: 12px;
-    border: 1px solid rgba(34, 197, 94, 0.1);
-    border-bottom: none;
+    background: none;
+    border-radius: 0;
+    padding: 0;
+    border: none;
 }
 
 .ai-best-caption {
@@ -7185,16 +7294,15 @@ body.lp-menu-open {
     gap: 10px;
     text-decoration: none;
     color: var(--text);
-    padding: 10px;
-    border-radius: var(--r-lg);
-    background: var(--bg-card);
-    border: 1px solid rgba(34, 197, 94, 0.16);
-    box-shadow: var(--shadow-sm);
+    padding: 8px 0;
+    border-radius: 0;
+    background: none;
+    border: none;
+    box-shadow: none;
 }
 
 .ai-best-link:hover {
-    border-color: rgba(34, 197, 94, 0.2);
-    background: var(--bg-hover);
+    opacity: 0.75;
 }
 
 .ai-best-thumb {
@@ -7279,13 +7387,12 @@ body.lp-menu-open {
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    padding: 10px 12px;
-    border-radius: var(--r-md);
+    padding: 8px 0;
     font-size: var(--text-sm);
-    background: var(--bg-elevated);
+    background: none;
     color: var(--text);
-    border: 1px solid rgba(244, 63, 94, 0.16);
-    box-shadow: var(--shadow-sm);
+    border: none;
+    box-shadow: none;
     line-height: 1.5;
 }
 
@@ -7335,12 +7442,12 @@ body.lp-menu-open {
 
 /* ── AI: Disclaimer ── */
 .ai-disclaimer {
-    padding: 12px 0 0;
+    padding: 16px 0 0;
     font-size: 10px;
     color: var(--text-dim);
     line-height: 1.5;
     border-top: 1px solid var(--border);
-    margin-top: 8px;
+    margin-top: 12px;
 }
 
 /* ── AI: Light theme adjustments ── */
@@ -7353,7 +7460,7 @@ body.lp-menu-open {
 }
 
 [data-theme="light"] .ai-section--best {
-    background: rgba(22, 163, 74, 0.05);
+    background: none;
 }
 
 [data-theme="light"] .ai-market-point,
@@ -7362,19 +7469,37 @@ body.lp-menu-open {
 }
 
 [data-theme="light"] .ai-flag-item {
-    background: rgba(220, 38, 38, 0.05);
+    background: none;
+}
+
+/* Light theme nav rail dots */
+[data-theme="light"] .ai-nav-dot::after {
+    opacity: 0.25;
+}
+[data-theme="light"] .ai-nav-dot--active::after {
+    opacity: 1;
+}
+
+/* Light theme section dividers */
+[data-theme="light"] .ai-section + .ai-section {
+    border-top-color: var(--border);
+}
+
+/* Light theme disclaimer */
+[data-theme="light"] .ai-disclaimer {
+    border-top-color: var(--border);
 }
 
 /* ── AI: Scam analysis section ── */
 .ai-section--scam {
-    background: rgba(220, 38, 38, 0.04);
-    border-radius: 8px;
-    padding: 12px 14px;
+    background: none;
+    border-radius: 0;
+    padding: 0;
     margin: 4px 0;
 }
 
 [data-theme="light"] .ai-section--scam {
-    background: rgba(220, 38, 38, 0.06);
+    background: none;
 }
 
 .ai-scam-indicators {
@@ -7409,21 +7534,21 @@ body.lp-menu-open {
     font-size: var(--text-sm);
     color: var(--text);
     line-height: 1.55;
-    padding: 8px 10px;
-    background: rgba(34, 197, 94, 0.06);
-    border-radius: 6px;
+    padding: 0;
+    background: none;
+    border-radius: 0;
 }
 
 /* ── AI: Photo authenticity section ── */
 .ai-section--photo-auth {
-    background: rgba(234, 179, 8, 0.04);
-    border-radius: 8px;
-    padding: 12px 14px;
+    background: none;
+    border-radius: 0;
+    padding: 0;
     margin: 4px 0;
 }
 
 [data-theme="light"] .ai-section--photo-auth {
-    background: rgba(234, 179, 8, 0.06);
+    background: none;
 }
 
 .ai-photo-issues {
@@ -7612,6 +7737,7 @@ body {
 }
 
 .listing-badge {
+    background: transparent;
     background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
 }
 
@@ -7621,42 +7747,52 @@ body {
 
 .listing-btn--ai {
     color: var(--accent-secondary);
+    border-color: transparent;
     border-color: color-mix(in srgb, var(--accent-secondary) 36%, transparent);
+    background: transparent;
     background: color-mix(in srgb, var(--bg-card) 82%, var(--accent-secondary) 18%);
 }
 
 .ai-sheet {
+    background: transparent;
     background: color-mix(in srgb, var(--bg-card) 94%, var(--accent-secondary) 6%);
 }
 
 .ai-header-bar {
+    background: transparent;
     background: color-mix(in srgb, var(--bg-card) 76%, transparent);
     backdrop-filter: blur(14px);
 }
 
 .ai-header-icon {
+    background: transparent;
     background: color-mix(in srgb, var(--bg-card) 84%, var(--accent-secondary) 16%);
+    box-shadow: inset 0 0 0 1px none;
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-secondary) 22%, transparent);
 }
 
 .ai-modal-verdict,
 .ai-section {
+    border-color: transparent;
     border-color: color-mix(in srgb, var(--border) 80%, var(--accent-secondary) 20%);
+    background: transparent;
     background: color-mix(in srgb, var(--bg-card) 91%, var(--accent-secondary) 9%);
 }
 
 [data-theme="light"] .ai-modal-verdict,
 [data-theme="light"] .ai-section {
-    background: rgba(255, 255, 255, 0.88);
+    background: none;
 }
 
 .ai-label {
+    color: inherit;
     color: color-mix(in srgb, var(--accent-secondary) 82%, var(--text) 18%);
 }
 
 /* ── Listing Assistant: card on Deals view ────────────────────────────── */
 
 .la-card {
+    background: transparent;
     background: color-mix(in srgb, var(--bg-card) 92%, var(--accent) 8%);
     display: flex;
     flex-direction: column;
@@ -7764,6 +7900,7 @@ body {
     align-items: center;
     justify-content: center;
     border-radius: 999px;
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 22%, transparent);
     color: var(--accent);
     font-size: 11px;
@@ -7784,8 +7921,10 @@ body {
     flex-wrap: wrap;
     gap: 8px;
     padding: 12px;
+    border: 1px dashed transparent;
     border: 1px dashed color-mix(in srgb, var(--accent) 32%, var(--border) 68%);
     border-radius: var(--r-md);
+    background: transparent;
     background: color-mix(in srgb, var(--bg-elevated) 84%, transparent);
 }
 
@@ -7832,7 +7971,9 @@ body {
     width: 76px;
     height: 76px;
     border-radius: var(--r-md);
+    border: 1px solid transparent;
     border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border) 72%);
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 6%, transparent);
     color: var(--accent);
     cursor: pointer;
@@ -7847,6 +7988,7 @@ body {
 }
 
 .la-photo-add:hover {
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
@@ -7945,6 +8087,7 @@ body {
 .la-input:focus {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px none;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
@@ -7981,9 +8124,12 @@ body {
 .la-error {
     padding: 12px 14px;
     border-radius: var(--r-md);
+    background: transparent;
     background: color-mix(in srgb, var(--red) 14%, transparent);
+    color: inherit;
     color: color-mix(in srgb, var(--red) 80%, var(--text) 20%);
     font-size: var(--text-sm);
+    border: 1px solid transparent;
     border: 1px solid color-mix(in srgb, var(--red) 28%, transparent);
 }
 
@@ -8000,6 +8146,7 @@ body {
 .la-loading-spinner {
     width: 28px;
     height: 28px;
+    border: 2px solid transparent;
     border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
     border-top-color: var(--accent);
     border-radius: 999px;
@@ -8024,8 +8171,10 @@ body {
 .la-section {
     padding: 14px;
     border: 0;
+    border-left: 3px solid transparent;
     border-left: 3px solid color-mix(in srgb, var(--accent-secondary) 40%, transparent);
     border-radius: 0 var(--r-lg) var(--r-lg) 0;
+    background: transparent;
     background: color-mix(in srgb, var(--bg-card) 94%, var(--accent-secondary) 6%);
     display: flex;
     flex-direction: column;
@@ -8037,11 +8186,13 @@ body {
 }
 
 .la-section--summary {
+    background: transparent;
     background: color-mix(in srgb, var(--accent-secondary) 10%, var(--bg-card) 90%);
     border-left-color: var(--accent-secondary);
 }
 
 [data-theme="light"] .la-section--summary {
+    background: transparent;
     background: color-mix(in srgb, var(--accent-secondary) 8%, white 92%);
 }
 
@@ -8078,10 +8229,12 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
+    background: transparent;
     background: color-mix(in srgb, var(--bg-elevated) 70%, var(--accent) 30%);
 }
 
 [data-theme="light"] .la-copy-head {
+    background: transparent;
     background: color-mix(in srgb, var(--bg-elevated) 80%, var(--accent) 20%);
 }
 
@@ -8095,7 +8248,9 @@ body {
 
 .la-copy-btn {
     appearance: none;
+    border: 1px solid transparent;
     border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--accent);
     padding: 4px 10px;
@@ -8115,6 +8270,7 @@ body {
 }
 
 .la-copy-btn:hover {
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
@@ -8169,16 +8325,19 @@ body {
 
 .la-tier--fast {
     border-left-color: var(--green);
+    background: transparent;
     background: color-mix(in srgb, var(--green) 10%, var(--bg-elevated) 90%);
 }
 
 .la-tier--market {
     border-left-color: var(--accent);
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated) 90%);
 }
 
 .la-tier--patient {
     border-left-color: var(--amber);
+    background: transparent;
     background: color-mix(in srgb, var(--amber) 8%, var(--bg-elevated) 92%);
 }
 
@@ -8350,7 +8509,9 @@ body {
 
 .la-history-open {
     appearance: none;
+    border: 1px solid transparent;
     border: 1px solid color-mix(in srgb, var(--accent-secondary) 40%, transparent);
+    background: transparent;
     background: color-mix(in srgb, var(--accent-secondary) 14%, transparent);
     color: var(--accent-secondary);
     padding: 6px 12px;
@@ -8360,6 +8521,7 @@ body {
 }
 
 .la-history-open:hover {
+    background: transparent;
     background: color-mix(in srgb, var(--accent-secondary) 22%, transparent);
 }
 
@@ -8377,6 +8539,7 @@ body {
 
 .la-history-delete:hover {
     color: var(--red);
+    border-color: transparent;
     border-color: color-mix(in srgb, var(--red) 32%, transparent);
 }
 
@@ -8650,6 +8813,7 @@ body {
 .la-photo-upload {
     padding: 10px;
     background: transparent;
+    border: 1px dashed transparent;
     border: 1px dashed color-mix(in srgb, var(--accent) 26%, var(--border) 74%);
 }
 
@@ -8705,12 +8869,16 @@ body {
 }
 
 .profit-card.is-accent {
+    background: transparent;
     background: color-mix(in srgb, var(--green) 10%, var(--bg-card) 90%);
+    border-color: transparent;
     border-color: color-mix(in srgb, var(--green) 30%, var(--border) 70%);
 }
 
 [data-theme="light"] .profit-card.is-accent {
+    background: transparent;
     background: color-mix(in srgb, var(--green) 8%, #ffffff 92%);
+    border-color: transparent;
     border-color: color-mix(in srgb, var(--green) 25%, transparent);
 }
 
@@ -8767,6 +8935,7 @@ body {
 
 /* --- Header: subtle, не мерцает при scroll ----------------------- */
 .header {
+    background: transparent;
     background: color-mix(in srgb, var(--bg) 92%, transparent);
     border-bottom-color: var(--border);
     backdrop-filter: blur(14px);
@@ -8781,6 +8950,7 @@ body {
 
 .search-wrap:focus-within {
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px none;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
@@ -8860,11 +9030,14 @@ body {
 
 .tracker-action-btn.danger {
     color: var(--red);
+    border-color: transparent;
     border-color: color-mix(in srgb, var(--red) 32%, transparent);
 }
 
 .tracker-action-btn.danger:hover:not(:disabled) {
+    background: transparent;
     background: color-mix(in srgb, var(--red) 8%, transparent);
+    border-color: transparent;
     border-color: color-mix(in srgb, var(--red) 50%, transparent);
 }
 
@@ -8919,6 +9092,7 @@ body {
 .edit-tracker-form .deal-range-input-wrap:focus-within {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px none;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
@@ -9032,6 +9206,7 @@ body {
     align-items: center;
     justify-content: center;
     border-radius: 999px;
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 20%, transparent);
     color: var(--accent);
     font-size: 11px;
@@ -9093,6 +9268,7 @@ body {
 
 .items-tab:not(.is-active):hover {
     color: var(--text);
+    background: transparent;
     background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
@@ -9104,6 +9280,7 @@ body {
     align-items: center;
     justify-content: center;
     border-radius: 999px;
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 22%, transparent);
     color: var(--accent);
     font-size: 11px;
@@ -9130,6 +9307,7 @@ body {
     align-items: center;
     justify-content: center;
     border-radius: 999px;
+    background: transparent;
     background: color-mix(in srgb, var(--text) 12%, transparent);
     color: var(--text-muted);
     font-size: 11px;
@@ -9141,6 +9319,7 @@ body {
 
 .s-tab.active .filter-count,
 button.active .filter-count {
+    background: transparent;
     background: color-mix(in srgb, var(--accent) 25%, transparent);
     color: var(--accent);
 }

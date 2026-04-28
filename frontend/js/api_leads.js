@@ -27,7 +27,7 @@ function createApiLeads(context) {
     // ── Load leads ───────────────────────────────────────────────────────
     async function loadLeads() {
         if (!hasTelegramInitData()) {
-            state.leads = [];
+            state.leads.items = [];
             renderLeads();
             renderDealsHeroStats();
             renderProfitDashboard();
@@ -37,7 +37,7 @@ function createApiLeads(context) {
         // by reloads can issue multiple in-flight loadLeads() calls. The
         // older response can otherwise resolve last and overwrite a
         // fresher state with outdated rows.
-        const requestId = (state._leadsRequestId = (state._leadsRequestId + 1) % 1_000_000);
+        const requestId = (state.leads._requestId = (state.leads._requestId + 1) % 1_000_000);
         let nextLeads;
         try {
             nextLeads = await getJson("/api/v1/leads");
@@ -45,8 +45,8 @@ function createApiLeads(context) {
             nextLeads = [];
         }
         // Drop the response if a newer loadLeads() has started since.
-        if (requestId !== state._leadsRequestId) return;
-        state.leads = nextLeads;
+        if (requestId !== state.leads._requestId) return;
+        state.leads.items = nextLeads;
         renderLeads();
         renderDealsHeroStats();
         renderProfitDashboard();
@@ -59,27 +59,27 @@ function createApiLeads(context) {
     // ── Load lead analytics dashboard ────────────────────────────────────
     async function loadAnalytics() {
         if (!hasTelegramInitData()) {
-            state.analyticsDashboard = null;
+            state.analytics.dashboard = null;
             renderProfitDashboard();
             return;
         }
         const requestId = (state._analyticsRequestId =
             ((state._analyticsRequestId || 0) + 1) % 1_000_000);
-        state.analyticsLoading = true;
+        state.analytics.loading = true;
         renderProfitDashboard();
         try {
-            const days = Number(state.analyticsPeriodDays || 90);
+            const days = Number(state.analytics.periodDays || 90);
             const response = await getJson(
                 `/api/v1/analytics/leads?days=${encodeURIComponent(days)}`,
             );
             if (requestId !== state._analyticsRequestId) return;
-            state.analyticsDashboard = response;
+            state.analytics.dashboard = response;
         } catch (_) {
             if (requestId !== state._analyticsRequestId) return;
-            state.analyticsDashboard = null;
+            state.analytics.dashboard = null;
         } finally {
             if (requestId === state._analyticsRequestId) {
-                state.analyticsLoading = false;
+                state.analytics.loading = false;
                 renderProfitDashboard();
             }
         }
@@ -87,7 +87,7 @@ function createApiLeads(context) {
 
     // ── Clear all leads (active only) ────────────────────────────────────
     async function clearAllLeads() {
-        const activeLeads = state.leads.filter((l) => l.status !== "closed");
+        const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
         if (!activeLeads.length) {
             showToast("Нет активных сделок для удаления");
             return;
@@ -95,7 +95,7 @@ function createApiLeads(context) {
         try {
             await deleteJson("/api/v1/leads/all");
             const count = activeLeads.length;
-            state.leads = state.leads.filter((l) => l.status === "closed");
+            state.leads.items = state.leads.items.filter((l) => l.status === "closed");
             renderLeads();
             showToast(`Удалено ${count} сделок`);
             await loadLeads();
@@ -131,9 +131,19 @@ function createApiLeads(context) {
             buyPriceInput?.focus();
             return;
         }
+        if (buyPriceNum > 10_000_000) {
+            showToast("Цена покупки слишком большая (макс. 10 000 000 BYN)");
+            buyPriceInput?.focus();
+            return;
+        }
 
         if (!Number.isInteger(soldPriceNum) || soldPriceNum <= 0) {
             showToast("Введите целую цену продажи больше 0");
+            soldPriceInput?.focus();
+            return;
+        }
+        if (soldPriceNum > 10_000_000) {
+            showToast("Цена продажи слишком большая (макс. 10 000 000 BYN)");
             soldPriceInput?.focus();
             return;
         }
@@ -151,7 +161,7 @@ function createApiLeads(context) {
                 body: JSON.stringify(payload),
             });
 
-            const leadInState = state.leads.find((l) => l.id === lead.id);
+            const leadInState = state.leads.items.find((l) => l.id === lead.id);
             if (leadInState) {
                 leadInState.buy_price_byn = buyPriceNum;
                 leadInState.sold_price_byn = soldPriceNum;
@@ -163,6 +173,9 @@ function createApiLeads(context) {
             const profit = soldPriceNum - buyPriceNum;
             const profitSign = profit >= 0 ? "+" : "";
             showToast(`✓ Сделка подтверждена! ${profitSign}${Math.round(profit)} BYN`, "success");
+
+            // Full reload to refresh analytics/profit dashboard data
+            await loadLeads();
 
             setTimeout(() => {
                 const updatedCard = elements.leadInboxList?.querySelector(
@@ -181,7 +194,7 @@ function createApiLeads(context) {
     async function cancelLead(leadId) {
         try {
             await deleteJson(`/api/v1/leads/${leadId}`);
-            state.leads = state.leads.filter((l) => l.id !== leadId);
+            state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
             renderLeads();
             showToast("✓ Сделка отменена", "info");
             await loadLeads();
@@ -193,7 +206,7 @@ function createApiLeads(context) {
     // ── Close deal (mark closed, show profit) ────────────────────────────
     async function closeDeal(leadId) {
         try {
-            const lead = state.leads.find((l) => l.id === leadId);
+            const lead = state.leads.items.find((l) => l.id === leadId);
             const buyPriceByn = lead?.buy_price_byn || 0;
             const soldPriceByn = lead?.sold_price_byn || 0;
 
@@ -234,7 +247,7 @@ function createApiLeads(context) {
                 }),
             });
 
-            const leadInState = state.leads.find((l) => l.id === leadId);
+            const leadInState = state.leads.items.find((l) => l.id === leadId);
             if (leadInState) {
                 leadInState.status = "new";
                 leadInState.buy_price_byn = null;
@@ -261,7 +274,7 @@ function createApiLeads(context) {
     async function deleteLead(leadId) {
         try {
             await deleteJson(`/api/v1/leads/${leadId}`);
-            state.leads = state.leads.filter((l) => l.id !== leadId);
+            state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
             renderLeads();
             showToast("Сделка удалена");
             await loadLeads();
@@ -307,7 +320,7 @@ function createApiLeads(context) {
             }),
         });
 
-        const leadInState = state.leads.find((l) => l.id === lead.id);
+        const leadInState = state.leads.items.find((l) => l.id === lead.id);
         if (leadInState) {
             leadInState.status = "sold";
             leadInState.sold_price_byn = priceNum;
@@ -326,7 +339,7 @@ function createApiLeads(context) {
             showToast("Не удалось открыть: нет ID объявления");
             return;
         }
-        const queryToUse = lead.query || state.query || "";
+        const queryToUse = lead.query || state.search.query || "";
         if (!queryToUse) {
             showToast("Не удалось открыть: нет привязки к запросу");
             return;
@@ -334,22 +347,22 @@ function createApiLeads(context) {
         // Shared stale-response guard with openListingDetail and
         // openWatchlistDetail — only the latest tap wins, older
         // listing-detail responses are dropped.
-        const requestId = (state._detailRequestId =
-            (state._detailRequestId + 1) % 1_000_000);
+        const requestId = (state.detail._requestId =
+            (state.detail._requestId + 1) % 1_000_000);
 
         const loadingToast = showToast("Загружаю...", "info", 1400);
-        state.error = null;
+        state.ui.error = null;
         renderError();
         try {
-            const catParam = state.category != null ? `&category=${state.category}` : "";
+            const catParam = state.filters.category != null ? `&category=${state.filters.category}` : "";
             const fullDetail = await getJson(
-                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.currency}&strict_search=${state.strictSearch}&ad_id=${lead.ad_id}${catParam}`
+                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.misc.currency}&strict_search=${state.search.strictSearch}&ad_id=${lead.ad_id}${catParam}`
             );
-            if (requestId !== state._detailRequestId) return;
-            state.detail = fullDetail;
-            state.detailImageIndex = 0;
-            state.detailFromWatchlist = false;
-            state.detailAi = {
+            if (requestId !== state.detail._requestId) return;
+            state.detail.data = fullDetail;
+            state.detail.imageIndex = 0;
+            state.detail.fromWatchlist = false;
+            state.detail.ai = {
                 adId: fullDetail.ad_id || lead.ad_id,
                 loading: false,
                 result: null,
@@ -358,8 +371,8 @@ function createApiLeads(context) {
             };
             renderDetailModal();
         } catch (error) {
-            if (requestId !== state._detailRequestId) return;
-            state.error = error.message || "Не удалось загрузить детали";
+            if (requestId !== state.detail._requestId) return;
+            state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
         } finally {
             if (loadingToast) dismissToast(loadingToast);

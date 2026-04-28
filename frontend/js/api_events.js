@@ -81,17 +81,17 @@ function createApiEvents(context) {
     } = context;
 
     // ── Event binding ────────────────────────────────────────────────────
-    function bindEvents() {
-        let searchDebounceTimer = null;
+    const _searchDebounce = { timer: null };
 
+    function bindSearchEvents() {
         // ── Search input ─────────────────────────────────────────────
         elements.searchInput?.addEventListener("input", () => {
-            state.query = elements.searchInput.value.trim();
+            state.search.query = elements.searchInput.value.trim();
             renderLoading();
 
-            clearTimeout(searchDebounceTimer);
-            searchDebounceTimer = setTimeout(() => {
-                if (state.query.length >= 2) {
+            clearTimeout(_searchDebounce.timer);
+            _searchDebounce.timer = setTimeout(() => {
+                if (state.search.query.length >= 2) {
                     void search("overview");
 
                     if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -104,7 +104,7 @@ function createApiEvents(context) {
         elements.searchInput?.addEventListener("keydown", (event) => {
             if (event.key === "Enter") {
                 event.preventDefault();
-                clearTimeout(searchDebounceTimer);
+                clearTimeout(_searchDebounce.timer);
                 void search("overview");
 
                 if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -114,28 +114,21 @@ function createApiEvents(context) {
         });
 
         elements.searchButton?.addEventListener("click", () => {
-            clearTimeout(searchDebounceTimer);
+            clearTimeout(_searchDebounce.timer);
             void search("overview");
 
             if (window.Telegram?.WebApp?.HapticFeedback) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("medium");
             }
         });
+    }
 
-        // ── Strict search toggle ─────────────────────────────────────
-        elements.strictSearchToggle?.addEventListener("change", () => {
-            state.strictSearch = Boolean(elements.strictSearchToggle.checked);
-            renderStrictSearch();
-            if (state.query.trim()) {
-                void search(state.activeView);
-            }
-        });
-
+    function bindRecentSearchEvents() {
         // ── Recent searches (chips + clear button) ────────────────────
         elements.recentSection?.addEventListener("click", (event) => {
             if (event.target.closest("#recent-clear-btn")) {
                 // 1. Instant visual feedback — clear state and hide immediately
-                state.recentSearches = [];
+                state.search.recentSearches = [];
 
                 // 2. Defer localStorage write to next tick (non-blocking)
                 requestAnimationFrame(() => {
@@ -158,9 +151,9 @@ function createApiEvents(context) {
             if (chip) {
                 const query = chip.dataset.recentQuery || "";
                 elements.searchInput.value = query;
-                state.query = query;
+                state.search.query = query;
                 renderLoading();
-                clearTimeout(searchDebounceTimer);
+                clearTimeout(_searchDebounce.timer);
                 void search("overview");
             }
         });
@@ -172,9 +165,9 @@ function createApiEvents(context) {
                 const query = chip.dataset.recentQuery || "";
                 if (!query) return;
                 elements.searchInput.value = query;
-                state.query = query;
+                state.search.query = query;
                 renderLoading();
-                clearTimeout(searchDebounceTimer);
+                clearTimeout(_searchDebounce.timer);
                 void search("overview");
                 return;
             }
@@ -199,7 +192,7 @@ function createApiEvents(context) {
             if (!chip) return;
             const token = chip.dataset.refinement || "";
             if (!token) return;
-            const current = (state.query || "").trim();
+            const current = (state.search.query || "").trim();
             const lowerCurrent = current.toLowerCase();
             const lowerToken = token.toLowerCase();
             // Avoid duplicating the token if it's already in the query.
@@ -208,15 +201,25 @@ function createApiEvents(context) {
                 : `${current} ${token}`.trim();
             if (merged === current) return;
             elements.searchInput.value = merged;
-            state.query = merged;
+            state.search.query = merged;
             renderLoading();
-            clearTimeout(searchDebounceTimer);
+            clearTimeout(_searchDebounce.timer);
             if (window.Telegram?.WebApp?.HapticFeedback) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
             }
             void search("overview");
         });
+    }
 
+    function bindViewTabEvents() {
+        // ── Strict search toggle ─────────────────────────────────────
+        elements.strictSearchToggle?.addEventListener("change", () => {
+            state.search.strictSearch = Boolean(elements.strictSearchToggle.checked);
+            renderStrictSearch();
+            if (state.search.query.trim()) {
+                void search(state.ui.activeView);
+            }
+        });
         // ── View tabs ────────────────────────────────────────────────
         for (const button of elements.viewTabs || []) {
             button.addEventListener("click", () => {
@@ -243,6 +246,20 @@ function createApiEvents(context) {
             });
         }
 
+        // ── Items filter tabs (Избранное / Покупки within deals view) ──
+        for (const button of elements.itemsFilterButtons || []) {
+            button.addEventListener("click", () => {
+                const filter = button.dataset.itemsFilter;
+                if (!filter) return;
+                state.leads.itemsFilter = filter;
+                renderLeads();
+
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                    Telegram.WebApp.HapticFeedback.impactOccurred("light");
+                }
+            });
+        }
+
         // ── Panel toggles (collapsible sections) ─────────────────────
         for (const button of elements.panelToggles || []) {
             button.addEventListener("click", () => {
@@ -258,10 +275,10 @@ function createApiEvents(context) {
         for (const button of elements.historyRangeButtons || []) {
             button.addEventListener("click", () => {
                 const nextDays = Number(button.dataset.historyDays);
-                if (!nextDays || nextDays === state.historyDays) {
+                if (!nextDays || nextDays === state.misc.historyDays) {
                     return;
                 }
-                state.historyDays = nextDays;
+                state.misc.historyDays = nextDays;
                 renderHistory();
                 void loadHistory();
             });
@@ -271,10 +288,10 @@ function createApiEvents(context) {
         for (const button of elements.sortButtons || []) {
             button.addEventListener("click", () => {
                 const sort = button.dataset.sort || "newest";
-                if (sort === state.sort) {
+                if (sort === state.search.sort) {
                     return;
                 }
-                state.sort = sort;
+                state.search.sort = sort;
                 renderSortButtons();
                 // Discount-range controls live below the sort row in the
                 // ads view. They're only meaningful for sort=cheap; the
@@ -283,35 +300,37 @@ function createApiEvents(context) {
                 if (elements.dealsControls) {
                     elements.dealsControls.hidden = sort !== "cheap";
                 }
-                if (state.query.trim()) {
+                if (state.search.query.trim()) {
                     void loadListings(true);
                 }
             });
         }
+    }
 
+    function bindFilterEvents() {
         // ── Filter button (toggle dropdown) ───────────────────────────
         elements.filterBtn?.addEventListener("click", () => {
             const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            if (!state.filterDropdownOpen) {
+            if (!state.filters.filterDropdownOpen) {
                 // Opening — initialize pending values with current applied values
-                state.pendingCategory = state.category;
-                state.pendingCondition = state.condition;
-                state.pendingSellerType = state.sellerType;
-                state.pendingMinPrice = state.minPrice;
-                state.pendingMaxPrice = state.maxPrice;
-                state.pendingRegionName = state.regionName;
-                state.filterDropdownOpen = true;
+                state.filters.pendingCategory = state.filters.category;
+                state.filters.pendingCondition = state.filters.condition;
+                state.filters.pendingSellerType = state.filters.sellerType;
+                state.filters.pendingMinPrice = state.filters.minPrice;
+                state.filters.pendingMaxPrice = state.filters.maxPrice;
+                state.filters.pendingRegionName = state.filters.regionName;
+                state.filters.filterDropdownOpen = true;
                 renderAll();
             } else if (prefersReducedMotion) {
                 // Closing without animation for users who prefer reduced motion
-                state.filterDropdownOpen = false;
+                state.filters.filterDropdownOpen = false;
                 renderAll();
             } else {
                 // Closing — add closing class for animation, then hide
                 elements.filterDropdown?.classList.add("closing");
                 setTimeout(() => {
                     elements.filterDropdown?.classList.remove("closing");
-                    state.filterDropdownOpen = false;
+                    state.filters.filterDropdownOpen = false;
                     renderAll();
                 }, 150);
             }
@@ -323,20 +342,20 @@ function createApiEvents(context) {
 
         // Close filter dropdown when clicking outside
         document.addEventListener("click", (event) => {
-            if (!state.filterDropdownOpen) return;
+            if (!state.filters.filterDropdownOpen) return;
             const dropdown = elements.filterDropdown;
             const btn = elements.filterBtn;
             const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             if (dropdown && !dropdown.hidden && !dropdown.contains(event.target) && btn && !btn.contains(event.target)) {
                 if (prefersReducedMotion) {
-                    state.filterDropdownOpen = false;
+                    state.filters.filterDropdownOpen = false;
                     renderAll();
                 } else {
                     // Add closing class for animation
                     dropdown.classList.add("closing");
                     setTimeout(() => {
                         dropdown.classList.remove("closing");
-                        state.filterDropdownOpen = false;
+                        state.filters.filterDropdownOpen = false;
                         renderAll();
                     }, 150);
                 }
@@ -358,7 +377,7 @@ function createApiEvents(context) {
             const newCategory = rawValue === "" ? null : Number(rawValue);
 
             // Update pending value and re-render to show selection
-            state.pendingCategory = newCategory;
+            state.filters.pendingCategory = newCategory;
             renderAll();
 
             if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -373,7 +392,7 @@ function createApiEvents(context) {
 
             event.stopPropagation(); // Prevent dropdown from closing
             // Update pending value and re-render to show selection
-            state.pendingCondition = button.dataset.condition;
+            state.filters.pendingCondition = button.dataset.condition;
             renderAll();
 
             if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -388,7 +407,7 @@ function createApiEvents(context) {
 
             event.stopPropagation(); // Prevent dropdown from closing
             // Update pending value and re-render to show selection
-            state.pendingSellerType = button.dataset.seller;
+            state.filters.pendingSellerType = button.dataset.seller;
             renderAll();
 
             if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -399,7 +418,7 @@ function createApiEvents(context) {
         // ── Filter dropdown: price range inputs ──────────────────────
         elements.filterMinPrice?.addEventListener("input", () => {
             const value = elements.filterMinPrice.value.trim();
-            state.pendingMinPrice = value === "" ? null : Math.max(0, Number(value));
+            state.filters.pendingMinPrice = value === "" ? null : Math.max(0, Number(value));
         });
 
         elements.filterMinPrice?.addEventListener("click", (event) => {
@@ -408,7 +427,7 @@ function createApiEvents(context) {
 
         elements.filterMaxPrice?.addEventListener("input", () => {
             const value = elements.filterMaxPrice.value.trim();
-            state.pendingMaxPrice = value === "" ? null : Math.max(0, Number(value));
+            state.filters.pendingMaxPrice = value === "" ? null : Math.max(0, Number(value));
         });
 
         elements.filterMaxPrice?.addEventListener("click", (event) => {
@@ -417,7 +436,7 @@ function createApiEvents(context) {
 
         // ── Filter dropdown: region select ─────────────────────────────
         elements.filterRegion?.addEventListener("change", () => {
-            state.pendingRegionName = elements.filterRegion.value;
+            state.filters.pendingRegionName = elements.filterRegion.value;
         });
 
         elements.filterRegion?.addEventListener("click", (event) => {
@@ -427,23 +446,23 @@ function createApiEvents(context) {
         // ── Filter dropdown: Apply button ─────────────────────────────
         elements.filterApplyBtn?.addEventListener("click", () => {
             // Check if category changed to trigger search
-            const categoryChanged = state.pendingCategory !== state.category;
+            const categoryChanged = state.filters.pendingCategory !== state.filters.category;
             
             // Apply pending filter values
-            state.category = state.pendingCategory;
-            state.condition = state.pendingCondition;
-            state.sellerType = state.pendingSellerType;
-            state.minPrice = state.pendingMinPrice;
-            state.maxPrice = state.pendingMaxPrice;
-            state.regionName = state.pendingRegionName;
-            state.filterDropdownOpen = false;
+            state.filters.category = state.filters.pendingCategory;
+            state.filters.condition = state.filters.pendingCondition;
+            state.filters.sellerType = state.filters.pendingSellerType;
+            state.filters.minPrice = state.filters.pendingMinPrice;
+            state.filters.maxPrice = state.filters.pendingMaxPrice;
+            state.filters.regionName = state.filters.pendingRegionName;
+            state.filters.filterDropdownOpen = false;
             renderAll();
 
             // If category changed, trigger new search keeping the
             // freshly-applied filters (otherwise search() would wipe
             // the user's selection).
-            if (categoryChanged && state.query.trim()) {
-                void search(state.activeView, { keepFilters: true });
+            if (categoryChanged && state.search.query.trim()) {
+                void search(state.ui.activeView, { keepFilters: true });
             }
 
             if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -454,20 +473,22 @@ function createApiEvents(context) {
         // ── Filter dropdown: Cancel button ────────────────────────────
         elements.filterCancelBtn?.addEventListener("click", () => {
             // Reset pending values to current applied values
-            state.pendingCategory = state.category;
-            state.pendingCondition = state.condition;
-            state.pendingSellerType = state.sellerType;
-            state.pendingMinPrice = state.minPrice;
-            state.pendingMaxPrice = state.maxPrice;
-            state.pendingRegionName = state.regionName;
-            state.filterDropdownOpen = false;
+            state.filters.pendingCategory = state.filters.category;
+            state.filters.pendingCondition = state.filters.condition;
+            state.filters.pendingSellerType = state.filters.sellerType;
+            state.filters.pendingMinPrice = state.filters.minPrice;
+            state.filters.pendingMaxPrice = state.filters.maxPrice;
+            state.filters.pendingRegionName = state.filters.regionName;
+            state.filters.filterDropdownOpen = false;
             renderAll();
 
             if (window.Telegram?.WebApp?.HapticFeedback) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
             }
         });
+    }
 
+    function bindDiscountEvents() {
         // ── Discount buttons ─────────────────────────────────────────
         // Discount range presets (10-20%, 10-30%, …) and the manual
         // From/To inputs both used to live in their own "Выгодно"
@@ -476,13 +497,13 @@ function createApiEvents(context) {
         // sort=cheap so the discount filter is applied to the same
         // listings list the user is already looking at.
         function _activateCheapSort() {
-            state.sort = "cheap";
+            state.search.sort = "cheap";
             renderSortButtons();
             if (elements.dealsControls) {
                 elements.dealsControls.hidden = false;
             }
             setActiveView("ads");
-            if (state.query.trim()) {
+            if (state.search.query.trim()) {
                 void loadListings(true);
             }
         }
@@ -494,8 +515,8 @@ function createApiEvents(context) {
                 if (!Number.isFinite(from) || !Number.isFinite(to)) {
                     return;
                 }
-                state.discountFromPercent = Math.min(from, to);
-                state.discountToPercent = Math.max(from, to);
+                state.filters.discountFromPercent = Math.min(from, to);
+                state.filters.discountToPercent = Math.max(from, to);
                 renderDiscountButtons();
                 renderDealInputs();
                 _activateCheapSort();
@@ -504,15 +525,17 @@ function createApiEvents(context) {
 
         // ── Discount apply button ────────────────────────────────────
         elements.dealApplyButton?.addEventListener("click", () => {
-            const from = Math.abs(Number(elements.dealFromInput?.value || state.discountFromPercent));
-            const to = Math.abs(Number(elements.dealToInput?.value || state.discountToPercent));
-            state.discountFromPercent = Math.min(from, to);
-            state.discountToPercent = Math.max(from, to);
+            const from = Math.abs(Number(elements.dealFromInput?.value || state.filters.discountFromPercent));
+            const to = Math.abs(Number(elements.dealToInput?.value || state.filters.discountToPercent));
+            state.filters.discountFromPercent = Math.min(from, to);
+            state.filters.discountToPercent = Math.max(from, to);
             renderDiscountButtons();
             renderDealInputs();
             _activateCheapSort();
         });
+    }
 
+    function bindTrackerEvents() {
         // ── Tracker create button ────────────────────────────────────
         elements.trackQueryButton?.addEventListener("click", () => {
             const button = elements.trackQueryButton;
@@ -535,7 +558,7 @@ function createApiEvents(context) {
         let clearEventsConfirmed = false;
         elements.clearEventsButton?.addEventListener("click", () => {
             void (async () => {
-                if (state.trackerEvents.length === 0) {
+                if (state.trackers.events.length === 0) {
                     showToast("Нет событий для удаления");
                     return;
                 }
@@ -561,7 +584,7 @@ function createApiEvents(context) {
                 } catch (_) {
                     // ignore — clear locally anyway
                 }
-                state.trackerEvents = [];
+                state.trackers.events = [];
                 showToast("События очищены");
                 renderTrackerEvents();
                 // Refresh the "N событий" hero badge so the count drops
@@ -576,7 +599,7 @@ function createApiEvents(context) {
         let clearLeadsConfirmed = false;
         elements.clearAllLeadsButton?.addEventListener("click", () => {
             void (async () => {
-                const activeLeads = state.leads.filter((l) => l.status !== "closed");
+                const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
                 if (activeLeads.length === 0) {
                     showToast("Нет активных сделок для удаления");
                     return;
@@ -605,7 +628,7 @@ function createApiEvents(context) {
         let clearWatchlistConfirmed = false;
         elements.deleteAllWatchlistButton?.addEventListener("click", () => {
             void (async () => {
-                if (state.watchlist.length === 0) {
+                if (state.watchlist.items.length === 0) {
                     showToast("Список уже пуст");
                     return;
                 }
@@ -632,33 +655,33 @@ function createApiEvents(context) {
         // ── Tracker filter inputs ────────────────────────────────────
         elements.trackerMinDiscountInput?.addEventListener("input", () => {
             const nextValue = Number(elements.trackerMinDiscountInput.value);
-            state.trackerMinDiscountPercent = Number.isFinite(nextValue) ? Math.abs(nextValue) : 10;
+            state.trackers.minDiscountPercent = Number.isFinite(nextValue) ? Math.abs(nextValue) : 10;
         });
 
         elements.trackerMaxPriceInput?.addEventListener("input", () => {
             const rawValue = elements.trackerMaxPriceInput.value.trim();
             if (!rawValue) {
-                state.trackerMaxPriceByn = null;
+                state.trackers.maxPriceByn = null;
                 return;
             }
             const nextValue = Number(rawValue);
-            state.trackerMaxPriceByn = Number.isFinite(nextValue) ? Math.abs(nextValue) : null;
+            state.trackers.maxPriceByn = Number.isFinite(nextValue) ? Math.abs(nextValue) : null;
         });
 
         elements.trackerSellerSelect?.addEventListener("change", () => {
-            state.trackerSellerType = elements.trackerSellerSelect.value;
+            state.trackers.sellerType = elements.trackerSellerSelect.value;
         });
 
         elements.trackerConditionSelect?.addEventListener("change", () => {
-            state.trackerCondition = elements.trackerConditionSelect.value;
+            state.trackers.condition = elements.trackerConditionSelect.value;
         });
 
         elements.trackerRegionSelect?.addEventListener("change", () => {
-            state.trackerRegionName = elements.trackerRegionSelect.value;
+            state.trackers.regionName = elements.trackerRegionSelect.value;
         });
 
         elements.trackerConfigInput?.addEventListener("input", () => {
-            state.trackerConfigKeyword = elements.trackerConfigInput.value.trim();
+            state.trackers.configKeyword = elements.trackerConfigInput.value.trim();
         });
 
         // ── Edit tracker modal ───────────────────────────────────────
@@ -694,41 +717,14 @@ function createApiEvents(context) {
         // ── Tracker event filter buttons ─────────────────────────────
         for (const button of elements.trackerEventFilterButtons || []) {
             button.addEventListener("click", () => {
-                state.trackerEventFilter = button.dataset.eventFilter || "all";
+                state.trackers.eventFilter = button.dataset.eventFilter || "all";
                 renderTrackerEventFilters();
                 renderTrackerEvents();
             });
         }
+    }
 
-        // ── Analytics period chips (30 / 90 / 365 days) ──────────────
-        for (const button of elements.analyticsPeriodButtons || []) {
-            button.addEventListener("click", () => {
-                const days = Number(button.dataset.analyticsPeriod || 90);
-                if (!days || days === state.analyticsPeriodDays) return;
-                state.analyticsPeriodDays = days;
-                if (typeof loadAnalytics === "function") {
-                    void loadAnalytics();
-                }
-            });
-        }
-
-        // ── Tracker event tracker dropdown ──────────────────────────
-        if (elements.trackerEventTrackerSelect) {
-            elements.trackerEventTrackerSelect.addEventListener("change", () => {
-                const val = elements.trackerEventTrackerSelect.value;
-                state.trackerEventFilterTrackerId = val ? Number(val) : null;
-                renderTrackerEvents();
-            });
-        }
-
-        // ── Unified "Мои объявления" filter chips (Все/Слежу/В работе/…) ──
-        for (const button of elements.itemsFilterButtons || []) {
-            button.addEventListener("click", () => {
-                state.itemsFilter = button.dataset.itemsFilter || "all";
-                renderLeads();
-            });
-        }
-
+    function bindModalEvents() {
         // ── Detail modal ─────────────────────────────────────────────
         elements.detailClose?.addEventListener("click", () => {
             closeDetailModal();
@@ -739,20 +735,20 @@ function createApiEvents(context) {
         });
 
         elements.detailAddLeadButton?.addEventListener("click", () => {
-            if (state.detail) {
-                void context.addLeadFromListing(state.detail, "detail_modal", state.detail.query || state.query);
+            if (state.detail.data) {
+                void context.addLeadFromListing(state.detail.data, "detail_modal", state.detail.data.query || state.search.query);
             }
         });
 
         elements.detailAddWatchlistButton?.addEventListener("click", () => {
-            if (state.detail) {
-                void context.addWatchlistFromListing(state.detail, state.detail.query || state.query);
+            if (state.detail.data) {
+                void context.addWatchlistFromListing(state.detail.data, state.detail.data.query || state.search.query);
             }
         });
 
         elements.detailAiBtn?.addEventListener("click", () => {
-            if (state.detail?.ad_id) {
-                void loadAIAnalysis(state.detail.ad_id);
+            if (state.detail.data?.ad_id) {
+                void loadAIAnalysis(state.detail.data.ad_id);
             }
         });
 
@@ -769,16 +765,18 @@ function createApiEvents(context) {
             if (event.key === "Escape") {
                 if (!elements.aiModal?.hidden) {
                     closeAIModal();
-                } else if (!state.detail && !elements.editTrackerModal?.hidden) {
+                } else if (!state.detail.data && !elements.editTrackerModal?.hidden) {
                     closeEditTrackerAction();
                 } else if (!elements.expensesModal?.hidden) {
                     closeExpensesModal();
-                } else if (state.detail) {
+                } else if (state.detail.data) {
                     closeDetailModal();
                 }
             }
         });
+    }
 
+    function bindCarouselEvents() {
         // ── Image carousel — minimal opacity-crossfade swipe ──────────
         //
         // Earlier we tried a finger-follow live drag with rAF
@@ -799,8 +797,8 @@ function createApiEvents(context) {
         let isAnimating = false;
 
         function _preloadAdjacent() {
-            const images = state.detail?.images || [];
-            const idx = state.detailImageIndex || 0;
+            const images = state.detail.data?.images || [];
+            const idx = state.detail.imageIndex || 0;
             for (const i of [idx - 1, idx + 1]) {
                 if (i < 0 || i >= images.length) continue;
                 const raw = images[i];
@@ -818,19 +816,19 @@ function createApiEvents(context) {
         }
 
         async function navigateDetailImage(direction) {
-            const images = state.detail?.images;
+            const images = state.detail.data?.images;
             if (!images || images.length <= 1) return;
             if (isAnimating) return;
 
             const total = images.length;
             const newIndex = direction > 0
-                ? Math.min(total - 1, state.detailImageIndex + 1)
-                : Math.max(0, state.detailImageIndex - 1);
-            if (newIndex === state.detailImageIndex) return;
+                ? Math.min(total - 1, state.detail.imageIndex + 1)
+                : Math.max(0, state.detail.imageIndex - 1);
+            if (newIndex === state.detail.imageIndex) return;
 
             const img = elements.detailMainImage;
             if (!img) {
-                state.detailImageIndex = newIndex;
+                state.detail.imageIndex = newIndex;
                 context.renderDetailModal();
                 return;
             }
@@ -853,7 +851,7 @@ function createApiEvents(context) {
             // opposite-side enter sells the direction of travel; the
             // 8 px is small enough that the composite is trivially
             // cheap on any device.
-            state.detailImageIndex = newIndex;
+            state.detail.imageIndex = newIndex;
             context.renderDetailModal();
             _preloadAdjacent();
 
@@ -925,35 +923,22 @@ function createApiEvents(context) {
         // Preload adjacent images when the modal first becomes active
         // so the first swipe doesn't show the network delay.
         const _preloadOnOpen = () => {
-            if (state.detail) _preloadAdjacent();
+            if (state.detail.data) _preloadAdjacent();
         };
         elements.detailModal?.addEventListener("transitionend", _preloadOnOpen, { passive: true });
 
         // Keyboard arrows — only react when the detail modal is open.
         document.addEventListener("keydown", (event) => {
-            if (!state.detail) return;
+            if (!state.detail.data) return;
             if (event.key === "ArrowLeft") {
                 void navigateDetailImage(-1);
             } else if (event.key === "ArrowRight") {
                 void navigateDetailImage(1);
             }
         });
+    }
 
-        // ── External link interception (Telegram Mini App mobile) ────
-        document.addEventListener("click", (event) => {
-            const link = event.target.closest("a[target='_blank']");
-            if (link && link.href && !link.href.startsWith("#") && !link.href.startsWith("javascript:")) {
-                event.preventDefault();
-                event.stopPropagation();
-
-                if (window.Telegram?.WebApp?.openLink) {
-                    window.Telegram.WebApp.openLink(link.href);
-                } else {
-                    window.open(link.href, "_blank", "noopener,noreferrer");
-                }
-            }
-        });
-
+    function bindExpenseEvents() {
         // ── Expenses modal ───────────────────────────────────────────
         elements.expensesClose?.addEventListener("click", () => {
             closeExpensesModal();
@@ -964,7 +949,7 @@ function createApiEvents(context) {
         });
 
         elements.saveExpenseButton?.addEventListener("click", () => {
-            const leadId = state.currentExpenseLeadId;
+            const leadId = state.expenses.currentLeadId;
             if (!leadId) return;
             const type = elements.expenseTypeSelect?.value || "other";
             const rawAmount = elements.expenseAmountInput?.value?.trim();
@@ -996,15 +981,45 @@ function createApiEvents(context) {
         elements.cancelExpenseButton?.addEventListener("click", () => {
             closeExpensesModal();
         });
+    }
+
+    function bindVisibilityEvents() {
+        // ── External link interception (Telegram Mini App mobile) ────
+        document.addEventListener("click", (event) => {
+            const link = event.target.closest("a[target='_blank']");
+            if (link && link.href && !link.href.startsWith("#") && !link.href.startsWith("javascript:")) {
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (window.Telegram?.WebApp?.openLink) {
+                    window.Telegram.WebApp.openLink(link.href);
+                } else {
+                    window.open(link.href, "_blank", "noopener,noreferrer");
+                }
+            }
+        });
 
         // ── Visibility change (pause/resume tracker refresh) ─────────
         document.addEventListener("visibilitychange", () => {
             if (document.hidden) {
                 stopTrackerRefresh();
-            } else if (state.activeView === "tracking") {
+            } else if (state.ui.activeView === "tracking") {
                 startTrackerRefresh();
             }
         });
+    }
+
+    function bindEvents() {
+        bindSearchEvents();
+        bindRecentSearchEvents();
+        bindViewTabEvents();
+        bindFilterEvents();
+        bindDiscountEvents();
+        bindTrackerEvents();
+        bindModalEvents();
+        bindCarouselEvents();
+        bindExpenseEvents();
+        bindVisibilityEvents();
     }
 
     return {

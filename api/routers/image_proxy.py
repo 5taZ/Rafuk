@@ -154,11 +154,11 @@ def _transcode(
         image.load()
         if image.mode not in ("RGB", "RGBA"):
             image = image.convert("RGB")
-        width, height = image.size
+        width, orig_height = image.size
         target = max(1, min(max_width, width))
         if width > target:
             scale = target / width
-            new_size = (target, max(1, int(round(height * scale))))
+            new_size = (target, max(1, int(round(orig_height * scale))))
             image = image.resize(new_size, Image.LANCZOS)
         buf = io.BytesIO()
         if fmt == "webp":

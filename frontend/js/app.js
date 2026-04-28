@@ -11,8 +11,8 @@ function analyticsApp() {
      * instead of bouncing without doing anything useful.
      */
     function getRefreshForActiveView() {
-        const view = core.state.activeView || "overview";
-        const query = (core.state.query || "").trim();
+        const view = core.state.ui.activeView || "overview";
+        const query = (core.state.search.query || "").trim();
         if (view === "deals") {
             return () => Promise.all([
                 actions.loadLeads ? actions.loadLeads() : null,
@@ -50,7 +50,7 @@ function analyticsApp() {
         const privacyBtn = document.getElementById("privacy-btn");
         if (privacyBtn) privacyBtn.addEventListener("click", () => actions.openPrivacyModal?.());
 
-        core.state.query = core.elements.searchInput.value.trim();
+        core.state.search.query = core.elements.searchInput.value.trim();
         renderers.renderAll();
         void actions.loadTrackers();
         void actions.loadLeads();
