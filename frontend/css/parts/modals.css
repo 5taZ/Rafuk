@@ -538,95 +538,12 @@ body.modal-open {
     border-color: rgba(251, 113, 133, 0.2);
 }
 
-.listing-badge.too_cheap {
-    color: var(--green);
-    background: var(--green-soft);
-    border-color: rgba(52, 211, 153, 0.2);
-}
 
-.listing-badge.too_expensive {
-    color: var(--red);
-    background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.2);
-}
 
 .listing-badge.cheap {
     color: var(--accent);
     background: var(--accent-soft);
     border-color: var(--accent-glow);
-}
-
-/* ===== Risk Badges (listing cards) ===== */
-.listing-badge.risk-badge {
-    font-weight: 600;
-    letter-spacing: -0.01em;
-}
-
-.listing-badge.risk-badge.risk-high {
-    color: var(--red);
-    background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.2);
-}
-
-.listing-badge.risk-badge.risk-medium {
-    color: var(--amber);
-    background: var(--amber-soft);
-    border-color: rgba(251, 191, 36, 0.2);
-}
-
-/* ===== Risk Block (detail modal) ===== */
-.risk-block {
-    background: var(--bg-surface-tint-soft);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: var(--space-3);
-}
-
-.risk-score-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: var(--radius-full);
-    font-size: var(--text-sm);
-    font-weight: 700;
-    margin-bottom: var(--space-2);
-}
-
-.risk-score-badge.high {
-    color: var(--red);
-    background: var(--red-soft);
-    border: 1px solid rgba(251, 113, 133, 0.2);
-}
-
-.risk-score-badge.medium {
-    color: var(--amber);
-    background: var(--amber-soft);
-    border: 1px solid rgba(251, 191, 36, 0.2);
-}
-
-.risk-score-badge.low {
-    color: var(--green);
-    background: var(--green-soft);
-    border: 1px solid rgba(52, 211, 153, 0.2);
-}
-
-.risk-factor-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-1) 0;
-}
-
-.risk-factor-icon {
-    flex-shrink: 0;
-    width: 18px;
-    text-align: center;
-    font-size: var(--text-sm);
-}
-
-.risk-factor-message {
-    color: var(--text);
-    font-size: var(--text-sm);
-    line-height: 1.4;
 }
 
 /* ===== Profit Dashboard ===== */
@@ -1062,61 +979,6 @@ body.modal-open {
     .stat-val {
         font-size: var(--text-lg);
     }
-}
-
-/* ===== Risk Assessment Badges ===== */
-.risk-badge {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: var(--r-sm);
-    font-size: 0.78rem;
-    font-weight: 500;
-    line-height: 1.4;
-    margin: 2px 4px 2px 0;
-}
-
-.risk-badge.risk-low {
-    background: var(--green-soft);
-    color: var(--green);
-    border: 1px solid rgba(16, 185, 105, 0.25);
-}
-
-.risk-badge.risk-medium {
-    background: var(--amber-soft);
-    color: var(--amber);
-    border: 1px solid rgba(245, 158, 11, 0.25);
-}
-
-.risk-badge.risk-high {
-    background: var(--red-soft);
-    color: var(--red);
-    border: 1px solid rgba(244, 63, 94, 0.25);
-}
-
-.risk-badges-wrap {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 6px;
-}
-
-/* ===== Light Theme Risk Badge Overrides ===== */
-[data-theme="light"] .risk-badge.risk-low {
-    background: rgba(4, 120, 87, 0.08);
-    color: var(--green);
-    border-color: rgba(4, 120, 87, 0.2);
-}
-
-[data-theme="light"] .risk-badge.risk-medium {
-    background: rgba(217, 119, 6, 0.08);
-    color: var(--amber);
-    border-color: rgba(217, 119, 6, 0.2);
-}
-
-[data-theme="light"] .risk-badge.risk-high {
-    background: rgba(190, 18, 60, 0.08);
-    color: var(--red);
-    border-color: rgba(190, 18, 60, 0.2);
 }
 
 /* ===== Long-press action menu =====

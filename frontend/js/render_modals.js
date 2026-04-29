@@ -166,37 +166,6 @@ function createRenderModals(context) {
         }
         elements.detailSellerBlock.hidden = sellerFields.length === 0;
 
-        // Risk assessment block — show when risk_score is not "low" and not null
-        clearChildren(elements.detailRiskContent);
-        const riskScore = detail.risk_score;
-        const riskFactors = Array.isArray(detail.risk_factors) ? detail.risk_factors : [];
-        const showRiskBlock = riskScore && riskScore !== "low" && riskFactors.length > 0;
-        if (showRiskBlock) {
-            // Overall risk score badge
-            const SCORE_LABELS = { high: "Высокий", medium: "Средний", low: "Низкий" };
-            const scoreLabel = SCORE_LABELS[riskScore] || riskScore;
-            const scoreBadge = document.createElement("span");
-            scoreBadge.className = `risk-score-badge ${riskScore}`;
-            scoreBadge.textContent = scoreLabel;
-            elements.detailRiskContent.appendChild(scoreBadge);
-
-            // Individual risk factors
-            const RISK_ICONS = { high: "🔴", medium: "🟡" };
-            for (const rf of riskFactors) {
-                const row = document.createElement("div");
-                row.className = "risk-factor-row";
-                const icon = document.createElement("span");
-                icon.className = "risk-factor-icon";
-                icon.textContent = RISK_ICONS[rf.level] || "⚪";
-                const msg = document.createElement("span");
-                msg.className = "risk-factor-message";
-                msg.textContent = rf.message || rf.type || "";
-                row.append(icon, msg);
-                elements.detailRiskContent.appendChild(row);
-            }
-        }
-        elements.detailRiskBlock.hidden = !showRiskBlock;
-
         // Hide "Следить" button if item is already in watchlist
         if (elements.detailAddWatchlistButton) {
             elements.detailAddWatchlistButton.hidden = state.detail.fromWatchlist || false;

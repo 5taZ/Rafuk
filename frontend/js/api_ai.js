@@ -527,15 +527,7 @@ function createApiAi(context) {
         // ── Scam analysis ──────────────────────────────────────────────
         if (data.scam_analysis) {
             const scam = data.scam_analysis;
-            const riskMap = {
-                low: { text: "Низкий риск", cls: "ai-badge--good" },
-                medium: { text: "Средний риск", cls: "ai-badge--warn" },
-                high: { text: "Высокий риск", cls: "ai-badge--bad" },
-            };
-            const riskInfo = riskMap[scam.risk_level] || { text: scam.risk_level || "—", cls: "ai-badge--ok" };
-            const scamChildren = [
-                domEl("span", { className: `ai-badge ${riskInfo.cls}`, text: riskInfo.text }),
-            ];
+            const scamChildren = [];
             if (scam.indicators?.length) {
                 scamChildren.push(
                     domEl("ul", { className: "ai-scam-indicators" },

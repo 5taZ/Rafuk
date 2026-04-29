@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _KUFAR_IMAGE_HOST_RE = re.compile(r"^rms\d*\.kufar\.by$")
 _MAX_AI_IMAGE_BYTES = 5_000_000
+_MAX_AI_REDIRECTS = 2
 
 
 def _entry_price_guidance(
@@ -67,6 +68,10 @@ def _entry_price_guidance(
 
 # ── Parallel analysis sub-prompts ────────────────────────────────────────
 # The monolithic analyze_listing call is split into two parallel calls:
+# TODO: Extract prompt templates to separate .txt/.md files under
+#   api/services/prompts/ and load at startup.  This file is ~1500 lines
+#   largely due to inline prompts, which makes maintenance difficult.
+#
 #   Call A — Price & Market: fair_price, resale_potential, market_context,
 #            negotiation_tips, best_pick
 #   Call B — Condition & Risks: condition, watch_out, meeting_checklist,
@@ -75,24 +80,21 @@ def _entry_price_guidance(
 # cutting max_tokens per call from 2800 to ~1500 and running concurrently.
 
 _PRICE_MARKET_PROMPT_TEMPLATE = """\
-Ты — Rafuk AI, эксперт-аналитик объявлений Kufar.by. \
-Отвечай ТОЛЬКО на русском.
+Ты — Rafuk AI, эксперт-аналитик объявлений Kufar.by. Отвечай ТОЛЬКО на русском.
 
-Твоя задача — оценить ЦЕНУ и РЫНОК для объявления.
-ПРАВИЛА:
-- Будь конкретен: указывай суммы в BYN, сроки, проценты.
-- НЕ пиши общие фразы — каждый пункт — действие или факт.
-- ОБЯЗАТЕЛЬНО заполни ВСЕ секции JSON.
-- fair_price.from/to — реалистичный диапазон для ЭТОГО товара в ЕГО состоянии.
-- reasoning в fair_price — почему именно этот диапазон (сравнение с конкретными аналогами).
-- negotiation_tips — МИНИМУМ 3 конкретных аргумента с BYN-суммами скидки.
-- Если цена договорная, negotiation_tips должны опираться на реалистичный диапазон входа.
-- resale_potential — за сколько потенциально можно перепродать этот товар.
-  fast_price: цена для быстрой продажи (ниже рынка, быстрый отчёт).
-  market_price: справедливая рыночная цена перепродажи.
-  optimal_price: максимальная реалистичная цена (продажа терпеливо, в идеальном состоянии).
-  Учитывай состояние товара, спрос и конкретные аналоги. Укажи конкретные суммы BYN.
-- market_context — 2-3 предложения: позиция цены, сравнение с лучшим аналогом, 1 ключевой вывод.
+Оцени ЦЕНУ и РЫНОК. Правила:
+- Конкретно: суммы в BYN, сроки, проценты. Без воды.
+- fair_price.from/to — диапазон для ЭТОГО товара в ЕГО состоянии.
+  reasoning: сравни с конкретными аналогами из АЛЬТЕРНАТИВ (ad_id, цена, отличие).
+  НЕ выдумывай диапазон — опирайся на медиану, Q1-Q3 и аналоги из контекста.
+  Если аналогов нет — честно укажи, что данных мало.
+- negotiation_tips — МИНИМУМ 3 аргумента с BYN-суммами. Опирайся на разницу
+  с аналогами и дефекты из condition.notes/watch_out.
+- resale_potential: fast/market/optimal — три цены перепродажи в BYN.
+  fast — ниже рынка для быстрой продажи; market — справедливая; optimal — максимум.
+  reasoning: за сколько можно перепродать и почему, с учётом состояния и спроса.
+- market_context — 2-3 предложения: позиция цены, лучший аналог, тренд.
+- best_pick — ad_id лучшей альтернативы из АЛЬТЕРНАТИВ (или null).
 
 Цена товара {price_position_label}. {category_hints} {bargain_hint}
 Ответь строго JSON:
@@ -102,7 +104,7 @@ _PRICE_MARKET_SCHEMA = """{
   "fair_price": {
     "from": число_BYN,
     "to": число_BYN,
-    "reasoning": "обоснование: аналог X стоит Y BYN в состоянии Z, этот — потому что..."
+    "reasoning": "обоснование: аналог [ad_id] стоит X BYN в состоянии Y, этот — потому что..."
   },
   "resale_potential": {
     "fast_price": {"label": "Быстро", "price_byn": число, "reasoning": "почему"},
@@ -116,51 +118,24 @@ _PRICE_MARKET_SCHEMA = """{
 }"""
 
 _CONDITION_RISKS_PROMPT_TEMPLATE = """\
-Ты — Rafuk AI, эксперт-аналитик объявлений Kufar.by. \
-Отвечай ТОЛЬКО на русском.
+Ты — Rafuk AI, эксперт-аналитик объявлений Kufar.by. Отвечай ТОЛЬКО на русском.
 
-Твоя задача — оценить СОСТОЯНИЕ и РИСКИ для объявления.
-ПРАВИЛА:
-- Будь конкретен: указывай конкретные дефекты, модели, проценты.
-- НЕ пиши общие фразы — каждый пункт — действие или факт.
-- ОБЯЗАТЕЛЬНО заполни ВСЕ секции JSON.
-- condition.notes — МИНИМУМ 2 конкретных наблюдения по фото или описанию.
-  Если в контексте есть БЫСТРЫЙ ФОТО-ОСМОТР с наблюдениями — НЕ повторяй их
-  дословно и не пересказывай чуть длиннее. Добавляй НОВЫЕ детали (углы, фон,
-  комплектация, износ). Один и тот же факт ("ЛКП имеет блеск") — только один раз.
-- watch_out — МИНИМУМ 3 конкретных дефекта/риска с обоснованием. Каждый пункт: point и why.
-  Не повторяй то, что уже стоит в condition.notes.
-- meeting_checklist — МИНИМУМ 5 пошаговых проверок при встрече, специфичных для категории.
-- red_flags — только реальные признаки мошенничества/проблем, не очевидные вещи.
-  Максимум 3 коротких пункта, самые важные сначала.
-- Если во входном контексте есть явные hot words или risk signals вроде кредита,
-  рассрочки, перекупа, автохауса, площадки, магазина или reseller-поведения,
-  учитывай их в red_flags, но не выдумывай факты сверх контекста.
-- recommendation.verdict — строго одно из: worth_it, think_twice, overpriced.
-- Если цена договорная, recommendation должна опираться на реалистичный
-  диапазон входа после торга в BYN, а не на абстрактную формулировку.
-- summary — 1-2 предложения с вердиктом и ключевой причиной.
+Оцени СОСТОЯНИЕ и РИСКИ. Правила:
+- Конкретно: дефекты, модели, проценты. Без воды.
+- condition.notes — МИНИМУМ 2 наблюдения по фото/описанию.
+  Если есть БЫСТРЫЙ ФОТО-ОСМОТР — НЕ повторяй его дословно. Добавляй НОВЫЕ детали.
+- watch_out — МИНИМУМ 3 конкретных риска (point + why). Не дублируй condition.notes.
+- meeting_checklist — МИНИМУМ 5 проверок при встрече, специфичных для категории.
+- red_flags — максимум 3 реальных признака мошенничества/проблем, не очевидности.
+  Учитывай hot words из РИСК-СИГНАЛОВ (кредит, перекуп, автохаус), но не выдумывай.
+- scam_analysis: risk_level (low/medium/high), indicators, photo_issues, advice.
+- photo_authenticity: сток/водяной знак/скриншот/дубликат — проверяй все.
+- recommendation.verdict — строго: worth_it / think_twice / overpriced.
+  Если цена договорная — опирайся на реалистичный диапазон входа после торга.
+- summary — 1-2 предложения: вердикт + ключевая причина.
 
-ПРИЗНАКИ МОШЕННИЧЕСТВА — проверяй:
-- Цена значительно ниже рынка (>30% ниже медианы) без обоснования
-- Мало фото или фото низкого качества / с водяными знаками других сайтов
-- Описание скопировано, шаблонно или не соответствует фото
-- Нет реальных фото товара (только стоковые/промо изображения)
-- Несоответствие: в описании одна модель, в параметрах другая
-
-АУТЕНТИЧНОСТЬ ФОТО — проверяй:
-- Стоковые фото (одинаковые фото на разных объявлениях, идеальный свет)
-- Водяные знаки других сайтов/магазинов на фото
-- Скриншоты вместо реальных фото (полоска статуса, рамка браузера)
-- Повторяющиеся фото из других объявлений
-- Фото не соответствует описанию (другая модель, другой цвет)
-
-БЕЗОПАСНАЯ СДЕЛКА — добавь в meeting_checklist:
-- Проверка соответствия товара описанию и фото
-- Проверка документов (чек, гарантия, договор)
-- Осмотр при хорошем освещении, тестирование функций
-- Безопасное место встречи (общественное, днём)
-- Не отправлять предоплату без гарантий
+ПРОВЕРЯЙ НА МОШЕННИЧЕСТВО: цена >30% ниже медианы без обоснования, мало/стоковые фото,
+скопированное описание, несоответствие модели, водяные знаки других сайтов.
 
 Цена товара {price_position_label}. {category_hints} {bargain_hint}
 Ответь строго JSON:
@@ -653,19 +628,23 @@ class AIService:
         self._max_images = settings.ai_max_images
         self._proxy_url = settings.ai_proxy_url
         self._httpx_client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
 
     @property
     def available(self) -> bool:
         return self._api_key is not None
 
-    def _get_client(self) -> httpx.AsyncClient:
+    async def _get_client(self) -> httpx.AsyncClient:
         if self._httpx_client is None or self._httpx_client.is_closed:
-            kwargs: dict = {
-                "timeout": httpx.Timeout(connect=15, read=180, write=20, pool=10),
-            }
-            if self._proxy_url:
-                kwargs["proxy"] = self._proxy_url
-            self._httpx_client = httpx.AsyncClient(**kwargs)
+            async with self._client_lock:
+                if self._httpx_client is None or self._httpx_client.is_closed:
+                    kwargs: dict = {
+                        "timeout": httpx.Timeout(connect=15, read=180, write=20, pool=10),
+                        "max_redirects": _MAX_AI_REDIRECTS,
+                    }
+                    if self._proxy_url:
+                        kwargs["proxy"] = self._proxy_url
+                    self._httpx_client = httpx.AsyncClient(**kwargs)
         return self._httpx_client
 
     @property
@@ -706,17 +685,19 @@ class AIService:
             "temperature": 0.2,
         }
         # Gemini 2.5 Flash/Pro spend output budget on internal "thinking"
-        # tokens before producing the JSON. Without this the model can
-        # exhaust max_tokens on reasoning and return empty content.
-        # `reasoning_effort: "low"` keeps response time ~5-15s instead of
-        # 30-60s and leaves enough budget for our 5-6 JSON sections.
+        # tokens before producing the JSON. `reasoning_effort: "medium"`
+        # gives enough depth for grounded price comparisons and condition
+        # analysis without the 30-60s latency of "high". "low" was used
+        # for the legacy Gemma 4 fallback but produces shallow analysis
+        # on Flash — the model skips comparison steps and hallucinates
+        # fair_price ranges that aren't grounded in the analog data.
         if self._is_gemini:
-            body["reasoning_effort"] = "low"
+            body["reasoning_effort"] = "medium"
             # Gemini honours response_format properly — ask for JSON to
             # cut down on stray markdown fences and prose around the JSON.
             body["response_format"] = {"type": "json_object"}
         api_key = self._api_key.get_secret_value() if self._api_key else ""
-        client = self._get_client()
+        client = await self._get_client()
         logger.info(
             "AI _chat: model=%s, base_url=%s, proxy=%s, content_parts=%d",
             self._model,
@@ -866,17 +847,20 @@ class AIService:
             + _CONDITION_RISKS_SCHEMA
         )
 
-        # Gemma 4 uses internal reasoning tokens that consume output budget.
-        # Each sub-call needs enough room for reasoning + ~5-6 JSON sections.
-        # 2200 tokens per call (vs 2800 for the old monolithic call).
+        # Gemini 2.5 Flash with reasoning_effort="medium" uses ~300-600 thinking
+        # tokens. Each sub-call needs enough room for thinking + ~5-6 JSON
+        # sections. 3200/4000 tokens per call gives Flash room to reason
+        # through price comparisons without truncating the JSON output.
+        # (The old 2200/2800 values were tuned for Gemma 4 which had no
+        # thinking tokens but was prone to empty content with response_format.)
         async def _call_a():
-            return await self._chat(system=system_a, content=context, max_tokens=2200)
+            return await self._chat(system=system_a, content=context, max_tokens=3200)
 
         async def _call_b():
             # Stagger by 1s to avoid Together AI rate-limit (429) on concurrent requests
             await asyncio.sleep(1.0)
-            # Call B now includes scam_analysis + photo_authenticity — needs more tokens
-            return await self._chat(system=system_b, content=context, max_tokens=2800)
+            # Call B includes scam_analysis + photo_authenticity — needs more tokens
+            return await self._chat(system=system_b, content=context, max_tokens=4000)
 
         logger.warning("AI analyze_listing_parallel: starting staggered sub-calls")
         # Use return_exceptions so one failure doesn't kill the other
@@ -985,6 +969,7 @@ class AIService:
                 cond = item.get("condition") or item.get("condition_label") or ""
                 seller = item.get("seller_type") or ""
                 title_text = (item.get("title") or "").strip().replace("\n", " ")
+                params_list = item.get("parameters") or []
                 bits: list[str] = []
                 if price:
                     bits.append(f"{int(round(float(price)))} BYN")
@@ -992,6 +977,8 @@ class AIService:
                     bits.append(str(cond))
                 if seller:
                     bits.append(str(seller))
+                if params_list:
+                    bits.append(", ".join(str(p) for p in params_list))
                 meta = " · ".join(bits)
                 if title_text:
                     ctx_lines.append(f"- {title_text} ({meta})" if meta else f"- {title_text}")
@@ -1022,14 +1009,14 @@ class AIService:
             result = await self._chat(
                 system=LISTING_ASSISTANT_PROMPT,
                 content=content,
-                max_tokens=2400,
+                max_tokens=3200,
             )
             return _dedupe_listing_payload(result)
 
         result = await self._chat(
             system=LISTING_ASSISTANT_PROMPT,
             content=user_text,
-            max_tokens=2200,
+            max_tokens=3000,
         )
         return _dedupe_listing_payload(result)
 
@@ -1044,7 +1031,7 @@ class AIService:
                 content.append(img)
         if len(content) == 1:
             raise ValueError("Не удалось загрузить фото для анализа")
-        result = await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=900)
+        result = await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=1200)
         notes = _clean_photo_notes(result.get("notes"))
         return {
             "condition": normalize_condition_label(result.get("condition")),
@@ -1271,7 +1258,7 @@ class AIService:
 
         # Similar listings — enriched with price deltas
         if similar_listings:
-            compact_similar = similar_listings[:3]
+            compact_similar = similar_listings[:5]
             parts.append(f"\n## АЛЬТЕРНАТИВЫ ({len(compact_similar)} вариантов):")
             for i, sl in enumerate(compact_similar, 1):
                 if is_negotiable_price:
@@ -1297,20 +1284,24 @@ class AIService:
                 ad = sl.get("age_days")
                 if ad is not None:
                     age_str = f", {ad} дн." if ad > 0 else ", сегодня"
+                deal_str = ""
+                ds = sl.get("deal_score")
+                if ds is not None:
+                    deal_str = f", оценка: {ds:.0f}/100"
 
                 parts.append(
                     f"  {i}. [{sl.get('ad_id')}] "
-                    f"{sl.get('title', '')[:60]} — "
+                    f"{sl.get('title', '')[:80]} — "
                     f"{sl.get('price_byn', 0):.0f} BYN ({diff_str}), "
                     f"{sl.get('condition') or 'не указано'}, "
-                    f"{sl.get('seller_type', '?')}{age_str}"
+                    f"{sl.get('seller_type', '?')}{age_str}{deal_str}"
                 )
-                desc = (sl.get("description") or "").strip()
-                if desc:
-                    parts.append(f"     Описание: {desc[:120]}")
                 params = (sl.get("parameters") or "").strip()
                 if params:
-                    parts.append(f"     Параметры: {params[:90]}")
+                    parts.append(f"     Параметры: {params[:120]}")
+                desc = (sl.get("description") or "").strip()
+                if desc:
+                    parts.append(f"     Описание: {desc[:100]}")
 
         return "\n".join(parts)
 
@@ -1338,24 +1329,23 @@ class AIService:
         }
 
     async def _fetch_image_bytes(self, url: str) -> bytes | None:
-        """Download image bytes using shared httpx client."""
+        """Download image bytes using shared httpx client.
+
+        Uses follow_redirects=True with a max_redirects limit to avoid
+        manual redirect handling. Streams the response to enforce the
+        byte limit without loading the entire body into memory first.
+        """
         if not self._is_allowed_image_url(url):
             logger.warning("Skipped AI image fetch from unsupported host: %s", url[:80])
             return None
         try:
-            client = self._get_client()
-            resp = await client.get(url, timeout=8, follow_redirects=False)
-            if resp.is_redirect:
-                location = resp.headers.get("location")
-                if not location:
-                    logger.warning("Skipped AI image fetch with empty redirect")
+            client = await self._get_client()
+            # Use streaming to check size before loading entire body
+            async with client.stream(
+                "GET", url, timeout=8, follow_redirects=True,
+            ) as resp:
+                if resp.status_code != 200:
                     return None
-                redirect_url = str(resp.url.join(location))
-                if not self._is_allowed_image_url(redirect_url):
-                    logger.warning("Skipped AI image fetch redirect to unsupported host")
-                    return None
-                resp = await client.get(redirect_url, timeout=8, follow_redirects=False)
-            if resp.status_code == 200:
                 content_type = resp.headers.get("content-type", "")
                 if not content_type.lower().startswith("image/"):
                     logger.warning("Skipped AI image fetch with content-type=%s", content_type)
@@ -1367,12 +1357,17 @@ class AIService:
                             logger.warning("Skipped AI image fetch larger than byte limit")
                             return None
                     except ValueError:
-                        logger.warning("Skipped AI image fetch with invalid content-length")
+                        pass
+                # Read in chunks, enforcing the byte limit
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    total += len(chunk)
+                    if total > _MAX_AI_IMAGE_BYTES:
+                        logger.warning("Skipped AI image fetch larger than byte limit (streaming)")
                         return None
-                if len(resp.content) > _MAX_AI_IMAGE_BYTES:
-                    logger.warning("Skipped AI image fetch larger than byte limit")
-                    return None
-                return resp.content
+                    chunks.append(chunk)
+                return b"".join(chunks)
         except httpx.HTTPError as e:
             logger.warning("Failed to fetch image %s: %s", url[:80], e)
         return None
@@ -1435,8 +1430,9 @@ class AIService:
             except json.JSONDecodeError:
                 continue
 
-        # Strategy 3: greedy regex (original behavior)
-        json_match = re.search(r"\{.*\}", text.strip(), flags=re.DOTALL)
+        # Strategy 3: non-greedy regex (original behavior, but non-greedy
+        # to avoid capturing across multiple JSON objects)
+        json_match = re.search(r"\{.*?\}", text.strip(), flags=re.DOTALL)
         if json_match:
             candidate = json_match.group(0)
             try:

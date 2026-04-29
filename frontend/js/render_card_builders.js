@@ -116,22 +116,6 @@ function createRenderCardBuilders(context) {
             }
         }
 
-        // Risk badges — show when risk_factors is non-empty
-        const riskFactors = Array.isArray(item.risk_factors) ? item.risk_factors : [];
-        const RISK_BADGE_MAP = {
-            too_cheap: { icon: "\u{1F534}", label: "\u0421\u043B\u0438\u0448\u043A\u043E\u043C \u0434\u0451\u0448\u0435\u0432\u043E", cls: "risk-high" },
-            suspicious_desc: { icon: "\u{1F7E1}", label: "\u041F\u043E\u0434\u043E\u0437\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u043E", cls: "risk-medium" },
-            duplicate: { icon: "\u{1F534}", label: "\u0414\u0443\u0431\u043B\u044C", cls: "risk-high" },
-        };
-        for (const rf of riskFactors) {
-            const spec = RISK_BADGE_MAP[rf.type];
-            if (!spec) continue;
-            badges.push(domEl("span", {
-                className: `listing-badge risk-badge ${spec.cls}`,
-                text: `${spec.icon} ${spec.label}`,
-            }));
-        }
-
         const tags = domEl("div", { className: "listing-tags" });
         if (item.condition) tags.appendChild(domEl("span", { className: "tag", text: formatCondition(item.condition) }));
         if (item.seller_type) tags.appendChild(domEl("span", { className: "tag", text: formatSeller(item.seller_type) }));
