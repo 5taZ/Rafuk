@@ -23,7 +23,6 @@ function cacheAppElements(elements) {
     elements.summaryMedian = document.getElementById("summary-median");
     elements.summaryRange = document.getElementById("summary-range");
     elements.summaryFair = document.getElementById("summary-fair");
-    elements.summaryCoverage = document.getElementById("summary-coverage");
     elements.summaryRefinements = document.getElementById("summary-refinements");
     elements.summaryRefinementsChips = document.getElementById("summary-refinements-chips");
     elements.viewTabs = Array.from(document.querySelectorAll("[data-view]"));
@@ -105,7 +104,6 @@ function cacheAppElements(elements) {
         elements.itemsCountBadges[node.dataset.itemsCount] = node;
     }
     elements.trackingHeroStats = document.getElementById("tracking-hero-stats");
-    elements.cheapHeroStats = document.getElementById("cheap-hero-stats");
     elements.dealsHeroStats = document.getElementById("deals-hero-stats");
     elements.detailModal = document.getElementById("detail-modal");
     elements.detailOverlay = document.getElementById("detail-overlay");
@@ -160,7 +158,6 @@ function cacheAppElements(elements) {
     elements.analyticsPeriodButtons = Array.from(
         document.querySelectorAll("[data-analytics-period]"),
     );
-    elements.exportLeadsButton = document.getElementById("export-leads-btn");
     elements.historyDealsSection = document.getElementById("history-deals-section");
     elements.historyDealsCount = document.getElementById("history-deals-count");
     elements.historyDealsList = document.getElementById("history-deals-list");
@@ -197,7 +194,6 @@ function cacheAppElements(elements) {
         segments: document.getElementById("segments-body"),
         geography: document.getElementById("geography-body"),
         historyDeals: document.getElementById("history-deals-body"),
-        listingAssistant: document.getElementById("listing-assistant-body"),
     };
 }
 

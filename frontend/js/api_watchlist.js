@@ -14,7 +14,6 @@ function createApiWatchlist(context) {
         renderError,
         renderWatchlist,
         renderLeads,
-        renderMonitoringHeroStats,
         renderDetailModal,
         showToast,
         dismissToast,
@@ -92,7 +91,6 @@ function createApiWatchlist(context) {
             const count = state.watchlist.items.length;
             state.watchlist.items = [];
             await loadWatchlist();
-            renderMonitoringHeroStats();
             showToast(`Удалено ${count} лотов`);
         } catch (error) {
             showToast(error.message || "Не удалось очистить список");
@@ -294,7 +292,6 @@ function createApiWatchlist(context) {
             // delete actually fired vs the card just animating out.
             showToast("✓ Удалено из избранного", "info");
             await loadWatchlist();
-            renderMonitoringHeroStats();
         } catch (error) {
             // Rollback the optimistic removal so the user can see the
             // item didn't actually delete and retry.
@@ -317,7 +314,6 @@ function createApiWatchlist(context) {
             await deleteJson("/api/v1/watchlist/all");
             state.watchlist.items = [];
             await loadWatchlist();
-            renderMonitoringHeroStats();
             showToast(`Удалено ${count} лотов`);
         } catch (error) {
             showToast(error.message || "Не удалось очистить");

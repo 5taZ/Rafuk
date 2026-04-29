@@ -38,31 +38,6 @@ function createRenderViews(context) {
         appendHeroStat(elements.trackingHeroStats, String(eventCount), "событий");
     }
 
-    function renderCheapHeroStats() {
-        if (!elements.cheapHeroStats) return;
-        const cheapCount = state.deals.items.length;
-        const range = state.filters.discountFromPercent === state.filters.discountToPercent
-            ? `${state.filters.discountFromPercent}%`
-            : `${state.filters.discountFromPercent}-${state.filters.discountToPercent}%`;
-        clearChildren(elements.cheapHeroStats);
-        appendHeroStat(elements.cheapHeroStats, String(cheapCount), "лотов дешевле рынка");
-        const rangeStat = document.createElement("span");
-        rangeStat.className = "hero-stat";
-        rangeStat.append("диапазон ");
-        const rangeValue = document.createElement("span");
-        rangeValue.className = "hero-stat-val mono";
-        rangeValue.textContent = range;
-        rangeStat.appendChild(rangeValue);
-        elements.cheapHeroStats.appendChild(rangeStat);
-    }
-
-    function renderMonitoringHeroStats() {
-        if (!elements.monitoringHeroStats) return;
-        const watchCount = state.watchlist.items.length;
-        clearChildren(elements.monitoringHeroStats);
-        appendHeroStat(elements.monitoringHeroStats, String(watchCount), "объявлений");
-    }
-
     function renderDealsHeroStats() {
         if (!elements.dealsHeroStats) return;
         const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
@@ -427,8 +402,6 @@ function createRenderViews(context) {
 
     return {
         renderTrackingHeroStats,
-        renderCheapHeroStats,
-        renderMonitoringHeroStats,
         renderDealsHeroStats,
         renderSortButtons,
         renderDiscountButtons,

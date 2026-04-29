@@ -20,8 +20,6 @@ function createApiListingAssistant(context) {
     const overlay = document.getElementById("la-overlay");
     const closeBtn = document.getElementById("la-modal-close");
     const openBtn = document.getElementById("listing-assistant-open-btn");
-    const historyShortcutBtn = document.getElementById("listing-assistant-history-btn");
-    const cardCountBadge = document.getElementById("la-history-count");
 
     const tabsRow = modal?.querySelector(".la-tabs");
     const formPane = document.getElementById("la-pane-form");
@@ -98,10 +96,6 @@ function createApiListingAssistant(context) {
 
     function renderHistoryCounts() {
         const count = loadHistory().length;
-        if (cardCountBadge) {
-            cardCountBadge.textContent = String(count);
-            cardCountBadge.hidden = count === 0;
-        }
         if (tabHistoryCount) {
             tabHistoryCount.textContent = String(count);
             tabHistoryCount.hidden = count === 0;
@@ -822,7 +816,6 @@ function createApiListingAssistant(context) {
         clearForm();
         openModal("form");
     });
-    historyShortcutBtn?.addEventListener("click", () => openModal("history"));
     closeBtn?.addEventListener("click", closeModal);
     overlay?.addEventListener("click", closeModal);
     const _keydownHandler = (e) => {

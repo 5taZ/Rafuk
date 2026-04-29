@@ -399,7 +399,7 @@ function createAppCore() {
     /**
      * Mark one or more views as needing re-render.
      * Views: 'error','loading','currency','strict','tabs','panels','summary',
-     * 'helper','views','trackingHero','cheapHero','monitoringHero','dealsHero',
+     * 'helper','views','trackingHero','dealsHero',
      * 'sort','discount','eventFilters','dealInputs','trackerInputs','stats',
      * 'history','segments','geography','recent','listings','deals',
      * 'rates','trackerStatus','trackers','trackerEvents','leads','watchlist',

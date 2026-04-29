@@ -610,7 +610,6 @@ function createRenderCards(context) {
         domClear(container);
 
         if (context._hooks?.renderWatchlistFilters) context._hooks.renderWatchlistFilters();
-        if (context._hooks?.renderMonitoringHeroStats) context._hooks.renderMonitoringHeroStats();
 
         if (!hasTelegramInitData()) {
             const note = document.createElement("p");

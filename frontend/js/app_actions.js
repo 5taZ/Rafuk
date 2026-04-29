@@ -41,7 +41,6 @@ function createAppActions(context) {
         openExpensesModal,
         closeExpensesModal,
         renderProfitDashboard,
-        renderMonitoringHeroStats,
         renderDealsHeroStats,
     } = context;
 

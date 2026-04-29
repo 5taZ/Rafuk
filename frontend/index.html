@@ -426,6 +426,13 @@
             </div>
             <div class="listings-list" id="listings-list" role="list" aria-live="polite"></div>
         </section>
+        <section class="section" id="deals-section" hidden>
+            <div class="sec-head listings-head">
+                <h2 class="sec-title">Выгодные предложения</h2>
+                <span class="badge" id="deals-total-badge"></span>
+            </div>
+            <div class="listings-list" id="deals-list" role="list" aria-live="polite"></div>
+        </section>
     </section>
 
     <section class="view-panel" id="tracking-view" hidden role="tabpanel" aria-labelledby="tab-tracking">
@@ -559,8 +566,7 @@
         <div class="view-hero deals-hero">
             <h2 class="view-hero-title">Мои объявления</h2>
             <p class="view-hero-desc">Слежу, торгую, продаю — всё в одной воронке</p>
-            <!-- "N сделок" hero badge removed: redundant with the
-                 Избранное / Покупки tab counts directly below. -->
+            <div class="view-hero-stats" id="deals-hero-stats"></div>
         </div>
         <section class="section" id="profit-dashboard-section">
             <div class="sec-head listings-head">

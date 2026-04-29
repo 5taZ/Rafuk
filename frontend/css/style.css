@@ -58,6 +58,8 @@
     --amber: #f59e0b;
     --amber-soft: rgba(245, 158, 11, 0.08);
     --amber-400: #fbbf24;
+    --orange: #f97316;
+    --blue: #3b82f6;
     --violet: #8b5cf6;
     --violet-soft: rgba(139, 92, 246, 0.08);
     --cyan: #06b6d4;
@@ -306,6 +308,8 @@ button:focus-visible,
     --amber: #d97706;
     --amber-soft: rgba(217, 119, 6, 0.06);
     --amber-400: #f59e0b;
+    --orange: #ea580c;
+    --blue: #2563eb;
     --violet: #7c3aed;
     --violet-soft: rgba(124, 58, 237, 0.06);
     --cyan: #0891b2;
