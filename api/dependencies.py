@@ -3,13 +3,16 @@ from __future__ import annotations
 import logging
 
 from fastapi import Header, HTTPException, Request, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings, get_settings
 from api.database import get_engine
 from api.database import get_session_factory as build_session_factory
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
-from api.services.cache import CacheBackend, RedisCache
+from api.models import User
+from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
 
@@ -24,7 +27,9 @@ def get_cache(request: Request) -> CacheBackend:
     cache = getattr(request.app.state, "cache", None)
     if cache is not None:
         return cache
-    return RedisCache.from_url(get_settings().redis_url)
+    raise RuntimeError(
+        "Cache not initialized in app.state — lifespan must set it before serving requests"
+    )
 
 
 def get_currency_service(request: Request) -> CurrencyService:
@@ -76,7 +81,35 @@ def get_telegram_user(
         request.state.telegram_user = user
         return user
     except ValueError as exc:
+        logger.warning("Telegram auth failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
+            detail="Invalid Telegram authentication",
         ) from exc
+
+
+async def ensure_user_exists(
+    session_factory: async_sessionmaker[AsyncSession],
+    telegram_user_id: int,
+    first_name: str = "",
+) -> None:
+    """Upsert a User row for the given telegram_user_id.
+
+    Called after Telegram auth to prevent FK violations on first request.
+    Best-effort: if the DB is unreachable the error will surface downstream.
+    """
+    if telegram_user_id == 0:
+        return  # Debug mode — no real user to persist
+    async with session_factory() as session:
+        existing = await session.execute(
+            select(User.id).where(User.telegram_user_id == telegram_user_id)
+        )
+        if existing.scalar_one_or_none() is None:
+            try:
+                session.add(
+                    User(telegram_user_id=telegram_user_id, first_name=first_name[:128])
+                )
+                await session.commit()
+            except IntegrityError:
+                # Concurrent request already inserted this user — rollback and continue
+                await session.rollback()

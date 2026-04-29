@@ -14,6 +14,7 @@ from api.dependencies import (
     get_kufar_client,
     get_session_factory_dependency,
     get_settings_dependency,
+    get_telegram_user,
 )
 from api.limiter import limiter
 from api.schemas import PriceStatsResponse
@@ -76,6 +77,7 @@ async def get_price_stats(
     currency_service: CurrencyService = Depends(get_currency_service),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     kufar_client: KufarClient = Depends(get_kufar_client),
+    _user=Depends(get_telegram_user),
 ) -> PriceStatsResponse:
     cache_key = f"price-stats:{query}:{currency}:{strict_search}:{category}"
     cached = await cache.get_json(cache_key)

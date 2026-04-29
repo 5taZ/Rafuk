@@ -487,6 +487,16 @@ function createApiAi(context) {
     function _buildAiResultNodes(data) {
         const nodes = [];
 
+        // Show AI warning banner if present (e.g. fallback analysis)
+        if (data._ai_warning) {
+            nodes.push(
+                domEl("div", { className: "ai-warning-banner" },
+                    domEl("span", { className: "ai-warning-icon", text: "⚠" }),
+                    domEl("span", { text: data._ai_warning }),
+                )
+            );
+        }
+
         if (data.recommendation) {
             const verdictMap = {
                 worth_it: { text: "Стоит брать", cls: "ai-badge--good" },
@@ -686,6 +696,9 @@ function createApiAi(context) {
             }
             if (data.best_alternative?.price_byn) {
                 contextPills.push(_buildAiMetaPill(`Ориентир: ${formatPrice(data.best_alternative.price_byn)}`));
+            }
+            if (data.price_reference_scope === "category" && data.price_reference_label) {
+                contextPills.push(_buildAiMetaPill(data.price_reference_label, "ai-meta-pill--scope"));
             }
             nodes.push(
                 _buildAiSection(
@@ -932,6 +945,11 @@ function createApiAi(context) {
     function _buildPdfSections(data) {
         const sections = [];
 
+        // AI warning (fallback analysis)
+        if (data._ai_warning) {
+            sections.push({ title: "⚠ Внимание", body: data._ai_warning });
+        }
+
         // Verdict
         if (data.recommendation) {
             const verdictMap = {
@@ -980,7 +998,11 @@ function createApiAi(context) {
 
         // Market context
         if (data.market_context) {
-            sections.push({ title: "Контекст рынка", body: data.market_context });
+            let body = data.market_context;
+            if (data.price_reference_scope === "category" && data.price_reference_label) {
+                body += `\nОриентир: ${data.price_reference_label}`;
+            }
+            sections.push({ title: "Контекст рынка", body });
         }
 
         // Best alternative

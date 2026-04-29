@@ -81,11 +81,11 @@ def _row_for_lead(lead: LeadItem, lead_expenses: dict[int, float]) -> list[Any]:
         lead.query,
         lead.title,
         lead.link,
-        lead.price_byn,
-        lead.target_resale_byn,
+        float(lead.price_byn) if lead.price_byn is not None else None,
+        float(lead.target_resale_byn) if lead.target_resale_byn is not None else None,
         lead.status,
         lead.source,
-        lead.sold_price_byn,
+        float(lead.sold_price_byn) if lead.sold_price_byn is not None else None,
         lead.sold_at.isoformat() if lead.sold_at else None,
         round(total_expenses, 2),
         round(actual_profit, 2) if actual_profit is not None else None,
@@ -202,7 +202,8 @@ async def export_leads(
         if lead_ids:
             expenses_result = await session.execute(
                 select(DealExpense.lead_id, DealExpense.amount_byn).where(
-                    DealExpense.lead_id.in_(lead_ids)
+                    DealExpense.lead_id.in_(lead_ids),
+                    DealExpense.user_id == user_id,
                 )
             )
             for lid, amount in expenses_result:

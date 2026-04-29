@@ -7,7 +7,6 @@ falls back to client IP for public endpoints.
 from __future__ import annotations
 
 import logging
-import socket
 from urllib.parse import urlparse
 
 from fastapi import Request
@@ -15,6 +14,8 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 logger = logging.getLogger(__name__)
+
+rate_limiter_degraded: bool = False
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -26,13 +27,18 @@ def _rate_limit_key(request: Request) -> str:
     return get_remote_address(request)
 
 
-def _redis_reachable(url: str, *, timeout: float = 0.3) -> bool:
+def _redis_reachable(url: str) -> bool:
     """Quick TCP probe to decide whether to use Redis or fall back to memory.
 
     slowapi's Limiter doesn't ping at construction — it only fails on the
     first INCR. If Redis is down, every request would 500 with
-    `ConnectionError: 111 Connection refused`. So we probe up-front.
+    ``ConnectionError: 111 Connection refused``. So we probe up-front.
+
+    Uses a very short timeout (0.1s) to minimize blocking at import time.
+    This is called once at module load; the cost is acceptable.
     """
+    import socket
+
     try:
         parsed = urlparse(url)
     except (ValueError, TypeError):
@@ -40,7 +46,7 @@ def _redis_reachable(url: str, *, timeout: float = 0.3) -> bool:
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or 6379
     try:
-        with socket.create_connection((host, port), timeout=timeout):
+        with socket.create_connection((host, port), timeout=0.1):
             return True
     except OSError:
         return False
@@ -68,10 +74,13 @@ def _create_limiter() -> Limiter:
         logger.info("Rate limiter configured with Redis storage URI")
         return Limiter(key_func=_rate_limit_key, storage_uri=storage_uri)
 
-    logger.warning(
-        "Rate limiter using in-memory storage — Redis at %s is unreachable",
+    global rate_limiter_degraded
+    logger.error(
+        "Rate limiter using in-memory fallback — "
+        "limits not shared across workers. Redis at %s unreachable",
         storage_uri or "<unset>",
     )
+    rate_limiter_degraded = True
     return Limiter(key_func=_rate_limit_key, storage_uri="memory://")
 
 

@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency
+from api.limiter import rate_limiter_degraded
 
 router = APIRouter()
 
@@ -26,6 +27,13 @@ async def health_check(
     except Exception:
         checks["database"] = "unavailable"
         checks["status"] = "degraded"
+
+    # Rate limiter status
+    if rate_limiter_degraded:
+        checks["rate_limiter"] = "degraded"
+        checks["status"] = "degraded"
+    else:
+        checks["rate_limiter"] = "ok"
 
     return checks
 

@@ -7,11 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from api.database import get_engine, get_session_factory
 
 _engine: AsyncEngine | None = None
+
+# Lazy-initialized lock to avoid "Future attached to a different loop" errors
+# when uvicorn --reload or multi-worker forks inherit the parent's event loop.
 _init_lock: asyncio.Lock | None = None
 
 
 def _get_init_lock() -> asyncio.Lock:
-    """Get or create the initialization lock."""
+    """Return (or create) the initialization lock for the current event loop."""
     global _init_lock
     if _init_lock is None:
         _init_lock = asyncio.Lock()
@@ -42,7 +45,7 @@ async def init_bot_engine() -> None:
 
 async def close_bot_engine() -> None:
     """Dispose the bot engine singleton."""
-    global _engine, _init_lock
+    global _engine
     lock = _get_init_lock()
     async with lock:
         if _engine is not None:

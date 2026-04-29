@@ -23,10 +23,18 @@ from api.schemas import (
     AIResalePotential,
     AIResalePrice,
 )
-from api.services.aggregator import normalize_price_byn
+from api.services.aggregator import (
+    compute_category_price_stats,
+    compute_price_stats,
+    extract_prices,
+    filter_ads_for_accessory_category,
+    normalize_price_byn,
+    resolve_price_reference,
+)
 from api.services.ai_guardrails import apply_ai_market_guardrails
 from api.services.ai_marketplace import (
     BestAlternativeDecision,
+    MarketplaceRiskContext,
     build_fallback_analysis_result,
     build_market_context_fallback,
     build_marketplace_risk_context,
@@ -37,6 +45,7 @@ from api.services.ai_marketplace import (
 )
 from api.services.ai_service import (
     dedupe_analysis_payload,
+    detect_category,
     get_ai_service,
     normalize_condition_label,
 )
@@ -88,13 +97,20 @@ def _export_ttl() -> int:
     return int(getattr(get_settings(), "ai_export_ttl", 900) or 900)
 
 
+_MAX_SHADOW_ENTRIES = 200
+
+
 def _prune_old_tasks_shadow() -> None:
-    """Remove local shadow tasks older than TTL."""
+    """Remove local shadow tasks older than TTL. Evicts oldest when over capacity."""
     now = datetime.now(UTC).timestamp()
     ttl = _task_ttl()
     expired = [k for k, v in _tasks.items() if now - v.get("_updated_ts", 0) > ttl]
     for k in expired:
         _tasks.pop(k, None)
+    # Enforce upper bound — evict oldest entries first
+    while len(_tasks) > _MAX_SHADOW_ENTRIES:
+        oldest_key = min(_tasks, key=lambda k: _tasks[k].get("_updated_ts", 0))
+        _tasks.pop(oldest_key, None)
 
 
 def clear_user_ai_data(telegram_user_id: int) -> None:
@@ -129,8 +145,10 @@ async def periodic_prune_shadow_stores() -> None:
         pass  # Graceful shutdown
 
 
-def _task_cache_key(task_id: str) -> str:
-    return f"ai_task:{task_id}"
+def _task_cache_key(task_id: str, *, user_id: int | None = None) -> str:
+    # Namespace by user_id to prevent cross-user data access via shared Redis
+    uid_part = f":u{user_id}" if user_id is not None else ""
+    return f"ai_task{uid_part}:{task_id}"
 
 
 def _task_version(task: dict[str, Any] | None) -> float:
@@ -142,12 +160,21 @@ def _task_version(task: dict[str, Any] | None) -> float:
         return 0.0
 
 
-async def _get_task(cache: CacheBackend, task_id: str) -> dict[str, Any] | None:
+async def _get_task(
+    cache: CacheBackend, task_id: str, *, user_id: int | None = None,
+) -> dict[str, Any] | None:
     # Periodically prune shadow dict on reads too (not just on new task creation)
-    if len(_tasks) > 200:
+    if len(_tasks) > _MAX_SHADOW_ENTRIES:
         _prune_old_tasks_shadow()
-    cached_task = await cache.get_json(_task_cache_key(task_id))
+    # Prefer user_id from shadow entry for namespaced cache lookup
     shadow_task = _tasks.get(task_id)
+    # Ownership check: if user_id is provided, verify shadow entry belongs to this user
+    if shadow_task and user_id is not None:
+        shadow_uid = shadow_task.get("_telegram_user_id")
+        if shadow_uid is not None and shadow_uid != user_id:
+            shadow_task = None  # Deny access to another user's task
+    effective_uid = user_id or (shadow_task.get("_telegram_user_id") if shadow_task else None)
+    cached_task = await cache.get_json(_task_cache_key(task_id, user_id=effective_uid))
 
     if _task_version(shadow_task) > _task_version(cached_task):
         return shadow_task
@@ -161,12 +188,15 @@ async def _set_task(cache: CacheBackend, task_id: str, task: dict[str, Any]) -> 
     if "_updated_ts" not in task:
         task["_updated_ts"] = datetime.now(UTC).timestamp()
     _tasks[task_id] = task
-    await cache.set_json(_task_cache_key(task_id), task, ttl=_task_ttl())
+    user_id = task.get("_telegram_user_id")
+    await cache.set_json(_task_cache_key(task_id, user_id=user_id), task, ttl=_task_ttl())
     return task
 
 
-async def _update_task(cache: CacheBackend, task_id: str, **updates: Any) -> dict[str, Any]:
-    task = await _get_task(cache, task_id) or {
+async def _update_task(
+    cache: CacheBackend, task_id: str, *, user_id: int | None = None, **updates: Any,
+) -> dict[str, Any]:
+    task = await _get_task(cache, task_id, user_id=user_id) or {
         "status": "pending",
         "progress": 0,
         "result": None,
@@ -180,7 +210,7 @@ async def _update_task(cache: CacheBackend, task_id: str, **updates: Any) -> dic
 
 
 def _prune_old_exports() -> None:
-    """Remove expired HTML exports. Only scans when dict has entries."""
+    """Remove expired HTML exports. Evicts oldest when over capacity."""
     if not _exports:
         return
     now = datetime.now(UTC).timestamp()
@@ -188,6 +218,10 @@ def _prune_old_exports() -> None:
     expired = [token for token, item in _exports.items() if now - item.get("_created_ts", 0) > ttl]
     for token in expired:
         _exports.pop(token, None)
+    # Enforce upper bound — evict oldest entries first
+    while len(_exports) > _MAX_SHADOW_ENTRIES:
+        oldest_key = min(_exports, key=lambda k: _exports[k].get("_created_ts", 0))
+        _exports.pop(oldest_key, None)
 
 
 @router.get("/task/{task_id}")
@@ -197,7 +231,7 @@ async def get_task_status(
     _user=Depends(get_telegram_user),
 ):
     """Poll AI analysis task status."""
-    task = await _get_task(get_cache(request), task_id)
+    task = await _get_task(get_cache(request), task_id, user_id=_user.user_id)
     if not task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     if task.get("_telegram_user_id") != _user.user_id:
@@ -390,8 +424,105 @@ def _build_resale_potential(resale_data: Any) -> AIResalePotential | None:
         return None
 
 
+def _build_fallback_response(
+    *,
+    payload: AIAnalysisRequest,
+    price_byn: float,
+    is_negotiable_price: bool,
+    median: float | None,
+    q1: float | None,
+    q3: float | None,
+    similar: list[dict[str, Any]],
+    risk_context: MarketplaceRiskContext,
+    reference: Any,
+    photo_condition_label: str | None,
+    photo_condition_notes: list[str],
+    title: str,
+    parameters: list[dict[str, Any]],
+) -> AIAnalysisResponse:
+    """Build a fallback AIAnalysisResponse when the AI call fails.
+
+    Uses rule-based analysis instead of AI, so the user always gets
+    a useful result rather than a raw error message.
+    """
+    fallback_best_decision = choose_best_alternative(
+        similar,
+        target_price=price_byn,
+        is_negotiable_price=is_negotiable_price,
+        ai_best_pick_ad_id=None,
+    )
+    fallback_best_alt = fallback_best_decision.item
+    if fallback_best_alt:
+        fallback_best_alt = {
+            "ad_id": fallback_best_alt["ad_id"],
+            "title": fallback_best_alt["title"],
+            "price_byn": fallback_best_alt["price_byn"],
+            "image_url": fallback_best_alt.get("image_url"),
+            "link": fallback_best_alt.get("link", ""),
+            "deal_score": fallback_best_alt.get("deal_score", 0.0),
+            "condition": fallback_best_alt.get("condition"),
+            "ai_note": fallback_best_decision.reason,
+        }
+    fallback_red_flags = finalize_red_flags([], risk_context)
+    fallback_result = build_fallback_analysis_result(
+        title=title or "",
+        parameters=parameters,
+        price_byn=price_byn,
+        is_negotiable_price=is_negotiable_price,
+        market_median=median,
+        market_q1=q1,
+        market_q3=q3,
+        best_alternative=fallback_best_alt,
+        similar_listings=similar,
+        risk_context=risk_context,
+        photo_condition_label=photo_condition_label or None,
+        photo_condition_notes=photo_condition_notes or [],
+        red_flags=fallback_red_flags,
+    )
+    fallback_result = dedupe_analysis_payload(fallback_result)
+    fallback_market_ctx = build_market_context_fallback(
+        price_byn=price_byn,
+        is_negotiable_price=is_negotiable_price,
+        market_median=median,
+        similar_listings=similar,
+        risk_context=risk_context,
+        ai_market_context="",
+        price_reference_scope=reference.scope,
+        price_reference_label=reference.label,
+    )
+    response = AIAnalysisResponse(
+        ad_id=payload.ad_id,
+        condition=fallback_result.get("condition"),
+        fair_price=fallback_result.get("fair_price"),
+        resale_potential=None,
+        watch_out=fallback_result.get("watch_out", []),
+        recommendation=fallback_result.get("recommendation"),
+        similar_listings=similar,
+        best_alternative=fallback_best_alt,
+        meeting_checklist=fallback_result.get("meeting_checklist", []),
+        negotiation_tips=fallback_result.get("negotiation_tips", []),
+        red_flags=fallback_red_flags,
+        market_context=fallback_market_ctx,
+        price_reference_scope=reference.scope,
+        price_reference_label=reference.label,
+        best_pick_reason=fallback_best_decision.reason,
+        summary=fallback_result.get("summary", ""),
+        disclaimer=DISCLAIMER,
+    )
+    response.resale_potential = _build_resale_potential(
+        fallback_result.get("resale_potential")
+    )
+    return response
+
+
 async def _run_analysis(
-    task_id: str, payload: AIAnalysisRequest, settings, cache, kufar_client: KufarClient
+    task_id: str,
+    payload: AIAnalysisRequest,
+    settings,
+    cache,
+    kufar_client: KufarClient,
+    *,
+    user_id: int | None = None,
 ) -> None:
     """Background coroutine: does the full analysis and updates the task store."""
     ai = get_ai_service()
@@ -413,6 +544,7 @@ async def _run_analysis(
         await _update_task(
             cache,
             task_id,
+            user_id=user_id,
             status="processing",
             progress=10,
             stage="loading_market_data",
@@ -447,7 +579,7 @@ async def _run_analysis(
             return_exceptions=True,
         )
 
-        await _update_task(cache, task_id, progress=30, stage="search_ready")
+        await _update_task(cache, task_id, user_id=user_id, progress=30, stage="search_ready")
         logger.info("AI task %s stage=search_ready", task_id)
 
         datasets_by_cohort: list[tuple[str, Any]] = []
@@ -481,6 +613,7 @@ async def _run_analysis(
             await _update_task(
                 cache,
                 task_id,
+                user_id=user_id,
                 status="error",
                 stage="target_missing",
                 error="Объявление не найдено",
@@ -522,12 +655,31 @@ async def _run_analysis(
                 images.append(f"https://rms.kufar.by/v1/gallery/{path}")
 
         stats = dataset.price_stats
-        median = stats.median if stats else None
-        count = stats.count if stats else 0
-        q1 = stats.q1 if stats else None
-        q3 = stats.q3 if stats else None
-        price_min = stats.min if stats else None
-        price_max = stats.max if stats else None
+        # Detect the product category so we can filter out irrelevant
+        # listings (e.g. phones mixed into a "чехол" search).
+        detected_cat = detect_category(title, parameters)
+        # When the detected category is an accessory type, filter ads
+        # by price cap so that phone-level prices don't skew the median.
+        # This prevents a 20 BYN case being compared against 2000 BYN phones.
+        filtered_ads = filter_ads_for_accessory_category(dataset.ads, detected_cat)
+        if filtered_ads is not dataset.ads:
+            # Recompute stats on the filtered subset
+            filtered_prices = extract_prices(filtered_ads)
+            if filtered_prices:
+                stats = compute_price_stats(filtered_prices)
+        # Compute category-aware price stats so that accessories (e.g. phone
+        # cases) are compared against other accessories, not against phones.
+        category_price_stats = compute_category_price_stats(filtered_ads)
+        reference = resolve_price_reference(
+            target_ad, stats, category_price_stats
+        )
+        effective_stats = reference.stats
+        median = effective_stats.median if effective_stats else None
+        count = effective_stats.count if effective_stats else 0
+        q1 = effective_stats.q1 if effective_stats else None
+        q3 = effective_stats.q3 if effective_stats else None
+        price_min = effective_stats.min if effective_stats else None
+        price_max = effective_stats.max if effective_stats else None
 
         similar = collect_similar_listings_from_cohorts(
             cohorts=datasets_by_cohort or [("broad_category", dataset)],
@@ -561,10 +713,10 @@ async def _run_analysis(
         target_deal_verdict = ""
         photo_condition_label = ""
         photo_condition_notes: list[str] = []
-        if stats:
+        if effective_stats:
             raw_flags: list[Any] = []
             try:
-                raw_flags = detect_anomaly_flags(target_ad, stats)
+                raw_flags = detect_anomaly_flags(target_ad, effective_stats)
             except (AttributeError, KeyError, TypeError, ValueError):
                 logger.warning(
                     "Failed to compute anomaly flags for ad_id=%d",
@@ -573,7 +725,9 @@ async def _run_analysis(
                 )
             target_anomaly_labels = anomaly_labels(raw_flags)
             try:
-                deal = compute_deal_score(target_ad, query=payload.query, market_stats=stats)
+                deal = compute_deal_score(
+                    target_ad, query=payload.query, market_stats=effective_stats,
+                )
                 target_deal_score = deal.score
                 target_deal_verdict = deal.verdict
             except (AttributeError, KeyError, TypeError, ValueError):
@@ -584,7 +738,10 @@ async def _run_analysis(
                 )
 
         if images:
-            await _update_task(cache, task_id, progress=40, stage="photo_precheck")
+            await _update_task(
+                cache, task_id, user_id=user_id,
+                progress=40, stage="photo_precheck",
+            )
             logger.info("AI task %s stage=photo_precheck images=%d", task_id, len(images))
             try:
                 quick_photo = await asyncio.wait_for(
@@ -615,7 +772,7 @@ async def _run_analysis(
                     exc,
                 )
 
-        await _update_task(cache, task_id, progress=50, stage="calling_ai")
+        await _update_task(cache, task_id, user_id=user_id, progress=50, stage="calling_ai")
         logger.info(
             "AI task %s stage=calling_ai title=%r images=%d similar=%d",
             task_id,
@@ -659,7 +816,10 @@ async def _run_analysis(
                     ]
                     for pct, delay in steps:
                         await asyncio.sleep(delay)
-                        await _update_task(cache, task_id, progress=pct, stage="calling_ai")
+                        await _update_task(
+                            cache, task_id, user_id=user_id,
+                            progress=pct, stage="calling_ai",
+                        )
 
                 pump_task = asyncio.create_task(_progress_pump())
                 try:
@@ -714,7 +874,7 @@ async def _run_analysis(
         )
         logger.info("AI async task %s: AI done in %.1fs", task_id, _time.monotonic() - _t0)
 
-        await _update_task(cache, task_id, progress=85, stage="building_response")
+        await _update_task(cache, task_id, user_id=user_id, progress=85, stage="building_response")
         logger.info("AI task %s stage=building_response", task_id)
 
         # Build response
@@ -755,6 +915,8 @@ async def _run_analysis(
             similar_listings=similar,
             risk_context=risk_context,
             ai_market_context=result.get("market_context", ""),
+            price_reference_scope=reference.scope,
+            price_reference_label=reference.label,
         )
         result = complete_analysis_sections(
             result=result,
@@ -805,13 +967,15 @@ async def _run_analysis(
             negotiation_tips=result.get("negotiation_tips", []),
             red_flags=final_red_flags,
             market_context=final_market_context,
+            price_reference_scope=reference.scope,
+            price_reference_label=reference.label,
             best_pick_reason=best_pick_reason,
             summary=result.get("summary", ""),
             disclaimer=DISCLAIMER,
         )
 
         # Brief intermediate progress so the bar doesn't stall at 85→100
-        await _update_task(cache, task_id, progress=95, stage="building_response")
+        await _update_task(cache, task_id, user_id=user_id, progress=95, stage="building_response")
 
         # Cache result (use cache passed from endpoint)
         cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
@@ -821,6 +985,7 @@ async def _run_analysis(
         await _update_task(
             cache,
             task_id,
+            user_id=user_id,
             status="done",
             progress=100,
             stage="done",
@@ -831,80 +996,28 @@ async def _run_analysis(
 
     except TimeoutError:
         try:
-            # Compute best_alternative without AI input
-            fallback_best_decision = choose_best_alternative(
-                similar,
-                target_price=price_byn,
+            response = _build_fallback_response(
+                payload=payload,
+                price_byn=price_byn,
                 is_negotiable_price=is_negotiable_price,
-                ai_best_pick_ad_id=None,
-            )
-            fallback_best_alt = fallback_best_decision.item
-            if fallback_best_alt:
-                fallback_best_alt = {
-                    "ad_id": fallback_best_alt["ad_id"],
-                    "title": fallback_best_alt["title"],
-                    "price_byn": fallback_best_alt["price_byn"],
-                    "image_url": fallback_best_alt.get("image_url"),
-                    "link": fallback_best_alt.get("link", ""),
-                    "deal_score": fallback_best_alt.get("deal_score", 0.0),
-                    "condition": fallback_best_alt.get("condition"),
-                    "ai_note": fallback_best_decision.reason,
-                }
-            fallback_red_flags = finalize_red_flags([], risk_context)
-            fallback_result = build_fallback_analysis_result(
-                title=title or "",
+                median=median,
+                q1=q1,
+                q3=q3,
+                similar=similar,
+                risk_context=risk_context,
+                reference=reference,
+                photo_condition_label=photo_condition_label,
+                photo_condition_notes=photo_condition_notes,
+                title=title,
                 parameters=parameters,
-                price_byn=price_byn,
-                is_negotiable_price=is_negotiable_price,
-                market_median=median,
-                market_q1=q1,
-                market_q3=q3,
-                best_alternative=fallback_best_alt,
-                similar_listings=similar,
-                risk_context=risk_context,
-                photo_condition_label=photo_condition_label or None,
-                photo_condition_notes=photo_condition_notes or [],
-                red_flags=fallback_red_flags,
             )
-            # Cross-field dedupe so watch_out items echoing photo_condition_notes
-            # don't render the same observation twice.
-            fallback_result = dedupe_analysis_payload(fallback_result)
-            fallback_market_ctx = build_market_context_fallback(
-                price_byn=price_byn,
-                is_negotiable_price=is_negotiable_price,
-                market_median=median,
-                similar_listings=similar,
-                risk_context=risk_context,
-                ai_market_context="",
-            )
-            response = AIAnalysisResponse(
-                ad_id=payload.ad_id,
-                condition=fallback_result.get("condition"),
-                fair_price=fallback_result.get("fair_price"),
-                resale_potential=None,
-                watch_out=fallback_result.get("watch_out", []),
-                recommendation=fallback_result.get("recommendation"),
-                similar_listings=similar,
-                best_alternative=fallback_best_alt,
-                meeting_checklist=fallback_result.get("meeting_checklist", []),
-                negotiation_tips=fallback_result.get("negotiation_tips", []),
-                red_flags=fallback_red_flags,
-                market_context=fallback_market_ctx,
-                best_pick_reason=fallback_best_decision.reason,
-                summary=fallback_result.get("summary", ""),
-                disclaimer=DISCLAIMER,
-            )
-            # Build resale_potential from fallback data if available
-            response.resale_potential = _build_resale_potential(
-                fallback_result.get("resale_potential")
-            )
-            # Cache the fallback result too
             cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
             fallback_serialized = response.model_dump(by_alias=True)
             await cache.set_json(cache_key, fallback_serialized, ttl=fallback_cache_ttl)
             await _update_task(
                 cache,
                 task_id,
+                user_id=user_id,
                 status="done",
                 progress=100,
                 stage="done",
@@ -912,7 +1025,7 @@ async def _run_analysis(
                 error=None,
             )
             logger.warning(
-                "AI task %s: fallback result delivered for ad_id=%d",
+                "AI task %s: fallback result delivered (timeout) for ad_id=%d",
                 task_id,
                 payload.ad_id,
             )
@@ -926,28 +1039,92 @@ async def _run_analysis(
             await _update_task(
                 cache,
                 task_id,
+                user_id=user_id,
                 status="error",
                 stage="timeout",
                 error="AI анализ занял слишком долго. Попробуйте ещё раз.",
             )
     except _AI_ANALYSIS_ERRORS as exc:
         logger.error("AI async task %s failed: [%s] %s", task_id, type(exc).__name__, exc)
-        err_msg = "AI сервис недоступен. Попробуйте позже."
-        err_str = str(exc).lower()
-        if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
-            err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
-        elif (
-            "timeout" in err_str
-            or "timed out" in err_str
-            or "connect" in err_str
-            or "connection" in err_str
-        ):
-            err_msg = "Не удалось подключиться к AI-сервису. Возможно, требуется VPN на сервере."
-        elif "insufficient balance" in err_str:
-            err_msg = "Баланс AI-сервиса исчерпан."
-        if getattr(settings, "debug", False):
-            err_msg += f" [{type(exc).__name__}: {exc}]"
-        await _update_task(cache, task_id, status="error", stage="error", error=err_msg)
+        # Instead of showing a raw error, try to deliver a fallback result.
+        # The user gets useful analysis even when the AI service is down.
+        try:
+            response = _build_fallback_response(
+                payload=payload,
+                price_byn=price_byn,
+                is_negotiable_price=is_negotiable_price,
+                median=median,
+                q1=q1,
+                q3=q3,
+                similar=similar,
+                risk_context=risk_context,
+                reference=reference,
+                photo_condition_label=photo_condition_label,
+                photo_condition_notes=photo_condition_notes,
+                title=title,
+                parameters=parameters,
+            )
+            cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
+            fallback_serialized = response.model_dump(by_alias=True)
+            await cache.set_json(cache_key, fallback_serialized, ttl=fallback_cache_ttl)
+            # Add a warning to the fallback result so the user knows AI was
+            # unavailable — but they still get analysis, not a blank error.
+            fallback_serialized["_ai_warning"] = (
+                "AI-сервис временно недоступен. Показан упрощённый анализ."
+            )
+            await _update_task(
+                cache,
+                task_id,
+                user_id=user_id,
+                status="done",
+                progress=100,
+                stage="done",
+                result=fallback_serialized,
+                error=None,
+            )
+            logger.warning(
+                "AI task %s: fallback result delivered (error: %s) for ad_id=%d",
+                task_id,
+                type(exc).__name__,
+                payload.ad_id,
+            )
+        except Exception as fallback_exc:
+            logger.error(
+                "Fallback build also failed for task %s: %s",
+                task_id,
+                fallback_exc,
+                exc_info=True,
+            )
+            # Only show a raw error if even the fallback build fails
+            err_msg = "AI сервис недоступен. Попробуйте позже."
+            err_str = str(exc).lower()
+            if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
+            elif (
+                "timeout" in err_str
+                or "timed out" in err_str
+                or "connect" in err_str
+                or "connection" in err_str
+            ):
+                err_msg = (
+                    "Не удалось подключиться к AI-сервису."
+                    " Возможно, требуется VPN на сервере."
+                )
+            elif "insufficient balance" in err_str:
+                err_msg = "Баланс AI-сервиса исчерпан."
+            if getattr(settings, "debug", False):
+                import re as _re
+
+                _safe_exc = _re.sub(r"https?://\S+", "[URL]", str(exc))
+                _safe_exc = _re.sub(
+                    r"(?:api[_-]?key|token|bearer)\s*[:=]\s*\S+",
+                    "[REDACTED]", _safe_exc, flags=_re.IGNORECASE,
+                )
+                err_msg += f" [{type(exc).__name__}: {_safe_exc}]"
+            await _update_task(
+                cache, task_id, user_id=user_id,
+                status="error", stage="error", error=err_msg,
+            )
 
 
 @router.post("/analyze")
@@ -1002,80 +1179,35 @@ async def analyze_listing(
     # Use _spawn_bg_task instead of bare asyncio.create_task — without a
     # strong reference Python's GC can drop the task before completion.
     _spawn_bg_task(
-        _run_analysis(task_id, payload, settings, cache, kufar_client),
+        _run_analysis(task_id, payload, settings, cache, kufar_client, user_id=_user.user_id),
         name=f"ai-analysis-{task_id[:8]}",
     )
 
     return {"task_id": task_id}
 
 
-# ── XSS sanitization for export HTML ──────────────────────────────────────
-# Defence-in-depth: even with a strict CSP we strip dangerous tags and
-# attributes server-side so that the export remains safe when the CSP is
-# accidentally relaxed (e.g. opened outside the export route).
-_XSS_PAIRED_TAGS = (
-    "script",
-    "iframe",
-    "object",
-    "embed",
-    "applet",
-    "form",
-    "svg",
-    "frame",
-    "frameset",
-    "title",
-)
-# Tags that MUST NOT appear in the export at all — including self-closing.
-_XSS_VOID_TAGS = (
-    "script",
-    "iframe",
-    "object",
-    "embed",
-    "applet",
-    "link",
-    "meta",
-    "base",
-    "svg",
-    "frame",
-    "frameset",
-)
-_XSS_PAIRED_TAG_PATTERNS = [
-    _re.compile(
-        rf"<\s*{tag}\b[^>]*>.*?<\s*/\s*{tag}\s*>",
-        flags=_re.DOTALL | _re.IGNORECASE,
-    )
-    for tag in _XSS_PAIRED_TAGS
-]
-_XSS_VOID_TAG_RE = _re.compile(
-    r"<\s*(?:" + "|".join(_XSS_VOID_TAGS) + r")\b[^>]*/?\s*>",
-    flags=_re.IGNORECASE,
-)
-_XSS_EVENT_HANDLER_RE = _re.compile(
-    r"\son\w+\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)",
-    flags=_re.IGNORECASE,
-)
-# Match dangerous URL schemes inside href/src/action attributes.
-# Allow https:, http:, mailto:, tel:, data: (images only), and relative URLs.
-_XSS_DANGEROUS_URL_ATTR_RE = _re.compile(
-    r"(\s(?:href|src|action|formaction|xlink:href|background|cite|poster|srcset)\s*=\s*)"
-    r"(\"|')\s*(?:javascript|vbscript|data:(?!image/)|about|file)\s*:[^\"'>]*\2",
-    flags=_re.IGNORECASE,
-)
-_XSS_STYLE_IMPORT_RE = _re.compile(r"@import[^;]+;?", flags=_re.IGNORECASE)
-_XSS_STYLE_URL_RE = _re.compile(r"url\s*\([^)]*\)", flags=_re.IGNORECASE)
-
-
 def _sanitize_export_html(html: str) -> str:
-    """Strip XSS vectors from user-provided HTML before storing it."""
-    sanitized = html
-    for pattern in _XSS_PAIRED_TAG_PATTERNS:
-        sanitized = pattern.sub("", sanitized)
-    sanitized = _XSS_VOID_TAG_RE.sub("", sanitized)
-    sanitized = _XSS_EVENT_HANDLER_RE.sub("", sanitized)
-    sanitized = _XSS_DANGEROUS_URL_ATTR_RE.sub(r"\1\2#\2", sanitized)
-    sanitized = _XSS_STYLE_IMPORT_RE.sub("", sanitized)
-    sanitized = _XSS_STYLE_URL_RE.sub("none", sanitized)
-    return sanitized
+    import nh3
+
+    return nh3.clean(
+        html,
+        tags={
+            "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
+            "table", "thead", "tbody", "tr", "th", "td",
+            "ul", "ol", "li", "strong", "em", "b", "i", "u",
+            "br", "hr", "img", "a", "blockquote", "code", "pre",
+        },
+        attributes={
+            "*": {"class"},
+            "img": {"src", "alt", "width", "height"},
+            "a": {"href", "target"},
+            "td": {"colspan", "rowspan"},
+            "th": {"colspan", "rowspan"},
+        },
+        clean_content_tags={"script", "style"},
+        # Only allow https: URLs — blocks data: and javascript: schemes
+        url_schemes={"https"},
+    )
 
 
 @router.post("/export-report")
@@ -1125,7 +1257,7 @@ async def get_export_report(
             "Cache-Control": "no-store, max-age=0",
             "Content-Security-Policy": (
                 "default-src 'none'; "
-                "img-src https: data:; "
+                "img-src https:; "
                 "style-src 'unsafe-inline'; "
                 "script-src 'none'; "
                 "base-uri 'none'; "

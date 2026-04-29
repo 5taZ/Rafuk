@@ -9,6 +9,7 @@ from api.dependencies import (
     get_currency_service,
     get_session_factory_dependency,
     get_settings_dependency,
+    get_telegram_user,
 )
 from api.limiter import limiter
 from api.schemas import PriceHistoryPoint, PriceHistoryResponse
@@ -33,6 +34,7 @@ async def get_price_history(
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+    _user=Depends(get_telegram_user),
 ) -> PriceHistoryResponse:
     bounded_days = max(1, min(days, 90))
     search_key = build_query_key(query, strict_search)
@@ -49,10 +51,10 @@ async def get_price_history(
     points = [
         PriceHistoryPoint(
             snapshot_at=snapshot.snapshot_at,
-            mean=currency_service.convert_from_byn(snapshot.mean_byn, currency, rates),
-            median=currency_service.convert_from_byn(snapshot.median_byn, currency, rates),
-            min=currency_service.convert_from_byn(snapshot.min_byn, currency, rates),
-            max=currency_service.convert_from_byn(snapshot.max_byn, currency, rates),
+            mean=currency_service.convert_from_byn(float(snapshot.mean_byn), currency, rates),
+            median=currency_service.convert_from_byn(float(snapshot.median_byn), currency, rates),
+            min=currency_service.convert_from_byn(float(snapshot.min_byn), currency, rates),
+            max=currency_service.convert_from_byn(float(snapshot.max_byn), currency, rates),
             analyzed_count=snapshot.analyzed_count,
             total_results=snapshot.total_results,
         )

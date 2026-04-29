@@ -867,6 +867,25 @@
     margin-top: 8px;
 }
 
+/* ── AI: Warning banner (fallback analysis) ── */
+.ai-warning-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--amber-soft);
+    border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent);
+    border-radius: 10px;
+    font-size: var(--text-xs);
+    color: var(--amber);
+    line-height: 1.4;
+    margin-bottom: 12px;
+}
+.ai-warning-icon {
+    flex-shrink: 0;
+    font-size: 16px;
+}
+
 /* ── AI: Light theme adjustments ── */
 [data-theme="light"] .ai-header-icon {
     background: var(--bg-elevated);

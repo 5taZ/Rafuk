@@ -10,6 +10,7 @@ from api.dependencies import (
     get_currency_service,
     get_kufar_client,
     get_settings_dependency,
+    get_telegram_user,
 )
 from api.limiter import limiter
 from api.schemas import ListingsResponse
@@ -58,6 +59,7 @@ async def get_listings(
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
     kufar_client: KufarClient = Depends(get_kufar_client),
+    _user=Depends(get_telegram_user),
 ) -> ListingsResponse:
     effective_from_source = (
         discount_from_percent if discount_from_percent is not None else discount_percent

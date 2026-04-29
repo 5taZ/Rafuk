@@ -61,12 +61,41 @@ async def test_parallel_search_respects_semaphore_limit(mock_settings: MagicMock
 
 
 @pytest.mark.asyncio
-async def test_parallel_search_propagates_errors(mock_settings: MagicMock) -> None:
+async def test_parallel_search_returns_empty_on_failure(mock_settings: MagicMock) -> None:
     async def failing_search(**kwargs: object) -> dict:
         del kwargs
         raise KufarAPIError("Kufar down")
 
     client = KufarClient(mock_settings)
     client.search = failing_search  # type: ignore[method-assign]
-    with pytest.raises(KufarAPIError):
-        await parallel_search(client, [{"query": "test"}], mock_settings)
+    results = await parallel_search(client, [{"query": "test"}], mock_settings)
+    assert len(results) == 1
+    assert results[0]["ads"] == []
+    assert results[0]["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_parallel_search_preserves_list_length_on_partial_failure(
+    mock_settings: MagicMock,
+) -> None:
+    call_idx = 0
+
+    async def flaky_search(**kwargs: object) -> dict:
+        del kwargs
+        nonlocal call_idx
+        call_idx += 1
+        if call_idx == 2:
+            raise KufarAPIError("timeout")
+        return {"ads": [{"ad_id": call_idx}], "pagination": {}, "total": 1}
+
+    client = KufarClient(mock_settings)
+    client.search = flaky_search  # type: ignore[method-assign]
+    results = await parallel_search(
+        client,
+        [{"query": "a"}, {"query": "b"}, {"query": "c"}],
+        mock_settings,
+    )
+    assert len(results) == 3
+    assert results[0]["ads"] == [{"ad_id": 1}]
+    assert results[1]["ads"] == []  # failed task → empty response
+    assert results[2]["ads"] == [{"ad_id": 3}]

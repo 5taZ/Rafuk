@@ -17,6 +17,7 @@ from api.routers.ai_analysis import (
     _check_ai_available,
     _check_ai_consent,
     _check_rate_limit,
+    _coerce_string_list,
     _log_ai_audit,
 )
 from api.schemas import (
@@ -25,6 +26,11 @@ from api.schemas import (
     AIListingPriceTier,
     AIListingPricing,
     AINegotiationCounter,
+)
+from api.services.aggregator import (
+    compute_price_stats,
+    extract_prices,
+    filter_ads_for_accessory_category,
 )
 from api.services.ai_listing_guardrails import (
     normalize_listing_pricing,
@@ -110,25 +116,6 @@ def _coerce_negotiation(raw: Any) -> list[AINegotiationCounter]:
     return items
 
 
-def _coerce_string_list(raw: Any, *, limit: int, max_len: int) -> list[str]:
-    items: list[str] = []
-    if not isinstance(raw, list):
-        return items
-    seen: set[str] = set()
-    for entry in raw:
-        text = _re.sub(r"\s+", " ", str(entry or "").strip())
-        if not text:
-            continue
-        text = text[:max_len]
-        key = text.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        items.append(text)
-        if len(items) >= limit:
-            break
-    return items
-
 
 # A single user-uploaded photo capped at ~1.5MB of base64 (~1MB binary).
 _LISTING_PHOTO_MAX_BYTES = 1_500_000
@@ -182,6 +169,16 @@ def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[s
     """Pick a diverse, priced subset of ads to use as competitor context."""
     from api.services.aggregator import normalize_price_byn
 
+    # Parameter keys that carry pricing weight — include these in context
+    _pricing_params = {
+        "storage", "ram", "memory", "generation", "generation_name",
+        "screen_size", "diagonal", "processor", "cpu", "gpu",
+        "drive_type", "ssd_capacity", "hdd_capacity",
+        "mileage", "engine_volume", "year", "year_of_manufacture",
+        "rooms", "area", "floor", "total_floors",
+        "frame_size", "wheel_size",
+    }
+
     priced = [
         ad for ad in dataset_ads if normalize_price_byn(ad.get("price_byn")) is not None
     ]
@@ -194,19 +191,25 @@ def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[s
         params = ad.get("ad_parameters") or []
         seller_label = ""
         condition = ""
+        key_params: list[str] = []
         for p in params:
             label = str(p.get("p") or "").lower()
             value = str(p.get("v") or p.get("vl") or "").strip()
+            if not value:
+                continue
             if label == "seller_type" and value:
                 seller_label = value
             elif label in {"condition", "cond"} and value:
                 condition = value
+            elif label in _pricing_params:
+                key_params.append(f"{label}={value}")
         out.append(
             {
                 "title": title_text[:120],
                 "price_byn": price,
                 "seller_type": seller_label,
                 "condition": condition,
+                "parameters": key_params[:5],
             }
         )
         if len(out) >= 8:
@@ -278,7 +281,24 @@ async def listing_assistant(
         dataset = None
 
     market_stats = dataset.price_stats if dataset is not None else None
-    competitors = _build_listing_competitors(dataset.ads) if dataset is not None else []
+
+    # Detect category early so we can filter ads for accessories.
+    # When searching "чехол iPhone", Kufar returns phones + cases;
+    # filtering by price cap keeps only accessory-priced listings.
+    category_key = detect_category(title)
+    filtered_ads = dataset.ads if dataset is not None else []
+    if dataset is not None and category_key in {
+        "phone_accessory", "auto_accessory", "computer_accessory",
+        "photo_accessory", "gaming_accessory", "home_accessory",
+        "bicycle_accessory", "watch_accessory",
+    }:
+        filtered_ads = filter_ads_for_accessory_category(dataset.ads, category_key)
+        if filtered_ads is not dataset.ads:
+            filtered_prices = extract_prices(filtered_ads)
+            if filtered_prices:
+                market_stats = compute_price_stats(filtered_prices)
+
+    competitors = _build_listing_competitors(filtered_ads)
 
     market_anchors: dict[str, float | int | None] = {
         "median": market_stats.median if market_stats and market_stats.count else None,
@@ -289,7 +309,6 @@ async def listing_assistant(
         "count": market_stats.count if market_stats else 0,
     }
 
-    category_key = detect_category(title)
     category_meta = CATEGORY_HINTS.get(category_key) or {}
 
     timeout_s = int(getattr(settings, "ai_listing_assistant_timeout", 120) or 120)

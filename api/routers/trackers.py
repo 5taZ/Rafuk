@@ -184,6 +184,8 @@ async def create_tracker(
             condition=payload.condition,
             region_name=payload.region_name,
             config_keyword=payload.config_keyword or default_config_keyword(query),
+            alert_price_threshold=payload.alert_price_threshold,
+            alert_discount_percent=payload.alert_discount_percent,
         )
         session.add(tracker)
         try:
@@ -246,8 +248,11 @@ async def update_tracker(
         if tracker is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
 
-        # Update only provided fields
-        update_data = payload.model_dump(exclude_unset=True)
+        # Update only provided (non-None) fields
+        update_data = {
+            k: v for k, v in payload.model_dump(exclude_unset=True).items()
+            if v is not None
+        }
         for field, value in update_data.items():
             setattr(tracker, field, value)
 

@@ -12,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 
 from api.config import get_settings
 from api.database import get_engine, get_session_factory
+from api.dependencies import ensure_user_exists
 from api.limiter import limiter
 from api.routers import (
     ai_analysis,
@@ -28,6 +29,7 @@ from api.routers import (
     listings,
     price_history,
     price_stats,
+    reminders,
     segments,
     trackers,
     workflow,
@@ -145,6 +147,61 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return response
 
+    # CSRF protection: validate Origin header on state-changing requests.
+    # Prevents cross-origin POST/PATCH/DELETE from arbitrary websites.
+    @app.middleware("http")
+    async def csrf_origin_check(request: Request, call_next):
+        if request.method in ("POST", "PATCH", "DELETE"):
+            origin = request.headers.get("origin")
+            if origin:
+                settings = get_settings()
+                allowed = set(origins)  # Same list as CORS allow_origins
+                # Telegram WebApp sends requests from web.telegram.org
+                # or from the mini app URL — both are legitimate.
+                allowed.update(
+                    [
+                        "https://web.telegram.org",
+                        "https://webk.telegram.org",
+                        "null",  # Telegram iOS sometimes sends Origin: null
+                    ]
+                )
+                if settings.debug:
+                    allowed.update(
+                        [
+                            "http://localhost:8081",
+                            "http://127.0.0.1:8081",
+                            "http://localhost:8010",
+                            "http://127.0.0.1:8010",
+                        ]
+                    )
+                # Also allow when Origin matches the mini app or API URL
+                if settings.mini_app_url:
+                    allowed.add(settings.mini_app_url)
+                if settings.api_base_url:
+                    allowed.add(settings.api_base_url)
+                if origin not in allowed:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "CSRF: origin not allowed"},
+                    )
+        return await call_next(request)
+
+    # Auto-provision User row on first authenticated request
+    @app.middleware("http")
+    async def auto_provision_user(request: Request, call_next):
+        response = await call_next(request)
+        # After the request completes (so we don't delay the response),
+        # ensure the Telegram user exists in the DB to prevent FK violations.
+        init_data = getattr(request.state, "telegram_user", None)
+        if init_data is not None and init_data.user_id != 0:
+            sf = getattr(request.app.state, "session_factory", None)
+            if sf is not None:
+                try:
+                    await ensure_user_exists(sf, init_data.user_id, init_data.first_name)
+                except Exception:
+                    logger.debug("User auto-provision failed (likely exists)", exc_info=True)
+        return response
+
     # Add rate limiter to app state
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
@@ -159,6 +216,7 @@ def create_app() -> FastAPI:
     app.include_router(trackers.router, prefix="/api/v1")
     app.include_router(workflow.router, prefix="/api/v1")
     app.include_router(expenses.router, prefix="/api/v1")
+    app.include_router(reminders.router, prefix="/api/v1")
     app.include_router(health.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
     app.include_router(ai_analysis.router, prefix="/api/v1")

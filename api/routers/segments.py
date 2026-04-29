@@ -8,6 +8,7 @@ from api.dependencies import (
     get_currency_service,
     get_kufar_client,
     get_settings_dependency,
+    get_telegram_user,
 )
 from api.limiter import limiter
 from api.schemas import SegmentsResponse
@@ -21,10 +22,10 @@ from api.validators import MAX_QUERY_LENGTH
 router = APIRouter(tags=["analytics"])
 
 
-_EMPTY_SEGMENT = {
-    "mean": 0.0, "median": 0.0, "q1": 0.0, "q3": 0.0,
-    "min": 0.0, "max": 0.0, "count": 0,
-}
+_EMPTY_SEGMENT = PriceStats(
+    mean=0.0, median=0.0, q1=0.0, q3=0.0,
+    min=0.0, max=0.0, count=0,
+)
 
 
 @router.get("/segments", response_model=SegmentsResponse)
@@ -39,6 +40,7 @@ async def get_segments(
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
     kufar_client: KufarClient = Depends(get_kufar_client),
+    _user=Depends(get_telegram_user),
 ) -> SegmentsResponse:
     cache_key = f"segments:{query}:{currency}:{strict_search}:{category}"
     cached = await cache.get_json(cache_key)
@@ -72,9 +74,7 @@ async def get_segments(
 
     def _segment_payload(name: str) -> dict:
         seg = raw_segments.get(name)
-        if not seg:
-            return dict(_EMPTY_SEGMENT)
-        stats = PriceStats(**seg)
+        stats = PriceStats(**seg) if seg else _EMPTY_SEGMENT
         return convert_price_stats(
             stats,
             currency=currency,

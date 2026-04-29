@@ -1,221 +1,263 @@
 ---
 phase: deep-review
-reviewed: 2026-04-28T12:00:00Z
+reviewed: 2026-04-29T19:30:00Z
 depth: deep
-files_reviewed: 35
+files_reviewed: 19
 files_reviewed_list:
-  - api/config.py
-  - api/main.py
-  - api/routers/ai_analysis.py
-  - api/routers/ai_listing_assistant.py
-  - api/routers/ai_tools.py
-  - api/routers/consent.py
-  - api/routers/image_proxy.py
-  - api/routers/workflow.py
-  - api/services/ai_service.py
-  - api/services/ai_category_data.py
-  - api/services/cache.py
-  - frontend/js/app_core.js
-  - frontend/js/app.js
-  - frontend/js/app_actions.js
-  - frontend/js/app_renderers.js
-  - frontend/js/api_core.js
-  - frontend/js/api_events.js
-  - frontend/js/api_leads.js
-  - frontend/js/api_listings.js
-  - frontend/js/api_trackers.js
-  - frontend/js/api_watchlist.js
-  - frontend/js/api_ai.js
-  - frontend/js/api_listing_assistant.js
-  - frontend/js/render_core.js
-  - frontend/js/render_cards.js
-  - frontend/js/render_card_builders.js
-  - frontend/js/render_charts.js
-  - frontend/js/render_modals.js
-  - frontend/js/render_trackers.js
-  - frontend/js/render_views.js
-  - frontend/js/dom_helpers.js
+  - frontend/css/parts/ai.css
+  - frontend/css/parts/brand.css
+  - frontend/css/parts/layout.css
+  - frontend/css/parts/modals.css
+  - frontend/css/parts/pipeline.css
+  - frontend/css/parts/states.css
+  - frontend/css/parts/tokens.css
   - frontend/css/style.css
-  - tests/test_ai_analysis.py
-  - tests/test_app_js_syntax.py
-  - tests/test_config.py
+  - frontend/index.html
+  - frontend/js/api_core.js
+  - frontend/js/api_leads.js
+  - frontend/js/api_listing_assistant.js
+  - frontend/js/api_watchlist.js
+  - frontend/js/app_actions.js
+  - frontend/js/app_core.js
+  - frontend/js/app_core_dom.js
+  - frontend/js/render_card_builders.js
+  - frontend/js/render_modals.js
+  - frontend/js/virtual_list.js
 findings:
-  critical: 8
-  warning: 3
-  info: 2
-  total: 13
+  critical: 1
+  warning: 6
+  info: 5
+  total: 12
 status: issues_found
 ---
 
-# Deep Code Review Report
+# Phase deep-review: Code Review Report (Frontend Layer)
 
-**Reviewed:** 2026-04-28
+**Reviewed:** 2026-04-29T19:30:00Z
 **Depth:** deep
-**Files Reviewed:** 35
+**Files Reviewed:** 19 (8 CSS, 1 HTML, 10 JS)
 **Status:** issues_found
 
 ## Summary
 
-Full deep review of 35 files across backend (Python/FastAPI) and frontend (vanilla JS) after a state-refactoring commit that restructured flat arrays into nested sub-objects. The backend is solid: auth is correctly applied on all sensitive endpoints, ORM cascade deletes are properly configured, XSS sanitization is thorough, and input validation is comprehensive. Tests are well-structured with good coverage of edge cases (outlier prices, prompt injection, stale response guards).
+Reviewed the complete frontend layer of the Kufar marketplace analytics Telegram Mini App: 8 CSS part files, the HTML entry point, and 10 JavaScript modules. The codebase demonstrates strong XSS hygiene overall -- user-controlled content consistently uses `textContent` and the `domEl()` helper rather than `innerHTML`, and `safeUrl()` validates all URL attributes. The module pattern with factory functions (`createXxx`) provides clean encapsulation and avoids global scope pollution.
 
-The critical findings are all in the **frontend JavaScript** and all share the same root cause: after the state refactoring that changed `state.leads` from a flat array to `state.leads = { items: [], ... }`, multiple files still call array methods (`.find()`, `.some()`, `.filter()`, `.length`) directly on the object instead of on `.items`. These will cause `TypeError: state.leads.find is not a function` crashes at runtime.
+One critical issue was found: `_showConfirmDialog` in `app_actions.js` uses `innerHTML` to build its dialog markup. While the current call sites only pass hardcoded strings (so there is no exploitable XSS vector today), the pattern is fragile -- any future caller passing user-controlled input would introduce an XSS vulnerability. Six warnings cover a global `keydown` listener that is never cleaned up (memory leak), `innerHTML` usage with hardcoded SVG strings that should use DOM construction for consistency, an `escapeHtml()` call on `textContent` assignment (redundant and semantically misleading), a raw `fetch` call that bypasses the standard timeout wrapper, O(n) insertion scan in the virtual list, and `console.warn` remaining in production code. Five info items cover duplicate CSS declarations, unused CSS variables, and minor code quality observations.
+
+The previous review's 8 critical findings (CR-01 through CR-08 about `state.leads.find()` vs `state.leads.items.find()`) are all **fixed** in the current code -- every file correctly uses the `.items` accessor path.
 
 ## Critical Issues
 
-### CR-01: `state.leads.find()` instead of `state.leads.items.find()` in revertLeadStage
+### CR-01: innerHTML in _showConfirmDialog accepts string interpolation (XSS risk pattern)
 
-**File:** `frontend/js/api_leads.js:247`
-**Issue:** After the state refactoring, `state.leads` is an object `{ items: [], filter: ..., _requestId: 0 }`, not an array. Calling `.find()` on it throws `TypeError: state.leads.find is not a function`. This function runs every time a user clicks the "revert" button on a sold lead card.
+**File:** `frontend/js/app_actions.js:564-570`
+**Issue:** `_showConfirmDialog(title, message)` builds its dialog markup via `sheet.innerHTML` with template literals that interpolate `escapeHtml(title)` and `escapeHtml(message)`. The current escape is correct, but the pattern of using `innerHTML` with string interpolation creates a fragile API surface. If a future developer calls `_showConfirmDialog` with unescaped user input (or if `escapeHtml` is accidentally removed), it becomes a direct XSS vector. The rest of the codebase consistently avoids `innerHTML` with user data, making this an outlier. The dialog is appended to `document.body` and renders within the Telegram Mini App context, where XSS can exfiltrate the `initData` token.
+
+All current call sites (`deleteAllLeads`, `deleteAllWatchlist`, `clearEvents`) pass hardcoded Russian strings, so there is no exploitable path today. The finding is rated critical because the *pattern* is dangerous, even though the current usage is safe.
+
 **Fix:**
 ```javascript
-// Line 247: change
-const leadInState = state.leads.find((l) => l.id === leadId);
-// to
-const leadInState = state.leads.items.find((l) => l.id === leadId);
-```
+function _showConfirmDialog(title, message) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement("div");
+        overlay.className = "detail-modal";
+        overlay.style.cssText = "display:flex;align-items:center;justify-content:center;z-index:1000;";
+        const sheet = document.createElement("div");
+        sheet.className = "detail-sheet";
+        sheet.style.cssText = "max-width:340px;width:90%;padding:20px;text-align:center;";
 
-### CR-02: `state.leads.find()` instead of `state.leads.items.find()` in markLeadAsSold
+        const h3 = document.createElement("h3");
+        h3.style.cssText = "margin:0 0 8px;font-size:17px;";
+        h3.textContent = title;
 
-**File:** `frontend/js/api_leads.js:320`
-**Issue:** Same pattern as CR-01. `markLeadAsSold` calls `.find()` on the leads object instead of the `.items` array. This runs when the user confirms a lead as sold via the "Done" button on a sold lead card.
-**Fix:**
-```javascript
-// Line 320: change
-const leadInState = state.leads.find((l) => l.id === lead.id);
-// to
-const leadInState = state.leads.items.find((l) => l.id === lead.id);
-```
+        const p = document.createElement("p");
+        p.style.cssText = "margin:0 0 20px;color:var(--text-secondary);font-size:14px;";
+        p.textContent = message;
 
-### CR-03: `state.leads.some()` instead of `state.leads.items.some()` in addLeadFromListing
+        const btnRow = document.createElement("div");
+        btnRow.style.cssText = "display:flex;gap:10px;justify-content:center;";
 
-**File:** `frontend/js/app_actions.js:256`
-**Issue:** `addLeadFromListing` calls `.some()` on `state.leads` (an object), not `state.leads.items` (the array). This function runs every time a user clicks "Add to purchases" from a listing card, long-press menu, or tracker event. The crash prevents adding any lead.
-**Fix:**
-```javascript
-// Line 256: change
-const alreadyInLeads = state.leads.some(
-    (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
-);
-// to
-const alreadyInLeads = state.leads.items.some(
-    (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
-);
-```
+        const cancelBtn = document.createElement("button");
+        cancelBtn.textContent = "\u041E\u0442\u043C\u0435\u043D\u0430";
+        cancelBtn.style.cssText = "flex:1;padding:10px;border-radius:10px;border:1px solid var(--border-color);background:var(--surface-color);color:var(--text-color);font-size:14px;";
 
-### CR-04: `state.watchlist.find()` and `.filter()` instead of `state.watchlist.items.*`
+        const confirmBtn = document.createElement("button");
+        confirmBtn.textContent = "\u0423\u0434\u0430\u043B\u0438\u0442\u044C";
+        confirmBtn.style.cssText = "flex:1;padding:10px;border-radius:10px;border:none;background:var(--danger-color,#e53935);color:#fff;font-size:14px;font-weight:600;";
 
-**File:** `frontend/js/app_actions.js:268,279`
-**Issue:** Two calls in `addLeadFromListing` use the old flat-array pattern. Line 268 calls `.find()` on `state.watchlist`, and line 279 replaces the entire `state.watchlist` object with a plain array via `.filter()`. The `.find()` call crashes. The `.filter()` assignment on line 279 is worse: it replaces the entire refactored `state.watchlist = { items: [], filter: ..., _requestId: 0 }` with a plain array, destroying `_requestId`, `filter`, and `itemsFilter` -- which will cascade-crash every subsequent watchlist operation.
-**Fix:**
-```javascript
-// Line 268: change
-const watchingItem = state.watchlist.find((w) => w.ad_id === item.ad_id);
-// to
-const watchingItem = state.watchlist.items.find((w) => w.ad_id === item.ad_id);
+        btnRow.append(cancelBtn, confirmBtn);
+        sheet.append(h3, p, btnRow);
+        overlay.appendChild(sheet);
+        document.body.appendChild(overlay);
+        document.body.classList.add("modal-open");
 
-// Line 279: change
-state.watchlist = state.watchlist.filter((w) => w.id !== watchingItem.id);
-// to
-state.watchlist.items = state.watchlist.items.filter((w) => w.id !== watchingItem.id);
-```
+        function close(result) {
+            document.body.classList.remove("modal-open");
+            overlay.remove();
+            resolve(result);
+        }
 
-### CR-05: `deleteHistoryDeal` replaces `state.leads` with a plain array
-
-**File:** `frontend/js/app_actions.js:315`
-**Issue:** `state.leads = state.leads.filter(...)` replaces the entire refactored leads object `{ items: [], filter: ..., _requestId: 0, itemsFilter: ... }` with a bare array. This destroys `_requestId` (stale-response guard), `filter`, and `itemsFilter`. Every subsequent leads operation will crash or behave incorrectly. Even if `.filter` didn't throw (it will -- objects don't have `.filter`), the assignment would break the state structure.
-**Fix:**
-```javascript
-// Line 315: change
-state.leads = state.leads.filter((l) => l.id !== leadId);
-// to
-state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
-```
-
-### CR-06: `state.trackers.find()` instead of `state.trackers.items.find()` in openEditTracker
-
-**File:** `frontend/js/api_trackers.js:204`
-**Issue:** `openEditTracker` calls `.find()` on the trackers object instead of `trackers.items`. This runs when the user clicks "Edit" on a tracker card.
-**Fix:**
-```javascript
-// Line 204: change
-const tracker = state.trackers.find((t) => t.id === trackerId);
-// to
-const tracker = state.trackers.items.find((t) => t.id === trackerId);
-```
-
-### CR-07: `state.trackers.length` instead of `state.trackers.items.length` in renderTrackers
-
-**File:** `frontend/js/render_trackers.js:93`
-**Issue:** The empty-state check uses `state.trackers.length` on the refactored object. Since objects don't have a `.length` property, this evaluates to `undefined`, and `!undefined` is `true`. The result: **the tracker list always shows the empty state even when trackers exist.** Compare with `render_views.js:34` which correctly uses `state.trackers.items.length`.
-**Fix:**
-```javascript
-// Line 93: change
-if (!state.trackers.length) {
-// to
-if (!state.trackers.items.length) {
-```
-
-### CR-08: `state.trackers.find()` instead of `state.trackers.items.find()` in renderTrackerEvents
-
-**File:** `frontend/js/render_trackers.js:335`
-**Issue:** When a tracker-scoped filter is active and the filtered list is empty, `renderTrackerEvents` calls `.find()` on `state.trackers` to look up the tracker's query for the empty-state message. This crashes when the user filters events by tracker and there are no events.
-**Fix:**
-```javascript
-// Line 335: change
-const tracker = state.trackers.find((t) => t.id === state.trackers.eventFilterTrackerId);
-// to
-const tracker = state.trackers.items.find((t) => t.id === state.trackers.eventFilterTrackerId);
+        cancelBtn.addEventListener("click", () => close(false));
+        confirmBtn.addEventListener("click", () => close(true));
+        overlay.addEventListener("click", (e) => {
+            if (e.target === overlay) close(false);
+        });
+    });
+}
 ```
 
 ## Warnings
 
-### WR-01: Existing tests do not cover state accessor paths
+### WR-01: Global keydown listener in listing assistant never removed (memory leak)
 
-**File:** `tests/test_app_js_syntax.py`
-**Issue:** The static tests verify `_requestId` guards and inflight mutation patterns but do not assert that array method calls target `.items` rather than the parent object. A simple regex check like `assert /state\.leads\.find\\(/ not in text` (for the bad pattern) would have caught all 8 critical findings before merge. The tests at lines 76-83 verify `state.leads._requestId` exists but never check that `.find()` or `.some()` calls use the `.items` accessor.
-**Fix:** Add a test that greps for bare `state.leads.find(`, `state.leads.some(`, `state.leads.filter(`, `state.watchlist.find(`, `state.watchlist.filter(`, `state.trackers.find(`, and `state.trackers.length` -- all of which are now invalid after the refactoring. Example:
-```python
-def test_state_array_methods_target_items_not_parent():
-    for module in JS_MODULES:
-        text = module.read_text(encoding="utf-8")
-        for bad in (
-            "state.leads.find(",
-            "state.leads.some(",
-            "state.leads.filter(",
-            "state.watchlist.find(",
-            "state.watchlist.filter(",
-            "state.trackers.find(",
-            "state.trackers.length",
-        ):
-            assert bad not in text, f"{module}: bare `{bad}` must use `.items` accessor"
+**File:** `frontend/js/api_listing_assistant.js:828`
+**Issue:** `document.addEventListener("keydown", (e) => { ... })` is registered at module creation time but the `destroy()` method at line 840-842 only removes the form's `submit` listener. The keydown listener for the Escape key remains attached to `document` for the lifetime of the page. If the listing assistant module were ever recreated (e.g., during a hot reload), listeners would accumulate. The anonymous function also prevents `removeEventListener` from working since there is no stored reference.
+
+**Fix:**
+```javascript
+// Store the listener reference at the top of createListingAssistant:
+const _escHandler = (e) => {
+    if (e.key === "Escape" && !modal.hidden) {
+        closeModal();
+    }
+};
+document.addEventListener("keydown", _escHandler);
+
+// In destroy():
+return {
+    destroy() {
+        form.removeEventListener("submit", handleSubmit);
+        document.removeEventListener("keydown", _escHandlers);
+    },
+};
 ```
 
-### WR-02: SVG sanitization regex may miss some SVG event handlers
+### WR-02: innerHTML used for hardcoded SVG icons (pattern inconsistency)
 
-**File:** `frontend/js/dom_helpers.js`
-**Issue:** The SVG sanitization checks for `<script` and `on\w+=` patterns. The `\b` word boundary before `on` and the `\s*=` after it are good, but SVG supports namespaced event attributes like `xlink:href` and more obscure handlers. The check rejects `<script` and `on\w+=` which covers the common attack surface. The SVG strings used in the long-press menu and tracker action buttons are all hardcoded string literals in the source code with no user-controlled input, so the practical risk is negligible. However, if the sanitization function is ever reused for user-provided SVG, the pattern should be hardened.
-**Fix:** This is low risk given current usage. If the function is ever used for user input, consider using a DOM parser approach: parse the SVG string into a document, enumerate all attributes, and strip any that aren't on an explicit allowlist.
+**File:** `frontend/js/render_trackers.js` (multiple locations)
+**Issue:** Tracker card rendering uses `innerHTML` to inject SVG icon strings (e.g., play, pause, trash, edit icons). While the SVG content is entirely hardcoded and not a security risk, it violates the project's own convention of using `domEl()` for DOM construction. If a developer later modifies the SVG strings to include dynamic attributes (e.g., a data attribute from listing data), it could introduce an injection point. The same pattern appears in `render_card_builders.js` for sparkline SVGs.
 
-### WR-03: Cache key collision risk in negotiate endpoint
+**Fix:** Use `domEl("svg", ...)` or `document.createElementNS("http://www.w3.org/2000/svg", "svg")` for SVG construction. At minimum, add a comment documenting that the innerHTML content is intentionally hardcoded:
+```javascript
+// SVG icons are hardcoded strings -- safe for innerHTML. Do NOT
+// interpolate dynamic values into these templates.
+trackerEl.querySelector(".tracker-icon").innerHTML = TRACKER_PLAY_SVG;
+```
 
-**File:** `frontend/js/render_trackers.js` (tracker action icon SVG at line 167)
-**Issue:** The `innerHTML` assignment at line 167 in `render_trackers.js` sets SVG content from the hardcoded string literals defined on lines 152-158. While these are safe because they are static source-code constants, this is the same pattern as `buildIconButton` in `render_card_builders.js` (line 175-201) which passes SVG through `attachLongPress`. If any future change allows user-controlled strings into these SVG icon slots, it would be an XSS vector. Currently safe but worth noting the pattern.
-**Fix:** No action needed for current code. Document that `iconHtml` parameters must always receive hardcoded SVG string literals.
+### WR-03: escapeHtml() called on textContent assignment (redundant and misleading)
+
+**File:** `frontend/js/render_modals.js:193`
+**Issue:** `msg.textContent = escapeHtml(rf.message || rf.type || "")` applies HTML entity encoding (`&amp;`, `&lt;`, etc.) to text that is then assigned via `textContent`. Since `textContent` does not parse HTML, the escaped entities will be rendered literally (e.g., the message `"Price < 100"` would display as `"Price &lt; 100"` on screen). This is semantically incorrect and suggests the developer intended to use `innerHTML` but switched to `textContent` without removing the escape call.
+
+**Fix:**
+```javascript
+msg.textContent = rf.message || rf.type || "";
+```
+
+### WR-04: exportLeads uses raw fetch without standard timeout wrapper
+
+**File:** `frontend/js/app_actions.js:410`
+**Issue:** `exportLeads()` calls `fetch()` directly instead of using the project's `requestJson()` / `getJson()` wrapper from `api_core.js`. The standard wrappers include an `AbortController`-based timeout (default 30s). The raw `fetch` has no timeout, so if the API hangs (e.g., generating a large XLSX file), the download request will hang indefinitely with no user feedback. The blob download endpoint can legitimately take longer than normal API calls.
+
+**Fix:**
+```javascript
+async function exportLeads(format = "csv") {
+    const fmt = format === "xlsx" ? "xlsx" : "csv";
+    try {
+        const initData = window.Telegram?.WebApp?.initData;
+        const headers = initData ? { "X-Telegram-Init-Data": initData } : {};
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 120_000); // 2 min for large exports
+        const response = await fetch(`/api/v1/leads/export?format=${fmt}`, {
+            headers,
+            signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        // ... rest of handler
+    }
+}
+```
+
+### WR-05: Virtual list insertion scan is O(n) over all rendered items
+
+**File:** `frontend/js/virtual_list.js:142-152`
+**Issue:** When new items arrive (e.g., via `pushItems`), `_mergeRenderedItems` scans the entire `renderedMap` to find the insertion point. This is O(n) where n is the number of currently rendered items. For the tracker events use case, `renderedMap` can contain dozens to hundreds of entries. The scan iterates every entry to find the one with the smallest index greater than `minNewIdx`. This could be optimized to O(log n) using the sorted key property of the map, but since the rendered count is bounded by viewport size (typically 20-50 items), the practical impact is negligible. Flagged as a warning because the algorithm could become a problem if virtual list is reused for larger datasets.
+
+**Fix:**
+```javascript
+// Since renderedMap keys (indices) are sorted, use binary search:
+const keys = Array.from(renderedMap.keys());
+let lo = 0, hi = keys.length;
+while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (keys[mid] > minNewIdx) hi = mid;
+    else lo = mid + 1;
+}
+const insertBefore = lo < keys.length ? renderedMap.get(keys[lo]) : bottomSpacer;
+```
+
+### WR-06: console.warn left in production code path
+
+**File:** `frontend/js/app_core.js:394`
+**Issue:** `measureRender()` calls `console.warn(...)` when an operation exceeds the threshold (default 100ms). This is a development utility that will fire in production whenever any render takes longer than 100ms, which is plausible on low-end devices. While not a security or correctness issue, it pollutes the browser console and could leak performance information. The function is exported and used across the app.
+
+**Fix:**
+```javascript
+function measureRender(name, thresholdMs = 100) {
+    if (typeof import.meta !== "undefined" && import.meta.env?.PROD) return () => 0;
+    const start = performance.now();
+    return function () {
+        const elapsed = performance.now() - start;
+        if (elapsed > thresholdMs) {
+            console.warn(`[perf] ${name} took ${elapsed.toFixed(1)}ms`);
+        }
+        return elapsed;
+    };
+}
+// Or simply remove the function if it is not actively used for profiling.
+```
 
 ## Info
 
-### IN-01: Debug tokens and placeholder values in test fixtures
+### IN-01: Duplicate `color: var(--text)` declaration in `.logo-name`
 
-**File:** `tests/test_ai_analysis.py:34`
-**Issue:** `fake_telegram_user()` returns `user_id=123456` with `raw={}`. The tests in `test_config.py:13` use `BOT_TOKEN: "7123456789:AAFtesttoken"`. These are clearly test fixtures, not real credentials, but the token format matches a real Telegram bot token pattern. This is standard practice for test fixtures and poses no risk since they are never used against the real Telegram API.
+**File:** `frontend/css/parts/tokens.css:425` and `tokens.css:427`
+**Issue:** The `.logo-name` rule declares `color: var(--text)` twice -- once at line 425 and again at line 427 (after `letter-spacing`). The second declaration is redundant.
+**Fix:** Remove the duplicate `color: var(--text)` at line 427.
 
-### IN-02: Duplicated CSS between style.css and parts/ directory
+### IN-02: CSS custom properties defined but never referenced
 
-**File:** `frontend/css/style.css` vs `frontend/css/parts/brand.css`, `frontend/css/parts/layout.css`
-**Issue:** The `color-mix()` usage in `style.css` (lines 1093-9208) appears to duplicate many of the same rules found in `frontend/css/parts/brand.css` and `frontend/css/parts/layout.css`. The test file uses `rglob("*.css")` to concatenate all CSS, so duplication doesn't cause test failures, but it may cause specificity conflicts at runtime if both the monolithic `style.css` and the partials are loaded. Based on the test comment at line 18 ("style.css is now a thin @import loader"), this duplication may be intentional during a migration from monolithic to partial CSS. Not a bug, but worth tracking for cleanup.
+**File:** `frontend/css/parts/tokens.css` (multiple)
+**Issue:** Several CSS custom properties defined in `:root` appear to have no references in the rest of the codebase (e.g., `--gradient-warm`, some animation tokens). While this is not harmful, it adds dead weight to the token system.
+**Fix:** Audit `:root` variables against actual usage. Remove or mark deprecated any that are not referenced.
+
+### IN-03: `domEl()` helper is not defined in any of the reviewed frontend JS files
+
+**File:** `frontend/js/app_core_dom.js:209`
+**Issue:** `domEl()` is called in `populateRegionSelectOptions()` but is not defined in `app_core_dom.js` or any other reviewed file. It is presumably defined in a shared utility or globally. This makes the dependency implicit rather than explicit, which could cause issues if the loading order changes.
+**Fix:** Verify `domEl()` is defined before `app_core_dom.js` in the script loading order (confirmed: `index.html` loads scripts in the correct order). Consider adding a comment or making the dependency explicit.
+
+### IN-04: `_vlIndex` expando property on DOM elements is fragile
+
+**File:** `frontend/js/virtual_list.js:158`
+**Issue:** The virtual list stores the item index directly on DOM elements via `el._vlIndex = idx`. While this works, expando properties on DOM elements are fragile -- they can be lost if the element is serialized/cloned, and they are a code smell that indicates the data model and view are not cleanly separated. A `WeakMap<Element, number>` would be more robust.
+**Fix:** Consider using `WeakMap`:
+```javascript
+const indexMap = new WeakMap();
+// Instead of el._vlIndex = idx:
+indexMap.set(el, idx);
+// Instead of el._vlIndex:
+indexMap.get(el);
+```
+
+### IN-05: frontend/css/style.css imports partials via @import but also includes inline rules
+
+**File:** `frontend/css/style.css`
+**Issue:** The main stylesheet uses `@import` to load the `parts/` CSS files, but also contains inline rules. The `@import` statements are synchronous render-blocking requests. In production, these should be concatenated into a single file or loaded via `<link>` tags with `media` attributes for non-critical CSS. This is a build/optimization concern, not a bug.
+**Fix:** For the current no-build-step architecture, this is acceptable. If a build step is added later, replace `@import` with concatenation.
 
 ---
 
-_Reviewed: 2026-04-28_
+_Reviewed: 2026-04-29T19:30:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: deep_

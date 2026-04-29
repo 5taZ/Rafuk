@@ -22,6 +22,8 @@ async def test_health_check_returns_ok(client: AsyncClient) -> None:
     data = resp.json()
     assert data["status"] in ("healthy", "degraded")
     assert "database" in data
+    assert "rate_limiter" in data
+    assert data["rate_limiter"] in ("ok", "degraded")
 
 
 @pytest.mark.asyncio

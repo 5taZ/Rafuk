@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,10 +17,13 @@ class CurrencyService:
         self._cache = cache
         self._http_client = http_client
         self._owns_client = http_client is None
+        self._client_lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=3.0)
+        if self._http_client is None or self._http_client.is_closed:
+            async with self._client_lock:
+                if self._http_client is None or self._http_client.is_closed:
+                    self._http_client = httpx.AsyncClient(timeout=3.0)
         return self._http_client
 
     async def aclose(self) -> None:

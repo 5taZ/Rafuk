@@ -66,9 +66,9 @@ def _serialize_watchlist(
     delta_byn = None
     delta_percent = None
     if current is not None and initial is not None:
-        delta_byn = round(current - initial, 2)
+        delta_byn = round(float(current) - float(initial), 2)
         if initial:
-            delta_percent = round((delta_byn / initial) * 100.0, 2)
+            delta_percent = round((delta_byn / float(initial)) * 100.0, 2)
     return WatchlistRead(
         id=item.id,
         user_id=item.user_id,
@@ -586,7 +586,7 @@ async def refresh_watchlist(
                 if new_thumb:
                     item.thumbnail = new_thumb
                 updated += 1
-                if previous is not None and price is not None and price < previous:
+                if previous is not None and price is not None and price < float(previous):
                     item.market_status = "price_drop"
                     price_drops += 1
                 # Append a sparkline point only when the price moved

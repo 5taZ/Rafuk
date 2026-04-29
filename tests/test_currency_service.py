@@ -16,6 +16,7 @@ async def test_currency_service_fetches_and_caches_rates() -> None:
         {"Cur_Abbreviation": "USD", "Cur_OfficialRate": 3.2, "Cur_Scale": 1},
     ]
     http_client = MagicMock()
+    http_client.is_closed = False
     http_client.get = AsyncMock(return_value=response)
 
     service = CurrencyService(MemoryCache(), http_client=http_client)
@@ -27,6 +28,7 @@ async def test_currency_service_fetches_and_caches_rates() -> None:
 @pytest.mark.asyncio
 async def test_currency_service_uses_safe_fallback_when_fetch_fails() -> None:
     http_client = MagicMock()
+    http_client.is_closed = False
     http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
 
     service = CurrencyService(MemoryCache(), http_client=http_client)

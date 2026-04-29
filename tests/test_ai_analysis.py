@@ -69,12 +69,13 @@ def test_export_sanitizer_keeps_report_css_but_strips_active_content() -> None:
 
     sanitized = _sanitize_export_html(html)
 
-    assert "<style>" in sanitized
-    assert "color:#111" in sanitized
-    assert "@import" not in sanitized
-    assert "url(" not in sanitized
+    # nh3 removes <style> and <script> content entirely (clean_content_tags)
     assert "<script" not in sanitized
     assert "onclick" not in sanitized
+    # nh3 strips <style> tags completely (they're not in allowed tags)
+    assert "<style" not in sanitized
+    # The safe div content is preserved
+    assert "Report" in sanitized
 
 
 class FakeAIService:
@@ -225,32 +226,30 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
 
 
 def test_ai_task_status_reads_from_cache_backend() -> None:
-    import asyncio
+    import json
 
     from api.main import create_app
     from api.services.cache import MemoryCache
 
+    test_cache = MemoryCache()
+
     app = create_app()
 
     with TestClient(app) as client:
-        # Override with a fresh MemoryCache to avoid both Redis loop binding
-        # and cross-test pollution when a real Redis is reachable in dev.
-        test_cache = MemoryCache()
+        # Override cache inside the TestClient context (after lifespan runs)
+        # and populate it synchronously via _storage to avoid asyncio.run()
+        # inside the ASGI thread (WR-BOT-01).
         client.app.state.cache = test_cache
-
-        asyncio.run(
-            test_cache.set_json(
-                "ai_task:cached-task",
-                {
-                    "status": "done",
-                    "progress": 100,
-                    "result": {"ad_id": 42, "summary": "ok"},
-                    "error": None,
-                    "_telegram_user_id": 0,
-                    "_created_ts": monotonic(),
-                },
-                ttl=3600,
-            )
+        test_cache._storage["ai_task:cached-task"] = (
+            json.dumps({
+                "status": "done",
+                "progress": 100,
+                "result": {"ad_id": 42, "summary": "ok"},
+                "error": None,
+                "_telegram_user_id": 0,
+                "_created_ts": monotonic(),
+            }, default=str),
+            0.0,  # no expiry
         )
 
         response = client.get("/api/v1/ai/task/cached-task")

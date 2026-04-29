@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -30,6 +31,7 @@ class MemoryCache:
     def __init__(self) -> None:
         self._storage: OrderedDict[str, tuple[str, float]] = OrderedDict()
         # (value, expires_at) — expires_at=0 means no expiry
+        self._lock = asyncio.Lock()
 
     async def get(self, key: str) -> str | None:
         entry = self._storage.get(key)
@@ -68,24 +70,26 @@ class MemoryCache:
 
     async def incr(self, key: str, ttl: int | None = None) -> int:
         """Atomically increment a counter. Returns the new value."""
-        entry = self._storage.get(key)
-        if entry is not None:
-            value, expires_at = entry
-            if expires_at > 0 and time.monotonic() >= expires_at:
-                del self._storage[key]
-                count = 1
-            else:
-                try:
-                    count = int(value) + 1
-                except (TypeError, ValueError):
+        async with self._lock:
+            entry = self._storage.get(key)
+            if entry is not None:
+                value, expires_at = entry
+                if expires_at > 0 and time.monotonic() >= expires_at:
+                    del self._storage[key]
                     count = 1
-        else:
-            count = 1
-        new_expires = (
-            expires_at if entry else (time.monotonic() + ttl if ttl else 0.0)
-        )
-        self._storage[key] = (str(count), new_expires)
-        self._storage.move_to_end(key)
+                    # Fresh TTL for re-created counter — don't reuse expired timestamp
+                    new_expires = time.monotonic() + ttl if ttl else 0.0
+                else:
+                    try:
+                        count = int(value) + 1
+                    except (TypeError, ValueError):
+                        count = 1
+                    new_expires = expires_at
+            else:
+                count = 1
+                new_expires = time.monotonic() + ttl if ttl else 0.0
+            self._storage[key] = (str(count), new_expires)
+            self._storage.move_to_end(key)
         return count
 
     async def delete(self, key: str) -> None:
@@ -143,12 +147,20 @@ class RedisCache:
         await self.set(key, json.dumps(value, default=str), ttl)
 
     async def incr(self, key: str, ttl: int | None = None) -> int:
-        """Atomically increment a counter using Redis INCR. Returns the new value."""
+        """Atomically increment a counter using Redis INCR. Returns the new value.
+
+        Uses SET NX EX for the initial key to make INCR + TTL atomic,
+        avoiding the race where a process crashes between INCR and EXPIRE.
+        """
         try:
-            count = await self._client.incr(key)
-            if count == 1 and ttl:
-                await self._client.expire(key, ttl)
-            return count
+            if ttl:
+                # SET key 1 NX EX ttl — only sets if key doesn't exist
+                created = await self._client.set(key, "1", nx=True, ex=ttl)
+                if created:
+                    return 1
+                # Key already exists — just increment (TTL preserved)
+                return await self._client.incr(key)
+            return await self._client.incr(key)
         except RedisError:
             logger.warning("Redis incr failed for key=%s", key, exc_info=True)
             return 0

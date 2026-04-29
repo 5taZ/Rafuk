@@ -22,6 +22,7 @@ from api.services.market_signals import (
     region_label,
 )
 from api.services.reseller_tools import analyze_query_text, compute_deal_score
+from api.services.risk_detector import detect_risks
 
 IMAGE_BASE_URL = "https://rms.kufar.by/v1/gallery/"
 IGNORED_AD_PARAMETER_KEYS = {"users_synonyms"}
@@ -179,6 +180,7 @@ def build_listing_detail(
         parameters=collect_fields(ad.get("ad_parameters", []), ignored=IGNORED_AD_PARAMETER_KEYS),
         seller_fields=collect_fields(ad.get("account_parameters", []), ignored=PII_PARAMETER_KEYS),
         seller_rating=extract_seller_rating(ad),
+        risk_factors=detect_risks(ad, market_stats={"median": market_stats.median}),
     )
 
 
@@ -237,4 +239,5 @@ def build_listing_item(
         flip_estimates=compute_flip_estimates(ad, market_stats),
         thumbnail=first_image_url(ad),
         seller_rating=extract_seller_rating(ad),
+        risk_factors=detect_risks(ad, market_stats={"median": market_stats.median}),
     )

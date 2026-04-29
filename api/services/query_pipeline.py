@@ -153,6 +153,19 @@ class QueryDatasetContext:
 # and the whole search completes in roughly one pagination's worth
 # of time.
 _inflight_dataset_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
+_MAX_INFLIGHT = 500
+_INFLIGHT_STALE_SECONDS = 300  # prune futures older than 5 minutes
+
+
+def _prune_stale_inflight_futures() -> None:
+    """Remove futures from a different event loop or already done."""
+    loop = asyncio.get_running_loop()
+    stale = [
+        key for key, fut in _inflight_dataset_futures.items()
+        if fut.done() or fut.get_loop() is not loop
+    ]
+    for key in stale:
+        _inflight_dataset_futures.pop(key, None)
 
 
 def _dataset_cache_key(
@@ -230,6 +243,11 @@ async def load_query_dataset(
             response = await cache.get_json(sf_key)
 
         if response is None:
+            # Prune futures from old event loops (hot reload) or already done
+            _prune_stale_inflight_futures()
+            if len(_inflight_dataset_futures) > _MAX_INFLIGHT:
+                logger.warning("Purging %d stale inflight futures", len(_inflight_dataset_futures))
+                _inflight_dataset_futures.clear()
             inflight = _inflight_dataset_futures.get(sf_key)
             if inflight is not None and not inflight.done():
                 # Someone else is already paginating this exact key —
@@ -247,10 +265,10 @@ async def load_query_dataset(
                     )
                     response = _normalize_response_ads(response)
                     if cache is not None:
-                        # 5-minute TTL — long enough for the 6 parallel
-                        # search endpoints to share, short enough that
-                        # fresh ads show up on the user's next search.
-                        await cache.set_json(sf_key, response, ttl=300)
+                        # Use the configured cache TTL — same as listings
+                        # response cache so they expire together.
+                        cache_ttl = getattr(settings, "cache_ttl_seconds", 300) or 300
+                        await cache.set_json(sf_key, response, ttl=cache_ttl)
                     if not future.done():
                         future.set_result(response)
                 except BaseException as exc:

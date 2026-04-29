@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 from datetime import UTC, datetime
@@ -17,6 +18,15 @@ from api.schemas import ConsentGrantRequest, ConsentStatusResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/account", tags=["account"])
+
+
+def _is_valid_ip(value: str) -> bool:
+    """Return True if *value* is a valid IPv4 or IPv6 address."""
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
 
 VALID_CONSENT_TYPES = {"ai_analysis", "pd_processing", "cross_border"}
 CURRENT_POLICY_VERSION = "2026.1"
@@ -133,10 +143,13 @@ async def grant_consent(
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
             # Last entry is set by our reverse proxy; earlier entries
-            # may be client-injected. Strip whitespace and validate.
+            # may be client-injected. Strip whitespace and validate format.
             parts = [p.strip() for p in forwarded.split(",") if p.strip()]
             if parts:
-                client_ip = parts[-1]
+                candidate = parts[-1]
+                # Basic IP format validation — reject obviously spoofed values
+                if _is_valid_ip(candidate):
+                    client_ip = candidate
 
         consent = UserConsent(
             user_id=uid,
@@ -312,9 +325,14 @@ async def export_account_data(
             for t in trackers
         ]
 
-        # Tracker events
+        # Tracker events (capped to prevent memory issues)
         tracker_events = (
-            await session.execute(select(TrackerEvent).where(TrackerEvent.user_id == uid))
+            await session.execute(
+                select(TrackerEvent)
+                .where(TrackerEvent.user_id == uid)
+                .order_by(TrackerEvent.created_at.desc())
+                .limit(500)
+            )
         ).scalars().all()
         events_data = [
             {
@@ -322,7 +340,7 @@ async def export_account_data(
                 "tracker_id": e.tracker_id,
                 "event_type": e.event_type,
                 "title": e.title,
-                "price_byn": e.price_byn,
+                "price_byn": float(e.price_byn) if e.price_byn is not None else None,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
             }
             for e in tracker_events
@@ -340,9 +358,15 @@ async def export_account_data(
                 "ad_id": lead.ad_id,
                 "query": lead.query,
                 "title": lead.title,
-                "price_byn": lead.price_byn,
-                "buy_price_byn": lead.buy_price_byn,
-                "sold_price_byn": lead.sold_price_byn,
+                "price_byn": (
+                    float(lead.price_byn) if lead.price_byn is not None else None
+                ),
+                "buy_price_byn": (
+                    float(lead.buy_price_byn) if lead.buy_price_byn is not None else None
+                ),
+                "sold_price_byn": (
+                    float(lead.sold_price_byn) if lead.sold_price_byn is not None else None
+                ),
                 "status": lead.status,
                 "source": lead.source,
                 "notes": lead.notes,
@@ -394,9 +418,15 @@ async def export_account_data(
                 "ad_id": w.ad_id,
                 "query": w.query,
                 "title": w.title,
-                "price_byn": w.price_byn,
-                "initial_price_byn": w.initial_price_byn,
-                "market_median_byn": w.market_median_byn,
+                "price_byn": (
+                    float(w.price_byn) if w.price_byn is not None else None
+                ),
+                "initial_price_byn": (
+                    float(w.initial_price_byn) if w.initial_price_byn is not None else None
+                ),
+                "market_median_byn": (
+                    float(w.market_median_byn) if w.market_median_byn is not None else None
+                ),
                 "notes": w.notes,
                 "created_at": w.created_at.isoformat() if w.created_at else None,
             }

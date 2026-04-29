@@ -10,6 +10,7 @@ from api.dependencies import (
     get_currency_service,
     get_kufar_client,
     get_settings_dependency,
+    get_telegram_user,
 )
 from api.limiter import limiter
 from api.schemas import GeographyRegionPoint, GeographyResponse
@@ -36,6 +37,7 @@ async def get_geography(
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
     kufar_client: KufarClient = Depends(get_kufar_client),
+    _user=Depends(get_telegram_user),
 ) -> GeographyResponse:
     cache_key = f"geography:{query}:{currency}:{strict_search}:{category}"
     cached = await cache.get_json(cache_key)

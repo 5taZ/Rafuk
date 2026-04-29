@@ -9,7 +9,9 @@ import pytest
 
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
 
-BOT_TOKEN = "7123456789:AAFtesttoken"
+# WARNING: This is a FAKE test token. Never copy this pattern with a real
+# bot token — real tokens MUST come from env vars only.
+_TEST_BOT_TOKEN = "7123456789:AAFtesttoken"
 
 
 def _make_init_data(user_id: int, bot_token: str, auth_date: int | None = None) -> str:
@@ -26,41 +28,41 @@ def _make_init_data(user_id: int, bot_token: str, auth_date: int | None = None) 
 
 
 def test_valid_init_data_returns_parsed_object() -> None:
-    init_data = _make_init_data(user_id=123456, bot_token=BOT_TOKEN)
-    result = verify_telegram_init_data(init_data, BOT_TOKEN)
+    init_data = _make_init_data(user_id=123456, bot_token=_TEST_BOT_TOKEN)
+    result = verify_telegram_init_data(init_data, _TEST_BOT_TOKEN)
     assert isinstance(result, TelegramInitData)
     assert result.user_id == 123456
 
 
 def test_tampered_hash_raises_value_error() -> None:
-    init_data = _make_init_data(user_id=123456, bot_token=BOT_TOKEN)
+    init_data = _make_init_data(user_id=123456, bot_token=_TEST_BOT_TOKEN)
     tampered = init_data.replace("query_id=AAHtest", "query_id=AAHtampered")
     with pytest.raises(ValueError, match="Invalid Telegram initData signature"):
-        verify_telegram_init_data(tampered, BOT_TOKEN)
+        verify_telegram_init_data(tampered, _TEST_BOT_TOKEN)
 
 
 def test_missing_hash_raises_value_error() -> None:
     with pytest.raises(ValueError, match="missing hash"):
-        verify_telegram_init_data("user=%7B%22id%22%3A1%7D&auth_date=1700000000", BOT_TOKEN)
+        verify_telegram_init_data("user=%7B%22id%22%3A1%7D&auth_date=1700000000", _TEST_BOT_TOKEN)
 
 
 def test_stale_init_data_raises_value_error() -> None:
     now_ts = int(time())
     stale = _make_init_data(
         user_id=123456,
-        bot_token=BOT_TOKEN,
+        bot_token=_TEST_BOT_TOKEN,
         auth_date=now_ts - 86_401,
     )
     with pytest.raises(ValueError, match="too old"):
-        verify_telegram_init_data(stale, BOT_TOKEN, now_ts=now_ts)
+        verify_telegram_init_data(stale, _TEST_BOT_TOKEN, now_ts=now_ts)
 
 
 def test_future_init_data_raises_value_error() -> None:
     now_ts = int(time())
     future = _make_init_data(
         user_id=123456,
-        bot_token=BOT_TOKEN,
+        bot_token=_TEST_BOT_TOKEN,
         auth_date=now_ts + 120,
     )
     with pytest.raises(ValueError, match="in the future"):
-        verify_telegram_init_data(future, BOT_TOKEN, now_ts=now_ts)
+        verify_telegram_init_data(future, _TEST_BOT_TOKEN, now_ts=now_ts)

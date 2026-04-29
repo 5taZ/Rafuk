@@ -672,6 +672,7 @@ class AIService:
         system: str,
         content: list[dict] | str,
         max_tokens: int = 1200,
+        reasoning_effort: str | None = None,
     ) -> dict:
         """Call OpenAI-compatible /chat/completions endpoint."""
         messages = [
@@ -691,8 +692,13 @@ class AIService:
         # for the legacy Gemma 4 fallback but produces shallow analysis
         # on Flash — the model skips comparison steps and hallucinates
         # fair_price ranges that aren't grounded in the analog data.
+        #
+        # For the listing assistant we use "low" because the output is a
+        # single large JSON (title + description + 3 pricing tiers with
+        # reasoning + negotiation playbook + photo tips) — "medium" would
+        # spend too many tokens on thinking and truncate the JSON.
         if self._is_gemini:
-            body["reasoning_effort"] = "medium"
+            body["reasoning_effort"] = reasoning_effort or "medium"
             # Gemini honours response_format properly — ask for JSON to
             # cut down on stray markdown fences and prose around the JSON.
             body["response_format"] = {"type": "json_object"}
@@ -724,7 +730,14 @@ class AIService:
             raise RuntimeError("Insufficient balance")
         resp.raise_for_status()
         data = resp.json()
-        message = data["choices"][0]["message"]
+        choice = data["choices"][0]
+        finish_reason = choice.get("finish_reason", "")
+        message = choice["message"]
+        if finish_reason == "length":
+            logger.warning(
+                "AI _chat: output truncated (finish_reason=length, max_tokens=%d)",
+                max_tokens,
+            )
         # Some models (Gemma 4 on Together) return output in `reasoning`
         # field while `content` is empty — handle both.
         text = message.get("content") or ""
@@ -1009,14 +1022,16 @@ class AIService:
             result = await self._chat(
                 system=LISTING_ASSISTANT_PROMPT,
                 content=content,
-                max_tokens=3200,
+                max_tokens=4000,
+                reasoning_effort="low",
             )
             return _dedupe_listing_payload(result)
 
         result = await self._chat(
             system=LISTING_ASSISTANT_PROMPT,
             content=user_text,
-            max_tokens=3000,
+            max_tokens=4000,
+            reasoning_effort="low",
         )
         return _dedupe_listing_payload(result)
 

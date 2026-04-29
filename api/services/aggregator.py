@@ -11,6 +11,21 @@ KOPECKS = 100
 MAX_PRICE_BYN = 100_000.0
 MIN_PRICE_BYN = 0.5  # Ignore listings priced below 0.50 BYN (kopecks remainder / spam)
 MIN_CATEGORY_REFERENCE_COUNT = 3
+
+# Maximum reasonable price (BYN) for accessory subcategories.
+# When Kufar search returns mixed results (e.g. phones + cases for "чехол iPhone"),
+# ads priced above these caps are clearly the *parent* product, not the accessory.
+# Used by filter_ads_for_accessory_category() to compute accurate price stats.
+ACCESSORY_PRICE_CAPS: dict[str, float] = {
+    "phone_accessory": 150.0,
+    "auto_accessory": 500.0,
+    "computer_accessory": 2000.0,
+    "photo_accessory": 500.0,
+    "gaming_accessory": 1000.0,
+    "home_accessory": 200.0,
+    "bicycle_accessory": 200.0,
+    "watch_accessory": 120.0,
+}
 STRICT_VARIANT_TOKENS = {
     "pro",
     "max",
@@ -291,6 +306,36 @@ def resolve_price_reference(
                     label=get_category_label(ad) or f"Категория {category_id}",
                 )
     return PriceReference(stats=market_stats, scope="query", label="Весь запрос")
+
+
+def filter_ads_for_accessory_category(
+    ads: list[dict[str, Any]],
+    detected_category: str,
+) -> list[dict[str, Any]]:
+    """Filter ads to only those within the accessory price range.
+
+    When Kufar search returns mixed results (e.g. phones + cases for
+    "чехол iPhone 14 Pro"), ads priced above the accessory cap are
+    clearly the parent product, not the accessory.  Removing them
+    before computing price stats prevents the median from being
+    dominated by phone-level prices (~2000 BYN instead of ~20 BYN).
+
+    Returns the original list unchanged when *detected_category* is
+    not an accessory type or when the filtered result would be empty.
+    """
+    cap = ACCESSORY_PRICE_CAPS.get(detected_category)
+    if cap is None:
+        return ads
+
+    filtered: list[dict[str, Any]] = []
+    for ad in ads:
+        price = normalize_price_byn(ad.get("price_byn"))
+        if price is not None and price <= cap:
+            filtered.append(ad)
+
+    # If filtering removes everything (edge case), fall back to the
+    # original list — better to have noisy stats than zero stats.
+    return filtered if filtered else ads
 
 
 def compute_price_vs_reference(

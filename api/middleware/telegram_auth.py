@@ -19,7 +19,7 @@ def verify_telegram_init_data(
     init_data: str,
     bot_token: str,
     *,
-    max_age_seconds: int = 86_400,
+    max_age_seconds: int = 300,
     now_ts: int | None = None,
 ) -> TelegramInitData:
     if not init_data:
@@ -48,7 +48,7 @@ def verify_telegram_init_data(
     now = int(now_ts if now_ts is not None else time())
     if auth_date <= 0:
         raise ValueError("initData auth_date is missing")
-    if auth_date > now + 60:
+    if auth_date > now + 5:
         raise ValueError("initData auth_date is in the future")
     if max_age_seconds > 0 and now - auth_date > max_age_seconds:
         raise ValueError("initData is too old")

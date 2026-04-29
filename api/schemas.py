@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,11 +15,15 @@ class LeadStatusEnum(StrEnum):
 
     watching = "watching"
     new = "new"
+    reviewing = "reviewing"
     in_progress = "in_progress"
     researching = "researching"
+    negotiating = "negotiating"
+    deferred = "deferred"
+    closed = "closed"
+    abandoned = "abandoned"
     bought = "bought"
     sold = "sold"
-    closed = "closed"
     skipped = "skipped"
 
 
@@ -129,6 +133,7 @@ class ListingItem(BaseModel):
     flip_estimates: list[FlipEstimate] = Field(default_factory=list)
     thumbnail: str | None = None
     seller_rating: float | None = None
+    risk_factors: list[dict] = Field(default_factory=list)
 
 
 class ListingField(BaseModel):
@@ -174,6 +179,8 @@ class ListingDetailResponse(BaseModel):
     parameters: list[ListingField] = Field(default_factory=list)
     seller_fields: list[ListingField] = Field(default_factory=list)
     seller_rating: float | None = None
+    risk_score: str | None = None  # "low", "medium", "high"
+    risk_factors: list[dict] = Field(default_factory=list)
 
 
 class ListingsResponse(BaseModel):
@@ -263,6 +270,8 @@ class TrackerCreate(BaseModel):
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
+    alert_price_threshold: float | None = None
+    alert_discount_percent: float | None = None
 
 
 class TrackerUpdate(BaseModel):
@@ -276,6 +285,8 @@ class TrackerUpdate(BaseModel):
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
+    alert_price_threshold: float | None = None
+    alert_discount_percent: float | None = None
 
 
 class TrackerRead(BaseModel):
@@ -292,6 +303,8 @@ class TrackerRead(BaseModel):
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
+    alert_price_threshold: float | None = None
+    alert_discount_percent: float | None = None
     last_seen_ad_id: int | None = None
     last_seen_price_byn: float | None = None
     last_checked_at: datetime | None = None
@@ -518,6 +531,23 @@ class DealExpenseRead(BaseModel):
     created_at: datetime
 
 
+# ── Lead Reminders ──────────────────────────────────────────────────────────
+
+
+class ReminderCreate(BaseModel):
+    remind_at: datetime
+    message: str | None = None
+
+
+class ReminderRead(ReminderCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lead_id: int
+    sent: bool
+    created_at: datetime
+
+
 # ── User Consent ──────────────────────────────────────────────────────────
 
 
@@ -687,6 +717,8 @@ class AIAnalysisResponse(BaseModel):
     scam_analysis: AIScamAnalysis | None = None
     photo_authenticity: AIPhotoAuthenticity | None = None
     market_context: str = ""
+    price_reference_scope: str = "query"
+    price_reference_label: str | None = None
     best_pick_reason: str = ""
     summary: str = ""
     disclaimer: str = (
@@ -697,7 +729,7 @@ class AIAnalysisResponse(BaseModel):
         "самостоятельно на свой страх и риск. Рыночные данные основаны на открытых "
         "объявлениях kufar.by и могут не отражать реальные цены сделок."
     )
-    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))  # noqa: UP017
 
 
 # ─── Listing Assistant (seller side) ──────────────────────────────────────
@@ -764,4 +796,4 @@ class AIListingAssistantResponse(BaseModel):
         "остаётся за продавцом. Рыночные данные основаны на открытых объявлениях kufar.by "
         "и могут не отражать реальные цены сделок."
     )
-    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))  # noqa: UP017

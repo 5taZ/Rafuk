@@ -6,8 +6,8 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
-    Float,
     ForeignKey,
     Index,
     Integer,
@@ -90,7 +90,9 @@ class ActiveMixin:
 class TimestampMixin:
     """Mixin for models that have created_at timestamp."""
 
-    created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class QueryTrackingMixin:
@@ -108,8 +110,8 @@ class QueryTrackingMixin:
 class TrackerFiltersMixin:
     """Mixin for tracker filtering configuration."""
 
-    min_discount_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
-    max_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_discount_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    max_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     condition: Mapped[str | None] = mapped_column(String(32), nullable=True)
     region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -120,6 +122,8 @@ class TrackerFiltersMixin:
         default=False,
         server_default="false",
     )
+    alert_price_threshold: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    alert_discount_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
 
 
 class Tracker(
@@ -140,7 +144,7 @@ class Tracker(
         server_default="15",
     )
     last_seen_ad_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    last_seen_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_seen_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
@@ -181,10 +185,10 @@ class QuerySnapshot(Base, TimestampMixin):
     snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     total_results: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     analyzed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    mean_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    median_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    min_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    max_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mean_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    median_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    min_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    max_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
 
     __table_args__ = (
         UniqueConstraint("query", "snapshot_at", name="uq_query_snapshot_bucket"),
@@ -200,7 +204,7 @@ class QueryListingState(Base):
     ad_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     link: Mapped[str] = mapped_column(String(512), nullable=False)
-    last_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     list_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
     active: Mapped[bool] = mapped_column(
         Boolean,
@@ -244,8 +248,8 @@ class TrackerEvent(Base, UserIDMixin):
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     link: Mapped[str] = mapped_column(String(512), nullable=False)
-    price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
-    delta_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    delta_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     # Enriched metadata
     thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
     parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -264,6 +268,12 @@ class TrackerEvent(Base, UserIDMixin):
     __table_args__ = (
         Index("idx_tracker_events_user", "user_id"),
         Index("idx_tracker_events_created", "created_at"),
+        Index("idx_tracker_events_tracker_created", "tracker_id", "created_at"),
+        CheckConstraint(
+            "event_type IN ('new_listing', 'price_drop', 'trend_reversal', "
+            "'price_threshold_alert', 'discount_alert')",
+            name="chk_tracker_events_event_type",
+        ),
     )
 
 
@@ -275,10 +285,10 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     query: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     link: Mapped[str] = mapped_column(String(512), nullable=False)
-    price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     buy_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     sold_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
-    target_resale_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_resale_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -303,8 +313,8 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
     # Watchlist-merged columns (status='watching' uses these)
-    initial_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
-    market_median_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    initial_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    market_median_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     duplicate_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -330,6 +340,12 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("user_id", "ad_id", name="uq_lead_items_user_ad"),
+        CheckConstraint(
+            "status IN ('watching', 'new', 'reviewing', 'in_progress', "
+            "'researching', 'negotiating', 'deferred', 'closed', "
+            "'abandoned', 'bought', 'sold', 'skipped')",
+            name="chk_lead_items_status",
+        ),
         Index("idx_lead_items_user", "user_id"),
         Index("idx_lead_items_status", "status"),
         Index("idx_lead_items_market_status", "market_status"),
@@ -354,7 +370,7 @@ class LeadItemPriceSnapshot(Base):
         nullable=False,
         index=True,
     )
-    price_byn: Mapped[float] = mapped_column(Float, nullable=False)
+    price_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     snapped_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -408,6 +424,51 @@ class DealExpense(Base):
     __table_args__ = (
         Index("idx_deal_expenses_lead", "lead_id"),
         Index("idx_deal_expenses_user", "user_id"),
+    )
+
+
+class LeadReminder(Base):
+    """Reminder for a lead — notifies the user at a scheduled time."""
+
+    __tablename__ = "lead_reminders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lead_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("lead_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    remind_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+    message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sent: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    lead = relationship("LeadItem", backref="reminders")
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("idx_reminders_due", "remind_at", "sent"),
     )
 
 

@@ -10,6 +10,7 @@ from api.dependencies import (
     get_currency_service,
     get_kufar_client,
     get_settings_dependency,
+    get_telegram_user,
 )
 from api.limiter import limiter
 from api.schemas import ListingDetailResponse
@@ -20,6 +21,7 @@ from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_detail
 from api.services.query_pipeline import load_query_dataset_context
+from api.services.risk_detector import compute_risk_score, detect_risks
 from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
@@ -39,6 +41,7 @@ async def get_listing_detail(
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
     kufar_client: KufarClient = Depends(get_kufar_client),
+    _user=Depends(get_telegram_user),
 ) -> ListingDetailResponse:
     cache_key = (
         f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}:{category}:{reference_context}"
@@ -81,5 +84,12 @@ async def get_listing_detail(
         category_price_stats=category_price_stats,
         liquidity=liquidity,
     )
+    # Risk detection — runs after the listing detail is built so we can
+    # reuse the market stats already fetched for the query.
+    market_stats_dict = {"median": reference_dataset.price_stats.median}
+    risk_factors = detect_risks(ad, market_stats=market_stats_dict)
+    risk_score = compute_risk_score(risk_factors)
+    payload.risk_score = risk_score
+    payload.risk_factors = risk_factors
     await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
     return payload

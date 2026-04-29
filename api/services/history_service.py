@@ -4,9 +4,11 @@ import statistics
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models import QueryListingState, QuerySnapshot
@@ -78,6 +80,19 @@ async def upsert_query_snapshot(
     if existing is None:
         existing = QuerySnapshot(query=query, snapshot_at=bucket_at)
         session.add(existing)
+        try:
+            async with session.begin_nested():
+                await session.flush([existing])
+        except IntegrityError:
+            await session.rollback()
+            existing = await session.scalar(
+                select(QuerySnapshot).where(
+                    QuerySnapshot.query == query,
+                    QuerySnapshot.snapshot_at == bucket_at,
+                )
+            )
+            if existing is None:
+                raise
 
     existing.total_results = total_results
     existing.analyzed_count = stats.count
@@ -213,6 +228,20 @@ async def sync_query_listing_states(
                 last_seen_at=observed_at,
             )
             session.add(existing)
+            try:
+                async with session.begin_nested():
+                    await session.flush([existing])
+            except IntegrityError:
+                await session.rollback()
+                # Re-fetch the row that the concurrent tick inserted
+                existing = await session.scalar(
+                    select(QueryListingState).where(
+                        QueryListingState.query == query,
+                        QueryListingState.ad_id == ad_id,
+                    )
+                )
+                if existing is None:
+                    raise
             existing_by_id[ad_id] = existing
             new_listings.append(existing)
             continue
@@ -221,7 +250,7 @@ async def sync_query_listing_states(
             existing.last_price_byn is not None
             and price_byn is not None
             and price_byn < existing.last_price_byn
-            and (existing.last_price_byn - price_byn) >= 0.5
+            and (existing.last_price_byn - price_byn) >= Decimal("0.5")
         ):
             price_drops.append((existing, existing.last_price_byn - price_byn))
 
