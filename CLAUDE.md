@@ -206,3 +206,21 @@ Docker Compose maps PostgreSQL `5432→5433` and Redis `6379→6380` to avoid co
 - `ruff UP017` suggests `datetime.UTC` but this does not exist on the `datetime` class — use `timezone.utc` and ignore UP017
 - Gemma 4 on Google Gemini uses internal reasoning tokens that consume output budget — `max_tokens` must be ≥2800 for analysis prompts
 - CSS `display: flex/grid` overrides HTML `hidden` attribute — always add `[hidden] { display: none !important }` rules for elements that use both flex layout and `hidden`
+
+## Skill routing
+
+When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
+
+Key routing rules:
+- Product ideas/brainstorming → invoke /office-hours
+- Strategy/scope → invoke /plan-ceo-review
+- Architecture → invoke /plan-eng-review
+- Design system/plan review → invoke /design-consultation or /plan-design-review
+- Full review pipeline → invoke /autoplan
+- Bugs/errors → invoke /investigate
+- QA/testing site behavior → invoke /qa or /qa-only
+- Code review/diff check → invoke /review
+- Visual polish → invoke /design-review
+- Ship/deploy/PR → invoke /ship or /land-and-deploy
+- Save progress → invoke /context-save
+- Resume context → invoke /context-restore
