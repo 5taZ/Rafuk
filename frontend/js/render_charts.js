@@ -487,7 +487,7 @@ function createRenderCharts(context) {
             const thumbNode = thumbSrc
                 ? domEl("img", {
                     className: "history-deal-thumb",
-                    attrs: { src: thumbSrc, alt: "", loading: "lazy" },
+                    attrs: { src: thumbSrc, alt: lead.title || "Сделка", loading: "lazy" },
                 })
                 : domEl("div", { className: "history-deal-thumb-placeholder", text: "📦" });
 

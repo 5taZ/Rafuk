@@ -111,10 +111,21 @@ function createRenderCards(context) {
 
             const filtered = applyFilters(items);
             if (!filtered.length) {
-                const note = document.createElement("p");
-                note.className = "tracker-empty";
-                note.textContent = emptyText;
-                container.appendChild(note);
+                const buildEmpty = context.buildEmptyState;
+                if (typeof buildEmpty === "function") {
+                    container.appendChild(
+                        buildEmpty({
+                            icon: "listings",
+                            title: "Ничего не найдено",
+                            hint: emptyText || "Попробуйте изменить запрос или снять фильтры.",
+                        })
+                    );
+                } else {
+                    const note = document.createElement("p");
+                    note.className = "tracker-empty";
+                    note.textContent = emptyText;
+                    container.appendChild(note);
+                }
                 if (badge) {
                     badge.textContent = "0";
                 }
@@ -253,7 +264,6 @@ function createRenderCards(context) {
 
     function renderDeals() {
         return safeRender('renderDeals', () => {
-            if (state.ui.loading) return;
             const container = elements.dealsList;
             if (!container) return;
             const rangeLabel = `${state.filters.discountFromPercent}-${state.filters.discountToPercent}`;
@@ -267,11 +277,48 @@ function createRenderCards(context) {
             container.style.maxHeight = "";
 
             domClear(container);
+
+            // Show skeleton cards while deals are loading
+            if (state.deals.loading) {
+                for (let i = 0; i < 3; i++) {
+                    const skel = document.createElement("div");
+                    skel.className = "skeleton-card";
+                    skel.setAttribute("aria-hidden", "true");
+                    skel.innerHTML = '<div class="skel-bar" style="width:60%"></div><div class="skel-bar" style="width:40%"></div><div class="skel-bar" style="width:30%"></div>';
+                    container.appendChild(skel);
+                }
+                return;
+            }
+
             if (!state.deals.items.length) {
-                const note = document.createElement("p");
-                note.className = "tracker-empty";
-                note.textContent = `Нет лотов в диапазоне ${rangeLabel}% ниже медианы. Попробуйте расширить диапазон или другой запрос.`;
-                container.appendChild(note);
+                const buildEmpty = context.buildEmptyState;
+                if (typeof buildEmpty === "function") {
+                    container.appendChild(
+                        buildEmpty({
+                            icon: "deals",
+                            title: "Выгодных лотов пока нет",
+                            hint: `В диапазоне ${rangeLabel}% ниже медианы ничего не нашлось. Попробуйте расширить диапазон или изменить запрос.`,
+                            actionLabel: state.search.query ? "Расширить диапазон" : "Начать поиск",
+                            onAction: () => {
+                                if (!state.search.query) {
+                                    if (typeof context.setActiveView === "function") {
+                                        context.setActiveView("overview");
+                                    }
+                                    const searchInput = document.querySelector(".search-input");
+                                    if (searchInput) searchInput.focus();
+                                } else {
+                                    const discountSlider = document.querySelector(".discount-range-slider");
+                                    if (discountSlider) discountSlider.focus();
+                                }
+                            },
+                        })
+                    );
+                } else {
+                    const note = document.createElement("p");
+                    note.className = "tracker-empty";
+                    note.textContent = `Нет лотов в диапазоне ${rangeLabel}% ниже медианы. Попробуйте расширить диапазон или другой запрос.`;
+                    container.appendChild(note);
+                }
                 if (elements.dealsTotalBadge) {
                     elements.dealsTotalBadge.textContent = "0";
                 }
@@ -285,14 +332,25 @@ function createRenderCards(context) {
             // Virtual scrolling disabled — cards have variable heights
             const filtered = applyFilters(state.deals.items);
             if (!filtered.length) {
-                const note = document.createElement("p");
-                note.className = "tracker-empty";
-                if (!hasData) {
-                    note.textContent = `Нет лотов в диапазоне ${rangeLabel}% ниже медианы. Попробуйте расширить диапазон или другой запрос.`;
+                const buildEmpty = context.buildEmptyState;
+                if (typeof buildEmpty === "function") {
+                    container.appendChild(
+                        buildEmpty({
+                            icon: "deals",
+                            title: hasData ? "Все лоты отфильтрованы" : "Выгодных лотов пока нет",
+                            hint: hasData
+                                ? "Фильтры скрыли все результаты. Попробуйте изменить параметры."
+                                : `В диапазоне ${rangeLabel}% ниже медианы ничего не нашлось. Попробуйте расширить диапазон.`,
+                        })
+                    );
                 } else {
-                    note.textContent = `Фильтры скрыли все лоты. Попробуйте изменить фильтр.`;
+                    const note = document.createElement("p");
+                    note.className = "tracker-empty";
+                    note.textContent = hasData
+                        ? "Фильтры скрыли все лоты. Попробуйте изменить фильтр."
+                        : `Нет лотов в диапазоне ${rangeLabel}% ниже медианы.`;
+                    container.appendChild(note);
                 }
-                container.appendChild(note);
                 if (elements.dealsTotalBadge) {
                     elements.dealsTotalBadge.textContent = "0";
                 }
@@ -562,6 +620,18 @@ function createRenderCards(context) {
             return;
         }
 
+        // Show skeleton cards while loading
+        if (state.watchlist._loading) {
+            for (let i = 0; i < 3; i++) {
+                const skel = document.createElement("div");
+                skel.className = "skeleton-card";
+                skel.setAttribute("aria-hidden", "true");
+                skel.innerHTML = '<div class="skel-bar" style="width:60%"></div><div class="skel-bar" style="width:40%"></div><div class="skel-bar" style="width:30%"></div>';
+                container.appendChild(skel);
+            }
+            return;
+        }
+
         const filteredWatchlist = [...state.watchlist.items]
             .filter(watchlistMatchesFilter)
             .sort((left, right) => {
@@ -589,6 +659,14 @@ function createRenderCards(context) {
                             icon: "watchlist",
                             title: "Здесь будут ваши избранные лоты",
                             hint: "Нажмите «В избранное» в карточке объявления, чтобы следить за ценой и снятием с продажи.",
+                            actionLabel: "Найти объявления",
+                            onAction: () => {
+                                if (typeof context.setActiveView === "function") {
+                                    context.setActiveView("overview");
+                                }
+                                const searchInput = document.querySelector(".search-input");
+                                if (searchInput) searchInput.focus();
+                            },
                         })
                     );
                 }

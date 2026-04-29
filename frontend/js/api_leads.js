@@ -53,7 +53,9 @@ function createApiLeads(context) {
         // Refresh server-side analytics in parallel with the lead list —
         // the dashboard depends on lead-mutating endpoints (sale, expense)
         // so any reload of leads should also refresh aggregates.
-        void loadAnalytics();
+        if (!state.analytics.loading) {
+            void loadAnalytics();
+        }
     }
 
     // ── Load lead analytics dashboard ────────────────────────────────────

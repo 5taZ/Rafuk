@@ -11,6 +11,7 @@ function createRenderCardBuilders(context) {
         hasTelegramInitData,
         safeUrl: safeUrl,
         optimizedImage,
+        escapeHtml,
     } = context;
 
     /**
@@ -42,7 +43,7 @@ function createRenderCardBuilders(context) {
                 : validated;
             const attrs = {
                 src,
-                alt: altText || "",
+                alt: altText || "Товар без названия",
                 loading: "lazy",
                 decoding: "async",
                 width: String(displayPx),
@@ -115,6 +116,22 @@ function createRenderCardBuilders(context) {
             }
         }
 
+        // Risk badges — show when risk_factors is non-empty
+        const riskFactors = Array.isArray(item.risk_factors) ? item.risk_factors : [];
+        const RISK_BADGE_MAP = {
+            too_cheap: { icon: "\u{1F534}", label: "\u0421\u043B\u0438\u0448\u043A\u043E\u043C \u0434\u0451\u0448\u0435\u0432\u043E", cls: "risk-high" },
+            suspicious_desc: { icon: "\u{1F7E1}", label: "\u041F\u043E\u0434\u043E\u0437\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u043E", cls: "risk-medium" },
+            duplicate: { icon: "\u{1F534}", label: "\u0414\u0443\u0431\u043B\u044C", cls: "risk-high" },
+        };
+        for (const rf of riskFactors) {
+            const spec = RISK_BADGE_MAP[rf.type];
+            if (!spec) continue;
+            badges.push(domEl("span", {
+                className: `listing-badge risk-badge ${spec.cls}`,
+                text: `${spec.icon} ${spec.label}`,
+            }));
+        }
+
         const tags = domEl("div", { className: "listing-tags" });
         if (item.condition) tags.appendChild(domEl("span", { className: "tag", text: formatCondition(item.condition) }));
         if (item.seller_type) tags.appendChild(domEl("span", { className: "tag", text: formatSeller(item.seller_type) }));
@@ -144,8 +161,8 @@ function createRenderCardBuilders(context) {
                 domEl(
                     "div",
                     { className: "listing-actions" },
-                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "lead" }, text: "В покупки" }),
-                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "watch" }, text: "В избранное" }),
+                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "lead" }, text: "В покупки", attrs: { "aria-label": `Добавить «${altText || "товар"}» в покупки` } }),
+                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "watch" }, text: "В избранное", attrs: { "aria-label": `Добавить «${altText || "товар"}» в избранное` } }),
                     domEl("a", {
                         className: "listing-btn listing-btn--kufar",
                         text: "Kufar",
@@ -494,6 +511,7 @@ function createRenderCardBuilders(context) {
     /** Lead action row — depends on `status`. */
     function _buildLeadActions(lead) {
         const isSold = lead.status === "sold";
+        const leadTitle = lead.title || "лот";
         return domEl(
             "div",
             { className: "lead-card-actions" },
@@ -508,6 +526,7 @@ function createRenderCardBuilders(context) {
                             href: safeUrl(lead.link),
                             target: "_blank",
                             rel: "noreferrer noopener",
+                            "aria-label": `Открыть «${leadTitle}» на Kufar`,
                         },
                     }),
                 )
@@ -521,12 +540,14 @@ function createRenderCardBuilders(context) {
                         type: "button",
                         dataset: { role: "confirm" },
                         text: "✓",
+                        attrs: { "aria-label": `Подтвердить «${leadTitle}»` },
                     }),
                     domEl("button", {
                         className: "lead-btn lead-btn--delete",
                         type: "button",
                         dataset: { role: "cancel" },
                         text: "✕",
+                        attrs: { "aria-label": `Удалить «${leadTitle}»` },
                     }),
                 )
                 : null,
@@ -539,12 +560,14 @@ function createRenderCardBuilders(context) {
                         type: "button",
                         dataset: { role: "close-deal" },
                         text: "✓ Готово",
+                        attrs: { "aria-label": `Завершить сделку «${leadTitle}»` },
                     }),
                     domEl("button", {
                         className: "lead-btn lead-btn--revert",
                         type: "button",
                         dataset: { role: "revert" },
                         text: "↩ Назад",
+                        attrs: { "aria-label": `Вернуть «${leadTitle}» в работу` },
                     }),
                 )
                 : null,
@@ -553,6 +576,7 @@ function createRenderCardBuilders(context) {
 
     /** Watchlist action row — Kufar link is hidden when the listing is missing. */
     function _buildWatchlistActions(item, isMissing) {
+        const itemTitle = item.title || "товар";
         return domEl(
             "div",
             { className: "watchlist-card-actions" },
@@ -561,6 +585,7 @@ function createRenderCardBuilders(context) {
                 type: "button",
                 dataset: { role: "detail" },
                 text: "Подробнее",
+                attrs: { "aria-label": `Подробнее о «${itemTitle}»` },
             }),
             !isMissing
                 ? domEl("button", {
@@ -568,6 +593,7 @@ function createRenderCardBuilders(context) {
                     type: "button",
                     dataset: { role: "lead" },
                     text: "В покупки",
+                    attrs: { "aria-label": `Добавить «${itemTitle}» в покупки` },
                 })
                 : null,
             !isMissing
@@ -578,6 +604,7 @@ function createRenderCardBuilders(context) {
                         href: safeUrl(item.link),
                         target: "_blank",
                         rel: "noreferrer noopener",
+                        "aria-label": `Открыть «${itemTitle}» на Kufar`,
                     },
                 })
                 : null,
@@ -586,6 +613,7 @@ function createRenderCardBuilders(context) {
                 type: "button",
                 dataset: { role: "delete" },
                 text: "Удалить",
+                attrs: { "aria-label": `Удалить «${itemTitle}» из избранного` },
             }),
         );
     }

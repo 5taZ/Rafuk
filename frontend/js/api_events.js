@@ -121,6 +121,12 @@ function createApiEvents(context) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("medium");
             }
         });
+
+        // ── Error bar retry ────────────────────────────────────────────
+        elements.errorRetry?.addEventListener("click", () => {
+            state.ui.error = null;
+            void search(state.ui.activeView || "overview");
+        });
     }
 
     function bindRecentSearchEvents() {

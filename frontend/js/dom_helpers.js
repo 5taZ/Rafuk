@@ -115,6 +115,11 @@ function openModalAnimated(modalEl, { lockScroll = true } = {}) {
     // don't acquire a second scroll-lock — the matching closeModalAnimated
     // would only release one count and leave body.modal-open stuck on.
     const wasHidden = modalEl.hidden;
+    // Save the element that had focus before the modal opened so we can
+    // restore it on close (WCAG 2.4.3 focus order).
+    if (wasHidden && document.activeElement && document.activeElement !== document.body) {
+        modalEl._previousFocus = document.activeElement;
+    }
     // Make sure no leftover closing class from a previous run blocks the
     // entry animation.
     modalEl.classList.remove("is-closing");
@@ -137,6 +142,13 @@ function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
         modalEl.hidden = true;
         modalEl.classList.remove("is-closing");
         if (lockScroll) unlockBodyScroll();
+        // Restore focus to the element that was active before the modal
+        // opened (WCAG 2.4.3 focus order).
+        const prev = modalEl._previousFocus;
+        if (prev && typeof prev.focus === "function") {
+            try { prev.focus(); } catch (_) { /* element may have been removed */ }
+        }
+        modalEl._previousFocus = null;
     };
 
     if (prefersReducedMotion || !inner) {

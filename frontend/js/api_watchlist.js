@@ -42,6 +42,15 @@ function createApiWatchlist(context) {
     const _inflightAd = new Set();
     const _inflightWatchId = new Set();
 
+    function _guardInflightAd(adId) {
+        _inflightAd.add(adId);
+        setTimeout(() => _inflightAd.delete(adId), 30000);
+    }
+    function _guardInflightWatchId(watchId) {
+        _inflightWatchId.add(watchId);
+        setTimeout(() => _inflightWatchId.delete(watchId), 30000);
+    }
+
     // ── Load watchlist ───────────────────────────────────────────────────
     async function loadWatchlist() {
         if (!hasTelegramInitData()) {
@@ -49,6 +58,11 @@ function createApiWatchlist(context) {
             refreshAfterWatchlistChange();
             return;
         }
+        // Show skeleton cards while loading
+        state.watchlist.items = [];
+        state.watchlist._loading = true;
+        refreshAfterWatchlistChange();
+
         // Stale-response guard — same pattern as loadLeads(). Watchlist
         // and leads share the same lead_items table, so a stale
         // watchlist GET arriving after a promote/delete can resurrect
@@ -62,6 +76,7 @@ function createApiWatchlist(context) {
             nextWatchlist = [];
         }
         if (requestId !== state.watchlist._requestId) return;
+        state.watchlist._loading = false;
         state.watchlist.items = nextWatchlist;
         refreshAfterWatchlistChange();
     }
@@ -116,7 +131,7 @@ function createApiWatchlist(context) {
             return;
         }
 
-        _inflightAd.add(item.ad_id);
+        _guardInflightAd(item.ad_id);
         try {
             await postJson("/api/v1/watchlist", {
                 query: queryOverride || state.search.query || "",
@@ -193,7 +208,7 @@ function createApiWatchlist(context) {
             return;
         }
 
-        _inflightWatchId.add(item.id);
+        _guardInflightWatchId(item.id);
         try {
             await requestJson(`/api/v1/leads/${item.id}`, {
                 method: "PATCH",
@@ -265,7 +280,7 @@ function createApiWatchlist(context) {
         if (_inflightWatchId.has(watchlistId)) {
             return;
         }
-        _inflightWatchId.add(watchlistId);
+        _guardInflightWatchId(watchlistId);
         // Optimistic remove so the card disappears immediately even
         // when the network is slow. The server-side DELETE is
         // idempotent (always 204), so a duplicate click later — even

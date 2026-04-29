@@ -747,7 +747,7 @@ function createApiAi(context) {
                             bestAlternative.image_url
                                 ? domEl("img", {
                                     className: "ai-best-thumb",
-                                    attrs: { src: safeUrl(bestAlternative.image_url), alt: "", loading: "lazy" },
+                                    attrs: { src: safeUrl(bestAlternative.image_url), alt: bestAlternative.title || "Лучшая альтернатива", loading: "lazy" },
                                 })
                                 : null,
                             domEl(
@@ -785,7 +785,7 @@ function createApiAi(context) {
                                 item.image_url
                                     ? domEl("img", {
                                         className: "ai-similar-thumb",
-                                        attrs: { src: safeUrl(item.image_url), alt: "", loading: "lazy" },
+                                        attrs: { src: safeUrl(item.image_url), alt: item.title || "Похожий товар", loading: "lazy" },
                                     })
                                     : null,
                                 domEl(

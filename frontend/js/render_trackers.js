@@ -90,6 +90,18 @@ function createRenderTrackers(context) {
             return;
         }
 
+        // Show skeleton cards while loading
+        if (state.trackers._loading) {
+            for (let i = 0; i < 3; i++) {
+                const skel = document.createElement("div");
+                skel.className = "skeleton-card";
+                skel.setAttribute("aria-hidden", "true");
+                skel.innerHTML = '<div class="skel-bar" style="width:60%"></div><div class="skel-bar" style="width:40%"></div><div class="skel-bar" style="width:30%"></div>';
+                elements.trackersList.appendChild(skel);
+            }
+            return;
+        }
+
         if (!state.trackers.items.length) {
             if (typeof buildEmpty === "function") {
                 elements.trackersList.appendChild(
@@ -97,6 +109,11 @@ function createRenderTrackers(context) {
                         icon: "trackers",
                         title: "Создайте первый автопоиск",
                         hint: "Сохраните любой запрос как трекер — и Telegram пришлёт уведомление, когда появятся новые объявления или цена пойдёт вниз.",
+                        actionLabel: "Создать автопоиск",
+                        onAction: () => {
+                            const input = document.querySelector(".tracker-input");
+                            if (input) input.focus();
+                        },
                     })
                 );
             } else {
@@ -164,6 +181,7 @@ function createRenderTrackers(context) {
                 );
                 const icon = document.createElement("span");
                 icon.className = "tracker-action-icon";
+                // Hardcoded SVG — safe for innerHTML (no dynamic attributes)
                 icon.innerHTML = iconHtml;
                 btn.append(icon, document.createTextNode(label));
                 return btn;
@@ -177,6 +195,7 @@ function createRenderTrackers(context) {
                     (() => {
                         const iconWrap = document.createElement("div");
                         iconWrap.className = "tracker-icon";
+                        // Hardcoded SVG — safe for innerHTML (no dynamic attributes)
                         iconWrap.innerHTML =
                             '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
                         return iconWrap;
@@ -274,6 +293,8 @@ function createRenderTrackers(context) {
 
         const dropCount = trackerScopedEvents.filter((e) => e.event_type === "price_drop").length;
         const newCount = trackerScopedEvents.filter((e) => e.event_type === "new_listing").length;
+        const thresholdCount = trackerScopedEvents.filter((e) => e.event_type === "price_threshold_alert").length;
+        const discountAlertCount = trackerScopedEvents.filter((e) => e.event_type === "discount_alert").length;
         const totalCount = trackerScopedEvents.length;
 
         if (elements.trackerEventsBadge) {
@@ -284,11 +305,15 @@ function createRenderTrackers(context) {
             all: "Все",
             price_drop: "Упали в цене",
             new_listing: "Новые лоты",
+            price_threshold_alert: "Порог цены",
+            discount_alert: "Скидка",
         };
         const FILTER_COUNTS = {
             all: totalCount,
             price_drop: dropCount,
             new_listing: newCount,
+            price_threshold_alert: thresholdCount,
+            discount_alert: discountAlertCount,
         };
         for (const button of elements.trackerEventFilterButtons) {
             const filter = button.dataset.eventFilter;
@@ -366,7 +391,7 @@ function createRenderTrackers(context) {
             const thumbnailNode = thumbSrc
                 ? domEl("img", {
                     className: "event-thumbnail",
-                    attrs: { src: thumbSrc, alt: "", loading: "lazy" },
+                    attrs: { src: thumbSrc, alt: event.title || "Объявление", loading: "lazy" },
                 })
                 : domEl("div", { className: "event-thumbnail-placeholder", text: "📱" });
             const eventMeta = domEl("div", { className: "event-meta" });
@@ -377,8 +402,14 @@ function createRenderTrackers(context) {
                 { className: "event-price-row" },
                 domEl("span", { className: "event-price mono", text: event.price_byn ? `${Math.round(event.price_byn)} р.` : "без цены" }),
             );
-            if (event.delta_byn) {
+            if (event.delta_byn && event.event_type === "price_drop") {
                 priceRow.appendChild(domEl("span", { className: "event-delta", text: `-${Math.round(event.delta_byn)} р.` }));
+            }
+            if (event.event_type === "price_threshold_alert" && event.parameters?.threshold) {
+                priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `порог: ${Math.round(event.parameters.threshold)} р.` }));
+            }
+            if (event.event_type === "discount_alert" && event.parameters?.discount_percent) {
+                priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `-${Math.round(event.parameters.discount_percent)}% от медианы` }));
             }
 
             let badgeClass = "new";
@@ -388,6 +419,16 @@ function createRenderTrackers(context) {
                 badgeClass = "drop";
                 badgeText = "🔽 Падение цены";
                 cardModifier = " price-drop";
+            }
+            if (event.event_type === "price_threshold_alert") {
+                badgeClass = "alert";
+                badgeText = "🎯 Порог цены";
+                cardModifier = " threshold-alert";
+            }
+            if (event.event_type === "discount_alert") {
+                badgeClass = "alert";
+                badgeText = "📉 Скидка от медианы";
+                cardModifier = " discount-alert";
             }
 
             const card = domEl(
@@ -487,14 +528,20 @@ function createRenderTrackers(context) {
         const total = events.length;
         let priceDrops = 0;
         let newListings = 0;
+        let thresholdAlerts = 0;
+        let discountAlerts = 0;
         for (const event of events) {
             if (event?.event_type === "price_drop") priceDrops += 1;
             else if (event?.event_type === "new_listing") newListings += 1;
+            else if (event?.event_type === "price_threshold_alert") thresholdAlerts += 1;
+            else if (event?.event_type === "discount_alert") discountAlerts += 1;
         }
         const counts = {
             all: total,
             price_drop: priceDrops,
             new_listing: newListings,
+            price_threshold_alert: thresholdAlerts,
+            discount_alert: discountAlerts,
         };
 
         for (const button of elements.trackerEventFilterButtons) {

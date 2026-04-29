@@ -234,6 +234,11 @@ function createAppActions(context) {
     // alreadyInLeads guard sees the old empty list).
     const _inflightAdMutations = new Set();
 
+    function _guardAdMutation(adId) {
+        _inflightAdMutations.add(adId);
+        setTimeout(() => _inflightAdMutations.delete(adId), 30000);
+    }
+
     async function addLeadFromListing(item, source = "manual", queryOverride = null) {
         if (!hasTelegramInitData() || !item?.ad_id) {
             return;
@@ -267,7 +272,7 @@ function createAppActions(context) {
         // when the user rapid-fires "В избранное" then "В покупки".
         const watchingItem = state.watchlist.items.find((w) => w.ad_id === item.ad_id);
 
-        _inflightAdMutations.add(item.ad_id);
+        _guardAdMutation(item.ad_id);
         try {
             if (watchingItem) {
                 await core.requestJson(`/api/v1/leads/${watchingItem.id}`, {
@@ -343,6 +348,16 @@ function createAppActions(context) {
      */
     async function applyLaunchParams() {
         const params = new URLSearchParams(window.location.search);
+        // Support deep linking via start_param (from bot /start tracking)
+        // Can come from either URL param or Telegram initDataUnsafe
+        const startParam = params.get("start_param") || window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+        if (startParam && !params.has("view")) {
+            const viewMap = { tracking: "tracking", trackers: "tracking", deals: "deals", monitoring: "monitoring" };
+            const mappedView = viewMap[startParam] || startParam;
+            if (elements.views[mappedView]) {
+                params.set("view", mappedView);
+            }
+        }
         const query = params.get("query")?.trim() || "";
         const view = params.get("view") || "overview";
         if (view && elements.views[view]) {
@@ -399,11 +414,14 @@ function createAppActions(context) {
      */
     async function exportLeads(format = "csv") {
         const fmt = format === "xlsx" ? "xlsx" : "csv";
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120_000);
         try {
             const initData = window.Telegram?.WebApp?.initData;
             const headers = initData ? { "X-Telegram-Init-Data": initData } : {};
             const response = await fetch(`/api/v1/leads/export?format=${fmt}`, {
                 headers,
+                signal: controller.signal,
             });
             if (!response.ok) {
                 throw new Error("Не удалось экспортировать данные");
@@ -417,7 +435,13 @@ function createAppActions(context) {
             URL.revokeObjectURL(url);
             showToast("Файл загружен");
         } catch (error) {
-            showToast(error.message || "Не удалось экспортировать");
+            if (error.name === "AbortError") {
+                showToast("Экспорт занимает слишком долго, попробуйте позже");
+            } else {
+                showToast(error.message || "Не удалось экспортировать");
+            }
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
     // Backwards-compat name still used by api_events context
@@ -434,20 +458,16 @@ function createAppActions(context) {
      * If not, shows the consent modal and returns a Promise that resolves
      * when the user grants consent (or rejects on cancel).
      */
-    function checkAiConsent() {
-        return new Promise(async (resolve, reject) => {
-            try {
-                const status = await core.getJson("/api/v1/account/consent/ai_analysis");
-                if (status.granted) {
-                    resolve(true);
-                    return;
-                }
-            } catch (_) {
-                // Not logged in or error — proceed anyway (debug mode)
-                resolve(true);
-                return;
-            }
-            // Show consent modal
+    async function checkAiConsent() {
+        try {
+            const status = await core.getJson("/api/v1/account/consent/ai_analysis");
+            if (status.granted) return true;
+        } catch (_) {
+            // Not logged in or error — proceed anyway (debug mode)
+            return true;
+        }
+        // Show consent modal
+        return new Promise((resolve, reject) => {
             _showConsentModal(resolve, reject);
         });
     }
@@ -473,9 +493,13 @@ function createAppActions(context) {
         function updateAcceptBtn() {
             acceptBtn.disabled = !(aiCb.checked && crossCb.checked && pdCb.checked);
         }
-        aiCb.addEventListener("change", updateAcceptBtn);
-        crossCb.addEventListener("change", updateAcceptBtn);
-        pdCb.addEventListener("change", updateAcceptBtn);
+
+        // AbortController to clean up checkbox listeners at once
+        const ac = new AbortController();
+        const opts = { signal: ac.signal };
+        aiCb.addEventListener("change", updateAcceptBtn, opts);
+        crossCb.addEventListener("change", updateAcceptBtn, opts);
+        pdCb.addEventListener("change", updateAcceptBtn, opts);
 
         async function onAccept() {
             try {
@@ -502,6 +526,7 @@ function createAppActions(context) {
         }
 
         function cleanup() {
+            ac.abort(); // removes all checkbox change listeners
             acceptBtn.removeEventListener("click", onAccept);
             cancelBtn.removeEventListener("click", onCancel);
             if (privacyLink) privacyLink.removeEventListener("click", onPrivacyLink);
@@ -531,7 +556,13 @@ function createAppActions(context) {
     }
 
     async function deleteAccount() {
-        if (!confirm("Все ваши данные будут безвозвратно удалены. Продолжить?")) return;
+        // Use a custom confirmation dialog instead of window.confirm()
+        // which may not work in Telegram WebView.
+        const confirmed = await _showConfirmDialog(
+            "Удалить аккаунт?",
+            "Все ваши данные будут безвозвратно удалены. Это действие нельзя отменить."
+        );
+        if (!confirmed) return;
         try {
             await core.deleteJson("/api/v1/account");
             showToast("Аккаунт удалён. Данные стёрты.");
@@ -539,6 +570,56 @@ function createAppActions(context) {
         } catch (err) {
             showToast(err.message || "Не удалось удалить аккаунт");
         }
+    }
+
+    function _showConfirmDialog(title, message) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement("div");
+            overlay.className = "detail-modal";
+            overlay.style.cssText = "display:flex;align-items:center;justify-content:center;z-index:1000;";
+            const sheet = document.createElement("div");
+            sheet.className = "detail-sheet";
+            sheet.style.cssText = "max-width:340px;width:90%;padding:20px;text-align:center;";
+
+            const h3 = document.createElement("h3");
+            h3.style.cssText = "margin:0 0 8px;font-size:17px;";
+            h3.textContent = title;
+
+            const p = document.createElement("p");
+            p.style.cssText = "margin:0 0 20px;color:var(--text-secondary);font-size:14px;";
+            p.textContent = message;
+
+            const btnRow = document.createElement("div");
+            btnRow.style.cssText = "display:flex;gap:10px;justify-content:center;";
+
+            const cancelBtn = document.createElement("button");
+            cancelBtn.setAttribute("data-role", "cancel");
+            cancelBtn.style.cssText = "flex:1;padding:10px;border-radius:10px;border:1px solid var(--border-color);background:var(--surface-color);color:var(--text-color);font-size:14px;";
+            cancelBtn.textContent = "Отмена";
+
+            const confirmBtn = document.createElement("button");
+            confirmBtn.setAttribute("data-role", "confirm");
+            confirmBtn.style.cssText = "flex:1;padding:10px;border-radius:10px;border:none;background:var(--danger-color,#e53935);color:#fff;font-size:14px;font-weight:600;";
+            confirmBtn.textContent = "Удалить";
+
+            btnRow.append(cancelBtn, confirmBtn);
+            sheet.append(h3, p, btnRow);
+            overlay.appendChild(sheet);
+            document.body.appendChild(overlay);
+            document.body.classList.add("modal-open");
+
+            function close(result) {
+                document.body.classList.remove("modal-open");
+                overlay.remove();
+                resolve(result);
+            }
+
+            sheet.querySelector('[data-role="cancel"]').addEventListener("click", () => close(false));
+            sheet.querySelector('[data-role="confirm"]').addEventListener("click", () => close(true));
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) close(false);
+            });
+        });
     }
 
     async function exportAccountData() {

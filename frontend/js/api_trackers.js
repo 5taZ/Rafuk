@@ -75,11 +75,17 @@ function createApiTrackers(context) {
             return;
         }
 
+        // Show skeleton cards while loading
+        state.trackers.items = [];
+        state.trackers._loading = true;
+        renderTrackers();
+
         const [trackersResult, eventsResult] = await Promise.allSettled([
             getJson("/api/v1/trackers"),
             getJson("/api/v1/tracker-events"),
         ]);
 
+        state.trackers._loading = false;
         state.trackers.items = trackersResult.status === "fulfilled" ? trackersResult.value : [];
         state.trackers.events = eventsResult.status === "fulfilled" ? eventsResult.value : [];
 

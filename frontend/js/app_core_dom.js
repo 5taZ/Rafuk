@@ -15,6 +15,7 @@ function cacheAppElements(elements) {
     elements.strictSearchToggle = document.getElementById("strict-search-toggle");
     elements.errorBar = document.getElementById("error-bar");
     elements.errorText = document.getElementById("error-text");
+    elements.errorRetry = document.getElementById("error-retry");
     elements.helperPanel = document.getElementById("helper-panel");
     elements.summaryStrip = document.getElementById("summary-strip");
     elements.summaryQuery = document.getElementById("summary-query");
@@ -128,6 +129,8 @@ function cacheAppElements(elements) {
     elements.detailParams = document.getElementById("detail-params");
     elements.detailSellerBlock = document.getElementById("detail-seller-block");
     elements.detailSeller = document.getElementById("detail-seller");
+    elements.detailRiskBlock = document.getElementById("detail-risk-block");
+    elements.detailRiskContent = document.getElementById("detail-risk-content");
     elements.detailAiBlock = document.getElementById("detail-ai-block");
     elements.detailAiContent = document.getElementById("detail-ai-content");
     elements.detailAiBtn = document.getElementById("detail-ai-btn");
@@ -202,6 +205,7 @@ function cacheAppElements(elements) {
 
 function populateRegionSelectOptions(selectEl, currentValue) {
     if (!selectEl) return;
+    // Requires: domEl() from dom_helpers.js (loaded before this file)
     const prev = currentValue || "";
     const fragment = document.createDocumentFragment();
     fragment.appendChild(domEl("option", { value: "", text: "Любой" }));

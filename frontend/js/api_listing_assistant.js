@@ -140,6 +140,7 @@ function createApiListingAssistant(context) {
     }
 
     function closeModal() {
+        _cancelLaProgress();
         closeModalAnimated(modal);
     }
 
@@ -335,24 +336,27 @@ function createApiListingAssistant(context) {
 
     function buildPriceTier(tier, kind) {
         if (!tier || !tier.price_byn) return null;
-        return el(
-            "div",
-            { className: `la-tier la-tier--${kind}` },
-            el("span", { className: "la-tier-kicker", text: tier.label || kind }),
-            el(
-                "div",
-                { className: "la-tier-price" },
-                el("strong", { className: "la-tier-price-num mono" },
-                    document.createTextNode(`${Math.round(tier.price_byn)}`)),
-                el("span", { className: "la-tier-price-unit", text: " BYN" }),
-            ),
-            tier.weeks_to_sell
-                ? el("span", { className: "la-tier-weeks", text: tier.weeks_to_sell })
-                : null,
-            tier.reasoning
-                ? el("p", { className: "la-tier-reason", text: tier.reasoning })
-                : null,
-        );
+        const row = el("div", { className: `la-tier la-tier--${kind}` });
+        row.appendChild(el("span", { className: "la-tier-kicker", text: tier.label || kind }));
+        const priceWrap = el("div", { className: "la-tier-price" });
+        priceWrap.appendChild(el("span", { className: "la-tier-price-num mono" },
+            document.createTextNode(`${Math.round(tier.price_byn)}`)));
+        priceWrap.appendChild(el("span", { className: "la-tier-price-unit", text: " BYN" }));
+        row.appendChild(priceWrap);
+        if (tier.weeks_to_sell) {
+            row.appendChild(el("span", { className: "la-tier-weeks", text: tier.weeks_to_sell }));
+        }
+        // Reasoning goes on a separate line below the row
+        if (tier.reasoning) {
+            const reasonLine = el("div", { className: "la-tier-reason-line" });
+            reasonLine.appendChild(el("span", { className: "la-tier-reason", text: tier.reasoning }));
+            // Wrap tier + reason together
+            const wrap = el("div");
+            wrap.appendChild(row);
+            wrap.appendChild(reasonLine);
+            return wrap;
+        }
+        return row;
     }
 
     function buildPricingSection(pricing) {
@@ -381,7 +385,7 @@ function createApiListingAssistant(context) {
         return el(
             "section",
             { className: "la-section" },
-            el("h4", { className: "la-section-title", text: "Цена" }),
+            el("span", { className: "la-section-title", text: "Цена" }),
             tiers,
             pricing.floor_byn
                 ? el("p", { className: "la-floor" },
@@ -405,7 +409,7 @@ function createApiListingAssistant(context) {
         return el(
             "section",
             { className: "la-section" },
-            el("h4", { className: "la-section-title", text: "Что подсветить покупателю" }),
+            el("span", { className: "la-section-title", text: "Что подсветить покупателю" }),
             ul,
         );
     }
@@ -426,7 +430,7 @@ function createApiListingAssistant(context) {
         return el(
             "section",
             { className: "la-section" },
-            el("h4", { className: "la-section-title", text: "Как отвечать на торг" }),
+            el("span", { className: "la-section-title", text: "Как отвечать на торг" }),
             list,
         );
     }
@@ -440,7 +444,7 @@ function createApiListingAssistant(context) {
         return el(
             "section",
             { className: "la-section" },
-            el("h4", { className: "la-section-title", text: "Фото" }),
+            el("span", { className: "la-section-title", text: "Советы по фото" }),
             ul,
         );
     }
@@ -451,17 +455,112 @@ function createApiListingAssistant(context) {
         resultBox.hidden = false;
     }
 
+    // ── Progress animation (AI-style) ──────────────────────────────────
+    const LA_LOADING_STEPS = [
+        "Считаю рынок…",
+        "Подбираю цену…",
+        "Пишу заголовок и описание…",
+        "Формирую план торга…",
+        "Осталось немного…",
+    ];
+    const LA_PROGRESS_EXPECTED_MS = 18000;
+    const LA_PROGRESS_SOFT_CAP = 96;
+    let _laProgressFrame = null;
+    let _laProgressStartedAt = 0;
+
+    function _prefersReducedMotion() {
+        return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    }
+
+    function _cancelLaProgress() {
+        if (_laProgressFrame) {
+            cancelAnimationFrame(_laProgressFrame);
+            _laProgressFrame = null;
+        }
+    }
+
+    function _updateLaProgress(pct) {
+        const barEl = resultBox?.querySelector(".la-progress-bar");
+        const pctEl = resultBox?.querySelector(".la-progress-pct");
+        if (barEl) barEl.style.width = Math.max(0, Math.min(100, pct)) + "%";
+        if (pctEl) pctEl.textContent = Math.round(pct) + "%";
+    }
+
+    function _startLaProgress() {
+        _cancelLaProgress();
+        _laProgressStartedAt = performance.now();
+        let step = 0;
+        const textEl = () => resultBox?.querySelector(".la-loading-text");
+
+        if (_prefersReducedMotion()) {
+            const t = textEl();
+            if (t) t.textContent = LA_LOADING_STEPS[0];
+            _updateLaProgress(12);
+            return;
+        }
+
+        function tick(now) {
+            const elapsed = Math.max(0, now - _laProgressStartedAt);
+            const normalized = Math.min(elapsed / LA_PROGRESS_EXPECTED_MS, 1);
+            const target = 3 + normalized * (LA_PROGRESS_SOFT_CAP - 3);
+            _updateLaProgress(target);
+
+            const nextStep = Math.min(
+                LA_LOADING_STEPS.length - 1,
+                Math.floor(normalized * LA_LOADING_STEPS.length),
+            );
+            if (nextStep !== step) {
+                step = nextStep;
+                const t = textEl();
+                if (t) t.textContent = LA_LOADING_STEPS[step];
+            }
+
+            _laProgressFrame = requestAnimationFrame(tick);
+        }
+
+        const t = textEl();
+        if (t) t.textContent = LA_LOADING_STEPS[0];
+        _updateLaProgress(3);
+        _laProgressFrame = requestAnimationFrame(tick);
+    }
+
+    function _stopLaProgress(success = true) {
+        _cancelLaProgress();
+        const ring = resultBox?.querySelector(".la-loader-ring");
+        const icon = resultBox?.querySelector(".la-loader-icon");
+        const barEl = resultBox?.querySelector(".la-progress-bar");
+        const pctEl = resultBox?.querySelector(".la-progress-pct");
+        const textEl = resultBox?.querySelector(".la-loading-text");
+
+        if (success) {
+            _updateLaProgress(100);
+            if (ring) ring.classList.add("la-loader-ring--done");
+            if (icon) { icon.textContent = "✓"; icon.classList.add("la-loader-icon--done"); }
+            if (barEl) barEl.classList.add("la-progress-bar--done");
+            if (pctEl) pctEl.classList.add("la-progress-pct--done");
+            if (textEl) textEl.textContent = "Готово!";
+        }
+    }
+
     function renderLoading() {
         resultBox.replaceChildren();
         const wrap = el(
             "div",
             { className: "la-loading" },
-            el("div", { className: "la-loading-spinner", attrs: { "aria-hidden": "true" } }),
+            el("div", { className: "la-loader-wrap" },
+                el("div", { className: "la-loader-ring" }),
+                el("span", { className: "la-loader-icon", text: "AI" }),
+            ),
+            el("div", { className: "la-progress" },
+                el("div", { className: "la-progress-bar" }),
+            ),
+            el("span", { className: "la-progress-pct", text: "3%" }),
             el("p", { className: "la-loading-text", text: "Считаю рынок и собираю текст…" }),
-            el("p", { className: "la-loading-sub", text: "10–25 секунд" }),
+            el("p", { className: "la-loading-sub", text: "Обычно 10–25 секунд" }),
         );
         resultBox.appendChild(wrap);
         resultBox.hidden = false;
+        _startLaProgress();
     }
 
     function renderResult(data) {
@@ -473,7 +572,7 @@ function createApiListingAssistant(context) {
                 el(
                     "section",
                     { className: "la-section la-section--summary" },
-                    el("h4", { className: "la-section-title", text: "Контекст рынка" }),
+                    el("span", { className: "la-section-title", text: "Контекст рынка" }),
                     el("p", { className: "la-summary", text: summary }),
                 ),
             );
@@ -483,7 +582,7 @@ function createApiListingAssistant(context) {
         if (titleBlock) {
             resultBox.appendChild(
                 el("section", { className: "la-section" },
-                    el("h4", { className: "la-section-title", text: "Заголовок" }),
+                    el("span", { className: "la-section-title", text: "Заголовок" }),
                     titleBlock,
                 ),
             );
@@ -494,7 +593,7 @@ function createApiListingAssistant(context) {
             const descSection = el(
                 "section",
                 { className: "la-section" },
-                el("h4", { className: "la-section-title", text: "Описание" }),
+                el("span", { className: "la-section-title", text: "Описание" }),
                 desc,
             );
             const short = (data.description_short || "").trim();
@@ -663,7 +762,14 @@ function createApiListingAssistant(context) {
 
         try {
             const data = await postJson("/api/v1/ai/listing-assistant", payload);
-            renderResult(data || {});
+
+            // Show completion animation, then render result
+            _stopLaProgress(true);
+            const delay = _prefersReducedMotion() ? 150 : 950;
+            setTimeout(() => {
+                renderResult(data || {});
+            }, delay);
+
             state.misc.listingAssistantResult = data;
 
             // Save to history (we keep input + count of photos, NOT the photo
@@ -682,6 +788,8 @@ function createApiListingAssistant(context) {
                 output: data,
             });
         } catch (error) {
+            _stopLaProgress(false);
+            _cancelLaProgress();
             const text = (error && error.message) || "Не удалось получить ответ AI";
             renderError(text);
             showToast(text, "error");
@@ -717,11 +825,12 @@ function createApiListingAssistant(context) {
     historyShortcutBtn?.addEventListener("click", () => openModal("history"));
     closeBtn?.addEventListener("click", closeModal);
     overlay?.addEventListener("click", closeModal);
-    document.addEventListener("keydown", (e) => {
+    const _keydownHandler = (e) => {
         if (e.key === "Escape" && !modal.hidden) {
             closeModal();
         }
-    });
+    };
+    document.addEventListener("keydown", _keydownHandler);
 
     // Initial state: just refresh history badges. Form is always blank
     // until the user types or restores from history.
@@ -731,6 +840,7 @@ function createApiListingAssistant(context) {
     return {
         destroy() {
             form.removeEventListener("submit", handleSubmit);
+            document.removeEventListener("keydown", _keydownHandler);
         },
     };
 }

@@ -38,21 +38,26 @@ function createApiCore(context) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+        // Link external signal so caller abort also triggers our controller
+        if (options.signal) {
+            options.signal.addEventListener("abort", () => controller.abort(), { once: true });
+        }
+
         let response;
         try {
             response = await fetch(url, {
                 ...options,
                 headers,
-                signal: options.signal || controller.signal,
+                signal: controller.signal,
             });
+            // Clear timeout immediately on successful response
+            clearTimeout(timer);
         } catch (fetchErr) {
             clearTimeout(timer);
             if (fetchErr.name === "AbortError") {
                 throw new Error("Превышено время ожидания. Попробуйте ещё раз.");
             }
             throw fetchErr;
-        } finally {
-            clearTimeout(timer);
         }
 
         if (!response.ok) {

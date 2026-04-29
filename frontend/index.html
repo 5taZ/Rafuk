@@ -19,34 +19,34 @@
         href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
         rel="stylesheet"
     >
-    <link rel="stylesheet" href="css/style.css?v=20260427-v4">
+    <link rel="stylesheet" href="css/style.css?v=20260429-v7">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers. -->
-    <script defer src="js/dom_helpers.js?v=20260427-v4"></script>
-    <script defer src="js/app_core_dom.js?v=20260427-v4"></script>
-    <script defer src="js/app_core.js?v=20260427-v4"></script>
-    <script defer src="js/render_core.js?v=20260427-v4"></script>
-    <script defer src="js/render_card_builders.js?v=20260427-v4"></script>
-    <script defer src="js/render_cards.js?v=20260427-v4"></script>
-    <script defer src="js/render_views.js?v=20260427-v4"></script>
-    <script defer src="js/render_modals.js?v=20260427-v4"></script>
-    <script defer src="js/render_charts.js?v=20260427-v4"></script>
-    <script defer src="js/render_trackers.js?v=20260427-v4"></script>
-    <script defer src="js/virtual_list.js?v=20260427-v4"></script>
-    <script defer src="js/app_renderers.js?v=20260427-v4"></script>
-    <script defer src="js/api_core.js?v=20260427-v4"></script>
-    <script defer src="js/api_listings.js?v=20260427-v4"></script>
-    <script defer src="js/api_trackers.js?v=20260427-v4"></script>
-    <script defer src="js/api_leads.js?v=20260427-v4"></script>
-    <script defer src="js/api_watchlist.js?v=20260427-v4"></script>
-    <script defer src="js/api_events.js?v=20260427-v4"></script>
-    <script defer src="js/api_ai.js?v=20260427-v4"></script>
-    <script defer src="js/api_listing_assistant.js?v=20260427-v4"></script>
-    <script defer src="js/app_actions.js?v=20260427-v4"></script>
-    <script defer src="js/app.js?v=20260427-v4"></script>
+    <script defer src="js/dom_helpers.js?v=20260429-v7"></script>
+    <script defer src="js/app_core_dom.js?v=20260429-v7"></script>
+    <script defer src="js/app_core.js?v=20260429-v7"></script>
+    <script defer src="js/render_core.js?v=20260429-v7"></script>
+    <script defer src="js/render_card_builders.js?v=20260429-v7"></script>
+    <script defer src="js/render_cards.js?v=20260429-v7"></script>
+    <script defer src="js/render_views.js?v=20260429-v7"></script>
+    <script defer src="js/render_modals.js?v=20260429-v7"></script>
+    <script defer src="js/render_charts.js?v=20260429-v7"></script>
+    <script defer src="js/render_trackers.js?v=20260429-v7"></script>
+    <script defer src="js/virtual_list.js?v=20260429-v7"></script>
+    <script defer src="js/app_renderers.js?v=20260429-v7"></script>
+    <script defer src="js/api_core.js?v=20260429-v7"></script>
+    <script defer src="js/api_listings.js?v=20260429-v7"></script>
+    <script defer src="js/api_trackers.js?v=20260429-v7"></script>
+    <script defer src="js/api_leads.js?v=20260429-v7"></script>
+    <script defer src="js/api_watchlist.js?v=20260429-v7"></script>
+    <script defer src="js/api_events.js?v=20260429-v7"></script>
+    <script defer src="js/api_ai.js?v=20260429-v7"></script>
+    <script defer src="js/api_listing_assistant.js?v=20260429-v7"></script>
+    <script defer src="js/app_actions.js?v=20260429-v7"></script>
+    <script defer src="js/app.js?v=20260429-v7"></script>
 </head>
 <body>
 <a href="#main-content" class="skip-link" aria-label="Перейти к основному содержимому">
@@ -125,7 +125,7 @@
         <label class="strict-toggle" for="strict-search-toggle" title="Точное совпадение запроса">
             <input id="strict-search-toggle" type="checkbox" aria-label="Включить строгий поиск (точное совпадение)">
             <span class="strict-toggle-pill"></span>
-            <span class="strict-toggle-copy">Строгий поиск</span>
+            <span class="strict-toggle-copy ui-hint" data-hint="Искать только точное совпадение запроса">Строгий поиск</span>
         </label>
 
         <section class="recent-strip" id="recent-section" hidden>
@@ -190,7 +190,7 @@
                     <strong class="summary-pill-value mono" id="summary-range">—</strong>
                 </div>
                 <div class="summary-pill">
-                    <span class="summary-pill-label">Справедливо</span>
+                    <span class="summary-pill-label ui-hint" data-hint="Цена в пределах 25-75 перцентиля рынка">Справедливо</span>
                     <strong class="summary-pill-value mono" id="summary-fair">—</strong>
                 </div>
             </div>
@@ -209,6 +209,7 @@
             <circle cx="12" cy="16" r="0.5" fill="currentColor"></circle>
         </svg>
         <span id="error-text"></span>
+        <button class="err-retry" id="error-retry" type="button">Повторить</button>
     </div>
 
     <div class="helper-panel" id="helper-panel">
@@ -247,7 +248,7 @@
                     <span class="stat-sub"></span>
                 </div>
                 <div class="stat-card wide">
-                    <span class="stat-lbl">Справедливо</span>
+                    <span class="stat-lbl ui-hint" data-hint="25-75 перцентиль цен на рынке">Справедливо</span>
                     <span class="stat-val stat-range mono" id="stat-fair-range">—</span>
                     <span class="stat-sub">обычно в этих пределах</span>
                 </div>
@@ -330,8 +331,9 @@
         <section class="section" id="listings-section" hidden>
             <div class="sec-head listings-head">
                 <h2 class="sec-title">Объявления</h2>
-                <button class="ghost-btn small" id="filter-btn" type="button" aria-label="Фильтры">
+                <button class="ghost-btn small" id="filter-btn" type="button" aria-label="Фильтры" style="position:relative">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                    <span class="filter-active-badge" id="filter-active-badge" hidden></span>
                 </button>
                 <span class="badge" id="listings-total-badge"></span>
             </div>
@@ -531,6 +533,14 @@
                         Новые лоты
                         <span class="filter-count" data-event-filter-count="new_listing" hidden>0</span>
                     </button>
+                    <button class="s-tab" data-event-filter="price_threshold_alert" type="button">
+                        Порог цены
+                        <span class="filter-count" data-event-filter-count="price_threshold_alert" hidden>0</span>
+                    </button>
+                    <button class="s-tab" data-event-filter="discount_alert" type="button">
+                        Скидка
+                        <span class="filter-count" data-event-filter-count="discount_alert" hidden>0</span>
+                    </button>
                 </div>
                 <div class="tracker-event-tracker-filter">
                     <select id="tracker-event-tracker-select" aria-label="Фильтр по трекеру">
@@ -593,6 +603,10 @@
                     Покупки <span class="items-tab-count" data-items-count="purchases" hidden>0</span>
                 </button>
             </div>
+            <div class="reminder-upcoming" id="reminder-upcoming" hidden>
+                <span class="reminder-upcoming-label">📅 Ближайшие напоминания</span>
+                <div class="reminder-upcoming-list" id="reminder-upcoming-list"></div>
+            </div>
             <div class="trackers-list" id="lead-inbox-list"></div>
             <!-- Clear buttons live at the bottom of the list, only one
                  visible at a time depending on the active tab. The
@@ -652,9 +666,43 @@
                     <h4 class="detail-block-title">Продавец</h4>
                     <div class="detail-fields" id="detail-seller"></div>
                 </section>
+                <section class="detail-block risk-block" id="detail-risk-block" hidden>
+                    <h4 class="detail-block-title">⚠️ Оценка рисков</h4>
+                    <div id="detail-risk-content"></div>
+                </section>
                 <section class="detail-block" id="detail-ai-block" hidden>
                     <h4 class="detail-block-title">AI Анализ</h4>
                     <div id="detail-ai-content"></div>
+                </section>
+                <section class="detail-block reminder-section" id="detail-reminder-block" hidden>
+                    <h4 class="detail-block-title">🔔 Напоминание</h4>
+                    <div class="reminder-form" id="reminder-form">
+                        <div class="reminder-form-row">
+                            <label class="workflow-field">
+                                <span class="workflow-field-label">Дата и время</span>
+                                <div class="deal-range-input-wrap workflow-input-wrap">
+                                    <input id="reminder-datetime-input" type="datetime-local">
+                                </div>
+                            </label>
+                        </div>
+                        <div class="reminder-chips" id="reminder-chips">
+                            <button class="reminder-chip" type="button" data-reminder-offset="1d">Завтра</button>
+                            <button class="reminder-chip" type="button" data-reminder-offset="3d">Через 3 дня</button>
+                            <button class="reminder-chip" type="button" data-reminder-offset="7d">Через неделю</button>
+                        </div>
+                        <div class="reminder-form-row">
+                            <label class="workflow-field workflow-field-wide">
+                                <span class="workflow-field-label">Сообщение</span>
+                                <div class="deal-range-input-wrap workflow-input-wrap">
+                                    <input id="reminder-message-input" type="text" placeholder="Проверить сделку" maxlength="255">
+                                </div>
+                            </label>
+                        </div>
+                        <div class="contact-form-actions">
+                            <button class="primary-btn small" id="save-reminder-btn" type="button">Добавить</button>
+                        </div>
+                    </div>
+                    <div class="reminder-list" id="reminder-list"></div>
                 </section>
                 <div class="listing-actions detail-bottom-actions">
                     <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
@@ -837,8 +885,7 @@
                 <div class="ai-header-left">
                     <div class="ai-header-icon">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M3 7l3-3h12l3 3v3a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0z"/>
-                            <path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/>
+                            <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
                         </svg>
                     </div>
                     <div>

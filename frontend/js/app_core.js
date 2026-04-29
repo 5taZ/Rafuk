@@ -129,6 +129,7 @@ function createAppCore() {
             listingAssistantResult: null,
             modalCleanup: null,
             stats: null,
+
         },
     };
 
@@ -153,7 +154,6 @@ function createAppCore() {
         const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
         if (saved === "light" || saved === "dark") {
             document.documentElement.setAttribute("data-theme", saved);
-            return;
         }
         if (tg) {
             try {
@@ -162,21 +162,38 @@ function createAppCore() {
             } catch (_) {
                 // ready/expand can throw outside a real Telegram client
             }
-            const scheme = tg.colorScheme;
-            document.documentElement.setAttribute(
-                "data-theme",
-                scheme === "light" ? "light" : "dark"
-            );
+            // Override Telegram's injected background color with our own.
+            // Telegram WebApp JS sets body.style.backgroundColor to the
+            // user's theme bg_color (often blue), which breaks our dark
+            // palette. We force our own bg after Telegram has initialised.
+            const isDark = (saved || (tg.colorScheme !== "light")) === "dark";
+            const ourBg = isDark ? "#0a0a0b" : "#ffffff";
+            try { tg.setBackgroundColor(ourBg); } catch (_) {}
+            document.body.style.backgroundColor = ourBg;
+
+            if (!saved) {
+                const scheme = tg.colorScheme;
+                document.documentElement.setAttribute(
+                    "data-theme",
+                    scheme === "light" ? "light" : "dark"
+                );
+            }
             // React to the user toggling dark/light in the Telegram
             // client without a reload — but only swap our binary mode,
             // never override individual palette variables.
             try {
                 tg.onEvent?.("themeChanged", () => {
                     if (localStorage.getItem("theme")) return;
+                    const s = tg.colorScheme;
                     document.documentElement.setAttribute(
                         "data-theme",
-                        tg.colorScheme === "light" ? "light" : "dark"
+                        s === "light" ? "light" : "dark"
                     );
+                    // Re-assert our background colour after Telegram
+                    // re-injects its theme params on themeChanged.
+                    const bg = s === "light" ? "#ffffff" : "#0a0a0b";
+                    try { tg.setBackgroundColor(bg); } catch (_) {}
+                    document.body.style.backgroundColor = bg;
                 });
             } catch (_) {
                 // onEvent missing on older WebApp builds — non-fatal
@@ -191,6 +208,14 @@ function createAppCore() {
         const next = current === "light" ? "dark" : "light";
         document.documentElement.setAttribute("data-theme", next);
         localStorage.setItem("theme", next);
+        // Re-assert our background colour so Telegram's injected
+        // bg_color doesn't leak through after a theme toggle.
+        const bg = next === "light" ? "#ffffff" : "#0a0a0b";
+        document.body.style.backgroundColor = bg;
+        try {
+            const tg = window.Telegram && window.Telegram.WebApp;
+            if (tg) tg.setBackgroundColor(bg);
+        } catch (_) {}
     }
 
     function formatPrice(value) {
@@ -288,8 +313,15 @@ function createAppCore() {
     function saveRecentSearches() {
         try {
             localStorage.setItem("recentSearches", JSON.stringify(state.search.recentSearches));
-        } catch (_) {
-            // ignore
+        } catch (e) {
+            if (e.name === "QuotaExceededError" && state.search.recentSearches.length > 1) {
+                state.search.recentSearches = state.search.recentSearches.slice(0, Math.ceil(state.search.recentSearches.length / 2));
+                try {
+                    localStorage.setItem("recentSearches", JSON.stringify(state.search.recentSearches));
+                } catch (_) {
+                    // Give up after retry
+                }
+            }
         }
     }
 
@@ -358,9 +390,8 @@ function createAppCore() {
         const start = performance.now();
         return function () {
             const elapsed = performance.now() - start;
-            if (elapsed > thresholdMs) {
-                console.warn(`[perf] ${name} took ${elapsed.toFixed(1)}ms`);
-            }
+            // Slow-render diagnostic is available via the returned elapsed
+            // value; console.warn removed to avoid noise on weak devices.
             return elapsed;
         };
     }

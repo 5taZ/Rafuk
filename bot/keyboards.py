@@ -51,3 +51,28 @@ def tracker_alert_keyboard(
     if not row:
         return None
     return InlineKeyboardMarkup(inline_keyboard=[row])
+
+
+def enhanced_alert_keyboard(
+    *,
+    ad_id: int,
+    listing_url: str | None,
+) -> InlineKeyboardMarkup:
+    """Build an enriched inline keyboard for new listing / price drop alerts.
+
+    Three action buttons:
+      - 📌 В покупки  — callback ``add_lead:<ad_id>`` to create a lead
+      - 👁 Отслеживать — callback ``add_watch:<ad_id>`` to add to watchlist
+      - 🔗 Открыть    — URL button linking to the Kufar listing
+    """
+    row1: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(text="📌 В покупки", callback_data=f"add_lead:{ad_id}"),
+        InlineKeyboardButton(text="👁 Отслеживать", callback_data=f"add_watch:{ad_id}"),
+    ]
+    row2: list[InlineKeyboardButton] = []
+    if listing_url and listing_url.startswith(("http://", "https://")):
+        row2.append(InlineKeyboardButton(text="🔗 Открыть", url=listing_url))
+    keyboard = [row1]
+    if row2:
+        keyboard.append(row2)
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)

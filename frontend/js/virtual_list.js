@@ -13,7 +13,8 @@
  *   - Renders only visible items + small buffer above/below viewport
  *   - Uses sticky viewport + spacer technique (no absolute positioning hacks)
  *   - requestAnimationFrame-throttled scroll handler
- *   - DocumentFragment batching for minimal DOM thrashing
+ *   - DOM recycling: only entering/exiting items are created/removed;
+ *     items that remain visible are left untouched, reducing GC pressure
  *   - Automatic cleanup via destroy()
  */
 
@@ -31,6 +32,9 @@ function createVirtualList(container, options) {
     let visibleEnd = 0;
     let rafId = null;
     let destroyed = false;
+
+    // DOM recycling map: index → DOM element for currently rendered items
+    let renderedMap = new Map();
 
     // Validate required params
     if (!container || typeof renderFn !== "function") {
@@ -55,6 +59,12 @@ function createVirtualList(container, options) {
     viewport.style.cssText =
         "position:sticky;top:0;overflow:hidden;";
     container.appendChild(viewport);
+
+    // Bottom spacer (always the last child of viewport)
+    const bottomSpacer = document.createElement("div");
+    bottomSpacer.setAttribute("data-vl-bottom-spacer", "true");
+    bottomSpacer.setAttribute("aria-hidden", "true");
+    viewport.appendChild(bottomSpacer);
 
     // Configure container scrolling
     container.style.overflowY = "auto";
@@ -87,37 +97,69 @@ function createVirtualList(container, options) {
         // Calculate spacer heights
         const topPadding = start * itemHeight;
         const bottomPadding = (items.length - end) * itemHeight;
-
-        // Clear and re-render visible items
-        domClear(viewport);
         spacer.style.height = `${topPadding}px`;
-
-        // Create a bottom spacer if needed
-        let bottomSpacer = viewport.querySelector("[data-vl-bottom-spacer]");
-        if (!bottomSpacer) {
-            bottomSpacer = document.createElement("div");
-            bottomSpacer.setAttribute("data-vl-bottom-spacer", "true");
-            bottomSpacer.setAttribute("aria-hidden", "true");
-        }
         bottomSpacer.style.height = `${bottomPadding}px`;
 
-        // Build fragment for batch DOM insertion
-        const fragment = document.createDocumentFragment();
+        // Determine which indices are now visible
+        const newIndices = new Set();
         for (let i = start; i < end; i++) {
+            newIndices.add(i);
+        }
+
+        // Remove items that scrolled out of the visible range
+        for (const [idx, el] of renderedMap) {
+            if (!newIndices.has(idx)) {
+                el.remove();
+                renderedMap.delete(idx);
+            }
+        }
+
+        // Add items that scrolled into the visible range
+        // Build a fragment for all new items, then insert at the right position
+        const fragment = document.createDocumentFragment();
+        const toInsert = [];
+
+        for (let i = start; i < end; i++) {
+            if (renderedMap.has(i)) continue; // Already rendered, leave untouched
+
             const el = renderFn(items[i], i);
             if (el) {
-                // Don't force height - let CSS handle it naturally
-                // Only add margin if using gap-less container
                 if (itemHeight) {
                     el.style.minHeight = `${itemHeight}px`;
                 }
-                // Mark as virtualized item for potential debugging
                 el.setAttribute("data-vl-index", String(i));
                 fragment.appendChild(el);
+                toInsert.push([i, el]);
             }
         }
-        fragment.appendChild(bottomSpacer);
-        viewport.appendChild(fragment);
+
+        if (toInsert.length === 0) return; // Nothing new to add
+
+        // Find the insertion point: before the first already-rendered
+        // item whose index is greater than the smallest new index, or
+        // before the bottom spacer if no such item exists.
+        const minNewIdx = toInsert[0][0];
+        let insertBefore = bottomSpacer; // default: before bottom spacer
+
+        // Binary search over sorted keys for O(log n) instead of O(n) scan
+        const sortedKeys = [...renderedMap.keys()].sort((a, b) => a - b);
+        let lo = 0, hi = sortedKeys.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >>> 1;
+            if (sortedKeys[mid] > minNewIdx) hi = mid;
+            else lo = mid + 1;
+        }
+        if (lo < sortedKeys.length) {
+            const closestHigherIdx = sortedKeys[lo];
+            insertBefore = renderedMap.get(closestHigherIdx);
+        }
+
+        viewport.insertBefore(fragment, insertBefore);
+
+        // Register new items in the recycling map
+        for (const [idx, el] of toInsert) {
+            renderedMap.set(idx, el);
+        }
     }
 
     function onScroll() {
@@ -145,6 +187,10 @@ function createVirtualList(container, options) {
         setItems: function (newItems) {
             if (destroyed) return;
             items = newItems || [];
+            // Clear recycled DOM nodes — data changed, old nodes are stale
+            renderedMap.clear();
+            domClear(viewport);
+            viewport.appendChild(bottomSpacer);
             // Reset scroll position when data changes
             container.scrollTop = 0;
             scrollTop = 0;
@@ -166,6 +212,10 @@ function createVirtualList(container, options) {
          */
         refresh: function () {
             if (destroyed) return;
+            // Clear recycled DOM nodes — data changed, old nodes are stale
+            renderedMap.clear();
+            domClear(viewport);
+            viewport.appendChild(bottomSpacer);
             visibleStart = -1; // Force re-render
             visibleEnd = -1;
             renderVisibleItems();
@@ -176,6 +226,7 @@ function createVirtualList(container, options) {
          */
         destroy: function () {
             destroyed = true;
+            renderedMap.clear();
             if (rafId !== null) {
                 cancelAnimationFrame(rafId);
                 rafId = null;
