@@ -161,8 +161,8 @@ function createRenderCardBuilders(context) {
                 domEl(
                     "div",
                     { className: "listing-actions" },
-                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "lead" }, text: "В покупки", attrs: { "aria-label": `Добавить «${altText || "товар"}» в покупки` } }),
-                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "watch" }, text: "В избранное", attrs: { "aria-label": `Добавить «${altText || "товар"}» в избранное` } }),
+                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "lead" }, text: "В покупки", attrs: { "aria-label": `Добавить «${item.title || "товар"}» в покупки` } }),
+                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "watch" }, text: "В избранное", attrs: { "aria-label": `Добавить «${item.title || "товар"}» в избранное` } }),
                     domEl("a", {
                         className: "listing-btn listing-btn--kufar",
                         text: "Kufar",
