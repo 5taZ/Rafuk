@@ -66,3 +66,20 @@ def test_future_init_data_raises_value_error() -> None:
     )
     with pytest.raises(ValueError, match="in the future"):
         verify_telegram_init_data(future, _TEST_BOT_TOKEN, now_ts=now_ts)
+
+
+def test_10min_old_init_data_passes_with_1h_max_age() -> None:
+    """Telegram Mini App initData is generated once at launch and never
+    refreshed.  A 5-minute max-age (300s) causes auth failures after
+    the user spends a few minutes in the app.  With the default 1-hour
+    window, a 10-minute-old initData should still be valid."""
+    now_ts = int(time())
+    init_data = _make_init_data(
+        user_id=123456,
+        bot_token=_TEST_BOT_TOKEN,
+        auth_date=now_ts - 600,
+    )
+    result = verify_telegram_init_data(
+        init_data, _TEST_BOT_TOKEN, max_age_seconds=3600, now_ts=now_ts
+    )
+    assert result.user_id == 123456

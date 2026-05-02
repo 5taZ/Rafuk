@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     auto_remove_missing_days: int = 7
     max_trackers_per_user: int = 50
     debug: bool = False
+    # Telegram initData max age in seconds. Telegram generates initData once
+    # when the Mini App opens and never refreshes it — so a short window
+    # (e.g. 300s/5min) causes auth failures after the user spends a few
+    # minutes in the app.  The HMAC signature already prevents tampering;
+    # the max-age only limits replay-window exposure.  3600s (1 hour) is
+    # a reasonable balance between security and usability.
+    telegram_init_data_max_age: int = 3600
 
     @field_validator("debug")
     @classmethod

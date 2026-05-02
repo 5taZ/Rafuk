@@ -77,7 +77,11 @@ def get_telegram_user(
         )
     try:
         bot_token = settings.bot_token.get_secret_value()
-        user = verify_telegram_init_data(x_telegram_init_data, bot_token)
+        user = verify_telegram_init_data(
+            x_telegram_init_data,
+            bot_token,
+            max_age_seconds=settings.telegram_init_data_max_age,
+        )
         request.state.telegram_user = user
         return user
     except ValueError as exc:

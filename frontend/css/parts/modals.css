@@ -1270,7 +1270,7 @@ body.lp-menu-open {
 .consent-check a {
     color: var(--accent);
     text-decoration: underline;
-    text-decoration-color: var(--accent-glow);
+    text-decoration-color: var(--accent);
     text-underline-offset: 2px;
 }
 
