@@ -27,6 +27,7 @@ ACCESSORY_PRICE_CAPS: dict[str, float] = {
     "watch_accessory": 120.0,
 }
 STRICT_VARIANT_TOKENS = {
+    # Tech device variants (phones, laptops, tablets)
     "pro",
     "max",
     "plus",
@@ -46,6 +47,29 @@ STRICT_VARIANT_TOKENS = {
     "se",
     "xs",
     "xr",
+    # Car generations (Roman numerals in listing titles)
+    "vi",
+    "vii",
+    "viii",
+    "ix",
+    "xii",
+    # Car body types
+    "седан",
+    "хэтчбек",
+    "универсал",
+    "купе",
+    "кабриолет",
+    "лифтбек",
+    "рестайлинг",
+    "рестайл",
+    # Common car trim / model qualifiers
+    "gt",
+    "gts",
+    "amg",
+    "sport",
+    "comfortline",
+    "highline",
+    "trendline",
 }
 # Tokens shorter than 3 chars are too ambiguous for variant matching and cause
 # false positives (e.g. "s" matching inside "s24", "x" matching "xs").
@@ -81,6 +105,39 @@ SEARCH_ALIASES = {
     "поук": "poco",
     "найк": "nike",
     "адидас": "adidas",
+    # Car brand/model transliterations
+    "поло": "polo",
+    "фольксваген": "volkswagen",
+    "пассат": "passat",
+    "гольф": "golf",
+    "тигуан": "tiguan",
+    "тойота": "toyota",
+    "камри": "camry",
+    "королла": "corolla",
+    "раф4": "rav4",
+    "бмв": "bmw",
+    "мерседес": "mercedes",
+    "ауди": "audi",
+    "мазда": "mazda",
+    "форд": "ford",
+    "фокус": "focus",
+    "хёндай": "hyundai",
+    "хундай": "hyundai",
+    "солярис": "solaris",
+    "киа": "kia",
+    "рио": "rio",
+    "рено": "renault",
+    "логан": "logan",
+    "пежо": "peugeot",
+    "опель": "opel",
+    "шевроле": "chevrolet",
+    "ниссан": "nissan",
+    "хонда": "honda",
+    "митсубиси": "mitsubishi",
+    "лексус": "lexus",
+    "лендровер": "landrover",
+    "ягуар": "jaguar",
+    "порше": "porsche",
     "нот": "note",
     "нубия": "nubia",
     "хуавей": "huawei",
@@ -160,6 +217,52 @@ def apply_search_mode(
     if not strict_search:
         return ads
     return [ad for ad in ads if is_strict_match(str(ad.get("subject", "")), query)]
+
+
+# Minimum number of similar listings required for a cluster-specific
+# price comparison. Below this threshold the delta% is hidden (0.0)
+# to avoid misleading comparisons against a tiny sample.
+MIN_CLUSTER_SIZE = 3
+
+
+def find_similar_listings(
+    target_title: str,
+    all_ads: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Find listings that share the same variant tokens as the target.
+
+    Uses :func:`is_strict_match` in reverse — treats the target title as
+    the "query" and filters ``all_ads`` to only those that match its
+    variant profile (generation, body type, trim, etc.).
+
+    Returns the filtered list, or the full ``all_ads`` if the cluster is
+    smaller than :data:`MIN_CLUSTER_SIZE`.
+    """
+    similar = [
+        ad for ad in all_ads
+        if is_strict_match(str(ad.get("subject", "")), target_title)
+    ]
+    if len(similar) >= MIN_CLUSTER_SIZE:
+        return similar
+    return []
+
+
+def cluster_price_stats(
+    target_title: str,
+    all_ads: list[dict[str, Any]],
+) -> PriceStats | None:
+    """Compute price stats for listings similar to *target_title*.
+
+    Returns ``None`` when the cluster is too small (< MIN_CLUSTER_SIZE),
+    signalling the caller to hide the delta% badge.
+    """
+    similar = find_similar_listings(target_title, all_ads)
+    if not similar:
+        return None
+    prices = extract_prices(similar)
+    if not prices:
+        return None
+    return compute_price_stats(prices)
 
 
 def normalize_price_byn(raw_price: Any) -> float | None:

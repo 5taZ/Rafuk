@@ -5,6 +5,8 @@ from typing import Any
 from api.schemas import ListingDetailResponse, ListingField, ListingItem
 from api.services.aggregator import (
     PriceStats,
+    cluster_price_stats,
+    compute_price_vs_median,
     compute_price_vs_reference,
     get_category_label,
     get_param,
@@ -195,10 +197,27 @@ def build_listing_item(
     market_stats: PriceStats,
     category_price_stats: dict[int, PriceStats] | None = None,
     liquidity: LiquidityInsight | None = None,
+    all_ads: list[dict[str, Any]] | None = None,
 ) -> ListingItem:
     price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
     reference = resolve_price_reference(ad, market_stats, category_price_stats)
-    price_delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
+    # Cluster-aware delta: compare against listings with the same
+    # variant profile (generation, body type, trim, etc.). When a
+    # cluster exists (≥3 similar listings), use its median. Otherwise
+    # fall back to the category/reference-based comparison.
+    price_delta = 0.0
+    cluster_applied = False
+    if all_ads:
+        cluster_stats = cluster_price_stats(
+            str(ad.get("subject", "")), all_ads,
+        )
+        if cluster_stats is not None:
+            price_delta = compute_price_vs_median(ad, cluster_stats.median)
+            cluster_applied = True
+    if not cluster_applied:
+        price_delta = compute_price_vs_reference(
+            ad, market_stats, category_price_stats,
+        )
     fair_band = fair_price_band(price_delta)
     flags = detect_anomaly_flags(ad, reference.stats)
     deal_score = compute_deal_score(

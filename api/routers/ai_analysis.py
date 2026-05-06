@@ -24,6 +24,7 @@ from api.schemas import (
     AIResalePrice,
 )
 from api.services.aggregator import (
+    cluster_price_stats,
     compute_category_price_stats,
     compute_price_stats,
     extract_prices,
@@ -71,6 +72,9 @@ _AI_ANALYSIS_ERRORS = (
 
 # ── Async task store ──────────────────────────────────────────────────────
 # Redis-backed when available, with in-process shadow fallback.
+# NOTE: These dicts are safe under single-process asyncio (no preemption
+# between await points). If deploying with multiple worker processes,
+# the Redis path should be used exclusively via _TASKS_KEY/_EXPORTS_KEY.
 _tasks: dict[str, dict] = {}
 _exports: dict[str, dict] = {}
 
@@ -107,9 +111,16 @@ def _prune_old_tasks_shadow() -> None:
     expired = [k for k, v in _tasks.items() if now - v.get("_updated_ts", 0) > ttl]
     for k in expired:
         _tasks.pop(k, None)
-    # Enforce upper bound — evict oldest entries first
+    # Enforce upper bound — evict oldest entries first.
+    # Snapshot keys to avoid RuntimeError from concurrent mutation.
     while len(_tasks) > _MAX_SHADOW_ENTRIES:
-        oldest_key = min(_tasks, key=lambda k: _tasks[k].get("_updated_ts", 0))
+        oldest_key = min(
+            list(_tasks.keys()),
+            key=lambda k: _tasks[k].get("_updated_ts", 0),
+            default=None,
+        )
+        if oldest_key is None:
+            break
         _tasks.pop(oldest_key, None)
 
 
@@ -540,6 +551,22 @@ async def _run_analysis(
         safe_query,
     )
 
+    # Pre-initialize variables used by fallback handlers so that an
+    # early exception (e.g. during search) does not cause NameError
+    # in the except blocks below.
+    price_byn = 0.0
+    is_negotiable_price = True
+    median = None
+    q1 = None
+    q3 = None
+    similar = []
+    risk_context = None
+    reference = None
+    photo_condition_label = None
+    photo_condition_notes = None
+    title = ""
+    parameters = []
+
     try:
         await _update_task(
             cache,
@@ -674,6 +701,15 @@ async def _run_analysis(
             target_ad, stats, category_price_stats
         )
         effective_stats = reference.stats
+        # Cluster-aware median: compare against listings that share
+        # the same variant tokens (generation, body type, etc.) as
+        # the target ad.  Falls back to the broad median when the
+        # cluster is too small (< 3 similar listings).
+        cluster_stats = cluster_price_stats(
+            str(target_ad.get("subject", "")), filtered_ads,
+        )
+        if cluster_stats is not None:
+            effective_stats = cluster_stats
         median = effective_stats.median if effective_stats else None
         count = effective_stats.count if effective_stats else 0
         q1 = effective_stats.q1 if effective_stats else None
@@ -745,7 +781,7 @@ async def _run_analysis(
             logger.info("AI task %s stage=photo_precheck images=%d", task_id, len(images))
             try:
                 quick_photo = await asyncio.wait_for(
-                    ai.quick_condition(images[:1]), timeout=photo_precheck_timeout
+                    ai.quick_condition(images[:3]), timeout=photo_precheck_timeout
                 )
                 photo_condition_label = str(quick_photo.get("condition") or "").strip()
                 photo_condition_notes = [
@@ -847,6 +883,7 @@ async def _run_analysis(
                         deal_verdict=target_deal_verdict,
                         photo_condition_label=photo_condition_label or None,
                         photo_condition_notes=photo_condition_notes or None,
+                        image_urls=images,
                     )
                 finally:
                     pump_task.cancel()

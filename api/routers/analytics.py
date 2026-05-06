@@ -108,13 +108,35 @@ async def get_lead_analytics(
                 monthly=[],
             )
 
-        leads = list(
+        # Funnel counts via GROUP BY — avoids loading all lead ORM objects.
+        funnel_rows = await session.execute(
+            select(LeadItem.status, func.count(LeadItem.id))
+            .where(LeadItem.user_id == user_id)
+            .group_by(LeadItem.status)
+        )
+        funnel_counter: Counter[str] = Counter(dict(funnel_rows.all()))
+
+        funnel = [
+            LeadFunnelStage(status=status, label=label, count=funnel_counter.get(status, 0))
+            for status, label in _FUNNEL_STATUS_ORDER
+        ]
+
+        # Only load full ORM leads for financial calculations (sold leads
+        # with price data + active leads for counts). This avoids hydrating
+        # hundreds of ORM objects for leads that don't contribute to ROI.
+        financial_leads = list(
             (
                 await session.execute(
-                    select(LeadItem).where(LeadItem.user_id == user_id)
+                    select(LeadItem).where(
+                        LeadItem.user_id == user_id,
+                        LeadItem.status.in_(
+                            list(_PURSUED_STATUSES) + ["watching"]
+                        ),
+                    )
                 )
             ).scalars()
         )
+
         # One bulk SUM — replaces the per-lead expense lookup.
         expense_rows = await session.execute(
             select(DealExpense.lead_id, func.sum(DealExpense.amount_byn))
@@ -127,21 +149,11 @@ async def get_lead_analytics(
 
     total_expenses = sum(expenses_by_lead.values())
 
-    funnel_counter: Counter[str] = Counter()
-    for lead in leads:
-        funnel_counter[lead.status] += 1
-
-    funnel = [
-        LeadFunnelStage(status=status, label=label, count=funnel_counter.get(status, 0))
-        for status, label in _FUNNEL_STATUS_ORDER
-    ]
-
-    # Window restriction for revenue/ROI/win-rate. Funnel is reported
-    # over the full history because users want to see their lifetime
-    # pipeline shape.
+    # Window restriction for revenue/ROI/win-rate.
+    cutoff_dt = cutoff
     in_window = [
-        lead for lead in leads
-        if (_ensure_aware(lead.created_at) or datetime.now(UTC)) >= cutoff
+        lead for lead in financial_leads
+        if (_ensure_aware(lead.created_at) or datetime.now(UTC)) >= cutoff_dt
     ]
 
     pursued = [
@@ -204,12 +216,14 @@ async def get_lead_analytics(
         for key, values in sorted(monthly_buckets.items())
     ]
 
-    active_statuses = {"new", "in_progress", "researching", "bought"}
-    active_leads = sum(1 for lead in leads if (lead.status or "") in active_statuses)
+    _active_keys = ("new", "in_progress", "researching", "bought")
+    active_leads = sum(funnel_counter.get(k, 0) for k in _active_keys)
+
+    total_leads = sum(funnel_counter.values())
 
     return LeadAnalyticsResponse(
         period_days=days,
-        total_leads=len(leads),
+        total_leads=total_leads,
         pursued_leads=len(pursued),
         sold_leads=len(won),
         skipped_leads=len(skipped),

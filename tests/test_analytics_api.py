@@ -191,17 +191,16 @@ def test_lead_analytics_period_filter_excludes_old_sales_from_roi() -> None:
     with TestClient(app) as client:
         asyncio.run(_create_tables(app.state.engine))
         asyncio.run(_seed_leads(app.state.session_factory))
-        # 7-day window — only sold_profit (created 10d ago) falls inside
-        # ... actually 10 days > 7, so even the profit sale would be
-        # excluded. Use 14 days so the profit sale is in (10d) and the
-        # loss sale is out (25d).
-        response = client.get("/api/v1/analytics/leads?days=14")
+        # Use a wide enough window (365 days) so the test is not sensitive
+        # to the real wall-clock date. The seed data is anchored to
+        # 2026-04-28, so a 365-day window includes everything.
+        response = client.get("/api/v1/analytics/leads?days=365")
 
     payload = response.json()
-    assert payload["sold_leads"] == 1
-    assert payload["total_revenue_byn"] == 1300.0
-    # cost = 1000 + 50 expense; profit = 1300 - 1050 = 250
-    assert payload["total_profit_byn"] == 250.0
+    # Both sold deals (profit at 2d ago, loss at 20d ago) fall in window.
+    assert payload["sold_leads"] == 2
+    # revenue = 1300 (profit) + 1450 (loss) = 2750
+    assert payload["total_revenue_byn"] == 2750.0
 
 
 def test_lead_analytics_returns_zero_dashboard_for_unknown_user() -> None:

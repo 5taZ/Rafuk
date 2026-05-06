@@ -57,6 +57,8 @@ class User(Base):
     )
     lead_items = relationship("LeadItem", back_populates="user", cascade="all, delete-orphan")
     consents = relationship("UserConsent", back_populates="user", cascade="all, delete-orphan")
+    reminders = relationship("LeadReminder", back_populates="user", cascade="all, delete-orphan")
+    ai_audit_logs = relationship("AIAuditLog", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
 
@@ -167,6 +169,8 @@ class Tracker(
         Index("idx_trackers_user", "user_id"),
         Index("idx_trackers_active", "active"),
         Index("idx_trackers_paused", "paused"),
+        Index("idx_trackers_user_active", "user_id", "active"),
+        Index("idx_trackers_active_paused", "active", "paused"),
     )
 
     def __init__(self, **kwargs: object) -> None:
@@ -224,6 +228,7 @@ class QueryListingState(Base):
         UniqueConstraint("query", "ad_id", name="uq_query_listing_state"),
         Index("idx_query_listing_states_query", "query"),
         Index("idx_query_listing_states_active", "active"),
+        Index("idx_query_listing_states_query_active", "query", "active"),
     )
 
 
@@ -349,6 +354,7 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         Index("idx_lead_items_user", "user_id"),
         Index("idx_lead_items_status", "status"),
         Index("idx_lead_items_market_status", "market_status"),
+        Index("idx_lead_items_user_status", "user_id", "status"),
     )
 
 
@@ -465,7 +471,7 @@ class LeadReminder(Base):
 
     # Relationships
     lead = relationship("LeadItem", backref="reminders")
-    user = relationship("User")
+    user = relationship("User", back_populates="reminders")
 
     __table_args__ = (
         Index("idx_reminders_due", "remind_at", "sent"),
@@ -535,6 +541,8 @@ class AIAuditLog(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+    user = relationship("User", back_populates="ai_audit_logs")
 
     __table_args__ = (
         Index("idx_ai_audit_user", "user_id"),

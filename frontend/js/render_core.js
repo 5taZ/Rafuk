@@ -188,11 +188,12 @@ function createRenderCore(context) {
             dismissToast(toast);
         });
 
-        if (window.Telegram?.WebApp?.HapticFeedback) {
+        const _haptic = window.Telegram?.WebApp;
+        if (_haptic?.HapticFeedback && (!_haptic.version || parseFloat(_haptic.version) >= 6.1)) {
             if (type === "success") {
-                Telegram.WebApp.HapticFeedback.notificationOccurred("success");
+                _haptic.HapticFeedback.notificationOccurred("success");
             } else if (type === "error") {
-                Telegram.WebApp.HapticFeedback.notificationOccurred("error");
+                _haptic.HapticFeedback.notificationOccurred("error");
             }
         }
 

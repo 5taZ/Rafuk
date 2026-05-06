@@ -1,3 +1,12 @@
+// HapticFeedback requires Telegram WebApp version >= 6.1.
+// Returns the HapticFeedback object if available, null otherwise.
+function _tgHaptic() {
+    const tg = window.Telegram?.WebApp;
+    if (!tg?.HapticFeedback) return null;
+    if (tg.version && parseFloat(tg.version) < 6.1) return null;
+    return tg.HapticFeedback;
+}
+
 function domAppend(target) {
     if (!target) return target;
 
@@ -261,7 +270,7 @@ function makeSwipeable(card, options) {
             return;
         }
         // Light haptic so the user feels the action commit.
-        const haptic = window.Telegram?.WebApp?.HapticFeedback;
+        const haptic = _tgHaptic();
         try {
             haptic?.impactOccurred?.("medium");
         } catch (_) {
@@ -484,7 +493,7 @@ function setupPullToRefresh(options) {
             return;
         }
         // Commit.
-        const haptic = window.Telegram?.WebApp?.HapticFeedback;
+        const haptic = _tgHaptic();
         try {
             haptic?.impactOccurred?.("light");
         } catch (_) {
@@ -931,7 +940,7 @@ function attachLongPress(target, getItems, options) {
             timer = setTimeout(() => {
                 timer = null;
                 suppressClick = true;
-                const haptic = window.Telegram?.WebApp?.HapticFeedback;
+                const haptic = _tgHaptic();
                 try {
                     haptic?.impactOccurred?.("medium");
                 } catch (_) {

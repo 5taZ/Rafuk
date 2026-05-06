@@ -1281,9 +1281,9 @@ ${similarHtml}
                     throw new Error("Сервер не вернул ссылку на экспорт");
                 }
                 if (window.Telegram?.WebApp?.openLink) {
-                    window.Telegram.WebApp.openLink(exportUrl);
+                    window.Telegram.WebApp.openLink(safeUrl(exportUrl));
                 } else {
-                    window.location.href = exportUrl;
+                    window.location.href = safeUrl(exportUrl);
                 }
                 return;
             } catch (err) {

@@ -168,7 +168,10 @@ function createAppCore() {
             // palette. We force our own bg after Telegram has initialised.
             const isDark = (saved || (tg.colorScheme !== "light")) === "dark";
             const ourBg = isDark ? "#0a0a0b" : "#ffffff";
-            try { tg.setBackgroundColor(ourBg); } catch (_) {}
+            // setBackgroundColor requires Telegram WebApp version >= 6.1
+            if (tg.version && parseFloat(tg.version) >= 6.1) {
+                try { tg.setBackgroundColor(ourBg); } catch (_) {}
+            }
             document.body.style.backgroundColor = ourBg;
 
             if (!saved) {
@@ -192,7 +195,11 @@ function createAppCore() {
                     // Re-assert our background colour after Telegram
                     // re-injects its theme params on themeChanged.
                     const bg = s === "light" ? "#ffffff" : "#0a0a0b";
-                    try { tg.setBackgroundColor(bg); } catch (_) {}
+                    try {
+                        if (tg.version && parseFloat(tg.version) >= 6.1) {
+                            tg.setBackgroundColor(bg);
+                        }
+                    } catch (_) {}
                     document.body.style.backgroundColor = bg;
                 });
             } catch (_) {
@@ -214,7 +221,9 @@ function createAppCore() {
         document.body.style.backgroundColor = bg;
         try {
             const tg = window.Telegram && window.Telegram.WebApp;
-            if (tg) tg.setBackgroundColor(bg);
+            if (tg && tg.version && parseFloat(tg.version) >= 6.1) {
+                tg.setBackgroundColor(bg);
+            }
         } catch (_) {}
     }
 

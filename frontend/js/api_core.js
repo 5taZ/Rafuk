@@ -44,6 +44,7 @@ function createApiCore(context) {
         }
 
         let response;
+        let timedOut = false;
         try {
             response = await fetch(url, {
                 ...options,
@@ -55,6 +56,10 @@ function createApiCore(context) {
         } catch (fetchErr) {
             clearTimeout(timer);
             if (fetchErr.name === "AbortError") {
+                if (options.signal?.aborted) {
+                    // Caller aborted (e.g. stale request) — suppress silently
+                    throw fetchErr;
+                }
                 throw new Error("Превышено время ожидания. Попробуйте ещё раз.");
             }
             throw fetchErr;

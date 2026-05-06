@@ -1807,7 +1807,13 @@ def _fallback_recommendation(
     market_q1: float | None,
     market_q3: float | None,
     risk_context: MarketplaceRiskContext,
+    photo_condition_label: str | None = None,
 ) -> dict[str, str]:
+    # Poor condition from photo precheck → downgrade verdict
+    condition_is_poor = photo_condition_label in (
+        "Требует внимания", "Удовлетворительное",
+    )
+
     if is_negotiable_price:
         verdict = "think_twice"
         if risk_context.score >= 3.0:
@@ -1823,11 +1829,20 @@ def _fallback_recommendation(
         return {"verdict": verdict, "text": text}
 
     if market_q3 and price_byn > market_q3:
-        return {
-            "verdict": "overpriced",
-            "text": "Без заметного торга покупка выглядит завышенной относительно текущего рынка.",
-        }
+        text = "Без заметного торга покупка выглядит завышенной относительно текущего рынка."
+        if condition_is_poor:
+            text += " Состояние по фото также вызывает вопросы."
+        return {"verdict": "overpriced", "text": text}
+
     if market_q1 and price_byn <= market_q1 and risk_context.score < 2.5:
+        if condition_is_poor:
+            return {
+                "verdict": "think_twice",
+                "text": (
+                    "Цена привлекательна, но фото-осмотр выявил проблемы. "
+                    "Стоит осмотреть лично перед покупкой."
+                ),
+            }
         return {
             "verdict": "worth_it",
             "text": (
@@ -1864,6 +1879,7 @@ def build_fallback_analysis_result(
         market_q1=market_q1,
         market_q3=market_q3,
         risk_context=risk_context,
+        photo_condition_label=photo_condition_label,
     )
     category = detect_category(title, parameters)
     summary = _build_summary_fallback(

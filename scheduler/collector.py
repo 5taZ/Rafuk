@@ -729,265 +729,277 @@ async def _check_trackers_inner(
             total_errors = 0
 
             for (query, strict_mode), query_trackers in trackers_by_query.items():
-                try:
-                    payload = await client.search(query=query, currency="BYN", size=50)
-                    ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
-                    search_key = build_query_key(query, strict_mode)
-                    await upsert_query_snapshot(
-                        session,
-                        query=search_key,
-                        ads=ads,
-                        total_results=len(ads),
-                        bucket_at=bucket_at,
-                    )
-                    # Flush so the just-upserted snapshot is visible to
-                    # the trend detector below.
-                    await session.flush()
-                    snapshots = await load_query_snapshots(
-                        session, query=search_key, days=10
-                    )
-                    trend_signal = detect_trend_reversal_up(snapshots)
-                    sync_result = await sync_query_listing_states(
-                        session,
-                        query=search_key,
-                        ads=ads,
-                        observed_at=observed_at,
-                        total_results=len(ads),
-                    )
-                    ads_by_id = {
-                        int(ad.get("ad_id", 0)): ad for ad in ads if int(ad.get("ad_id", 0)) > 0
-                    }
-                    # Hoist these out of the per-tracker loop — they
-                    # depend only on the query result, not the tracker.
-                    # Was being recomputed inside _filter_sync_result_for_tracker
-                    # once per tracker sharing the same query.
-                    ads_list = list(ads_by_id.values())
-                    market_stats = compute_price_stats(extract_prices(ads_list))
-                    category_price_stats = compute_category_price_stats(ads_list)
-
-                    newest_id = int(ads[0].get("ad_id", 0)) if ads else None
-                    newest_price_byn = (
-                        normalize_price_byn(ads[0].get("price_byn")) if ads else None
-                    )
-
-                    safe_query = query.replace("\n", " ")[:80]
-                    logger.info(
-                        "Query %r [strict=%s]: %d ads, %d new, %d price drops",
-                        safe_query,
-                        strict_mode,
-                        len(ads),
-                        len(sync_result.new_listings),
-                        len(sync_result.price_drops),
-                    )
-
-                    for tracker in query_trackers:
-                        is_first_check = tracker.last_checked_at is None
-                        if is_first_check:
-                            logger.info(
-                                "Tracker %d (user %d): first check, initializing baseline",
-                                tracker.id,
-                                tracker.user_id,
-                            )
-                            tracker.last_seen_ad_id = newest_id
-                            tracker.last_seen_price_byn = newest_price_byn
-                            tracker.last_checked_at = observed_at
-                            # Mark all current listings as seen for this tracker
-                            # so they don't generate events on the next cycle.
-                            # sync_query_listing_states already recorded them as new
-                            # for the query, but this tracker should skip them.
-                            seen_by_tracker[tracker.id] = {
-                                (state.ad_id, state.event_type)
-                                for state in sync_result.new_listings
-                            }
-                            continue
-
-                        tracker_sync_result = _filter_sync_result_for_tracker(
-                            tracker,
-                            sync_result,
-                            ads_by_id,
-                            market_stats=market_stats,
-                            category_price_stats=category_price_stats,
-                        )
-                        trend_already_sent = tracker.id in trend_sent_recently
-                        seen_for_tracker = seen_by_tracker.get(tracker.id, set())
-
-                        # Persist all events first so we have their data
-                        await persist_tracker_events(
+                # Use a savepoint per query group so that a rollback only
+                # discards THIS group's changes — previous groups' flushed
+                # data stays intact in the outer transaction.
+                async with session.begin_nested():
+                    try:
+                        payload = await client.search(query=query, currency="BYN", size=50)
+                        ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
+                        search_key = build_query_key(query, strict_mode)
+                        await upsert_query_snapshot(
                             session,
-                            tracker,
-                            tracker_sync_result,
-                            ads_by_id,
-                            seen=seen_for_tracker,
-                            trend_signal=trend_signal,
-                            trend_already_sent=trend_already_sent,
+                            query=search_key,
+                            ads=ads,
+                            total_results=len(ads),
+                            bucket_at=bucket_at,
                         )
+                        # Flush so the just-upserted snapshot is visible to
+                        # the trend detector below.
                         await session.flush()
-                        if trend_signal is not None and not trend_already_sent:
-                            trend_sent_recently.add(tracker.id)
-
-                        # Send per-listing enhanced notifications for new listings
-                        for state in tracker_sync_result.new_listings[:3]:
-                            ad = ads_by_id.get(state.ad_id)
-                            median_byn = market_stats.median if market_stats.median > 0 else None
-                            discount_pct = None
-                            liquidity_label = None
-                            if ad is not None:
-                                discount_pct = abs(
-                                    compute_price_vs_reference(
-                                        ad, market_stats, category_price_stats
-                                    )
-                                )
-                                try:
-                                    deal = compute_deal_score(
-                                        ad, query=query, market_stats=market_stats
-                                    )
-                                    if deal.score >= 70:
-                                        liquidity_label = "Высокая ликвидность"
-                                    elif deal.score >= 40:
-                                        liquidity_label = "Средняя ликвидность"
-                                except Exception:  # noqa: BLE001
-                                    pass
-                            listing_msg = _build_new_listing_message(
-                                state,
-                                median_byn=median_byn,
-                                discount_pct=discount_pct,
-                                liquidity=liquidity_label,
-                            )
-                            keyboard = enhanced_alert_keyboard(
-                                ad_id=state.ad_id,
-                                listing_url=state.link,
-                            )
-                            can_notify = await notify_user(
-                                bot,
-                                tracker.user.telegram_user_id,
-                                listing_msg,
-                                session,
-                                internal_user_id=tracker.user_id,
-                                reply_markup=keyboard,
-                            )
-                            if can_notify:
-                                total_notified += 1
-                            else:
-                                break  # User blocked — stop sending
-
-                        # Send per-listing enhanced notifications for price drops
-                        for state, delta in tracker_sync_result.price_drops[:3]:
-                            ad = ads_by_id.get(state.ad_id)
-                            median_byn = market_stats.median if market_stats.median > 0 else None
-                            discount_pct = None
-                            if ad is not None:
-                                discount_pct = abs(
-                                    compute_price_vs_reference(
-                                        ad, market_stats, category_price_stats
-                                    )
-                                )
-                            drop_msg = _build_price_drop_message(
-                                state,
-                                delta,
-                                median_byn=median_byn,
-                                discount_pct=discount_pct,
-                            )
-                            keyboard = enhanced_alert_keyboard(
-                                ad_id=state.ad_id,
-                                listing_url=state.link,
-                            )
-                            can_notify = await notify_user(
-                                bot,
-                                tracker.user.telegram_user_id,
-                                drop_msg,
-                                session,
-                                internal_user_id=tracker.user_id,
-                                reply_markup=keyboard,
-                            )
-                            if can_notify:
-                                total_notified += 1
-                            else:
-                                break  # User blocked — stop sending
-
-                        # Send trend reversal as a separate message (uses old keyboard)
-                        if trend_signal is not None and not trend_already_sent:
-                            trend_msg = _build_tracker_message(
-                                query,
-                                strict_mode,
-                                QuerySyncResult(
-                                    stats_count=tracker_sync_result.stats_count,
-                                    total_results=tracker_sync_result.total_results,
-                                    new_listings=[],
-                                    price_drops=[],
-                                ),
-                                trend_signal=trend_signal,
-                                trend_already_sent=False,
-                            )
-                            if trend_msg:
-                                keyboard = tracker_alert_keyboard(
-                                    settings.mini_app_url,
-                                    query=query,
-                                    listing_url=None,
-                                )
-                                await notify_user(
-                                    bot,
-                                    tracker.user.telegram_user_id,
-                                    trend_msg,
-                                    session,
-                                    internal_user_id=tracker.user_id,
-                                    reply_markup=keyboard,
-                                )
-
-                        tracker.last_seen_ad_id = newest_id
-                        tracker.last_seen_price_byn = newest_price_byn
-                        tracker.last_checked_at = observed_at
-
-                        # ── Threshold alerts (price ≤ X, discount ≥ Y%) ──
-                        threshold_events = _detect_threshold_alerts(
-                            ads_by_id,
-                            tracker,
-                            market_stats=market_stats,
-                            category_price_stats=category_price_stats,
-                            seen=seen_for_tracker,
+                        snapshots = await load_query_snapshots(
+                            session, query=search_key, days=10
                         )
-                        if threshold_events:
-                            for evt in threshold_events:
-                                session.add(evt)
-                            await session.flush()
-                            threshold_msg = _build_threshold_message(
-                                tracker, threshold_events
+                        trend_signal = detect_trend_reversal_up(snapshots)
+                        sync_result = await sync_query_listing_states(
+                            session,
+                            query=search_key,
+                            ads=ads,
+                            observed_at=observed_at,
+                            total_results=len(ads),
+                        )
+                        ads_by_id = {
+                            int(ad["ad_id"]): ad
+                            for ad in ads
+                            if int(ad.get("ad_id", 0)) > 0
+                        }
+                        # Hoist these out of the per-tracker loop — they
+                        # depend only on the query result, not the tracker.
+                        # Was being recomputed inside _filter_sync_result_for_tracker
+                        # once per tracker sharing the same query.
+                        ads_list = list(ads_by_id.values())
+                        market_stats = compute_price_stats(extract_prices(ads_list))
+                        category_price_stats = compute_category_price_stats(ads_list)
+
+                        newest_id = int(ads[0].get("ad_id", 0)) if ads else None
+                        newest_price_byn = (
+                            normalize_price_byn(ads[0].get("price_byn")) if ads else None
+                        )
+
+                        safe_query = query.replace("\n", " ")[:80]
+                        logger.info(
+                            "Query %r [strict=%s]: %d ads, %d new, %d price drops",
+                            safe_query,
+                            strict_mode,
+                            len(ads),
+                            len(sync_result.new_listings),
+                            len(sync_result.price_drops),
+                        )
+
+                        for tracker in query_trackers:
+                            is_first_check = tracker.last_checked_at is None
+                            if is_first_check:
+                                logger.info(
+                                    "Tracker %d (user %d): first check, initializing baseline",
+                                    tracker.id,
+                                    tracker.user_id,
+                                )
+                                tracker.last_seen_ad_id = newest_id
+                                tracker.last_seen_price_byn = newest_price_byn
+                                tracker.last_checked_at = observed_at
+                                # Mark all current listings as seen for this tracker
+                                # so they don't generate events on the next cycle.
+                                # sync_query_listing_states already recorded them as new
+                                # for the query, but this tracker should skip them.
+                                seen_by_tracker[tracker.id] = {
+                                    (state.ad_id, state.event_type)
+                                    for state in sync_result.new_listings
+                                }
+                                continue
+
+                            tracker_sync_result = _filter_sync_result_for_tracker(
+                                tracker,
+                                sync_result,
+                                ads_by_id,
+                                market_stats=market_stats,
+                                category_price_stats=category_price_stats,
                             )
-                            if threshold_msg:
-                                primary = threshold_events[0]
-                                keyboard = tracker_alert_keyboard(
-                                    settings.mini_app_url,
-                                    query=primary.query,
-                                    listing_url=primary.link,
+                            trend_already_sent = tracker.id in trend_sent_recently
+                            seen_for_tracker = seen_by_tracker.get(tracker.id, set())
+
+                            # Persist all events first so we have their data
+                            await persist_tracker_events(
+                                session,
+                                tracker,
+                                tracker_sync_result,
+                                ads_by_id,
+                                seen=seen_for_tracker,
+                                trend_signal=trend_signal,
+                                trend_already_sent=trend_already_sent,
+                            )
+                            await session.flush()
+                            if trend_signal is not None and not trend_already_sent:
+                                trend_sent_recently.add(tracker.id)
+
+                            # Send per-listing enhanced notifications for new listings
+                            for state in tracker_sync_result.new_listings[:3]:
+                                ad = ads_by_id.get(state.ad_id)
+                                median_byn = (
+                                    market_stats.median
+                                    if market_stats.median > 0 else None
+                                )
+                                discount_pct = None
+                                liquidity_label = None
+                                if ad is not None:
+                                    discount_pct = abs(
+                                        compute_price_vs_reference(
+                                            ad, market_stats, category_price_stats
+                                        )
+                                    )
+                                    try:
+                                        deal = compute_deal_score(
+                                            ad, query=query, market_stats=market_stats
+                                        )
+                                        if deal.score >= 70:
+                                            liquidity_label = "Высокая ликвидность"
+                                        elif deal.score >= 40:
+                                            liquidity_label = "Средняя ликвидность"
+                                    except Exception:  # noqa: BLE001
+                                        pass
+                                listing_msg = _build_new_listing_message(
+                                    state,
+                                    median_byn=median_byn,
+                                    discount_pct=discount_pct,
+                                    liquidity=liquidity_label,
+                                )
+                                keyboard = enhanced_alert_keyboard(
+                                    ad_id=state.ad_id,
+                                    listing_url=state.link,
                                 )
                                 can_notify = await notify_user(
                                     bot,
                                     tracker.user.telegram_user_id,
-                                    threshold_msg,
+                                    listing_msg,
                                     session,
                                     internal_user_id=tracker.user_id,
                                     reply_markup=keyboard,
                                 )
                                 if can_notify:
                                     total_notified += 1
-                                    logger.info(
-                                        "Tracker %d (user %d): threshold alert "
-                                        "(%d events)",
-                                        tracker.id,
-                                        tracker.user_id,
-                                        len(threshold_events),
+                                else:
+                                    break  # User blocked — stop sending
+
+                            # Send per-listing enhanced notifications for price drops
+                            for state, delta in tracker_sync_result.price_drops[:3]:
+                                ad = ads_by_id.get(state.ad_id)
+                                median_byn = (
+                                    market_stats.median
+                                    if market_stats.median > 0 else None
+                                )
+                                discount_pct = None
+                                if ad is not None:
+                                    discount_pct = abs(
+                                        compute_price_vs_reference(
+                                            ad, market_stats, category_price_stats
+                                        )
+                                    )
+                                drop_msg = _build_price_drop_message(
+                                    state,
+                                    delta,
+                                    median_byn=median_byn,
+                                    discount_pct=discount_pct,
+                                )
+                                keyboard = enhanced_alert_keyboard(
+                                    ad_id=state.ad_id,
+                                    listing_url=state.link,
+                                )
+                                can_notify = await notify_user(
+                                    bot,
+                                    tracker.user.telegram_user_id,
+                                    drop_msg,
+                                    session,
+                                    internal_user_id=tracker.user_id,
+                                    reply_markup=keyboard,
+                                )
+                                if can_notify:
+                                    total_notified += 1
+                                else:
+                                    break  # User blocked — stop sending
+
+                            # Send trend reversal as a separate message (uses old keyboard)
+                            if trend_signal is not None and not trend_already_sent:
+                                trend_msg = _build_tracker_message(
+                                    query,
+                                    strict_mode,
+                                    QuerySyncResult(
+                                        stats_count=tracker_sync_result.stats_count,
+                                        total_results=tracker_sync_result.total_results,
+                                        new_listings=[],
+                                        price_drops=[],
+                                    ),
+                                    trend_signal=trend_signal,
+                                    trend_already_sent=False,
+                                )
+                                if trend_msg:
+                                    keyboard = tracker_alert_keyboard(
+                                        settings.mini_app_url,
+                                        query=query,
+                                        listing_url=None,
+                                    )
+                                    await notify_user(
+                                        bot,
+                                        tracker.user.telegram_user_id,
+                                        trend_msg,
+                                        session,
+                                        internal_user_id=tracker.user_id,
+                                        reply_markup=keyboard,
                                     )
 
-                    # Flush after each query group so a later failure
-                    # doesn't discard this group's snapshot/state/events.
-                    await session.flush()
-                except _TRACKER_QUERY_ERRORS:
-                    total_errors += 1
-                    await session.rollback()
-                    logger.exception(
-                        "Error processing query %r [strict=%s], skipping",
-                        query,
-                        strict_mode,
-                    )
+                            tracker.last_seen_ad_id = newest_id
+                            tracker.last_seen_price_byn = newest_price_byn
+                            tracker.last_checked_at = observed_at
+
+                            # ── Threshold alerts (price ≤ X, discount ≥ Y%) ──
+                            threshold_events = _detect_threshold_alerts(
+                                ads_by_id,
+                                tracker,
+                                market_stats=market_stats,
+                                category_price_stats=category_price_stats,
+                                seen=seen_for_tracker,
+                            )
+                            if threshold_events:
+                                for evt in threshold_events:
+                                    session.add(evt)
+                                await session.flush()
+                                threshold_msg = _build_threshold_message(
+                                    tracker, threshold_events
+                                )
+                                if threshold_msg:
+                                    primary = threshold_events[0]
+                                    keyboard = tracker_alert_keyboard(
+                                        settings.mini_app_url,
+                                        query=primary.query,
+                                        listing_url=primary.link,
+                                    )
+                                    can_notify = await notify_user(
+                                        bot,
+                                        tracker.user.telegram_user_id,
+                                        threshold_msg,
+                                        session,
+                                        internal_user_id=tracker.user_id,
+                                        reply_markup=keyboard,
+                                    )
+                                    if can_notify:
+                                        total_notified += 1
+                                        logger.info(
+                                            "Tracker %d (user %d): threshold alert "
+                                            "(%d events)",
+                                            tracker.id,
+                                            tracker.user_id,
+                                            len(threshold_events),
+                                        )
+
+                        # Savepoint auto-commits on clean exit, preserving
+                        # this group's data even if a later group fails.
+                    except _TRACKER_QUERY_ERRORS:
+                        total_errors += 1
+                        # Rolling back the savepoint only discards this
+                        # group's changes — previous groups are safe.
+                        logger.exception(
+                            "Error processing query %r [strict=%s], skipping",
+                            query,
+                            strict_mode,
+                        )
 
             # Commit whatever succeeded — errors are logged but don't block
             await session.commit()

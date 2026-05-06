@@ -261,9 +261,9 @@ class GeographyResponse(BaseModel):
 
 
 class TrackerCreate(BaseModel):
-    query: str
+    query: str = Field(min_length=1, max_length=255)
     strict_mode: bool = False
-    interval_min: int = 15
+    interval_min: int = Field(default=15, ge=1, le=1440)
     min_discount_percent: float | None = None
     max_price_byn: float | None = None
     seller_type: str | None = None
@@ -278,7 +278,7 @@ class TrackerUpdate(BaseModel):
     """Schema for updating an existing tracker."""
 
     strict_mode: bool | None = None
-    interval_min: int | None = None
+    interval_min: int | None = Field(default=None, ge=1, le=1440)
     min_discount_percent: float | None = None
     max_price_byn: float | None = None
     seller_type: str | None = None
@@ -344,17 +344,17 @@ class TrackerEventRead(BaseModel):
 
 
 class LeadCreate(BaseModel):
-    query: str
+    query: str = Field(min_length=1, max_length=255)
     ad_id: int
-    title: str
-    link: str
+    title: str = Field(max_length=255)
+    link: str = Field(max_length=512)
     price_byn: float | None = None
     thumbnail: str | None = None
     target_resale_byn: float | None = None
     market_median_byn: float | None = None
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=512)
     status: LeadStatusEnum = LeadStatusEnum.new
-    source: str = "manual"
+    source: str = Field(default="manual", max_length=32)
 
 
 class LeadUpdate(BaseModel):
@@ -536,7 +536,7 @@ class DealExpenseRead(BaseModel):
 
 class ReminderCreate(BaseModel):
     remind_at: datetime
-    message: str | None = None
+    message: str | None = Field(default=None, max_length=255)
 
 
 class ReminderRead(ReminderCreate):

@@ -158,6 +158,7 @@ async def get_listings(
                 market_stats=reference_dataset.price_stats,
                 category_price_stats=category_price_stats,
                 liquidity=liquidity,
+                all_ads=sorted_ads[:_MAX_LISTINGS_PAGE],
             )
             for ad in sorted_ads[:_MAX_LISTINGS_PAGE]
         ]
@@ -190,6 +191,7 @@ async def get_listings(
                 market_stats=reference_dataset.price_stats,
                 category_price_stats=category_price_stats,
                 liquidity=liquidity,
+                all_ads=sorted_ads[:_MAX_LISTINGS_PAGE],
             )
             for ad in page_slice
         ]

@@ -52,7 +52,7 @@ WATCHING_STATUS = "watching"
 def _serialize_watchlist(
     item: LeadItem,
     *,
-    price_history: list[LeadItemPriceSnapshot] | None = None,
+    price_history: list[dict] | None = None,
 ) -> WatchlistRead:
     """Serialize a LeadItem with status='watching' as a WatchlistRead.
 
@@ -92,10 +92,7 @@ def _serialize_watchlist(
         last_seen_at=item.last_seen_at,
         missing_since_at=item.missing_since_at,
         updated_at=item.updated_at,
-        price_history=[
-            {"snapped_at": p.snapped_at, "price_byn": float(p.price_byn)}
-            for p in (price_history or [])
-        ],
+        price_history=price_history or [],
     )
 
 
@@ -171,6 +168,21 @@ async def create_lead(
             telegram_user_id=telegram_user.user_id,
             first_name=telegram_user.first_name,
         )
+        # Prevent silent overwrite — if an active lead already exists for
+        # this ad, return 409 so the frontend can show a clear message.
+        existing = await session.scalar(
+            select(LeadItem).where(
+                LeadItem.user_id == user_id,
+                LeadItem.ad_id == payload.ad_id,
+            )
+        )
+        if existing is not None and existing.status not in {
+            WATCHING_STATUS, "closed",
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Этот лот уже в покупках",
+            )
         lead = await upsert_lead(
             session,
             user_id=user_id,
@@ -211,7 +223,9 @@ async def update_lead(
             first_name=telegram_user.first_name,
         )
         lead = await session.scalar(
-            select(LeadItem).where(LeadItem.id == lead_id, LeadItem.user_id == user_id)
+            select(LeadItem)
+            .where(LeadItem.id == lead_id, LeadItem.user_id == user_id)
+            .with_for_update()
         )
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
@@ -284,7 +298,9 @@ async def delete_lead(
             first_name=telegram_user.first_name,
         )
         lead = await session.scalar(
-            select(LeadItem).where(LeadItem.id == lead_id, LeadItem.user_id == user_id)
+            select(LeadItem)
+            .where(LeadItem.id == lead_id, LeadItem.user_id == user_id)
+            .with_for_update()
         )
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
@@ -323,19 +339,25 @@ async def get_watchlist(
         # row in a single query, then group by lead_item_id so the
         # serialiser can attach each row's slice without a per-row
         # round-trip. Empty lists fall through to "no movement yet".
-        history_by_item: dict[int, list[LeadItemPriceSnapshot]] = {}
+        history_by_item: dict[int, list[dict]] = {}
         if items:
             cutoff = datetime.now(UTC) - timedelta(days=30)
             history_rows = await session.execute(
-                select(LeadItemPriceSnapshot)
+                select(
+                    LeadItemPriceSnapshot.lead_item_id,
+                    LeadItemPriceSnapshot.snapped_at,
+                    LeadItemPriceSnapshot.price_byn,
+                )
                 .where(
                     LeadItemPriceSnapshot.lead_item_id.in_([i.id for i in items]),
                     LeadItemPriceSnapshot.snapped_at >= cutoff,
                 )
                 .order_by(LeadItemPriceSnapshot.snapped_at.asc())
             )
-            for snap in history_rows.scalars():
-                history_by_item.setdefault(snap.lead_item_id, []).append(snap)
+            for row in history_rows:
+                history_by_item.setdefault(row.lead_item_id, []).append(
+                    {"snapped_at": row.snapped_at, "price_byn": float(row.price_byn)}
+                )
 
         return [
             _serialize_watchlist(item, price_history=history_by_item.get(item.id))
@@ -498,6 +520,15 @@ async def delete_watchlist_item(
             )
         )
         if item is not None:
+            # Explicit pre-delete for cascade safety (matches delete_lead pattern).
+            await session.execute(
+                delete(LeadItemPriceSnapshot).where(
+                    LeadItemPriceSnapshot.lead_item_id == item.id
+                )
+            )
+            await session.execute(
+                delete(DealExpense).where(DealExpense.lead_id == item.id)
+            )
             await session.delete(item)
             await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -617,7 +648,7 @@ async def refresh_watchlist(
         await session.commit()
         return WatchlistRefreshResponse(
             updated=updated,
-            missing=missing - auto_removed,
+            missing=max(missing - auto_removed, 0),
             price_drops=price_drops,
             auto_removed=auto_removed,
         )

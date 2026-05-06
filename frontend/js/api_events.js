@@ -95,7 +95,7 @@ function createApiEvents(context) {
                 if (state.search.query.length >= 2) {
                     void search("overview");
 
-                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                    if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                         Telegram.WebApp.HapticFeedback.impactOccurred("light");
                     }
                 }
@@ -108,7 +108,7 @@ function createApiEvents(context) {
                 clearTimeout(_searchDebounce.timer);
                 void search("overview");
 
-                if (window.Telegram?.WebApp?.HapticFeedback) {
+                if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                     Telegram.WebApp.HapticFeedback.impactOccurred("medium");
                 }
             }
@@ -118,7 +118,7 @@ function createApiEvents(context) {
             clearTimeout(_searchDebounce.timer);
             void search("overview");
 
-            if (window.Telegram?.WebApp?.HapticFeedback) {
+            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("medium");
             }
         });
@@ -148,7 +148,7 @@ function createApiEvents(context) {
                 if (elements.recentList) domClear(elements.recentList);
 
                 // 4. Optional haptic feedback
-                if (window.Telegram?.WebApp?.HapticFeedback) {
+                if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                     Telegram.WebApp.HapticFeedback.impactOccurred("light");
                 }
 
@@ -211,7 +211,7 @@ function createApiEvents(context) {
             state.search.query = merged;
             renderLoading();
             clearTimeout(_searchDebounce.timer);
-            if (window.Telegram?.WebApp?.HapticFeedback) {
+            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
             }
             void search("overview");
@@ -261,7 +261,7 @@ function createApiEvents(context) {
                 state.leads.itemsFilter = filter;
                 renderLeads();
 
-                if (window.Telegram?.WebApp?.HapticFeedback) {
+                if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                     Telegram.WebApp.HapticFeedback.impactOccurred("light");
                 }
             });
@@ -355,7 +355,7 @@ function createApiEvents(context) {
                 }, 150);
             }
 
-            if (window.Telegram?.WebApp?.HapticFeedback) {
+            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
             }
         });
@@ -400,7 +400,7 @@ function createApiEvents(context) {
             state.filters.pendingCategory = newCategory;
             renderAll();
 
-            if (window.Telegram?.WebApp?.HapticFeedback) {
+            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
             }
         });
@@ -415,7 +415,7 @@ function createApiEvents(context) {
             state.filters.pendingCondition = button.dataset.condition;
             renderAll();
 
-            if (window.Telegram?.WebApp?.HapticFeedback) {
+            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
             }
         });
@@ -430,7 +430,7 @@ function createApiEvents(context) {
             state.filters.pendingSellerType = button.dataset.seller;
             renderAll();
 
-            if (window.Telegram?.WebApp?.HapticFeedback) {
+            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
             }
         });
@@ -485,7 +485,7 @@ function createApiEvents(context) {
                 void search(state.ui.activeView, { keepFilters: true });
             }
 
-            if (window.Telegram?.WebApp?.HapticFeedback) {
+            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("medium");
             }
         });
@@ -502,7 +502,7 @@ function createApiEvents(context) {
             state.filters.filterDropdownOpen = false;
             renderAll();
 
-            if (window.Telegram?.WebApp?.HapticFeedback) {
+            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
                 Telegram.WebApp.HapticFeedback.impactOccurred("light");
             }
         });
@@ -571,7 +571,7 @@ function createApiEvents(context) {
                     button.classList.remove('is-loading');
                     button.textContent = originalText;
                 }
-            })();
+            })().catch(() => {});
         });
 
         // ── Clear events button (double-confirm) ─────────────────────
@@ -725,7 +725,7 @@ function createApiEvents(context) {
                     button.classList.remove('is-loading');
                     button.textContent = originalText;
                 }
-            })();
+            })().catch(() => {});
         });
 
         elements.editTrackerModal?.addEventListener("click", (event) => {
@@ -783,14 +783,15 @@ function createApiEvents(context) {
         // ── Escape key (modal close) ─────────────────────────────────
         document.addEventListener("keydown", (event) => {
             if (event.key === "Escape") {
+                // Close the topmost modal first — AI > expenses > detail > edit tracker.
                 if (!elements.aiModal?.hidden) {
                     closeAIModal();
-                } else if (!state.detail.data && !elements.editTrackerModal?.hidden) {
-                    closeEditTrackerAction();
                 } else if (!elements.expensesModal?.hidden) {
                     closeExpensesModal();
                 } else if (state.detail.data) {
                     closeDetailModal();
+                } else if (!elements.editTrackerModal?.hidden) {
+                    closeEditTrackerAction();
                 }
             }
         });
@@ -995,7 +996,7 @@ function createApiEvents(context) {
                     button.classList.remove('is-loading');
                     button.textContent = originalText;
                 }
-            })();
+            })().catch(() => {});
         });
 
         elements.cancelExpenseButton?.addEventListener("click", () => {

@@ -84,7 +84,8 @@ async def upsert_query_snapshot(
             async with session.begin_nested():
                 await session.flush([existing])
         except IntegrityError:
-            await session.rollback()
+            # begin_nested() already rolled back the savepoint —
+            # no session.rollback() needed (that would kill the outer tx).
             existing = await session.scalar(
                 select(QuerySnapshot).where(
                     QuerySnapshot.query == query,
@@ -232,8 +233,8 @@ async def sync_query_listing_states(
                 async with session.begin_nested():
                     await session.flush([existing])
             except IntegrityError:
-                await session.rollback()
-                # Re-fetch the row that the concurrent tick inserted
+                # begin_nested() already rolled back the savepoint —
+                # no session.rollback() needed (that would kill the outer tx).
                 existing = await session.scalar(
                     select(QueryListingState).where(
                         QueryListingState.query == query,

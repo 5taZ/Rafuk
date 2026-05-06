@@ -76,8 +76,10 @@ def _entry_price_guidance(
 #            negotiation_tips, best_pick
 #   Call B — Condition & Risks: condition, watch_out, meeting_checklist,
 #            red_flags, recommendation, summary
-# Both receive the same listing context but produce different JSON sections,
-# cutting max_tokens per call from 2800 to ~1500 and running concurrently.
+# Both receive the same listing context (text + images when available) and
+# produce different JSON sections, using 3200/4000 max_tokens for Gemini
+# 2.5 Flash (which uses thinking tokens). Running concurrently means
+# wall-clock time ≈ max(A, B), not A + B.
 
 _PRICE_MARKET_PROMPT_TEMPLATE = """\
 Ты — Rafuk AI, эксперт-аналитик объявлений Kufar.by. Отвечай ТОЛЬКО на русском.
@@ -95,6 +97,9 @@ _PRICE_MARKET_PROMPT_TEMPLATE = """\
   reasoning: за сколько можно перепродать и почему, с учётом состояния и спроса.
 - market_context — 2-3 предложения: позиция цены, лучший аналог, тренд.
 - best_pick — ad_id лучшей альтернативы из АЛЬТЕРНАТИВ (или null).
+
+ФОТО: Если приложены фотографии — учитывай видимые дефекты при расчёте
+fair_price и resale_potential. Состояние на фото влияет на цену.
 
 Цена товара {price_position_label}. {category_hints} {bargain_hint}
 Ответь строго JSON:
@@ -134,8 +139,21 @@ _CONDITION_RISKS_PROMPT_TEMPLATE = """\
   Если цена договорная — опирайся на реалистичный диапазон входа после торга.
 - summary — 1-2 предложения: вердикт + ключевая причина.
 
-ПРОВЕРЯЙ НА МОШЕННИЧЕСТВО: цена >30% ниже медианы без обоснования, мало/стоковые фото,
-скопированное описание, несоответствие модели, водяные знаки других сайтов.
+ПРОВЕРЯЙ НА МОШЕННИЧЕСТВО (Kufar.by):
+- Цена >30% ниже медианы без обоснования — подозрительно.
+- Мало фото (1-2) или только стоковые/каталожные фото без реальных снимков.
+- Скопированное описание, несоответствие модели заявленной.
+- Водяные знаки других сайтов (olx, av.by, 21vek, 5element).
+- «Под заказ», «доставка из-за границы» — типичная схема на Kufar.
+- Отсутствие параметров (пробег, год, объём) для дорогих товаров.
+- Несовпадение названия города в описании и регионе объявления.
+- Если ПРИЛОЖЕНЫ ФОТО — проверяй: сток/скриншот/водяной знак/дубликат/размытие.
+
+ФОТО-АНАЛИЗ: Если к сообщению приложены фотографии — используй их для:
+- condition.notes: конкретные дефекты на фото (царапины, сколы, вмятины).
+- photo_authenticity: стоковые фото, скриншоты, водяные знаки, дубликаты.
+- scam_analysis: несоответствие фото описанию, каталожные фото вместо реальных.
+- watch_out: дефекты, которые не видны на фото, но вероятны для категории.
 
 Цена товара {price_position_label}. {category_hints} {bargain_hint}
 Ответь строго JSON:
@@ -780,6 +798,7 @@ class AIService:
         deal_verdict: str | None = None,
         photo_condition_label: str | None = None,
         photo_condition_notes: list[str] | None = None,
+        image_urls: list[str] | None = None,
     ) -> dict:
         """Parallel AI analysis — splits work into 2 concurrent sub-calls.
 
@@ -788,9 +807,9 @@ class AIService:
         Call B (Condition & Risks): condition, watch_out, meeting_checklist,
             red_flags, recommendation, summary
 
-        Both calls share the same listing context but produce different JSON
-        sections, so each needs ~1500 max_tokens instead of 2800.  Running
-        them concurrently means wall-clock time ≈ max(A, B), not A + B.
+        Both calls share the same listing context (text + images) and produce
+        different JSON sections, using 3200/4000 max_tokens for Gemini 2.5
+        Flash. Running concurrently means wall-clock time ≈ max(A, B), not A+B.
         """
         category = detect_category(title, parameters)
         hints = CATEGORY_HINTS.get(category, CATEGORY_HINTS["default"])
@@ -836,6 +855,34 @@ class AIService:
             photo_condition_notes=photo_condition_notes,
         )
 
+        # Fetch listing images for multimodal analysis (scam detection,
+        # photo authenticity, condition assessment). Fetched in parallel
+        # to minimise latency before the two AI sub-calls start.
+        image_content: list[dict] = []
+        if image_urls:
+            fetch_tasks = [
+                self._fetch_image_b64(url) for url in image_urls[:self._max_images]
+            ]
+            fetched = await asyncio.gather(*fetch_tasks)
+            for img in fetched:
+                if img:
+                    image_content.append(img)
+            if image_content:
+                logger.info(
+                    "AI analyze: fetched %d/%d images for multimodal analysis",
+                    len(image_content),
+                    len(image_urls),
+                )
+
+        # Build multimodal content: text + images (when available)
+        if image_content:
+            call_content: list[dict] | str = [
+                {"type": "text", "text": context},
+                *image_content,
+            ]
+        else:
+            call_content = context
+
         # Build system prompts for each sub-call
         system_a = (
             _PRICE_MARKET_PROMPT_TEMPLATE.format(
@@ -867,13 +914,13 @@ class AIService:
         # (The old 2200/2800 values were tuned for Gemma 4 which had no
         # thinking tokens but was prone to empty content with response_format.)
         async def _call_a():
-            return await self._chat(system=system_a, content=context, max_tokens=3200)
+            return await self._chat(system=system_a, content=call_content, max_tokens=3200)
 
         async def _call_b():
             # Stagger by 1s to avoid Together AI rate-limit (429) on concurrent requests
             await asyncio.sleep(1.0)
             # Call B includes scam_analysis + photo_authenticity — needs more tokens
-            return await self._chat(system=system_b, content=context, max_tokens=4000)
+            return await self._chat(system=system_b, content=call_content, max_tokens=4000)
 
         logger.warning("AI analyze_listing_parallel: starting staggered sub-calls")
         # Use return_exceptions so one failure doesn't kill the other
@@ -1188,6 +1235,15 @@ class AIService:
         # Market statistics
         if market_median:
             parts.append("\n## РЫНОК")
+            # Cluster-aware comparison note: when the listing belongs to
+            # a specific variant (e.g. "Polo VI поколение"), the median is
+            # computed from similar listings only — not from all search
+            # results. The count reflects the cluster size.
+            if market_count and market_count < 30:
+                parts.append(
+                    "Сравнение с похожими объявлениями (поколение/модификация), "
+                    f"не со всеми результатами поиска ({market_count} шт.)"
+                )
             if market_q1 and market_q3:
                 parts.append(
                     f"Медиана: {market_median:.0f} BYN | "

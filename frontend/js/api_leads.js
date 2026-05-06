@@ -188,7 +188,9 @@ function createApiLeads(context) {
                 }
             }, 100);
         } catch (error) {
+            // Revert optimistic state by reloading from server
             showToast(error.message || "Не удалось подтвердить сделку");
+            await loadLeads();
         }
     }
 
@@ -313,26 +315,31 @@ function createApiLeads(context) {
             return;
         }
 
-        await requestJson(`/api/v1/leads/${lead.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                status: "sold",
-                sold_price_byn: priceNum,
-            }),
-        });
+        try {
+            await requestJson(`/api/v1/leads/${lead.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    status: "sold",
+                    sold_price_byn: priceNum,
+                }),
+            });
 
-        const leadInState = state.leads.items.find((l) => l.id === lead.id);
-        if (leadInState) {
-            leadInState.status = "sold";
-            leadInState.sold_price_byn = priceNum;
+            const leadInState = state.leads.items.find((l) => l.id === lead.id);
+            if (leadInState) {
+                leadInState.status = "sold";
+                leadInState.sold_price_byn = priceNum;
+            }
+            renderLeads();
+
+            const priceBynRaw = lead.price_byn || 0;
+            const profit = priceNum - priceBynRaw;
+            const profitSign = profit >= 0 ? "+" : "";
+            showToast(`✓ Сделка продана! Результат: ${profitSign}${Math.round(profit)} BYN`);
+        } catch (err) {
+            showToast(err.message || "Не удалось отметить сделку как проданную");
+            await loadLeads();
         }
-        renderLeads();
-
-        const priceBynRaw = lead.price_byn || 0;
-        const profit = priceNum - priceBynRaw;
-        const profitSign = profit >= 0 ? "+" : "";
-        showToast(`✓ Сделка продана! Результат: ${profitSign}${Math.round(profit)} BYN`);
     }
 
     // ── Open lead detail modal ───────────────────────────────────────────

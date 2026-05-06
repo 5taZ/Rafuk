@@ -159,43 +159,47 @@ async def create_tracker(
             first_name=telegram_user.first_name,
         )
 
-        # Enforce per-user max tracker limit (from config)
-        max_trackers_per_user = get_settings().max_trackers_per_user
-        existing_count = await session.execute(
-            select(func.count(Tracker.id)).where(
-                Tracker.user_id == user_id,
-                Tracker.active.is_(True),
+        # Enforce per-user max tracker limit (from config).
+        # Use a savepoint so the count check and insert are atomic —
+        # concurrent requests that both pass the count check will hit
+        # the IntegrityError handler below.
+        async with session.begin_nested():
+            max_trackers_per_user = get_settings().max_trackers_per_user
+            existing_count = await session.scalar(
+                select(func.count(Tracker.id)).where(
+                    Tracker.user_id == user_id,
+                    Tracker.active.is_(True),
+                )
             )
-        )
-        if (existing_count.scalar() or 0) >= max_trackers_per_user:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Maximum {max_trackers_per_user} trackers per user",
-            )
+            if (existing_count or 0) >= max_trackers_per_user:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Maximum {max_trackers_per_user} trackers per user",
+                )
 
-        tracker = Tracker(
-            user_id=user_id,
-            query=query,
-            strict_mode=payload.strict_mode,
-            interval_min=payload.interval_min,
-            min_discount_percent=payload.min_discount_percent,
-            max_price_byn=payload.max_price_byn,
-            seller_type=payload.seller_type,
-            condition=payload.condition,
-            region_name=payload.region_name,
-            config_keyword=payload.config_keyword or default_config_keyword(query),
-            alert_price_threshold=payload.alert_price_threshold,
-            alert_discount_percent=payload.alert_discount_percent,
-        )
-        session.add(tracker)
-        try:
-            await session.commit()
-        except IntegrityError as exc:
-            await session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A tracker with this configuration already exists",
-            ) from exc
+            tracker = Tracker(
+                user_id=user_id,
+                query=query,
+                strict_mode=payload.strict_mode,
+                interval_min=payload.interval_min,
+                min_discount_percent=payload.min_discount_percent,
+                max_price_byn=payload.max_price_byn,
+                seller_type=payload.seller_type,
+                condition=payload.condition,
+                region_name=payload.region_name,
+                config_keyword=payload.config_keyword or default_config_keyword(query),
+                alert_price_threshold=payload.alert_price_threshold,
+                alert_discount_percent=payload.alert_discount_percent,
+            )
+            session.add(tracker)
+            try:
+                await session.commit()
+            except IntegrityError as exc:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="A tracker with this configuration already exists",
+                ) from exc
         await session.refresh(tracker)
         return TrackerRead.model_validate(tracker)
 
