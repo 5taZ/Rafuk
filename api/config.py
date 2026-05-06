@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # AI Analysis (Together API — OpenAI-compatible)
     ai_api_key: SecretStr | None = None
     ai_base_url: str = "https://api.together.xyz/v1"
-    ai_model: str = "google/gemma-4-31B-it"
+    ai_model: str = "gemini-3-flash"
     ai_max_images: int = 3
     ai_cache_hours: int = 1
     ai_hourly_limit: int = 10

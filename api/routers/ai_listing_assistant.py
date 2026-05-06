@@ -23,6 +23,7 @@ from api.routers.ai_analysis import (
 from api.schemas import (
     AIListingAssistantRequest,
     AIListingAssistantResponse,
+    AIListingCompetitor,
     AIListingPriceTier,
     AIListingPricing,
     AINegotiationCounter,
@@ -116,6 +117,58 @@ def _coerce_negotiation(raw: Any) -> list[AINegotiationCounter]:
     return items
 
 
+def _coerce_competitors(
+    raw: Any,
+    *,
+    dataset_competitors: list[dict[str, Any]] | None = None,
+) -> list[AIListingCompetitor]:
+    items: list[AIListingCompetitor] = []
+    if not isinstance(raw, list):
+        return items
+    # Build lookup from dataset competitors for image_url / link enrichment
+    ds_lookup: dict[tuple[str, int], dict[str, Any]] = {}
+    for ds in dataset_competitors or []:
+        ds_title = str(ds.get("title") or "").strip().lower()
+        ds_price = int(round(float(ds.get("price_byn") or 0)))
+        if ds_title:
+            ds_lookup[(ds_title, ds_price)] = ds
+
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title") or "").strip()
+        price = _coerce_price(entry.get("price_byn") or entry.get("price"))
+        advantage = str(entry.get("advantage") or "").strip()
+        if not title or price is None:
+            continue
+        # Try to match with dataset competitor for image/link
+        image_url: str | None = None
+        link: str = ""
+        match = ds_lookup.get((title.lower()[:60], int(round(price))))
+        if not match:
+            # Fuzzy: try matching by price only among same-price items
+            for key, ds in ds_lookup.items():
+                if (
+                    abs(int(round(ds.get("price_byn") or 0)) - int(round(price))) <= 2
+                    and (title.lower()[:20] in key[0] or key[0][:20] in title.lower())
+                ):
+                    match = ds
+                    break
+        if match:
+            image_url = match.get("image_url")
+            link = match.get("link", "")
+        items.append(AIListingCompetitor(
+            title=title[:120],
+            price_byn=price,
+            advantage=advantage[:300],
+            image_url=image_url,
+            link=link,
+        ))
+        if len(items) >= 4:
+            break
+    return items
+
+
 
 # A single user-uploaded photo capped at ~1.5MB of base64 (~1MB binary).
 _LISTING_PHOTO_MAX_BYTES = 1_500_000
@@ -151,7 +204,7 @@ def _listing_assistant_cache_key(
     canonical_notes = " ".join((payload.extra_notes or "").lower().split())
     photo_hashes = [hashlib.sha256(p.encode("utf-8")).hexdigest()[:16] for p in photos]
     parts = [
-        ("v", "1"),
+        ("v", "2"),
         ("title", canonical_title),
         ("category", str(payload.category or "")),
         ("condition", (payload.condition or "").strip().lower()),
@@ -210,11 +263,26 @@ def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[s
                 "seller_type": seller_label,
                 "condition": condition,
                 "parameters": key_params[:5],
+                "image_url": _first_image_url(ad),
+                "link": ad.get("ad_link", f"https://www.kufar.by/item/{ad.get('ad_id', '')}"),
             }
         )
         if len(out) >= 8:
             break
     return out
+
+
+_IMAGE_BASE_URL = "https://rms.kufar.by/v1/gallery/"
+
+
+def _first_image_url(ad: dict[str, Any]) -> str | None:
+    """Extract the first image thumbnail URL from a Kufar ad."""
+    images = ad.get("images") or []
+    for img in images:
+        path = img.get("path", "")
+        if path:
+            return f"{_IMAGE_BASE_URL}{path}"
+    return None
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────
@@ -366,6 +434,9 @@ async def listing_assistant(
         pricing=pricing,
         negotiation_playbook=_coerce_negotiation(ai_result.get("negotiation_playbook")),
         photo_tips=_coerce_string_list(ai_result.get("photo_tips"), limit=5, max_len=140),
+        competitors=_coerce_competitors(
+            ai_result.get("competitors"), dataset_competitors=competitors,
+        ),
         market_summary=market_summary[:600],
     )
 

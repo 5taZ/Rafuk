@@ -13,6 +13,7 @@ function createApiListingAssistant(context) {
         state,
         showToast,
         postJson,
+        safeUrl,
     } = context;
 
     // ── DOM refs ────────────────────────────────────────────────────────
@@ -443,6 +444,65 @@ function createApiListingAssistant(context) {
         );
     }
 
+    function buildCompetitors(compList) {
+        if (!Array.isArray(compList) || !compList.length) return null;
+        const list = el("div", { className: "la-competitors" });
+        for (const comp of compList) {
+            const href = safeUrl ? safeUrl(comp.link) : "";
+            const wrapper = href
+                ? el("a", {
+                    className: "la-competitor-row la-competitor-link",
+                    attrs: { href, target: "_blank", rel: "noreferrer noopener" },
+                })
+                : el("div", { className: "la-competitor-row" });
+
+            if (comp.image_url) {
+                const imgSrc = safeUrl ? safeUrl(comp.image_url) : "";
+                if (imgSrc) {
+                    wrapper.appendChild(
+                        el("img", {
+                            className: "la-competitor-thumb",
+                            attrs: {
+                                src: imgSrc,
+                                alt: comp.title || "Конкурент",
+                                loading: "lazy",
+                            },
+                        }),
+                    );
+                }
+            }
+
+            const info = el("div", { className: "la-competitor-info" });
+            info.appendChild(
+                el("span", { className: "la-competitor-title", text: comp.title || "" }),
+            );
+            info.appendChild(
+                el("span", { className: "la-competitor-price mono" },
+                    document.createTextNode(`${Math.round(comp.price_byn || 0)} BYN`)),
+            );
+            if (comp.advantage) {
+                info.appendChild(
+                    el("span", { className: "la-competitor-advantage", text: comp.advantage }),
+                );
+            }
+            wrapper.appendChild(info);
+
+            if (href) {
+                wrapper.appendChild(
+                    el("span", { className: "la-competitor-cta", text: "Открыть" }),
+                );
+            }
+
+            list.appendChild(wrapper);
+        }
+        return el(
+            "section",
+            { className: "la-section" },
+            el("span", { className: "la-section-title", text: "Конкуренты на рынке" }),
+            list,
+        );
+    }
+
     function renderError(message) {
         resultBox.replaceChildren();
         resultBox.appendChild(el("div", { className: "la-error", text: message }));
@@ -610,6 +670,9 @@ function createApiListingAssistant(context) {
 
         const playbook = buildPlaybook(data.negotiation_playbook);
         if (playbook) resultBox.appendChild(playbook);
+
+        const competitors = buildCompetitors(data.competitors);
+        if (competitors) resultBox.appendChild(competitors);
 
         const photoTips = buildPhotoTips(data.photo_tips);
         if (photoTips) resultBox.appendChild(photoTips);

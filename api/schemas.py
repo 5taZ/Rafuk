@@ -781,6 +781,14 @@ class AINegotiationCounter(BaseModel):
     response: str = ""
 
 
+class AIListingCompetitor(BaseModel):
+    title: str = ""
+    price_byn: float = 0.0
+    advantage: str = ""
+    image_url: str | None = None
+    link: str = ""
+
+
 class AIListingAssistantResponse(BaseModel):
     title_suggestion: str = ""
     description: str = ""
@@ -789,6 +797,7 @@ class AIListingAssistantResponse(BaseModel):
     pricing: AIListingPricing = Field(default_factory=AIListingPricing)
     negotiation_playbook: list[AINegotiationCounter] = Field(default_factory=list)
     photo_tips: list[str] = Field(default_factory=list)
+    competitors: list[AIListingCompetitor] = Field(default_factory=list)
     market_summary: str = ""
     disclaimer: str = (
         "Рекомендации AI носят информационно-справочный характер и не являются "
