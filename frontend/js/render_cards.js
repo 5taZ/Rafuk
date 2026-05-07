@@ -132,11 +132,11 @@ function createRenderCards(context) {
                 return false;
             }
 
-            // Cards use CSS content-visibility: auto for off-screen rendering skip
+            const fragment = document.createDocumentFragment();
             for (const item of filtered) {
-                const node = buildListingNode(item, verdictClassName);
-                container.appendChild(node);
+                fragment.appendChild(buildListingNode(item, verdictClassName));
             }
+            container.appendChild(fragment);
 
             if (badge) {
                 // Match kufar.by header behavior: the pill shows the

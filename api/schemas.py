@@ -783,7 +783,7 @@ class AINegotiationCounter(BaseModel):
 
 class AIListingCompetitor(BaseModel):
     title: str = ""
-    price_byn: float = 0.0
+    price_byn: float | None = None
     advantage: str = ""
     image_url: str | None = None
     link: str = ""

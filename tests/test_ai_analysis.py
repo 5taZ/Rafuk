@@ -937,6 +937,13 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
                     },
                 ],
                 "photo_tips": ["Снимай у окна без вспышки", "Покажи разъём и торцы"],
+                "competitors": [
+                    {
+                        "title": "iPhone 14 Pro Max 256GB",
+                        "price_byn": 2700,
+                        "advantage": "У нас дешевле на 200 BYN",
+                    },
+                ],
                 "market_summary": "Рынок iPhone 14 Pro Max стабилен.",
             }
 
@@ -986,6 +993,11 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
     assert len(payload["selling_points"]) >= 1
     assert payload["negotiation_playbook"][0]["scenario"]
     assert payload["photo_tips"]
+    assert isinstance(payload.get("competitors"), list)
+    if payload["competitors"]:
+        comp = payload["competitors"][0]
+        assert comp["title"]
+        assert comp["price_byn"] is not None
 
     # The AI got the actual market anchors, not None.
     call = fake_ai.calls[0]
@@ -1443,5 +1455,345 @@ def test_analyze_listing_context_strips_injection_from_title_and_description() -
     assert "хорошее состояние" in lowered
 
 
+# ── Competitor helper tests ─────────────────────────────────────────────
 
 
+def test_coerce_competitors_returns_empty_for_non_list_input() -> None:
+    from api.routers.ai_listing_assistant import _coerce_competitors
+
+    assert _coerce_competitors(None) == []
+    assert _coerce_competitors("not a list") == []
+    assert _coerce_competitors([]) == []
+
+
+def test_coerce_competitors_skips_invalid_entries() -> None:
+    from api.routers.ai_listing_assistant import _coerce_competitors
+
+    raw = [
+        {"price_byn": 100},
+        {"title": "Phone"},
+        {"title": "", "price_byn": 0},
+        "not a dict",
+        42,
+    ]
+    assert _coerce_competitors(raw) == []
+
+
+def test_coerce_competitors_exact_match_enriches_image_and_link() -> None:
+    from api.routers.ai_listing_assistant import _coerce_competitors
+
+    ds = [
+        {
+            "title": "iPhone 14",
+            "price_byn": 2500,
+            "image_url": "https://rms.kufar.by/v1/gallery/img1.jpg",
+            "link": "https://www.kufar.by/item/99",
+        },
+    ]
+    raw = [{"title": "iPhone 14", "price_byn": 2500, "advantage": "Cheaper"}]
+    result = _coerce_competitors(raw, dataset_competitors=ds)
+    assert len(result) == 1
+    assert result[0].image_url == "https://rms.kufar.by/v1/gallery/img1.jpg"
+    assert result[0].link == "https://www.kufar.by/item/99"
+
+
+def test_coerce_competitors_fuzzy_match_by_price_and_substring() -> None:
+    from api.routers.ai_listing_assistant import _coerce_competitors
+
+    ds = [
+        {
+            "title": "iPhone 14 Pro Max 256GB",
+            "price_byn": 3000,
+            "image_url": "https://rms.kufar.by/v1/gallery/img2.jpg",
+            "link": "https://www.kufar.by/item/100",
+        },
+    ]
+    raw = [{"title": "iPhone 14 Pro Max 256", "price_byn": 3001, "advantage": ""}]
+    result = _coerce_competitors(raw, dataset_competitors=ds)
+    assert len(result) == 1
+    assert result[0].image_url is not None
+
+
+def test_coerce_competitors_caps_at_four_items() -> None:
+    from api.routers.ai_listing_assistant import _coerce_competitors
+
+    raw = [{"title": f"Item {i}", "price_byn": float(100 + i)} for i in range(10)]
+    result = _coerce_competitors(raw)
+    assert len(result) == 4
+
+
+def test_coerce_competitors_price_coercion_edge_cases() -> None:
+    from api.routers.ai_listing_assistant import _coerce_competitors
+
+    raw = [
+        {"title": "A", "price_byn": "1500.5"},
+        {"title": "B", "price_byn": -100},
+        {"title": "C", "price_byn": 0},
+    ]
+    result = _coerce_competitors(raw)
+    assert len(result) == 1
+    assert result[0].price_byn == 1500.5
+
+
+def test_coerce_competitors_rejects_non_kufar_link() -> None:
+    from api.routers.ai_listing_assistant import _coerce_competitors
+
+    ds = [
+        {
+            "title": "Phone",
+            "price_byn": 100,
+            "image_url": "https://rms.kufar.by/v1/gallery/x.jpg",
+            "link": "https://evil-phishing.com/item/1",
+        },
+    ]
+    raw = [{"title": "Phone", "price_byn": 100, "advantage": "test"}]
+    result = _coerce_competitors(raw, dataset_competitors=ds)
+    assert len(result) == 1
+    assert result[0].link == ""
+
+
+def test_first_image_url_returns_none_for_no_images() -> None:
+    from api.routers.ai_listing_assistant import _first_image_url
+
+    assert _first_image_url({}) is None
+    assert _first_image_url({"images": []}) is None
+    assert _first_image_url({"images": None}) is None
+
+
+def test_first_image_url_returns_none_when_path_is_empty() -> None:
+    from api.routers.ai_listing_assistant import _first_image_url
+
+    assert _first_image_url({"images": [{"path": ""}, {"path": None}]}) is None
+
+
+def test_first_image_url_builds_correct_url() -> None:
+    from api.routers.ai_listing_assistant import _first_image_url
+
+    ad = {"images": [{"path": "abc/item1.jpg"}]}
+    assert _first_image_url(ad) == "https://rms.kufar.by/v1/gallery/abc/item1.jpg"
+
+
+def test_build_listing_competitors_extracts_image_url_and_link() -> None:
+    from api.routers.ai_listing_assistant import _build_listing_competitors
+
+    ads = [
+        {
+            "ad_id": 42,
+            "subject": "iPhone 14",
+            "price_byn": 250000,
+            "ad_link": "https://www.kufar.by/item/42",
+            "images": [{"path": "photos/42a.jpg"}],
+            "ad_parameters": [],
+        }
+    ]
+    result = _build_listing_competitors(ads)
+    assert len(result) == 1
+    assert result[0]["image_url"] == "https://rms.kufar.by/v1/gallery/photos/42a.jpg"
+    assert result[0]["link"] == "https://www.kufar.by/item/42"
+
+
+def test_build_listing_competitors_falls_back_to_synthetic_link() -> None:
+    from api.routers.ai_listing_assistant import _build_listing_competitors
+
+    ads = [
+        {
+            "ad_id": 99,
+            "subject": "Widget",
+            "price_byn": 5000,
+            "images": [],
+            "ad_parameters": [],
+        }
+    ]
+    result = _build_listing_competitors(ads)
+    assert result[0]["link"] == "https://www.kufar.by/item/99"
+    assert result[0]["image_url"] is None
+
+
+def test_build_listing_competitors_skips_unpriced_ads() -> None:
+    from api.routers.ai_listing_assistant import _build_listing_competitors
+
+    ads = [
+        {"ad_id": 1, "subject": "Free", "price_byn": 0, "ad_parameters": []},
+        {"ad_id": 2, "subject": "No price", "ad_parameters": []},
+    ]
+    assert _build_listing_competitors(ads) == []
+
+
+def test_cache_key_version_busts_old_cache() -> None:
+    import hashlib
+
+    from api.routers.ai_listing_assistant import _listing_assistant_cache_key
+    from api.schemas import AIListingAssistantRequest
+
+    payload = AIListingAssistantRequest(title="Test cache version")
+    current_key = _listing_assistant_cache_key(payload, [])
+    assert "ai_listing:" in current_key
+    canonical_title = " ".join((payload.title or "").lower().split())
+    parts = [("v", "1"), ("title", canonical_title)]
+    serialised = "|".join(f"{k}={v}" for k, v in parts)
+    old_key = f"ai_listing:{hashlib.sha256(serialised.encode()).hexdigest()}"
+    assert current_key != old_key
+
+
+def test_cache_key_differentiates_zero_price_from_none() -> None:
+    from api.routers.ai_listing_assistant import _listing_assistant_cache_key
+    from api.schemas import AIListingAssistantRequest
+
+    payload_zero = AIListingAssistantRequest(title="Phone", draft_price_byn=0)
+    payload_none = AIListingAssistantRequest(title="Phone", draft_price_byn=None)
+    key_zero = _listing_assistant_cache_key(payload_zero, [])
+    key_none = _listing_assistant_cache_key(payload_none, [])
+    assert key_zero != key_none
+
+
+def test_repair_truncated_json_preserves_keys_before_mid_key_truncation() -> None:
+    from api.services.ai_service import _repair_truncated_json
+
+    truncated = '{"fair_price": {"from": 1200, "to": 1400}, "summary": "Good deal", "red_fla'
+    result = _repair_truncated_json(truncated)
+    assert result.get("fair_price") is not None
+    assert result["fair_price"]["from"] == 1200
+    assert result["fair_price"]["to"] == 1400
+    assert result.get("summary") == "Good deal"
+
+
+def test_repair_truncated_json_handles_truncated_value() -> None:
+    from api.services.ai_service import _repair_truncated_json
+
+    truncated = '{"title": "iPhone 14", "price": 1'
+    result = _repair_truncated_json(truncated)
+    assert result.get("title") == "iPhone 14"
+
+
+def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
+    """Each AI endpoint gets its own hourly rate limit counter."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+    from api.services.cache import MemoryCache
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            ads=[],
+            price_stats=SimpleNamespace(
+                median=0.0, count=0, q1=0.0, q3=0.0, min=0.0, max=0.0
+            ),
+        )
+
+    class FakeAI:
+        available = True
+
+        async def generate_listing(self, **kwargs):
+            del kwargs
+            return {
+                "title_suggestion": "t",
+                "description": "d",
+                "selling_points": [],
+                "pricing": {
+                    "fast": {"label": "F", "price_byn": 1, "weeks_to_sell": "1"},
+                    "market": {"label": "M", "price_byn": 2, "weeks_to_sell": "2"},
+                    "patient": {"label": "P", "price_byn": 3, "weeks_to_sell": "3"},
+                    "floor_byn": 0,
+                },
+                "negotiation_playbook": [],
+                "photo_tips": [],
+            }
+
+        async def analyze_listing_parallel(self, **kwargs):
+            del kwargs
+            return {
+                "fair_price": {"from": 100, "to": 200, "reasoning": "ok"},
+                "condition": {"label": "Хорошее", "confidence": 0.8, "notes": []},
+                "summary": "ok",
+            }
+
+    fake_ai = FakeAI()
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    import api.routers.ai_listing_assistant as _la
+
+    monkeypatch.setattr(_la, "_check_ai_available", lambda: fake_ai)
+    monkeypatch.setattr(_la, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        cache = MemoryCache()
+        client.app.state.cache = cache
+        monkeypatch.setattr(ai_analysis, "get_cache", lambda r: cache)
+        monkeypatch.setattr(_la, "get_cache", lambda r: cache)
+
+        resp = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={"title": "Test rate limit", "draft_price_byn": 100},
+        )
+        assert resp.status_code == 200
+
+        keys_in_cache = [k for k in cache._storage if "ai_rate" in k]
+        assert any(":listing" in k for k in keys_in_cache), (
+            f"Expected per-endpoint key with ':listing', got: {keys_in_cache}"
+        )
+
+
+def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
+    """Daily cap blocks requests even if hourly limit is not reached."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+    from api.services.cache import MemoryCache
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            ads=[],
+            price_stats=SimpleNamespace(
+                median=0.0, count=0, q1=0.0, q3=0.0, min=0.0, max=0.0
+            ),
+        )
+
+    class FakeAI:
+        available = True
+
+        async def generate_listing(self, **kwargs):
+            del kwargs
+            return {
+                "title_suggestion": "t",
+                "description": "d",
+                "selling_points": [],
+                "pricing": {
+                    "fast": {"label": "F", "price_byn": 1, "weeks_to_sell": "1"},
+                    "market": {"label": "M", "price_byn": 2, "weeks_to_sell": "2"},
+                    "patient": {"label": "P", "price_byn": 3, "weeks_to_sell": "3"},
+                    "floor_byn": 0,
+                },
+                "negotiation_playbook": [],
+                "photo_tips": [],
+            }
+
+    fake_ai = FakeAI()
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    import api.routers.ai_listing_assistant as _la
+
+    monkeypatch.setattr(_la, "_check_ai_available", lambda: fake_ai)
+    monkeypatch.setattr(_la, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        cache = MemoryCache()
+        client.app.state.cache = cache
+        monkeypatch.setattr(ai_analysis, "get_cache", lambda r: cache)
+        monkeypatch.setattr(_la, "get_cache", lambda r: cache)
+
+        cache._storage["ai_daily:123456"] = ("999", 0.0)
+
+        resp = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={"title": "Test daily cap"},
+        )
+        assert resp.status_code == 429
+        assert "дневной лимит" in resp.json()["detail"].lower()

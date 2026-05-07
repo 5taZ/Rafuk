@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     ai_max_images: int = 3
     ai_cache_hours: int = 1
     ai_hourly_limit: int = 10
+    ai_daily_limit: int = 50
     ai_proxy_url: str | None = None
     ai_analysis_timeout: int = 150
     ai_quick_condition_timeout: int = 45

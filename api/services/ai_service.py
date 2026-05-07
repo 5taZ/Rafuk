@@ -476,6 +476,20 @@ def _repair_truncated_json(text: str) -> dict:
     # Close any open string
     if in_string:
         fragment += '"'
+    # Strip trailing incomplete key/value pairs to make repair viable.
+    # After closing the open string we may have: ..., "red_fla"  or
+    # ..., "key": 123  without closing brace.  Try progressively
+    # aggressive cleanup so we preserve as many valid keys as possible.
+    for pattern in (
+        r',\s*"[^"]*"\s*:\s*$',            # trailing "key": (no value)
+        r',\s*"[^"]*"\s*$',                # trailing "key" (no colon)
+        r',\s*"[^"]*$',                     # trailing "incomplete_key
+        r':\s*[^}\]"\dtruefalsenul.+-]+\s*$',  # trailing : garbage
+    ):
+        candidate = re.sub(pattern, "", fragment)
+        if candidate != fragment:
+            fragment = candidate
+            break
     # Close open brackets and braces
     fragment += "]" * max(0, open_brackets)
     fragment += "}" * max(0, open_braces)
@@ -747,15 +761,13 @@ class AIService:
         # Gemini 2.5 Flash/Pro spend output budget on internal "thinking"
         # tokens before producing the JSON. `reasoning_effort: "medium"`
         # gives enough depth for grounded price comparisons and condition
-        # analysis without the 30-60s latency of "high". "low" was used
-        # for the legacy Gemma 4 fallback but produces shallow analysis
-        # on Flash — the model skips comparison steps and hallucinates
-        # fair_price ranges that aren't grounded in the analog data.
+        # analysis without the 30-60s latency of "high".
         #
-        # For the listing assistant we use "low" because the output is a
-        # single large JSON (title + description + 3 pricing tiers with
-        # reasoning + negotiation playbook + photo tips) — "medium" would
-        # spend too many tokens on thinking and truncate the JSON.
+        # max_tokens=3200/4000 for analysis, 4800 for listing assistant
+        # (larger JSON output: title + description + 3 pricing tiers +
+        # negotiation playbook + competitors + photo tips).
+        # At medium effort, thinking uses ~300-600 tokens, leaving
+        # ~4200+ for the JSON payload — sufficient for all sections.
         if self._is_gemini:
             body["reasoning_effort"] = reasoning_effort or "medium"
             # Gemini honours response_format properly — ask for JSON to
@@ -789,9 +801,14 @@ class AIService:
             raise RuntimeError("Insufficient balance")
         resp.raise_for_status()
         data = resp.json()
-        choice = data["choices"][0]
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError(f"AI returned empty choices (status={resp.status_code})")
+        choice = choices[0]
         finish_reason = choice.get("finish_reason", "")
-        message = choice["message"]
+        message = choice.get("message")
+        if not message:
+            raise RuntimeError("AI returned no message in choice")
         if finish_reason == "length":
             logger.warning(
                 "AI _chat: output truncated (finish_reason=length, max_tokens=%d)",
@@ -1069,7 +1086,10 @@ class AIService:
                 price = item.get("price_byn") or 0
                 cond = item.get("condition") or item.get("condition_label") or ""
                 seller = item.get("seller_type") or ""
-                title_text = (item.get("title") or "").strip().replace("\n", " ")
+                title_text = sanitize_user_text(
+                    (item.get("title") or "").strip().replace("\n", " "),
+                    max_length=120,
+                ) or ""
                 params_list = item.get("parameters") or []
                 bits: list[str] = []
                 if price:

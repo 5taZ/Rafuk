@@ -92,7 +92,7 @@ async def negotiate_price(
     """Generate negotiation text for a buyer — counter-offer and tips."""
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
-    await _check_rate_limit(request, _user.user_id)
+    await _check_rate_limit(request, _user.user_id, endpoint="negotiate")
 
     # AI audit trail
     await _log_ai_audit(
@@ -159,7 +159,7 @@ async def price_advice(
     """Price timing advice — should I buy now or wait? NOT an investment recommendation."""
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
-    await _check_rate_limit(request, _user.user_id)
+    await _check_rate_limit(request, _user.user_id, endpoint="price_advice")
 
     # AI audit trail
     await _log_ai_audit(

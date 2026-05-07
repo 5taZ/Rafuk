@@ -69,17 +69,32 @@ function createApiListingAssistant(context) {
         }
     }
 
+    function _trimEntryForStorage(entry) {
+        const out = { ...entry };
+        if (out.output) {
+            const o = { ...out.output };
+            if (o.description && o.description.length > 500) {
+                o.description = o.description.slice(0, 500);
+            }
+            if (o.market_summary && o.market_summary.length > 300) {
+                o.market_summary = o.market_summary.slice(0, 300);
+            }
+            out.output = o;
+        }
+        return out;
+    }
+
     function saveHistory(list) {
         try {
-            const trimmed = list.slice(0, HISTORY_MAX);
+            const trimmed = list.slice(0, HISTORY_MAX).map(_trimEntryForStorage);
             localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
         } catch (_) {
-            // Quota exceeded — drop oldest entries until it fits.
             try {
                 while (list.length > 1) {
                     list.pop();
                     try {
-                        localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+                        const trimmed = list.map(_trimEntryForStorage);
+                        localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
                         break;
                     } catch (_) {}
                 }
@@ -449,6 +464,9 @@ function createApiListingAssistant(context) {
         const list = el("div", { className: "la-competitors" });
         for (const comp of compList) {
             const href = safeUrl ? safeUrl(comp.link) : "";
+            if (!safeUrl && comp.link) {
+                console.warn("[listing-assistant] safeUrl not in context, link dropped");
+            }
             const wrapper = href
                 ? el("a", {
                     className: "la-competitor-row la-competitor-link",
@@ -459,16 +477,18 @@ function createApiListingAssistant(context) {
             if (comp.image_url) {
                 const imgSrc = safeUrl ? safeUrl(comp.image_url) : "";
                 if (imgSrc) {
-                    wrapper.appendChild(
-                        el("img", {
-                            className: "la-competitor-thumb",
-                            attrs: {
-                                src: imgSrc,
-                                alt: comp.title || "Конкурент",
-                                loading: "lazy",
-                            },
-                        }),
-                    );
+                    const imgEl = el("img", {
+                        className: "la-competitor-thumb",
+                        attrs: {
+                            src: imgSrc,
+                            alt: comp.title || "\u041A\u043E\u043D\u043A\u0443\u0440\u0435\u043D\u0442",
+                            loading: "lazy",
+                        },
+                    });
+                    imgEl.addEventListener("error", () => {
+                        imgEl.style.display = "none";
+                    });
+                    wrapper.appendChild(imgEl);
                 }
             }
 
@@ -832,7 +852,9 @@ function createApiListingAssistant(context) {
             // Save to history (we keep input + count of photos, NOT the photo
             // bytes themselves to keep localStorage under quota).
             pushHistoryEntry({
-                id: Date.now(),
+                id: typeof crypto !== "undefined" && crypto.randomUUID
+                    ? crypto.randomUUID()
+                    : Date.now().toString(36) + Math.random().toString(36).slice(2),
                 ts: new Date().toISOString(),
                 input: {
                     title: payload.title,
@@ -857,30 +879,29 @@ function createApiListingAssistant(context) {
 
     // ── Wire DOM ───────────────────────────────────────────────────────
 
-    form.addEventListener("submit", handleSubmit);
-    notesInput?.addEventListener("input", updateNotesCounter);
-
-    photoInput?.addEventListener("change", (e) => {
+    const _notesHandler = () => updateNotesCounter();
+    const _photoHandler = (e) => {
         void handlePhotoFiles(e.target.files);
-        // Reset the value so picking the same file again still triggers change.
         e.target.value = "";
-    });
-
-    if (tabsRow) {
-        tabsRow.addEventListener("click", (e) => {
-            const target = e.target.closest("[data-la-tab]");
-            if (target) switchTab(target.dataset.laTab);
-        });
-    }
-
-    openBtn?.addEventListener("click", () => {
-        // Each "Открыть помощника" click starts with a clean slate so
-        // pre-filled values from a previous session don't confuse the user.
+    };
+    const _tabsHandler = (e) => {
+        const target = e.target.closest("[data-la-tab]");
+        if (target) switchTab(target.dataset.laTab);
+    };
+    const _openHandler = () => {
         clearForm();
         openModal("form");
-    });
-    closeBtn?.addEventListener("click", closeModal);
-    overlay?.addEventListener("click", closeModal);
+    };
+    const _closeHandler = () => closeModal();
+    const _overlayHandler = () => closeModal();
+
+    form.addEventListener("submit", handleSubmit);
+    notesInput?.addEventListener("input", _notesHandler);
+    photoInput?.addEventListener("change", _photoHandler);
+    if (tabsRow) tabsRow.addEventListener("click", _tabsHandler);
+    openBtn?.addEventListener("click", _openHandler);
+    closeBtn?.addEventListener("click", _closeHandler);
+    overlay?.addEventListener("click", _overlayHandler);
     const _keydownHandler = (e) => {
         if (e.key === "Escape" && !modal.hidden) {
             closeModal();
@@ -897,6 +918,12 @@ function createApiListingAssistant(context) {
         destroy() {
             form.removeEventListener("submit", handleSubmit);
             document.removeEventListener("keydown", _keydownHandler);
+            notesInput?.removeEventListener("input", _notesHandler);
+            photoInput?.removeEventListener("change", _photoHandler);
+            if (tabsRow) tabsRow.removeEventListener("click", _tabsHandler);
+            openBtn?.removeEventListener("click", _openHandler);
+            closeBtn?.removeEventListener("click", _closeHandler);
+            overlay?.removeEventListener("click", _overlayHandler);
         },
     };
 }

@@ -32,6 +32,7 @@ from api.services.aggregator import (
     compute_price_stats,
     extract_prices,
     filter_ads_for_accessory_category,
+    normalize_price_byn,
 )
 from api.services.ai_listing_guardrails import (
     normalize_listing_pricing,
@@ -128,7 +129,7 @@ def _coerce_competitors(
     # Build lookup from dataset competitors for image_url / link enrichment
     ds_lookup: dict[tuple[str, int], dict[str, Any]] = {}
     for ds in dataset_competitors or []:
-        ds_title = str(ds.get("title") or "").strip().lower()
+        ds_title = str(ds.get("title") or "").strip().lower()[:60]
         ds_price = int(round(float(ds.get("price_byn") or 0)))
         if ds_title:
             ds_lookup[(ds_title, ds_price)] = ds
@@ -141,7 +142,6 @@ def _coerce_competitors(
         advantage = str(entry.get("advantage") or "").strip()
         if not title or price is None:
             continue
-        # Try to match with dataset competitor for image/link
         image_url: str | None = None
         link: str = ""
         match = ds_lookup.get((title.lower()[:60], int(round(price))))
@@ -150,13 +150,18 @@ def _coerce_competitors(
             for key, ds in ds_lookup.items():
                 if (
                     abs(int(round(ds.get("price_byn") or 0)) - int(round(price))) <= 2
-                    and (title.lower()[:20] in key[0] or key[0][:20] in title.lower())
+                    and (
+                        title.lower()[:30] in key[0]
+                        or key[0][:30] in title.lower()
+                    )
                 ):
                     match = ds
                     break
         if match:
             image_url = match.get("image_url")
-            link = match.get("link", "")
+            raw_link = match.get("link", "")
+            if raw_link and raw_link.startswith(("https://www.kufar.by/", "https://kufar.by/", "https://re.kufar.by/")):
+                link = raw_link
         items.append(AIListingCompetitor(
             title=title[:120],
             price_byn=price,
@@ -167,7 +172,6 @@ def _coerce_competitors(
         if len(items) >= 4:
             break
     return items
-
 
 
 # A single user-uploaded photo capped at ~1.5MB of base64 (~1MB binary).
@@ -208,7 +212,11 @@ def _listing_assistant_cache_key(
         ("title", canonical_title),
         ("category", str(payload.category or "")),
         ("condition", (payload.condition or "").strip().lower()),
-        ("price", f"{int(round(payload.draft_price_byn))}" if payload.draft_price_byn else ""),
+        (
+            "price",
+            f"{int(round(payload.draft_price_byn))}"
+            if payload.draft_price_byn is not None else "",
+        ),
         ("negot", "1" if payload.is_negotiable else "0"),
         ("notes", canonical_notes),
         ("photos", ",".join(photo_hashes)),
@@ -220,9 +228,7 @@ def _listing_assistant_cache_key(
 
 def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pick a diverse, priced subset of ads to use as competitor context."""
-    from api.services.aggregator import normalize_price_byn
 
-    # Parameter keys that carry pricing weight — include these in context
     _pricing_params = {
         "storage", "ram", "memory", "generation", "generation_name",
         "screen_size", "diagonal", "processor", "cpu", "gpu",
@@ -232,14 +238,13 @@ def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[s
         "frame_size", "wheel_size",
     }
 
-    priced = [
-        ad for ad in dataset_ads if normalize_price_byn(ad.get("price_byn")) is not None
-    ]
-    out: list[dict[str, Any]] = []
-    for ad in priced[:24]:
+    priced: list[tuple[dict[str, Any], float]] = []
+    for ad in dataset_ads:
         price = normalize_price_byn(ad.get("price_byn"))
-        if price is None:
-            continue
+        if price is not None:
+            priced.append((ad, price))
+    out: list[dict[str, Any]] = []
+    for ad, price in priced[:24]:
         title_text = str(ad.get("subject") or ad.get("title") or "").strip()
         params = ad.get("ad_parameters") or []
         seller_label = ""
@@ -305,7 +310,7 @@ async def listing_assistant(
 
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
-    await _check_rate_limit(request, _user.user_id)
+    await _check_rate_limit(request, _user.user_id, endpoint="listing")
 
     # AI audit trail (Belarus Law No. 91-Z)
     await _log_ai_audit(

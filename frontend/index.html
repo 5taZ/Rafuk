@@ -18,9 +18,11 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
         rel="stylesheet"
+        media="print" onload="this.media='all'"
     >
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"></noscript>
     <link rel="stylesheet" href="css/style.css?v=20260429-v7">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
@@ -952,7 +954,7 @@
 
                         <label class="la-field la-field--checkbox">
                             <input type="checkbox" id="la-negotiable-checkbox">
-                            <span>Я не знаю сколько стоит</span>
+                            <span>Не знаю цену (подбери цену)</span>
                         </label>
 
                         <label class="la-field la-field--wide">

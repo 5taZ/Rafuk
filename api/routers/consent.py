@@ -251,7 +251,10 @@ async def delete_account(
         # Best-effort: clear known cache prefixes
         import contextlib
 
-        for prefix in (f"ai_rate:{_user.user_id}",):
+        for prefix in (
+            f"ai_rate:{_user.user_id}",
+            f"ai_daily:{_user.user_id}",
+        ):
             with contextlib.suppress(Exception):
                 await cache.delete(prefix)
     except Exception:

@@ -280,19 +280,33 @@ def _check_ai_available():
     return service
 
 
-async def _check_rate_limit(request: Request, user_id: int) -> None:
-    """Simple per-user rate limit using the configured cache backend."""
+async def _check_rate_limit(
+    request: Request,
+    user_id: int,
+    *,
+    endpoint: str = "default",
+) -> None:
+    """Per-user rate limit: hourly per-endpoint + shared daily cap."""
     cache = get_cache(request)
     settings = getattr(request.app.state, "settings", None)
     hourly_limit = int(getattr(settings, "ai_hourly_limit", 10) or 10)
+    daily_limit = int(getattr(settings, "ai_daily_limit", 50) or 50)
 
-    key = f"ai_rate:{user_id}"
-    count = await cache.incr(key, ttl=3600)
+    hourly_key = f"ai_rate:{user_id}:{endpoint}"
+    count = await cache.incr(hourly_key, ttl=3600)
 
     if count > hourly_limit:
         raise HTTPException(
             status_code=429,
             detail=f"Превышен лимит AI-анализов ({hourly_limit} в час)",
+        )
+
+    daily_key = f"ai_daily:{user_id}"
+    daily_count = await cache.incr(daily_key, ttl=86400)
+    if daily_count > daily_limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Превышен дневной лимит AI-анализов ({daily_limit})",
         )
 
 
@@ -329,18 +343,18 @@ async def _check_ai_consent(request: Request, user_id: int) -> None:
                 },
             )
 
-        for consent_type in ("ai_analysis", "cross_border"):
-            stmt = (
-                select(UserConsent)
-                .where(
+        consents = (
+            await session.execute(
+                select(UserConsent.consent_type).where(
                     UserConsent.user_id == uid,
-                    UserConsent.consent_type == consent_type,
+                    UserConsent.consent_type.in_(["ai_analysis", "cross_border"]),
                     UserConsent.revoked_at.is_(None),
                 )
-                .limit(1)
             )
-            consent = (await session.execute(stmt)).scalar_one_or_none()
-            if not consent:
+        ).scalars().all()
+
+        for consent_type in ("ai_analysis", "cross_border"):
+            if consent_type not in consents:
                 raise HTTPException(
                     status_code=403,
                     detail={
@@ -1182,7 +1196,7 @@ async def analyze_listing(
         return {"task_id": None, "cached": True, "result": cached}
 
     await _check_ai_consent(request, _user.user_id)
-    await _check_rate_limit(request, _user.user_id)
+    await _check_rate_limit(request, _user.user_id, endpoint="analyze")
 
     # AI audit trail (Belarus Law No. 91-Z)
     await _log_ai_audit(

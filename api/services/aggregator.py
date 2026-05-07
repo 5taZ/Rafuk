@@ -503,17 +503,17 @@ def sort_listings(
 ) -> list[dict[str, Any]]:
     effective_market_stats = market_stats or compute_price_stats(extract_prices(ads))
     if sort == "cheap":
-        return sorted(
-            ads,
-            key=lambda ad: (
-                compute_price_vs_reference(
-                    ad,
-                    effective_market_stats,
-                    category_price_stats,
-                ),
+        decorated = [
+            (
+                compute_price_vs_reference(ad, effective_market_stats, category_price_stats),
                 normalize_price_byn(ad.get("price_byn")) or 0.0,
-            ),
-        )
+                i,
+                ad,
+            )
+            for i, ad in enumerate(ads)
+        ]
+        decorated.sort()
+        return [ad for _, _, _, ad in decorated]
     if sort == "price_asc":
         return sorted(ads, key=lambda ad: normalize_price_byn(ad.get("price_byn")) or 0.0)
     if sort == "price_desc":

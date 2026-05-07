@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import functools
 import json
 import logging
 import time
@@ -101,6 +103,10 @@ class MemoryCache:
 
 
 class RedisCache:
+    _json_pool = concurrent.futures.ThreadPoolExecutor(
+        max_workers=2, thread_name_prefix="json_"
+    )
+
     def __init__(self, client: Redis) -> None:
         self._client = client
 
@@ -110,9 +116,9 @@ class RedisCache:
             Redis.from_url(
                 url,
                 decode_responses=True,
-                socket_connect_timeout=0.2,
-                socket_timeout=0.2,
-                retry_on_timeout=False,
+                socket_connect_timeout=0.5,
+                socket_timeout=3.0,
+                retry_on_timeout=True,
             )
         )
 
@@ -137,14 +143,19 @@ class RedisCache:
         payload = await self.get(key)
         if payload is None:
             return None
+        loop = asyncio.get_running_loop()
         try:
-            return json.loads(payload)
+            return await loop.run_in_executor(self._json_pool, json.loads, payload)
         except json.JSONDecodeError:
             logger.warning("Ignoring corrupt JSON in redis for key=%s", key)
             return None
 
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
-        await self.set(key, json.dumps(value, default=str), ttl)
+        loop = asyncio.get_running_loop()
+        serialized = await loop.run_in_executor(
+            self._json_pool, functools.partial(json.dumps, value, ensure_ascii=False, default=str)
+        )
+        await self.set(key, serialized, ttl)
 
     async def incr(self, key: str, ttl: int | None = None) -> int:
         """Atomically increment a counter using Redis INCR. Returns the new value.
