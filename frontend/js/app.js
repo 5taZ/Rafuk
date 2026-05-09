@@ -112,6 +112,21 @@ document.addEventListener("DOMContentLoaded", () => {
         Telegram.WebApp.expand();
     }
 
+    function _applyTelegramTheme() {
+        const tp = window.Telegram?.WebApp?.themeParams || {};
+        const root = document.documentElement;
+        if (tp.bg_color) root.style.setProperty('--tg-theme-bg-color', tp.bg_color);
+        if (tp.text_color) root.style.setProperty('--tg-theme-text-color', tp.text_color);
+        if (tp.hint_color) root.style.setProperty('--tg-theme-hint-color', tp.hint_color);
+        if (tp.link_color) root.style.setProperty('--tg-theme-link-color', tp.link_color);
+        if (tp.button_color) root.style.setProperty('--tg-theme-button-color', tp.button_color);
+        if (tp.button_text_color) root.style.setProperty('--tg-theme-button-text-color', tp.button_text_color);
+        if (tp.secondary_bg_color) root.style.setProperty('--tg-theme-secondary-bg-color', tp.secondary_bg_color);
+        if (tp.destructive_text_color) root.style.setProperty('--tg-theme-destructive-text-color', tp.destructive_text_color);
+    }
+    _applyTelegramTheme();
+    window.Telegram?.WebApp?.onEvent?.('themeChanged', _applyTelegramTheme);
+
     // Offline / online detection
     const _offlineBadge = document.getElementById("offline-badge");
     if (_offlineBadge) {

@@ -19,12 +19,18 @@
  */
 
 function createVirtualList(container, options) {
-    const {
+    let {
         itemHeight = 160,
+        fixedHeight = null,
+        estimateHeight = null,
         bufferSize = 5,
         maxHeight = "70vh",
         renderFn,
     } = options;
+
+    // When fixedHeight is set, use it directly instead of measuring
+    // When estimateHeight is set, use it as initial guess before measurement
+    let effectiveItemHeight = fixedHeight ?? estimateHeight ?? itemHeight;
 
     let items = [];
     let scrollTop = 0;
@@ -96,11 +102,11 @@ function createVirtualList(container, options) {
 
         const start = Math.max(
             0,
-            Math.floor(scrollTop / itemHeight) - bufferSize
+            Math.floor(scrollTop / effectiveItemHeight) - bufferSize
         );
         const end = Math.min(
             items.length,
-            Math.ceil((scrollTop + containerHeight) / itemHeight) + bufferSize
+            Math.ceil((scrollTop + containerHeight) / effectiveItemHeight) + bufferSize
         );
 
         // Skip if visible range hasn't changed
@@ -109,8 +115,8 @@ function createVirtualList(container, options) {
         visibleEnd = end;
 
         // Calculate spacer heights
-        const topPadding = start * itemHeight;
-        const bottomPadding = (items.length - end) * itemHeight;
+        const topPadding = start * effectiveItemHeight;
+        const bottomPadding = (items.length - end) * effectiveItemHeight;
         spacer.style.height = `${topPadding}px`;
         bottomSpacer.style.height = `${bottomPadding}px`;
 
@@ -139,8 +145,8 @@ function createVirtualList(container, options) {
 
             const el = renderFn(items[i], i);
             if (el) {
-                if (itemHeight) {
-                    el.style.minHeight = `${itemHeight}px`;
+                if (effectiveItemHeight) {
+                    el.style.minHeight = `${effectiveItemHeight}px`;
                 }
                 el.setAttribute("data-vl-index", String(i));
                 fragment.appendChild(el);
@@ -237,6 +243,26 @@ function createVirtualList(container, options) {
             visibleStart = -1; // Force re-render
             visibleEnd = -1;
             renderVisibleItems();
+        },
+
+        /**
+         * Update the fixed item height and re-render.
+         * @param {number} height
+         */
+        setItemHeight: function (height) {
+            if (destroyed) return;
+            effectiveItemHeight = height;
+            visibleStart = -1;
+            visibleEnd = -1;
+            renderVisibleItems();
+        },
+
+        /**
+         * Get the current item height.
+         * @returns {number}
+         */
+        getItemHeight: function () {
+            return effectiveItemHeight;
         },
 
         /**

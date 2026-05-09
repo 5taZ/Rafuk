@@ -497,6 +497,11 @@ function createRenderCards(context) {
         const container = elements.leadInboxList;
         if (!container) return;
 
+        // Destroy existing virtual list before reset
+        if (container._virtualList) {
+            container._virtualList.destroy();
+            container._virtualList = null;
+        }
         _resetContainer(container);
 
         // Call hero stats and profit dashboard via hooks
@@ -574,12 +579,25 @@ function createRenderCards(context) {
         }
 
         const watchlistMarketLabel = (val) => marketLabel(val);
-        const signal = _getSignal(container);
-        for (const entry of entries) {
-            if (entry.kind === "lead") {
-                container.appendChild(buildLeadNode(entry.data, signal));
-            } else {
-                container.appendChild(buildWatchlistNode(entry.data, watchlistMarketLabel, signal));
+        const WATCHLIST_ITEM_HEIGHT = 220;
+        const VIRTUAL_LIST_THRESHOLD = 30;
+
+        if (filter === "watching" && entries.length > VIRTUAL_LIST_THRESHOLD) {
+            container._virtualList = createVirtualList(container, {
+                itemHeight: WATCHLIST_ITEM_HEIGHT,
+                fixedHeight: WATCHLIST_ITEM_HEIGHT,
+                bufferSize: 5,
+                renderFn: (entry, index) => buildWatchlistNode(entry.data, watchlistMarketLabel),
+            });
+            container._virtualList.setItems(entries);
+        } else {
+            const signal = _getSignal(container);
+            for (const entry of entries) {
+                if (entry.kind === "lead") {
+                    container.appendChild(buildLeadNode(entry.data, signal));
+                } else {
+                    container.appendChild(buildWatchlistNode(entry.data, watchlistMarketLabel, signal));
+                }
             }
         }
         });
@@ -623,6 +641,11 @@ function createRenderCards(context) {
         const container = elements.watchlistList;
         if (!container) return;
 
+        // Destroy existing virtual list before reset
+        if (container._virtualList) {
+            container._virtualList.destroy();
+            container._virtualList = null;
+        }
         _resetContainer(container);
 
         if (context._hooks?.renderWatchlistFilters) context._hooks.renderWatchlistFilters();
@@ -690,12 +713,22 @@ function createRenderCards(context) {
             return;
         }
 
-        // Virtual scrolling disabled for watchlist — cards have variable heights
-        // due to notes, metadata, and dynamic content
-        // Re-enable only when cards have consistent fixed heights
-        const signal = _getSignal(container);
-        for (const item of filteredWatchlist) {
-            container.appendChild(buildWatchlistNode(item, marketLabel, signal));
+        // Re-enable virtual scrolling for watchlist — cards have consistent layout
+        const WATCHLIST_ITEM_HEIGHT = 220;
+        const VIRTUAL_LIST_THRESHOLD = 30;
+        if (filteredWatchlist.length > VIRTUAL_LIST_THRESHOLD) {
+            container._virtualList = createVirtualList(container, {
+                itemHeight: WATCHLIST_ITEM_HEIGHT,
+                fixedHeight: WATCHLIST_ITEM_HEIGHT,
+                bufferSize: 5,
+                renderFn: (item, index) => buildWatchlistNode(item, marketLabel),
+            });
+            container._virtualList.setItems(filteredWatchlist);
+        } else {
+            const signal = _getSignal(container);
+            for (const item of filteredWatchlist) {
+                container.appendChild(buildWatchlistNode(item, marketLabel, signal));
+            }
         }
         });
     }
