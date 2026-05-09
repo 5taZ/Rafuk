@@ -2,6 +2,13 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self' 'unsafe-inline' https://telegram.org;
+                   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                   font-src https://fonts.gstatic.com;
+                   connect-src 'self';
+                   img-src 'self' https://*.kufar.by data:;">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
     <title>Rafuk</title>
@@ -37,7 +44,6 @@
     <script defer src="js/render_modals.js?v=20260429-v7"></script>
     <script defer src="js/render_charts.js?v=20260429-v7"></script>
     <script defer src="js/render_trackers.js?v=20260429-v7"></script>
-    <script defer src="js/virtual_list.js?v=20260429-v7"></script>
     <script defer src="js/app_renderers.js?v=20260429-v7"></script>
     <script defer src="js/api_core.js?v=20260429-v7"></script>
     <script defer src="js/api_listings.js?v=20260429-v7"></script>
@@ -67,7 +73,7 @@
 </div>
 
 <div class="app" id="app-root">
-    <span id="main-content" tabindex="-1" aria-hidden="true"></span>
+    <span id="main-content" tabindex="-1"></span>
     <h1 class="sr-only">Rafuk — Анализ рынка Kufar</h1>
     <header class="header">
         <div class="header-inner">
@@ -124,8 +130,8 @@
                 <span id="search-btn-label">Найти</span>
             </button>
         </div>
-        <label class="strict-toggle" for="strict-search-toggle" title="Точное совпадение запроса">
-            <input id="strict-search-toggle" type="checkbox" aria-label="Включить строгий поиск (точное совпадение)">
+        <label class="strict-toggle" for="strict-search-toggle" title="Точное совпадение запроса" hidden>
+            <input id="strict-search-toggle" type="checkbox" checked aria-label="Строгий поиск включён (точное совпадение)">
             <span class="strict-toggle-pill"></span>
             <span class="strict-toggle-copy ui-hint" data-hint="Искать только точное совпадение запроса">Строгий поиск</span>
         </label>
@@ -335,9 +341,11 @@
                 <h2 class="sec-title">Объявления</h2>
                 <button class="ghost-btn small" id="filter-btn" type="button" aria-label="Фильтры" style="position:relative">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                    <span class="filter-btn-label">Фильтры</span>
                     <span class="filter-active-badge" id="filter-active-badge" hidden></span>
                 </button>
                 <span class="badge" id="listings-total-badge"></span>
+                <span class="badge badge--fallback" id="listings-fallback-badge" hidden>Показаны похожие</span>
             </div>
 
             <div class="filter-dropdown" id="filter-dropdown" hidden>
@@ -972,8 +980,6 @@
                             </button>
                         </div>
                     </form>
-
-                    <div class="la-result" id="listing-assistant-result" hidden></div>
                 </section>
 
                 <section class="la-pane" id="la-pane-history" role="tabpanel" hidden>
@@ -982,6 +988,17 @@
                         Здесь будут сохраняться твои запросы. Открой первый — он появится в списке.
                     </p>
                 </section>
+            </div>
+
+            <div class="la-result-overlay" id="la-result-overlay" hidden>
+                <div class="la-result-header">
+                    <button class="ai-action-btn" id="la-result-back" type="button" aria-label="Назад">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                    </button>
+                    <span class="la-result-title">Результат анализа</span>
+                </div>
+                <div class="la-result-scroll" id="listing-assistant-result"></div>
+            </div>
             </div>
         </div>
     </div>

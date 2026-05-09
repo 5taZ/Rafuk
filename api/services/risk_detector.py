@@ -20,8 +20,8 @@ from api.services.aggregator import normalize_price_byn
 
 # Words commonly used in scam/fraud listings on BY marketplaces.
 _SUSPICIOUS_WORDS = re.compile(
-    r"\b(предоплата|на карту|перевод|аванс|задаток|предоплат[аы]|"
-    r"перевед[иь]|карт[аыу]\s*\d{4}|qiwi|киви|webmoney|яндекс\s*деньги)\b",
+    r"\b(предоплата|на карту|перевод(?:ить|ит|оди|ела)?\s|аванс|задаток|предоплат[аы]|"
+    r"перевед[иь]|карт[аыу]\s*\d{4}|qiwi|киви|webmoney|яндекс\s*деньги)",
     re.IGNORECASE,
 )
 
@@ -83,11 +83,11 @@ def _check_too_cheap(
     price_byn = normalize_price_byn(ad.get("price_byn"))
     if not price_byn or price_byn <= 0:
         return
-    if price_byn < median * 0.6:
+    if price_byn < median * 0.68:
         risks.append({
             "type": "too_cheap",
             "level": "high",
-            "message": "Цена более 40% ниже медианы",
+            "message": "Цена более 32% ниже медианы",
         })
 
 

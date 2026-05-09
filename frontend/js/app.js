@@ -63,7 +63,7 @@ function analyticsApp() {
             // checkAiConsent checks /account/consent/ai_analysis which
             // implies PD processing consent was also granted (both are
             // required together). If missing, the consent modal appears.
-            void actions.checkAiConsent().catch(() => {});
+            void actions.checkAiConsent().catch((err) => { console.warn("AI consent check failed", err); });
         }
 
         // Pull-to-refresh — page-scoped, picks the right loader by view.

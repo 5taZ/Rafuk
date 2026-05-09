@@ -1,26 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from fastapi.testclient import TestClient
 
 from api.services.cache import MemoryCache
-
-
-class FakeCurrencyService:
-    async def get_rates(self) -> dict[str, object]:
-        return {
-            "base": "BYN",
-            "rates": {"USD": 3.2, "EUR": 3.5},
-            "source": "test",
-            "fetched_at": datetime.now(UTC).isoformat(),
-        }
-
-    def convert_from_byn(self, amount_byn: float, currency: str, rates: dict[str, float]) -> float:
-        if currency == "BYN":
-            return round(amount_byn, 2)
-        return round(amount_byn / rates[currency], 2)
-
+from tests.conftest import FakeCurrencyService, FakeKufarClient
 
 # The listings endpoint calls load_query_dataset which does 2 parallel
 # searches (condition=new + condition=used). FakeKufarClient returns the same
@@ -68,18 +51,6 @@ FAKE_ADS = [
 ]
 
 VERDICTS = {"Хорошая цена", "Ниже рынка", "Средняя цена", "Выше рынка"}
-
-
-class FakeKufarClient:
-    def __init__(self, settings) -> None:
-        del settings
-
-    async def search_all_ads(self, **kwargs) -> dict:
-        del kwargs
-        return {"total": len(FAKE_ADS), "ads": FAKE_ADS}
-
-    async def aclose(self) -> None:
-        return None
 
 
 def test_listings_endpoint_returns_items(monkeypatch) -> None:
@@ -250,7 +221,10 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
-        response = client.get("/api/v1/listings", params={"query": "iphone", "currency": "BYN"})
+        response = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "currency": "BYN", "strict_search": False},
+        )
 
     assert response.status_code == 200
     payload = response.json()
@@ -474,7 +448,7 @@ def test_listings_endpoint_keeps_price_delta_stable_in_category_view(monkeypatch
     with TestClient(app) as client:
         broad_response = client.get(
             "/api/v1/listings",
-            params={"query": "audi q7", "currency": "BYN"},
+            params={"query": "audi q7", "currency": "BYN", "strict_search": False},
         )
         category_response = client.get(
             "/api/v1/listings",
@@ -483,6 +457,7 @@ def test_listings_endpoint_keeps_price_delta_stable_in_category_view(monkeypatch
                 "currency": "BYN",
                 "category": 2010,
                 "reference_context": "base_query",
+                "strict_search": False,
             },
         )
 

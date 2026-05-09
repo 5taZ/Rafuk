@@ -11,7 +11,7 @@ def _age_hours(list_time: str | None) -> float | None:
     if not list_time:
         return None
     try:
-        parsed = datetime.fromisoformat(list_time)
+        parsed = datetime.fromisoformat(list_time.replace("Z", "+00:00"))
     except ValueError:
         return None
     if parsed.tzinfo is None:
@@ -28,7 +28,10 @@ def compute_liquidity_insight(
     fresh_count = sum(
         1 for a in ads if (_age := _age_hours(a.get("list_time"))) is not None and _age <= 72
     )
-    deal_count = len(filter_deal_ads(ads, market_stats.median, 8.0)) if market_stats.median else 0
+    deal_count = (
+        len(filter_deal_ads(ads, market_stats.median, 8.0, market_stats=market_stats))
+        if market_stats.median else 0
+    )
 
     # Market-level base score (0-40)
     market_score = 0.0
@@ -67,7 +70,7 @@ def compute_liquidity_insight(
 
     # If no specific ad given, return market-level score only
     if ad is None:
-        score = round(max(0.0, min(100.0, 30.0 + market_score)), 1)
+        score = round(max(0.0, min(100.0, 35.0 + market_score)), 1)
     else:
         # Per-item score: market base + item-specific factors
         item_score = 0.0
@@ -97,7 +100,7 @@ def compute_liquidity_insight(
 
         # Freshness of this specific ad (0-15 points)
         age = _age_hours(ad.get("list_time"))
-        if age is not None:
+        if age is not None and age >= 0:
             if age <= 6:
                 item_score += 15
                 reasons.append("только что выложено")

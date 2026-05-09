@@ -71,8 +71,9 @@ function createApiAi(context) {
         const previousTransition = barEl.style.transition;
         barEl.style.transition = "none";
         _updateProgressDisplay(pct);
-        barEl.offsetHeight;
-        barEl.style.transition = previousTransition;
+        requestAnimationFrame(() => {
+            barEl.style.transition = previousTransition;
+        });
     }
 
     function _setStageLabel(stage) {
@@ -82,10 +83,6 @@ function createApiAi(context) {
     }
 
     let _progressStartedAt = 0;
-
-    function _prefersReducedMotion() {
-        return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    }
 
     function _cancelProgressFrame() {
         if (_progressFrame) {
@@ -491,7 +488,7 @@ function createApiAi(context) {
         if (data._ai_warning) {
             nodes.push(
                 domEl("div", { className: "ai-warning-banner" },
-                    domEl("span", { className: "ai-warning-icon", text: "⚠" }),
+                    domEl("span", { className: "ai-warning-icon", attrs: { "aria-hidden": "true" }, text: "⚠" }),
                     domEl("span", { text: data._ai_warning }),
                 )
             );

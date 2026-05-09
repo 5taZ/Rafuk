@@ -12,6 +12,7 @@ from api.services.aggregator import (
     get_param,
     normalize_price_byn,
     normalize_search_text,
+    resolve_price_reference,
     tokenize_search_text,
 )
 from api.services.market_signals import area_label, detect_anomaly_flags, region_label
@@ -275,6 +276,7 @@ def compute_deal_score(
     *,
     query: str,
     market_stats: PriceStats,
+    category_price_stats: dict[int, PriceStats] | None = None,
 ) -> DealScore:
     reasons: list[str] = []
     delta = compute_price_vs_median(ad, market_stats.median)
@@ -324,7 +326,8 @@ def compute_deal_score(
     if config_reason:
         reasons.append(config_reason)
 
-    anomaly_flags = detect_anomaly_flags(ad, market_stats)
+    ref = resolve_price_reference(ad, market_stats, category_price_stats)
+    anomaly_flags = detect_anomaly_flags(ad, ref.stats)
     if anomaly_flags:
         score -= min(
             len(anomaly_flags) * SCORING.anomaly_penalty_per_flag,

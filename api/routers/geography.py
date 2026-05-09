@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -19,7 +20,7 @@ from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
 from api.services.market_signals import region_label
-from api.services.query_pipeline import load_query_dataset
+from api.services.query_pipeline import load_query_dataset_with_fallback
 from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
@@ -30,8 +31,8 @@ router = APIRouter(tags=["analytics"])
 async def get_geography(
     request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
-    currency: str = "BYN",
-    strict_search: bool = False,
+    currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
+    strict_search: bool = True,
     category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
@@ -44,7 +45,7 @@ async def get_geography(
     if cached:
         return GeographyResponse(**cached)
 
-    dataset = await load_query_dataset(
+    fb = await load_query_dataset_with_fallback(
         query=query,
         currency=currency,
         strict_search=strict_search,
@@ -53,6 +54,7 @@ async def get_geography(
         category=category,
         cache=cache,
     )
+    dataset = fb.dataset
     grouped: dict[int, list[dict]] = defaultdict(list)
     for ad in dataset.ads:
         region_id = ad.get("region_id")

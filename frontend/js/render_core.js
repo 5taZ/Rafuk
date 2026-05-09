@@ -79,10 +79,6 @@ function createRenderCore(context) {
         }
     }
 
-    function clearChildren(node) {
-        if (node) node.replaceChildren();
-    }
-
     /* ===== Toast ===== */
 
     // Cap on simultaneously-visible toasts. Anything past this count
@@ -172,7 +168,7 @@ function createRenderCore(context) {
         }
 
         // Remove entering class after animation completes
-        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const prefersReducedMotion = _prefersReducedMotion();
         const animationDuration = prefersReducedMotion ? 10 : 200;
         setTimeout(() => {
             toast.classList.remove("entering");
@@ -205,7 +201,7 @@ function createRenderCore(context) {
         if (toast.classList.contains("toast-exit")) return;
         const timerId = Number(toast.dataset.dismissTimer || 0);
         if (timerId) clearTimeout(timerId);
-        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const prefersReducedMotion = _prefersReducedMotion();
         const exitDuration = prefersReducedMotion ? 10 : 200;
         toast.classList.add("toast-exit");
         setTimeout(() => {
@@ -443,8 +439,7 @@ function createRenderCore(context) {
         const refinements = Array.isArray(state.misc.stats?.suggested_refinements)
             ? state.misc.stats.suggested_refinements
             : [];
-        clearChildren(elements.summaryRefinementsChips);
-        if (!refinements.length) {
+        domClear(elements.summaryRefinementsChips);        if (!refinements.length) {
             elements.summaryRefinements.hidden = true;
             return;
         }
@@ -472,8 +467,7 @@ function createRenderCore(context) {
                 elements.summaryFair.textContent = "—";
                 if (elements.summaryRefinements) {
                     elements.summaryRefinements.hidden = true;
-                    clearChildren(elements.summaryRefinementsChips);
-                }
+                    domClear(elements.summaryRefinementsChips);                }
                 return;
             }
             renderRefinementChips();

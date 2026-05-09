@@ -45,7 +45,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from PIL import Image, UnidentifiedImageError
 
 from api.config import Settings
-from api.dependencies import get_settings_dependency
+from api.dependencies import get_settings_dependency, get_telegram_user
 from api.limiter import limiter
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,7 @@ def _get_transcode_semaphore() -> asyncio.Semaphore:
 # it small; oldest entries fall out when capacity is reached.
 _LRU_CAPACITY = 256
 _transcoded_cache: OrderedDict[tuple[str, int, str], bytes] = OrderedDict()
+_transcoded_cache_lock = asyncio.Lock()
 
 
 def _cache_get(key: tuple[str, int, str]) -> bytes | None:
@@ -144,11 +145,9 @@ def _transcode(
 ) -> bytes:
     """Decode JPEG, optionally down-scale, encode to ``fmt``.
 
-    Pillow does the heavy lifting; we run it on the event loop because
-    Mini-App image requests are bursty but small (≤5 MB cap), so the
-    transcoded output is usually under ~80 KB and finishes in a few
-    milliseconds. If we ever need to scale this up, swap the call site
-    to ``run_in_executor``.
+    Pillow does the heavy lifting. Must always be called via
+    ``asyncio.to_thread`` — never call directly from the event loop
+    as the CPU-bound encode will block async scheduling.
     """
     with Image.open(io.BytesIO(raw)) as image:
         image.load()
@@ -183,7 +182,7 @@ def _get_http_client(settings: Settings) -> httpx.AsyncClient:
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
             timeout=settings.image_proxy_fetch_timeout,
-            follow_redirects=True,
+            follow_redirects=False,
             headers={"User-Agent": "Rafuk-ImageProxy/1.0"},
             # http2 keep-alive across image requests cuts the per-
             # request RTT roughly in half on warm connections.
@@ -223,6 +222,7 @@ async def get_optimized_image(
     w: int | None = Query(default=None, ge=16, le=2048),
     fmt: Literal["auto", "webp", "avif", "jpeg"] = "auto",
     settings: Settings = Depends(get_settings_dependency),
+    _user=Depends(get_telegram_user),
 ) -> Response:
     if not settings.image_proxy_enabled:
         raise HTTPException(status_code=404, detail="Image proxy disabled")
@@ -233,7 +233,8 @@ async def get_optimized_image(
     target_width = min(w or settings.image_proxy_max_width, settings.image_proxy_max_width)
     cache_key = (path, target_width, chosen_fmt)
 
-    cached_body = _cache_get(cache_key)
+    async with _transcoded_cache_lock:
+        cached_body = _cache_get(cache_key)
     if cached_body is not None:
         return _build_response(cached_body, chosen_fmt, hit="lru")
 
@@ -267,7 +268,8 @@ async def get_optimized_image(
             logger.warning("Image transcode failed for %s: %s", path, exc)
             raise HTTPException(status_code=415, detail="Unsupported source image") from exc
 
-    _cache_put(cache_key, body)
+    async with _transcoded_cache_lock:
+        _cache_put(cache_key, body)
     return _build_response(body, chosen_fmt, hit="miss")
 
 

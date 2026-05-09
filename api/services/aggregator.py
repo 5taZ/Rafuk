@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import statistics
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel
 
 KOPECKS = 100
-MAX_PRICE_BYN = 100_000.0
+MAX_PRICE_BYN = 1_000_000.0
 MIN_PRICE_BYN = 0.5  # Ignore listings priced below 0.50 BYN (kopecks remainder / spam)
 MIN_CATEGORY_REFERENCE_COUNT = 3
 
@@ -265,12 +266,31 @@ def cluster_price_stats(
     return compute_price_stats(prices)
 
 
+def precompute_cluster_stats(
+    all_ads: list[dict[str, Any]],
+) -> dict[int, PriceStats | None]:
+    """Pre-compute cluster stats for every ad in *all_ads* in O(n²) once.
+
+    Returns a dict mapping ``ad_id`` → ``PriceStats | None`` so callers
+    can look up per-ad cluster stats in O(1) instead of calling
+    :func:`cluster_price_stats` per listing (which itself is O(n)).
+    """
+    result: dict[int, PriceStats | None] = {}
+    for ad in all_ads:
+        ad_id = int(ad.get("ad_id", 0))
+        title = str(ad.get("subject", ""))
+        result[ad_id] = cluster_price_stats(title, all_ads)
+    return result
+
+
 def normalize_price_byn(raw_price: Any) -> float | None:
     if raw_price in (None, "", 0, 0.0):
         return None
     try:
         numeric = float(raw_price)
     except (TypeError, ValueError):
+        return None
+    if math.isnan(numeric) or math.isinf(numeric):
         return None
     if numeric <= 0:
         return None
@@ -311,6 +331,10 @@ def _remove_outliers(prices: list[float]) -> list[float]:
     bogus listings (e.g. 1 BYN phones or 99999 BYN accessories) from polluting
     median and mean calculations. Only applied when there are enough data points
     for IQR to be meaningful (>= 8).
+
+    When IQR=0 (near-uniform prices with one or two extreme outliers), falls
+    back to median-absolute-deviation: any price further than 5x from the
+    median is excluded.
     """
     if len(prices) < 8:
         return prices
@@ -319,6 +343,9 @@ def _remove_outliers(prices: list[float]) -> list[float]:
     q3 = _percentile(sorted_prices, 75)
     iqr = q3 - q1
     if iqr <= 0:
+        med = statistics.median(sorted_prices)
+        if med > 0:
+            return [p for p in prices if 0.2 * med <= p <= 5.0 * med]
         return prices
     lower = q1 - 2.5 * iqr
     upper = q3 + 2.5 * iqr
@@ -326,6 +353,13 @@ def _remove_outliers(prices: list[float]) -> list[float]:
 
 
 def compute_price_stats(prices: list[float]) -> PriceStats:
+    """Compute descriptive price statistics after outlier removal.
+
+    ``count`` reflects the number of prices AFTER outlier removal, which is
+    the set used for mean/median/Q1/Q3 — this is the meaningful count for
+    interpreting the statistics.  It may be smaller than the raw listing count
+    when spam or miscategorized listings are filtered out.
+    """
     if not prices:
         return PriceStats(mean=0.0, median=0.0, q1=0.0, q3=0.0, min=0.0, max=0.0, count=0)
     cleaned = _remove_outliers(prices)

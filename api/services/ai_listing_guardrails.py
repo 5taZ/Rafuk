@@ -16,6 +16,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_CANONICAL_TIER_LABELS = {"fast": "Быстро", "market": "Рыночная", "patient": "Терпеливо"}
+
 
 def _coerce_positive(value: Any) -> float | None:
     if value is None:
@@ -51,6 +53,12 @@ def _bounds_from_market(
     but tight enough to catch obviously bogus tiers.
     """
     if market_count < 3:
+        if min_price is not None and max_price is not None and min_price > 0 and max_price > 0:
+            low = float(min_price) * 0.80
+            high = float(max_price) * 1.20
+            if low >= high:
+                return None
+            return low, high
         return None
 
     floor = q1 if q1 and q1 > 0 else min_price
@@ -64,9 +72,11 @@ def _bounds_from_market(
     if floor is None or ceil_ is None:
         return None
 
-    # Allow ~20% tolerance on each side so a "patient" tier just above Q3
-    # isn't yanked back down — sellers might legitimately wait it out.
-    return float(floor) * 0.65, float(ceil_) * 1.35
+    low = float(floor) * 0.65
+    high = float(ceil_) * 1.35
+    if low >= high:
+        return None
+    return low, high
 
 
 def normalize_listing_pricing(
@@ -137,13 +147,17 @@ def normalize_listing_pricing(
                 out[target_key] = {
                     **tier_dict,
                     "price_byn": _round(clamped_price),
-                    "label": tier_dict.get("label") or target_key.title(),
+                    "label": _CANONICAL_TIER_LABELS.get(target_key, target_key.title()),
                 }
             logger.info(
                 "Listing assistant pricing tiers reordered: %s -> %s",
                 labels_in_input,
                 labels_sorted,
             )
+
+    for key in ("fast", "market", "patient"):
+        if key not in out:
+            out[key] = {"price_byn": 0, "label": _CANONICAL_TIER_LABELS.get(key, key.title())}
 
     # Clamp each tier price into market bounds (no-op if no bounds).
     for key in ("fast", "market", "patient"):
@@ -166,13 +180,16 @@ def normalize_listing_pricing(
 
     if fast_price is not None:
         if floor is None or floor > fast_price:
-            # Default floor at 0.85 of the fast tier — a sensible minimum
+            # Default floor at 0.90 of the fast tier — a sensible minimum
             # for resellers when AI didn't supply one.
-            out["floor_byn"] = _round(fast_price * 0.85)
+            out["floor_byn"] = _round(fast_price * 0.90)
         else:
             out["floor_byn"] = _round(floor)
     elif floor is not None:
         out["floor_byn"] = _round(floor)
+
+    if low is not None and out["floor_byn"] < low:
+        out["floor_byn"] = _round(low)
 
     return out
 

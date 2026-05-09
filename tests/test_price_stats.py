@@ -1,27 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
 from api.services.cache import MemoryCache
-from tests.conftest import init_test_tables
-
-
-class FakeCurrencyService:
-    async def get_rates(self) -> dict[str, object]:
-        return {
-            "base": "BYN",
-            "rates": {"USD": 3.2, "EUR": 3.5},
-            "source": "test",
-            "fetched_at": datetime.now(UTC).isoformat(),
-        }
-
-    def convert_from_byn(self, amount_byn: float, currency: str, rates: dict[str, float]) -> float:
-        if currency == "BYN":
-            return round(amount_byn, 2)
-        return round(amount_byn / rates[currency], 2)
+from tests.conftest import FakeCurrencyService, init_test_tables
 
 
 class FakeKufarClient:

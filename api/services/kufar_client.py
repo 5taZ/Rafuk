@@ -37,6 +37,12 @@ class KufarClient:
         # makes the spacing correct regardless of how many callers race.
         self._delay_lock = asyncio.Lock()
         self._client_lock = asyncio.Lock()
+        # Limit parallel HTTP requests across all KufarClient users
+        self._semaphore = asyncio.Semaphore(settings.kufar_parallel_semaphore)
+        # Simple circuit breaker: after 5 consecutive errors open the
+        # circuit for 30 seconds and return empty results.
+        self._consecutive_errors = 0
+        self._circuit_open_until: float = 0.0
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._closed:
@@ -79,6 +85,12 @@ class KufarClient:
         category: int | None = None,
         bypass_delay: bool = False,
     ) -> dict[str, Any]:
+        # Circuit breaker check
+        now = asyncio.get_running_loop().time()
+        if now < self._circuit_open_until:
+            logger.warning("Circuit breaker open for query=%s; returning empty stub", query)
+            return {"ads": [], "total": 0}
+
         params: dict[str, Any] = {
             "query": query,
             "size": size,
@@ -108,11 +120,15 @@ class KufarClient:
                 if not bypass_delay:
                     await self._enforce_delay()
                 client = await self._get_client()
-                response = await client.get(KUFAR_BASE_URL, params=params, headers=headers)
+                async with self._semaphore:
+                    response = await client.get(KUFAR_BASE_URL, params=params, headers=headers)
                 response.raise_for_status()
+                # Success — reset error counter
+                self._consecutive_errors = 0
                 return response.json()
             except (httpx.HTTPError, httpx.TimeoutException) as exc:
                 last_error = exc
+                self._consecutive_errors += 1
                 logger.warning(
                     "Kufar request failed on attempt %s/%s for query=%s: %s",
                     attempt + 1,
@@ -120,6 +136,10 @@ class KufarClient:
                     query,
                     exc,
                 )
+                if self._consecutive_errors >= 5:
+                    self._circuit_open_until = asyncio.get_running_loop().time() + 30.0
+                    logger.error("Circuit breaker opened after 5 consecutive errors")
+                    break
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(BACKOFF_BASE_SECONDS * (2**attempt))
 

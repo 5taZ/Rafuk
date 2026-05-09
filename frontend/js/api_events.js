@@ -83,6 +83,8 @@ function createApiEvents(context) {
 
     // ── Event binding ────────────────────────────────────────────────────
     const _searchDebounce = { timer: null };
+    const _confirmTimers = {};
+    const _preloadCache = [];
 
     function bindSearchEvents() {
         // ── Search input ─────────────────────────────────────────────
@@ -95,9 +97,7 @@ function createApiEvents(context) {
                 if (state.search.query.length >= 2) {
                     void search("overview");
 
-                    if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                        Telegram.WebApp.HapticFeedback.impactOccurred("light");
-                    }
+                    try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
                 }
             }, 1200); // 1.2s debounce — gives users time to finish typing
         });
@@ -108,9 +108,7 @@ function createApiEvents(context) {
                 clearTimeout(_searchDebounce.timer);
                 void search("overview");
 
-                if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                    Telegram.WebApp.HapticFeedback.impactOccurred("medium");
-                }
+                try { _tgHaptic()?.impactOccurred?.("medium"); } catch (_) {}
             }
         });
 
@@ -118,9 +116,7 @@ function createApiEvents(context) {
             clearTimeout(_searchDebounce.timer);
             void search("overview");
 
-            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                Telegram.WebApp.HapticFeedback.impactOccurred("medium");
-            }
+            try { _tgHaptic()?.impactOccurred?.("medium"); } catch (_) {}
         });
 
         // ── Error bar retry ────────────────────────────────────────────
@@ -148,9 +144,7 @@ function createApiEvents(context) {
                 if (elements.recentList) domClear(elements.recentList);
 
                 // 4. Optional haptic feedback
-                if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                    Telegram.WebApp.HapticFeedback.impactOccurred("light");
-                }
+                try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
 
                 return;
             }
@@ -211,9 +205,7 @@ function createApiEvents(context) {
             state.search.query = merged;
             renderLoading();
             clearTimeout(_searchDebounce.timer);
-            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                Telegram.WebApp.HapticFeedback.impactOccurred("light");
-            }
+            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
             void search("overview");
         });
     }
@@ -228,12 +220,34 @@ function createApiEvents(context) {
             }
         });
         // ── View tabs ────────────────────────────────────────────────
+        const tablist = document.querySelector('[role="tablist"].view-nav');
+        if (tablist) {
+            tablist.addEventListener("keydown", (event) => {
+                const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+                if (!tabs.length) return;
+                const idx = tabs.indexOf(document.activeElement);
+                if (idx === -1) return;
+                let next = -1;
+                if (event.key === "ArrowRight") next = (idx + 1) % tabs.length;
+                else if (event.key === "ArrowLeft") next = (idx - 1 + tabs.length) % tabs.length;
+                else if (event.key === "Home") next = 0;
+                else if (event.key === "End") next = tabs.length - 1;
+                if (next === -1) return;
+                event.preventDefault();
+                tabs[next].focus();
+                tabs[next].click();
+            });
+        }
         for (const button of elements.viewTabs || []) {
             button.addEventListener("click", () => {
                 const view = button.dataset.view;
                 if (!view) {
                     return;
                 }
+                Object.values(_confirmTimers).forEach(clearTimeout);
+                _confirmTimers.events = undefined;
+                _confirmTimers.leads = undefined;
+                _confirmTimers.watchlist = undefined;
                 setActiveView(view);
                 renderAll();
                 if (view === "tracking") {
@@ -261,9 +275,7 @@ function createApiEvents(context) {
                 state.leads.itemsFilter = filter;
                 renderLeads();
 
-                if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                    Telegram.WebApp.HapticFeedback.impactOccurred("light");
-                }
+                try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
             });
         }
 
@@ -330,7 +342,7 @@ function createApiEvents(context) {
     function bindFilterEvents() {
         // ── Filter button (toggle dropdown) ───────────────────────────
         elements.filterBtn?.addEventListener("click", () => {
-            const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const prefersReducedMotion = _prefersReducedMotion();
             if (!state.filters.filterDropdownOpen) {
                 // Opening — initialize pending values with current applied values
                 state.filters.pendingCategory = state.filters.category;
@@ -355,9 +367,7 @@ function createApiEvents(context) {
                 }, 150);
             }
 
-            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                Telegram.WebApp.HapticFeedback.impactOccurred("light");
-            }
+            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
         });
 
         // Close filter dropdown when clicking outside
@@ -365,7 +375,7 @@ function createApiEvents(context) {
             if (!state.filters.filterDropdownOpen) return;
             const dropdown = elements.filterDropdown;
             const btn = elements.filterBtn;
-            const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const prefersReducedMotion = _prefersReducedMotion();
             if (dropdown && !dropdown.hidden && !dropdown.contains(event.target) && btn && !btn.contains(event.target)) {
                 if (prefersReducedMotion) {
                     state.filters.filterDropdownOpen = false;
@@ -400,9 +410,7 @@ function createApiEvents(context) {
             state.filters.pendingCategory = newCategory;
             renderAll();
 
-            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                Telegram.WebApp.HapticFeedback.impactOccurred("light");
-            }
+            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
         });
 
         // ── Filter dropdown: condition chips (event delegation) ───────
@@ -415,9 +423,7 @@ function createApiEvents(context) {
             state.filters.pendingCondition = button.dataset.condition;
             renderAll();
 
-            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                Telegram.WebApp.HapticFeedback.impactOccurred("light");
-            }
+            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
         });
 
         // ── Filter dropdown: seller chips (event delegation) ──────────
@@ -430,9 +436,7 @@ function createApiEvents(context) {
             state.filters.pendingSellerType = button.dataset.seller;
             renderAll();
 
-            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                Telegram.WebApp.HapticFeedback.impactOccurred("light");
-            }
+            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
         });
 
         // ── Filter dropdown: price range inputs ──────────────────────
@@ -485,9 +489,7 @@ function createApiEvents(context) {
                 void search(state.ui.activeView, { keepFilters: true });
             }
 
-            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                Telegram.WebApp.HapticFeedback.impactOccurred("medium");
-            }
+            try { _tgHaptic()?.impactOccurred?.("medium"); } catch (_) {}
         });
 
         // ── Filter dropdown: Cancel button ────────────────────────────
@@ -502,9 +504,7 @@ function createApiEvents(context) {
             state.filters.filterDropdownOpen = false;
             renderAll();
 
-            if (window.Telegram?.WebApp?.HapticFeedback && (!window.Telegram.WebApp.version || parseFloat(window.Telegram.WebApp.version) >= 6.1)) {
-                Telegram.WebApp.HapticFeedback.impactOccurred("light");
-            }
+            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
         });
     }
 
@@ -571,7 +571,7 @@ function createApiEvents(context) {
                     button.classList.remove('is-loading');
                     button.textContent = originalText;
                 }
-            })().catch(() => {});
+            })().catch((err) => { console.error("tracker create failed", err); });
         });
 
         // ── Clear events button (double-confirm) ─────────────────────
@@ -586,7 +586,7 @@ function createApiEvents(context) {
                 if (!clearEventsConfirmed) {
                     clearEventsConfirmed = true;
                     elements.clearEventsButton.textContent = "Удалить все?";
-                    setTimeout(() => {
+                    _confirmTimers.events = setTimeout(() => {
                         clearEventsConfirmed = false;
                         if (elements.clearEventsButton) {
                             elements.clearEventsButton.textContent = "Очистить";
@@ -628,7 +628,7 @@ function createApiEvents(context) {
                     clearLeadsConfirmed = true;
                     elements.clearAllLeadsButton.textContent = "Удалить все?";
                     showToast("Нажмите ещё раз для подтверждения");
-                    setTimeout(() => {
+                    _confirmTimers.leads = setTimeout(() => {
                         clearLeadsConfirmed = false;
                         if (elements.clearAllLeadsButton) {
                             elements.clearAllLeadsButton.textContent = "Очистить";
@@ -656,7 +656,7 @@ function createApiEvents(context) {
                     clearWatchlistConfirmed = true;
                     elements.deleteAllWatchlistButton.textContent = "Удалить все?";
                     showToast("Нажмите ещё раз для подтверждения");
-                    setTimeout(() => {
+                    _confirmTimers.watchlist = setTimeout(() => {
                         clearWatchlistConfirmed = false;
                         if (elements.deleteAllWatchlistButton) {
                             elements.deleteAllWatchlistButton.textContent = "Очистить";
@@ -725,7 +725,7 @@ function createApiEvents(context) {
                     button.classList.remove('is-loading');
                     button.textContent = originalText;
                 }
-            })().catch(() => {});
+            })().catch((err) => { console.error("save tracker failed", err); });
         });
 
         elements.editTrackerModal?.addEventListener("click", (event) => {
@@ -783,8 +783,11 @@ function createApiEvents(context) {
         // ── Escape key (modal close) ─────────────────────────────────
         document.addEventListener("keydown", (event) => {
             if (event.key === "Escape") {
-                // Close the topmost modal first — AI > expenses > detail > edit tracker.
-                if (!elements.aiModal?.hidden) {
+                // Close the topmost modal first — LA > AI > expenses > detail > edit tracker.
+                const laModal = document.getElementById("la-modal");
+                if (laModal && !laModal.hidden) {
+                    laModal.hidden = true;
+                } else if (!elements.aiModal?.hidden) {
                     closeAIModal();
                 } else if (!elements.expensesModal?.hidden) {
                     closeExpensesModal();
@@ -820,6 +823,7 @@ function createApiEvents(context) {
         function _preloadAdjacent() {
             const images = state.detail.data?.images || [];
             const idx = state.detail.imageIndex || 0;
+            _preloadCache.length = 0;
             for (const i of [idx - 1, idx + 1]) {
                 if (i < 0 || i >= images.length) continue;
                 const raw = images[i];
@@ -833,6 +837,7 @@ function createApiEvents(context) {
                     : validated;
                 const ghost = new Image();
                 ghost.src = url;
+                _preloadCache.push(ghost);
             }
         }
 
@@ -996,7 +1001,7 @@ function createApiEvents(context) {
                     button.classList.remove('is-loading');
                     button.textContent = originalText;
                 }
-            })().catch(() => {});
+            })().catch((err) => { console.error("save expense failed", err); });
         });
 
         elements.cancelExpenseButton?.addEventListener("click", () => {

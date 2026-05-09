@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -27,9 +29,9 @@ router = APIRouter(tags=["analytics"])
 async def get_price_history(
     request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
-    currency: str = "BYN",
+    currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
     days: int = 7,
-    strict_search: bool = False,
+    strict_search: bool = True,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),

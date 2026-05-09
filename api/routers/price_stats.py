@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -31,7 +32,7 @@ from api.services.query_pipeline import (
     KUFAR_CATEGORY_LABELS,
     convert_price_stats,
     fetch_category_totals,
-    load_query_dataset,
+    load_query_dataset_with_fallback,
 )
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
@@ -69,8 +70,8 @@ async def get_price_stats(
     request: Request,
     background_tasks: BackgroundTasks,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
-    currency: str = "BYN",
-    strict_search: bool = False,
+    currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
+    strict_search: bool = True,
     category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
@@ -87,8 +88,8 @@ async def get_price_stats(
     # Kufar pagination (~1s) and NBRB rates fetch (~600ms cold) are
     # independent — overlap them so the wall-clock cost is the slower
     # of the two instead of the sum.
-    dataset, rates_payload = await asyncio.gather(
-        load_query_dataset(
+    async def _fetch_dataset():
+        fb = await load_query_dataset_with_fallback(
             query=query,
             currency=currency,
             strict_search=strict_search,
@@ -96,8 +97,18 @@ async def get_price_stats(
             client=kufar_client,
             category=category,
             cache=cache,
-        ),
-        currency_service.get_rates(),
+        )
+        return fb.dataset
+
+    async def _fetch_rates():
+        try:
+            return await currency_service.get_rates()
+        except Exception:
+            return {"rates": {"BYN": 1.0}}
+
+    dataset, rates_payload = await asyncio.gather(
+        _fetch_dataset(),
+        _fetch_rates(),
     )
     stats = dataset.price_stats
     converted = convert_price_stats(

@@ -19,10 +19,6 @@ function createRenderModals(context) {
         escapeHtml,
     } = context;
 
-    function clearChildren(node) {
-        if (node) node.replaceChildren();
-    }
-
     function buildDetailField(label, value) {
         const item = document.createElement("div");
         item.className = "detail-field";
@@ -60,7 +56,7 @@ function createRenderModals(context) {
         const aiState = state.detail.ai || {};
         if (elements.detailAiBlock && elements.detailAiContent) {
             elements.detailAiBlock.hidden = true;
-            clearChildren(elements.detailAiContent);
+            domClear(elements.detailAiContent);
         }
 
         elements.detailDescription.textContent = detail.description || "";
@@ -69,7 +65,7 @@ function createRenderModals(context) {
         // Flip estimates hidden — resale info now shown in AI analysis
         elements.detailProfitBlock.hidden = true;
 
-        clearChildren(elements.detailLiquidity);
+        domClear(elements.detailLiquidity);
         if (detail.liquidity) {
             const item = buildDetailField(
                 detail.liquidity.label,
@@ -98,7 +94,7 @@ function createRenderModals(context) {
             priceVsMarketLabel,
             formatDelta(detail.price_vs_median),
         ].filter(Boolean);
-        clearChildren(elements.detailMeta);
+        domClear(elements.detailMeta);
         for (const item of metaItems) {
             const pill = document.createElement("span");
             pill.className = "detail-pill";
@@ -136,7 +132,7 @@ function createRenderModals(context) {
             elements.detailMainImage.removeAttribute("src");
         }
 
-        clearChildren(elements.detailThumbs);
+        domClear(elements.detailThumbs);
         for (const [index, image] of images.entries()) {
             const button = document.createElement("button");
             button.type = "button";
@@ -152,14 +148,14 @@ function createRenderModals(context) {
             elements.detailThumbs.appendChild(button);
         }
 
-        clearChildren(elements.detailParams);
+        domClear(elements.detailParams);
         const params = detail.parameters || [];
         for (const field of params) {
             elements.detailParams.appendChild(buildDetailField(field.label, field.value));
         }
         elements.detailParamsBlock.hidden = params.length === 0;
 
-        clearChildren(elements.detailSeller);
+        domClear(elements.detailSeller);
         const sellerFields = detail.seller_fields || [];
         for (const field of sellerFields) {
             elements.detailSeller.appendChild(buildDetailField(field.label, field.value));
@@ -231,7 +227,7 @@ function createRenderModals(context) {
     function renderExpensesModal() {
         return safeRender('renderExpensesModal', () => {
             if (!elements.expensesModal) return;
-            clearChildren(elements.expensesList);
+            domClear(elements.expensesList);
 
         // Show loading state
         if (state.expenses.loading) {

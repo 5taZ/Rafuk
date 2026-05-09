@@ -4,9 +4,10 @@ import asyncio
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import delete, select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -36,6 +37,7 @@ from api.services.query_pipeline import load_query_dataset
 from api.services.workflow_store import (
     ensure_user,
     load_last_snapshot_prices,
+    make_price_snapshot,
     record_price_snapshot,
     resolve_user_id,
     upsert_lead,
@@ -97,9 +99,13 @@ def _serialize_watchlist(
 
 
 @router.get("/leads", response_model=list[LeadRead])
+@limiter.limit("30/minute")
 async def get_leads(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> list[LeadRead]:
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
@@ -111,6 +117,8 @@ async def get_leads(
             select(LeadItem)
             .where(LeadItem.user_id == user_id, LeadItem.status != WATCHING_STATUS)
             .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
         leads = list(result.scalars())
 
@@ -174,7 +182,7 @@ async def create_lead(
             select(LeadItem).where(
                 LeadItem.user_id == user_id,
                 LeadItem.ad_id == payload.ad_id,
-            )
+            ).with_for_update()
         )
         if existing is not None and existing.status not in {
             WATCHING_STATUS, "closed",
@@ -320,9 +328,13 @@ async def delete_lead(
 
 
 @router.get("/watchlist", response_model=list[WatchlistRead])
+@limiter.limit("30/minute")
 async def get_watchlist(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> list[WatchlistRead]:
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
@@ -332,6 +344,8 @@ async def get_watchlist(
             select(LeadItem)
             .where(LeadItem.user_id == user_id, LeadItem.status == WATCHING_STATUS)
             .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
         items = list(result.scalars())
 
@@ -588,6 +602,7 @@ async def refresh_watchlist(
         updated = 0
         missing = 0
         price_drops = 0
+        snapshots_to_insert: list[dict[str, Any]] = []
         for query, dataset in zip(unique_queries, datasets, strict=True):
             if isinstance(dataset, Exception):
                 logger.warning("Watchlist refresh: query %r failed: %s", query, dataset)
@@ -620,18 +635,18 @@ async def refresh_watchlist(
                 if previous is not None and price is not None and price < float(previous):
                     item.market_status = "price_drop"
                     price_drops += 1
-                # Append a sparkline point only when the price moved
-                # (the helper short-circuits on no-op refreshes so we
-                # don't grow the history table for unchanged lots).
-                # The bulk-loaded `last_prices` lookup means each
-                # iteration adds zero round-trips to the snapshots
-                # table — only the final flush/commit hits Postgres.
-                await record_price_snapshot(
-                    session,
+                # Build snapshot dicts in-memory and INSERT once after
+                # the loop instead of session.add() per iteration.
+                snapshot = make_price_snapshot(
                     lead_item=item,
                     price_byn=price,
                     last_known_price=last_prices.get(item.id, -1.0),
                 )
+                if snapshot:
+                    snapshots_to_insert.append(snapshot)
+
+        if snapshots_to_insert:
+            await session.execute(insert(LeadItemPriceSnapshot).values(snapshots_to_insert))
 
         # Auto-remove watchlist items that have been missing too long
         auto_remove_cutoff = datetime.now(UTC) - timedelta(days=settings.auto_remove_missing_days)
@@ -642,6 +657,14 @@ async def refresh_watchlist(
                 and item.missing_since_at is not None
                 and item.missing_since_at < auto_remove_cutoff
             ):
+                await session.execute(
+                    delete(LeadItemPriceSnapshot).where(
+                        LeadItemPriceSnapshot.lead_item_id == item.id
+                    )
+                )
+                await session.execute(
+                    delete(DealExpense).where(DealExpense.lead_id == item.id)
+                )
                 await session.delete(item)
                 auto_removed += 1
 

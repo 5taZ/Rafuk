@@ -148,13 +148,15 @@ def _coerce_competitors(
         if not match:
             # Fuzzy: try matching by price only among same-price items
             for key, ds in ds_lookup.items():
-                if (
-                    abs(int(round(ds.get("price_byn") or 0)) - int(round(price))) <= 2
-                    and (
-                        title.lower()[:30] in key[0]
-                        or key[0][:30] in title.lower()
-                    )
-                ):
+                if abs(int(round(ds.get("price_byn") or 0)) - int(round(price))) > 2:
+                    continue
+                src_tokens = set(title.lower().split())
+                ds_tokens = set(key[0].split())
+                shorter = min(len(src_tokens), len(ds_tokens))
+                if shorter == 0:
+                    continue
+                overlap = len(src_tokens & ds_tokens) / shorter
+                if overlap >= 0.6:
                     match = ds
                     break
         if match:
@@ -339,26 +341,44 @@ async def listing_assistant(
             return AIListingAssistantResponse.model_validate(cached)
         except ValidationError:
             logger.info("Listing assistant cache hit was stale, recomputing")
+            await cache.delete(cache_key)
 
     try:
         dataset = await load_query_dataset(
             query=title,
             currency="BYN",
-            strict_search=False,
+            strict_search=True,
             settings=settings,
             client=kufar_client,
             category=payload.category,
         )
     except KufarAPIError as exc:
-        logger.warning("Listing assistant: Kufar fetch failed: %s", exc)
+        logger.warning("Listing assistant: Kufar strict search failed: %s", exc)
         dataset = None
+
+    if dataset is None or not dataset.ads:
+        try:
+            dataset = await load_query_dataset(
+                query=title,
+                currency="BYN",
+                strict_search=False,
+                settings=settings,
+                client=kufar_client,
+                category=payload.category,
+            )
+        except KufarAPIError as exc:
+            logger.warning("Listing assistant: Kufar broad search also failed: %s", exc)
+            dataset = None
 
     market_stats = dataset.price_stats if dataset is not None else None
 
     # Detect category early so we can filter ads for accessories.
     # When searching "чехол iPhone", Kufar returns phones + cases;
     # filtering by price cap keeps only accessory-priced listings.
-    category_key = detect_category(title)
+    parameters = []
+    if payload.condition:
+        parameters.append({"label": "condition", "value": payload.condition})
+    category_key = detect_category(title, parameters)
     filtered_ads = dataset.ads if dataset is not None else []
     if dataset is not None and category_key in {
         "phone_accessory", "auto_accessory", "computer_accessory",

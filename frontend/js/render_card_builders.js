@@ -61,7 +61,10 @@ function createRenderCardBuilders(context) {
     }
 
     function buildListingNode(item, verdictClassName) {
-        const listing = domEl("article", { className: "listing" });
+        const listing = domEl("article", {
+            className: "listing",
+            attrs: { "aria-label": item.subject || item.title || "Объявление" },
+        });
         const resolveVerdictClassName =
             typeof verdictClassName === "function" ? verdictClassName : function () { return "neutral"; };
 
@@ -81,12 +84,6 @@ function createRenderCardBuilders(context) {
             }));
         }
 
-        // The backend always computes price_vs_median against the right
-        // reference (per-category if the category has ≥3 ads, otherwise the
-        // whole query). The fallback below only fires when we have no
-        // backend-supplied delta — and falls back to the query-level median
-        // exposed in state.misc.stats, which is the same reference type as the
-        // backend's "query" scope, so the values stay comparable.
         let delta = item.price_vs_median;
         if (delta == null && item.price && state.misc.stats?.median && Number(state.misc.stats.median) > 0) {
             delta = Math.round(((Number(item.price) - Number(state.misc.stats.median)) / Number(state.misc.stats.median)) * 100 * 100) / 100;
@@ -102,8 +99,6 @@ function createRenderCardBuilders(context) {
                         : "По рынку" },
                 }));
             } else {
-                // Show the reference label as a hover tooltip so the user can
-                // confirm whether the % is vs category or vs the whole query.
                 const tooltipPrefix = delta > 0 ? "Выше" : "Ниже";
                 const refLabel = item.price_reference_scope === "category"
                     ? (item.price_reference_label || "категории")
@@ -156,23 +151,8 @@ function createRenderCardBuilders(context) {
             )
         );
 
-        listing.querySelector(".listing-top")?.addEventListener("click", () => {
-            void actions.openListingDetail(item);
-        });
-        listing.querySelector('[data-role="lead"]')?.addEventListener("click", (e) => {
-            e.stopPropagation();
-            void actions.addLeadFromListing(item);
-        });
-        listing.querySelector('[data-role="watch"]')?.addEventListener("click", (e) => {
-            e.stopPropagation();
-            void actions.addWatchlistFromListing(item);
-        });
+        listing._item = item;
 
-        // Long-press the card to invoke a quick-action menu —
-        // actions beyond the inline buttons plus a direct "Открыть на
-        // Kufar" shortcut, surfaced via a bottom sheet so cluttered
-        // search results stay scannable. Helper falls back to a no-op
-        // on desktop / when touch events never fire.
         if (typeof attachLongPress === "function") {
             attachLongPress(listing, () => [
                 {
@@ -410,7 +390,7 @@ function createRenderCardBuilders(context) {
         buyInput.addEventListener("input", (e) => {
             const next = e.target.value.replace(/[^\d]/g, "");
             if (next !== e.target.value) e.target.value = next;
-        });
+        }, { signal });
 
         const soldInput = domEl("input", {
             type: "text",
@@ -421,7 +401,7 @@ function createRenderCardBuilders(context) {
         soldInput.addEventListener("input", (e) => {
             const next = e.target.value.replace(/[^\d]/g, "");
             if (next !== e.target.value) e.target.value = next;
-        });
+        }, { signal });
 
         const fillBuy = domEl("button", {
             className: "lead-field-chip",
@@ -435,7 +415,7 @@ function createRenderCardBuilders(context) {
                 buyInput.value = String(priceByn);
                 buyInput.focus();
             }
-        });
+        }, { signal });
 
         return domEl(
             "div",
@@ -479,7 +459,7 @@ function createRenderCardBuilders(context) {
             void actions.updateWatchlistMeta(item.id, {
                 notes: notesInput.value.trim() || null,
             });
-        });
+        }, { signal });
         return domEl(
             "div",
             { className: "watchlist-card-fields" },
@@ -603,30 +583,30 @@ function createRenderCardBuilders(context) {
     }
 
     /** Wire DOM-event handlers based on the card's mode. */
-    function _wireCardHandlers(card, item, mode) {
+    function _wireCardHandlers(card, item, mode, signal) {
         if (mode === "lead") {
             card.querySelector('[data-role="confirm"]')?.addEventListener("click", () => {
                 void actions.confirmLead(item, card);
-            });
+            }, { signal });
             card.querySelector('[data-role="cancel"]')?.addEventListener("click", () => {
                 void actions.cancelLead(item.id);
-            });
+            }, { signal });
             card.querySelector('[data-role="close-deal"]')?.addEventListener("click", () => {
                 void actions.closeDeal(item.id);
-            });
+            }, { signal });
             card.querySelector('[data-role="revert"]')?.addEventListener("click", () => {
                 void actions.revertLeadStage(item.id, item.status);
-            });
+            }, { signal });
         } else if (mode === "watching") {
             card.querySelector('[data-role="detail"]')?.addEventListener("click", () => {
                 void actions.openWatchlistDetail(item);
-            });
+            }, { signal });
             card.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
                 void actions.promoteWatchlistToLead(item);
-            });
+            }, { signal });
             card.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
                 void actions.deleteWatchlistItem(item.id);
-            });
+            }, { signal });
         }
     }
 
@@ -638,7 +618,7 @@ function createRenderCardBuilders(context) {
      * @param {object} options { mode, marketLabel }
      */
     function buildItemCard(item, options = {}) {
-        const { mode = "lead", marketLabel } = options;
+        const { mode = "lead", marketLabel, signal } = options;
         const isWatching = mode === "watching";
         const isLead = mode === "lead";
         const isMissing = item.market_status === "missing";
@@ -735,7 +715,7 @@ function createRenderCardBuilders(context) {
             )
         );
 
-        _wireCardHandlers(card, item, mode);
+        _wireCardHandlers(card, item, mode, signal);
 
         // Swipe gestures used to wrap watching cards (left → delete,
         // right → promote). Removed because the action buttons cover
@@ -750,9 +730,9 @@ function createRenderCardBuilders(context) {
     // Backwards-compat thin wrappers — callers in render_cards.js still
     // import these names. Keeping them lets us land the unification
     // without touching every render path.
-    const buildLeadNode = (lead) => buildItemCard(lead, { mode: "lead" });
-    const buildWatchlistNode = (item, marketLabel) =>
-        buildItemCard(item, { mode: "watching", marketLabel });
+    const buildLeadNode = (lead, signal) => buildItemCard(lead, { mode: "lead", signal });
+    const buildWatchlistNode = (item, marketLabel, signal) =>
+        buildItemCard(item, { mode: "watching", marketLabel, signal });
 
     return {
         buildListingNode,

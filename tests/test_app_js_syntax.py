@@ -108,7 +108,7 @@ def test_unified_item_card_replaces_lead_and_watchlist_builders() -> None:
     # The unified entry point exists.
     assert "function buildItemCard(" in text
     # The wrappers became thin one-liners delegating to it.
-    assert 'buildItemCard(lead, { mode: "lead" })' in text
+    assert 'buildItemCard(lead, { mode: "lead", signal })' in text
     assert 'buildItemCard(item, { mode: "watching"' in text
     # buildItemCard is exported alongside the legacy names.
     assert "buildItemCard," in text
@@ -190,8 +190,10 @@ def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:
     ):
         assert label in builder, f"long-press menu missing item {label}"
 
-    # Tapping .listing-top opens the detail view
-    assert 'listing.querySelector(".listing-top")' in builder
+    # Tapping .listing-top opens the detail view via delegation
+    assert "listing._item = item" in builder
+    cards = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
+    assert "_delegateListingClick" in cards
 
     css = _read_all_css()
     for cls in (

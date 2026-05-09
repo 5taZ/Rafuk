@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -81,6 +82,80 @@ async def init_test_tables(app) -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
+class FakeCurrencyService:
+    def __init__(self, *, rates: dict[str, float] | None = None) -> None:
+        self._rates = rates or {"USD": 3.2, "EUR": 3.5}
+
+    async def get_rates(self) -> dict[str, object]:
+        return {
+            "base": "BYN",
+            "rates": self._rates,
+            "source": "test",
+            "fetched_at": datetime.now(UTC).isoformat(),
+        }
+
+    def convert_from_byn(self, amount_byn: float, currency: str, rates: dict[str, float]) -> float:
+        if currency == "BYN":
+            return round(amount_byn, 2)
+        return round(amount_byn / rates[currency], 2)
+
+
+DEFAULT_FAKE_ADS: list[dict[str, object]] = [
+    {
+        "ad_id": 1,
+        "subject": "iPhone 15 256GB",
+        "price_byn": 2000,
+        "ad_link": "https://www.kufar.by/item/1",
+        "list_time": "2026-04-01T10:00:00",
+        "region_id": 6,
+        "category": "1000",
+        "ad_parameters": [
+            {"p": "condition", "v": "Новый"},
+            {"p": "category", "v": "1000", "vl": "Телефоны"},
+        ],
+    },
+    {
+        "ad_id": 2,
+        "subject": "iPhone 15 Pro 256GB",
+        "price_byn": 2600,
+        "ad_link": "https://www.kufar.by/item/2",
+        "list_time": "2026-04-01T11:00:00",
+        "region_id": 6,
+        "category": "1000",
+        "ad_parameters": [
+            {"p": "condition", "v": "Новый"},
+            {"p": "category", "v": "1000", "vl": "Телефоны"},
+        ],
+    },
+    {
+        "ad_id": 3,
+        "subject": "iPhone 15 mini 128GB",
+        "price_byn": 1500,
+        "ad_link": "https://www.kufar.by/item/3",
+        "list_time": "2026-04-01T09:00:00",
+        "region_id": 6,
+        "category": "1000",
+        "ad_parameters": [
+            {"p": "condition", "v": "Б/у"},
+            {"p": "category", "v": "1000", "vl": "Телефоны"},
+        ],
+    },
+]
+
+
+class FakeKufarClient:
+    def __init__(self, settings, *, ads: list[dict[str, object]] | None = None) -> None:
+        del settings
+        self._ads = ads or DEFAULT_FAKE_ADS
+
+    async def search_all_ads(self, **kwargs) -> dict:
+        del kwargs
+        return {"total": len(self._ads), "ads": self._ads}
+
+    async def aclose(self) -> None:
+        return None
+
+
 @pytest.fixture
 def sample_ads() -> list[dict[str, object]]:
     return [
@@ -149,7 +224,7 @@ def sample_ads() -> list[dict[str, object]]:
         {
             "ad_id": 6,
             "subject": "Anomaly",
-            "price_byn": 15000000,
+            "price_byn": 150000000,
             "currency": "BYN",
             "ad_link": "https://www.kufar.by/item/6",
             "list_time": "",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -40,12 +40,22 @@ async def health_check(
 
 @router.get("/health/ready")
 async def readiness_check(
+    request: Request,
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
-    """Readiness probe — returns 200 only if DB is reachable."""
+    """Readiness probe — returns 200 only if DB and Redis are reachable."""
     try:
         async with session_factory() as session:
             await session.execute(text("SELECT 1"))
-        return Response(status_code=status.HTTP_200_OK)
     except Exception:
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    cache = getattr(request.app.state, "cache", None)
+    if cache is not None:
+        try:
+            if not await cache.ping():
+                return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception:
+            return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    return Response(status_code=status.HTTP_200_OK)

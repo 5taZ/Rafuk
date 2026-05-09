@@ -41,13 +41,17 @@ function createApiListingAssistant(context) {
     const photoGrid = document.getElementById("la-photo-grid");
     const photoAdd = document.getElementById("la-photo-add");
     const resultBox = document.getElementById("listing-assistant-result");
+    const resultOverlay = document.getElementById("la-result-overlay");
+    const resultBackBtn = document.getElementById("la-result-back");
     const historyList = document.getElementById("la-history-list");
     const historyEmpty = document.getElementById("la-history-empty");
 
     if (!modal || !form || !resultBox) {
-        // Modal markup missing — bail quietly so the rest of the app still loads.
         return { destroy() {} };
     }
+
+    let _resultSource = "form";
+    let _analysisId = 0;
 
     // ── Persistence ─────────────────────────────────────────────────────
     // We intentionally don't persist the draft itself — the modal opens
@@ -127,7 +131,7 @@ function createApiListingAssistant(context) {
         photos.length = 0;
         renderPhotoGrid();
         resultBox.replaceChildren();
-        resultBox.hidden = true;
+        hideResultOverlay();
         state.misc.listingAssistantResult = null;
         updateNotesCounter();
     }
@@ -140,6 +144,7 @@ function createApiListingAssistant(context) {
 
     // ── Modal open/close ────────────────────────────────────────────────
     function openModal(initialTab = "form") {
+        _analysisId++;
         switchTab(initialTab);
         renderHistoryList();
         openModalAnimated(modal);
@@ -150,6 +155,7 @@ function createApiListingAssistant(context) {
     }
 
     function closeModal() {
+        _analysisId++;
         _cancelLaProgress();
         closeModalAnimated(modal);
     }
@@ -526,7 +532,20 @@ function createApiListingAssistant(context) {
     function renderError(message) {
         resultBox.replaceChildren();
         resultBox.appendChild(el("div", { className: "la-error", text: message }));
-        resultBox.hidden = false;
+        showResultOverlay();
+    }
+
+    function showResultOverlay() {
+        if (resultOverlay) resultOverlay.hidden = false;
+        const sheet = modal?.querySelector(".detail-sheet");
+        if (sheet) sheet.classList.add("la-sheet-expanded");
+    }
+
+    function hideResultOverlay() {
+        if (resultOverlay) resultOverlay.hidden = true;
+        const sheet = modal?.querySelector(".detail-sheet");
+        if (sheet) sheet.classList.remove("la-sheet-expanded");
+        _cancelLaProgress();
     }
 
     // ── Progress animation (AI-style) ──────────────────────────────────
@@ -541,10 +560,6 @@ function createApiListingAssistant(context) {
     const LA_PROGRESS_SOFT_CAP = 96;
     let _laProgressFrame = null;
     let _laProgressStartedAt = 0;
-
-    function _prefersReducedMotion() {
-        return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    }
 
     function _cancelLaProgress() {
         if (_laProgressFrame) {
@@ -633,7 +648,7 @@ function createApiListingAssistant(context) {
             el("p", { className: "la-loading-sub", text: "Обычно 10–25 секунд" }),
         );
         resultBox.appendChild(wrap);
-        resultBox.hidden = false;
+        showResultOverlay();
         _startLaProgress();
     }
 
@@ -703,7 +718,7 @@ function createApiListingAssistant(context) {
             );
         }
 
-        resultBox.hidden = false;
+        showResultOverlay();
     }
 
     // ── History list ────────────────────────────────────────────────────
@@ -760,18 +775,9 @@ function createApiListingAssistant(context) {
                 text: "Открыть",
             });
             openBtnEl.addEventListener("click", () => {
+                _resultSource = "history";
                 state.misc.listingAssistantResult = entry.output;
                 renderResult(entry.output);
-                if (entry.input) {
-                    titleInput.value = entry.input.title || "";
-                    priceInput.value = entry.input.draft_price_byn != null
-                        ? String(entry.input.draft_price_byn) : "";
-                    conditionSelect.value = entry.input.condition || "";
-                    negotiableCheckbox.checked = !!entry.input.is_negotiable;
-                    notesInput.value = entry.input.extra_notes || "";
-                    updateNotesCounter();
-                }
-                switchTab("form");
             });
 
             const deleteBtnEl = el("button", {
@@ -835,22 +841,24 @@ function createApiListingAssistant(context) {
         };
 
         setBusy(true);
+        _resultSource = "form";
+        const myId = ++_analysisId;
         renderLoading();
 
         try {
             const data = await postJson("/api/v1/ai/listing-assistant", payload);
 
-            // Show completion animation, then render result
+            if (_analysisId !== myId) return;
+
             _stopLaProgress(true);
             const delay = _prefersReducedMotion() ? 150 : 950;
             setTimeout(() => {
+                if (_analysisId !== myId) return;
                 renderResult(data || {});
             }, delay);
 
             state.misc.listingAssistantResult = data;
 
-            // Save to history (we keep input + count of photos, NOT the photo
-            // bytes themselves to keep localStorage under quota).
             pushHistoryEntry({
                 id: typeof crypto !== "undefined" && crypto.randomUUID
                     ? crypto.randomUUID()
@@ -867,6 +875,7 @@ function createApiListingAssistant(context) {
                 output: data,
             });
         } catch (error) {
+            if (_analysisId !== myId) return;
             _stopLaProgress(false);
             _cancelLaProgress();
             const text = (error && error.message) || "Не удалось получить ответ AI";
@@ -893,7 +902,20 @@ function createApiListingAssistant(context) {
         openModal("form");
     };
     const _closeHandler = () => closeModal();
-    const _overlayHandler = () => closeModal();
+    const _overlayHandler = () => _modalBackdropHandler();
+    const _resultBackHandler = () => {
+        hideResultOverlay();
+        if (_resultSource === "history") {
+            switchTab("history");
+        }
+    };
+    const _modalBackdropHandler = () => {
+        if (resultOverlay && !resultOverlay.hidden) {
+            _resultBackHandler();
+        } else {
+            closeModal();
+        }
+    };
 
     form.addEventListener("submit", handleSubmit);
     notesInput?.addEventListener("input", _notesHandler);
@@ -902,15 +924,18 @@ function createApiListingAssistant(context) {
     openBtn?.addEventListener("click", _openHandler);
     closeBtn?.addEventListener("click", _closeHandler);
     overlay?.addEventListener("click", _overlayHandler);
+    resultBackBtn?.addEventListener("click", _resultBackHandler);
     const _keydownHandler = (e) => {
         if (e.key === "Escape" && !modal.hidden) {
-            closeModal();
+            if (resultOverlay && !resultOverlay.hidden) {
+                _resultBackHandler();
+            } else {
+                closeModal();
+            }
         }
     };
     document.addEventListener("keydown", _keydownHandler);
 
-    // Initial state: just refresh history badges. Form is always blank
-    // until the user types or restores from history.
     renderHistoryCounts();
     updateNotesCounter();
 
@@ -924,6 +949,7 @@ function createApiListingAssistant(context) {
             openBtn?.removeEventListener("click", _openHandler);
             closeBtn?.removeEventListener("click", _closeHandler);
             overlay?.removeEventListener("click", _overlayHandler);
+            resultBackBtn?.removeEventListener("click", _resultBackHandler);
         },
     };
 }

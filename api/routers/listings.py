@@ -17,6 +17,7 @@ from api.schemas import ListingsResponse
 from api.services.aggregator import (
     compute_category_price_stats,
     filter_deal_ads,
+    precompute_cluster_stats,
     sort_listings,
 )
 from api.services.cache import CacheBackend
@@ -24,7 +25,7 @@ from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_item
-from api.services.query_pipeline import load_query_dataset_context
+from api.services.query_pipeline import load_query_dataset_context_with_fallback
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
@@ -45,9 +46,11 @@ _DEFAULT_LISTINGS_PAGE = 50
 async def get_listings(
     request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
-    sort: str = "newest",
-    currency: str = "BYN",
-    strict_search: bool = False,
+    sort: Literal[
+        "newest", "cheap", "price_asc", "price_desc", "near_median", "deal_score",
+    ] = "newest",
+    currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
+    strict_search: bool = True,
     discount_percent: float = 10.0,
     discount_from_percent: float | None = None,
     discount_to_percent: float | None = None,
@@ -69,6 +72,7 @@ async def get_listings(
     if effective_to is not None and effective_to < effective_from:
         effective_from, effective_to = effective_to, effective_from
 
+    fallback_used = False
     cache_key = (
         f"listings:{query}:{sort}:{currency}:{discount_percent}:"
         f"{effective_from}:{effective_to}:{strict_search}:{category}:"
@@ -78,7 +82,7 @@ async def get_listings(
     if cached:
         return ListingsResponse(**cached)
 
-    context = await load_query_dataset_context(
+    fb = await load_query_dataset_context_with_fallback(
         query=query,
         currency=currency,
         strict_search=strict_search,
@@ -88,6 +92,8 @@ async def get_listings(
         category=category,
         cache=cache,
     )
+    context = fb.context
+    fallback_used = fb.fallback_used
     visible_dataset = context.visible
     reference_dataset = context.reference
     median_byn = visible_dataset.price_stats.median
@@ -112,7 +118,10 @@ async def get_listings(
                 category: visible_dataset.price_stats,
             }
     liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats)
-    rates_payload = await currency_service.get_rates()
+    try:
+        rates_payload = await currency_service.get_rates()
+    except Exception:
+        rates_payload = {"rates": {"BYN": 1.0}}
     rates = rates_payload["rates"]
     insights = analyze_query_text(query)
 
@@ -136,6 +145,7 @@ async def get_listings(
         market_stats=reference_dataset.price_stats,
         category_price_stats=category_price_stats,
     )
+    cluster_cache = precompute_cluster_stats(sorted_ads[:_MAX_LISTINGS_PAGE])
     # Build ListingItem only for the slice the client is going to
     # actually render — saves several ms per skipped ad on big
     # result sets, since build_listing_item normalises params,
@@ -158,7 +168,7 @@ async def get_listings(
                 market_stats=reference_dataset.price_stats,
                 category_price_stats=category_price_stats,
                 liquidity=liquidity,
-                all_ads=sorted_ads[:_MAX_LISTINGS_PAGE],
+                cluster_cache=cluster_cache,
             )
             for ad in sorted_ads[:_MAX_LISTINGS_PAGE]
         ]
@@ -191,7 +201,7 @@ async def get_listings(
                 market_stats=reference_dataset.price_stats,
                 category_price_stats=category_price_stats,
                 liquidity=liquidity,
-                all_ads=sorted_ads[:_MAX_LISTINGS_PAGE],
+                cluster_cache=cluster_cache,
             )
             for ad in page_slice
         ]
@@ -239,6 +249,7 @@ async def get_listings(
         discount_percent=effective_from if sort == "cheap" else None,
         discount_from_percent=effective_from if sort == "cheap" else None,
         discount_to_percent=effective_to if sort == "cheap" else None,
+        fallback_used=fallback_used,
         listings=listings,
     )
     await cache.set_json(

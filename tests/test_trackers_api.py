@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -92,15 +91,18 @@ async def seed_tracker_event(session_factory) -> None:
         await session.commit()
 
 
-def test_tracker_events_endpoint() -> None:
+@pytest.mark.asyncio
+async def test_tracker_events_endpoint() -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
 
+    # Seed data before entering TestClient context
+    await seed_tracker_event(app.state.session_factory)
+
     with TestClient(app) as client:
-        asyncio.run(seed_tracker_event(app.state.session_factory))
         response = client.get("/api/v1/tracker-events")
 
     assert response.status_code == 200

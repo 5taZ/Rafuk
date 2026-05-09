@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from fastapi.testclient import TestClient
 
 from api.services.cache import MemoryCache
+from tests.conftest import FakeCurrencyService
 
 CAR_CATEGORY_PARAM = {
     "p": "category",
@@ -18,21 +17,6 @@ PART_CATEGORY_PARAM = {
     "v": "2040",
     "vl": "Запчасти",
 }
-
-
-class FakeCurrencyService:
-    async def get_rates(self) -> dict[str, object]:
-        return {
-            "base": "BYN",
-            "rates": {"USD": 3.2},
-            "source": "test",
-            "fetched_at": datetime.now(UTC).isoformat(),
-        }
-
-    def convert_from_byn(self, amount_byn: float, currency: str, rates: dict[str, float]) -> float:
-        if currency == "BYN":
-            return round(amount_byn, 2)
-        return round(amount_byn / rates[currency], 2)
 
 
 VERDICTS = {"Хорошая цена", "Ниже рынка", "Средняя цена", "Выше рынка"}
@@ -51,6 +35,7 @@ class FakeKufarClient:
                     "ad_id": 1,
                     "subject": "iPhone 15",
                     "price_byn": 200000,
+                    "price_usd": 600,
                     "ad_link": "https://www.kufar.by/item/1",
                     "list_time": "2026-04-01T10:00:00",
                     "region_id": 6,
@@ -89,7 +74,7 @@ def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
     with TestClient(app) as client:
         response = client.get(
             "/api/v1/listing-detail",
-            params={"query": "iphone", "ad_id": 1, "currency": "BYN"},
+            params={"query": "iphone", "ad_id": 1, "currency": "BYN", "strict_search": False},
         )
 
     assert response.status_code == 200

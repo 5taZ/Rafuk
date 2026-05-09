@@ -64,7 +64,9 @@ async def clear_tracker_events(
 
 
 @router.get("/trackers", response_model=list[TrackerRead])
+@limiter.limit("30/minute")
 async def get_trackers(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[TrackerRead]:

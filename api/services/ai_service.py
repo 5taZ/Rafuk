@@ -239,14 +239,29 @@ LISTING_ASSISTANT_PROMPT = """\
 - selling_points: 3-5 буллетов «что выгодно подсветить покупателю».
 - Цена: ВСЕГДА три tier'a — fast / market / patient — и обязательное
   floor_byn (минимум, ниже которого нельзя падать). Цены целые, в BYN.
-  Привязывай tier'ы к рыночной медиане и Q1-Q3 из контекста.
+  ПРАВИЛО ЦЕНООБРАЗОВАНИЯ:
+  1. Цены ВСЕГДА привязаны к разделу ТОП КОНКУРЕНТОВ.
+   2. fast ≈ нижний квартиль (Q1) рынка × 0.90-0.95 (быстрая продажа,
+      но не демпинг).
+  3. market ≈ среднее арифметическое цен конкурентов.
+   4. patient ≈ верхний квартиль (Q3) рынка × 1.0-1.10.
+  5. floor_byn ≈ fast × 0.90.
+  6. Если конкурентов 1-2 — fast не ниже самого дешёвого конкурента
+     минус 10%. Если конкурент один за 300 BYN — fast ≈ 270, market ≈ 300.
+  7. ЗАПРЕЩЕНО: предлагать цену ниже 80% от самого дешёвого конкурента.
+  8. reasoning в каждом tier'е: укажи от какой цены конкурента
+     отталкиваешься.
   Если черновая цена продавца сильно занижена/завышена — скажи это явно
   в reasoning соответствующего tier'a.
 - weeks_to_sell — словами: «1-2 недели», «3-4 недели», «1-2 месяца».
 - Anti-lowball: 3-4 сценария «что отвечать, когда…». Сценарии должны быть
   конкретными к данному товару (не «отказывайтесь вежливо»). Используй
   реальные суммы из рыночного контекста: «Если предлагают 1200 при медиане
-  1400 — ответь: ...». Отвечать тоже как живой человек — без формальностей.
+  1400 — ответь: ...». Суммы в сценариях должны быть РЕАЛИСТИЧНЫМИ —
+  основывайся на ценах конкурентов, а не на абстрактных процентах.
+  Если на рынке всего 2 конкурента за 250 и 300 BYN — торг идёт
+  в диапазоне 200-300, а не 100-150. Отвечать тоже как живой человек —
+  без формальностей.
 - photo_tips: 2-4 коротких совета по фото (свет, ракурсы, что обязательно
   показать). Без банальностей вроде «фотографируйте красиво». Если фото
   ПРИЛОЖЕНЫ — обязательно прокомментируй их: что снято хорошо, что
@@ -712,8 +727,9 @@ class AIService:
             async with self._client_lock:
                 if self._httpx_client is None or self._httpx_client.is_closed:
                     kwargs: dict = {
-                        "timeout": httpx.Timeout(connect=15, read=180, write=20, pool=10),
+                        "timeout": httpx.Timeout(connect=15, read=45, write=20, pool=10),
                         "max_redirects": _MAX_AI_REDIRECTS,
+                        "limits": httpx.Limits(max_connections=20, max_keepalive_connections=10),
                     }
                     if self._proxy_url:
                         kwargs["proxy"] = self._proxy_url
@@ -1377,7 +1393,9 @@ class AIService:
         # All parameters (not truncated)
         if parameters:
             params_str = ", ".join(
-                f"{p.get('label', '')}: {p.get('value', '')}" for p in parameters
+                f"{sanitize_user_text(str(p.get('label', '')), max_length=40) or ''}: "
+                f"{sanitize_user_text(str(p.get('value', '')), max_length=60) or ''}"
+                for p in parameters
             )
             parts.append(f"\n## ПАРАМЕТРЫ: {params_str}")
 
@@ -1428,7 +1446,9 @@ class AIService:
                     f"{sl.get('condition') or 'не указано'}, "
                     f"{sl.get('seller_type', '?')}{age_str}{deal_str}"
                 )
-                params = (sl.get("parameters") or "").strip()
+                params = sanitize_user_text(
+                    str(sl.get("parameters") or ""), max_length=120
+                ) or ""
                 if params:
                     parts.append(f"     Параметры: {params[:120]}")
                 desc = (sl.get("description") or "").strip()

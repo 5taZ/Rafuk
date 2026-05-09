@@ -50,6 +50,7 @@ function cacheAppElements(elements) {
     elements.dealsSection = document.getElementById("deals-section");
     elements.marketTotalBadge = document.getElementById("market-total-badge");
     elements.listingsTotalBadge = document.getElementById("listings-total-badge");
+    elements.listingsFallbackBadge = document.getElementById("listings-fallback-badge");
     elements.dealsTotalBadge = document.getElementById("deals-total-badge");
     elements.stats = {
         median: document.getElementById("stat-median"),

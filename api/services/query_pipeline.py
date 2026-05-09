@@ -3,13 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import statistics
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from api.config import Settings
 from api.services.aggregator import (
-    MAX_PRICE_BYN,
     PriceStats,
     apply_search_mode,
     compute_price_stats,
@@ -59,6 +57,23 @@ class SupportsParallelSearch(Protocol):
 
 
 def _normalize_response_ads(response: dict[str, Any]) -> dict[str, Any]:
+    """Normalise ``price_byn`` values in a raw Kufar response to kopecks.
+
+    Production Kufar responses always use kopecks (e.g. 150000 for 1500 BYN),
+    but some test fixtures pass direct BYN values (e.g. 1500). This function
+    detects the latter and multiplies by 100 so downstream code (which always
+    divides by 100) works correctly.
+
+    The heuristic is deliberately conservative:
+    - If *any* ad has a non-zero ``price_usd`` the response is assumed to be
+      already in kopecks (the production format).
+    - Otherwise, if ALL prices are divisible by 100 AND at least one price
+      exceeds 1000, the values are assumed to already be kopecks — this
+      matches the common pattern of items priced in double-digit BYN where
+      kopeck values are always multiples of 100 and typically > 1000.
+    - Otherwise (values not all divisible by 100, or all ≤ 1000) the
+      response is treated as direct BYN and multiplied by 100.
+    """
     ads = response.get("ads")
     if not isinstance(ads, list) or not ads:
         return response
@@ -79,13 +94,13 @@ def _normalize_response_ads(response: dict[str, Any]) -> dict[str, Any]:
     if not raw_prices:
         return response
 
-    raw_median = statistics.median(raw_prices)
-    likely_direct_byn = max(raw_prices) <= MAX_PRICE_BYN
-    if not likely_direct_byn:
+    all_divisible_by_100 = all(p % 100 == 0 for p in raw_prices)
+    any_above_1000 = any(p > 1000 for p in raw_prices)
+    already_kopecks = all_divisible_by_100 and any_above_1000
+    if already_kopecks:
         logger.warning(
-            "Price normalization heuristic triggered: raw_median=%.0f, "
-            "max_raw=%.0f — leaving price_byn values unchanged",
-            raw_median,
+            "Price normalization heuristic triggered: all prices divisible by "
+            "100 and max=%.0f > 1000 — leaving price_byn values unchanged",
             max(raw_prices),
         )
         return response
@@ -152,6 +167,9 @@ class QueryDatasetContext:
 # first arriver paginates once, the others await the same Future,
 # and the whole search completes in roughly one pagination's worth
 # of time.
+#
+# NOTE: singleflight pattern breaks with multiple uvicorn workers (gunicorn).
+# TODO: migrate to Redis-based singleflight if scaling beyond 1 worker.
 _inflight_dataset_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
 _MAX_INFLIGHT = 500
 _INFLIGHT_STALE_SECONDS = 300  # prune futures older than 5 minutes
@@ -291,6 +309,42 @@ async def load_query_dataset(
         response=response,
         ads=ads,
     )
+
+
+@dataclass(slots=True)
+class DatasetWithFallback:
+    dataset: QueryDataset
+    fallback_used: bool = False
+
+
+@dataclass(slots=True)
+class DatasetContextWithFallback:
+    context: QueryDatasetContext
+    fallback_used: bool = False
+
+
+async def load_query_dataset_with_fallback(
+    **kwargs: Any,
+) -> DatasetWithFallback:
+    """Try strict search first, fall back to loose if 0 results."""
+    dataset = await load_query_dataset(**kwargs)
+    if kwargs.get("strict_search") and not dataset.ads:
+        loose_kwargs = {**kwargs, "strict_search": False}
+        dataset = await load_query_dataset(**loose_kwargs)
+        return DatasetWithFallback(dataset=dataset, fallback_used=True)
+    return DatasetWithFallback(dataset=dataset, fallback_used=False)
+
+
+async def load_query_dataset_context_with_fallback(
+    **kwargs: Any,
+) -> DatasetContextWithFallback:
+    """Try strict search first, fall back to loose if 0 results."""
+    ctx = await load_query_dataset_context(**kwargs)
+    if kwargs.get("strict_search") and not ctx.visible.ads:
+        loose_kwargs = {**kwargs, "strict_search": False}
+        ctx = await load_query_dataset_context(**loose_kwargs)
+        return DatasetContextWithFallback(context=ctx, fallback_used=True)
+    return DatasetContextWithFallback(context=ctx, fallback_used=False)
 
 
 async def load_query_dataset_context(

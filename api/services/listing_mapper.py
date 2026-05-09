@@ -198,32 +198,45 @@ def build_listing_item(
     category_price_stats: dict[int, PriceStats] | None = None,
     liquidity: LiquidityInsight | None = None,
     all_ads: list[dict[str, Any]] | None = None,
+    cluster_cache: dict[int, PriceStats | None] | None = None,
 ) -> ListingItem:
     price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
     reference = resolve_price_reference(ad, market_stats, category_price_stats)
-    # Cluster-aware delta: compare against listings with the same
-    # variant profile (generation, body type, trim, etc.). When a
-    # cluster exists (≥3 similar listings), use its median. Otherwise
-    # fall back to the category/reference-based comparison.
     price_delta = 0.0
     cluster_applied = False
-    if all_ads:
+    cluster_stats: PriceStats | None = None
+    ad_id = int(ad.get("ad_id", 0))
+    if cluster_cache is not None:
+        cluster_stats = cluster_cache.get(ad_id)
+    elif all_ads:
         cluster_stats = cluster_price_stats(
             str(ad.get("subject", "")), all_ads,
         )
-        if cluster_stats is not None:
-            price_delta = compute_price_vs_median(ad, cluster_stats.median)
-            cluster_applied = True
+    if cluster_stats is not None:
+            cluster_delta = compute_price_vs_median(ad, cluster_stats.median)
+            reference_delta = compute_price_vs_reference(
+                ad, market_stats, category_price_stats,
+            )
+            price_spread = (
+                (cluster_stats.q3 - cluster_stats.q1) / cluster_stats.median
+                if cluster_stats.median > 0 else 0.0
+            )
+            if abs(cluster_delta - reference_delta) <= 25 and price_spread <= 0.5:
+                price_delta = cluster_delta
+                cluster_applied = True
+            else:
+                price_delta = reference_delta
     if not cluster_applied:
         price_delta = compute_price_vs_reference(
             ad, market_stats, category_price_stats,
         )
+    active_reference = cluster_stats if cluster_applied else reference.stats
     fair_band = fair_price_band(price_delta)
-    flags = detect_anomaly_flags(ad, reference.stats)
+    flags = detect_anomaly_flags(ad, active_reference)
     deal_score = compute_deal_score(
         ad,
         query=query,
-        market_stats=reference.stats,
+        market_stats=active_reference,
     )
 
     return ListingItem(
@@ -255,8 +268,8 @@ def build_listing_item(
         deal_reasons=deal_score.reasons,
         price_byn=price_byn,
         liquidity=liquidity,
-        flip_estimates=compute_flip_estimates(ad, market_stats),
+        flip_estimates=compute_flip_estimates(ad, active_reference),
         thumbnail=first_image_url(ad),
         seller_rating=extract_seller_rating(ad),
-        risk_factors=detect_risks(ad, market_stats={"median": market_stats.median}),
+        risk_factors=detect_risks(ad, market_stats={"median": active_reference.median}),
     )

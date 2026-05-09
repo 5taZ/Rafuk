@@ -7,6 +7,45 @@ function _tgHaptic() {
     return tg.HapticFeedback;
 }
 
+function _prefersReducedMotion() {
+    return typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function trapFocus(container) {
+    const sel = [
+        'button:not([disabled])',
+        'input:not([disabled])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        'a[href]',
+        '[tabindex]:not([tabindex="-1"])',
+    ].join(", ");
+    const focusable = container.querySelectorAll(sel);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    function handleKeydown(e) {
+        if (e.key !== "Tab") return;
+        if (e.shiftKey) {
+            if (document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            }
+        } else {
+            if (document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        }
+    }
+
+    container.addEventListener("keydown", handleKeydown);
+    first.focus();
+    return () => container.removeEventListener("keydown", handleKeydown);
+}
+
 function domAppend(target) {
     if (!target) return target;
 
@@ -134,6 +173,12 @@ function openModalAnimated(modalEl, { lockScroll = true } = {}) {
     modalEl.classList.remove("is-closing");
     modalEl.hidden = false;
     if (lockScroll && wasHidden) lockBodyScroll();
+    if (wasHidden) {
+        const cleanup = trapFocus(modalEl);
+        if (typeof cleanup === "function") {
+            modalEl._focusTrapCleanup = cleanup;
+        }
+    }
 }
 
 function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
@@ -144,15 +189,16 @@ function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
     // animation to finish before flipping `[hidden]` back.
     const inner =
         modalEl.querySelector(".detail-sheet") || modalEl.querySelector(".modal-content");
-    const prefersReducedMotion =
-        window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const prefersReducedMotion = _prefersReducedMotion();
 
     const finalize = () => {
         modalEl.hidden = true;
         modalEl.classList.remove("is-closing");
         if (lockScroll) unlockBodyScroll();
-        // Restore focus to the element that was active before the modal
-        // opened (WCAG 2.4.3 focus order).
+        if (typeof modalEl._focusTrapCleanup === "function") {
+            modalEl._focusTrapCleanup();
+            modalEl._focusTrapCleanup = null;
+        }
         const prev = modalEl._previousFocus;
         if (prev && typeof prev.focus === "function") {
             try { prev.focus(); } catch (_) { /* element may have been removed */ }
@@ -209,10 +255,7 @@ function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
  */
 function makeSwipeable(card, options) {
     if (!card) return card;
-    const reduced =
-        typeof window.matchMedia === "function" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) return card;
+    if (_prefersReducedMotion()) return card;
 
     const onSwipeLeft = options?.onSwipeLeft || null;
     const onSwipeRight = options?.onSwipeRight || null;
@@ -377,10 +420,7 @@ function setupPullToRefresh(options) {
     } = options || {};
     if (typeof getRefreshHandler !== "function") return () => {};
 
-    const reduced =
-        typeof window.matchMedia === "function" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) return () => {};
+    if (_prefersReducedMotion()) return () => {};
 
     let startY = 0;
     let startX = 0;
@@ -431,25 +471,19 @@ function setupPullToRefresh(options) {
         return true;
     }
 
-    document.addEventListener(
-        "touchstart",
-        (event) => {
-            if (event.touches.length !== 1) return;
-            if (!isEligible()) return;
-            startY = event.touches[0].clientY;
-            startX = event.touches[0].clientX;
-            dragging = false;
-            decided = false;
-            pullDistance = 0;
-        },
-        { passive: true },
-    );
+    function onTouchStart(event) {
+        if (event.touches.length !== 1) return;
+        if (!isEligible()) return;
+        startY = event.touches[0].clientY;
+        startX = event.touches[0].clientX;
+        dragging = false;
+        decided = false;
+        pullDistance = 0;
+    }
 
-    document.addEventListener(
-        "touchmove",
-        (event) => {
-            if (event.touches.length !== 1) return;
-            if (!isEligible() && !dragging) return;
+    function onTouchMove(event) {
+        if (event.touches.length !== 1) return;
+        if (!isEligible() && !dragging) return;
             const dy = event.touches[0].clientY - startY;
             const dx = event.touches[0].clientX - startX;
             if (!decided) {
@@ -471,9 +505,10 @@ function setupPullToRefresh(options) {
             target.style.transform = `translateY(${pullDistance}px)`;
             const ratio = pullDistance / thresholdPx;
             setIndicatorState(ratio >= 1 ? "ready" : "pulling", ratio);
-        },
-        { passive: true },
-    );
+    }
+
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchmove", onTouchMove, { passive: true });
 
     function onEnd() {
         if (!dragging) {
@@ -530,6 +565,8 @@ function setupPullToRefresh(options) {
     // Return an uninstall hook so callers/tests can unwire if they
     // really need to. Not used today but cheap to keep.
     return function uninstall() {
+        document.removeEventListener("touchstart", onTouchStart);
+        document.removeEventListener("touchmove", onTouchMove);
         document.removeEventListener("touchend", onEnd);
         document.removeEventListener("touchcancel", reset);
     };
@@ -863,15 +900,41 @@ function showLongPressMenu(items) {
         if (item.icon) {
             const iconBox = document.createElement("span");
             iconBox.className = "lp-menu-icon";
-            // Sanitize: only allow safe SVG markup, reject anything with
-            // script tags or event-handler attributes.
             const svg = String(item.icon);
-            if (
-                svg.startsWith("<svg") &&
-                !/<script[\s>]/i.test(svg) &&
-                !/\bon\w+\s*=/i.test(svg)
-            ) {
-                iconBox.innerHTML = svg;
+            if (svg.startsWith("<svg")) {
+                try {
+                    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+                    const svgEl = doc.querySelector("svg");
+                    if (svgEl && !doc.querySelector("parsererror")) {
+                        const allowedTags = new Set([
+                            "svg", "path", "circle", "rect", "line", "polyline",
+                            "polygon", "ellipse", "g", "defs", "title", "desc",
+                        ]);
+                        const allowedAttrs = new Set([
+                            "viewbox", "width", "height", "fill", "stroke",
+                            "stroke-width", "stroke-linecap", "stroke-linejoin",
+                            "d", "cx", "cy", "r", "x", "y", "x1", "y1", "x2", "y2",
+                            "points", "rx", "ry", "xmlns", "fill-rule", "clip-rule",
+                            "opacity", "transform",
+                        ]);
+                        let safe = true;
+                        const walk = (node) => {
+                            if (node.nodeType === 1) {
+                                if (!allowedTags.has(node.tagName.toLowerCase())) {
+                                    safe = false; return;
+                                }
+                                for (const attr of Array.from(node.attributes)) {
+                                    if (!allowedAttrs.has(attr.name.toLowerCase())) {
+                                        safe = false; return;
+                                    }
+                                }
+                            }
+                            for (const child of node.childNodes) walk(child);
+                        };
+                        walk(svgEl);
+                        if (safe) iconBox.innerHTML = svgEl.outerHTML;
+                    }
+                } catch (_) { /* reject unparseable SVG */ }
             }
             btn.appendChild(iconBox);
         }

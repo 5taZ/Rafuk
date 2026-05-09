@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     # when the Mini App opens and never refreshes it — so a short window
     # (e.g. 300s/5min) causes auth failures after the user spends a few
     # minutes in the app.  The HMAC signature already prevents tampering;
-    # the max-age only limits replay-window exposure.  3600s (1 hour) is
+    # the max-age only limits replay-window exposure.  7200s (2 hours) is
     # a reasonable balance between security and usability.
-    telegram_init_data_max_age: int = 3600
+    telegram_init_data_max_age: int = 7200
 
     @field_validator("debug")
     @classmethod

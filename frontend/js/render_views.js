@@ -12,10 +12,6 @@ function createRenderViews(context) {
         safeRender: safeRender,
     } = context;
 
-    function clearChildren(node) {
-        if (node) node.replaceChildren();
-    }
-
     function appendHeroStat(container, value, label) {
         const stat = document.createElement("span");
         stat.className = "hero-stat";
@@ -33,7 +29,7 @@ function createRenderViews(context) {
         if (!elements.trackingHeroStats) return;
         const trackerCount = state.trackers.items.length;
         const eventCount = state.trackers.events.length;
-        clearChildren(elements.trackingHeroStats);
+        domClear(elements.trackingHeroStats);
         appendHeroStat(elements.trackingHeroStats, String(trackerCount), "трекеров");
         appendHeroStat(elements.trackingHeroStats, String(eventCount), "событий");
     }
@@ -41,7 +37,7 @@ function createRenderViews(context) {
     function renderDealsHeroStats() {
         if (!elements.dealsHeroStats) return;
         const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
-        clearChildren(elements.dealsHeroStats);
+        domClear(elements.dealsHeroStats);
         appendHeroStat(elements.dealsHeroStats, String(activeLeads.length), "сделок");
 
         // Pipeline progress indicator — show status distribution
@@ -75,14 +71,8 @@ function createRenderViews(context) {
             // Toggle visibility
             elements.filterDropdown.hidden = !state.filters.filterDropdownOpen;
 
-            // Hide category group when strict search is on
-            const categoryGroup = elements.filterCategories?.closest(".filter-group");
-            if (categoryGroup) {
-                categoryGroup.hidden = !!state.search.strictSearch;
-            }
-
             // Render category chips
-            clearChildren(elements.filterCategories);
+            domClear(elements.filterCategories);
             if (!state.filters.categories.length || state.filters.categories.length <= 1) {
                 const empty = document.createElement("span");
                 empty.className = "filter-empty";
@@ -262,7 +252,7 @@ function createRenderViews(context) {
 
     function renderSegments() {
         return safeRender('renderSegments', () => {
-        clearChildren(elements.segmentsGrid);
+        domClear(elements.segmentsGrid);
         if (!state.misc.segments) {
             elements.segmentsSection.hidden = true;
             return;
@@ -343,7 +333,7 @@ function createRenderViews(context) {
 
     function renderGeography() {
         return safeRender('renderGeography', () => {
-        clearChildren(elements.geographyGrid);
+        domClear(elements.geographyGrid);
         if (!state.misc.geography.length) {
             elements.geographySection.hidden = true;
             return;
@@ -382,11 +372,11 @@ function createRenderViews(context) {
             const searches = state.search.recentSearches || [];
             if (!searches.length) {
                 elements.recentSection.hidden = true;
-                clearChildren(elements.recentList);
+                domClear(elements.recentList);
                 return;
             }
             elements.recentSection.hidden = false;
-            clearChildren(elements.recentList);
+            domClear(elements.recentList);
             const fragment = document.createDocumentFragment();
             for (const query of searches) {
                 const button = document.createElement("button");

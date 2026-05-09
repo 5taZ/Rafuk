@@ -24,7 +24,7 @@ from api.services.aggregator import (
 def test_extract_prices_filters_zero_and_anomalies(sample_ads: list[dict[str, object]]) -> None:
     prices = extract_prices(sample_ads)
     assert 0.0 not in prices
-    assert 150000.0 not in prices  # anomaly filtered
+    assert 1500000.0 not in prices  # anomaly filtered (15M BYN, above MAX_PRICE_BYN)
     assert len(prices) == 4
 
 

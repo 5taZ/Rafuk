@@ -23,6 +23,7 @@ from api.schemas import (
     AIPriceAdviceRequest,
     AIPriceAdviceResponse,
 )
+from api.services.ai_service import sanitize_user_text
 
 logger = logging.getLogger(__name__)
 
@@ -114,15 +115,18 @@ async def negotiate_price(
             pass
 
     # Build context
+    safe_query = sanitize_user_text(payload.query) or ""
+    safe_condition = sanitize_user_text(payload.condition) or ""
+    safe_market = sanitize_user_text(payload.market_context) or ""
     user_content = (
-        f"Товар: {payload.query}\n"
+        f"Товар: {safe_query}\n"
         f"Цена продавца: {payload.asking_price_byn} BYN\n"
         f"Моя цена: {payload.my_offer_byn} BYN\n"
     )
-    if payload.condition:
-        user_content += f"Состояние: {payload.condition}\n"
-    if payload.market_context:
-        user_content += f"Рыночный контекст: {payload.market_context}\n"
+    if safe_condition:
+        user_content += f"Состояние: {safe_condition}\n"
+    if safe_market:
+        user_content += f"Рыночный контекст: {safe_market}\n"
 
     try:
         result = await asyncio.wait_for(
@@ -205,8 +209,9 @@ async def price_advice(
             f"Максимальная цена: {stats.max:.0f} BYN\n"
         )
 
+    safe_query = sanitize_user_text(payload.query) or ""
     user_content = (
-        f"Запрос: {payload.query}\n"
+        f"Запрос: {safe_query}\n"
         f"Текущая цена: {payload.current_price_byn} BYN\n"
     )
     if market_info:

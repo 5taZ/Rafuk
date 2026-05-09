@@ -20,7 +20,7 @@ from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_detail
-from api.services.query_pipeline import load_query_dataset_context
+from api.services.query_pipeline import load_query_dataset_context_with_fallback
 from api.services.risk_detector import compute_risk_score, detect_risks
 from api.validators import MAX_QUERY_LENGTH
 
@@ -33,8 +33,8 @@ async def get_listing_detail(
     request: Request,
     ad_id: int,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
-    currency: str = "BYN",
-    strict_search: bool = False,
+    currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
+    strict_search: bool = True,
     category: int | None = None,
     reference_context: Literal["current", "base_query"] = "current",
     settings: Settings = Depends(get_settings_dependency),
@@ -50,7 +50,7 @@ async def get_listing_detail(
     if cached:
         return ListingDetailResponse(**cached)
 
-    context = await load_query_dataset_context(
+    fb = await load_query_dataset_context_with_fallback(
         query=query,
         currency=currency,
         strict_search=strict_search,
@@ -60,6 +60,7 @@ async def get_listing_detail(
         category=category,
         cache=cache,
     )
+    context = fb.context
     visible_dataset = context.visible
     reference_dataset = context.reference
     ad = next((item for item in visible_dataset.ads if int(item.get("ad_id", 0)) == ad_id), None)

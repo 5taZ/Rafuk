@@ -1,25 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from fastapi.testclient import TestClient
 
 from api.services.cache import MemoryCache
-
-
-class FakeCurrencyService:
-    async def get_rates(self) -> dict[str, object]:
-        return {
-            "base": "BYN",
-            "rates": {"USD": 3.0},
-            "source": "test",
-            "fetched_at": datetime.now(UTC).isoformat(),
-        }
-
-    def convert_from_byn(self, amount_byn: float, currency: str, rates: dict[str, float]) -> float:
-        if currency == "BYN":
-            return round(amount_byn, 2)
-        return round(amount_byn / rates[currency], 2)
+from tests.conftest import FakeCurrencyService
 
 
 class FakeKufarClient:
@@ -78,7 +62,10 @@ def test_geography_endpoint_returns_region_stats(monkeypatch) -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        response = client.get("/api/v1/geography", params={"query": "iphone", "currency": "BYN"})
+        response = client.get(
+            "/api/v1/geography",
+            params={"query": "iphone", "currency": "BYN", "strict_search": False},
+        )
 
     assert response.status_code == 200
     payload = response.json()

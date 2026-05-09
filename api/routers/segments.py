@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query, Request
 
 from api.config import Settings
@@ -16,7 +18,7 @@ from api.services.aggregator import PriceStats, compute_segments
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
-from api.services.query_pipeline import convert_price_stats, load_query_dataset
+from api.services.query_pipeline import convert_price_stats, load_query_dataset_with_fallback
 from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
@@ -33,8 +35,8 @@ _EMPTY_SEGMENT = PriceStats(
 async def get_segments(
     request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
-    currency: str = "BYN",
-    strict_search: bool = False,
+    currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
+    strict_search: bool = True,
     category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
@@ -58,7 +60,7 @@ async def get_segments(
     # that still gives 30-150 ads per non-empty segment, which is
     # more than enough for stable medians. The wall-clock saving on
     # cold cache is ~1.5-2 s.
-    dataset = await load_query_dataset(
+    fb = await load_query_dataset_with_fallback(
         query=query,
         currency=currency,
         strict_search=strict_search,
@@ -67,6 +69,7 @@ async def get_segments(
         category=category,
         cache=cache,
     )
+    dataset = fb.dataset
     raw_segments = compute_segments(dataset.ads)
 
     rates_payload = await currency_service.get_rates()

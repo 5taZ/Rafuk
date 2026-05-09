@@ -291,10 +291,13 @@ function createRenderTrackers(context) {
             ? state.trackers.events.filter((event) => event.tracker_id === state.trackers.eventFilterTrackerId)
             : state.trackers.events.slice();
 
-        const dropCount = trackerScopedEvents.filter((e) => e.event_type === "price_drop").length;
-        const newCount = trackerScopedEvents.filter((e) => e.event_type === "new_listing").length;
-        const thresholdCount = trackerScopedEvents.filter((e) => e.event_type === "price_threshold_alert").length;
-        const discountAlertCount = trackerScopedEvents.filter((e) => e.event_type === "discount_alert").length;
+        let dropCount = 0, newCount = 0, thresholdCount = 0, discountAlertCount = 0;
+        for (const e of trackerScopedEvents) {
+            if (e.event_type === "price_drop") dropCount++;
+            else if (e.event_type === "new_listing") newCount++;
+            else if (e.event_type === "price_threshold_alert") thresholdCount++;
+            else if (e.event_type === "discount_alert") discountAlertCount++;
+        }
         const totalCount = trackerScopedEvents.length;
 
         if (elements.trackerEventsBadge) {
@@ -456,7 +459,10 @@ function createRenderTrackers(context) {
                         domEl("strong", { className: "event-title", text: event.title }),
                         priceRow,
                         eventMeta,
-                        domEl("span", { className: "event-tracker-source", text: `🔍 ${event.query}` }),
+                        domEl("span", { className: "event-tracker-source" },
+                            domEl("span", { attrs: { "aria-hidden": "true" }, text: "🔍 " }),
+                            event.query,
+                        ),
                     ),
                 ),
                 domEl(

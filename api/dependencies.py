@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import Header, HTTPException, Request, status
 from sqlalchemy import select
@@ -65,6 +66,8 @@ def get_telegram_user(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ) -> TelegramInitData:
     settings = get_settings()
+    if settings.debug and os.environ.get("ENV") == "production":
+        raise RuntimeError("Debug mode is not allowed in production")
     if not x_telegram_init_data:
         if settings.debug:
             logger.warning("Debug mode: allowing request without Telegram initData")

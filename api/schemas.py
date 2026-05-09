@@ -203,6 +203,7 @@ class ListingsResponse(BaseModel):
     discount_percent: float | None = None
     discount_from_percent: float | None = None
     discount_to_percent: float | None = None
+    fallback_used: bool = False
     listings: list[ListingItem]
 
 

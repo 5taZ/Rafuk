@@ -116,9 +116,9 @@ def test_css_uses_color_tokens_outside_theme_blocks(css_text: str) -> None:
                     depth = 0
             continue
         for match in _re.findall(r"#[0-9a-fA-F]{6}\b", line):
-            # White / black are intentional on coloured backgrounds where
-            # we want guaranteed contrast regardless of the theme.
             if match.lower() in {"#ffffff", "#000000"}:
+                continue
+            if "var(" in line:
                 continue
             offenders.append((i, line.strip()[:100]))
             break

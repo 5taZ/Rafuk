@@ -73,7 +73,7 @@ function createAppActions(context) {
 
         const viewEl = elements.views[view];
         if (viewEl) {
-            const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const prefersReducedMotion = _prefersReducedMotion();
             if (!prefersReducedMotion) {
                 viewEl.classList.add("is-entering");
                 setTimeout(() => {
@@ -543,10 +543,13 @@ function createAppActions(context) {
         if (!modal) return;
         modal.hidden = false;
         document.body.classList.add("modal-open");
+        let focusCleanup = null;
+        if (typeof trapFocus === "function") focusCleanup = trapFocus(modal);
 
         function close() {
             modal.hidden = true;
             document.body.classList.remove("modal-open");
+            if (typeof focusCleanup === "function") focusCleanup();
             closeBtn?.removeEventListener("click", close);
             overlay?.removeEventListener("click", close);
         }
@@ -606,9 +609,13 @@ function createAppActions(context) {
             overlay.appendChild(sheet);
             document.body.appendChild(overlay);
             document.body.classList.add("modal-open");
+            let focusCleanup = null;
+            if (typeof trapFocus === "function") focusCleanup = trapFocus(sheet);
+            cancelBtn.focus();
 
             function close(result) {
                 document.body.classList.remove("modal-open");
+                if (typeof focusCleanup === "function") focusCleanup();
                 overlay.remove();
                 resolve(result);
             }

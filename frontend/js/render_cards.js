@@ -20,6 +20,32 @@ function createRenderCards(context) {
 
     /* ===== Shared helpers (from original file) ===== */
 
+    function _resetContainer(container) {
+        if (!container) return;
+        if (container._abortController) {
+            container._abortController.abort();
+            container._abortController = null;
+        }
+        container.style.overflowY = "";
+        container.style.maxHeight = "";
+        domClear(container);
+    }
+
+    function _getSignal(container) {
+        if (!container._abortController) {
+            container._abortController = new AbortController();
+        }
+        return container._abortController.signal;
+    }
+
+    function _buildSkeletonCard() {
+        const skel = document.createElement("div");
+        skel.className = "skeleton-card";
+        skel.setAttribute("aria-hidden", "true");
+        skel.innerHTML = '<div class="skel-bar" style="width:60%"></div><div class="skel-bar" style="width:40%"></div><div class="skel-bar" style="width:30%"></div>';
+        return skel;
+    }
+
     function verdictClassName(verdict) {
         if (!verdict) return "neutral";
         if (verdict.includes("Хорошая")) return "zabirat";
@@ -83,31 +109,44 @@ function createRenderCards(context) {
 
     /* ===== Collections ===== */
 
+    function _delegateListingClick(container) {
+        if (container._listingDelegated) return;
+        container._listingDelegated = true;
+        container.addEventListener("click", (event) => {
+            const card = event.target.closest(".listing");
+            if (!card || !card._item) return;
+            const item = card._item;
+            const actionBtn = event.target.closest('[data-role="lead"], [data-role="watch"]');
+            if (actionBtn) {
+                event.stopPropagation();
+                if (actionBtn.dataset.role === "lead") {
+                    void actions.addLeadFromListing(item);
+                } else {
+                    void actions.addWatchlistFromListing(item);
+                }
+                return;
+            }
+            if (event.target.closest(".listing-top")) {
+                void actions.openListingDetail(item);
+            }
+        });
+    }
+
     /**
-     * Renders a collection of items into a container, using virtual scrolling
-     * for large datasets (>50 items) to maintain performance.
+     * Renders a collection of items into a container.
      *
      * @param {Array} items - The data items to render
      * @param {HTMLElement} container - The DOM container to render into
      * @param {HTMLElement} badge - Optional badge element for item count
      * @param {string} emptyText - Text to show when no items
      * @param {number|null} totalOverride - Override for total count display
-     * @param {number} [itemHeight=180] - Fixed item height for virtual list
      * @returns {boolean} True if content was rendered, false if empty
      */
-    function renderListingsCollection(items, container, badge, emptyText, totalOverride = null, itemHeight = 180) {
+    function renderListingsCollection(items, container, badge, emptyText, totalOverride = null) {
         return safeRender('renderListingsCollection', () => {
             if (!container) return false;
-            // Destroy existing virtual list if present and reset container
-            if (container._virtualList) {
-                container._virtualList.destroy();
-                container._virtualList = null;
-            }
-            // Reset container styles that virtual list may have set
-            container.style.overflowY = "";
-            container.style.maxHeight = "";
-
-            domClear(container);
+            _delegateListingClick(container);
+            _resetContainer(container);
 
             const filtered = applyFilters(items);
             if (!filtered.length) {
@@ -243,6 +282,9 @@ function createRenderCards(context) {
                 "По этому запросу пока нечего показать.",
                 state.listings.total || null
             );
+            if (elements.listingsFallbackBadge) {
+                elements.listingsFallbackBadge.hidden = !state.listings.fallbackUsed;
+            }
             if (hasContent && elements.listingsList) {
                 _appendPaginationSentinel(elements.listingsList, {
                     renderedCount: state.listings.items.length,
@@ -268,25 +310,11 @@ function createRenderCards(context) {
             if (!container) return;
             const rangeLabel = `${state.filters.discountFromPercent}-${state.filters.discountToPercent}`;
 
-            // Destroy existing virtual list if present and reset container
-            if (container._virtualList) {
-                container._virtualList.destroy();
-                container._virtualList = null;
-            }
-            container.style.overflowY = "";
-            container.style.maxHeight = "";
-
-            domClear(container);
+            _resetContainer(container);
 
             // Show skeleton cards while deals are loading
             if (state.deals.loading) {
-                for (let i = 0; i < 3; i++) {
-                    const skel = document.createElement("div");
-                    skel.className = "skeleton-card";
-                    skel.setAttribute("aria-hidden", "true");
-                    skel.innerHTML = '<div class="skel-bar" style="width:60%"></div><div class="skel-bar" style="width:40%"></div><div class="skel-bar" style="width:30%"></div>';
-                    container.appendChild(skel);
-                }
+                for (let i = 0; i < 3; i++) container.appendChild(_buildSkeletonCard());
                 return;
             }
 
@@ -466,15 +494,7 @@ function createRenderCards(context) {
         const container = elements.leadInboxList;
         if (!container) return;
 
-        // Destroy existing virtual list if present and reset container
-        if (container._virtualList) {
-            container._virtualList.destroy();
-            container._virtualList = null;
-        }
-        container.style.overflowY = "";
-        container.style.maxHeight = "";
-
-        domClear(container);
+        _resetContainer(container);
 
         // Call hero stats and profit dashboard via hooks
         if (context._hooks?.renderDealsHeroStats) context._hooks.renderDealsHeroStats();
@@ -551,11 +571,12 @@ function createRenderCards(context) {
         }
 
         const watchlistMarketLabel = (val) => marketLabel(val);
+        const signal = _getSignal(container);
         for (const entry of entries) {
             if (entry.kind === "lead") {
-                container.appendChild(buildLeadNode(entry.data));
+                container.appendChild(buildLeadNode(entry.data, signal));
             } else {
-                container.appendChild(buildWatchlistNode(entry.data, watchlistMarketLabel));
+                container.appendChild(buildWatchlistNode(entry.data, watchlistMarketLabel, signal));
             }
         }
         });
@@ -599,15 +620,7 @@ function createRenderCards(context) {
         const container = elements.watchlistList;
         if (!container) return;
 
-        // Destroy existing virtual list if present and reset container
-        if (container._virtualList) {
-            container._virtualList.destroy();
-            container._virtualList = null;
-        }
-        container.style.overflowY = "";
-        container.style.maxHeight = "";
-
-        domClear(container);
+        _resetContainer(container);
 
         if (context._hooks?.renderWatchlistFilters) context._hooks.renderWatchlistFilters();
 
@@ -621,15 +634,9 @@ function createRenderCards(context) {
 
         // Show skeleton cards while loading
         if (state.watchlist._loading) {
-            for (let i = 0; i < 3; i++) {
-                const skel = document.createElement("div");
-                skel.className = "skeleton-card";
-                skel.setAttribute("aria-hidden", "true");
-                skel.innerHTML = '<div class="skel-bar" style="width:60%"></div><div class="skel-bar" style="width:40%"></div><div class="skel-bar" style="width:30%"></div>';
-                container.appendChild(skel);
+                for (let i = 0; i < 3; i++) container.appendChild(_buildSkeletonCard());
+                return;
             }
-            return;
-        }
 
         const filteredWatchlist = [...state.watchlist.items]
             .filter(watchlistMatchesFilter)
@@ -683,8 +690,9 @@ function createRenderCards(context) {
         // Virtual scrolling disabled for watchlist — cards have variable heights
         // due to notes, metadata, and dynamic content
         // Re-enable only when cards have consistent fixed heights
+        const signal = _getSignal(container);
         for (const item of filteredWatchlist) {
-            container.appendChild(buildWatchlistNode(item, marketLabel));
+            container.appendChild(buildWatchlistNode(item, marketLabel, signal));
         }
         });
     }

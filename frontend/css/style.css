@@ -19,9 +19,10 @@
  * 50   - sticky headers, sections
  * 100  - dropdowns, tooltips
  * 200  - header bar
- * 300  - modals
- * 400  - toast notifications
- * 1000 - loading overlay
+ * 300  - long-press menu
+ * 400  - modals, detail sheets
+ * 500  - toast notifications
+ * 600  - loading overlay
  */
 
 /* Global hidden override — flex/grid overrides HTML hidden attribute */
@@ -64,8 +65,11 @@
     --violet-soft: rgba(139, 92, 246, 0.08);
     --cyan: #06b6d4;
     --cyan-soft: rgba(6, 182, 212, 0.08);
-    --white: #e8e8e8;
+    --white: #e8e8e8; /* text color on dark bg; overridden to #ffffff in light theme */
     --font: "Geist", system-ui, -apple-system, sans-serif;
+    --font-sans: var(--font);
+    --warn: #d97706;
+    --warn-soft: rgba(217, 119, 6, 0.12);
     --accent-foreground: #ffffff;
     --font-mono: "JetBrains Mono", "Courier New", monospace;
     --text-2xs: 10px;
@@ -502,30 +506,6 @@ body {
     display: none;
 }
 
-.rate-strip {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0 0 10px;
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
-.rate-label {
-    color: var(--text-dim);
-}
-
-.rate-value {
-    color: var(--accent);
-    font-size: var(--text-sm);
-}
-
-.rate-meta {
-    color: var(--text-muted);
-}
-
 /* Skip link — visible on focus for keyboard users */
 .skip-link {
     position: absolute;
@@ -593,6 +573,11 @@ body {
 }
 
 /* Filter active badge */
+.filter-btn-label {
+    font-size: var(--text-sm);
+    margin-left: 4px;
+}
+
 .filter-active-badge {
     position: absolute;
     top: -6px;
@@ -639,10 +624,6 @@ body {
 }
 
 /* DUPLICATE REMOVED: .view-panel at line 117 (empty rule) and line 773 (duplicate) */
-
-[x-cloak] {
-    display: none !important;
-}
 
 .search-section {
     padding: 14px 0 6px;
@@ -2007,6 +1988,15 @@ body {
     border-radius: var(--radius-full);
     letter-spacing: 0.02em;
     line-height: 1.4;
+}
+
+.badge--fallback {
+    font-family: var(--font-sans);
+    font-weight: 500;
+    background: var(--warn-soft, rgba(251, 191, 36, 0.12));
+    color: var(--warn, #d97706);
+    border-color: rgba(251, 191, 36, 0.2);
+    font-size: var(--text-xs);
 }
 
 .section-toggle {
@@ -8033,6 +8023,10 @@ body {
     gap: 12px;
 }
 
+.la-form[hidden] {
+    display: none !important;
+}
+
 .la-row {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8106,13 +8100,13 @@ body {
 .la-actions {
     grid-column: 1 / -1;
     display: flex;
-    justify-content: flex-end;
+    justify-content: stretch;
     gap: 8px;
     margin-top: 4px;
 }
 
 .la-submit {
-    min-width: 220px;
+    width: 100%;
 }
 
 .la-submit.is-busy {
@@ -8120,13 +8114,80 @@ body {
     cursor: progress;
 }
 
-/* ── Listing Assistant: result area (unified with AI analysis style) ── */
+/* ── Listing Assistant: result overlay ── */
 
-.la-result {
-    margin-top: 0;
+.la-result-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+    animation: la-result-in 250ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.detail-sheet.la-sheet-expanded {
+    height: min(96vh, 900px) !important;
+}
+
+.la-result-overlay[hidden] {
+    display: none !important;
+}
+
+@keyframes la-result-in {
+    from {
+        opacity: 0;
+        transform: translateY(16px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.la-result-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.la-result-title {
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+}
+
+.la-result-scroll {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 4px 20px 24px;
     display: flex;
     flex-direction: column;
     gap: 0;
+}
+
+.la-result-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+
+.la-result-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.la-result-scroll::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
 }
 
 .la-error {
@@ -8724,10 +8785,6 @@ body {
 }
 
 @media (max-width: 480px) {
-    .la-submit {
-        width: 100%;
-        min-width: 0;
-    }
     .la-row {
         grid-template-columns: 1fr;
     }

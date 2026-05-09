@@ -106,7 +106,13 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Rafuk API", lifespan=lifespan)
 
     # Add CORS middleware
-    origins = [settings.mini_app_url, settings.api_base_url]
+    origins = [
+        settings.mini_app_url,
+        settings.api_base_url,
+        "https://web.telegram.org",
+        "https://webk.telegram.org",
+        "null",
+    ]
     if settings.debug:
         origins.extend(
             [
@@ -132,6 +138,7 @@ def create_app() -> FastAPI:
             request.url.path,
             type(exc).__name__,
             exc,
+            exc_info=True,
         )
         return JSONResponse(
             status_code=500,
@@ -147,43 +154,59 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return response
 
+    # Cache-Control middleware
+    @app.middleware("http")
+    async def add_cache_control(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/v1/health"):
+            pass
+        elif request.method in ("POST", "PATCH", "DELETE"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        elif request.url.path.startswith(("/api/v1/price-stats", "/api/v1/listings")):
+            response.headers["Cache-Control"] = "max-age=300"
+        return response
+
     # CSRF protection: validate Origin header on state-changing requests.
     # Prevents cross-origin POST/PATCH/DELETE from arbitrary websites.
     @app.middleware("http")
     async def csrf_origin_check(request: Request, call_next):
         if request.method in ("POST", "PATCH", "DELETE"):
             origin = request.headers.get("origin")
-            if origin:
-                settings = get_settings()
-                allowed = set(origins)  # Same list as CORS allow_origins
-                # Telegram WebApp sends requests from web.telegram.org
-                # or from the mini app URL — both are legitimate.
+            if not origin:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "CSRF: origin required"},
+                )
+            settings = get_settings()
+            allowed = set(origins)  # Same list as CORS allow_origins
+            # Telegram WebApp sends requests from web.telegram.org
+            # or from the mini app URL — both are legitimate.
+            allowed.update(
+                [
+                    "https://web.telegram.org",
+                    "https://webk.telegram.org",
+                    "null",  # Telegram iOS sometimes sends Origin: null
+                ]
+            )
+            if settings.debug:
                 allowed.update(
                     [
-                        "https://web.telegram.org",
-                        "https://webk.telegram.org",
-                        "null",  # Telegram iOS sometimes sends Origin: null
+                        "http://localhost:8081",
+                        "http://127.0.0.1:8081",
+                        "http://localhost:8010",
+                        "http://127.0.0.1:8010",
                     ]
                 )
-                if settings.debug:
-                    allowed.update(
-                        [
-                            "http://localhost:8081",
-                            "http://127.0.0.1:8081",
-                            "http://localhost:8010",
-                            "http://127.0.0.1:8010",
-                        ]
-                    )
-                # Also allow when Origin matches the mini app or API URL
-                if settings.mini_app_url:
-                    allowed.add(settings.mini_app_url)
-                if settings.api_base_url:
-                    allowed.add(settings.api_base_url)
-                if origin not in allowed:
-                    return JSONResponse(
-                        status_code=403,
-                        content={"detail": "CSRF: origin not allowed"},
-                    )
+            # Also allow when Origin matches the mini app or API URL
+            if settings.mini_app_url:
+                allowed.add(settings.mini_app_url)
+            if settings.api_base_url:
+                allowed.add(settings.api_base_url)
+            if origin not in allowed:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "CSRF: origin not allowed"},
+                )
         return await call_next(request)
 
     # Auto-provision User row on first authenticated request

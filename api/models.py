@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -28,7 +29,7 @@ class User(Base):
 
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     telegram_user_id: Mapped[int] = mapped_column(
         BigInteger,
         unique=True,
@@ -59,6 +60,8 @@ class User(Base):
     consents = relationship("UserConsent", back_populates="user", cascade="all, delete-orphan")
     reminders = relationship("LeadReminder", back_populates="user", cascade="all, delete-orphan")
     ai_audit_logs = relationship("AIAuditLog", back_populates="user", cascade="all, delete-orphan")
+    saved_searches = relationship("SavedSearch", back_populates="user", cascade="all, delete-orphan")
+    contacts = relationship("Contact", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
 
@@ -170,6 +173,8 @@ class Tracker(
         Index("idx_trackers_active", "active"),
         Index("idx_trackers_paused", "paused"),
         Index("idx_trackers_user_active", "user_id", "active"),
+        Index("idx_trackers_user_active_partial", "user_id", "active", postgresql_where=text("active = true")),
+        Index("idx_trackers_last_checked", "last_checked_at"),
         Index("idx_trackers_active_paused", "active", "paused"),
     )
 
@@ -219,6 +224,7 @@ class QueryListingState(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
@@ -273,7 +279,7 @@ class TrackerEvent(Base, UserIDMixin):
     __table_args__ = (
         Index("idx_tracker_events_user", "user_id"),
         Index("idx_tracker_events_created", "created_at"),
-        Index("idx_tracker_events_tracker_created", "tracker_id", "created_at"),
+        Index("idx_tracker_events_tracker_created", "tracker_id", text("created_at DESC")),
         CheckConstraint(
             "event_type IN ('new_listing', 'price_drop', 'trend_reversal', "
             "'price_threshold_alert', 'discount_alert')",
@@ -547,4 +553,82 @@ class AIAuditLog(Base):
     __table_args__ = (
         Index("idx_ai_audit_user", "user_id"),
         Index("idx_ai_audit_created", "created_at"),
+    )
+
+
+class SavedSearch(Base, UserIDMixin, TimestampMixin):
+    """User-saved search queries with optional alert filters."""
+
+    __tablename__ = "saved_searches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    group_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    query: Mapped[str] = mapped_column(String(255), nullable=False)
+    strict_mode: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    target_discount_percent: Mapped[float] = mapped_column(
+        Numeric(5, 2),
+        nullable=False,
+        default=10.0,
+        server_default="10",
+    )
+    max_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    condition: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    config_keyword: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    exclude_duplicates: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+
+    # Relationships
+    user = relationship("User", back_populates="saved_searches")
+
+    __table_args__ = (
+        Index("idx_saved_searches_user", "user_id"),
+        Index("idx_saved_searches_active", "active"),
+    )
+
+
+class Contact(Base):
+    """Saved seller contacts for a user."""
+
+    __tablename__ = "contacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    seller_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    kufar_profile: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    saved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    user = relationship("User", back_populates="contacts")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "phone", name="uq_contacts_user_phone"),
+        Index("idx_contacts_user", "user_id"),
     )

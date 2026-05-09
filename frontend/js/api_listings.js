@@ -55,6 +55,7 @@ function createApiListings(context) {
         state.listings.items = [];
         state.listings._loadedAt = 0;
         state.listings.total = 0;
+        state.listings.fallbackUsed = false;
         state.deals.items = [];
         state.deals._loadedAt = 0;
         state.deals.total = 0;
@@ -148,6 +149,7 @@ function createApiListings(context) {
                     state.listings.items = payload.listings || [];
                     state.listings.total = payload.total || 0;
                     state.listings.hasMore = Boolean(payload.has_more);
+                    state.listings.fallbackUsed = Boolean(payload.fallback_used);
                     state.listings._loadedAt = Date.now();
                     state.listings._loadedSort = state.search.sort;
                     state.listings._pending = false;
@@ -254,6 +256,7 @@ function createApiListings(context) {
             state.listings.items = payload.listings || [];
             state.listings.total = payload.total || 0;
             state.listings.hasMore = Boolean(payload.has_more);
+            state.listings.fallbackUsed = Boolean(payload.fallback_used);
             state.listings._loadedAt = Date.now();
             state.listings._loadedSort = state.search.sort;
             state._listingsLoadedDiscountFrom = state.filters.discountFromPercent;

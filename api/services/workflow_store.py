@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -69,6 +70,42 @@ async def load_last_snapshot_prices(
         .where(LeadItemPriceSnapshot.id.in_(latest_id_subq))
     )
     return {row.lead_item_id: float(row.price_byn) for row in rows}
+
+
+def make_price_snapshot(
+    *,
+    lead_item: LeadItem,
+    price_byn: float | None,
+    snapped_at: datetime | None = None,
+    epsilon: float = 0.5,
+    last_known_price: float | None = None,
+) -> dict[str, Any] | None:
+    """Build a price snapshot dict if the price has actually moved.
+
+    Returns ``None`` when the price hasn't changed enough or is invalid.
+    """
+    if lead_item is None or lead_item.id is None:
+        return None
+    if price_byn is None:
+        return None
+    try:
+        price_value = float(price_byn)
+    except (TypeError, ValueError):
+        return None
+    if price_value <= 0:
+        return None
+
+    if last_known_price is not None:
+        if last_known_price >= 0 and abs(last_known_price - price_value) < epsilon:
+            return None
+    # When last_known_price is None the caller hasn't pre-fetched;
+    # bulk callers should always pre-fetch to avoid per-row SELECTs.
+
+    return {
+        "lead_item_id": lead_item.id,
+        "price_byn": price_value,
+        "snapped_at": snapped_at or datetime.now(UTC),
+    }
 
 
 async def record_price_snapshot(

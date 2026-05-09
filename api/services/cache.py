@@ -36,26 +36,28 @@ class MemoryCache:
         self._lock = asyncio.Lock()
 
     async def get(self, key: str) -> str | None:
-        entry = self._storage.get(key)
-        if entry is None:
-            return None
-        value, expires_at = entry
-        if expires_at > 0 and time.monotonic() >= expires_at:
-            del self._storage[key]
-            return None
-        # Move to end (most recently used)
-        self._storage.move_to_end(key)
-        return value
+        async with self._lock:
+            entry = self._storage.get(key)
+            if entry is None:
+                return None
+            value, expires_at = entry
+            if expires_at > 0 and time.monotonic() >= expires_at:
+                del self._storage[key]
+                return None
+            # Move to end (most recently used)
+            self._storage.move_to_end(key)
+            return value
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
-        expires_at = 0.0
-        if ttl and ttl > 0:
-            expires_at = time.monotonic() + ttl
-        self._storage[key] = (value, expires_at)
-        self._storage.move_to_end(key)
-        # Evict oldest if over capacity
-        while len(self._storage) > self.MAX_ENTRIES:
-            self._storage.popitem(last=False)
+        async with self._lock:
+            expires_at = 0.0
+            if ttl and ttl > 0:
+                expires_at = time.monotonic() + ttl
+            self._storage[key] = (value, expires_at)
+            self._storage.move_to_end(key)
+            # Evict oldest if over capacity
+            while len(self._storage) > self.MAX_ENTRIES:
+                self._storage.popitem(last=False)
 
     async def get_json(self, key: str) -> Any:
         value = await self.get(key)
@@ -96,7 +98,8 @@ class MemoryCache:
 
     async def delete(self, key: str) -> None:
         """Remove a key from the cache. No-op if the key does not exist."""
-        self._storage.pop(key, None)
+        async with self._lock:
+            self._storage.pop(key, None)
 
     async def ping(self) -> bool:
         return True
@@ -162,19 +165,20 @@ class RedisCache:
 
         Uses SET NX EX for the initial key to make INCR + TTL atomic,
         avoiding the race where a process crashes between INCR and EXPIRE.
+
+        On Redis failure returns a very high number so rate-limit checks
+        fail **closed** (deny the request) instead of silently allowing it.
         """
         try:
             if ttl:
-                # SET key 1 NX EX ttl — only sets if key doesn't exist
                 created = await self._client.set(key, "1", nx=True, ex=ttl)
                 if created:
                     return 1
-                # Key already exists — just increment (TTL preserved)
                 return await self._client.incr(key)
             return await self._client.incr(key)
         except RedisError:
             logger.warning("Redis incr failed for key=%s", key, exc_info=True)
-            return 0
+            return 999_999
 
     async def delete(self, key: str) -> None:
         """Remove a key from Redis. No-op if the key does not exist."""

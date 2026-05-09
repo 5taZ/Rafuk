@@ -87,6 +87,10 @@ _bg_tasks: set[asyncio.Task[Any]] = set()
 
 def _spawn_bg_task(coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
     """Spawn a background task that survives GC until completion."""
+    _bg_tasks.difference_update(t for t in list(_bg_tasks) if t.done())
+    if len(_bg_tasks) > 50:
+        logger.warning("_bg_tasks at capacity (%d), refusing new task", len(_bg_tasks))
+        raise RuntimeError("Too many background tasks")
     task = asyncio.create_task(coro, name=name)
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
@@ -101,7 +105,7 @@ def _export_ttl() -> int:
     return int(getattr(get_settings(), "ai_export_ttl", 900) or 900)
 
 
-_MAX_SHADOW_ENTRIES = 200
+_MAX_SHADOW_ENTRIES = 50
 
 
 def _prune_old_tasks_shadow() -> None:
@@ -174,25 +178,25 @@ def _task_version(task: dict[str, Any] | None) -> float:
 async def _get_task(
     cache: CacheBackend, task_id: str, *, user_id: int | None = None,
 ) -> dict[str, Any] | None:
-    # Periodically prune shadow dict on reads too (not just on new task creation)
     if len(_tasks) > _MAX_SHADOW_ENTRIES:
         _prune_old_tasks_shadow()
-    # Prefer user_id from shadow entry for namespaced cache lookup
     shadow_task = _tasks.get(task_id)
-    # Ownership check: if user_id is provided, verify shadow entry belongs to this user
     if shadow_task and user_id is not None:
         shadow_uid = shadow_task.get("_telegram_user_id")
         if shadow_uid is not None and shadow_uid != user_id:
-            shadow_task = None  # Deny access to another user's task
+            shadow_task = None
     effective_uid = user_id or (shadow_task.get("_telegram_user_id") if shadow_task else None)
     cached_task = await cache.get_json(_task_cache_key(task_id, user_id=effective_uid))
 
-    if _task_version(shadow_task) > _task_version(cached_task):
-        return shadow_task
+    # Redis is authoritative — multi-worker deployments may have a newer
+    # version there that the local shadow hasn't seen yet. Only fall back
+    # to shadow when Redis has nothing.
     if cached_task:
         _tasks[task_id] = cached_task
         return cached_task
-    return shadow_task
+    if shadow_task:
+        return shadow_task
+    return None
 
 
 async def _set_task(cache: CacheBackend, task_id: str, task: dict[str, Any]) -> dict[str, Any]:
@@ -379,6 +383,7 @@ async def _log_ai_audit(
     result_summary: str | None = None,
     model: str = "",
     latency_ms: int | None = None,
+    cached: bool = False,
 ) -> None:
     """Write an AI audit log entry (Belarus Law No. 91-Z requirement).
 
@@ -397,7 +402,11 @@ async def _log_ai_audit(
                 endpoint=endpoint,
                 ad_id=ad_id,
                 query=(query or "")[:256] if query else None,
-                result_summary=(result_summary or "")[:512] if result_summary else None,
+                result_summary=(
+                    (result_summary or "cached")[:512]
+                    if (result_summary or cached)
+                    else None
+                ),
                 model=model,
                 latency_ms=latency_ms,
             )
@@ -458,7 +467,7 @@ def _build_fallback_response(
     q1: float | None,
     q3: float | None,
     similar: list[dict[str, Any]],
-    risk_context: MarketplaceRiskContext,
+    risk_context: MarketplaceRiskContext | None,
     reference: Any,
     photo_condition_label: str | None,
     photo_condition_notes: list[str],
@@ -470,6 +479,8 @@ def _build_fallback_response(
     Uses rule-based analysis instead of AI, so the user always gets
     a useful result rather than a raw error message.
     """
+    if risk_context is None:
+        risk_context = MarketplaceRiskContext(summary="", flags=[], score=0.0)
     fallback_best_decision = choose_best_alternative(
         similar,
         target_price=price_byn,
@@ -505,6 +516,8 @@ def _build_fallback_response(
         red_flags=fallback_red_flags,
     )
     fallback_result = dedupe_analysis_payload(fallback_result)
+    ref_scope = getattr(reference, "scope", None) or "query"
+    ref_label = getattr(reference, "label", None) or ""
     fallback_market_ctx = build_market_context_fallback(
         price_byn=price_byn,
         is_negotiable_price=is_negotiable_price,
@@ -512,8 +525,8 @@ def _build_fallback_response(
         similar_listings=similar,
         risk_context=risk_context,
         ai_market_context="",
-        price_reference_scope=reference.scope,
-        price_reference_label=reference.label,
+        price_reference_scope=ref_scope,
+        price_reference_label=ref_label,
     )
     response = AIAnalysisResponse(
         ad_id=payload.ad_id,
@@ -528,8 +541,8 @@ def _build_fallback_response(
         negotiation_tips=fallback_result.get("negotiation_tips", []),
         red_flags=fallback_red_flags,
         market_context=fallback_market_ctx,
-        price_reference_scope=reference.scope,
-        price_reference_label=reference.label,
+        price_reference_scope=ref_scope,
+        price_reference_label=ref_label,
         best_pick_reason=fallback_best_decision.reason,
         summary=fallback_result.get("summary", ""),
         disclaimer=DISCLAIMER,
@@ -538,6 +551,65 @@ def _build_fallback_response(
         fallback_result.get("resale_potential")
     )
     return response
+
+
+async def _deliver_fallback_result(
+    cache: CacheBackend,
+    task_id: str,
+    *,
+    user_id: int | None = None,
+    payload: AIAnalysisRequest,
+    price_byn: float,
+    is_negotiable_price: bool,
+    median: float | None,
+    q1: float | None,
+    q3: float | None,
+    similar: list[dict[str, Any]],
+    risk_context: MarketplaceRiskContext | None,
+    reference: Any,
+    photo_condition_label: str | None,
+    photo_condition_notes: list[str] | None,
+    title: str,
+    parameters: list[dict[str, Any]],
+    fallback_cache_ttl: int = 1800,
+    warning: str | None = None,
+) -> None:
+    try:
+        response = _build_fallback_response(
+            payload=payload,
+            price_byn=price_byn,
+            is_negotiable_price=is_negotiable_price,
+            median=median,
+            q1=q1,
+            q3=q3,
+            similar=similar,
+            risk_context=risk_context,
+            reference=reference,
+            photo_condition_label=photo_condition_label,
+            photo_condition_notes=photo_condition_notes,
+            title=title,
+            parameters=parameters,
+        )
+        cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
+        fallback_serialized = response.model_dump(by_alias=True)
+        if warning:
+            fallback_serialized["_ai_warning"] = warning
+        await cache.set_json(cache_key, fallback_serialized, ttl=fallback_cache_ttl)
+        await _update_task(
+            cache, task_id, user_id=user_id,
+            status="done", progress=100, stage="done",
+            result=fallback_serialized, error=None,
+        )
+    except Exception as fallback_exc:
+        logger.error(
+            "Fallback build also failed for task %s: %s",
+            task_id, fallback_exc, exc_info=True,
+        )
+        err_msg = "AI сервис недоступен. Попробуйте позже."
+        await _update_task(
+            cache, task_id, user_id=user_id,
+            status="error", stage="error", error=err_msg,
+        )
 
 
 async def _run_analysis(
@@ -958,6 +1030,8 @@ async def _run_analysis(
                 "ai_note": best_pick_reason,
             }
 
+        if risk_context is None:
+            risk_context = MarketplaceRiskContext(summary="", flags=[], score=0.0)
         final_red_flags = finalize_red_flags(result.get("red_flags", []), risk_context)
         final_market_context = build_market_context_fallback(
             price_byn=price_byn,
@@ -1046,136 +1120,41 @@ async def _run_analysis(
         logger.info("AI task %s stage=done", task_id)
 
     except TimeoutError:
-        try:
-            response = _build_fallback_response(
-                payload=payload,
-                price_byn=price_byn,
-                is_negotiable_price=is_negotiable_price,
-                median=median,
-                q1=q1,
-                q3=q3,
-                similar=similar,
-                risk_context=risk_context,
-                reference=reference,
-                photo_condition_label=photo_condition_label,
-                photo_condition_notes=photo_condition_notes,
-                title=title,
-                parameters=parameters,
-            )
-            cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
-            fallback_serialized = response.model_dump(by_alias=True)
-            await cache.set_json(cache_key, fallback_serialized, ttl=fallback_cache_ttl)
-            await _update_task(
-                cache,
-                task_id,
-                user_id=user_id,
-                status="done",
-                progress=100,
-                stage="done",
-                result=fallback_serialized,
-                error=None,
-            )
-            logger.warning(
-                "AI task %s: fallback result delivered (timeout) for ad_id=%d",
-                task_id,
-                payload.ad_id,
-            )
-        except Exception as fallback_exc:
-            logger.error(
-                "Fallback build also failed for task %s: %s",
-                task_id,
-                fallback_exc,
-                exc_info=True,
-            )
-            await _update_task(
-                cache,
-                task_id,
-                user_id=user_id,
-                status="error",
-                stage="timeout",
-                error="AI анализ занял слишком долго. Попробуйте ещё раз.",
-            )
+        logger.warning(
+            "AI task %s: timeout for ad_id=%d — delivering fallback",
+            task_id, payload.ad_id,
+        )
+        await _deliver_fallback_result(
+            cache, task_id, user_id=user_id,
+            payload=payload, price_byn=price_byn,
+            is_negotiable_price=is_negotiable_price,
+            median=median, q1=q1, q3=q3,
+            similar=similar, risk_context=risk_context,
+            reference=reference,
+            photo_condition_label=photo_condition_label,
+            photo_condition_notes=photo_condition_notes,
+            title=title, parameters=parameters,
+            fallback_cache_ttl=fallback_cache_ttl,
+        )
     except _AI_ANALYSIS_ERRORS as exc:
         logger.error("AI async task %s failed: [%s] %s", task_id, type(exc).__name__, exc)
-        # Instead of showing a raw error, try to deliver a fallback result.
-        # The user gets useful analysis even when the AI service is down.
-        try:
-            response = _build_fallback_response(
-                payload=payload,
-                price_byn=price_byn,
-                is_negotiable_price=is_negotiable_price,
-                median=median,
-                q1=q1,
-                q3=q3,
-                similar=similar,
-                risk_context=risk_context,
-                reference=reference,
-                photo_condition_label=photo_condition_label,
-                photo_condition_notes=photo_condition_notes,
-                title=title,
-                parameters=parameters,
-            )
-            cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
-            fallback_serialized = response.model_dump(by_alias=True)
-            await cache.set_json(cache_key, fallback_serialized, ttl=fallback_cache_ttl)
-            # Add a warning to the fallback result so the user knows AI was
-            # unavailable — but they still get analysis, not a blank error.
-            fallback_serialized["_ai_warning"] = (
-                "AI-сервис временно недоступен. Показан упрощённый анализ."
-            )
-            await _update_task(
-                cache,
-                task_id,
-                user_id=user_id,
-                status="done",
-                progress=100,
-                stage="done",
-                result=fallback_serialized,
-                error=None,
-            )
-            logger.warning(
-                "AI task %s: fallback result delivered (error: %s) for ad_id=%d",
-                task_id,
-                type(exc).__name__,
-                payload.ad_id,
-            )
-        except Exception as fallback_exc:
-            logger.error(
-                "Fallback build also failed for task %s: %s",
-                task_id,
-                fallback_exc,
-                exc_info=True,
-            )
-            # Only show a raw error if even the fallback build fails
-            err_msg = "AI сервис недоступен. Попробуйте позже."
-            err_str = str(exc).lower()
-            if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
-                err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
-            elif (
-                "timeout" in err_str
-                or "timed out" in err_str
-                or "connect" in err_str
-                or "connection" in err_str
-            ):
-                err_msg = (
-                    "Не удалось подключиться к AI-сервису."
-                    " Возможно, требуется VPN на сервере."
-                )
-            elif "insufficient balance" in err_str:
-                err_msg = "Баланс AI-сервиса исчерпан."
-            if getattr(settings, "debug", False):
-                import re as _re
-
-                _safe_exc = _re.sub(r"https?://\S+", "[URL]", str(exc))
-                _safe_exc = _re.sub(
-                    r"(?:api[_-]?key|token|bearer)\s*[:=]\s*\S+",
-                    "[REDACTED]", _safe_exc, flags=_re.IGNORECASE,
-                )
-                err_msg += f" [{type(exc).__name__}: {_safe_exc}]"
-            await _update_task(
-                cache, task_id, user_id=user_id,
-                status="error", stage="error", error=err_msg,
-            )
+        await _deliver_fallback_result(
+            cache, task_id, user_id=user_id,
+            payload=payload, price_byn=price_byn,
+            is_negotiable_price=is_negotiable_price,
+            median=median, q1=q1, q3=q3,
+            similar=similar, risk_context=risk_context,
+            reference=reference,
+            photo_condition_label=photo_condition_label,
+            photo_condition_notes=photo_condition_notes,
+            title=title, parameters=parameters,
+            fallback_cache_ttl=fallback_cache_ttl,
+            warning="AI-сервис временно недоступен. Показан упрощённый анализ.",
+        )
+        logger.warning(
+            "AI task %s: fallback result delivered (error: %s) for ad_id=%d",
+            task_id, type(exc).__name__, payload.ad_id,
+        )
 
 
 @router.post("/analyze")
@@ -1187,15 +1166,23 @@ async def analyze_listing(
 ):
     """Start async AI analysis. Returns task_id immediately for polling."""
     _check_ai_available()
+    await _check_ai_consent(request, _user.user_id)
 
-    # Check cache BEFORE rate limit — cached results return immediately
     cache = get_cache(request)
     cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
     cached = await cache.get_json(cache_key)
     if cached:
+        await _log_ai_audit(
+            request.app.state.session_factory,
+            telegram_user_id=_user.user_id,
+            endpoint="analyze",
+            ad_id=str(payload.ad_id),
+            query=payload.query,
+            model=get_settings().ai_model,
+            cached=True,
+        )
         return {"task_id": None, "cached": True, "result": cached}
 
-    await _check_ai_consent(request, _user.user_id)
     await _check_rate_limit(request, _user.user_id, endpoint="analyze")
 
     # AI audit trail (Belarus Law No. 91-Z)
@@ -1229,10 +1216,22 @@ async def analyze_listing(
 
     # Use _spawn_bg_task instead of bare asyncio.create_task — without a
     # strong reference Python's GC can drop the task before completion.
-    _spawn_bg_task(
-        _run_analysis(task_id, payload, settings, cache, kufar_client, user_id=_user.user_id),
-        name=f"ai-analysis-{task_id[:8]}",
-    )
+    try:
+        _spawn_bg_task(
+            _run_analysis(task_id, payload, settings, cache, kufar_client, user_id=_user.user_id),
+            name=f"ai-analysis-{task_id[:8]}",
+        )
+    except RuntimeError:
+        await _update_task(
+            cache, task_id,
+            user_id=_user.user_id,
+            status="error",
+            error="Сервер перегружен, попробуйте позже",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Сервер перегружен, попробуйте позже",
+        ) from None
 
     return {"task_id": task_id}
 
@@ -1275,6 +1274,8 @@ async def create_export_report(
         raise HTTPException(status_code=400, detail="HTML отчёта слишком большой")
 
     html = _sanitize_export_html(html)
+    if len(html) > 150_000:
+        html = html[:150_000]
 
     _prune_old_exports()
     token = secrets.token_urlsafe(18)

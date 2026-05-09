@@ -489,7 +489,7 @@ function createRenderCharts(context) {
                     className: "history-deal-thumb",
                     attrs: { src: thumbSrc, alt: lead.title || "Сделка", loading: "lazy" },
                 })
-                : domEl("div", { className: "history-deal-thumb-placeholder", text: "📦" });
+                : domEl("div", { className: "history-deal-thumb-placeholder", attrs: { "aria-hidden": "true" }, text: "📦" });
 
             card.appendChild(
                 domFragment(

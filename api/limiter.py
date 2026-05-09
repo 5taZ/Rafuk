@@ -52,6 +52,17 @@ def _redis_reachable(url: str) -> bool:
         return False
 
 
+def _mask_password(url: str) -> str:
+    """Mask password in Redis URL for safe logging."""
+    try:
+        parsed = urlparse(url)
+        if parsed.password:
+            return url.replace(f":{parsed.password}@", ":****@")
+    except Exception:
+        pass
+    return url
+
+
 def _create_limiter() -> Limiter:
     """Create the limiter, preferring Redis storage when available.
 
@@ -78,7 +89,7 @@ def _create_limiter() -> Limiter:
     logger.error(
         "Rate limiter using in-memory fallback — "
         "limits not shared across workers. Redis at %s unreachable",
-        storage_uri or "<unset>",
+        _mask_password(storage_uri) or "<unset>",
     )
     rate_limiter_degraded = True
     return Limiter(key_func=_rate_limit_key, storage_uri="memory://")

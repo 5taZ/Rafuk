@@ -9,21 +9,7 @@ from sqlalchemy import delete
 from api.models import QuerySnapshot
 from api.services.aggregator import build_query_key
 from api.services.cache import MemoryCache
-
-
-class FakeCurrencyService:
-    async def get_rates(self) -> dict[str, object]:
-        return {
-            "base": "BYN",
-            "rates": {"USD": 3.0},
-            "source": "test",
-            "fetched_at": datetime.now(UTC).isoformat(),
-        }
-
-    def convert_from_byn(self, amount_byn: float, currency: str, rates: dict[str, float]) -> float:
-        if currency == "BYN":
-            return round(amount_byn, 2)
-        return round(amount_byn / rates[currency], 2)
+from tests.conftest import FakeCurrencyService
 
 
 class FakeKufarClient:
@@ -37,14 +23,16 @@ class FakeKufarClient:
                 {
                     "ad_id": 1,
                     "subject": "iPhone 16",
-                    "price_byn": 2400,
+                    "price_byn": 240000,
+                    "price_usd": 1,
                     "ad_link": "https://www.kufar.by/item/1",
                     "list_time": "2026-04-01T10:00:00",
                 },
                 {
                     "ad_id": 2,
                     "subject": "iPhone 16 Pro",
-                    "price_byn": 2600,
+                    "price_byn": 260000,
+                    "price_usd": 1,
                     "ad_link": "https://www.kufar.by/item/2",
                     "list_time": "2026-04-01T11:00:00",
                 },
@@ -58,13 +46,18 @@ class FakeKufarClient:
 async def seed_history(session_factory, query: str = "iphone 16") -> None:
     async with session_factory() as session:
         await session.execute(
-            delete(QuerySnapshot).where(QuerySnapshot.query == build_query_key(query, False))
+            delete(QuerySnapshot).where(
+                QuerySnapshot.query.in_([
+                    build_query_key(query, False),
+                    build_query_key(query, True),
+                ])
+            )
         )
         now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
         session.add_all(
             [
                 QuerySnapshot(
-                    query=build_query_key(query, False),
+                    query=build_query_key(query, True),
                     snapshot_at=now - timedelta(days=2),
                     total_results=100,
                     analyzed_count=80,
@@ -74,7 +67,7 @@ async def seed_history(session_factory, query: str = "iphone 16") -> None:
                     max_byn=3300,
                 ),
                 QuerySnapshot(
-                    query=build_query_key(query, False),
+                    query=build_query_key(query, True),
                     snapshot_at=now - timedelta(hours=6),
                     total_results=120,
                     analyzed_count=92,
@@ -94,7 +87,9 @@ def test_price_history_endpoint_returns_snapshots() -> None:
 
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
-    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService(
+        rates={"USD": 3.0},
+    )
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 history"))
@@ -117,7 +112,9 @@ def test_price_history_caps_days_at_ninety() -> None:
 
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
-    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService(
+        rates={"USD": 3.0},
+    )
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 caps"))
@@ -139,7 +136,9 @@ def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
     app = create_app()
     app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
-    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService(
+        rates={"USD": 3.0},
+    )
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 persist-old"))
