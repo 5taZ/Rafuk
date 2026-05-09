@@ -195,6 +195,7 @@ async def export_leads(
             select(LeadItem)
             .where(LeadItem.user_id == user_id)
             .order_by(LeadItem.created_at.desc())
+            .limit(5000)
         )
         leads = list(result.scalars())
 

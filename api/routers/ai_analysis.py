@@ -11,12 +11,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+import nh3
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import select
 
 from api.config import get_settings
 from api.dependencies import get_cache, get_kufar_client, get_telegram_user
+from api.models import AIAuditLog, UserConsent
 from api.schemas import (
     AIAnalysisRequest,
     AIAnalysisResponse,
@@ -55,6 +58,7 @@ from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.market_signals import anomaly_labels, detect_anomaly_flags
 from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import compute_deal_score
+from api.services.workflow_store import resolve_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -319,19 +323,11 @@ async def _check_ai_consent(request: Request, user_id: int) -> None:
 
     Skipped in debug mode — same as Telegram auth bypass.
     """
-    from api.config import get_settings
-
     if get_settings().debug:
         return
 
-    from sqlalchemy import select
-
-    from api.models import UserConsent
-
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
-        from api.services.workflow_store import resolve_user_id
-
         uid = await resolve_user_id(session, user_id)
         if uid is None:
             raise HTTPException(
@@ -390,9 +386,6 @@ async def _log_ai_audit(
     Best-effort: errors are logged but never propagated.
     """
     try:
-        from api.models import AIAuditLog
-        from api.services.workflow_store import resolve_user_id
-
         async with session_factory() as session:
             uid = await resolve_user_id(session, telegram_user_id)
             if uid is None:
@@ -1237,8 +1230,6 @@ async def analyze_listing(
 
 
 def _sanitize_export_html(html: str) -> str:
-    import nh3
-
     return nh3.clean(
         html,
         tags={
@@ -1301,6 +1292,10 @@ async def get_export_report(
     item = _exports.get(token)
     if not item:
         raise HTTPException(status_code=404, detail="Экспорт не найден или истёк")
+    age = datetime.now(UTC).timestamp() - item.get("_created_ts", 0)
+    if age > 3600:
+        del _exports[token]
+        raise HTTPException(status_code=410, detail="Export expired")
     if item.get("_telegram_user_id") != _user.user_id:
         raise HTTPException(status_code=404, detail="Экспорт не найден или истёк")
     return HTMLResponse(

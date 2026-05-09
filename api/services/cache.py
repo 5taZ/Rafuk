@@ -163,19 +163,18 @@ class RedisCache:
     async def incr(self, key: str, ttl: int | None = None) -> int:
         """Atomically increment a counter using Redis INCR. Returns the new value.
 
-        Uses SET NX EX for the initial key to make INCR + TTL atomic,
-        avoiding the race where a process crashes between INCR and EXPIRE.
+        INCR auto-creates the key at 0 and increments to 1.  We set TTL
+        only on the first increment to avoid the SET NX + INCR race where
+        the key expires between the two commands.
 
         On Redis failure returns a very high number so rate-limit checks
         fail **closed** (deny the request) instead of silently allowing it.
         """
         try:
-            if ttl:
-                created = await self._client.set(key, "1", nx=True, ex=ttl)
-                if created:
-                    return 1
-                return await self._client.incr(key)
-            return await self._client.incr(key)
+            count = await self._client.incr(key)
+            if ttl and count == 1:
+                await self._client.expire(key, ttl)
+            return count
         except RedisError:
             logger.warning("Redis incr failed for key=%s", key, exc_info=True)
             return 999_999

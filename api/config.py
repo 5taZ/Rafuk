@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from pydantic import Field, SecretStr, field_validator
@@ -49,6 +50,11 @@ class Settings(BaseSettings):
         """Prevent debug=True when connected to a non-localhost database."""
         if not v:
             return False
+        if os.getenv("ENV") == "production":
+            raise ValueError(
+                "debug=True is not allowed when ENV=production. "
+                "All requests would share user_id=0."
+            )
         db_url = info.data.get("database_url", "")
         if db_url and not any(
             h in db_url

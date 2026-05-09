@@ -55,7 +55,6 @@ function createVirtualList(container, options) {
     // Create viewport (sticky container for visible items)
     const viewport = document.createElement("div");
     viewport.setAttribute("role", "list");
-    viewport.setAttribute("aria-live", "polite");
     viewport.style.cssText =
         "position:sticky;top:0;overflow:hidden;";
     container.appendChild(viewport);

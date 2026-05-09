@@ -25,4 +25,4 @@ USER appuser
 ENV PATH="/app/.venv/bin:${PATH}"
 ENV SERVICE=api
 
-CMD ["sh", "-c", "case \"$SERVICE\" in api) uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 ;; bot) uv run python -m bot.main ;; scheduler) uv run python -m scheduler.collector ;; *) echo \"Unknown SERVICE=$SERVICE\"; exit 1 ;; esac"]
+CMD ["sh", "-c", "case \"$SERVICE\" in api) uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --log-level ${LOG_LEVEL:-info} ;; bot) uv run python -m bot.main ;; scheduler) uv run python -m scheduler.collector ;; *) echo \"Unknown SERVICE=$SERVICE\"; exit 1 ;; esac"]

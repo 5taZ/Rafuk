@@ -87,9 +87,9 @@ def _coerce_pricing(
     raw: Any, *, market_anchors: dict[str, float | int | None]
 ) -> AIListingPricing:
     pricing = AIListingPricing(
-        market_median_byn=market_anchors.get("median"),  # type: ignore[arg-type]
-        market_q1_byn=market_anchors.get("q1"),  # type: ignore[arg-type]
-        market_q3_byn=market_anchors.get("q3"),  # type: ignore[arg-type]
+        market_median_byn=float(market_anchors["median"]) if market_anchors.get("median") is not None else None,
+        market_q1_byn=float(market_anchors["q1"]) if market_anchors.get("q1") is not None else None,
+        market_q3_byn=float(market_anchors["q3"]) if market_anchors.get("q3") is not None else None,
         competing_count=int(market_anchors.get("count") or 0),
     )
     if not isinstance(raw, dict):

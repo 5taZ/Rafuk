@@ -9556,3 +9556,19 @@ button.active .filter-count {
     opacity: 1;
 }
 
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid var(--tg-theme-button-color, #3390ec);
+    outline-offset: 2px;
+}
+
+.listing-btn:focus-visible,
+.wl-btn:focus-visible,
+.lead-btn:focus-visible {
+    outline: 2px solid var(--tg-theme-button-color, #3390ec);
+    outline-offset: 2px;
+}
+

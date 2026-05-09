@@ -195,13 +195,14 @@ async def create_tracker(
             )
             session.add(tracker)
             try:
-                await session.commit()
+                await session.flush()
             except IntegrityError as exc:
                 await session.rollback()
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="A tracker with this configuration already exists",
                 ) from exc
+        await session.commit()
         await session.refresh(tracker)
         return TrackerRead.model_validate(tracker)
 

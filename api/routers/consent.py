@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import logging
+
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.dependencies import get_session_factory_dependency, get_telegram_user
+from api.dependencies import get_cache, get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
-from api.models import UserConsent
+from api.models import DealExpense, LeadItem, Tracker, TrackerEvent, User, UserConsent
 from api.schemas import ConsentGrantRequest, ConsentStatusResponse
+from api.services.workflow_store import ensure_user, resolve_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -98,12 +102,10 @@ async def get_consent_status(
     """Check whether the current user has granted a specific consent."""
     if consent_type not in VALID_CONSENT_TYPES:
         raise HTTPException(
-            status_code=400, detail=f"Неизвестный тип согласия: {consent_type}"
+            status_code=400, detail="Указанный тип согласия не найден"
         )
 
     async with session_factory() as session:
-        from api.services.workflow_store import resolve_user_id
-
         uid = await resolve_user_id(session, _user.user_id)
         if uid is None:
             return ConsentStatusResponse(consent_type=consent_type, granted=False)
@@ -147,7 +149,7 @@ async def grant_consent(
     """Grant a consent (e.g. AI analysis, PD processing, cross-border transfer)."""
     if payload.consent_type not in VALID_CONSENT_TYPES:
         raise HTTPException(
-            status_code=400, detail=f"Неизвестный тип согласия: {payload.consent_type}"
+            status_code=400, detail="Указанный тип согласия не найден"
         )
 
     # Reject stale consent versions — forces re-consent when policy changes
@@ -158,8 +160,6 @@ async def grant_consent(
         )
 
     async with session_factory() as session:
-        from api.services.workflow_store import ensure_user
-
         uid = await ensure_user(
             session,
             telegram_user_id=_user.user_id,
@@ -229,13 +229,11 @@ async def revoke_consent(
     """Revoke a previously granted consent."""
     if consent_type not in VALID_CONSENT_TYPES:
         raise HTTPException(
-            status_code=400, detail=f"Неизвестный тип согласия: {consent_type}"
+            status_code=400, detail="Указанный тип согласия не найден"
         )
 
     revoked_count = 0
     async with session_factory() as session:
-        from api.services.workflow_store import resolve_user_id
-
         uid = await resolve_user_id(session, _user.user_id)
         if uid is None:
             return
@@ -272,8 +270,6 @@ async def delete_account(
 
     Cascade-deletes from all tables where the user has data.
     """
-    from api.models import User
-
     user_internal_id: int | None = None
     async with session_factory() as session:
         # Find the internal user id
@@ -291,12 +287,7 @@ async def delete_account(
 
     # Clear Redis/AI task caches for this user
     try:
-        from api.dependencies import get_cache
-
         cache = get_cache(request)
-        # Best-effort: clear known cache prefixes
-        import contextlib
-
         for prefix in (
             f"ai_rate:{_user.user_id}",
             f"ai_daily:{_user.user_id}",
@@ -310,7 +301,7 @@ async def delete_account(
             exc_info=True,
         )
     try:
-        from api.routers.ai_analysis import clear_user_ai_data
+        from api.routers.ai_analysis import clear_user_ai_data  # deferred to avoid circular import
 
         clear_user_ai_data(_user.user_id)
     except Exception:
@@ -333,15 +324,6 @@ async def export_account_data(
     ),
 ):
     """Export all user data as JSON (right to data portability)."""
-    from api.models import (
-        DealExpense,
-        LeadItem,
-        Tracker,
-        TrackerEvent,
-        User,
-        UserConsent,
-    )
-
     async with session_factory() as session:
         # User profile
         stmt = select(User).where(User.telegram_user_id == _user.user_id)
@@ -500,8 +482,6 @@ async def export_account_data(
         "consents": consents_data,
         "exported_at": datetime.now(UTC).isoformat(),
     }
-
-    from fastapi.responses import Response
 
     return Response(
         content=json.dumps(payload, ensure_ascii=False, indent=2),

@@ -474,6 +474,7 @@ function setupPullToRefresh(options) {
     function onTouchStart(event) {
         if (event.touches.length !== 1) return;
         if (!isEligible()) return;
+        if (event.target.closest('.search-wrap, input, textarea, select')) return;
         startY = event.touches[0].clientY;
         startX = event.touches[0].clientX;
         dragging = false;

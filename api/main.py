@@ -153,6 +153,7 @@ def create_app() -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
     # Cache-Control middleware
@@ -169,6 +170,27 @@ def create_app() -> FastAPI:
 
     # CSRF protection: validate Origin header on state-changing requests.
     # Prevents cross-origin POST/PATCH/DELETE from arbitrary websites.
+    _csrf_allowed = frozenset(origins) | frozenset(
+        [
+            "https://web.telegram.org",
+            "https://webk.telegram.org",
+            "null",
+        ]
+    )
+    if settings.debug:
+        _csrf_allowed = _csrf_allowed | frozenset(
+            [
+                "http://localhost:8081",
+                "http://127.0.0.1:8081",
+                "http://localhost:8010",
+                "http://127.0.0.1:8010",
+            ]
+        )
+    if settings.mini_app_url:
+        _csrf_allowed = _csrf_allowed | {settings.mini_app_url}
+    if settings.api_base_url:
+        _csrf_allowed = _csrf_allowed | {settings.api_base_url}
+
     @app.middleware("http")
     async def csrf_origin_check(request: Request, call_next):
         if request.method in ("POST", "PATCH", "DELETE"):
@@ -178,32 +200,7 @@ def create_app() -> FastAPI:
                     status_code=403,
                     content={"detail": "CSRF: origin required"},
                 )
-            settings = get_settings()
-            allowed = set(origins)  # Same list as CORS allow_origins
-            # Telegram WebApp sends requests from web.telegram.org
-            # or from the mini app URL — both are legitimate.
-            allowed.update(
-                [
-                    "https://web.telegram.org",
-                    "https://webk.telegram.org",
-                    "null",  # Telegram iOS sometimes sends Origin: null
-                ]
-            )
-            if settings.debug:
-                allowed.update(
-                    [
-                        "http://localhost:8081",
-                        "http://127.0.0.1:8081",
-                        "http://localhost:8010",
-                        "http://127.0.0.1:8010",
-                    ]
-                )
-            # Also allow when Origin matches the mini app or API URL
-            if settings.mini_app_url:
-                allowed.add(settings.mini_app_url)
-            if settings.api_base_url:
-                allowed.add(settings.api_base_url)
-            if origin not in allowed:
+            if origin not in _csrf_allowed:
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "CSRF: origin not allowed"},
@@ -222,8 +219,8 @@ def create_app() -> FastAPI:
             if sf is not None:
                 try:
                     await ensure_user_exists(sf, init_data.user_id, init_data.first_name)
-                except Exception:
-                    logger.debug("User auto-provision failed (likely exists)", exc_info=True)
+                except Exception as e:
+                    logger.warning("Auto-provision failed for telegram_user_id=%s: %s", init_data.user_id, e, exc_info=True)
         return response
 
     # Add rate limiter to app state

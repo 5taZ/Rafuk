@@ -32,7 +32,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import (
@@ -121,23 +121,7 @@ async def get_lead_analytics(
             for status, label in _FUNNEL_STATUS_ORDER
         ]
 
-        # Only load full ORM leads for financial calculations (sold leads
-        # with price data + active leads for counts). This avoids hydrating
-        # hundreds of ORM objects for leads that don't contribute to ROI.
-        financial_leads = list(
-            (
-                await session.execute(
-                    select(LeadItem).where(
-                        LeadItem.user_id == user_id,
-                        LeadItem.status.in_(
-                            list(_PURSUED_STATUSES) + ["watching"]
-                        ),
-                    )
-                )
-            ).scalars()
-        )
-
-        # One bulk SUM — replaces the per-lead expense lookup.
+        # Bulk expense lookup (used for per-lead ROI).
         expense_rows = await session.execute(
             select(DealExpense.lead_id, func.sum(DealExpense.amount_byn))
             .where(DealExpense.user_id == user_id)
@@ -147,74 +131,110 @@ async def get_lead_analytics(
             row[0]: float(row[1] or 0) for row in expense_rows
         }
 
-    total_expenses = sum(expenses_by_lead.values())
+        # Window-scoped metrics via SQL aggregation (no full ORM load).
+        window_pursued = LeadItem.status.in_(list(_PURSUED_STATUSES))
+        window_won = LeadItem.sold_price_byn.isnot(None)
+        window_where = [
+            LeadItem.user_id == user_id,
+            window_pursued,
+            LeadItem.created_at >= cutoff,
+        ]
 
-    # Window restriction for revenue/ROI/win-rate.
-    cutoff_dt = cutoff
-    in_window = [
-        lead for lead in financial_leads
-        if (_ensure_aware(lead.created_at) or datetime.now(UTC)) >= cutoff_dt
-    ]
-
-    pursued = [
-        lead for lead in in_window if (lead.status or "") in _PURSUED_STATUSES
-    ]
-    won = [lead for lead in pursued if lead.sold_price_byn is not None]
-    skipped = [lead for lead in pursued if (lead.status or "") == "skipped"]
-
-    total_revenue = 0.0
-    total_cost = 0.0
-    total_profit = 0.0
-    roi_values: list[float] = []
-    days_to_close: list[float] = []
-
-    for lead in won:
-        sold_price = float(lead.sold_price_byn or 0)
-        buy_price = float(lead.buy_price_byn) if lead.buy_price_byn is not None else 0.0
-        expenses = expenses_by_lead.get(lead.id, 0.0)
-        cost = buy_price + expenses
-        profit = sold_price - cost
-        total_revenue += sold_price
-        total_cost += cost
-        total_profit += profit
-        if cost > 0:
-            roi_values.append((profit / cost) * 100.0)
-        sold_at = _ensure_aware(lead.sold_at)
-        created_at = _ensure_aware(lead.created_at)
-        if sold_at and created_at:
-            delta_days = (sold_at - created_at).total_seconds() / 86400.0
-            if delta_days >= 0:
-                days_to_close.append(delta_days)
-
-    win_rate = 0.0
-    if pursued:
-        win_rate = (len(won) / len(pursued)) * 100.0
-
-    monthly_buckets: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"sold_count": 0.0, "revenue_byn": 0.0, "profit_byn": 0.0}
-    )
-    for lead in won:
-        sold_at = _ensure_aware(lead.sold_at) or _ensure_aware(lead.created_at)
-        if sold_at is None:
-            continue
-        bucket_key = sold_at.strftime("%Y-%m")
-        bucket = monthly_buckets[bucket_key]
-        bucket["sold_count"] += 1
-        sold_price = float(lead.sold_price_byn or 0)
-        buy_price = float(lead.buy_price_byn) if lead.buy_price_byn is not None else 0.0
-        cost = buy_price + expenses_by_lead.get(lead.id, 0.0)
-        bucket["revenue_byn"] += sold_price
-        bucket["profit_byn"] += sold_price - cost
-
-    monthly = [
-        LeadMonthlyStat(
-            month=key,
-            sold_count=int(values["sold_count"]),
-            revenue_byn=round(values["revenue_byn"], 2),
-            profit_byn=round(values["profit_byn"], 2),
+        agg = await session.execute(
+            select(
+                func.count(LeadItem.id).label("pursued_count"),
+                func.count(case((window_won, 1))).label("won_count"),
+                func.count(case((LeadItem.status == "skipped", 1))).label("skipped_count"),
+                func.coalesce(
+                    func.sum(case((window_won, LeadItem.sold_price_byn))), 0
+                ).label("total_revenue"),
+                func.coalesce(
+                    func.sum(case((window_won, LeadItem.buy_price_byn))), 0
+                ).label("total_buy_cost"),
+            ).where(*window_where)
         )
-        for key, values in sorted(monthly_buckets.items())
-    ]
+        agg_row = agg.one()
+        pursued_count = agg_row.pursued_count
+        won_count = agg_row.won_count or 0
+        skipped_count = agg_row.skipped_count or 0
+        total_revenue = float(agg_row.total_revenue or 0)
+        total_buy_cost = float(agg_row.total_buy_cost or 0)
+
+        # Per-lead ROI + days-to-close (columns only, no ORM hydration).
+        won_rows = await session.execute(
+            select(
+                LeadItem.id,
+                LeadItem.buy_price_byn,
+                LeadItem.sold_price_byn,
+                LeadItem.sold_at,
+                LeadItem.created_at,
+            ).where(*window_where, window_won)
+        )
+        won_expenses_total = 0.0
+        roi_values: list[float] = []
+        days_to_close: list[float] = []
+        for lid, buy, sold, sold_at_raw, created_at_raw in won_rows:
+            buy_price = float(buy) if buy is not None else 0.0
+            sold_price = float(sold or 0)
+            expenses = expenses_by_lead.get(lid, 0.0)
+            cost = buy_price + expenses
+            won_expenses_total += expenses
+            if cost > 0:
+                roi_values.append(((sold_price - cost) / cost) * 100.0)
+            sold_at = _ensure_aware(sold_at_raw)
+            created_at = _ensure_aware(created_at_raw)
+            if sold_at and created_at:
+                delta_days = (sold_at - created_at).total_seconds() / 86400.0
+                if delta_days >= 0:
+                    days_to_close.append(delta_days)
+
+        total_cost = total_buy_cost + won_expenses_total
+        total_profit = total_revenue - total_cost
+        total_expenses = sum(expenses_by_lead.values())
+        win_rate = (won_count / pursued_count) * 100.0 if pursued_count else 0.0
+
+        # Monthly revenue/profit via SQL GROUP BY with expense subquery.
+        expense_subq = (
+            select(
+                DealExpense.lead_id,
+                func.sum(DealExpense.amount_byn).label("total_expense"),
+            )
+            .where(DealExpense.user_id == user_id)
+            .group_by(DealExpense.lead_id)
+            .subquery()
+        )
+        month_year = func.extract(
+            "year", func.coalesce(LeadItem.sold_at, LeadItem.created_at)
+        )
+        month_num = func.extract(
+            "month", func.coalesce(LeadItem.sold_at, LeadItem.created_at)
+        )
+        monthly_rows = await session.execute(
+            select(
+                month_year.label("yr"),
+                month_num.label("mo"),
+                func.count(LeadItem.id).label("sold_count"),
+                func.coalesce(func.sum(LeadItem.sold_price_byn), 0).label("revenue_byn"),
+                (
+                    func.coalesce(func.sum(LeadItem.sold_price_byn), 0)
+                    - func.coalesce(func.sum(LeadItem.buy_price_byn), 0)
+                    - func.coalesce(func.sum(expense_subq.c.total_expense), 0)
+                ).label("profit_byn"),
+            )
+            .outerjoin(expense_subq, LeadItem.id == expense_subq.c.lead_id)
+            .where(*window_where, window_won)
+            .group_by(month_year, month_num)
+        )
+        monthly = [
+            LeadMonthlyStat(
+                month=f"{int(row.yr):04d}-{int(row.mo):02d}",
+                sold_count=int(row.sold_count),
+                revenue_byn=round(float(row.revenue_byn or 0), 2),
+                profit_byn=round(float(row.profit_byn or 0), 2),
+            )
+            for row in monthly_rows
+            if row.yr is not None and row.mo is not None
+        ]
 
     _active_keys = ("new", "in_progress", "researching", "bought")
     active_leads = sum(funnel_counter.get(k, 0) for k in _active_keys)
@@ -224,9 +244,9 @@ async def get_lead_analytics(
     return LeadAnalyticsResponse(
         period_days=days,
         total_leads=total_leads,
-        pursued_leads=len(pursued),
-        sold_leads=len(won),
-        skipped_leads=len(skipped),
+        pursued_leads=pursued_count,
+        sold_leads=won_count,
+        skipped_leads=skipped_count,
         active_leads=active_leads,
         win_rate_percent=round(win_rate, 1),
         total_revenue_byn=round(total_revenue, 2),

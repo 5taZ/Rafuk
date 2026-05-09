@@ -379,7 +379,7 @@ function createRenderCardBuilders(context) {
     }
 
     /** Lead-specific buy/sold price input fields. */
-    function _buildLeadFields(lead) {
+    function _buildLeadFields(lead, { signal } = {}) {
         const priceByn = _roundOrNull(lead.price_byn);
         const buyInput = domEl("input", {
             type: "text",
@@ -447,7 +447,7 @@ function createRenderCardBuilders(context) {
     }
 
     /** Watchlist-specific note input. */
-    function _buildWatchlistFields(item) {
+    function _buildWatchlistFields(item, { signal } = {}) {
         const notesInput = domEl("input", {
             type: "text",
             attrs: { placeholder: "заметка к лоту…" },
@@ -681,7 +681,7 @@ function createRenderCardBuilders(context) {
         const bodyClass = isLead ? "lead-card-body" : "watchlist-card-body";
         const topClass = isLead ? "lead-card-top" : "watchlist-card-top";
 
-        const fields = isLead ? _buildLeadFields(item) : _buildWatchlistFields(item);
+        const fields = isLead ? _buildLeadFields(item, { signal }) : _buildWatchlistFields(item, { signal });
         const actionsRow = isLead
             ? _buildLeadActions(item)
             : _buildWatchlistActions(item, isMissing);

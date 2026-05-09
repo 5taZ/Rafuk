@@ -107,6 +107,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const app = analyticsApp();
     app.init();
 
+    if (window.Telegram?.WebApp) {
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
+    }
+
     // Offline / online detection
     function showOfflineBanner() {
         let banner = document.getElementById("offline-banner");
