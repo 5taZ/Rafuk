@@ -429,7 +429,7 @@ function setupPullToRefresh(options) {
     let pullDistance = 0;
     let refreshing = false;
 
-    const target = document.documentElement;
+    const target = document.querySelector('.app') || document.documentElement;
 
     function setIndicatorState(stage, ratio = 0) {
         if (!indicatorEl) return;
@@ -1036,6 +1036,20 @@ function attachLongPress(target, getItems, options) {
 
     target.addEventListener("touchend", clear, { passive: true });
     target.addEventListener("touchcancel", clear, { passive: true });
+
+    target.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        const items = getItems() || [];
+        if (items.length) showLongPressMenu(items);
+    });
+
+    target.addEventListener("keydown", (e) => {
+        if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+            e.preventDefault();
+            const items = getItems() || [];
+            if (items.length) showLongPressMenu(items);
+        }
+    });
 
     // The synthesised mousedown→mouseup→click sequence still fires
     // after a touchend, so guard the host element's click handlers

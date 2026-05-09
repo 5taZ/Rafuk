@@ -1070,14 +1070,12 @@ function createApiAi(context) {
         const link = detail.link || (adId ? `https://www.kufar.by/item/${adId}` : "");
         const dateStr = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
         const sections = _buildPdfSections(data);
+        const escapeHtml = context.escapeHtml;
 
-        // Listing images from detail
         const listingImages = (detail.images || []).slice(0, 4);
 
-        // Listing parameters from detail
         const listingParams = detail.parameters || [];
 
-        // Verdict section extracted for hero treatment
         const verdictSection = sections.find(s => s.title === "Вердикт");
         const otherSections = sections.filter(s => s.title !== "Вердикт");
         const vMap = { "Стоит брать": { cls: "good", icon: "&#10003;" }, "Подумай": { cls: "warn", icon: "&#9888;" }, "Дорого": { cls: "bad", icon: "&#10007;" } };
@@ -1085,25 +1083,23 @@ function createApiAi(context) {
         const verdictSummary = verdictSection ? verdictSection.body.split("\n").slice(1).join("\n").trim() : "";
         const vInfo = vMap[verdictLine] || { cls: "warn", icon: "&#9888;" };
 
-        // Build best alternative card HTML
         let bestAltHtml = "";
         if (data.best_alternative) {
             const ba = data.best_alternative;
             bestAltHtml = `<div class="alt-card">
   ${ba.image_url ? `<img class="alt-thumb" src="${_safeXmlUrl(ba.image_url)}" alt="" />` : ""}
   <div class="alt-info">
-    <div class="alt-title">${_escXml(ba.title)}</div>
+    <div class="alt-title">${escapeHtml(ba.title)}</div>
     <div class="alt-meta">
       <span class="alt-price mono">${Math.round(ba.price_byn)} BYN</span>
-      ${ba.condition ? `<span class="alt-cond">${_escXml(ba.condition)}</span>` : ""}
+      ${ba.condition ? `<span class="alt-cond">${escapeHtml(ba.condition)}</span>` : ""}
     </div>
-    ${data.best_pick_reason ? `<div class="alt-reason">${_escXml(data.best_pick_reason)}</div>` : ""}
+    ${data.best_pick_reason ? `<div class="alt-reason">${escapeHtml(data.best_pick_reason)}</div>` : ""}
     ${ba.link ? `<a class="alt-link" href="${_safeXmlUrl(ba.link)}">Открыть на Kufar</a>` : ""}
   </div>
 </div>`;
         }
 
-        // Build similar listings cards HTML
         let similarHtml = "";
         if (data.similar_listings?.length) {
             const others = data.best_alternative
@@ -1119,20 +1115,18 @@ function createApiAi(context) {
 ${others.slice(0, 8).map(s => `    <div class="similar-row">
       ${s.image_url ? `<img class="similar-thumb" src="${_safeXmlUrl(s.image_url)}" alt="" />` : `<span></span>`}
       <div>
-        <div class="similar-title">${_escXml(s.title)}</div>
-        <div class="similar-meta">${s.condition ? _escXml(s.condition) : "Состояние не указано"}${s.link ? ` · <a href="${_safeXmlUrl(s.link)}">Открыть</a>` : ""}</div>
+        <div class="similar-title">${escapeHtml(s.title)}</div>
+        <div class="similar-meta">${s.condition ? escapeHtml(s.condition) : "Состояние не указано"}${s.link ? ` · <a href="${_safeXmlUrl(s.link)}">Открыть</a>` : ""}</div>
       </div>
       <div class="similar-price mono">${Math.round(s.price_byn)} BYN</div>
     </div>`).join("\n")}
   </div>
 </section>`;
-                // Remove "Другие варианты" from text sections so it doesn't duplicate
                 const idx = otherSections.findIndex(s => s.title.startsWith("Другие варианты"));
                 if (idx >= 0) otherSections.splice(idx, 1);
             }
         }
 
-        // Remove "Лучший вариант" from text sections (rendered as card above)
         const bestIdx = otherSections.findIndex(s => s.title === "Лучший вариант");
         if (bestIdx >= 0) otherSections.splice(bestIdx, 1);
 
@@ -1140,7 +1134,7 @@ ${others.slice(0, 8).map(s => `    <div class="similar-row">
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>${_escXml(title)}</title>
+<title>${escapeHtml(title)}</title>
 <style>
   @page { margin: 14mm; size: A4; }
   * { box-sizing: border-box; }
@@ -1218,14 +1212,14 @@ ${others.slice(0, 8).map(s => `    <div class="similar-row">
   <header class="report-head">
     <div class="brand-row">
       <div class="brand"><div class="brand-mark">RF</div><span>Rafuk</span></div>
-      <div class="report-meta"><div>AI market memo</div><div>${dateStr}${adId ? ` · ID ${_escXml(String(adId))}` : ""}</div></div>
+      <div class="report-meta"><div>AI market memo</div><div>${dateStr}${adId ? ` · ID ${escapeHtml(String(adId))}` : ""}</div></div>
     </div>
     <div class="hero-grid">
       <div>
         <div class="eyebrow">Kufar buyer intelligence</div>
-        <h1>${_escXml(title)}</h1>
-        ${price ? `<div class="hero-price mono">${_escXml(price)}</div>` : ""}
-        ${link ? `<a class="hero-link" href="${_safeXmlUrl(link)}">${_escXml(link)}</a>` : ""}
+        <h1>${escapeHtml(title)}</h1>
+        ${price ? `<div class="hero-price mono">${escapeHtml(price)}</div>` : ""}
+        ${link ? `<a class="hero-link" href="${_safeXmlUrl(link)}">${escapeHtml(link)}</a>` : ""}
       </div>
       ${listingImages.length ? `<div class="photo-strip">${listingImages.map(img => `<img src="${_safeXmlUrl(img)}" alt="" />`).join("")}</div>` : ""}
     </div>
@@ -1233,16 +1227,16 @@ ${others.slice(0, 8).map(s => `    <div class="similar-row">
 
   ${verdictSection ? `<section class="verdict-card ${vInfo.cls}">
     <div class="verdict-icon">${vInfo.icon}</div>
-    <div><div class="verdict-text">${_escXml(verdictLine)}</div>${verdictSummary ? `<div class="verdict-summary">${_escXml(verdictSummary)}</div>` : ""}</div>
+    <div><div class="verdict-text">${escapeHtml(verdictLine)}</div>${verdictSummary ? `<div class="verdict-summary">${escapeHtml(verdictSummary)}</div>` : ""}</div>
   </section>` : ""}
 
   <section class="facts-grid">
-    <div class="fact"><span class="fact-label">Цена</span><span class="fact-value mono">${price ? _escXml(price) : "—"}</span></div>
+    <div class="fact"><span class="fact-label">Цена</span><span class="fact-value mono">${price ? escapeHtml(price) : "—"}</span></div>
     <div class="fact"><span class="fact-label">Дата отчёта</span><span class="fact-value">${dateStr}</span></div>
-    <div class="fact"><span class="fact-label">Объявление</span><span class="fact-value mono">${adId ? _escXml(String(adId)) : "—"}</span></div>
+    <div class="fact"><span class="fact-label">Объявление</span><span class="fact-value mono">${adId ? escapeHtml(String(adId)) : "—"}</span></div>
   </section>
 
-  ${listingParams.length ? `<section class="params-strip">${listingParams.slice(0, 10).map(p => `<span class="param-chip"><b>${_escXml(p.label)}</b> ${_escXml(p.value)}</span>`).join("")}</section>` : ""}
+  ${listingParams.length ? `<section class="params-strip">${listingParams.slice(0, 10).map(p => `<span class="param-chip"><b>${escapeHtml(p.label)}</b> ${escapeHtml(p.value)}</span>`).join("")}</section>` : ""}
 
   <main class="content">
 ${otherSections.map(s => {
@@ -1250,8 +1244,8 @@ ${otherSections.map(s => {
     const isFlags = s.title === "Красные флаги";
     const sectionCls = isPrice ? " section--price" : isFlags ? " section--flags" : "";
     return `    <section class="section${sectionCls}">
-      <div class="section-header"><div class="section-dot"></div><div class="section-title">${_escXml(s.title)}</div></div>
-      <div class="section-body">${_escXml(s.body)}</div>
+      <div class="section-header"><div class="section-dot"></div><div class="section-title">${escapeHtml(s.title)}</div></div>
+      <div class="section-body">${escapeHtml(s.body)}</div>
     </section>`;
 }).join("\n")}
 
@@ -1263,7 +1257,7 @@ ${data.best_alternative ? `    <section class="section section--best">
 ${similarHtml}
   </main>
 
-  <footer class="footer"><span class="footer-brand">Rafuk</span> — ${_escXml(data.disclaimer || "AI-анализ носит информационно-справочный характер и не является финансовой или инвестиционной консультацией.")}</footer>
+  <footer class="footer"><span class="footer-brand">Rafuk</span> — ${escapeHtml(data.disclaimer || "AI-анализ носит информационно-справочный характер и не является финансовой или инвестиционной консультацией.")}</footer>
 </div>
 </body>
 </html>`;
@@ -1288,22 +1282,13 @@ ${similarHtml}
             }
         }
 
-        const win = window.open("", "_blank");
+        const blob = new Blob([pdfHtml], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, "_blank");
         if (win) {
-            win.document.write(pdfHtml);
-            win.document.close();
             win.onload = function () { win.print(); };
         }
-    }
-
-    function _escXml(str) {
-        if (!str) return "";
-        return String(str)
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#39;");
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
 
     // Sanitize URLs for href/src attributes — blocks javascript:, data:,
@@ -1313,12 +1298,12 @@ ${similarHtml}
         if (!url || typeof url !== "string") return "#";
         const trimmed = url.trim();
         const lowered = trimmed.toLowerCase();
+        const escapeHtml = context.escapeHtml;
         if (lowered.startsWith("https://") || lowered.startsWith("http://")) {
-            return _escXml(trimmed);
+            return escapeHtml(trimmed);
         }
-        // Allow same-origin relative URLs (no scheme).
         if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
-            return _escXml(trimmed);
+            return escapeHtml(trimmed);
         }
         return "#";
     }

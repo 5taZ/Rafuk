@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
+
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import make_user
 
 USER_A = TelegramInitData(user_id=111111, first_name="Alice", raw={})
 USER_B = TelegramInitData(user_id=222222, first_name="Bob", raw={})
@@ -291,7 +297,8 @@ def test_user_b_cannot_see_user_a_tracker_events() -> None:
     import asyncio
 
     from api.database import get_engine, get_session_factory
-    from api.models import Base, Tracker, TrackerEvent, User
+    from api.models import Base, Tracker, TrackerEvent
+    from conftest import make_user
 
     app_a = _make_app_with_user(USER_A)
     engine = get_engine()
@@ -301,7 +308,7 @@ def test_user_b_cannot_see_user_a_tracker_events() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         async with session_factory() as session:
-            user = User(telegram_user_id=111111, first_name="Alice")
+            user = make_user(telegram_user_id=111111, first_name="Alice")
             session.add(user)
             await session.flush()
             tracker = Tracker(user_id=user.id, query="iphone se", strict_mode=False)

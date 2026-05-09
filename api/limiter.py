@@ -7,6 +7,7 @@ falls back to client IP for public endpoints.
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from urllib.parse import urlparse
 
 from fastapi import Request
@@ -35,7 +36,8 @@ def _redis_reachable(url: str) -> bool:
     ``ConnectionError: 111 Connection refused``. So we probe up-front.
 
     Uses a very short timeout (0.1s) to minimize blocking at import time.
-    This is called once at module load; the cost is acceptable.
+    Cached via lru_cache so the TCP probe runs once on first call, not at
+    every module import.
     """
     import socket
 
@@ -50,6 +52,9 @@ def _redis_reachable(url: str) -> bool:
             return True
     except OSError:
         return False
+
+
+_redis_reachable = lru_cache(maxsize=1)(_redis_reachable)
 
 
 def _mask_password(url: str) -> str:

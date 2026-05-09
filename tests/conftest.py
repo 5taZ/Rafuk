@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,6 +37,55 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         pass
 
 
+# ── CSRF fix: auto-add Origin header to TestClient ───────────────────────
+# The CSRF middleware requires an Origin header on POST/PATCH/DELETE.
+# In debug mode "http://localhost:8081" is an allowed origin.
+# We patch TestClient so every instance sends it by default.
+
+import fastapi.testclient as _ftc
+
+_OriginalTestClient = _ftc.TestClient
+
+
+class _CSRFTestClient(_OriginalTestClient):
+    def __init__(self, app, **kwargs):
+        headers = dict(kwargs.pop("headers", None) or {})
+        headers.setdefault("origin", "http://localhost:8081")
+        super().__init__(app, headers=headers, **kwargs)
+
+
+_ftc.TestClient = _CSRFTestClient
+
+
+# ── SQLite BigInteger fix ────────────────────────────────────────────────
+# SQLite only auto-increments INTEGER PRIMARY KEY, not BIGINT PRIMARY KEY.
+# The User model uses BigInteger for id. Patch the column type so DDL
+# generates INTEGER PRIMARY KEY which auto-increments correctly.
+
+from sqlalchemy import Integer as _Integer
+
+try:
+    from api.models import User as _User
+
+    _User.__table__.c.id.type = _Integer()
+except Exception:
+    pass
+
+
+# ── SQLite BigInteger fix: User.id auto-assignment ───────────────────────
+# Fallback helper for tests that create User objects directly — provides
+# an explicit id in case the type patch above isn't sufficient.
+
+_user_id_seq = itertools.count(1)
+
+
+def make_user(*, telegram_user_id: int, first_name: str, **kwargs):
+    from api.models import User
+
+    uid = kwargs.pop("id", None) or next(_user_id_seq)
+    return User(id=uid, telegram_user_id=telegram_user_id, first_name=first_name, **kwargs)
+
+
 @pytest.fixture(autouse=True)
 async def _flush_test_redis() -> None:
     """Flush the test Redis DB before each test so tests are isolated.
@@ -56,6 +106,14 @@ async def _flush_test_redis() -> None:
         client.close()
     except Exception:
         pass
+
+    try:
+        from api.limiter import limiter
+
+        limiter.reset()
+    except Exception:
+        pass
+
     yield
 
 

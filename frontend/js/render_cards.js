@@ -39,10 +39,13 @@ function createRenderCards(context) {
     }
 
     function _buildSkeletonCard() {
-        const skel = document.createElement("div");
-        skel.className = "skeleton-card";
-        skel.setAttribute("aria-hidden", "true");
-        skel.innerHTML = '<div class="skel-bar" style="width:60%"></div><div class="skel-bar" style="width:40%"></div><div class="skel-bar" style="width:30%"></div>';
+        const skel = domEl("div", {
+            className: "skeleton-card",
+            attrs: { "aria-hidden": "true" },
+        });
+        skel.appendChild(domEl("div", { className: "skel-bar", attrs: { style: "width:60%" } }));
+        skel.appendChild(domEl("div", { className: "skel-bar", attrs: { style: "width:40%" } }));
+        skel.appendChild(domEl("div", { className: "skel-bar", attrs: { style: "width:30%" } }));
         return skel;
     }
 

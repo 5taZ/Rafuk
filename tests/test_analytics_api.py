@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import Base, DealExpense, LeadItem, User
+from api.models import Base, DealExpense, LeadItem
+
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import make_user
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -26,7 +31,7 @@ async def _seed_leads(session_factory) -> int:
     Returns the user_id so tests can grab it if needed.
     """
     async with session_factory() as session:
-        user = User(telegram_user_id=987654, first_name="Analytics")
+        user = make_user(telegram_user_id=987654, first_name="Analytics")
         session.add(user)
         await session.flush()
 

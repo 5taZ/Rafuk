@@ -85,6 +85,7 @@ function createApiEvents(context) {
     const _searchDebounce = { timer: null };
     const _confirmTimers = {};
     const _preloadCache = [];
+    let _filterCloseTimeout = null;
 
     function bindSearchEvents() {
         // ── Search input ─────────────────────────────────────────────
@@ -244,6 +245,7 @@ function createApiEvents(context) {
                 if (!view) {
                     return;
                 }
+                _preloadCache.length = 0;
                 Object.values(_confirmTimers).forEach(clearTimeout);
                 _confirmTimers.events = undefined;
                 _confirmTimers.leads = undefined;
@@ -344,7 +346,7 @@ function createApiEvents(context) {
         elements.filterBtn?.addEventListener("click", () => {
             const prefersReducedMotion = _prefersReducedMotion();
             if (!state.filters.filterDropdownOpen) {
-                // Opening — initialize pending values with current applied values
+                if (_filterCloseTimeout) { clearTimeout(_filterCloseTimeout); _filterCloseTimeout = null; }
                 state.filters.pendingCategory = state.filters.category;
                 state.filters.pendingCondition = state.filters.condition;
                 state.filters.pendingSellerType = state.filters.sellerType;
@@ -354,13 +356,12 @@ function createApiEvents(context) {
                 state.filters.filterDropdownOpen = true;
                 renderAll();
             } else if (prefersReducedMotion) {
-                // Closing without animation for users who prefer reduced motion
                 state.filters.filterDropdownOpen = false;
                 renderAll();
             } else {
-                // Closing — add closing class for animation, then hide
                 elements.filterDropdown?.classList.add("closing");
-                setTimeout(() => {
+                _filterCloseTimeout = setTimeout(() => {
+                    _filterCloseTimeout = null;
                     elements.filterDropdown?.classList.remove("closing");
                     state.filters.filterDropdownOpen = false;
                     renderAll();
@@ -381,9 +382,10 @@ function createApiEvents(context) {
                     state.filters.filterDropdownOpen = false;
                     renderAll();
                 } else {
-                    // Add closing class for animation
                     dropdown.classList.add("closing");
-                    setTimeout(() => {
+                    if (_filterCloseTimeout) clearTimeout(_filterCloseTimeout);
+                    _filterCloseTimeout = setTimeout(() => {
+                        _filterCloseTimeout = null;
                         dropdown.classList.remove("closing");
                         state.filters.filterDropdownOpen = false;
                         renderAll();

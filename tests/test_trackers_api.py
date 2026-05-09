@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from api.database import get_engine, get_session_factory
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import Base, Tracker, TrackerEvent, User
+from api.models import Base, Tracker, TrackerEvent
 from api.services.history_service import QuerySyncResult, TrendReversal
 from scheduler.collector import (
     _build_tracker_message,
@@ -15,6 +17,9 @@ from scheduler.collector import (
     _recent_trend_event_tracker_ids,
     persist_tracker_events,
 )
+
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import make_user
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -99,10 +104,8 @@ async def test_tracker_events_endpoint() -> None:
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
 
-    # Seed data before entering TestClient context
-    await seed_tracker_event(app.state.session_factory)
-
     with TestClient(app) as client:
+        await seed_tracker_event(app.state.session_factory)
         response = client.get("/api/v1/tracker-events")
 
     assert response.status_code == 200
@@ -126,7 +129,7 @@ async def test_recent_events_by_tracker_groups_by_id_and_skips_old() -> None:
         await connection.run_sync(Base.metadata.create_all)
 
     async with session_factory() as session:
-        user = User(telegram_user_id=999_999, first_name="Test")
+        user = make_user(telegram_user_id=999_999, first_name="Test")
         session.add(user)
         await session.flush()
 
@@ -232,7 +235,7 @@ async def test_persist_tracker_events_creates_trend_reversal_with_query_metadata
         await connection.run_sync(Base.metadata.create_all)
 
     async with session_factory() as session:
-        user = User(telegram_user_id=11_111, first_name="Trend")
+        user = make_user(telegram_user_id=11_111, first_name="Trend")
         session.add(user)
         await session.flush()
         tracker = Tracker(user_id=user.id, query="iphone 13", strict_mode=False)
@@ -289,7 +292,7 @@ async def test_recent_trend_event_tracker_ids_within_window() -> None:
         await connection.run_sync(Base.metadata.create_all)
 
     async with session_factory() as session:
-        user = User(telegram_user_id=22_222, first_name="Window")
+        user = make_user(telegram_user_id=22_222, first_name="Window")
         session.add(user)
         await session.flush()
         tracker_recent = Tracker(user_id=user.id, query="ps5", strict_mode=False)

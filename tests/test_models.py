@@ -40,7 +40,7 @@ def test_tracker_indexes() -> None:
     table = Base.metadata.tables["trackers"]
     index_names = {index.name for index in table.indexes}
     assert "idx_trackers_user" in index_names
-    assert "idx_trackers_active" in index_names
+    assert "idx_trackers_active_paused" in index_names
 
 
 def test_tracker_model_defaults() -> None:

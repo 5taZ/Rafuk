@@ -14,9 +14,13 @@ router = APIRouter()
 
 @router.get("/health", status_code=status.HTTP_200_OK)
 async def health_check(
+    request: Request,
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> dict:
     """Check database connectivity and return service status."""
+    if not hasattr(request.app.state, "session_factory") or request.app.state.session_factory is None:
+        return {"status": "unhealthy", "database": "not initialized"}
+
     checks: dict[str, str] = {"status": "healthy"}
 
     # Database health check

@@ -2,14 +2,20 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import sys
+from pathlib import Path
+
 import pytest
 
 from api.database import get_engine, get_session_factory
-from api.models import Base, LeadItem, LeadItemPriceSnapshot, User
+from api.models import Base, LeadItem, LeadItemPriceSnapshot
 from api.services.workflow_store import (
     load_last_snapshot_prices,
     record_price_snapshot,
 )
+
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import make_user
 
 
 @pytest.mark.asyncio
@@ -25,7 +31,7 @@ async def test_load_last_snapshot_prices_returns_latest_per_item() -> None:
         await connection.run_sync(Base.metadata.create_all)
 
     async with session_factory() as session:
-        user = User(telegram_user_id=42, first_name="Snap")
+        user = make_user(telegram_user_id=42, first_name="Snap")
         session.add(user)
         await session.flush()
         item_a = LeadItem(
@@ -86,7 +92,7 @@ async def test_record_price_snapshot_skips_db_round_trip_when_hint_provided() ->
         await connection.run_sync(Base.metadata.create_all)
 
     async with session_factory() as session:
-        user = User(telegram_user_id=43, first_name="Skip")
+        user = make_user(telegram_user_id=43, first_name="Skip")
         session.add(user)
         await session.flush()
         item = LeadItem(

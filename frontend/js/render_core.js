@@ -277,7 +277,11 @@ function createRenderCore(context) {
         if (iconHtml) {
             const iconBox = document.createElement("div");
             iconBox.className = "empty-state-icon";
-            iconBox.innerHTML = iconHtml;
+            const parsed = new DOMParser().parseFromString(iconHtml, "image/svg+xml");
+            const svg = parsed.querySelector("svg");
+            if (svg && !parsed.querySelector("parsererror")) {
+                iconBox.appendChild(svg);
+            }
             wrap.appendChild(iconBox);
         }
         if (title) {

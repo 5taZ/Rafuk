@@ -140,6 +140,12 @@ class Tracker(
     __tablename__ = "trackers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
     interval_min: Mapped[int] = mapped_column(
         Integer,
         nullable=False,

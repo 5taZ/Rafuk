@@ -383,16 +383,16 @@ class LeadRead(BaseModel):
     status: str
     source: str
     sold_at: datetime | None = None
-    market_status: str = "active"
+    market_status: str = Field(default="active")
     missing_since_at: datetime | None = None
     # Watchlist-merged fields
     initial_price_byn: float | None = None
     market_median_byn: float | None = None
-    duplicate_count: int = 0
+    duplicate_count: int = Field(default=0)
     last_seen_at: datetime | None = None
     notes: str | None = None
     # Computed fields (not in DB)
-    total_expenses: float = 0.0
+    total_expenses: float = Field(default=0.0)
     actual_profit: float | None = None
     roi_percent: float | None = None
     price_delta_byn: float | None = None

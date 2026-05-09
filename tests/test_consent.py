@@ -25,7 +25,11 @@ def _override_auth():
 @pytest.fixture
 async def client(_override_auth):
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"origin": "http://localhost:8081"},
+    ) as c:
         yield c
 
 

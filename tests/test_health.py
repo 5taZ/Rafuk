@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from fastapi.testclient import TestClient
 
 from api.main import create_app
 
 
 @pytest.fixture
-async def client() -> AsyncClient:
+def client():
     app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    with TestClient(app) as c:
         yield c
 
 
-@pytest.mark.asyncio
-async def test_health_check_returns_ok(client: AsyncClient) -> None:
-    resp = await client.get("/api/v1/health")
+def test_health_check_returns_ok(client) -> None:
+    resp = client.get("/api/v1/health")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] in ("healthy", "degraded")
@@ -26,7 +25,6 @@ async def test_health_check_returns_ok(client: AsyncClient) -> None:
     assert data["rate_limiter"] in ("ok", "degraded")
 
 
-@pytest.mark.asyncio
-async def test_readiness_check_returns_200(client: AsyncClient) -> None:
-    resp = await client.get("/api/v1/health/ready")
+def test_readiness_check_returns_200(client) -> None:
+    resp = client.get("/api/v1/health/ready")
     assert resp.status_code in (200, 503)

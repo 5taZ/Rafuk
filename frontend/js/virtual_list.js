@@ -36,6 +36,21 @@ function createVirtualList(container, options) {
     // DOM recycling map: index → DOM element for currently rendered items
     let renderedMap = new Map();
 
+    let _sortedKeysCache = null;
+    let _sortedKeysDirty = true;
+
+    function _invalidateSortedKeys() {
+        _sortedKeysDirty = true;
+    }
+
+    function _getSortedKeys() {
+        if (_sortedKeysDirty) {
+            _sortedKeysCache = [...renderedMap.keys()].sort((a, b) => a - b);
+            _sortedKeysDirty = false;
+        }
+        return _sortedKeysCache;
+    }
+
     // Validate required params
     if (!container || typeof renderFn !== "function") {
         return {
@@ -110,6 +125,7 @@ function createVirtualList(container, options) {
             if (!newIndices.has(idx)) {
                 el.remove();
                 renderedMap.delete(idx);
+                _invalidateSortedKeys();
             }
         }
 
@@ -141,7 +157,7 @@ function createVirtualList(container, options) {
         let insertBefore = bottomSpacer; // default: before bottom spacer
 
         // Binary search over sorted keys for O(log n) instead of O(n) scan
-        const sortedKeys = [...renderedMap.keys()].sort((a, b) => a - b);
+        const sortedKeys = _getSortedKeys();
         let lo = 0, hi = sortedKeys.length;
         while (lo < hi) {
             const mid = (lo + hi) >>> 1;
@@ -158,6 +174,7 @@ function createVirtualList(container, options) {
         // Register new items in the recycling map
         for (const [idx, el] of toInsert) {
             renderedMap.set(idx, el);
+            _invalidateSortedKeys();
         }
     }
 
@@ -188,6 +205,7 @@ function createVirtualList(container, options) {
             items = newItems || [];
             // Clear recycled DOM nodes — data changed, old nodes are stale
             renderedMap.clear();
+            _invalidateSortedKeys();
             domClear(viewport);
             viewport.appendChild(bottomSpacer);
             // Reset scroll position when data changes
@@ -213,6 +231,7 @@ function createVirtualList(container, options) {
             if (destroyed) return;
             // Clear recycled DOM nodes — data changed, old nodes are stale
             renderedMap.clear();
+            _invalidateSortedKeys();
             domClear(viewport);
             viewport.appendChild(bottomSpacer);
             visibleStart = -1; // Force re-render
@@ -226,6 +245,7 @@ function createVirtualList(container, options) {
         destroy: function () {
             destroyed = true;
             renderedMap.clear();
+            _invalidateSortedKeys();
             if (rafId !== null) {
                 cancelAnimationFrame(rafId);
                 rafId = null;
@@ -241,19 +261,4 @@ function createVirtualList(container, options) {
     };
 }
 
-/**
- * Estimate how many items are currently rendered in a virtual list.
- * Useful for debugging and performance monitoring.
- */
-function getVirtualListRenderedCount(container) {
-    const viewport = container.querySelector("[role='list']");
-    if (!viewport) return 0;
-    return viewport.children.length;
-}
 
-/**
- * Check if a container has an active virtual list.
- */
-function hasVirtualList(container) {
-    return container._virtualList != null;
-}

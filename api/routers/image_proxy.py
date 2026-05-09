@@ -113,9 +113,10 @@ def _clear_cache_for_tests() -> None:
     the singleton would otherwise hold a real client built before
     the patch took effect.
     """
-    global _http_client
+    global _http_client, _client_lock
     _transcoded_cache.clear()
     _http_client = None
+    _client_lock = None
 
 
 def _pick_format(requested: str, accept: str) -> Literal["webp", "avif", "jpeg"]:
@@ -182,24 +183,34 @@ def _transcode(
 # source of latency. The client is closed by the FastAPI lifespan
 # when the app shuts down via aclose() exposed below.
 _http_client: httpx.AsyncClient | None = None
+_client_lock: asyncio.Lock | None = None
 
 
-def _get_http_client(settings: Settings) -> httpx.AsyncClient:
+def _get_client_lock() -> asyncio.Lock:
+    global _client_lock
+    if _client_lock is None:
+        _client_lock = asyncio.Lock()
+    return _client_lock
+
+
+async def _get_http_client(settings: Settings) -> httpx.AsyncClient:
     global _http_client
-    if _http_client is None or _http_client.is_closed:
+    if _http_client is not None and not _http_client.is_closed:
+        return _http_client
+    async with _get_client_lock():
+        if _http_client is not None and not _http_client.is_closed:
+            return _http_client
         _http_client = httpx.AsyncClient(
             timeout=settings.image_proxy_fetch_timeout,
             follow_redirects=False,
             headers={"User-Agent": "Rafuk-ImageProxy/1.0"},
-            # http2 keep-alive across image requests cuts the per-
-            # request RTT roughly in half on warm connections.
             limits=httpx.Limits(
                 max_connections=20,
                 max_keepalive_connections=10,
                 keepalive_expiry=60.0,
             ),
         )
-    return _http_client
+        return _http_client
 
 
 async def aclose_http_client() -> None:
@@ -247,7 +258,7 @@ async def get_optimized_image(
 
     upstream_url = f"{_KUFAR_BASE}{path}"
     try:
-        client = _get_http_client(settings)
+        client = await _get_http_client(settings)
         upstream = await client.get(upstream_url)
     except httpx.HTTPError as exc:
         logger.warning("Image fetch failed for %s: %s", path, exc)
