@@ -514,7 +514,7 @@ class DealExpenseCreate(BaseModel):
 
 class DealExpenseUpdate(BaseModel):
     expense_type: ExpenseTypeEnum | None = None
-    amount_byn: float | None = None
+    amount_byn: float | None = Field(default=None, gt=0)
     notes: str | None = None
     expense_date: datetime | None = None
 

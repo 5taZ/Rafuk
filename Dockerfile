@@ -6,14 +6,16 @@ ENV UV_LINK_MODE=copy
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y curl nodejs && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir uv
 
 # Create non-root user for security
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
 
-COPY . .
+COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev
+
+COPY . .
 
 # Change ownership of app directory to appuser
 RUN chown -R appuser:appuser /app

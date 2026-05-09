@@ -51,3 +51,13 @@ FULL_PROJECT_AUDIT.md
 FRONTEND_OPTIMIZATION_REPORT.md
 AUDIT_FIX_VERIFICATION.md
 FINAL_AUDIT_VERIFICATION.md
+DEEP_DIVE_REVIEW*.md
+AGENT_SWARM*.md
+
+# Repo / CI / planning
+.github/
+LICENSE
+docker-compose.yml
+.dockerignore
+.planning/
+*.md

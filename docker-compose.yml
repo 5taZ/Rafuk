@@ -25,7 +25,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   bot:
     build: .
@@ -43,6 +48,11 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - kufar-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   scheduler:
     build: .
@@ -61,6 +71,11 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - kufar-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     image: nginx:1.27-alpine
@@ -79,9 +94,17 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
     ports:
       - "6380:6379"
     networks:
@@ -93,7 +116,7 @@ services:
       retries: 3
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2024.12.1
     command: tunnel run
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
@@ -107,3 +130,6 @@ services:
 networks:
   kufar-net:
     driver: bridge
+
+volumes:
+  redis-data:

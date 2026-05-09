@@ -78,7 +78,14 @@ def _get_transcode_semaphore() -> asyncio.Semaphore:
 # it small; oldest entries fall out when capacity is reached.
 _LRU_CAPACITY = 256
 _transcoded_cache: OrderedDict[tuple[str, int, str], bytes] = OrderedDict()
-_transcoded_cache_lock = asyncio.Lock()
+_transcoded_cache_lock: asyncio.Lock | None = None
+
+
+def _get_cache_lock() -> asyncio.Lock:
+    global _transcoded_cache_lock
+    if _transcoded_cache_lock is None:
+        _transcoded_cache_lock = asyncio.Lock()
+    return _transcoded_cache_lock
 
 
 def _cache_get(key: tuple[str, int, str]) -> bytes | None:
@@ -233,7 +240,7 @@ async def get_optimized_image(
     target_width = min(w or settings.image_proxy_max_width, settings.image_proxy_max_width)
     cache_key = (path, target_width, chosen_fmt)
 
-    async with _transcoded_cache_lock:
+    async with _get_cache_lock():
         cached_body = _cache_get(cache_key)
     if cached_body is not None:
         return _build_response(cached_body, chosen_fmt, hit="lru")
@@ -268,7 +275,7 @@ async def get_optimized_image(
             logger.warning("Image transcode failed for %s: %s", path, exc)
             raise HTTPException(status_code=415, detail="Unsupported source image") from exc
 
-    async with _transcoded_cache_lock:
+    async with _get_cache_lock():
         _cache_put(cache_key, body)
     return _build_response(body, chosen_fmt, hit="miss")
 

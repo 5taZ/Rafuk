@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
+from api.limiter import limiter
 from api.models import UserConsent
 from api.schemas import ConsentGrantRequest, ConsentStatusResponse
 
@@ -85,7 +86,9 @@ def _get_client_ip(request: Request) -> str | None:
 
 
 @router.get("/consent/{consent_type}", response_model=ConsentStatusResponse)
+@limiter.limit("10/minute")
 async def get_consent_status(
+    request: Request,
     consent_type: str,
     _user=Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(
@@ -132,9 +135,10 @@ async def get_consent_status(
 
 
 @router.post("/consent", response_model=ConsentStatusResponse, status_code=201)
+@limiter.limit("10/minute")
 async def grant_consent(
-    payload: ConsentGrantRequest,
     request: Request,
+    payload: ConsentGrantRequest,
     _user=Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(
         get_session_factory_dependency
@@ -213,7 +217,9 @@ async def grant_consent(
 
 
 @router.delete("/consent/{consent_type}", status_code=204)
+@limiter.limit("10/minute")
 async def revoke_consent(
+    request: Request,
     consent_type: str,
     _user=Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(
@@ -254,6 +260,7 @@ async def revoke_consent(
 
 
 @router.delete("", status_code=204)
+@limiter.limit("10/minute")
 async def delete_account(
     request: Request,
     _user=Depends(get_telegram_user),
@@ -297,21 +304,29 @@ async def delete_account(
             with contextlib.suppress(Exception):
                 await cache.delete(prefix)
     except Exception:
-        pass
-
-    # Clear in-memory AI task/export shadow stores
+        logger.warning(
+            "Failed to clear Redis caches for user %d during account deletion",
+            _user.user_id,
+            exc_info=True,
+        )
     try:
         from api.routers.ai_analysis import clear_user_ai_data
 
         clear_user_ai_data(_user.user_id)
     except Exception:
-        pass
+        logger.warning(
+            "Failed to clear AI shadow data for user %d during account deletion",
+            _user.user_id,
+            exc_info=True,
+        )
 
     logger.info("User %d (telegram_id=%d) deleted their account", user_internal_id, _user.user_id)
 
 
 @router.get("/export")
+@limiter.limit("10/minute")
 async def export_account_data(
+    request: Request,
     _user=Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(
         get_session_factory_dependency

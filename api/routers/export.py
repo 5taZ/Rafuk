@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 from collections import defaultdict
@@ -176,7 +177,7 @@ async def export_leads(
             if fmt == "csv":
                 return _empty_csv_response()
             # Empty xlsx fallback — header only, still a valid workbook.
-            content = _build_xlsx_workbook([], {})
+            content = await asyncio.to_thread(_build_xlsx_workbook, [], {})
             return Response(
                 content=content,
                 media_type=(
@@ -240,7 +241,7 @@ async def export_leads(
         )
 
     # xlsx
-    content_bytes = _build_xlsx_workbook(leads, lead_expenses)
+    content_bytes = await asyncio.to_thread(_build_xlsx_workbook, leads, lead_expenses)
     return Response(
         content=content_bytes,
         media_type=(

@@ -34,7 +34,6 @@ class User(Base):
         BigInteger,
         unique=True,
         nullable=False,
-        index=True,
     )
     first_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     username: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -73,7 +72,6 @@ class UserIDMixin:
         BigInteger,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
 
@@ -170,7 +168,6 @@ class Tracker(
 
     __table_args__ = (
         Index("idx_trackers_user", "user_id"),
-        Index("idx_trackers_active", "active"),
         Index("idx_trackers_paused", "paused"),
         Index("idx_trackers_user_active", "user_id", "active"),
         Index("idx_trackers_user_active_partial", "user_id", "active", postgresql_where=text("active = true")),
@@ -246,7 +243,6 @@ class TrackerEvent(Base, UserIDMixin):
         Integer,
         ForeignKey("trackers.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     ad_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     query: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -335,6 +331,7 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
@@ -343,6 +340,7 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     # Relationships
     user = relationship("User", back_populates="lead_items")
     expenses = relationship("DealExpense", back_populates="lead", cascade="all, delete-orphan")
+    reminders = relationship("LeadReminder", back_populates="lead", cascade="all, delete-orphan")
     price_snapshots = relationship(
         "LeadItemPriceSnapshot",
         back_populates="lead_item",
@@ -407,13 +405,11 @@ class DealExpense(Base):
         Integer,
         ForeignKey("lead_items.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     user_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     expense_type: Mapped[str] = mapped_column(String(32), nullable=False)
     amount_byn: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
@@ -434,6 +430,10 @@ class DealExpense(Base):
     user = relationship("User")
 
     __table_args__ = (
+        CheckConstraint(
+            "expense_type IN ('delivery', 'repair', 'customs', 'packaging', 'transport', 'other')",
+            name="chk_deal_expenses_expense_type",
+        ),
         Index("idx_deal_expenses_lead", "lead_id"),
         Index("idx_deal_expenses_user", "user_id"),
     )
@@ -476,7 +476,7 @@ class LeadReminder(Base):
     )
 
     # Relationships
-    lead = relationship("LeadItem", backref="reminders")
+    lead = relationship("LeadItem", back_populates="reminders")
     user = relationship("User", back_populates="reminders")
 
     __table_args__ = (
@@ -494,7 +494,6 @@ class UserConsent(Base):
         BigInteger,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     consent_type: Mapped[str] = mapped_column(
         String(32),
@@ -521,6 +520,11 @@ class UserConsent(Base):
     __table_args__ = (
         Index("idx_user_consents_user", "user_id"),
         Index("idx_user_consents_type", "consent_type"),
+        Index(
+            "idx_user_consents_user_type_active",
+            "user_id", "consent_type", "granted_at",
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
     )
 
 
@@ -534,7 +538,6 @@ class AIAuditLog(Base):
         BigInteger,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     endpoint: Mapped[str] = mapped_column(String(64), nullable=False)
     ad_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -599,6 +602,7 @@ class SavedSearch(Base, UserIDMixin, TimestampMixin):
     user = relationship("User", back_populates="saved_searches")
 
     __table_args__ = (
+        UniqueConstraint("user_id", "query", "strict_mode", name="uq_saved_searches_user_query"),
         Index("idx_saved_searches_user", "user_id"),
         Index("idx_saved_searches_active", "active"),
     )
@@ -614,7 +618,6 @@ class Contact(Base):
         BigInteger,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     phone: Mapped[str] = mapped_column(String(32), nullable=False)
     seller_name: Mapped[str | None] = mapped_column(String(128), nullable=True)

@@ -229,8 +229,12 @@ async def price_advice(
     except TimeoutError:
         raise HTTPException(status_code=504, detail="AI перегружен, попробуйте позже") from None
 
+    _VALID_ADVICE_VALUES = {"buy_now", "wait", "neutral"}
+    raw_advice = str(result.get("advice") or "neutral")[:20]
+    advice = raw_advice if raw_advice in _VALID_ADVICE_VALUES else "neutral"
+
     response = AIPriceAdviceResponse(
-        advice=str(result.get("advice") or "neutral")[:20],
+        advice=advice,
         reasoning=str(result.get("reasoning") or "")[:500],
         price_trend=str(result.get("price_trend") or "")[:20],
         historical_context=str(result.get("historical_context") or "")[:400],

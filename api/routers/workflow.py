@@ -47,8 +47,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["workflow"])
 
-# Status used internally for watchlist items (merged-in from old watchlist_items).
 WATCHING_STATUS = "watching"
+
+_REFRESH_SEMAPHORE = asyncio.Semaphore(3)
+
+
+async def _limited_query(coro):
+    async with _REFRESH_SEMAPHORE:
+        return await coro
 
 
 def _serialize_watchlist(
@@ -248,6 +254,9 @@ async def update_lead(
             if payload.sold_price_byn is not None and lead.status != "sold":
                 lead.status = "sold"
                 lead.sold_at = datetime.now(UTC)
+            elif payload.sold_price_byn is None and lead.status == "sold":
+                lead.status = "active"
+                lead.sold_at = None
         await session.commit()
         await session.refresh(lead)  # Refresh to get server-generated updated_at
         return LeadRead.model_validate(lead)
@@ -586,7 +595,7 @@ async def refresh_watchlist(
         # Batch Kufar queries in parallel instead of sequential N+1
         unique_queries = list(grouped.keys())
         datasets = await asyncio.gather(
-            *[
+            *[_limited_query(
                 load_query_dataset(
                     query=q,
                     currency="BYN",
@@ -594,8 +603,7 @@ async def refresh_watchlist(
                     settings=settings,
                     client=kufar_client,
                 )
-                for q in unique_queries
-            ],
+            ) for q in unique_queries],
             return_exceptions=True,
         )
 
@@ -711,7 +719,7 @@ async def refresh_leads(
         # Batch Kufar queries in parallel instead of sequential N+1
         unique_queries = list(grouped.keys())
         datasets = await asyncio.gather(
-            *[
+            *[_limited_query(
                 load_query_dataset(
                     query=q,
                     currency="BYN",
@@ -719,8 +727,7 @@ async def refresh_leads(
                     settings=settings,
                     client=kufar_client,
                 )
-                for q in unique_queries
-            ],
+            ) for q in unique_queries],
             return_exceptions=True,
         )
 
