@@ -82,8 +82,7 @@ def upgrade() -> None:
     op.alter_column('users', 'id',
                existing_type=sa.INTEGER(),
                type_=sa.BigInteger(),
-               existing_nullable=False,
-               autoincrement=True)
+               existing_nullable=False)
     # ### end Alembic commands ###
 
 
@@ -92,8 +91,7 @@ def downgrade() -> None:
     op.alter_column('users', 'id',
                existing_type=sa.BigInteger(),
                type_=sa.INTEGER(),
-               existing_nullable=False,
-               autoincrement=True)
+               existing_nullable=False)
     op.drop_index(op.f('ix_user_consents_user_id'), table_name='user_consents')
     op.drop_index(op.f('ix_trackers_user_id'), table_name='trackers')
     op.drop_index('idx_trackers_user_active_partial', table_name='trackers', postgresql_where=sa.text('active = true'))
