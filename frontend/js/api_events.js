@@ -7,6 +7,10 @@
  * functions passed through context.
  */
 
+function _haptic(type = "light") {
+    try { _tgHaptic()?.impactOccurred?.(type); } catch (_) {}
+}
+
 function createApiEvents(context) {
     const {
         state,
@@ -98,7 +102,7 @@ function createApiEvents(context) {
                 if (state.search.query.length >= 2) {
                     void search("overview");
 
-                    try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
+                    _haptic("light");
                 }
             }, 1200); // 1.2s debounce — gives users time to finish typing
         });
@@ -109,7 +113,7 @@ function createApiEvents(context) {
                 clearTimeout(_searchDebounce.timer);
                 void search("overview");
 
-                try { _tgHaptic()?.impactOccurred?.("medium"); } catch (_) {}
+                _haptic("medium");
             }
         });
 
@@ -117,7 +121,7 @@ function createApiEvents(context) {
             clearTimeout(_searchDebounce.timer);
             void search("overview");
 
-            try { _tgHaptic()?.impactOccurred?.("medium"); } catch (_) {}
+            _haptic("medium");
         });
 
         // ── Error bar retry ────────────────────────────────────────────
@@ -145,7 +149,7 @@ function createApiEvents(context) {
                 if (elements.recentList) domClear(elements.recentList);
 
                 // 4. Optional haptic feedback
-                try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
+                _haptic("light");
 
                 return;
             }
@@ -206,7 +210,7 @@ function createApiEvents(context) {
             state.search.query = merged;
             renderLoading();
             clearTimeout(_searchDebounce.timer);
-            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
+            _haptic("light");
             void search("overview");
         });
     }
@@ -277,7 +281,7 @@ function createApiEvents(context) {
                 state.leads.itemsFilter = filter;
                 renderLeads();
 
-                try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
+                _haptic("light");
             });
         }
 
@@ -368,7 +372,7 @@ function createApiEvents(context) {
                 }, 150);
             }
 
-            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
+            _haptic("light");
         });
 
         // Close filter dropdown when clicking outside
@@ -412,7 +416,7 @@ function createApiEvents(context) {
             state.filters.pendingCategory = newCategory;
             renderAll();
 
-            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
+            _haptic("light");
         });
 
         // ── Filter dropdown: condition chips (event delegation) ───────
@@ -425,7 +429,7 @@ function createApiEvents(context) {
             state.filters.pendingCondition = button.dataset.condition;
             renderAll();
 
-            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
+            _haptic("light");
         });
 
         // ── Filter dropdown: seller chips (event delegation) ──────────
@@ -438,7 +442,7 @@ function createApiEvents(context) {
             state.filters.pendingSellerType = button.dataset.seller;
             renderAll();
 
-            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
+            _haptic("light");
         });
 
         // ── Filter dropdown: price range inputs ──────────────────────
@@ -491,7 +495,7 @@ function createApiEvents(context) {
                 void search(state.ui.activeView, { keepFilters: true });
             }
 
-            try { _tgHaptic()?.impactOccurred?.("medium"); } catch (_) {}
+            _haptic("medium");
         });
 
         // ── Filter dropdown: Cancel button ────────────────────────────
@@ -506,7 +510,7 @@ function createApiEvents(context) {
             state.filters.filterDropdownOpen = false;
             renderAll();
 
-            try { _tgHaptic()?.impactOccurred?.("light"); } catch (_) {}
+            _haptic("light");
         });
     }
 

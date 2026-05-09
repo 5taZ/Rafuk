@@ -9571,3 +9571,28 @@ select:focus-visible,
     outline-offset: 2px;
 }
 
+/* ===== Offline Indicator ===== */
+.offline-badge {
+    position: fixed;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--tg-theme-destructive-text-color, #e53935);
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+}
+.offline-badge[hidden] {
+    display: block;
+    opacity: 0;
+}
+.offline-badge:not([hidden]) {
+    opacity: 1;
+}
+

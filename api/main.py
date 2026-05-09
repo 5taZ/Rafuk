@@ -151,6 +151,7 @@ def create_app() -> FastAPI:
     async def add_security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
+        # X-Frame-Options: DENY for API responses (frontend uses SAMEORIGIN via nginx)
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"

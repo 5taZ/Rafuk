@@ -117,6 +117,7 @@ services:
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
+    # Note: port 6380 exposed for local debugging. Remove in production.
     ports:
       - "6380:6379"
     networks:

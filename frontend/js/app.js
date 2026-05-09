@@ -113,24 +113,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Offline / online detection
-    function showOfflineBanner() {
-        let banner = document.getElementById("offline-banner");
-        if (!banner) {
-            banner = document.createElement("div");
-            banner.id = "offline-banner";
-            banner.setAttribute("role", "alert");
-            banner.textContent = "Нет подключения к интернету";
-            document.body.appendChild(banner);
-        }
+    const _offlineBadge = document.getElementById("offline-badge");
+    if (_offlineBadge) {
+        window.addEventListener("online", () => _offlineBadge.hidden = true);
+        window.addEventListener("offline", () => _offlineBadge.hidden = false);
+        if (!navigator.onLine) _offlineBadge.hidden = false;
     }
-    function hideOfflineBanner() {
-        const banner = document.getElementById("offline-banner");
-        if (banner) banner.remove();
-    }
-
-    if (!navigator.onLine) showOfflineBanner();
-    window.addEventListener("offline", showOfflineBanner);
-    window.addEventListener("online", hideOfflineBanner);
 
     // Register the service worker so the shell + read-only API
     // responses survive flaky networks. Skipped on insecure origins

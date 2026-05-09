@@ -140,6 +140,9 @@ class Tracker(
     __tablename__ = "trackers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # NOTE: onupdate only fires on ORM-level attribute changes.
+    # Bulk updates via session.execute(update(...)) will NOT trigger this.
+    # For bulk updates, set updated_at=datetime.now(UTC) explicitly.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -336,6 +339,9 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # NOTE: onupdate only fires on ORM-level attribute changes.
+    # Bulk updates via session.execute(update(...)) will NOT trigger this.
+    # For bulk updates, set updated_at=datetime.now(UTC) explicitly.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
