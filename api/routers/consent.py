@@ -5,7 +5,6 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
-
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request

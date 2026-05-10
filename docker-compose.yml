@@ -5,6 +5,40 @@ services:
   # `restart: unless-stopped` ensures crashed services come back without
   # auto-restarting after an explicit `docker compose down`.
 
+  # INF-M3: one-shot migration runner. Previously the api service started
+  # uvicorn directly and the first request would fail (or worse, succeed
+  # against a half-migrated schema) until somebody manually ran
+  # `alembic upgrade head` against the live DB. Wiring migrations into a
+  # dedicated service that completes before api/bot/scheduler boot makes
+  # the dependency chain explicit:
+  #     migrate (one-shot)  →  api (long-running)
+  #                          →  bot, scheduler (depend on api healthy)
+  # `restart: "no"` keeps it from looping after a successful run.
+  migrate:
+    build: .
+    restart: "no"
+    command: ["uv", "run", "alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
+      BOT_TOKEN: ${BOT_TOKEN}
+      REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
+      API_BASE_URL: ${API_BASE_URL}
+      MINI_APP_URL: ${MINI_APP_URL}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - kufar-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   api:
     build: .
     restart: unless-stopped
@@ -21,6 +55,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      # INF-M3: hard requirement — api must not start until alembic
+      # has finished. ``service_completed_successfully`` waits for
+      # the migrate container to exit 0; a failed migration blocks
+      # the whole stack rather than letting api come up half-broken.
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8010:8000"
     extra_hosts:

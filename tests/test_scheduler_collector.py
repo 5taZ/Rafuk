@@ -4,13 +4,13 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_engine, get_session_factory
-from api.models import Base, QueryListingState, Tracker, TrackerEvent, User
+from api.models import Base, QueryListingState, Tracker, TrackerEvent
 from api.services.history_service import QuerySyncResult, TrendReversal
 from scheduler.collector import (
     _build_new_listing_message,
@@ -22,9 +22,9 @@ from scheduler.collector import (
     _recent_events_by_tracker,
     _recent_trend_event_tracker_ids,
     cleanup_ai_audit_log,
+    cleanup_inactive_listing_states,
     cleanup_old_events,
     cleanup_old_snapshots,
-    cleanup_inactive_listing_states,
     cleanup_stale_missing_watchlist,
     notify_user,
     persist_tracker_events,
@@ -288,7 +288,6 @@ def test_build_threshold_message_empty_returns_none():
 
 
 def test_build_threshold_message_price_alerts():
-    from api.services.history_service import QueryListingState
 
     tracker = MagicMock()
     tracker.query = "iphone 15"

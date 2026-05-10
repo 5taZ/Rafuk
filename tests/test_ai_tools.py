@@ -39,8 +39,7 @@ async def _noop_async(*a, **kw) -> None:
 def test_negotiate_endpoint_returns_response(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
-    from api.routers import ai_analysis
-    from api.routers import ai_tools
+    from api.routers import ai_analysis, ai_tools
 
     fake_ai = FakeAIChatService()
 
@@ -75,8 +74,7 @@ def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
     import api.services.query_pipeline as _qp_mod
     from api.dependencies import get_kufar_client, get_telegram_user
     from api.main import create_app
-    from api.routers import ai_analysis
-    from api.routers import ai_tools
+    from api.routers import ai_analysis, ai_tools
 
     fake_ai = FakeAIChatService()
 

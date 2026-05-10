@@ -42,9 +42,9 @@ from api.schemas import AIAnalysisRequest
 #                                       _coerce_string_list, _log_ai_audit
 #   api/routers/ai_tools             → same set as ai_listing_assistant
 from api.services.ai_analysis_pipeline import (  # noqa: F401 — re-exports
-    DISCLAIMER,
-    _AI_ANALYSIS_ERRORS,
     _AC,
+    _AI_ANALYSIS_ERRORS,
+    DISCLAIMER,
     _AnalysisComplete,
     _build_fallback_response,
     _build_resale_potential,
@@ -56,10 +56,10 @@ from api.services.ai_analysis_pipeline import (  # noqa: F401 — re-exports
 from api.services.ai_audit import _log_ai_audit  # noqa: F401 — re-export
 from api.services.ai_export import (  # noqa: F401 — re-export
     AIExportReportRequest,
+    _sanitize_export_html,
     create_export_report,
     export_router,
     get_export_report,
-    _sanitize_export_html,
 )
 from api.services.ai_guards import (  # noqa: F401 — re-exports
     _check_ai_available,
@@ -68,6 +68,7 @@ from api.services.ai_guards import (  # noqa: F401 — re-exports
     _coerce_string_list,
 )
 from api.services.ai_privacy import clear_user_ai_data  # noqa: F401 — re-export
+
 # ``get_ai_service`` is re-exported here so ai_guards' late-bound
 # lookup (and several monkeypatch sites in tests) can stay anchored
 # at api.routers.ai_analysis.get_ai_service. Treat this as a public

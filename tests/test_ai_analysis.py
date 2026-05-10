@@ -353,8 +353,8 @@ def test_stage_extract_classifies_three_price_states_correctly() -> None:
     cases (negotiable / free / fixed) correctly. The previous bug used
     `or 0.0` which conflated free with negotiable.
     """
-    from api.services.ai_analysis_pipeline import _AC, _stage_extract
     from api.services.aggregator import PriceStats
+    from api.services.ai_analysis_pipeline import _AC, _stage_extract
 
     def _make_ctx(ad: dict) -> "_AC":
         c = _AC()
@@ -961,7 +961,7 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
-    from api.services import ai_analysis_pipeline, ai_service
+    from api.services import ai_analysis_pipeline
 
     captured: dict = {}
 
@@ -1122,7 +1122,7 @@ def test_listing_assistant_passes_photos_to_ai_and_drops_invalid_ones(monkeypatc
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
-    from api.services import ai_analysis_pipeline, ai_service
+    from api.services import ai_analysis_pipeline
 
     async def fake_load_query_dataset(**kwargs):
         del kwargs
@@ -1193,7 +1193,7 @@ def test_listing_assistant_handles_empty_market_gracefully(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
-    from api.services import ai_analysis_pipeline, ai_service
+    from api.services import ai_analysis_pipeline
 
     async def fake_load_query_dataset(**kwargs):
         del kwargs
@@ -1421,7 +1421,7 @@ def test_listing_assistant_caches_identical_inputs(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
-    from api.services import ai_analysis_pipeline, ai_service
+    from api.services import ai_analysis_pipeline
     from api.services.cache import MemoryCache
 
     async def fake_load_query_dataset(**kwargs):
@@ -1493,7 +1493,7 @@ def test_listing_assistant_strips_prompt_injection_from_notes(monkeypatch) -> No
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
-    from api.services import ai_analysis_pipeline, ai_service
+    from api.services import ai_analysis_pipeline
 
     async def fake_load_query_dataset(**kwargs):
         del kwargs
@@ -1802,7 +1802,7 @@ def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
-    from api.services import ai_analysis_pipeline, ai_service
+    from api.services import ai_analysis_pipeline
     from api.services.cache import MemoryCache
 
     async def fake_load_query_dataset(**kwargs):
@@ -1876,7 +1876,7 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
-    from api.services import ai_analysis_pipeline, ai_service
+    from api.services import ai_analysis_pipeline
     from api.services.cache import MemoryCache
 
     async def fake_load_query_dataset(**kwargs):

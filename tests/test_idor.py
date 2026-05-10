@@ -319,7 +319,6 @@ def test_user_b_cannot_see_user_a_tracker_events() -> None:
 
     from api.database import get_engine, get_session_factory
     from api.models import Base, Tracker, TrackerEvent
-    from conftest import make_user
 
     app_a = _make_app_with_user(USER_A)
     engine = get_engine()

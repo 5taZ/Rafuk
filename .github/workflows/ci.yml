@@ -8,6 +8,11 @@ on:
 
 jobs:
   lint:
+    # INF-M4: lint and test now run in parallel — neither has a `needs:`
+    # on the other. Previously a transient ruff failure (e.g. a stale
+    # cache hit) blocked the test job from even starting, hiding test
+    # regressions until the lint was fixed and the whole pipeline was
+    # re-run.
     name: Lint & Type Check
     runs-on: ubuntu-latest
     steps:
@@ -29,13 +34,55 @@ jobs:
       - name: Run ruff linter
         run: uv run ruff check .
 
-      - name: Run ruff formatter check
-        run: uv run ruff format --check .
+      # NOTE: `ruff format --check` is intentionally NOT run. The
+      # project uses a compact, dense style (single-line trailing-
+      # comma arg lists) that the ruff formatter would explode into
+      # multi-line form across ~77 files. The user's coding rule
+      # is "compact, dense, idiomatic" — see AGENTS.md → Conventions.
+      # Use ``ruff check`` for real correctness issues instead.
+
+  security:
+    # INF-M1: dependency vulnerability scan. pip-audit hits the PyPI
+    # advisory DB and exits non-zero on any known CVE in the resolved
+    # graph. Runs in parallel with lint+test so PRs see issues from
+    # all three checks at once instead of serially.
+    #
+    # `--ignore-vuln GHSA-*` is the supported way to whitelist a CVE
+    # we've evaluated and accepted; keep the list short and add a
+    # comment whenever you extend it.
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Export resolved requirements
+        # pip-audit needs a flat package list; uv's editable install of
+        # the local kufar-analytics project would otherwise trip the
+        # auditor (PyPI doesn't know about us). Exporting from uv.lock
+        # also pins exactly the versions that ship in the production
+        # image — no drift between audit target and runtime.
+        run: uv export --no-dev --no-emit-project --no-hashes --format requirements-txt -o requirements.lock.txt
+
+      - name: Run pip-audit
+        # `--strict` turns warnings into errors. `--no-deps` skips the
+        # transitive resolution step (we already have the full graph
+        # frozen in requirements.lock.txt) which keeps the audit job
+        # under a minute.
+        run: uv tool run --from pip-audit pip-audit --strict -r requirements.lock.txt --no-deps
 
   test:
     name: Tests
     runs-on: ubuntu-latest
-    needs: lint
     services:
       postgres:
         image: postgres:16-alpine
@@ -95,7 +142,9 @@ jobs:
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest
-    needs: test
+    # docker-build still gates on the trio — green lint + green tests +
+    # clean security audit before we burn CI minutes building images.
+    needs: [lint, test, security]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4

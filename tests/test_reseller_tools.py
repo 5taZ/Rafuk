@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from api.services.aggregator import PriceStats
 from api.services.reseller_tools import (
     SCORING,

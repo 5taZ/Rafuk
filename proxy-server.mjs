@@ -1,10 +1,16 @@
 import http from 'http';
 import { createReadStream, existsSync, statSync } from 'fs';
-import { join, extname } from 'path';
+import { join, extname, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
-const FRONTEND_DIR = '/home/staz/Downloads/myProjetctKufar/frontend';
-const API_PORT = 8010;
-const PORT = 8081;
+// INF-M2: previously hardcoded as `/home/staz/Downloads/myProjetctKufar/frontend`
+// which only worked on a single developer's machine. Resolve relative to
+// this file so the dev proxy works from any clone or CI checkout. Override
+// via FRONTEND_DIR env var when running outside the repo layout.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FRONTEND_DIR = process.env.FRONTEND_DIR || join(__dirname, 'frontend');
+const API_PORT = Number(process.env.API_PORT) || 8010;
+const PORT = Number(process.env.PORT) || 8081;
 
 const MIME = {
   '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
