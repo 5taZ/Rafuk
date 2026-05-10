@@ -1043,12 +1043,29 @@ function attachLongPress(target, getItems, options) {
         if (items.length) showLongPressMenu(items);
     });
 
+    // FE-H5/UX-H2: Keyboard support for elements wearing role="button".
+    //  * ContextMenu / Shift+F10 → open the action sheet (matches
+    //    right-click), so keyboard users can reach the actions that
+    //    were previously only exposed via long-press.
+    //  * Enter / Space → same (WAI-ARIA 1.2 "button" pattern requires
+    //    these to activate the element). Without this the listing
+    //    cards we mark with role=button were a dead-end for screen
+    //    readers: focus-visible showed but pressing Enter did nothing.
+    // Guards: we only react when the target is the card itself, so
+    // typing in the inline <input> or hitting Space on a nested
+    // <button> stays untouched.
     target.addEventListener("keydown", (e) => {
-        if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
-            e.preventDefault();
-            const items = getItems() || [];
-            if (items.length) showLongPressMenu(items);
-        }
+        const isActionKey =
+            e.key === "ContextMenu" ||
+            (e.shiftKey && e.key === "F10") ||
+            e.key === "Enter" ||
+            e.key === " ";
+        if (!isActionKey) return;
+        if (e.target !== target) return;
+        // Space scrolls the page by default; stop both just for cards.
+        e.preventDefault();
+        const items = getItems() || [];
+        if (items.length) showLongPressMenu(items);
     });
 
     // The synthesised mousedown→mouseup→click sequence still fires

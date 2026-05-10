@@ -15,6 +15,7 @@ from api.config import get_settings
 from api.database import get_engine, get_session_factory
 from api.dependencies import ensure_user_exists
 from api.limiter import limiter
+from api.logging_config import configure_logging, request_id_ctxvar
 from api.routers import (
     ai_analysis,
     ai_listing_assistant,
@@ -152,6 +153,10 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    # INF-H9: configure structured logging once per process, as
+    # early as possible so any import-time warnings we log land in
+    # the right formatter.
+    configure_logging(service="api")
     app = FastAPI(title="Rafuk API", lifespan=lifespan)
 
     # Add CORS middleware
@@ -183,7 +188,16 @@ def create_app() -> FastAPI:
         allow_origins=origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["X-Telegram-Init-Data", "Content-Type", "Accept"],
+        allow_headers=[
+            "X-Telegram-Init-Data",
+            "Content-Type",
+            "Accept",
+            # FE-H7: X-Requested-With is a custom header → triggers a
+            # preflight. Whitelisting it means legitimate browsers
+            # pass the CORS check while forged cross-origin requests
+            # still fail at the Origin guard below.
+            "X-Requested-With",
+        ],
     )
 
     # Global exception handler — ensures JSON responses for ALL errors
@@ -201,6 +215,33 @@ def create_app() -> FastAPI:
             status_code=500,
             content={"detail": "Внутренняя ошибка сервера. Попробуйте позже."},
         )
+
+    # INF-H9: request-ID middleware. Generate (or accept) a short ID
+    # for each request and stash it on a contextvar so every
+    # subsequent log line — in this middleware, inside dependencies,
+    # or deep in a service layer — automatically carries the same
+    # ``request_id`` field. The ID is also echoed back in the
+    # ``X-Request-ID`` response header so clients can correlate a
+    # bug report with server logs.
+    import secrets as _secrets
+
+    @app.middleware("http")
+    async def add_request_id(request: Request, call_next):
+        incoming = request.headers.get("x-request-id")
+        # Only honour IDs that look safe (hex/base36, up to 64 chars).
+        # Otherwise we'd let a client poison the logs with arbitrary
+        # text including newlines.
+        if incoming and len(incoming) <= 64 and incoming.replace("-", "").isalnum():
+            req_id = incoming
+        else:
+            req_id = _secrets.token_hex(8)
+        token = request_id_ctxvar.set(req_id)
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_ctxvar.reset(token)
+        response.headers["X-Request-ID"] = req_id
+        return response
 
     # Security headers middleware
     @app.middleware("http")
@@ -250,7 +291,7 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def csrf_origin_check(request: Request, call_next):
-        if request.method in ("POST", "PATCH", "DELETE"):
+        if request.method in ("POST", "PATCH", "DELETE", "PUT"):
             origin = request.headers.get("origin")
             if not origin:
                 return JSONResponse(
@@ -261,6 +302,19 @@ def create_app() -> FastAPI:
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "CSRF: origin not allowed"},
+                )
+            # FE-H7 (defence in depth): also require the browser-only
+            # header X-Requested-With. HTML forms and image/link tags
+            # cannot set custom headers, so this means any CSRF payload
+            # has to pass a CORS preflight as well. The mini-app sets
+            # this header in api_core.js for every mutating request;
+            # the Telegram bot goes through its own HTTP client and
+            # never hits this middleware from a browser context.
+            requested_with = request.headers.get("x-requested-with", "").lower()
+            if requested_with != "xmlhttprequest":
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "CSRF: X-Requested-With required"},
                 )
         return await call_next(request)
 

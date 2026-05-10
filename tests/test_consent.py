@@ -28,7 +28,14 @@ async def client(_override_auth):
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"origin": "http://localhost:8081"},
+        # FE-H7: CSRF middleware now requires Origin AND the browser-
+        # only X-Requested-With header on state-changing methods.
+        # AsyncClient doesn't go through our TestClient shim, so we
+        # set both explicitly here.
+        headers={
+            "origin": "http://localhost:8081",
+            "x-requested-with": "XMLHttpRequest",
+        },
     ) as c:
         yield c
 

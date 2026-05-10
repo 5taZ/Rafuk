@@ -4,6 +4,12 @@ function analyticsApp() {
     const renderers = createAppRenderers({ ...core, actions });
     Object.assign(actions, createAppActions({ ...core, ...renderers }));
 
+    // FE-H8: module-scoped handle for the pull-to-refresh uninstall
+    // function returned by setupPullToRefresh(). Declared up-front so
+    // init() can both re-arm it (idempotency) and pagehide can tear
+    // it down without races.
+    let _ptrUninstall = null;
+
     /**
      * Pick the right "refresh this view" function based on the active
      * tab. Returns null for views where pull-to-refresh is meaningless
@@ -68,13 +74,36 @@ function analyticsApp() {
 
         // Pull-to-refresh — page-scoped, picks the right loader by view.
         // Skipped under prefers-reduced-motion (the helper short-circuits).
+        //
+        // FE-H8: setupPullToRefresh attaches four document-level touch
+        // listeners. The returned uninstall() detaches them. When the
+        // mini-app tab is closed (pagehide) or the bfcache restore
+        // happens, we run uninstall so the listeners aren't duplicated
+        // on next init() — this previously grew unbounded when init
+        // was triggered multiple times in dev (HMR, Telegram WebView
+        // re-mounts).
         if (typeof setupPullToRefresh === "function") {
-            setupPullToRefresh({
+            if (typeof _ptrUninstall === "function") {
+                try { _ptrUninstall(); } catch (_) { /* already gone */ }
+                _ptrUninstall = null;
+            }
+            _ptrUninstall = setupPullToRefresh({
                 getRefreshHandler: getRefreshForActiveView,
                 indicatorEl: document.getElementById("ptr-indicator"),
             });
         }
     }
+
+    // Detach listeners when the page is unloaded or put into bfcache;
+    // the browser normally GCs them, but iOS Safari keeps touch
+    // listeners alive across bfcache restores which leads to double
+    // firings when we come back.
+    window.addEventListener("pagehide", () => {
+        if (typeof _ptrUninstall === "function") {
+            try { _ptrUninstall(); } catch (_) { /* noop */ }
+            _ptrUninstall = null;
+        }
+    });
 
     function search(...args) {
         return actions.search(...args);

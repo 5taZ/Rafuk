@@ -707,7 +707,12 @@ body {
 }
 
 .search-btn:disabled {
-    opacity: 0.45;
+    /* UX-H3: see matching rule in tokens.css — disabled at 0.45
+       opacity failed WCAG AA (~3.8:1) for white text on the blue
+       accent. 0.6 gets us back to ~5:1 while still reading as
+       visibly disabled. Keeping both rules in sync until we delete
+       the duplicate in a future refactor. */
+    opacity: 0.6;
     cursor: default;
 }
 

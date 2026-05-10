@@ -229,8 +229,13 @@ function createApiTrackers(context) {
                 state.misc.modalCleanup();
                 state.misc.modalCleanup = null;
             }
+            // FE-H4/UX-H1: openModalAnimated() already installs a
+            // focus trap (see dom_helpers.js). The extra trapFocus()
+            // call we used to make here registered a second keydown
+            // listener that both handled Tab, leading to focus fights
+            // and a leaked listener once closeModalAnimated cleaned up
+            // only _focusTrapCleanup.
             openModalAnimated(elements.editTrackerModal);
-            state.misc.modalCleanup = trapFocus(elements.editTrackerModal);
         }
     }
 

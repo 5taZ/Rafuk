@@ -76,12 +76,16 @@ services:
         reservations:
           memory: 96M
           cpus: "0.1"
+    # INF-H6: real HTTP liveness/readiness instead of "pgrep python".
+    # The bot starts an aiohttp server on BOT_HEALTH_PORT (8001 by
+    # default) that returns 200 when the event loop is turning and
+    # a DB "SELECT 1" succeeds.
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "python"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health/ready',timeout=3).status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     logging:
       driver: json-file
       options:
@@ -117,12 +121,15 @@ services:
         reservations:
           memory: 96M
           cpus: "0.1"
+    # INF-H6: same HTTP healthcheck story as the bot service —
+    # SCHEDULER_HEALTH_PORT defaults to 8002 and is served by the
+    # background aiohttp app registered in scheduler.collector.main().
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "python"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/health/ready',timeout=3).status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     logging:
       driver: json-file
       options:

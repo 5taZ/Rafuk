@@ -307,8 +307,13 @@ function createRenderModals(context) {
                 state.misc.modalCleanup();
                 state.misc.modalCleanup = null;
             }
+            // FE-H4/UX-H1: openModalAnimated() already installs a
+            // focus trap and stores the cleanup on the modal element
+            // (_focusTrapCleanup), which closeModalAnimated() will run
+            // on exit. Adding a second trap here caused two keydown
+            // listeners to fight over Tab, and the outer cleanup never
+            // ran because closeExpensesModal relies on closeModalAnimated.
             openModalAnimated(elements.expensesModal);
-            state.misc.modalCleanup = trapFocus(elements.expensesModal);
         }
         void actions.loadExpenses(leadId);
     }

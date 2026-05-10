@@ -505,6 +505,14 @@ function createAppActions(context) {
         pdCb.checked = false;
         acceptBtn.disabled = true;
         modal.hidden = false;
+        // FE-H4/UX-H1: install a focus trap when the modal opens so a
+        // keyboard user can't Tab out of the consent dialog and
+        // interact with the app underneath (which has its own shortcuts
+        // and scroll). trapFocus returns a cleanup that restores focus
+        // to whatever had it before the modal; we call it from
+        // cleanup() on every exit path.
+        let focusCleanup = null;
+        if (typeof trapFocus === "function") focusCleanup = trapFocus(modal);
 
         function updateAcceptBtn() {
             acceptBtn.disabled = !(aiCb.checked && crossCb.checked && pdCb.checked);
@@ -546,6 +554,7 @@ function createAppActions(context) {
             acceptBtn.removeEventListener("click", onAccept);
             cancelBtn.removeEventListener("click", onCancel);
             if (privacyLink) privacyLink.removeEventListener("click", onPrivacyLink);
+            if (typeof focusCleanup === "function") focusCleanup();
         }
 
         acceptBtn.addEventListener("click", onAccept);

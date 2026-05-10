@@ -207,6 +207,21 @@ function createRenderCardBuilders(context) {
         return n && n > 0 ? Math.round(n) : null;
     }
 
+    /**
+     * Human-readable status for a lead, used as the aria-label suffix
+     * on the outer <article>. Keeps the four values the backend emits
+     * in lead_items.status in sync with what screen readers announce.
+     */
+    function _leadStatusLabel(status) {
+        switch (status) {
+            case "new": return "ожидает подтверждения";
+            case "confirmed": return "подтверждено";
+            case "sold": return "продано";
+            case "cancelled": return "отменено";
+            default: return status || "без статуса";
+        }
+    }
+
     /** Build a shared "missing" banner with a mode-appropriate message. */
     function _buildMissingBanner(mode) {
         const text =
@@ -694,10 +709,24 @@ function createRenderCardBuilders(context) {
         const outerClass = isLead
             ? `lead-card status-${item.status}`
             : "watchlist-card";
+        // FE-H5/UX-H2: ARIA roles on the card itself.
+        //   * watching card: role="button" — Enter/Space opens the
+        //     detail sheet (primary action, handled below).
+        //   * lead card: no role=button because there are multiple
+        //     equivalent actions (confirm/cancel/close-deal/…) and no
+        //     single "primary" one. We still keep tabindex=0 so the
+        //     card is reachable for screen readers as a landmark that
+        //     contains the inline price inputs and action buttons.
+        //     aria-label summarises the lot and status for assistive
+        //     tech that lands on the article.
         const card = domEl("article", {
             className: outerClass,
             attrs: isLead
-                ? { "data-lead-id": item.id, tabindex: "0", role: "button" }
+                ? {
+                    "data-lead-id": item.id,
+                    tabindex: "0",
+                    "aria-label": `${item.title || "лот"} — ${_leadStatusLabel(item.status)}`,
+                }
                 : { "data-watchlist-id": item.id, tabindex: "0", role: "button" },
         });
         card.style.overflow = "hidden";
@@ -789,14 +818,21 @@ function createRenderCardBuilders(context) {
         _wireCardHandlers(card, item, mode, signal);
         _attachSwipeReveal(card, item, mode);
 
-        card.addEventListener("keydown", (event) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            if (event.target !== card) return;
-            event.preventDefault();
-            if (mode === "watching") {
+        // FE-H5/UX-H2: keyboard activation for watching cards. Only
+        // the outer <article> has role=button in that mode; lead cards
+        // are a focusable group (see role assignment above) and rely
+        // on the nested native <button>s for activation, so we skip
+        // the handler for them to avoid phantom "Enter does nothing"
+        // feedback. Guard on event.target===card so pressing Space in
+        // the inline "Заметка" input still types a space.
+        if (mode === "watching") {
+            card.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                if (event.target !== card) return;
+                event.preventDefault();
                 void actions.openWatchlistDetail(item);
-            }
-        });
+            }, { signal });
+        }
 
         return card;
     }

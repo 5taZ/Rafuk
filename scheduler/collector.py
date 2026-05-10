@@ -64,12 +64,13 @@ _CYCLE_TIMEOUT_SECONDS = 600
 # Maximum events per tracker per check cycle (new listings + price drops).
 _MAX_EVENTS_PER_TYPE = 10
 
-# Configure logging for the scheduler process (after imports, before usage)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+# INF-H9: structured JSON logging (or LOG_FORMAT=text for local dev).
+# Switched from the previous bare basicConfig() so scheduler emits the
+# same line shape as API and bot, with a stable "service":"scheduler"
+# field for log aggregators to filter on.
+from api.logging_config import configure_logging as _configure_logging  # noqa: E402
+
+_configure_logging(service="scheduler")
 
 logger = logging.getLogger(__name__)
 
@@ -1231,6 +1232,10 @@ async def check_db_health(engine) -> bool:
 
 
 async def main() -> None:
+    import os
+
+    from api.healthcheck import start_health_server, stop_health_server
+
     settings = get_settings()
     engine = get_engine()
     session_factory = get_session_factory(engine)
@@ -1243,6 +1248,22 @@ async def main() -> None:
         await engine.dispose()
         await bot.session.close()
         return
+
+    # INF-H6: HTTP health server so Docker can hit /health/ready
+    # directly. The closure captures `engine` by name so reconnects
+    # below (which reassign `engine`) automatically update the probe
+    # target without us re-registering handlers.
+    async def _scheduler_readiness() -> bool:
+        try:
+            return await check_db_health(engine)
+        except Exception as exc:
+            logger.warning("scheduler readiness probe failed: %s", exc)
+            return False
+
+    health_port = int(os.environ.get("SCHEDULER_HEALTH_PORT", "8002"))
+    health_runner = await start_health_server(
+        port=health_port, readiness=_scheduler_readiness
+    )
 
     scheduler.start()
     try:
@@ -1263,6 +1284,7 @@ async def main() -> None:
             await asyncio.sleep(300)
     finally:
         scheduler.shutdown(wait=False)
+        await stop_health_server(health_runner)
         await engine.dispose()
         await bot.session.close()
 

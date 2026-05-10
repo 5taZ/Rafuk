@@ -25,7 +25,12 @@
     --border-hover: rgba(255, 255, 255, 0.1);
     --text: #e8e8e8;
     --text-muted: #a0a0a0;
-    --text-dim: #8a8a8a;
+    /* UX-H3: --text-dim used to be #8a8a8a, which on --bg #0a0a0b sits
+       at ~4.8:1 — right at the WCAG AA floor and failing once the
+       browser anti-aliases thin glyphs. Bumping to #9e9e9e gives us
+       ~6.3:1 with room to spare, matching the tone of --text-muted
+       so body copy and secondary hints stay in the same family. */
+    --text-dim: #9e9e9e;
     --text-secondary: #a0a0a0;
     --accent: #3b82f6;
     --accent-soft: rgba(59, 130, 246, 0.08);
@@ -266,7 +271,12 @@ button:focus-visible,
     --border-hover: rgba(0, 0, 0, 0.1);
     --text: #1a1a1a;
     --text-muted: #5a5a5a;
-    --text-dim: #636363;
+    /* UX-H3: light-mode --text-dim was #636363 on --bg #f7f7f8, which
+       tests at ~5.4:1. It technically passes AA but fails AAA for
+       body text (7:1) and felt thin in screen readers' high-contrast
+       mode. Deepening to #4f4f4f gives ~8:1 — safely AAA for
+       dim/secondary labels, still visibly softer than --text. */
+    --text-dim: #4f4f4f;
     --text-secondary: #5a5a5a;
     --accent: #2563eb;
     --accent-soft: rgba(37, 99, 235, 0.06);
@@ -699,7 +709,10 @@ body {
 }
 
 .search-btn:disabled {
-    opacity: 0.45;
+    /* UX-H3: disabled opacity of 0.45 dropped the white text on
+       var(--accent) under the WCAG AA 4.5:1 floor (~3.8:1). 0.6 lands
+       at ~5:1 while still reading as visibly disabled. */
+    opacity: 0.6;
     cursor: default;
 }
 

@@ -37,10 +37,15 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         pass
 
 
-# ── CSRF fix: auto-add Origin header to TestClient ───────────────────────
-# The CSRF middleware requires an Origin header on POST/PATCH/DELETE.
-# In debug mode "http://localhost:8081" is an allowed origin.
-# We patch TestClient so every instance sends it by default.
+# ── CSRF fix: auto-add Origin + X-Requested-With to TestClient ───────────
+# The CSRF middleware requires:
+#   1. An Origin header on POST/PATCH/DELETE (debug mode allows
+#      "http://localhost:8081").
+#   2. (FE-H7) X-Requested-With: XMLHttpRequest — the browser-only
+#      header we now require as defence in depth. The mini-app sets
+#      it automatically in api_core.js; tests have to do the same so
+#      they don't trip the 403 guard.
+# Wrapping TestClient in one place keeps every test file clean.
 
 import fastapi.testclient as _ftc
 
@@ -51,6 +56,7 @@ class _CSRFTestClient(_OriginalTestClient):
     def __init__(self, app, **kwargs):
         headers = dict(kwargs.pop("headers", None) or {})
         headers.setdefault("origin", "http://localhost:8081")
+        headers.setdefault("x-requested-with", "XMLHttpRequest")
         super().__init__(app, headers=headers, **kwargs)
 
 

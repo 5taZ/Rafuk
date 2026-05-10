@@ -28,8 +28,19 @@ function createApiCore(context) {
 
     // ── Generic request wrapper ──────────────────────────────────────────
     async function requestJson(url, options = {}) {
+        const method = (options.method || "GET").toUpperCase();
+        // FE-H7: X-Requested-With header on every state-changing call.
+        // HTML forms and <img>/<link> tags can't set custom headers, so
+        // requiring "XMLHttpRequest" here means a CSRF attacker has to
+        // also beat the browser's CORS preflight — on top of the
+        // existing Origin check on the server. It costs nothing for
+        // legitimate traffic (we already send X-Telegram-Init-Data)
+        // and gives us one more layer of defence for the endpoints
+        // that mutate state.
+        const isStateChanging = method !== "GET" && method !== "HEAD";
         const headers = {
             ...telegramHeaders(),
+            ...(isStateChanging ? { "X-Requested-With": "XMLHttpRequest" } : {}),
             ...(options.headers || {}),
         };
 
