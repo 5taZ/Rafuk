@@ -1,6 +1,13 @@
 services:
+  # NOTE: resource limits are deliberately conservative — they're sized
+  # for a single-host dev deployment, not for production scale. Limits
+  # are enforced by docker compose v2 even outside swarm mode.
+  # `restart: unless-stopped` ensures crashed services come back without
+  # auto-restarting after an explicit `docker compose down`.
+
   api:
     build: .
+    restart: unless-stopped
     environment:
       SERVICE: api
       BOT_TOKEN: ${BOT_TOKEN}
@@ -20,6 +27,17 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - kufar-net
+    deploy:
+      resources:
+        limits:
+          # API holds the FastAPI app + httpx pools + AI cache layer.
+          # 1G is enough for ~4 uvicorn workers under typical load;
+          # raise if you bump the worker count.
+          memory: 1G
+          cpus: "1.5"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/ready"]
       interval: 30s
@@ -34,6 +52,7 @@ services:
 
   bot:
     build: .
+    restart: unless-stopped
     environment:
       SERVICE: bot
       BOT_TOKEN: ${BOT_TOKEN}
@@ -48,6 +67,15 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - kufar-net
+    deploy:
+      resources:
+        limits:
+          # Telegram bot is mostly httpx polling — light footprint.
+          memory: 384M
+          cpus: "0.5"
+        reservations:
+          memory: 96M
+          cpus: "0.1"
     healthcheck:
       test: ["CMD", "pgrep", "-f", "python"]
       interval: 30s
@@ -62,6 +90,7 @@ services:
 
   scheduler:
     build: .
+    restart: unless-stopped
     environment:
       SERVICE: scheduler
       BOT_TOKEN: ${BOT_TOKEN}
@@ -77,6 +106,17 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - kufar-net
+    deploy:
+      resources:
+        limits:
+          # Scheduler periodically fans out to Kufar; spikes during
+          # snapshot windows but mostly idle. Memory bumped to handle
+          # the snapshot batch (load all trackers + market stats).
+          memory: 512M
+          cpus: "0.75"
+        reservations:
+          memory: 96M
+          cpus: "0.1"
     healthcheck:
       test: ["CMD", "pgrep", "-f", "python"]
       interval: 30s
@@ -91,6 +131,7 @@ services:
 
   frontend:
     image: nginx:1.27-alpine
+    restart: unless-stopped
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./assets:/usr/share/nginx/assets:ro
@@ -101,6 +142,15 @@ services:
       - "8081:80"
     networks:
       - kufar-net
+    deploy:
+      resources:
+        limits:
+          # nginx serves static + a tiny CSP/headers layer; 64M is plenty.
+          memory: 96M
+          cpus: "0.25"
+        reservations:
+          memory: 16M
+          cpus: "0.05"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80"]
       interval: 30s
@@ -114,13 +164,14 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     volumes:
       - redis-data:/data
     # Redis requires AUTH. REDIS_PASSWORD must be set in .env (generate
     # with `openssl rand -hex 32`). Without --requirepass, anyone with
     # localhost access can read every cache entry, session token, and
     # rate-limit counter.
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --maxmemory 192mb --maxmemory-policy allkeys-lru"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     # Note: port 6380 exposed for local debugging. Remove in production.
@@ -128,6 +179,17 @@ services:
       - "6380:6379"
     networks:
       - kufar-net
+    deploy:
+      resources:
+        limits:
+          # Redis maxmemory inside the server is set to 192M (LRU on
+          # eviction); container-level cap is 256M to absorb fork-and-
+          # save overhead for AOF rewrites.
+          memory: 256M
+          cpus: "0.5"
+        reservations:
+          memory: 64M
+          cpus: "0.1"
     healthcheck:
       test: ["CMD", "sh", "-c", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
@@ -136,6 +198,7 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:2024.12.1
+    restart: unless-stopped
     command: tunnel run
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
@@ -145,6 +208,14 @@ services:
     networks:
       - kufar-net
     profiles: ["tunnel"]
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+        reservations:
+          memory: 32M
+          cpus: "0.05"
 
 networks:
   kufar-net:

@@ -40,29 +40,62 @@ set_env_var() {
     fi
 }
 
+# Verify a stored PID is alive AND owns a process whose command line
+# starts with $ROOT_DIR — this prevents us from killing a stranger that
+# happened to recycle the PID after our previous run died. Returns 0
+# (true) if the PID belongs to us, 1 otherwise.
+_pid_belongs_to_project() {
+    local pid="$1"
+    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+    # /proc/<pid>/cwd is a symlink to the process's working directory.
+    # If it points anywhere inside $ROOT_DIR (or equals it), this PID
+    # is one of ours.
+    local cwd
+    cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+    if [[ "$cwd" == "$ROOT_DIR" || "$cwd" == "$ROOT_DIR"/* ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Kill the process recorded in a PID file IF it still belongs to us.
+# Never falls back to pkill -f: that's been known to wipe out unrelated
+# uvicorn / python -m processes from other projects on the same host.
+_kill_pid_file() {
+    local pid_file="$1"
+    if [[ ! -f "$pid_file" ]]; then
+        return 0
+    fi
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if _pid_belongs_to_project "$pid"; then
+        kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$pid_file"
+}
+
 stop_existing() {
-    # Kill by port (most reliable — catches both uv run and direct python)
-    for port in 8010; do
-        local pids
-        pids="$(lsof -ti :"$port" 2>/dev/null)" || true
-        if [[ -n "$pids" ]]; then
-            kill $pids 2>/dev/null || true
+    # Stop by recorded PID first — never `pkill -f`, which would happily
+    # nuke a stranger's `python -m something` on the same host.
+    _kill_pid_file "$RUN_DIR/cloudflared.pid"
+    _kill_pid_file "$RUN_DIR/api.pid"
+    _kill_pid_file "$RUN_DIR/bot.pid"
+    _kill_pid_file "$RUN_DIR/scheduler.pid"
+
+    # Last-resort cleanup: if the API port is still bound (PID file was
+    # missing or stale and a real listener is leftover), free :8010 by
+    # PID. lsof gives us the actual owner — no name-pattern guessing.
+    local pids
+    pids="$(lsof -ti :8010 2>/dev/null)" || true
+    for pid in $pids; do
+        if _pid_belongs_to_project "$pid"; then
+            kill "$pid" 2>/dev/null || true
         fi
     done
 
-    # Kill by process pattern (catches bot/scheduler regardless of how launched)
-    pkill -f 'uvicorn api.main:app' || true
-    pkill -f 'python -m bot.main' || true
-    pkill -f 'python -m scheduler.collector' || true
-
     sleep 1
-
-    if [[ -f "$RUN_DIR/cloudflared.pid" ]]; then
-        kill "$(cat "$RUN_DIR/cloudflared.pid")" 2>/dev/null || true
-        rm -f "$RUN_DIR/cloudflared.pid"
-    fi
-
-    rm -f "$RUN_DIR/api.pid" "$RUN_DIR/bot.pid" "$RUN_DIR/scheduler.pid"
 }
 
 wait_for_http() {

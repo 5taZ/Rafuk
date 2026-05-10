@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Gracefully stop everything that start-local.sh launched.
+#
+# Uses PID files written by start-local.sh — NOT `pkill -f`, which is
+# happy to match unrelated processes on the same host. Each kill also
+# verifies that the PID's working directory is somewhere inside this
+# project before sending the signal, so a recycled PID belonging to
+# another user/process is left alone.
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -6,28 +14,37 @@ RUN_DIR="$ROOT_DIR/.run"
 
 cd "$ROOT_DIR"
 
-pkill -f 'uv run uvicorn api.main:app --host 0.0.0.0 --port 8010' || true
-pkill -f 'uv run uvicorn api.main:app --host 127.0.0.1 --port 8010' || true
-pkill -f 'python -m bot.main' || true
-pkill -f 'python -m scheduler.collector' || true
+_pid_belongs_to_project() {
+    local pid="$1"
+    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+    local cwd
+    cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+    if [[ "$cwd" == "$ROOT_DIR" || "$cwd" == "$ROOT_DIR"/* ]]; then
+        return 0
+    fi
+    return 1
+}
 
-if [[ -f "$RUN_DIR/cloudflared.pid" ]]; then
-    kill "$(cat "$RUN_DIR/cloudflared.pid")" 2>/dev/null || true
-fi
+_kill_pid_file() {
+    local pid_file="$1"
+    if [[ ! -f "$pid_file" ]]; then
+        return 0
+    fi
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if _pid_belongs_to_project "$pid"; then
+        kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$pid_file"
+}
 
-if [[ -f "$RUN_DIR/api.pid" ]]; then
-    kill "$(cat "$RUN_DIR/api.pid")" 2>/dev/null || true
-fi
+for service in api bot scheduler cloudflared; do
+    _kill_pid_file "$RUN_DIR/$service.pid"
+done
 
-if [[ -f "$RUN_DIR/bot.pid" ]]; then
-    kill "$(cat "$RUN_DIR/bot.pid")" 2>/dev/null || true
-fi
-
-if [[ -f "$RUN_DIR/scheduler.pid" ]]; then
-    kill "$(cat "$RUN_DIR/scheduler.pid")" 2>/dev/null || true
-fi
-
-rm -f "$RUN_DIR"/*.pid
+# Frontend runs as a docker container — stop it through compose.
 docker compose stop frontend >/dev/null 2>&1 || true
 
 echo "Project stopped."
