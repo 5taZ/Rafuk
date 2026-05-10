@@ -54,15 +54,28 @@ def test_node_syntax_check() -> None:
 def test_close_ai_modal_cancels_polling() -> None:
     """closeAIModal used to leave the AI polling loop running for up to 6
     minutes, blocking re-opening AI Analysis. Verify the cancel-by-session
-    pattern is wired up so a regression here is caught statically."""
-    text = (JS_DIR / "api_ai.js").read_text(encoding="utf-8")
-    assert "_aiPollSession" in text, "session counter for poll cancellation is missing"
-    # closeAIModal must bump the session and release the loading slot.
-    close_block = re.search(r"function closeAIModal\(\)\s*\{[^}]+\}", text, re.DOTALL)
-    assert close_block, "closeAIModal definition not found"
+    pattern is wired up so a regression here is caught statically.
+
+    UX-M8 (Wave 25): api_ai.js was split — closeAIModal lives in
+    api_ai_modal.js and the session counter is now aiCtx.pollSession
+    (shared mutable state owned by the orchestrator)."""
+    modal_text = (JS_DIR / "api_ai_modal.js").read_text(encoding="utf-8")
+    orchestrator_text = (JS_DIR / "api_ai.js").read_text(encoding="utf-8")
+
+    assert "aiCtx.pollSession" in modal_text, (
+        "session counter for poll cancellation is missing from api_ai_modal.js"
+    )
+    assert "aiCtx.pollSession" in orchestrator_text, (
+        "orchestrator must read aiCtx.pollSession for isCancelled"
+    )
+
+    # closeAIModal in the modal module must bump the session and
+    # release the loading slot.
+    close_block = re.search(r"function closeAIModal\(\)\s*\{[^}]+\}", modal_text, re.DOTALL)
+    assert close_block, "closeAIModal definition not found in api_ai_modal.js"
     body = close_block.group(0)
-    assert "_aiPollSession" in body, "closeAIModal must invalidate the poll session"
-    assert "_aiLoading = false" in body, "closeAIModal must release _aiLoading"
+    assert "aiCtx.pollSession" in body, "closeAIModal must invalidate the poll session"
+    assert "aiCtx.loading = false" in body, "closeAIModal must release aiCtx.loading"
 
 
 def test_load_leads_and_watchlist_have_stale_response_guard() -> None:

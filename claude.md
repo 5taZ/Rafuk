@@ -1,12 +1,10 @@
 # Project handoff for the next AI
 
 > Drop this file when you start helping with the Kufar Analytics
-> project. It captures the state of the codebase as of commit
-> `<Wave 24>` (PERF-M3 complete — both reminder and tracker
-> notification loops now run their DB work and network I/O in
-> separate phases). What's been fixed across Waves 0–24 is
-> reflected here, what's still genuinely worth doing is listed
-> below. The companion audit
+> project. It captures the state of the codebase as of Wave 25
+> (UX-M8 complete — `api_ai.js` split into 4 modules). What's
+> been fixed across Waves 0–25 is reflected here, what's still
+> genuinely worth doing is listed below. The companion audit
 > document is `DEEP_DIVE_REVIEW_COMPREHENSIVE.md` (gitignored) — it
 > lists 186 issues at four severities (29 CRITICAL / 54 HIGH /
 > 73 MEDIUM / 30 LOW). Numbers in this file refer to those audit IDs.
@@ -208,16 +206,8 @@ audit item.
 After 11 themed sweeps, the remaining 27 MEDIUM items split into
 three buckets:
 
-**Genuinely-impactful, deferred for scope or risk reasons (2):**
+**Genuinely-impactful, deferred for scope or risk reasons (1):**
 
-* **UX-M8** — `frontend/js/api_ai.js` is 1325 lines (~53 KB).
-  Natural split into 4 modules (modal lifecycle, analysis loop,
-  result rendering, PDF export) but they share closure-scoped
-  state (`_lastAiData`, progress refs, cancellation signals);
-  needs careful closure rewiring. Wave 18's
-  `api/services/ai_service.py` split was the equivalent
-  backend work; the FE AI flow has near-zero automated coverage
-  so a manual smoke pass is the safe cadence.
 * **FE-M5** — 31 `!important` CSS declarations across
   `tokens.css`, `pipeline.css`, `modals.css`, `brand.css`,
   `states.css`. Most fight Telegram-WebApp inline styles or the
@@ -347,23 +337,14 @@ tests/
 
 The themed sweeps are done. What's left is bigger / more deliberate:
 
-1. **UX-M8 (api_ai.js split)** — most-visible internal refactor.
-   Take Wave 18's `ai_service.py` split as the template:
-   `api_ai_modal.js` (lifecycle + progress UI),
-   `api_ai_loop.js` (loadAIAnalysis + polling),
-   `api_ai_render.js` (result/error rendering),
-   `api_ai_pdf.js` (PDF export). Pass shared closure state
-   through a small `aiContext` object. Add a manual smoke pass
-   (the FE AI flow has near-zero automated coverage).
-
-2. **DB-H3 (`ai_audit_log` partitioning)** — only HIGH still
+1. **DB-H3 (`ai_audit_log` partitioning)** — only HIGH still
    actually open. Plan: monthly partitions on `created_at`,
    24-month default rolling window, default partition for
    safety. Migration needs `pg_partman` or hand-rolled DDL +
    backfill. The Wave 8 cleanup function buys time but the
    real fix is partitioning.
 
-3. **Operational HIGHs (INF-H1/2/3/4 + SEC-H2)** — these need
+2. **Operational HIGHs (INF-H1/2/3/4 + SEC-H2)** — these need
    ops-side decisions (backup target, monitoring stack, secret
    store, deployment target) before code can land. Worth
    surfacing to the user when one of these blockers comes up

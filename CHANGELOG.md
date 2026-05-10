@@ -14,7 +14,79 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 24 — PERF-M3 complete (parallel tracker notifications) _(this commit)_
+### Wave 25 — UX-M8 (split api_ai.js into 4 modules) _(this commit)_
+
+`frontend/js/api_ai.js` had grown to a **1318-line god-file** that
+spanned modal lifecycle, async polling, DOM rendering, and PDF
+export — every helper sharing the same closure scope. This made
+small changes risky: a fix to the PDF generator could accidentally
+touch progress-bar state, a render tweak could shadow the polling
+loop's session counter. UX-M8 was the most-visible internal refactor
+left on the audit. After Wave 18's analogous backend split of
+`ai_service.py`, the AI flow is now symmetric on both sides.
+
+* **UX-M8** — `frontend/js/api_ai.js` (1318 lines) split into 4
+  factory files, each a single responsibility:
+
+    1. `api_ai_modal.js` (~285 lines) — modal lifecycle, loader
+       ring, progress bar, stage labels. Encapsulates the
+       module-local mutable state that only the modal touches
+       (`_aiProgress`, `_progressFrame`, `_progressStartedAt`) and
+       the constants that drove them (`LOADING_STEPS`,
+       `AI_PROGRESS_EXPECTED_MS`, `AI_PROGRESS_SOFT_CAP`,
+       `STAGE_LABELS`).
+    2. `api_ai_render.js` (~526 lines) — DOM-build helpers
+       (`_buildAiSection`, `_buildAiList`, `_buildAiResultNodes`,
+       …) plus the public `renderAIModalResult` and
+       `renderAiErrorState`. Owns `SECTION_IDS` (scroll-nav
+       anchors). The only cross-module write is
+       `aiCtx.lastData = data` so the PDF module can read it
+       on export.
+    3. `api_ai_pdf.js` (~388 lines) — printable HTML / PDF
+       generator. Reads `aiCtx.lastData` only; performs the
+       Telegram-side server export or the browser print
+       fallback.
+    4. `api_ai.js` (~224 lines, was 1318) — orchestrator. Owns
+       the `loadAIAnalysis` polling loop, the hybrid
+       `_showAIError` glue that touches both modal visuals and
+       render DOM, the `aiCtx` cross-module state, and wires
+       the PDF button click.
+
+* **Cross-module state contract**: a tiny `aiCtx` object
+  carries the three fields multiple modules need to coordinate
+  on: `loading` (re-entrancy guard), `pollSession` (bumped by
+  `closeAIModal` to cancel an in-flight poll), `lastData` (PDF
+  source). Everything else stays module-private. The previous
+  god-file relied on `let _aiPollSession`, `let _aiLoading`,
+  `let _lastAiData` at the top of the factory — fine when
+  there was one factory, untenable across four.
+
+* **Loading**: `app_actions.js#ensureAiLoaded` now
+  `Promise.all`s 5 scripts instead of 2 (the 3 new sub-modules
+  + the orchestrator + the existing listing-assistant). All
+  share the same `?v=` cache-busting stamp. The orchestrator
+  doesn't run until all sub-factories are defined as globals,
+  which the parallel-load guarantees.
+
+* **Test update**: `test_close_ai_modal_cancels_polling` (the
+  static regression check that closeAIModal still bumps the
+  poll session) is rewritten to look in `api_ai_modal.js`
+  instead of `api_ai.js`, and matches against the new
+  `aiCtx.pollSession` / `aiCtx.loading` field names. Behaviour
+  invariant is unchanged. 507 passed, 1 skipped.
+
+* **Cache bump**: `scripts/bump_static_version.sh` rewrote
+  index.html tags to `?v=20260510-cd8fa23`; app_actions.js's
+  hand-maintained lazy-load tags were updated to match.
+
+The AI flow itself is unchanged from the user's perspective —
+this is purely an internal refactor that makes future work on
+the AI flow (e.g. adding new sections, swapping the PDF
+template, replacing the polling loop with SSE) tractable
+without re-reading a 1300-line file. Each module is now ≤526
+lines.
+
+### Wave 24 — PERF-M3 complete (parallel tracker notifications)
 
 Closes the deeper half of **PERF-M3** that Wave 23 explicitly
 deferred: the tracker-check loop in `scheduler/collector.py`
