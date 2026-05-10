@@ -24,6 +24,8 @@ function createApiWatchlist(context) {
         buildCommonQuery,
     } = context;
 
+    let _watchlistDetailAbortController = null;
+
     // After watchlist mutations we need to refresh BOTH renders. The
     // legacy "Избранное" view still binds renderWatchlist, while the
     // unified "Мои объявления" tab binds renderLeads which itself reads
@@ -239,6 +241,14 @@ function createApiWatchlist(context) {
             showToast("Не удалось открыть: нет привязки к запросу");
             return;
         }
+
+        // Abort previous in-flight watchlist detail request
+        if (_watchlistDetailAbortController) {
+            _watchlistDetailAbortController.abort();
+        }
+        _watchlistDetailAbortController = new AbortController();
+        const signal = _watchlistDetailAbortController.signal;
+
         // Shared stale-response guard with openListingDetail and
         // openLeadDetail — older detail responses are dropped.
         const requestId = (state.detail._requestId =
@@ -250,7 +260,8 @@ function createApiWatchlist(context) {
         try {
             const catParam = state.filters.category != null ? `&category=${state.filters.category}` : "";
             const fullDetail = await getJson(
-                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.misc.currency}&strict_search=${state.search.strictSearch}&ad_id=${item.ad_id}${catParam}`
+                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.misc.currency}&strict_search=${state.search.strictSearch}&ad_id=${item.ad_id}${catParam}`,
+                { signal }
             );
             if (requestId !== state.detail._requestId) return;
             state.detail.data = fullDetail;
@@ -265,6 +276,9 @@ function createApiWatchlist(context) {
             };
             renderDetailModal();
         } catch (error) {
+            if (error.name === "AbortError") {
+                return;
+            }
             if (requestId !== state.detail._requestId) return;
             state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();

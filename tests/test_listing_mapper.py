@@ -236,7 +236,9 @@ class TestBuildListingItem:
         )
         assert item.ad_id == 99
         assert item.title == ""
-        assert item.price == 0.0
+        # No price_byn field at all -> None (negotiable: empty ad text has no free keywords)
+        assert item.price is None
+        assert item.price_type == "negotiable"
 
     def test_zero_price(self) -> None:
         item = build_listing_item(
@@ -248,7 +250,25 @@ class TestBuildListingItem:
             median_byn=2000.0,
             market_stats=_make_stats(),
         )
+        # price_byn=0 with no free keywords in ad text -> negotiable -> None
+        assert item.price is None
+        assert item.price_type == "negotiable"
+
+    def test_zero_price_with_free_keyword(self) -> None:
+        ad = _ad(price_byn=0)
+        ad["body"] = "Отдам бесплатно в хорошие руки"
+        item = build_listing_item(
+            ad,
+            query="x",
+            currency="BYN",
+            rates=RATES,
+            currency_service=_currency_service(),
+            median_byn=2000.0,
+            market_stats=_make_stats(),
+        )
+        # "бесплатно" keyword -> free -> price 0.0
         assert item.price == 0.0
+        assert item.price_type == "free"
 
     def test_with_thumbnail(self) -> None:
         ad = _ad(images=[{"path": "thumb.jpg"}])

@@ -38,6 +38,9 @@ function createApiListings(context) {
     // Hoisted to module scope so `loadSearchDependencies` can use it.
     const PAGE_SIZE = 50;
 
+    let _detailAbortController = null;
+    let _historyAbortController = null;
+
     function buildListingsQuery(params = {}) {
         const query = new URLSearchParams(buildCommonQuery(params));
         if (state.filters.category != null) {
@@ -56,9 +59,6 @@ function createApiListings(context) {
         state.listings._loadedAt = 0;
         state.listings.total = 0;
         state.listings.fallbackUsed = false;
-        state.deals.items = [];
-        state.deals._loadedAt = 0;
-        state.deals.total = 0;
         state.detail.data = null;
         state.detail.imageIndex = 0;
         state.listings._pending = true;
@@ -89,6 +89,13 @@ function createApiListings(context) {
             renderHistory();
             return;
         }
+        // Abort previous in-flight history request
+        if (_historyAbortController) {
+            _historyAbortController.abort();
+        }
+        _historyAbortController = new AbortController();
+        const signal = _historyAbortController.signal;
+
         // Stale-response guard — switching the history range button or
         // changing the query mid-fetch shouldn't let the older response
         // overwrite the freshly-requested points.
@@ -97,10 +104,12 @@ function createApiListings(context) {
         let nextHistory;
         try {
             const payload = await getJson(
-                `/api/v1/price-history?${buildCommonQuery({ days: state.misc.historyDays })}`
+                `/api/v1/price-history?${buildCommonQuery({ days: state.misc.historyDays })}`,
+                { signal }
             );
             nextHistory = payload.points || [];
-        } catch (_) {
+        } catch (err) {
+            if (err.name === "AbortError") return;
             nextHistory = [];
         }
         if (requestId !== state.charts._historyRequestId) return;
@@ -155,23 +164,6 @@ function createApiListings(context) {
                     state.listings._pending = false;
                 },
             },
-            {
-                request: getJson(
-                    `/api/v1/listings?${buildListingsQuery({
-                        sort: "cheap",
-                        discount_from_percent: state.filters.discountFromPercent,
-                        discount_to_percent: state.filters.discountToPercent,
-                        limit: PAGE_SIZE,
-                        offset: 0,
-                    })}`,
-                    { signal }
-                ),
-                apply(payload) {
-                    state.deals.items = payload.listings || [];
-                    state.deals.total = payload.total || 0;
-                    state.deals.hasMore = Boolean(payload.has_more);
-                },
-            },
         ];
 
         for (const dependency of dependencies) {
@@ -181,7 +173,7 @@ function createApiListings(context) {
                         return;
                     }
                     dependency.apply(payload);
-                    markDirty('stats', 'history', 'segments', 'geography', 'listings', 'deals');
+                    markDirty('stats', 'history', 'segments', 'geography', 'listings');
                     scheduleRender();
                 })
                 .catch((err) => {
@@ -189,7 +181,7 @@ function createApiListings(context) {
                         return;
                     }
                     state.listings._pending = false;
-                    markDirty('stats', 'history', 'segments', 'geography', 'listings', 'deals');
+                    markDirty('stats', 'history', 'segments', 'geography', 'listings');
                     scheduleRender();
                 });
         }
@@ -315,104 +307,20 @@ function createApiListings(context) {
         }
     }
 
-    // ── Load deals (cheap view) ──────────────────────────────────────────
-    async function loadDeals(force) {
-        if (!state.search.query) {
-            state.deals.items = [];
-            state.deals.hasMore = false;
-            markDirty('deals');
-            renderAll();
-            return;
-        }
-        // Skip reload if data is fresh and same discount range
-        const sameRange = state.deals._loadedFrom === state.filters.discountFromPercent && state.deals._loadedTo === state.filters.discountToPercent;
-        if (!force && state.deals.items.length && sameRange && Date.now() - state.deals._loadedAt < CACHE_TTL) {
-            return;
-        }
-
-        state.deals.items = [];
-        state.deals.hasMore = false;
-        state.deals.loading = true;
-        markDirty('deals');
-        renderAll();
-
-        const requestId = (state.deals._requestId =
-            ((state.deals._requestId || 0) + 1) % 1_000_000);
-
-        try {
-            const payload = await getJson(
-                `/api/v1/listings?${buildListingsQuery({
-                    sort: "cheap",
-                    discount_from_percent: state.filters.discountFromPercent,
-                    discount_to_percent: state.filters.discountToPercent,
-                    limit: PAGE_SIZE,
-                    offset: 0,
-                })}`
-            );
-            if (requestId !== state.deals._requestId) return;
-            state.deals.items = payload.listings || [];
-            state.deals.total = payload.total || 0;
-            state.deals.hasMore = Boolean(payload.has_more);
-            state.deals._loadedAt = Date.now();
-            state.deals._loadedFrom = state.filters.discountFromPercent;
-            state.deals._loadedTo = state.filters.discountToPercent;
-            state.ui.error = null;
-        } catch (error) {
-            if (requestId !== state.deals._requestId) return;
-            state.deals.items = [];
-            state.deals.hasMore = false;
-            state.ui.error = error.message || "Не удалось загрузить дешёвые объявления";
-            renderError();
-        } finally {
-            if (requestId === state.deals._requestId) {
-                state.deals.loading = false;
-                markDirty('deals', 'error');
-                renderAll();
-            }
-        }
-    }
-
-    async function loadMoreDeals() {
-        if (!state.search.query) return;
-        if (!state.deals.hasMore) return;
-        if (state.deals.loadingMore) return;
-        state.deals.loadingMore = true;
-        markDirty('deals');
-        scheduleRender();
-
-        const offset = state.deals.items.length;
-        const requestId = state.deals._requestId;
-        try {
-            const payload = await getJson(
-                `/api/v1/listings?${buildListingsQuery({
-                    sort: "cheap",
-                    discount_from_percent: state.filters.discountFromPercent,
-                    discount_to_percent: state.filters.discountToPercent,
-                    limit: PAGE_SIZE,
-                    offset,
-                })}`
-            );
-            if (requestId !== state.deals._requestId) return;
-            const fresh = payload.listings || [];
-            state.deals.items = state.deals.items.concat(fresh);
-            state.deals.total = payload.total || state.deals.total;
-            state.deals.hasMore = Boolean(payload.has_more);
-        } catch (_) {
-            // Same behaviour as loadMoreListings — keep has_more so
-            // the user can retry via the visible "load more" chip.
-        } finally {
-            state.deals.loadingMore = false;
-            markDirty('deals');
-            renderAll();
-        }
-    }
-
     // ── Open listing detail modal ────────────────────────────────────────
     async function openListingDetail(item) {
         const queryToUse = (item?.query || state.search.query || "").trim();
         if (!item?.ad_id || !queryToUse) {
             return;
         }
+
+        // Abort previous in-flight detail request
+        if (_detailAbortController) {
+            _detailAbortController.abort();
+        }
+        _detailAbortController = new AbortController();
+        const signal = _detailAbortController.signal;
+
         // Stale-response guard — if the user taps a different listing
         // before the first detail fetch resolves, the older response
         // would otherwise overwrite state.detail and pop the wrong
@@ -435,7 +343,8 @@ function createApiListings(context) {
                 params.set("reference_context", "base_query");
             }
             const fullDetail = await getJson(
-                `/api/v1/listing-detail?${params.toString()}`
+                `/api/v1/listing-detail?${params.toString()}`,
+                { signal }
             );
             if (requestId !== state.detail._requestId) return;
             state.detail.data = fullDetail;
@@ -450,6 +359,9 @@ function createApiListings(context) {
             };
             renderDetailModal();
         } catch (error) {
+            if (error.name === "AbortError") {
+                return;
+            }
             if (requestId !== state.detail._requestId) return;
             state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
@@ -550,8 +462,6 @@ function createApiListings(context) {
         search,
         loadListings,
         loadMoreListings,
-        loadDeals,
-        loadMoreDeals,
         openListingDetail,
         loadSearchDependencies,
         clearSearchData,

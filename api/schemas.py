@@ -107,7 +107,8 @@ class ListingItem(BaseModel):
 
     ad_id: int
     title: str = Field(validation_alias="subject")
-    price: float
+    price: float | None = None
+    price_type: str | None = None  # "fixed" | "negotiable" | "free"
     currency: str
     link: str = Field(validation_alias="ad_link")
     list_time: str | None = None
@@ -149,7 +150,8 @@ class ListingDetailResponse(BaseModel):
     ram_gb: int | None = None
     ad_id: int
     title: str
-    price: float
+    price: float | None = None
+    price_type: str | None = None  # "fixed" | "negotiable" | "free"
     currency: str
     link: str
     list_time: str | None = None

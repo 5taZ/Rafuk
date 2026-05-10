@@ -163,6 +163,7 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
 
     async def fake_load_query_dataset(**kwargs):
         del kwargs
@@ -200,8 +201,13 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
         )
 
     fake_ai = FakeAIService()
+    ai_service.get_ai_service.cache_clear()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_service, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis_pipeline, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
@@ -302,6 +308,7 @@ def test_ai_guardrails_clamp_outlier_price_for_negotiable_financing_bait(monkeyp
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
 
     async def fake_load_query_dataset(**kwargs):
         del kwargs
@@ -344,7 +351,10 @@ def test_ai_guardrails_clamp_outlier_price_for_negotiable_financing_bait(monkeyp
         )
 
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: FakeOutlierAIService())
+    monkeypatch.setattr(ai_service, "get_ai_service", lambda: FakeOutlierAIService())
+    monkeypatch.setattr(ai_analysis_pipeline, "get_ai_service", lambda: FakeOutlierAIService())
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
@@ -411,6 +421,7 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
 
     target_ad = {
         "ad_id": 10,
@@ -506,8 +517,12 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
             }
 
     fake_ai = QuietAIService()
+    ai_service.get_ai_service.cache_clear()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_service, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis_pipeline, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
@@ -857,6 +872,7 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
 
     captured: dict = {}
 
@@ -950,6 +966,7 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
     import api.routers.ai_listing_assistant as _la_mod
 
     monkeypatch.setattr(_la_mod, "_check_ai_available", lambda: fake_ai)
@@ -1016,6 +1033,7 @@ def test_listing_assistant_passes_photos_to_ai_and_drops_invalid_ones(monkeypatc
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
 
     async def fake_load_query_dataset(**kwargs):
         del kwargs
@@ -1049,6 +1067,7 @@ def test_listing_assistant_passes_photos_to_ai_and_drops_invalid_ones(monkeypatc
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
@@ -1085,6 +1104,7 @@ def test_listing_assistant_handles_empty_market_gracefully(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
 
     async def fake_load_query_dataset(**kwargs):
         del kwargs
@@ -1120,6 +1140,7 @@ def test_listing_assistant_handles_empty_market_gracefully(monkeypatch) -> None:
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
     import api.routers.ai_listing_assistant as _la_mod2
 
     monkeypatch.setattr(_la_mod2, "_check_ai_available", lambda: fake_ai)
@@ -1293,6 +1314,7 @@ def test_listing_assistant_caches_identical_inputs(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
     from api.services.cache import MemoryCache
 
     async def fake_load_query_dataset(**kwargs):
@@ -1330,6 +1352,7 @@ def test_listing_assistant_caches_identical_inputs(monkeypatch) -> None:
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
@@ -1363,6 +1386,7 @@ def test_listing_assistant_strips_prompt_injection_from_notes(monkeypatch) -> No
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
 
     async def fake_load_query_dataset(**kwargs):
         del kwargs
@@ -1394,6 +1418,7 @@ def test_listing_assistant_strips_prompt_injection_from_notes(monkeypatch) -> No
 
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: FakeAI())
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
@@ -1670,6 +1695,7 @@ def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
     from api.services.cache import MemoryCache
 
     async def fake_load_query_dataset(**kwargs):
@@ -1711,6 +1737,7 @@ def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
     import api.routers.ai_listing_assistant as _la
 
     monkeypatch.setattr(_la, "_check_ai_available", lambda: fake_ai)
@@ -1742,6 +1769,7 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline, ai_service
     from api.services.cache import MemoryCache
 
     async def fake_load_query_dataset(**kwargs):
@@ -1775,6 +1803,7 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
     import api.routers.ai_listing_assistant as _la
 
     monkeypatch.setattr(_la, "_check_ai_available", lambda: fake_ai)

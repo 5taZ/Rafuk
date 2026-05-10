@@ -84,10 +84,6 @@ function analyticsApp() {
         return actions.loadListings(...args);
     }
 
-    function loadDeals(...args) {
-        return actions.loadDeals(...args);
-    }
-
     function renderChart(...args) {
         return renderers.renderChart(...args);
     }
@@ -96,7 +92,6 @@ function analyticsApp() {
         init,
         search,
         loadListings,
-        loadDeals,
         renderChart,
         renderBoxPlot: renderChart,
         formatPrice: core.formatPrice,

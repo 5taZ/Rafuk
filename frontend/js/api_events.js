@@ -44,7 +44,6 @@ function createApiEvents(context) {
         // Action functions delegated from other modules
         search,
         loadListings,
-        loadDeals,
         loadHistory,
         loadTrackers,
         loadLeads,
@@ -1052,6 +1051,18 @@ function createApiEvents(context) {
         bindCarouselEvents();
         bindExpenseEvents();
         bindVisibilityEvents();
+
+        // Lazy-load AI modules on first interaction with listing-assistant.
+        // The module itself binds its own click handler inside
+        // createApiListingAssistant; we intercept the first click to
+        // load the scripts, then re-dispatch so the module's handler
+        // fires on the next tick.
+        const laOpenBtn = document.getElementById("listing-assistant-open-btn");
+        laOpenBtn?.addEventListener("click", async function onFirstLaClick(e) {
+            e.stopImmediatePropagation();
+            await context.ensureAiLoaded();
+            laOpenBtn.click();
+        }, { once: true });
     }
 
     return {

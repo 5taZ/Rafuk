@@ -1,5 +1,5 @@
 /**
- * render_cards.js — buildListingNode, renderListings, renderDeals,
+ * render_cards.js — buildListingNode, renderListings,
  * lead cards, watchlist cards.
  */
 
@@ -60,10 +60,10 @@ function createRenderCards(context) {
 
     function matchesFilters(item) {
         // Price range filter
-        const itemPrice = item.price ? Number(item.price) : null;
+        const itemPrice = item.price != null ? Number(item.price) : null;
         const hasPriceRange = state.filters.minPrice != null || state.filters.maxPrice != null;
-        // Exclude "Договорная" (price 0/null) when a price range is set
-        if (hasPriceRange && (!itemPrice || itemPrice <= 0)) return false;
+        // Exclude "Договорная" (price null) when a price range is set
+        if (hasPriceRange && itemPrice == null) return false;
         if (state.filters.minPrice != null && itemPrice != null && itemPrice < state.filters.minPrice) return false;
         if (state.filters.maxPrice != null && itemPrice != null && itemPrice > state.filters.maxPrice) return false;
 
@@ -132,6 +132,14 @@ function createRenderCards(context) {
             if (event.target.closest(".listing-top")) {
                 void actions.openListingDetail(item);
             }
+        });
+        container.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            const card = event.target.closest(".listing");
+            if (!card || !card._item) return;
+            if (event.target !== card) return;
+            event.preventDefault();
+            void actions.openListingDetail(card._item);
         });
     }
 
@@ -277,6 +285,22 @@ function createRenderCards(context) {
             if (state.ui.loading) return;
             // Keep skeletons while listings request is in flight
             if (state.listings._pending) return;
+
+            // Show skeleton cards while listings are loading (e.g. sort change)
+            if (state.listings.loading && !state.listings.items.length) {
+                if (elements.listingsList) {
+                    _resetContainer(elements.listingsList);
+                    for (let i = 0; i < 3; i++) {
+                        elements.listingsList.appendChild(_buildSkeletonCard());
+                    }
+                    elements.listingsSection.hidden = false;
+                }
+                if (elements.listingsTotalBadge) {
+                    elements.listingsTotalBadge.textContent = "";
+                }
+                return;
+            }
+
             const hasData = state.listings.items.length > 0 || state.listings.total > 0;
             const hasContent = renderListingsCollection(
                 state.listings.items,
@@ -304,114 +328,6 @@ function createRenderCards(context) {
             // Keep section visible if data exists but was filtered out —
             // the empty message inside the container tells the user why.
             elements.listingsSection.hidden = !hasContent && !hasData;
-        });
-    }
-
-    function renderDeals() {
-        return safeRender('renderDeals', () => {
-            const container = elements.dealsList;
-            if (!container) return;
-            const rangeLabel = `${state.filters.discountFromPercent}-${state.filters.discountToPercent}`;
-
-            _resetContainer(container);
-
-            // Show skeleton cards while deals are loading
-            if (state.deals.loading) {
-                for (let i = 0; i < 3; i++) container.appendChild(_buildSkeletonCard());
-                return;
-            }
-
-            if (!state.deals.items.length) {
-                const buildEmpty = context.buildEmptyState;
-                if (typeof buildEmpty === "function") {
-                    container.appendChild(
-                        buildEmpty({
-                            icon: "deals",
-                            title: "Выгодных лотов пока нет",
-                            hint: `В диапазоне ${rangeLabel}% ниже медианы ничего не нашлось. Попробуйте расширить диапазон или изменить запрос.`,
-                            actionLabel: state.search.query ? "Расширить диапазон" : "Начать поиск",
-                            onAction: () => {
-                                if (!state.search.query) {
-                                    if (typeof context.setActiveView === "function") {
-                                        context.setActiveView("overview");
-                                    }
-                                    const searchInput = document.querySelector(".search-input");
-                                    if (searchInput) searchInput.focus();
-                                } else {
-                                    const discountSlider = document.querySelector(".discount-range-slider");
-                                    if (discountSlider) discountSlider.focus();
-                                }
-                            },
-                        })
-                    );
-                } else {
-                    const note = document.createElement("p");
-                    note.className = "tracker-empty";
-                    note.textContent = `Нет лотов в диапазоне ${rangeLabel}% ниже медианы. Попробуйте расширить диапазон или другой запрос.`;
-                    container.appendChild(note);
-                }
-                if (elements.dealsTotalBadge) {
-                    elements.dealsTotalBadge.textContent = "0";
-                }
-                elements.dealsSection.hidden = !state.search.query;
-                if (!state.search.query) return;
-                elements.dealsSection.hidden = false;
-                return;
-            }
-
-            const hasData = state.deals.items.length > 0 || state.deals.total > 0;
-            // Virtual scrolling disabled — cards have variable heights
-            const filtered = applyFilters(state.deals.items);
-            if (!filtered.length) {
-                const buildEmpty = context.buildEmptyState;
-                if (typeof buildEmpty === "function") {
-                    container.appendChild(
-                        buildEmpty({
-                            icon: "deals",
-                            title: hasData ? "Все лоты отфильтрованы" : "Выгодных лотов пока нет",
-                            hint: hasData
-                                ? "Фильтры скрыли все результаты. Попробуйте изменить параметры."
-                                : `В диапазоне ${rangeLabel}% ниже медианы ничего не нашлось. Попробуйте расширить диапазон.`,
-                        })
-                    );
-                } else {
-                    const note = document.createElement("p");
-                    note.className = "tracker-empty";
-                    note.textContent = hasData
-                        ? "Фильтры скрыли все лоты. Попробуйте изменить фильтр."
-                        : `Нет лотов в диапазоне ${rangeLabel}% ниже медианы.`;
-                    container.appendChild(note);
-                }
-                if (elements.dealsTotalBadge) {
-                    elements.dealsTotalBadge.textContent = "0";
-                }
-                elements.dealsSection.hidden = !state.search.query;
-                return;
-            }
-            for (const item of filtered) {
-                container.appendChild(buildListingNode(item, verdictClassName));
-            }
-
-            _appendPaginationSentinel(container, {
-                renderedCount: state.deals.items.length,
-                totalCount: state.deals.total,
-                hasMore: state.deals.hasMore,
-                isLoadingMore: state.deals.loadingMore,
-                onLoadMore: () => {
-                    if (typeof actions.loadMoreDeals === "function") {
-                        void actions.loadMoreDeals();
-                    }
-                },
-                allLoadedText: "Все лоты в этом диапазоне загружены.",
-            });
-
-            if (elements.dealsTotalBadge) {
-                // Same rule as the listings pill — show Kufar's total
-                // count, not the on-page rendered count.
-                const apiTotal = state.deals.total || filtered.length;
-                elements.dealsTotalBadge.textContent = `${apiTotal} объявлений`;
-            }
-            elements.dealsSection.hidden = !state.search.query;
         });
     }
 
@@ -737,7 +653,6 @@ function createRenderCards(context) {
         buildListingNode,
         renderListingsCollection,
         renderListings,
-        renderDeals,
         renderLeads,
         renderWatchlist,
     };

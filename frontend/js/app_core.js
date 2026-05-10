@@ -46,15 +46,6 @@ function createAppCore() {
             _pending: false,
             fallbackUsed: false,
         },
-        deals: {
-            items: [],
-            _loadedAt: 0,
-            total: 0,
-            hasMore: false,
-            loading: false,
-            loadingMore: false,
-            _requestId: 0,
-        },
         trackers: {
             items: [],
             events: [],
@@ -229,9 +220,9 @@ function createAppCore() {
         } catch (_) {}
     }
 
-    function formatPrice(value) {
-        if (value == null) return "Договорная";
-        if (value === 0) return "Бесплатно";
+    function formatPrice(value, priceType) {
+        if (priceType === "negotiable" || (value == null && priceType !== "free")) return "Договорная";
+        if (priceType === "free" || value === 0) return "Бесплатно";
         const numeric = Number(value);
         if (Number.isNaN(numeric)) return "Договорная";
 
@@ -410,6 +401,18 @@ function createAppCore() {
         populateRegionSelectOptions(selectEl, currentValue);
     }
 
+    const _loadedScripts = new Set();
+    function _loadScript(src) {
+        if (_loadedScripts.has(src)) return Promise.resolve();
+        return new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = src;
+            s.onload = () => { _loadedScripts.add(src); resolve(); };
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
     return {
         state,
         elements,
@@ -434,5 +437,6 @@ function createAppCore() {
         isDirty,
         clearDirty,
         populateRegionSelect,
+        _loadScript,
     };
 }

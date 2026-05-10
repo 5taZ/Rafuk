@@ -1065,7 +1065,7 @@ function createApiAi(context) {
 
         const detail = state.detail.data || {};
         const title = detail.title || "Объявление";
-        const price = detail.price ? formatPrice(detail.price) : "";
+        const price = detail.price != null ? formatPrice(detail.price, detail.price_type) : (detail.price_type === "negotiable" ? "Договорная" : "");
         const adId = data.ad_id || "";
         const link = detail.link || (adId ? `https://www.kufar.by/item/${adId}` : "");
         const dateStr = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });

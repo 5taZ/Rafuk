@@ -1,0 +1,111 @@
+"""AI task cache and background task management."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
+from api.config import get_settings
+from api.services.cache import CacheBackend
+
+logger = logging.getLogger(__name__)
+
+# ── Export token cache ─────────────────────────────────────────────
+
+_exports_key = "ai_export:{}"
+
+
+async def _export_set(cache: CacheBackend, token: str, data: dict[str, Any]) -> None:
+    key = _exports_key.format(token)
+    await cache.set_json(key, data, ttl=3600)
+
+
+async def _export_get(cache: CacheBackend, token: str) -> dict[str, Any] | None:
+    key = _exports_key.format(token)
+    return await cache.get_json(key)
+
+
+async def _export_delete(cache: CacheBackend, token: str) -> None:
+    key = _exports_key.format(token)
+    await cache.delete(key)
+
+
+# ── Background task bookkeeping ────────────────────────────────────
+
+# Strong references to background asyncio tasks — without this the GC may
+# drop a task before it finishes (documented behaviour in Python 3.12+ for
+# fire-and-forget asyncio.create_task patterns). Tasks self-clean from
+# this set in their done callback.
+_bg_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _spawn_bg_task(coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
+    """Spawn a background task that survives GC until completion."""
+    _bg_tasks.difference_update(t for t in list(_bg_tasks) if t.done())
+    if len(_bg_tasks) > 50:
+        logger.warning("_bg_tasks at capacity (%d), refusing new task", len(_bg_tasks))
+        raise RuntimeError("Too many background tasks")
+    task = asyncio.create_task(coro, name=name)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return task
+
+
+# ── Task cache helpers ─────────────────────────────────────────────
+
+def _task_ttl() -> int:
+    return int(getattr(get_settings(), "ai_task_ttl", 3600) or 3600)
+
+
+def _task_cache_key(task_id: str, *, user_id: int | None = None) -> str:
+    # Namespace by user_id to prevent cross-user data access via shared Redis
+    uid_part = f":u{user_id}" if user_id is not None else ""
+    return f"ai_task{uid_part}:{task_id}"
+
+
+def _task_version(task: dict[str, Any] | None) -> float:
+    if not task:
+        return 0.0
+    try:
+        return float(task.get("_updated_ts") or task.get("_created_ts") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def _get_task(
+    cache: CacheBackend, task_id: str, *, user_id: int | None = None,
+) -> dict[str, Any] | None:
+    if user_id is not None:
+        cached_task = await cache.get_json(_task_cache_key(task_id, user_id=user_id))
+        if cached_task:
+            return cached_task
+    cached_task = await cache.get_json(_task_cache_key(task_id))
+    if cached_task:
+        return cached_task
+    return None
+
+
+async def _set_task(cache: CacheBackend, task_id: str, task: dict[str, Any]) -> dict[str, Any]:
+    if "_updated_ts" not in task:
+        task["_updated_ts"] = datetime.now(UTC).timestamp()
+    user_id = task.get("_telegram_user_id")
+    await cache.set_json(_task_cache_key(task_id, user_id=user_id), task, ttl=_task_ttl())
+    return task
+
+
+async def _update_task(
+    cache: CacheBackend, task_id: str, *, user_id: int | None = None, **updates: Any,
+) -> dict[str, Any]:
+    task = await _get_task(cache, task_id, user_id=user_id) or {
+        "status": "pending",
+        "progress": 0,
+        "result": None,
+        "error": None,
+        "_created_ts": datetime.now(UTC).timestamp(),
+        "_updated_ts": datetime.now(UTC).timestamp(),
+    }
+    task.update(updates)
+    task["_updated_ts"] = datetime.now(UTC).timestamp()
+    return await _set_task(cache, task_id, task)

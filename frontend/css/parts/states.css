@@ -617,6 +617,17 @@
     opacity: 0.7;
 }
 
+/* skel-bar used by inline skeleton builders in render_cards.js and render_trackers.js */
+.skel-bar {
+    height: 12px;
+    border-radius: var(--r-sm);
+    background: var(--bg-elevated);
+    background-size: 2000px 100%;
+    animation: shimmer 2s ease-in-out infinite;
+    margin-bottom: var(--space-2);
+    opacity: 0.7;
+}
+
 .skeleton-title {
     width: 70%;
     height: 14px;

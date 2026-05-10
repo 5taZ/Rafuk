@@ -39,6 +39,7 @@ from api.services.aggregator import (
     compute_category_price_stats,
     compute_price_stats,
     compute_price_vs_reference,
+    detect_price_type,
     extract_prices,
     normalize_price_byn,
 )
@@ -362,12 +363,12 @@ def _filter_sync_result_for_tracker(
     )
 
 
-def _format_price_byn(value: float | None) -> str:
-    if value is None:
-        return "без цены"
-    fval = float(value)
-    if fval == 0:
+def _format_price_byn(value: float | None, price_type: str | None = None) -> str:
+    if price_type == "negotiable" or (value is None and price_type != "free"):
         return "договорная"
+    if price_type == "free" or value == 0:
+        return "бесплатно"
+    fval = float(value)
     if fval >= 1000:
         compact = f"{fval / 1000:.2f}".rstrip("0").rstrip(".")
         return f"{compact} тыс. р."

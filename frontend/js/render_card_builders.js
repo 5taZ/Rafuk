@@ -63,7 +63,11 @@ function createRenderCardBuilders(context) {
     function buildListingNode(item, verdictClassName) {
         const listing = domEl("article", {
             className: "listing",
-            attrs: { "aria-label": item.subject || item.title || "Объявление" },
+            attrs: {
+                "aria-label": item.subject || item.title || "Объявление",
+                tabindex: "0",
+                role: "button",
+            },
         });
         const resolveVerdictClassName =
             typeof verdictClassName === "function" ? verdictClassName : function () { return "neutral"; };
@@ -85,7 +89,7 @@ function createRenderCardBuilders(context) {
         }
 
         let delta = item.price_vs_median;
-        if (delta == null && item.price && state.misc.stats?.median && Number(state.misc.stats.median) > 0) {
+        if (delta == null && item.price != null && state.misc.stats?.median && Number(state.misc.stats.median) > 0) {
             delta = Math.round(((Number(item.price) - Number(state.misc.stats.median)) / Number(state.misc.stats.median)) * 100 * 100) / 100;
         }
         if (delta != null) {
@@ -133,7 +137,7 @@ function createRenderCardBuilders(context) {
                         { className: "listing-body" },
                         domEl("span", { className: "listing-name", text: item.title }),
                         tags,
-                        domEl("span", { className: "listing-price mono", text: formatPrice(item.price) }),
+                        domEl("span", { className: "listing-price mono", text: formatPrice(item.price, item.price_type) }),
                     ),
                 ),
                 badges.length ? domEl("div", { className: "listing-badges" }, badges) : null,
@@ -692,7 +696,9 @@ function createRenderCardBuilders(context) {
             : "watchlist-card";
         const card = domEl("article", {
             className: outerClass,
-            attrs: isLead ? { "data-lead-id": item.id } : { "data-watchlist-id": item.id },
+            attrs: isLead
+                ? { "data-lead-id": item.id, tabindex: "0", role: "button" }
+                : { "data-watchlist-id": item.id, tabindex: "0", role: "button" },
         });
         card.style.overflow = "hidden";
 
@@ -782,6 +788,15 @@ function createRenderCardBuilders(context) {
 
         _wireCardHandlers(card, item, mode, signal);
         _attachSwipeReveal(card, item, mode);
+
+        card.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            if (event.target !== card) return;
+            event.preventDefault();
+            if (mode === "watching") {
+                void actions.openWatchlistDetail(item);
+            }
+        });
 
         return card;
     }

@@ -337,7 +337,6 @@ function createRenderCore(context) {
             if (state.ui.loading) {
                 elements.searchButtonLabel.replaceChildren(domEl("span", { className: "spin" }));
                 elements.listingsSection?.setAttribute('aria-busy', 'true');
-                elements.dealsSection?.setAttribute('aria-busy', 'true');
                 elements.statsSection?.setAttribute('aria-busy', 'true');
 
                 // Show skeleton cards in listing containers during initial load
@@ -348,17 +347,9 @@ function createRenderCore(context) {
                     }
                     elements.listingsSection.hidden = false;
                 }
-                if (!state.deals.items.length && elements.dealsList) {
-                    domClear(elements.dealsList);
-                    for (let i = 0; i < 3; i++) {
-                        elements.dealsList.appendChild(buildSkeletonCard());
-                    }
-                    elements.dealsSection.hidden = false;
-                }
             } else {
                 elements.searchButtonLabel.textContent = "Найти";
                 elements.listingsSection?.removeAttribute('aria-busy');
-                elements.dealsSection?.removeAttribute('aria-busy');
                 elements.statsSection?.removeAttribute('aria-busy');
             }
         });

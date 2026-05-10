@@ -50,7 +50,7 @@ function createRenderModals(context) {
         const currentImage = hasImages ? images[state.detail.imageIndex] || images[0] : null;
 
         elements.detailTitle.textContent = detail.title || "Объявление";
-        elements.detailPrice.textContent = formatPrice(detail.price);
+        elements.detailPrice.textContent = formatPrice(detail.price, detail.price_type);
         elements.detailLink.href = safeUrl(detail.link) || "#";
 
         const aiState = state.detail.ai || {};

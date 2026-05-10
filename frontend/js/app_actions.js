@@ -149,11 +149,29 @@ function createAppActions(context) {
     // both surfaces atomically when promoting a watching item to a lead.
     context.loadLeads = leads.loadLeads;
     const watchlist = createApiWatchlist(context);
-    const ai = createApiAi(context);
-    const listingAssistant = (typeof createApiListingAssistant === "function")
-        ? createApiListingAssistant(context)
-        : null;
-    void listingAssistant;
+    let _aiModule = null;
+    let _listingAssistantModule = null;
+
+    async function ensureAiLoaded() {
+        if (_aiModule) return;
+        await Promise.all([
+            context._loadScript("js/api_ai.js?v=20260429-v7"),
+            context._loadScript("js/api_listing_assistant.js?v=20260429-v7"),
+        ]);
+        _aiModule = createApiAi(context);
+        _listingAssistantModule = (typeof createApiListingAssistant === "function")
+            ? createApiListingAssistant(context)
+            : null;
+    }
+
+    async function loadAIAnalysis(...args) {
+        await ensureAiLoaded();
+        return _aiModule.loadAIAnalysis(...args);
+    }
+
+    function closeAIModal() {
+        if (_aiModule) _aiModule.closeAIModal();
+    }
 
     // ── Cross-module hooks (actions that modules call into each other) ───
     // These are injected into context so every module can reach them.
@@ -162,8 +180,6 @@ function createAppActions(context) {
         search: listings.search,
         loadListings: listings.loadListings,
         loadMoreListings: listings.loadMoreListings,
-        loadDeals: listings.loadDeals,
-        loadMoreDeals: listings.loadMoreDeals,
         openListingDetail: listings.openListingDetail,
         loadSearchDependencies: listings.loadSearchDependencies,
         clearSearchData: listings.clearSearchData,
@@ -211,8 +227,9 @@ function createAppActions(context) {
         // View / focus helpers are injected above as context.setActiveView, context.focusTarget
 
         // From AI
-        loadAIAnalysis: ai.loadAIAnalysis,
-        closeAIModal: ai.closeAIModal,
+        loadAIAnalysis,
+        closeAIModal,
+        ensureAiLoaded,
     });
     // ── Wire events module (needs all action functions on context) ────────
     const events = createApiEvents(context);
@@ -650,14 +667,13 @@ function createAppActions(context) {
     // Expose consent function on context so api_ai.js can call it
     context.checkAiConsent = checkAiConsent;
     context.openPrivacyModal = openPrivacyModal;
+    context.ensureAiLoaded = ensureAiLoaded;
 
     return {
         bindEvents: events.bindEvents,
         search: listings.search,
         loadListings: listings.loadListings,
         loadMoreListings: listings.loadMoreListings,
-        loadDeals: listings.loadDeals,
-        loadMoreDeals: listings.loadMoreDeals,
         loadHistory: listings.loadHistory,
         loadTrackers: trackers.loadTrackers,
         loadLeads: leads.loadLeads,
@@ -698,8 +714,8 @@ function createAppActions(context) {
         exportLeads,
         exportLeadsCSV,
         exportLeadsXLSX,
-        loadAIAnalysis: ai.loadAIAnalysis,
-        closeAIModal: ai.closeAIModal,
+        loadAIAnalysis,
+        closeAIModal,
         checkAiConsent,
         openPrivacyModal,
         deleteAccount,

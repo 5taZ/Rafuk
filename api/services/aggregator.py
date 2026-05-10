@@ -283,8 +283,29 @@ def precompute_cluster_stats(
     return result
 
 
-def normalize_price_byn(raw_price: Any) -> float | None:
+def detect_price_type(ad: dict[str, Any]) -> str:
+    """Detect if a zero-price listing is 'free' or 'negotiable' based on text."""
+    text = f"{ad.get('subject', '')} {ad.get('body', '')} {ad.get('body_short', '')}".lower()
+    free_keywords = [
+        "бесплатно", "даром", "отдам бесплатно", "отдам даром",
+        "безвозмездно", "не нужны", "не нужен", "заберите", "забрать бесплатно",
+        "отдаю бесплатно", "отдаю даром", "free", "отдам в хорошие руки бесплатно",
+        "отдам за шоколадку", "отдам даром", "отдам бесплатно",
+    ]
+    for kw in free_keywords:
+        if kw in text:
+            return "free"
+    return "negotiable"
+
+
+def normalize_price_byn(raw_price: Any, ad: dict[str, Any] | None = None) -> float | None:
     if raw_price in (None, "", 0, 0.0):
+        # Kufar API returns both "negotiable" and "free" as 0.
+        # Distinguish them by ad text when the raw ad dict is provided.
+        if ad is not None:
+            price_type = detect_price_type(ad)
+            if price_type == "free":
+                return 0.0
         return None
     try:
         numeric = float(raw_price)
@@ -304,9 +325,15 @@ def normalize_price_byn(raw_price: Any) -> float | None:
 
 
 def extract_prices(ads: list[dict[str, Any]]) -> list[float]:
+    """Extract prices for metric calculations.
+
+    * Negotiable listings (price_byn == 0 with no free keywords) are excluded.
+    * Free listings (price_byn == 0 with free keywords) are included as 0.0.
+    * Normal priced listings are included as-is.
+    """
     prices: list[float] = []
     for ad in ads:
-        price_byn = normalize_price_byn(ad.get("price_byn"))
+        price_byn = normalize_price_byn(ad.get("price_byn"), ad)
         if price_byn is None:
             continue
         prices.append(price_byn)
@@ -378,7 +405,7 @@ def compute_price_stats(prices: list[float]) -> PriceStats:
 def compute_price_vs_median(ad: dict[str, Any], median: float) -> float:
     if not median:
         return 0.0
-    price_byn = normalize_price_byn(ad.get("price_byn"))
+    price_byn = normalize_price_byn(ad.get("price_byn"), ad)
     if price_byn is None:
         return 0.0
     return round((price_byn - median) / median * 100.0, 2)
@@ -410,7 +437,7 @@ def compute_category_price_stats(ads: list[dict[str, Any]]) -> dict[int, PriceSt
         category_id = get_category_id(ad)
         if category_id is None:
             continue
-        price_byn = normalize_price_byn(ad.get("price_byn"))
+        price_byn = normalize_price_byn(ad.get("price_byn"), ad)
         if price_byn is None:
             continue
         grouped_prices.setdefault(category_id, []).append(price_byn)

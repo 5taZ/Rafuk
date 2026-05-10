@@ -106,7 +106,6 @@ function createAppRenderers(context) {
         buildListingNode,
         renderListingsCollection,
         renderListings,
-        renderDeals,
         renderLeads,
         renderWatchlist,
     } = cards;
@@ -184,7 +183,6 @@ function createAppRenderers(context) {
         recent: renderRecentSearches,
         categories: renderFilterDropdown,
         listings: renderListings,
-        deals: renderDeals,
         trackerStatus: renderTrackerStatus,
         trackers: renderTrackers,
         trackerEvents: renderTrackerEvents,
@@ -257,7 +255,6 @@ function createAppRenderers(context) {
         renderRecentSearches,
         renderListingsCollection,
         renderListings,
-        renderDeals,
         renderTrackerStatus,
         renderTrackers,
         renderTrackerEvents,

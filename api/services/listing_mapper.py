@@ -8,6 +8,7 @@ from api.services.aggregator import (
     cluster_price_stats,
     compute_price_vs_median,
     compute_price_vs_reference,
+    detect_price_type,
     get_category_label,
     get_param,
     normalize_price_byn,
@@ -128,7 +129,9 @@ def build_listing_detail(
     category_price_stats: dict[int, PriceStats] | None = None,
     liquidity: LiquidityInsight | None = None,
 ) -> ListingDetailResponse:
-    price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
+    raw_price_byn = normalize_price_byn(ad.get("price_byn"), ad)
+    price_type = detect_price_type(ad) if raw_price_byn is None or raw_price_byn == 0.0 else "fixed"
+    price_byn = raw_price_byn
     description = _stringify_value(ad.get("body")) or _stringify_value(ad.get("body_short"))
     reference = resolve_price_reference(ad, market_stats, category_price_stats)
     price_delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
@@ -141,6 +144,8 @@ def build_listing_detail(
         market_stats=reference.stats,
     )
 
+    price = currency_service.convert_from_byn(price_byn, currency, rates) if price_byn is not None else None
+
     return ListingDetailResponse(
         query=query,
         normalized_query=query_insights.normalized_query,
@@ -149,7 +154,8 @@ def build_listing_detail(
         ram_gb=query_insights.ram_gb,
         ad_id=int(ad.get("ad_id", 0)),
         title=str(ad.get("subject", "")),
-        price=currency_service.convert_from_byn(price_byn, currency, rates),
+        price=price,
+        price_type=price_type,
         currency=currency,
         link=str(ad.get("ad_link", "")),
         list_time=ad.get("list_time"),
@@ -200,7 +206,9 @@ def build_listing_item(
     all_ads: list[dict[str, Any]] | None = None,
     cluster_cache: dict[int, PriceStats | None] | None = None,
 ) -> ListingItem:
-    price_byn = normalize_price_byn(ad.get("price_byn")) or 0.0
+    raw_price_byn = normalize_price_byn(ad.get("price_byn"), ad)
+    price_type = detect_price_type(ad) if raw_price_byn is None or raw_price_byn == 0.0 else "fixed"
+    price_byn = raw_price_byn
     reference = resolve_price_reference(ad, market_stats, category_price_stats)
     price_delta = 0.0
     cluster_applied = False
@@ -239,10 +247,13 @@ def build_listing_item(
         market_stats=active_reference,
     )
 
+    price = currency_service.convert_from_byn(price_byn, currency, rates) if price_byn is not None else None
+
     return ListingItem(
         ad_id=int(ad.get("ad_id", 0)),
         subject=str(ad.get("subject", "")),
-        price=currency_service.convert_from_byn(price_byn, currency, rates),
+        price=price,
+        price_type=price_type,
         currency=currency,
         ad_link=str(ad.get("ad_link", "")),
         list_time=ad.get("list_time"),

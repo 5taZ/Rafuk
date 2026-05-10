@@ -303,7 +303,7 @@ async def delete_account(
     try:
         from api.routers.ai_analysis import clear_user_ai_data  # deferred to avoid circular import
 
-        clear_user_ai_data(_user.user_id)
+        await clear_user_ai_data(_user.user_id)
     except Exception:
         logger.warning(
             "Failed to clear AI shadow data for user %d during account deletion",

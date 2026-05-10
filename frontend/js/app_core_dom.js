@@ -47,11 +47,9 @@ function cacheAppElements(elements) {
     elements.geographyGrid = document.getElementById("geography-grid");
     elements.geographyNote = document.getElementById("geography-note");
     elements.listingsSection = document.getElementById("listings-section");
-    elements.dealsSection = document.getElementById("deals-section");
     elements.marketTotalBadge = document.getElementById("market-total-badge");
     elements.listingsTotalBadge = document.getElementById("listings-total-badge");
     elements.listingsFallbackBadge = document.getElementById("listings-fallback-badge");
-    elements.dealsTotalBadge = document.getElementById("deals-total-badge");
     elements.stats = {
         median: document.getElementById("stat-median"),
         mean: document.getElementById("stat-mean"),
@@ -62,7 +60,6 @@ function cacheAppElements(elements) {
     };
     elements.segmentsGrid = document.getElementById("segments-grid");
     elements.listingsList = document.getElementById("listings-list");
-    elements.dealsList = document.getElementById("deals-list");
     elements.sortButtons = Array.from(document.querySelectorAll("[data-sort]"));
     elements.discountButtons = Array.from(document.querySelectorAll("[data-discount-from]"));
     elements.trackerEventFilterButtons = Array.from(document.querySelectorAll("[data-event-filter]"));

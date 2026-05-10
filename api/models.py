@@ -220,6 +220,7 @@ class QueryListingState(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     link: Mapped[str] = mapped_column(String(512), nullable=False)
     last_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     list_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
     active: Mapped[bool] = mapped_column(
         Boolean,
@@ -265,6 +266,7 @@ class TrackerEvent(Base, UserIDMixin):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     link: Mapped[str] = mapped_column(String(512), nullable=False)
     price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     delta_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     # Enriched metadata
     thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
