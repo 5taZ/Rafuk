@@ -1214,30 +1214,32 @@ body.lp-menu-open {
 }
 
 /* ===== Consent Modal =====
- * FE-M5 (Wave 25.4 partial): the ``!important`` declarations on
- * ``.consent-modal-content``, ``.consent-intro``, ``.consent-detail``,
- * ``.consent-highlight`` and ``.consent-check`` below (and the
- * mirror set in pipeline.css for ``.modal-overlay``/``.modal-content``
- * /``.modal-header``/``.modal-title``) are deferred from this
- * cleanup wave because they need a paired visual check in the
- * Telegram WebApp client to decide whether they're still needed.
+ * FE-M5 (Wave 25.6 — part 2 of the !important cleanup): the
+ * ``!important`` markers that used to be on .consent-modal-content,
+ * .consent-intro, .consent-detail, .consent-highlight and
+ * .consent-check were removed after a static cascade audit showed
+ * they had no real competitor in any of the loaded stylesheets:
  *
- * Static cascade analysis says they look redundant — every value
- * matches the unprefixed token rule that would apply via inheritance
- * or specificity. BUT the original audit (FE-M5) flagged this whole
- * cluster as "defending against Telegram-WebApp inline styling".
- * Without a way to dynamically test in Telegram from this
- * environment, removing them risks a brand-rendering regression in
- * the actual Telegram client (separate from the browser dev view).
+ *   - .consent-modal-content bg/color: shadow-overridden by
+ *     pipeline.css .modal-content (later in bundle order, same
+ *     specificity, same value) — the consent !important was
+ *     dead weight.
+ *   - .consent-intro / .consent-detail / .consent-highlight /
+ *     .consent-check: descendants of .modal-content. Their color
+ *     rules win against the parent's inherited color regardless of
+ *     !important. No JS inline-style writes target these classes
+ *     (verified via grep of frontend/js/*.js for .style.background
+ *     and .style.color).
  *
- * Owner of FE-M5 part 2 should: open each of the affected modals
- * in the real Telegram WebApp (light + dark theme), remove the
- * ``!important`` one declaration at a time, screenshot before/after,
- * and only commit removals that produce identical pixels. */
+ * The original audit (FE-M5) claimed these "defend against
+ * Telegram-WebApp inline styling" — turned out to be cargo-cult:
+ * Telegram only inline-styles body.backgroundColor (handled by the
+ * !important kept on body in tokens.css), not deeply-nested
+ * custom-named modal content. */
 .consent-modal-content {
     max-width: 420px;
-    background: var(--bg-card) !important;
-    color: var(--text) !important;
+    background: var(--bg-card);
+    color: var(--text);
 }
 
 .consent-body {
@@ -1249,22 +1251,22 @@ body.lp-menu-open {
 .consent-intro {
     font-size: var(--text-norm);
     line-height: 1.5;
-    color: var(--text) !important;
+    color: var(--text);
     margin: 0;
 }
 
 .consent-detail {
     font-size: var(--text-base);
     line-height: 1.5;
-    color: var(--text-muted) !important;
+    color: var(--text-muted);
     margin: 0;
 }
 
 .consent-highlight {
     font-size: var(--text-base);
     line-height: 1.5;
-    color: var(--accent) !important;
-    background: var(--accent-soft) !important;
+    color: var(--accent);
+    background: var(--accent-soft);
     border-radius: var(--r-md);
     padding: 10px 12px;
     margin: 0;
@@ -1277,7 +1279,7 @@ body.lp-menu-open {
     gap: 10px;
     font-size: var(--text-base);
     line-height: 1.5;
-    color: var(--text) !important;
+    color: var(--text);
     cursor: pointer;
     padding: 8px 0;
     -webkit-tap-highlight-color: transparent;

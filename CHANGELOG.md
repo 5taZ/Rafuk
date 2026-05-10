@@ -14,7 +14,91 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 25.5 — fix listing-assistant Esc freeze (broken modal close path) _(this commit)_
+### Wave 25.6 — FE-M5 complete (delete 13 dead-weight !important markers) _(this commit)_
+
+Second pass on FE-M5 — the cluster Wave 25.4 deferred for visual
+review. Static cascade audit + a sweep of every `.style.*` write in
+`frontend/js/*.js` proved the cluster's "defends against Telegram-
+WebApp inline styling" claim was cargo-cult: nothing in any loaded
+partial or in any JS code actually competes with these declarations.
+Telegram WebApp only inline-styles `document.body.backgroundColor`
+(handled by the `!important` we kept on `body` in `tokens.css`),
+never the deeply-nested custom-named modal content.
+
+Removed (13 declarations):
+
+* **modals.css consent-modal block (7 declarations)** —
+  `.consent-modal-content { background, color }`,
+  `.consent-intro { color }`, `.consent-detail { color }`,
+  `.consent-highlight { background, color }`,
+  `.consent-check { color }`. All five descend from
+  `.modal-content` (now also without `!important`), so their
+  directly-set color wins over inherited regardless of priority
+  markers. The `.consent-modal-content` background/color were
+  literally dead weight — pipeline.css's `.modal-content` rule
+  loads later in the bundle with the same value and same
+  specificity, winning by source order whether `!important` or
+  not.
+
+* **pipeline.css modal-overlay/content/header/title (6
+  declarations)** — `.modal-overlay { background }`,
+  `.modal-content { background, color }`,
+  `.modal-header { color }`, `.modal-title { color }`. No
+  competing rule exists in any partial — brand.css only adds
+  `animation` to these selectors, not bg/color — and `grep` over
+  `frontend/js/*.js` finds zero inline-style writes to these
+  classes. The only inline `.style.background` write in the
+  whole codebase is on `document.body` in `app_core.js` (which
+  is what the kept-`!important` on `body` defends against).
+
+Deleted (1 redundant rule):
+
+* `[data-theme="light"] .modal-overlay { background: var(--overlay)
+  !important; }` — same value as the unprefixed rule. Light
+  theme works because `tokens.css` redefines `--overlay` on
+  `[data-theme="light"]`, so the variable lookup at the
+  unprefixed rule cascades to the correct value without a
+  duplicate selector.
+
+Each cluster's CSS comment was rewritten to be a forward-facing
+note ("removed because…") instead of the backward-facing TODO
+("deferred because…") from Wave 25.4.
+
+After Wave 25.6, the entire CSS bundle has **14 `!important`
+declarations remaining (was 30 at the start of FE-M5)**. The
+remaining 14 are all W3C-canonical or Telegram-WebApp defensive:
+
+* `tokens.css`: `[hidden]`, `[x-cloak]`,
+  `prefers-reduced-motion *` block (4 declarations),
+  `body { background, color }`. 8 total.
+* `modals.css`: `body.modal-open { overflow }`,
+  `.detail-sheet { animation: none }` in reduced-motion,
+  `.detail-media img { transition-duration }` in reduced-motion,
+  `.swipe-target { transition: none }` in reduced-motion.
+  4 total.
+* `pipeline.css`: none after this wave. 0.
+* `brand.css`: `.modal-overlay { animation: none }` in
+  reduced-motion. 1 total.
+* `states.css`: `.recent-strip[hidden] { display: flex }`
+  (intentionally overrides the global `[hidden]` rule for
+  animation purposes — documented inline since Wave 22). 1 total.
+
+Each one is annotated with WHY it must stay (most are
+`prefers-reduced-motion` accessibility — WCAG 2.3.3 canonical, or
+beats Telegram WebApp's `body.style.backgroundColor` inline).
+
+`scripts/rebuild_css.py` regenerated `style.css`. 509 passed.
+Static version stamp bumped to `?v=20260510-9064985`; frontend
+container rebuilt and running.
+
+**Smoke-test plan after redeploy**: open AI Consent modal (first
+launch or after clearing localStorage), Edit Tracker modal,
+Privacy Policy modal — backgrounds and text colors should be
+identical to before. If anything looks off in the actual Telegram
+WebApp client, revert the specific declaration and add a
+clarifying comment.
+
+### Wave 25.5 — fix listing-assistant Esc freeze (broken modal close path)
 
 User reported: opened the "create listing" assistant from "Мои
 объявления", pressed `Esc` instead of clicking ✕, and **the

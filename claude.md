@@ -206,13 +206,16 @@ audit item.
 After 11 themed sweeps, the remaining 27 MEDIUM items split into
 three buckets:
 
-**Genuinely-impactful, deferred for scope or risk reasons (1):**
+**Genuinely-impactful, deferred (0):** — all closed.
 
-* **FE-M5** — 31 `!important` CSS declarations across
-  `tokens.css`, `pipeline.css`, `modals.css`, `brand.css`,
-  `states.css`. Most fight Telegram-WebApp inline styles or the
-  global `[hidden]` attribute. Each removal needs paired visual
-  review, so a bulk strip isn't safe.
+* ~~**FE-M5**~~ — closed by Waves 25.4 + 25.6. The audit's 31
+  `!important` declarations are now down to 14, all of them
+  W3C-canonical (`prefers-reduced-motion`, `[hidden]`,
+  `[x-cloak]`) or Telegram-WebApp defensive (`body { background,
+  color }`, `body.modal-open { overflow }` — beat the inline
+  styles `app_core.js` and Telegram's BottomSheet set on body).
+  Each kept declaration is annotated inline with WHY it must
+  stay. See CHANGELOG 25.4 + 25.6.
 
 **Internal refactor / low user impact (a handful):**
 
