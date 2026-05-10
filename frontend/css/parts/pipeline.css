@@ -1639,7 +1639,12 @@
     flex: 1;
 }
 
-/* Modal styles */
+/* Modal styles.
+ * FE-M5 (Wave 25.4 partial): the ``!important`` on ``.modal-overlay``,
+ * ``.modal-content``, ``.modal-header`` and ``.modal-title`` below
+ * is the second half of the deferred cluster — see the longer note
+ * in modals.css above the ``.consent-modal-content`` block. Same
+ * "needs visual confirmation in real Telegram WebApp" reason. */
 .modal-overlay {
     position: fixed;
     top: 0;

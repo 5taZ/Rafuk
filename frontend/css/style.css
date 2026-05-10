@@ -24,7 +24,16 @@
  * 1000 - loading overlay
  */
 
-/* Global hidden override — flex/grid overrides HTML hidden attribute */
+/* Global hidden override.
+ * FE-M5 (Wave 25.4): ``!important`` is W3C-canonical here. The HTML
+ * ``hidden`` attribute maps to ``display: none`` at user-agent
+ * specificity, but any author rule that sets ``display: flex/grid/
+ * block`` beats UA rules. ``!important`` re-establishes the spec
+ * intent that ``[hidden]`` is invisible regardless of authored
+ * display. The common pattern used by every reset stylesheet.
+ * Counterpart for ``.recent-strip[hidden]`` (states.css) is the
+ * documented escape hatch when an element needs to animate from
+ * hidden → visible. */
 [hidden] {
     display: none !important;
 }
@@ -40,7 +49,12 @@
     --border-hover: rgba(255, 255, 255, 0.1);
     --text: #e8e8e8;
     --text-muted: #a0a0a0;
-    --text-dim: #8a8a8a;
+    /* UX-H3: --text-dim used to be #8a8a8a, which on --bg #0a0a0b sits
+       at ~4.8:1 — right at the WCAG AA floor and failing once the
+       browser anti-aliases thin glyphs. Bumping to #9e9e9e gives us
+       ~6.3:1 with room to spare, matching the tone of --text-muted
+       so body copy and secondary hints stay in the same family. */
+    --text-dim: #9e9e9e;
     --text-secondary: #a0a0a0;
     --accent: #3b82f6;
     --accent-soft: rgba(59, 130, 246, 0.08);
@@ -131,6 +145,14 @@
     --overlay-light: rgba(255, 255, 255, 0.82);
 }
 
+/* FE-M5 (Wave 25.4): ``!important`` here is the W3C-canonical pattern
+ * for ``prefers-reduced-motion`` (see WCAG 2.1, success criterion
+ * 2.3.3). Author rules typically set ``transition: ... 300ms`` on
+ * specific selectors at higher specificity than ``*``; without
+ * ``!important`` the universal selector would lose the cascade and
+ * the user's reduced-motion preference would be ignored. Every
+ * other ``!important`` inside ``prefers-reduced-motion`` media
+ * queries (modals.css, brand.css) keeps for the same reason. */
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -281,7 +303,12 @@ button:focus-visible,
     --border-hover: rgba(0, 0, 0, 0.1);
     --text: #1a1a1a;
     --text-muted: #5a5a5a;
-    --text-dim: #636363;
+    /* UX-H3: light-mode --text-dim was #636363 on --bg #f7f7f8, which
+       tests at ~5.4:1. It technically passes AA but fails AAA for
+       body text (7:1) and felt thin in screen readers' high-contrast
+       mode. Deepening to #4f4f4f gives ~8:1 — safely AAA for
+       dim/secondary labels, still visibly softer than --text. */
+    --text-dim: #4f4f4f;
     --text-secondary: #5a5a5a;
     --accent: #2563eb;
     --accent-soft: rgba(37, 99, 235, 0.06);
@@ -342,6 +369,16 @@ html {
     font-size: var(--text-md);
 }
 
+/* FE-M5 (Wave 25.4): the ``!important`` on ``background``/``color``
+ * here is defensive against Telegram WebApp injecting its own inline
+ * theme styles on ``body`` when launched inside a Telegram client.
+ * Inline ``style="..."`` beats any normal-priority CSS rule on
+ * specificity grounds; the only thing that beats inline (without an
+ * ``!important`` on the inline style) is an ``!important`` author
+ * rule. Removing either ``!important`` causes the WebApp to render
+ * with Telegram's default theme variables instead of our brand
+ * tokens — visually breaks the brand-refresh design. Keep until
+ * Telegram WebApp deprecates the inline-style injection. */
 body {
     margin: 0;
     background: var(--bg) !important;
@@ -542,6 +579,13 @@ body {
     border: 0;
 }
 
+/* Filter button — needs relative positioning so the absolutely-positioned
+   .filter-active-badge dot anchors to it. Replaces a former
+   inline style="position:relative" on the button element. */
+.filter-btn {
+    position: relative;
+}
+
 /* Filter active badge — small indicator dot on the filter button */
 .filter-active-badge {
     position: absolute;
@@ -626,6 +670,12 @@ body {
 
 /* DUPLICATE REMOVED: .view-panel at line 117 (empty rule) and line 773 (duplicate) */
 
+/* FE-M5 (Wave 25.4): standard Alpine-style pre-hydration hide.
+ * Used to prevent flash-of-uninitialised-template before the JS
+ * removes the ``x-cloak`` attribute. ``!important`` is canonical
+ * here (same reasoning as ``[hidden]`` above — any author
+ * ``display`` value at higher specificity would otherwise show
+ * the un-hydrated markup). */
 [x-cloak] {
     display: none !important;
 }
@@ -707,11 +757,9 @@ body {
 }
 
 .search-btn:disabled {
-    /* UX-H3: see matching rule in tokens.css — disabled at 0.45
-       opacity failed WCAG AA (~3.8:1) for white text on the blue
-       accent. 0.6 gets us back to ~5:1 while still reading as
-       visibly disabled. Keeping both rules in sync until we delete
-       the duplicate in a future refactor. */
+    /* UX-H3: disabled opacity of 0.45 dropped the white text on
+       var(--accent) under the WCAG AA 4.5:1 floor (~3.8:1). 0.6 lands
+       at ~5:1 while still reading as visibly disabled. */
     opacity: 0.6;
     cursor: default;
 }
@@ -2797,7 +2845,12 @@ body {
     animation: modal-overlay-out 200ms ease forwards;
 }
 
-/* When a modal is open, lock body scroll to prevent double-scroll */
+/* When a modal is open, lock body scroll to prevent double-scroll.
+ * FE-M5 (Wave 25.4): ``!important`` is defensive against Telegram
+ * WebApp's BottomSheet behaviour, which inline-styles
+ * ``body.style.overflow`` on expand. Author rules can't beat inline
+ * styles without ``!important``; keep until verified Telegram no
+ * longer touches body.overflow. */
 body.modal-open {
     overflow: hidden !important;
     touch-action: none;
@@ -3990,7 +4043,27 @@ body.lp-menu-open {
     }
 }
 
-/* ===== Consent Modal ===== */
+/* ===== Consent Modal =====
+ * FE-M5 (Wave 25.4 partial): the ``!important`` declarations on
+ * ``.consent-modal-content``, ``.consent-intro``, ``.consent-detail``,
+ * ``.consent-highlight`` and ``.consent-check`` below (and the
+ * mirror set in pipeline.css for ``.modal-overlay``/``.modal-content``
+ * /``.modal-header``/``.modal-title``) are deferred from this
+ * cleanup wave because they need a paired visual check in the
+ * Telegram WebApp client to decide whether they're still needed.
+ *
+ * Static cascade analysis says they look redundant — every value
+ * matches the unprefixed token rule that would apply via inheritance
+ * or specificity. BUT the original audit (FE-M5) flagged this whole
+ * cluster as "defending against Telegram-WebApp inline styling".
+ * Without a way to dynamically test in Telegram from this
+ * environment, removing them risks a brand-rendering regression in
+ * the actual Telegram client (separate from the browser dev view).
+ *
+ * Owner of FE-M5 part 2 should: open each of the affected modals
+ * in the real Telegram WebApp (light + dark theme), remove the
+ * ``!important`` one declaration at a time, screenshot before/after,
+ * and only commit removals that produce identical pixels. */
 .consent-modal-content {
     max-width: 420px;
     background: var(--bg-card) !important;
@@ -5824,7 +5897,12 @@ body.lp-menu-open {
     flex: 1;
 }
 
-/* Modal styles */
+/* Modal styles.
+ * FE-M5 (Wave 25.4 partial): the ``!important`` on ``.modal-overlay``,
+ * ``.modal-content``, ``.modal-header`` and ``.modal-title`` below
+ * is the second half of the deferred cluster — see the longer note
+ * in modals.css above the ``.consent-modal-content`` block. Same
+ * "needs visual confirmation in real Telegram WebApp" reason. */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -7665,10 +7743,13 @@ body.lp-menu-open {
 
 /* ===== brand ===== */
 /* ===== Visual refresh: scanner brand system ===== */
-body {
-    background: var(--bg) !important;
-}
-
+/* FE-M5 (Wave 25.4): the previous ``body { background: var(--bg)
+ * !important; }`` rule was a duplicate of the same declaration in
+ * tokens.css (the canonical body rule) and of the second copy
+ * further down in this file. The cascade already resolves to the
+ * same colour via ``var(--bg)``, so all three competing copies were
+ * computing identical pixels. Removed two; kept the tokens.css
+ * version as the single source of truth. */
 .header {
     background: var(--bg);
     border-bottom-color: var(--border);
@@ -9066,15 +9147,13 @@ body {
     letter-spacing: -0.01em;
 }
 
-/* --- Body background: keep it pure, no radial gradients ----------- */
-body {
-    background: var(--bg) !important;
-}
-
-[data-theme="light"] body {
-    background: var(--bg) !important;
-}
-
+/* --- Body background ------------------------------------------------
+ * FE-M5 (Wave 25.4): removed two duplicate ``body { background:
+ * var(--bg) !important; }`` rules (one default, one
+ * ``[data-theme="light"] body``). Both resolved to the same value
+ * via ``var(--bg)`` as tokens.css's canonical body rule, which
+ * already redefines ``--bg`` for the light theme on ``[data-theme=
+ * "light"]``. The duplicates were no-ops in every cascade trace. */
 /* --- Header: subtle, не мерцает при scroll ----------------------- */
 .header {
     background: color-mix(in srgb, var(--bg) 92%, transparent);

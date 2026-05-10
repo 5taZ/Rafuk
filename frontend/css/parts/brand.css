@@ -1,8 +1,11 @@
 /* ===== Visual refresh: scanner brand system ===== */
-body {
-    background: var(--bg) !important;
-}
-
+/* FE-M5 (Wave 25.4): the previous ``body { background: var(--bg)
+ * !important; }`` rule was a duplicate of the same declaration in
+ * tokens.css (the canonical body rule) and of the second copy
+ * further down in this file. The cascade already resolves to the
+ * same colour via ``var(--bg)``, so all three competing copies were
+ * computing identical pixels. Removed two; kept the tokens.css
+ * version as the single source of truth. */
 .header {
     background: var(--bg);
     border-bottom-color: var(--border);
@@ -1400,15 +1403,13 @@ body {
     letter-spacing: -0.01em;
 }
 
-/* --- Body background: keep it pure, no radial gradients ----------- */
-body {
-    background: var(--bg) !important;
-}
-
-[data-theme="light"] body {
-    background: var(--bg) !important;
-}
-
+/* --- Body background ------------------------------------------------
+ * FE-M5 (Wave 25.4): removed two duplicate ``body { background:
+ * var(--bg) !important; }`` rules (one default, one
+ * ``[data-theme="light"] body``). Both resolved to the same value
+ * via ``var(--bg)`` as tokens.css's canonical body rule, which
+ * already redefines ``--bg`` for the light theme on ``[data-theme=
+ * "light"]``. The duplicates were no-ops in every cascade trace. */
 /* --- Header: subtle, не мерцает при scroll ----------------------- */
 .header {
     background: color-mix(in srgb, var(--bg) 92%, transparent);

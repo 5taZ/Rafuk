@@ -15,7 +15,12 @@
     animation: modal-overlay-out 200ms ease forwards;
 }
 
-/* When a modal is open, lock body scroll to prevent double-scroll */
+/* When a modal is open, lock body scroll to prevent double-scroll.
+ * FE-M5 (Wave 25.4): ``!important`` is defensive against Telegram
+ * WebApp's BottomSheet behaviour, which inline-styles
+ * ``body.style.overflow`` on expand. Author rules can't beat inline
+ * styles without ``!important``; keep until verified Telegram no
+ * longer touches body.overflow. */
 body.modal-open {
     overflow: hidden !important;
     touch-action: none;
@@ -1208,7 +1213,27 @@ body.lp-menu-open {
     }
 }
 
-/* ===== Consent Modal ===== */
+/* ===== Consent Modal =====
+ * FE-M5 (Wave 25.4 partial): the ``!important`` declarations on
+ * ``.consent-modal-content``, ``.consent-intro``, ``.consent-detail``,
+ * ``.consent-highlight`` and ``.consent-check`` below (and the
+ * mirror set in pipeline.css for ``.modal-overlay``/``.modal-content``
+ * /``.modal-header``/``.modal-title``) are deferred from this
+ * cleanup wave because they need a paired visual check in the
+ * Telegram WebApp client to decide whether they're still needed.
+ *
+ * Static cascade analysis says they look redundant — every value
+ * matches the unprefixed token rule that would apply via inheritance
+ * or specificity. BUT the original audit (FE-M5) flagged this whole
+ * cluster as "defending against Telegram-WebApp inline styling".
+ * Without a way to dynamically test in Telegram from this
+ * environment, removing them risks a brand-rendering regression in
+ * the actual Telegram client (separate from the browser dev view).
+ *
+ * Owner of FE-M5 part 2 should: open each of the affected modals
+ * in the real Telegram WebApp (light + dark theme), remove the
+ * ``!important`` one declaration at a time, screenshot before/after,
+ * and only commit removals that produce identical pixels. */
 .consent-modal-content {
     max-width: 420px;
     background: var(--bg-card) !important;

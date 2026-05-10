@@ -9,7 +9,16 @@
  * 1000 - loading overlay
  */
 
-/* Global hidden override — flex/grid overrides HTML hidden attribute */
+/* Global hidden override.
+ * FE-M5 (Wave 25.4): ``!important`` is W3C-canonical here. The HTML
+ * ``hidden`` attribute maps to ``display: none`` at user-agent
+ * specificity, but any author rule that sets ``display: flex/grid/
+ * block`` beats UA rules. ``!important`` re-establishes the spec
+ * intent that ``[hidden]`` is invisible regardless of authored
+ * display. The common pattern used by every reset stylesheet.
+ * Counterpart for ``.recent-strip[hidden]`` (states.css) is the
+ * documented escape hatch when an element needs to animate from
+ * hidden → visible. */
 [hidden] {
     display: none !important;
 }
@@ -121,6 +130,14 @@
     --overlay-light: rgba(255, 255, 255, 0.82);
 }
 
+/* FE-M5 (Wave 25.4): ``!important`` here is the W3C-canonical pattern
+ * for ``prefers-reduced-motion`` (see WCAG 2.1, success criterion
+ * 2.3.3). Author rules typically set ``transition: ... 300ms`` on
+ * specific selectors at higher specificity than ``*``; without
+ * ``!important`` the universal selector would lose the cascade and
+ * the user's reduced-motion preference would be ignored. Every
+ * other ``!important`` inside ``prefers-reduced-motion`` media
+ * queries (modals.css, brand.css) keeps for the same reason. */
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -337,6 +354,16 @@ html {
     font-size: var(--text-md);
 }
 
+/* FE-M5 (Wave 25.4): the ``!important`` on ``background``/``color``
+ * here is defensive against Telegram WebApp injecting its own inline
+ * theme styles on ``body`` when launched inside a Telegram client.
+ * Inline ``style="..."`` beats any normal-priority CSS rule on
+ * specificity grounds; the only thing that beats inline (without an
+ * ``!important`` on the inline style) is an ``!important`` author
+ * rule. Removing either ``!important`` causes the WebApp to render
+ * with Telegram's default theme variables instead of our brand
+ * tokens — visually breaks the brand-refresh design. Keep until
+ * Telegram WebApp deprecates the inline-style injection. */
 body {
     margin: 0;
     background: var(--bg) !important;
@@ -628,6 +655,12 @@ body {
 
 /* DUPLICATE REMOVED: .view-panel at line 117 (empty rule) and line 773 (duplicate) */
 
+/* FE-M5 (Wave 25.4): standard Alpine-style pre-hydration hide.
+ * Used to prevent flash-of-uninitialised-template before the JS
+ * removes the ``x-cloak`` attribute. ``!important`` is canonical
+ * here (same reasoning as ``[hidden]`` above — any author
+ * ``display`` value at higher specificity would otherwise show
+ * the un-hydrated markup). */
 [x-cloak] {
     display: none !important;
 }

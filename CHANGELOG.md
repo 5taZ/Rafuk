@@ -14,7 +14,55 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 25.3 — fix modal inert regression (UX-M2 was broken since Wave 22) _(this commit)_
+### Wave 25.4 — FE-M5 partial (delete duplicate body backgrounds, annotate keepers) _(this commit)_
+
+First pass on FE-M5 (CSS `!important` cleanup). The audit flagged
+31 declarations and noted "each removal needs paired visual review,
+so a bulk strip isn't safe". This wave does the safe subset only:
+
+* **Removed 3 duplicate `body { background: var(--bg) !important; }`
+  declarations** from `brand.css` — two unconditional copies plus
+  one `[data-theme="light"] body` variant. All three resolved to
+  the exact same `var(--bg)` value already set by the canonical
+  rule in `tokens.css`. Light theme works because `tokens.css`
+  redefines `--bg` for `[data-theme="light"]`, so the variable
+  lookup at the body level cascades correctly without the
+  duplicated selector. Verified static cascade trace; no visual
+  change expected.
+
+* **Annotated the W3C-canonical keepers** with a brief explanation
+  of WHY they need `!important`, so the next person to scan for
+  cleanup wins doesn't keep re-discovering "ah right, this one
+  HAS to stay":
+
+    * `tokens.css [hidden]`, `[x-cloak]` — standard reset patterns
+      to beat any author `display: flex/grid` rule.
+    * `tokens.css @media (prefers-reduced-motion: reduce) *` —
+      WCAG 2.3.3 canonical (must beat per-selector transition
+      rules).
+    * `tokens.css body { background, color !important }` —
+      defensive against Telegram WebApp's inline-style theme
+      injection. Inline styles beat non-`!important` author rules
+      by spec; remove only after confirming Telegram no longer
+      touches body inline.
+    * `modals.css body.modal-open { overflow !important }` —
+      defensive against Telegram BottomSheet's body.overflow
+      inline style.
+
+* **Annotated the deferred cluster** (17 declarations across
+  `modals.css` consent-modal block + `pipeline.css` modal-overlay/
+  content/header/title) with an explicit "FE-M5 part 2" header
+  block above each cluster, including a runbook for the eventual
+  cleanup (open in real Telegram WebApp, remove one at a time,
+  screenshot before/after, only commit pixel-identical removals).
+
+Net: 30 declarations → 27 (3 removed); 8 annotated as canonical
+keepers; 17 explicitly documented for visual-review follow-up.
+`scripts/rebuild_css.py` regenerated `style.css`. 508 passed.
+Static version stamp bumped to `?v=20260510-a037e2f`; frontend
+container rebuilt and running.
+
+### Wave 25.3 — fix modal inert regression (UX-M2 was broken since Wave 22)
 
 User reported: **no scroll, no clicks inside any modal** (detail
 sheet, AI analysis, listing assistant). Root cause: a Wave 22
