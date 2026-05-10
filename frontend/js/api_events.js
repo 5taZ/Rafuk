@@ -786,13 +786,25 @@ function createApiEvents(context) {
         });
 
         // ── Escape key (modal close) ─────────────────────────────────
+        // Topmost-modal priority. Listing-Assistant deliberately
+        // NOT handled here — that module registers its OWN
+        // ``keydown`` listener in api_listing_assistant.js which
+        // calls its internal ``closeModal()`` (which goes through
+        // ``closeModalAnimated`` and therefore runs the full close
+        // path: ``is-closing`` animation, ``unlockBodyScroll``,
+        // focus-trap cleanup, ``_restoreInertSiblings``).
+        //
+        // Wave 25.5: the earlier code here had its own LA branch
+        // that did ``laModal.hidden = true;`` directly, bypassing
+        // every part of that cleanup. Symptom: pressing Esc inside
+        // the listing-assistant left ``body.modal-open`` (page
+        // scroll-locked), the ``inert`` siblings still inert (no
+        // clicks anywhere) and the focus trapped inside the now-
+        // hidden modal — UI completely frozen until the user
+        // refreshed.
         document.addEventListener("keydown", (event) => {
             if (event.key === "Escape") {
-                // Close the topmost modal first — LA > AI > expenses > detail > edit tracker.
-                const laModal = document.getElementById("la-modal");
-                if (laModal && !laModal.hidden) {
-                    laModal.hidden = true;
-                } else if (!elements.aiModal?.hidden) {
+                if (!elements.aiModal?.hidden) {
                     closeAIModal();
                 } else if (!elements.expensesModal?.hidden) {
                     closeExpensesModal();

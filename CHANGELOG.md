@@ -14,7 +14,72 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 25.4 — FE-M5 partial (delete duplicate body backgrounds, annotate keepers) _(this commit)_
+### Wave 25.5 — fix listing-assistant Esc freeze (broken modal close path) _(this commit)_
+
+User reported: opened the "create listing" assistant from "Мои
+объявления", pressed `Esc` instead of clicking ✕, and **the
+entire UI froze**. No clicks register, page can't scroll.
+
+Root cause: the global `Escape` handler in `api_events.js` had a
+fast-path for the listing-assistant modal that bypassed every
+piece of cleanup. The branch did literally just:
+
+```js
+const laModal = document.getElementById("la-modal");
+if (laModal && !laModal.hidden) {
+    laModal.hidden = true;   // ← direct DOM mutation, no cleanup
+}
+```
+
+Compare with the same handler's other branches — they all call
+the proper `closeAIModal()` / `closeExpensesModal()` /
+`closeDetailModal()` / `closeEditTrackerAction()` helpers, each of
+which routes through `closeModalAnimated()`. That helper is the
+one that:
+
+* removes `body.modal-open` and releases the scroll-lock
+  (`unlockBodyScroll`),
+* runs `_focusTrapCleanup` so Tab is no longer captured inside
+  the now-hidden dialog,
+* runs `_restoreInertSiblings` so every background element gets
+  its `inert` attribute removed (after Wave 25.3 the inert set
+  is the whole page chrome — leaving it inert means nothing on
+  the page is clickable),
+* restores focus to the element that had it before the modal
+  opened.
+
+The `laModal.hidden = true` shortcut skipped ALL of that. Symptom:
+modal disappears visually, page is now stuck in modal-locked
+state forever, user has to refresh.
+
+What made this worse: the listing-assistant module already
+registers its OWN keydown handler inside
+`api_listing_assistant.js` that calls its internal `closeModal()`
+(which uses `closeModalAnimated` correctly). But the global
+handler in api_events.js ran FIRST and hid the modal directly, so
+when the local handler then checked `!modal.hidden` it found it
+already hidden and no-op'd — leaving cleanup permanently undone.
+
+Fix:
+
+* Remove the LA branch from the global Esc handler entirely. The
+  listing-assistant module's own handler now handles its key
+  unconflicted.
+* Document at the call-site that LA is *deliberately* excluded.
+
+Static regression test added (`test_no_modal_close_bypasses_close_modal_animated`):
+scans `api_events.js` for any `xxxModal.hidden = true` pattern
+that bypasses the close helpers. The test would have caught the
+original Wave-22-era code that introduced this branch.
+
+509 passed (was 508), 1 skipped. Static version stamp bumped to
+`?v=20260510-1de3cf9`; frontend container rebuilt and running.
+
+After reloading: open Listing Assistant → press Esc → modal
+should close with the slide-out animation, page should scroll
+again, the rest of the UI should be responsive.
+
+### Wave 25.4 — FE-M5 partial (delete duplicate body backgrounds, annotate keepers)
 
 First pass on FE-M5 (CSS `!important` cleanup). The audit flagged
 31 declarations and noted "each removal needs paired visual review,

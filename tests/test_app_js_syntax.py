@@ -215,6 +215,46 @@ console.log("OK");
     assert "OK" in result.stdout, f"unexpected output: {result.stdout!r}"
 
 
+def test_no_modal_close_bypasses_close_modal_animated() -> None:
+    """Wave 25.5 regression test: every modal close path must go through
+    ``closeModalAnimated`` (or a wrapper that ultimately does) — never
+    directly set ``modalEl.hidden = true``. The direct-hidden shortcut
+    skips ``unlockBodyScroll``, the focus-trap cleanup, and the
+    ``_restoreInertSiblings`` call, leaving the page scroll-locked
+    and every background element ``inert``. User-visible symptom: UI
+    appears frozen, no clicks register anywhere.
+
+    The bug that triggered this test: the global Escape handler in
+    api_events.js had a fast-path for the listing-assistant modal
+    that did ``laModal.hidden = true`` directly. The listing-assistant
+    module already had its OWN Escape handler that called
+    ``closeModal()`` correctly; the duplicate global handler did its
+    direct-hide first and the local handler then no-op'd (because
+    modal was already hidden=true), leaving cleanup undone.
+
+    This test scans api_events.js for any ``hidden = true`` set on a
+    DOM element variable that LOOKS like a modal reference.
+    """
+    events_src = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    # Strip line comments so commented-out historical examples don't
+    # trigger the matcher.
+    lines = [
+        ln for ln in events_src.splitlines()
+        if not ln.strip().startswith("//")
+    ]
+    stripped_src = "\n".join(lines)
+    bad_matches = re.findall(
+        r"\b([a-zA-Z_]\w*[Mm]odal)\.hidden\s*=\s*true",
+        stripped_src,
+    )
+    assert not bad_matches, (
+        f"api_events.js sets ``.hidden = true`` directly on modals: "
+        f"{sorted(set(bad_matches))}. Use the matching closeXModal() "
+        f"helper instead — direct-hidden bypasses scroll-lock release "
+        f"and the inert/focus-trap cleanup."
+    )
+
+
 def test_close_ai_modal_cancels_polling() -> None:
     """closeAIModal used to leave the AI polling loop running for up to 6
     minutes, blocking re-opening AI Analysis. Verify the cancel-by-session
