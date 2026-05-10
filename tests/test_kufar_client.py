@@ -188,3 +188,60 @@ async def test_concurrent_search_respects_request_delay(
     assert elapsed >= 0.090, (
         f"concurrent calls completed in {elapsed * 1000:.0f}ms — delay not enforced"
     )
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_counter_is_thread_safe(mock_settings: MagicMock) -> None:
+    """Concurrent failures + a success used to race on _consecutive_errors:
+    the success path could reset the counter to 0 between a failure
+    path's read and its compare, so the circuit would never open. With
+    the lock, every read-modify-write is atomic and the threshold is
+    respected even under heavy concurrency."""
+    import asyncio
+
+    failing = MagicMock(spec=httpx.Response)
+    failing.status_code = 500
+    failing.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError(
+        "boom", request=MagicMock(), response=failing,
+    ))
+
+    mock_settings.kufar_request_delay = 0.0  # no spacing
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=failing):
+        client = KufarClient(mock_settings)
+
+        async def one_call() -> None:
+            with pytest.raises(KufarAPIError):
+                await client.search(query="x")
+
+        # Fire 6 failing calls in parallel — each retries up to MAX_RETRIES,
+        # so there are well over 5 failure events. With the lock, after
+        # this gather() the breaker MUST be open. Without the lock the
+        # counter could get clobbered and the breaker silently stay shut.
+        await asyncio.gather(*[one_call() for _ in range(6)], return_exceptions=True)
+
+        # The circuit_open_until timestamp lives in the future, ergo open.
+        loop = asyncio.get_running_loop()
+        assert client._circuit_open_until > loop.time(), (
+            "Circuit breaker did not open after >5 concurrent failures — "
+            "counter likely raced and never reached the threshold"
+        )
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_resets_on_success(
+    ok_response: MagicMock, mock_settings: MagicMock
+) -> None:
+    """Once the breaker is open the per-call check returns the empty
+    stub immediately. A clean response after the cooldown should also
+    bring the consecutive-error counter back to 0 atomically (so a
+    later transient failure isn't already at the threshold from the
+    previous storm)."""
+    mock_settings.kufar_request_delay = 0.0
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=ok_response):
+        client = KufarClient(mock_settings)
+        # Manually simulate a partial-storm leftover (not enough to open)
+        async with client._circuit_lock:
+            client._consecutive_errors = 4
+        await client.search(query="x")
+        # Successful call must reset the counter.
+        assert client._consecutive_errors == 0

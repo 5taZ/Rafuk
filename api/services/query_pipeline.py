@@ -174,9 +174,35 @@ _inflight_dataset_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
 _MAX_INFLIGHT = 500
 _INFLIGHT_STALE_SECONDS = 300  # prune futures older than 5 minutes
 
+# Protects every read/write of _inflight_dataset_futures. Without this
+# two concurrent callers can both miss the dict lookup, both create
+# futures, and both run the (slow) pagination — defeating the whole
+# point of the pattern and doubling Kufar load. The lock is held only
+# for the tiny check-then-insert section; the actual await on the
+# future happens OUTSIDE the lock so other keys can be registered.
+_inflight_lock: asyncio.Lock | None = None
+
+
+def _get_inflight_lock() -> asyncio.Lock:
+    """Lazy-init the lock so it binds to the current running loop.
+
+    We can't just do `_inflight_lock = asyncio.Lock()` at module level
+    because pre-Python-3.10 it would bind to the loop running at import
+    time (which might not be the serving loop in tests / reloads).
+    """
+    global _inflight_lock
+    if _inflight_lock is None:
+        _inflight_lock = asyncio.Lock()
+    return _inflight_lock
+
 
 def _prune_stale_inflight_futures() -> None:
-    """Remove futures from a different event loop or already done."""
+    """Remove futures from a different event loop or already done.
+
+    Caller must hold `_get_inflight_lock()` — this function mutates
+    the shared dict. It intentionally is not async so it can run
+    inside the lock without yielding to the event loop.
+    """
     loop = asyncio.get_running_loop()
     stale = [
         key for key, fut in _inflight_dataset_futures.items()
@@ -261,20 +287,35 @@ async def load_query_dataset(
             response = await cache.get_json(sf_key)
 
         if response is None:
-            # Prune futures from old event loops (hot reload) or already done
-            _prune_stale_inflight_futures()
-            if len(_inflight_dataset_futures) > _MAX_INFLIGHT:
-                logger.warning("Purging %d stale inflight futures", len(_inflight_dataset_futures))
-                _inflight_dataset_futures.clear()
-            inflight = _inflight_dataset_futures.get(sf_key)
-            if inflight is not None and not inflight.done():
-                # Someone else is already paginating this exact key —
-                # wait for their result instead of starting our own.
-                response = await inflight
+            # Register-or-attach under the lock. We must decide
+            # "do I own the fetch or am I a follower?" atomically —
+            # without the lock two coroutines would both see a cache
+            # miss, both decide to own, and we'd pay the Kufar cost
+            # twice.
+            lock = _get_inflight_lock()
+            async with lock:
+                _prune_stale_inflight_futures()
+                if len(_inflight_dataset_futures) > _MAX_INFLIGHT:
+                    logger.warning(
+                        "Purging %d stale inflight futures",
+                        len(_inflight_dataset_futures),
+                    )
+                    _inflight_dataset_futures.clear()
+                inflight = _inflight_dataset_futures.get(sf_key)
+                if inflight is not None and not inflight.done():
+                    owns_future = False
+                    future = inflight
+                else:
+                    loop = asyncio.get_running_loop()
+                    future = loop.create_future()
+                    _inflight_dataset_futures[sf_key] = future
+                    owns_future = True
+
+            if not owns_future:
+                # Wait outside the lock so the owner can finish and
+                # other keys can register meanwhile.
+                response = await future
             else:
-                loop = asyncio.get_running_loop()
-                future: asyncio.Future[dict[str, Any]] = loop.create_future()
-                _inflight_dataset_futures[sf_key] = future
                 try:
                     response = await client.search_all_ads(
                         query=query,
@@ -294,9 +335,11 @@ async def load_query_dataset(
                         future.set_exception(exc)
                     raise
                 finally:
-                    # Clear AFTER set_result so any awaiter that
-                    # already grabbed the future gets a clean read.
-                    _inflight_dataset_futures.pop(sf_key, None)
+                    # Clear under the lock so prune/re-entry don't
+                    # race with us. `.pop(key, None)` is a no-op if a
+                    # later cycle already rotated the key out.
+                    async with lock:
+                        _inflight_dataset_futures.pop(sf_key, None)
     finally:
         if owns_client:
             await client.aclose()

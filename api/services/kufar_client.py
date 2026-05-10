@@ -41,6 +41,15 @@ class KufarClient:
         self._semaphore = asyncio.Semaphore(settings.kufar_parallel_semaphore)
         # Simple circuit breaker: after 5 consecutive errors open the
         # circuit for 30 seconds and return empty results.
+        #
+        # _circuit_lock serialises read-modify-write of _consecutive_errors
+        # / _circuit_open_until. Without it, two coroutines can each
+        # observe an old counter, both decide their failure is the
+        # 5th-in-a-row, and either step on each other (counter overshoots)
+        # or — worse — a success path resets the counter to 0 between
+        # a failure path's read and its compare, so the circuit never
+        # opens despite sustained errors.
+        self._circuit_lock = asyncio.Lock()
         self._consecutive_errors = 0
         self._circuit_open_until: float = 0.0
 
@@ -85,7 +94,11 @@ class KufarClient:
         category: int | None = None,
         bypass_delay: bool = False,
     ) -> dict[str, Any]:
-        # Circuit breaker check
+        # Circuit breaker check.
+        # Reading _circuit_open_until is a single 64-bit float load —
+        # CPython makes that atomic, so we don't need the lock here.
+        # (We only need the lock around READ-MODIFY-WRITE on the
+        # counter, see below.)
         now = asyncio.get_running_loop().time()
         if now < self._circuit_open_until:
             logger.warning("Circuit breaker open for query=%s; returning empty stub", query)
@@ -123,12 +136,25 @@ class KufarClient:
                 async with self._semaphore:
                     response = await client.get(KUFAR_BASE_URL, params=params, headers=headers)
                 response.raise_for_status()
-                # Success — reset error counter
-                self._consecutive_errors = 0
+                # Success — reset error counter under the lock so a
+                # concurrent failure path can't observe an old (high)
+                # counter mid-update.
+                async with self._circuit_lock:
+                    self._consecutive_errors = 0
                 return response.json()
             except (httpx.HTTPError, httpx.TimeoutException) as exc:
                 last_error = exc
-                self._consecutive_errors += 1
+                # Read-modify-write of the error counter MUST be atomic
+                # vs. a concurrent success-reset; otherwise two failures
+                # racing with a success could either overshoot the
+                # threshold or never reach it.
+                async with self._circuit_lock:
+                    self._consecutive_errors += 1
+                    consecutive = self._consecutive_errors
+                    if consecutive >= 5:
+                        self._circuit_open_until = (
+                            asyncio.get_running_loop().time() + 30.0
+                        )
                 logger.warning(
                     "Kufar request failed on attempt %s/%s for query=%s: %s",
                     attempt + 1,
@@ -136,8 +162,7 @@ class KufarClient:
                     query,
                     exc,
                 )
-                if self._consecutive_errors >= 5:
-                    self._circuit_open_until = asyncio.get_running_loop().time() + 30.0
+                if consecutive >= 5:
                     logger.error("Circuit breaker opened after 5 consecutive errors")
                     break
                 if attempt < MAX_RETRIES - 1:

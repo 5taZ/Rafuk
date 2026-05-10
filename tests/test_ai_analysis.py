@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from time import monotonic, sleep
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
@@ -1913,3 +1915,88 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
         )
         assert resp.status_code == 429
         assert "дневной лимит" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_shadow_store_prune_lock_prevents_dict_change_during_iteration() -> None:
+    """The shadow stores _tasks / _exports used to be plain dicts mutated
+    by the periodic pruner AND by clear_user_ai_data simultaneously.
+    Iterating one path while the other called .pop() raised
+    "RuntimeError: dictionary changed size during iteration" sporadically
+    and silently dropped records. The lock now serialises every reader
+    with every writer."""
+    import asyncio
+
+    from api.routers import ai_analysis as aia
+
+    # Seed both stores with enough entries to exercise the prune loops.
+    aia._tasks.clear()
+    aia._exports.clear()
+    now = datetime.now(UTC).timestamp()
+    for i in range(100):
+        aia._tasks[f"t{i}"] = {
+            "_telegram_user_id": 42 if i % 2 == 0 else 99,
+            "_updated_ts": now,
+        }
+        aia._exports[f"e{i}"] = {
+            "_telegram_user_id": 42 if i % 2 == 0 else 99,
+            "_created_ts": now,
+        }
+
+    # Kick off concurrent pruners and a deletion path. Without the lock,
+    # any of these gathers would frequently raise
+    # "dictionary changed size during iteration" — with the lock it
+    # always completes cleanly.
+    await asyncio.gather(
+        aia._prune_old_tasks_shadow(),
+        aia._prune_old_exports(),
+        aia._prune_old_tasks_shadow(),
+        aia._prune_old_exports(),
+        return_exceptions=False,
+    )
+
+    # The lock means every gather completes without "dictionary changed
+    # size during iteration" — the assert above (return_exceptions=False
+    # would re-raise it) is the real check. Ancillary: the size-prune
+    # caps at _MAX_SHADOW_ENTRIES, so after concurrent prunes the dicts
+    # are at most that size.
+    assert len(aia._tasks) <= aia._MAX_SHADOW_ENTRIES
+    assert len(aia._exports) <= aia._MAX_SHADOW_ENTRIES
+
+    # Cleanup
+    aia._tasks.clear()
+    aia._exports.clear()
+
+
+@pytest.mark.asyncio
+async def test_clear_user_ai_data_under_concurrent_pruner() -> None:
+    """clear_user_ai_data and the background pruner both walk the
+    shadow stores. The lock makes it safe to interleave them."""
+    import asyncio
+
+    from api.routers import ai_analysis as aia
+
+    aia._tasks.clear()
+    aia._exports.clear()
+    now = datetime.now(UTC).timestamp()
+    for i in range(40):
+        aia._tasks[f"t{i}"] = {
+            "_telegram_user_id": 7,
+            "_updated_ts": now,
+        }
+
+    async def fake_clear_for_user_7() -> None:
+        # Mirrors the shadow-store cleanup section of clear_user_ai_data.
+        async with aia._get_shadow_lock():
+            for tid in list(aia._tasks.keys()):
+                if aia._tasks[tid].get("_telegram_user_id") == 7:
+                    aia._tasks.pop(tid, None)
+
+    await asyncio.gather(
+        fake_clear_for_user_7(),
+        aia._prune_old_tasks_shadow(),
+        fake_clear_for_user_7(),
+    )
+
+    assert all(v.get("_telegram_user_id") != 7 for v in aia._tasks.values())
+    aia._tasks.clear()

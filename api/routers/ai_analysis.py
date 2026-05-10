@@ -65,18 +65,39 @@ router.include_router(export_router)
 
 
 # ── Shadow stores (in-process fallback when Redis is unavailable) ────────
+#
+# Access to _tasks / _exports is serialised through _shadow_lock. Without
+# the lock, concurrent pruners and consent-deletion paths iterate the
+# dicts while other coroutines mutate them (task status updates, export
+# creation), which can raise "dictionary changed size during iteration"
+# or silently drop records. One lock covers both dicts — they are small,
+# modified infrequently, and often walked together (e.g. during account
+# deletion).
 
 _tasks: dict[str, dict] = {}
 _exports: dict[str, dict] = {}
 
 _MAX_SHADOW_ENTRIES = 50
 
+# Lazy-init so the lock binds to the currently-running loop rather than
+# whatever loop happened to be active at import time (important for
+# tests that spin up multiple loops).
+_shadow_lock: asyncio.Lock | None = None
+
+
+def _get_shadow_lock() -> asyncio.Lock:
+    global _shadow_lock
+    if _shadow_lock is None:
+        _shadow_lock = asyncio.Lock()
+    return _shadow_lock
+
 
 def _export_ttl() -> int:
     return int(getattr(get_settings(), "ai_export_ttl", 900) or 900)
 
 
-def _prune_old_tasks_shadow() -> None:
+def _prune_old_tasks_shadow_unlocked() -> None:
+    """Caller must hold _get_shadow_lock()."""
     now = datetime.now(UTC).timestamp()
     from api.services.ai_task_store import _task_ttl
 
@@ -95,7 +116,13 @@ def _prune_old_tasks_shadow() -> None:
         _tasks.pop(oldest_key, None)
 
 
-def _prune_old_exports() -> None:
+async def _prune_old_tasks_shadow() -> None:
+    async with _get_shadow_lock():
+        _prune_old_tasks_shadow_unlocked()
+
+
+def _prune_old_exports_unlocked() -> None:
+    """Caller must hold _get_shadow_lock()."""
     if not _exports:
         return
     now = datetime.now(UTC).timestamp()
@@ -106,6 +133,11 @@ def _prune_old_exports() -> None:
     while len(_exports) > _MAX_SHADOW_ENTRIES:
         oldest_key = min(_exports, key=lambda k: _exports[k].get("_created_ts", 0))
         _exports.pop(oldest_key, None)
+
+
+async def _prune_old_exports() -> None:
+    async with _get_shadow_lock():
+        _prune_old_exports_unlocked()
 
 
 # ── AI data cleanup (called from consent.py during account deletion) ─────
@@ -154,13 +186,15 @@ async def clear_user_ai_data(telegram_user_id: int) -> None:
                         await redis_client.delete(key)
                 if cursor == 0:
                     break
-        # Also clean shadow stores
-        for task_id in list(_tasks.keys()):
-            if _tasks[task_id].get("_telegram_user_id") == telegram_user_id:
-                _tasks.pop(task_id, None)
-        for export_id in list(_exports.keys()):
-            if _exports[export_id].get("_telegram_user_id") == telegram_user_id:
-                _exports.pop(export_id, None)
+        # Also clean shadow stores. The lock guards us from a
+        # concurrent pruner walking the same keys.
+        async with _get_shadow_lock():
+            for task_id in list(_tasks.keys()):
+                if _tasks[task_id].get("_telegram_user_id") == telegram_user_id:
+                    _tasks.pop(task_id, None)
+            for export_id in list(_exports.keys()):
+                if _exports[export_id].get("_telegram_user_id") == telegram_user_id:
+                    _exports.pop(export_id, None)
     except Exception:
         logger.warning("Failed to clear AI data for user %d", telegram_user_id, exc_info=True)
     finally:
@@ -173,8 +207,8 @@ async def periodic_prune_shadow_stores() -> None:
     try:
         while True:
             await asyncio.sleep(300)
-            _prune_old_tasks_shadow()
-            _prune_old_exports()
+            await _prune_old_tasks_shadow()
+            await _prune_old_exports()
     except asyncio.CancelledError:
         pass
 
