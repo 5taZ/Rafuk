@@ -21,6 +21,7 @@ from scheduler.collector import (
     _recent_event_keys,
     _recent_events_by_tracker,
     _recent_trend_event_tracker_ids,
+    cleanup_ai_audit_log,
     cleanup_old_events,
     cleanup_old_snapshots,
     cleanup_inactive_listing_states,
@@ -732,6 +733,48 @@ async def test_cleanup_old_events(populated_session):
     await session.flush()
 
     deleted = await cleanup_old_events(session, days=30)
+    assert deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_cleanup_ai_audit_log(populated_session):
+    """DB-H3: ensure the new cleanup_ai_audit_log helper deletes
+    rows older than the retention window and leaves recent rows
+    alone. Mirrors the test_cleanup_old_events shape so both
+    cleanups stay covered by the same nightly job."""
+    session, user, _tracker = populated_session
+    from api.models import AIAuditLog
+
+    old = datetime.now(UTC) - timedelta(days=400)
+    recent = datetime.now(UTC) - timedelta(days=10)
+
+    session.add(
+        AIAuditLog(
+            user_id=user.id,
+            endpoint="analyse_listing",
+            ad_id="111",
+            query="iphone 15",
+            result_summary="old summary",
+            model="gemini-flash",
+            latency_ms=120,
+            created_at=old,
+        )
+    )
+    session.add(
+        AIAuditLog(
+            user_id=user.id,
+            endpoint="analyse_listing",
+            ad_id="222",
+            query="iphone 15",
+            result_summary="recent summary",
+            model="gemini-flash",
+            latency_ms=130,
+            created_at=recent,
+        )
+    )
+    await session.flush()
+
+    deleted = await cleanup_ai_audit_log(session, days=365)
     assert deleted == 1
 
 

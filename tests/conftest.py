@@ -77,6 +77,17 @@ try:
 except Exception:
     pass
 
+# DB-H3 (Wave 8): same patch for ai_audit_log — its id is BIGINT
+# autoincrement which SQLite refuses to auto-assign. The new
+# test_cleanup_ai_audit_log inserts rows directly, so without this
+# patch the INSERT trips a NOT NULL on id.
+try:
+    from api.models import AIAuditLog as _AIAuditLog
+
+    _AIAuditLog.__table__.c.id.type = _Integer()
+except Exception:
+    pass
+
 
 # ── SQLite BigInteger fix: User.id auto-assignment ───────────────────────
 # Fallback helper for tests that create User objects directly — provides

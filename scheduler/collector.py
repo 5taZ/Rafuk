@@ -25,6 +25,7 @@ from sqlalchemy.orm import joinedload
 from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
 from api.models import (
+    AIAuditLog,
     LeadItem,
     LeadReminder,
     QueryListingState,
@@ -1148,6 +1149,14 @@ async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None
             await cleanup_inactive_listing_states(session, days=90)
             await cleanup_stale_missing_watchlist(session, days=settings.auto_remove_missing_days)
             await cleanup_old_snapshots(session, days=90)
+            # DB-H3: previously the cleanup function existed in
+            # 20260510_0004 as a SQL function but nothing actually
+            # called it, so ai_audit_log kept growing forever. We
+            # now run the same DELETE here every night so retention
+            # actually happens. 365 days matches the
+            # Law-91-Z review window we picked when adding the
+            # function.
+            await cleanup_ai_audit_log(session, days=365)
             await session.commit()
             logger.info("Daily cleanup completed successfully")
         except (OperationalError, SQLAlchemyError):
@@ -1216,6 +1225,28 @@ async def cleanup_old_snapshots(session: AsyncSession, days: int = 90) -> int:
     if deleted_count > 0:
         logger.info(
             "Cleaned up %d old query snapshots (older than %d days)", deleted_count, days
+        )
+    return deleted_count
+
+
+async def cleanup_ai_audit_log(session: AsyncSession, days: int = 365) -> int:
+    """Delete AI audit-log rows older than ``days`` (default 365).
+
+    Mirrors the SQL ``clean_ai_audit_log`` function added in
+    20260510_0004 so we can keep ORM-level visibility (rowcount log,
+    transaction integration) without depending on pg_cron or an out-
+    of-band scheduler. Runs nightly from ``run_cleanup``.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    result = await session.execute(
+        delete(AIAuditLog).where(AIAuditLog.created_at < cutoff)
+    )
+    deleted_count = result.rowcount
+    if deleted_count > 0:
+        logger.info(
+            "Cleaned up %d AI audit log rows (older than %d days)",
+            deleted_count,
+            days,
         )
     return deleted_count
 
