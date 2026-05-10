@@ -14,7 +14,55 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 25.1 — nginx upstream DNS deferred to runtime _(this commit)_
+### Wave 25.2 — fix nginx upstream resolution (revert + better fix) _(this commit)_
+
+Wave 25.1 was **wrong**. It tried to defer `host.docker.internal`
+resolution to runtime via nginx's `resolver 127.0.0.11` (Docker's
+embedded DNS) + a variable `proxy_pass`. The fix made `nginx -t`
+pass at build, but **broke runtime**: Docker's embedded DNS at
+127.0.0.11 only resolves docker-network service names; it does NOT
+read `/etc/hosts`, where `extra_hosts: host-gateway` injects the
+real entry. Result: `/api/*` requests 502'd in production with
+`host.docker.internal could not be resolved (3: Host not found)`
+in the nginx error log.
+
+Root cause now correctly identified:
+
+* nginx with a LITERAL upstream name uses libc's `getaddrinfo()` at
+  config-load time, which DOES respect /etc/hosts and thus DOES
+  pick up runtime `extra_hosts` entries. This is what we want at
+  runtime, and what worked before Wave 25.1.
+* The build-time `RUN nginx -t` failure was a separate concern —
+  the build sandbox simply doesn't have the host-gateway entry
+  injected (that only happens at container start).
+
+Correct fix:
+
+1. **Revert nginx/default.conf** to the literal
+   `proxy_pass http://host.docker.internal:8010/api/;` form. Drop
+   the `resolver` directive. Document the libc-vs-resolver
+   distinction inline so the next person doesn't repeat 25.1.
+2. **Inject the build-time stub via BuildKit's
+   `build.extra_hosts`** in docker-compose.yml. Compose Spec
+   supports this; it tells BuildKit to populate /etc/hosts inside
+   each RUN step. Build sees `127.0.0.1 host.docker.internal`,
+   which is enough for `nginx -t` to syntactically check (nothing
+   actually connects to it). At container start, the runtime
+   `extra_hosts: host-gateway` entry takes over.
+3. **Restore `RUN nginx -t`** in Dockerfile.frontend as a simple
+   one-liner. The intermediate stub-and-revert dance I briefly
+   tried (echo + sed) fails because BuildKit mounts /etc/hosts
+   read-only during RUN steps — only `build.extra_hosts` works
+   for build-time host injection.
+
+End-to-end verification: `docker compose build frontend --no-cache`
+passes, `nginx -t` reports OK; `docker compose up -d frontend` plus
+`curl http://127.0.0.1:8081/api/v1/health` returns 403 (API-level
+CSRF rejection — proves the proxy reached the upstream) instead of
+502 (proxy failure). User's Telegram Mini App `/api/v1/price-stats`
+call now routes correctly. 507 passed, 1 skipped.
+
+### Wave 25.1 — nginx upstream DNS deferred to runtime _(superseded by 25.2)_
 
 Hot-fix for the local dev build. After Wave 25 (`api_ai.js` split)
 the user ran `./start-local.sh --with-tunnel`, which rebuilds the

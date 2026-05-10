@@ -40,6 +40,14 @@ COPY assets /usr/share/nginx/assets
 # Smoke-test the nginx config at build time. Catches typos before
 # the image ever boots; failed config = failed build = no broken
 # rollout in prod.
+#
+# The upstream is ``host.docker.internal`` which Docker injects via
+# ``extra_hosts: host-gateway`` at CONTAINER start. The BUILD sandbox
+# doesn't have that entry — it's supplied via ``build.extra_hosts``
+# in docker-compose.yml, which BuildKit translates to a /etc/hosts
+# entry visible to RUN steps (the build's /etc/hosts is otherwise
+# read-only by design). Without that compose entry this RUN would
+# fail with "host not found in upstream".
 RUN nginx -t
 
 # Default nginx CMD already exposes 80; no override needed.

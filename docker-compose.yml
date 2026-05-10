@@ -190,6 +190,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
+      # Wave 25.2: ``nginx -t`` inside the Dockerfile resolves the
+      # literal ``host.docker.internal`` upstream in nginx.conf at
+      # config-load time. The build sandbox normally doesn't have
+      # that entry — the runtime ``extra_hosts`` below only kicks in
+      # at container START. BuildKit's ``build.extra_hosts``
+      # injects a /etc/hosts entry visible to RUN steps. The build-
+      # time value is a no-op stub (127.0.0.1) because nothing in
+      # the build phase actually talks to it; runtime resolution is
+      # supplied by Docker's host-gateway entry below.
+      extra_hosts:
+        - "host.docker.internal:127.0.0.1"
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
