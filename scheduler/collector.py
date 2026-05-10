@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import signal
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
@@ -1295,10 +1296,44 @@ async def main() -> None:
         port=health_port, readiness=_scheduler_readiness
     )
 
+    # PERF-M4: graceful shutdown on SIGTERM/SIGINT. Python's default
+    # SIGTERM disposition kills the process immediately, which used to
+    # interrupt mid-cycle tracker checks — the affected
+    # ``session.commit()`` would be torn down, leaving half of a
+    # tick's ``tracker_events`` rows in the DB and the other half
+    # silently dropped. Now SIGTERM sets ``shutdown_event``, the main
+    # loop exits cleanly, and the ``finally`` block calls
+    # ``scheduler.shutdown(wait=True)`` which lets the in-flight job
+    # finish its transaction. Docker's default 10s grace before
+    # SIGKILL is enough for a typical tracker tick to commit; if it
+    # isn't, the SIGKILL is still the safety net.
+    shutdown_event = asyncio.Event()
+
+    def _request_shutdown(signum: int) -> None:
+        signal_name = signal.Signals(signum).name if signum else "unknown"
+        logger.info(
+            "Received %s, beginning graceful shutdown", signal_name,
+        )
+        shutdown_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        # add_signal_handler isn't supported on Windows and may fail
+        # if we're not the main thread (some test harnesses). Fall
+        # back silently to Python's default disposition in that case.
+        try:
+            loop.add_signal_handler(sig, _request_shutdown, sig)
+        except (NotImplementedError, RuntimeError, ValueError):
+            logger.debug("Could not install handler for %s", sig.name)
+
     scheduler.start()
     try:
-        while True:
-            # Periodic health check every 5 minutes
+        while not shutdown_event.is_set():
+            # Periodic health check every 5 minutes. The
+            # ``wait_for(shutdown_event.wait(), timeout=300)`` idiom
+            # interrupts the sleep as soon as a signal arrives so we
+            # don't sit in an unkillable wait state for up to 5
+            # minutes after SIGTERM.
             if not await check_db_health(engine):
                 logger.warning("Database connection lost. Attempting reconnect...")
                 scheduler.shutdown(wait=False)
@@ -1311,9 +1346,18 @@ async def main() -> None:
                 logger.info("Database reconnected successfully. Restarting scheduler...")
                 scheduler = create_scheduler(bot, session_factory, settings)
                 scheduler.start()
-            await asyncio.sleep(300)
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=300)
+            except asyncio.TimeoutError:
+                # 5 minutes elapsed without a shutdown signal — fall
+                # through to the next health-check iteration.
+                continue
     finally:
-        scheduler.shutdown(wait=False)
+        # PERF-M4: wait=True lets the currently-running tracker tick
+        # commit its transaction before the engine is disposed.
+        # Without this, the engine would be torn down mid-flight and
+        # the session's connection would raise on commit.
+        scheduler.shutdown(wait=True)
         await stop_health_server(health_runner)
         await engine.dispose()
         await bot.session.close()

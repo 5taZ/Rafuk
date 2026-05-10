@@ -172,6 +172,44 @@ _SLASH_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 _TB_RE = re.compile(r"\b([12])\s*(?:tb|тб)\b")
 _NONALNUM_RE = re.compile(r"[^a-zа-я0-9]+", re.IGNORECASE)
 
+# BE-M13: replace the per-alias ``str.replace`` loop (67 separate
+# passes, O(n × m)) with a precompiled alternation regex. The ``re``
+# engine builds an Aho-Corasick-ish DFA for an OR-of-literals pattern,
+# so each iteration is O(n × max_alias_len) — roughly 67× cheaper for
+# the alias step alone on a typical 50-char query/title.
+#
+# Aliases are sorted longest-first so multi-word keys (``"mac book"``,
+# ``"play station"``, ``"про макс"``) win over their single-word
+# shorter substrings — same precedence the old iteration-order trick
+# relied on, but explicit instead of implicit.
+#
+# We iterate to fixed point because the old sequential ``.replace``
+# cascade allowed earlier substitutions to feed into later ones
+# (e.g. ``"плейстейшен"`` → ``"ps"`` then ``"ps 4"`` → ``"ps4"``).
+# A single regex pass operates on the original string with
+# non-overlapping matches and can't see its own output, so we re-run
+# until the string stabilises. Two iterations cover every alias chain
+# in the current map; the loop bails out as soon as the text stops
+# changing, and the safety cap of 4 guarantees termination even if
+# someone adds an alias that paradoxically rewrites to itself.
+_ALIAS_PATTERN = re.compile(
+    "|".join(re.escape(k) for k in sorted(SEARCH_ALIASES, key=len, reverse=True))
+)
+_ALIAS_MAX_PASSES = 4
+
+
+def _alias_sub(match: "re.Match[str]") -> str:
+    return SEARCH_ALIASES[match.group(0)]
+
+
+def _apply_aliases(text: str) -> str:
+    for _ in range(_ALIAS_MAX_PASSES):
+        new_text = _ALIAS_PATTERN.sub(_alias_sub, text)
+        if new_text == text:
+            return new_text
+        text = new_text
+    return text
+
 
 # Cached per-string normaliser. The same query / title is processed
 # repeatedly (e.g. by precompute_cluster_stats which used to be O(n²)
@@ -182,8 +220,7 @@ _NONALNUM_RE = re.compile(r"[^a-zа-я0-9]+", re.IGNORECASE)
 @lru_cache(maxsize=4096)
 def normalize_search_text(value: str) -> str:
     text = value.casefold()
-    for source, target in SEARCH_ALIASES.items():
-        text = text.replace(source, target)
+    text = _apply_aliases(text)
     text = _GB_RE.sub(r"\1", text)
     text = _GB_CYR_RE.sub(r"\1", text)
     text = _SLASH_RE.sub(r"\1 \2", text)

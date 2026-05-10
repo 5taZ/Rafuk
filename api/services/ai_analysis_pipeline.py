@@ -271,6 +271,28 @@ async def _deliver_fallback_result(
 # ── Analysis state and stages ──────────────────────────────────────
 
 
+# BE-M4: cap the fan-out of parallel Kufar searches that ``_stage_search``
+# fires per AI task (strict_category / broad_category / broad_query).
+# KufarClient already has its own ``kufar_parallel_semaphore`` for HTTP
+# concurrency across all callers, but without this AI-pipeline-side
+# cap a single task can submit 3 search jobs that immediately saturate
+# the client semaphore — pushing any concurrent /listings or /analytics
+# request behind them. Bounding to 2 here keeps a slot free for the
+# rest of the API surface while still letting a slow first attempt
+# overlap with its fallback. Lazily initialised so the semaphore binds
+# to whichever event loop is currently running (tests routinely spin
+# up fresh loops via pytest-asyncio).
+_PIPELINE_SEARCH_LIMIT = 2
+_pipeline_search_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_pipeline_search_semaphore() -> asyncio.Semaphore:
+    global _pipeline_search_semaphore
+    if _pipeline_search_semaphore is None:
+        _pipeline_search_semaphore = asyncio.Semaphore(_PIPELINE_SEARCH_LIMIT)
+    return _pipeline_search_semaphore
+
+
 class _AnalysisComplete(Exception):  # noqa: N818
     """Signal early completion of analysis (e.g. target ad not found)."""
 
@@ -380,19 +402,28 @@ async def _stage_search(c: _AC) -> None:
     if c.payload.category is not None:
         search_attempts.append({"strict_search": False, "category": None})
 
+    # BE-M4: bound parallel Kufar fan-out via the module-level semaphore
+    # so one runaway AI task can't starve the rest of the API. With the
+    # default cap of 2, the third search attempt (broad_query fallback)
+    # only kicks in once one of the first two finishes — which is
+    # almost always what we want anyway since attempt 1 usually finds
+    # the target.
+    search_sem = _get_pipeline_search_semaphore()
+
     async def _search_one(attempt: dict):
-        ds = await load_query_dataset(
-            query=c.payload.query,
-            currency="BYN",
-            settings=c.settings,
-            client=c.kufar_client,
-            **attempt,
-        )
-        target = next(
-            (ad for ad in ds.ads if int(ad.get("ad_id", 0)) == c.payload.ad_id),
-            None,
-        )
-        return ds, target
+        async with search_sem:
+            ds = await load_query_dataset(
+                query=c.payload.query,
+                currency="BYN",
+                settings=c.settings,
+                client=c.kufar_client,
+                **attempt,
+            )
+            target = next(
+                (ad for ad in ds.ads if int(ad.get("ad_id", 0)) == c.payload.ad_id),
+                None,
+            )
+            return ds, target
 
     results = await asyncio.gather(
         *[_search_one(a) for a in search_attempts],

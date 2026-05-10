@@ -14,7 +14,74 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 15 — backend data integrity + UX _(this commit)_
+### Wave 16 — backend performance _(this commit)_
+
+* **BE-M4** (`api/services/ai_analysis_pipeline.py`) — added a
+  module-level `asyncio.Semaphore` (cap=2) that bounds the parallel
+  Kufar searches each AI analysis task fires in `_stage_search`
+  (strict_category / broad_category / broad_query). The
+  `KufarClient` already has its own
+  `kufar_parallel_semaphore` for HTTP concurrency across all
+  callers, but without this AI-pipeline-side cap a single task can
+  submit 3 search jobs that immediately saturate the client
+  semaphore and push any concurrent `/listings` or `/analytics`
+  request behind them.
+* **BE-M13** (`api/services/aggregator.py`) — replaced the 67-pass
+  `for source, target in SEARCH_ALIASES.items(): text =
+  text.replace(...)` loop in `normalize_search_text` with a single
+  precompiled alternation regex (`_ALIAS_PATTERN`) sorted longest-
+  alias-first. The old sequential `.replace` chain composed
+  substitutions (e.g. `плейстейшен` → `ps` then `ps 4` → `ps4`);
+  the new code preserves that semantic by iterating to fixed point
+  with a safety cap of 4 passes. Per-call alias work drops from
+  O(n × 67) to O(n × max_alias_len), and the loop bails out in 1-2
+  passes for typical input. Tested against 15 representative
+  queries to confirm zero divergence from the old behaviour.
+* **PERF-M4** (`scheduler/collector.py`) — graceful shutdown on
+  SIGTERM/SIGINT. Python's default SIGTERM disposition kills the
+  process immediately, which used to interrupt mid-cycle tracker
+  checks; the affected `session.commit()` got torn down, leaving
+  half of a tick's `tracker_events` rows committed and the other
+  half silently dropped. Now SIGTERM sets an `asyncio.Event`, the
+  5-minute health-check sleep is replaced with
+  `wait_for(event, timeout=300)` so it interrupts immediately, and
+  the `finally` block calls `scheduler.shutdown(wait=True)` instead
+  of `wait=False` — APScheduler drains the in-flight job so its
+  transaction can commit before the engine is disposed. The
+  signal-handler registration is best-effort: it falls back
+  silently on Windows / non-main-thread test harnesses.
+
+### Verified non-bugs / closed-by-prior-wave (no code change)
+
+* **BE-M5** — `api/routers/image_proxy.py` already wraps the CPU-
+  bound Pillow encode in `asyncio.to_thread` and bounds concurrency
+  via `_get_transcode_semaphore` (cap=4). The 200-card list view
+  no longer stalls the event loop. Closed in a previous wave.
+* **BE-M6** — `price_advice` endpoint already enforces a per-user
+  rate limit via `_check_rate_limit(...)` *before* the
+  `load_query_dataset` call fires, and the underlying Kufar fetch
+  goes through `KufarClient`'s internal
+  `kufar_parallel_semaphore`. Two layers of bounding already
+  in place.
+* **PERF-M5** — module-level `logging.basicConfig` was replaced
+  with `configure_logging(service=...)` in Wave 6 (INF-H9) for all
+  three services. Verified by `grep`: no top-level basicConfig
+  remains anywhere in `api/`, `bot/`, `scheduler/`.
+
+### Deferred
+
+* **PERF-M3** (scheduler Telegram notifications with bounded
+  concurrency) — needs an architectural refactor of the
+  tracker-check loop to separate the DB phase from the
+  notification phase (the current code interleaves
+  `session.execute` and `notify_user` calls, and SQLAlchemy's
+  `AsyncSession` is not safe for concurrent use). Punt to a
+  future wave that does the loop split intentionally.
+
+Verification: 500 passed (Wave 15's count), 1 skipped, no
+regressions. ruff F clean.
+
+### Wave 15 — backend data integrity + UX `9dda1a6`
 
 * **BE-M2** — `GET /leads/{id}/expenses` now paginates via `limit`
   (1-500, default 100) and `offset` (≥0) query params. Previously
@@ -195,7 +262,8 @@ round-trip smoke), no regressions.
 | 12   | e603bd8 | MEDIUM/LOW dead code + type-safety sweep                   |
 | 13   | db55f04 | docs + CI security/parallelisation + compose migrate       |
 | 14   | 58f609d | test sweep — Alembic DAG checks + tightened assertions     |
-| 15   | _this_  | backend data integrity + UX (pagination, typed delete confirm, FOR UPDATE) |
+| 15   | 9dda1a6 | backend data integrity + UX (pagination, typed delete confirm, FOR UPDATE) |
+| 16   | _this_  | backend performance (AI semaphore, alias regex, graceful SIGTERM)        |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -203,13 +271,13 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 15:
+As of Wave 16:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
 | HIGH     | 54    | 50     | 4         | All 4 are ops/CI (CD, monitoring, backups, partitioning)    |
-| MEDIUM   | 73    | 19     | 54        | Wave 16+ continues the sweep         |
+| MEDIUM   | 73    | 25     | 48        | PERF-M3 deferred (needs scheduler loop refactor)            |
 | LOW      | 30    | 1      | 29        | Mostly polish (docs, dead imports)   |
 
 ## Conventions
