@@ -41,13 +41,24 @@ def get_currency_service(request: Request) -> CurrencyService:
 
 
 def get_kufar_client(request: Request) -> KufarClient:
-    """Get the shared KufarClient from app state (created in lifespan)."""
+    """Get the shared KufarClient from app state (created in lifespan).
+
+    The previous implementation silently fabricated a fresh KufarClient
+    when lifespan didn't run — and never closed it. Each fallback
+    request leaked an httpx.AsyncClient + its connection pool, slowly
+    exhausting file descriptors. Fail loud instead so a misconfigured
+    deployment is caught immediately rather than degrading days later.
+    Tests that need a different client should use FastAPI's
+    ``dependency_overrides`` (every existing test already does).
+    """
     client = getattr(request.app.state, "kufar_client", None)
-    if client is not None:
-        return client
-    # Fallback: create a new client (should not happen in normal operation)
-    logger.warning("Falling back to creating a new KufarClient — lifespan client not available")
-    return KufarClient(get_settings())
+    if client is None:
+        raise RuntimeError(
+            "KufarClient is not initialized in app.state. The lifespan "
+            "context must run before serving requests, or the test "
+            "must override `get_kufar_client` via `dependency_overrides`."
+        )
+    return client
 
 
 def get_session_factory_dependency(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -61,7 +72,7 @@ def get_session_factory_dependency(request: Request) -> async_sessionmaker[Async
     return build_session_factory(get_engine())
 
 
-def get_telegram_user(
+async def get_telegram_user(
     request: Request,
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ) -> TelegramInitData:
@@ -92,14 +103,39 @@ def get_telegram_user(
             bot_token,
             max_age_seconds=settings.telegram_init_data_max_age,
         )
-        request.state.telegram_user = user
-        return user
     except ValueError as exc:
         logger.warning("Telegram auth failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Telegram authentication",
         ) from exc
+
+    # SEC-H6: refuse blacklisted users. Lookup failures are fail-open
+    # (logged) — a Redis blip must not nuke every authenticated session.
+    cache = getattr(request.app.state, "cache", None)
+    from api.services.session_security import (  # noqa: PLC0415 — avoid cycle
+        is_user_blacklisted,
+        track_init_data_use,
+    )
+
+    if await is_user_blacklisted(cache, user.user_id):
+        logger.warning("Blocked blacklisted user_id=%s", user.user_id)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is suspended",
+        )
+
+    # SEC-H1: track first-seen IP per initData and log on mismatch.
+    # We can't outright reject replay (the Mini App genuinely reuses
+    # one initData for many requests), but the log gives ops a signal
+    # they can feed back into the blacklist.
+    client_ip = request.client.host if request.client else None
+    await track_init_data_use(
+        cache, x_telegram_init_data, user_id=user.user_id, client_ip=client_ip,
+    )
+
+    request.state.telegram_user = user
+    return user
 
 
 async def ensure_user_exists(

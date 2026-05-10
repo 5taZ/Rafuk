@@ -390,7 +390,12 @@ _TRIPLE_BACKTICK_RE = re.compile(r"```+|~~~+")
 _MULTILINE_COLLAPSE_RE = re.compile(r"\n{3,}")
 
 
-def sanitize_user_text(value: str | None, *, max_length: int = 1200) -> str | None:
+def sanitize_user_text(
+    value: str | None,
+    *,
+    max_length: int = 1200,
+    context: str = "user_text",
+) -> str | None:
     """Strip prompt-injection-shaped sequences from user-supplied free text.
 
     Telegram users can paste anything into the listing assistant's notes /
@@ -404,6 +409,17 @@ def sanitize_user_text(value: str | None, *, max_length: int = 1200) -> str | No
       - flattens triple-backtick code fences,
       - normalises whitespace,
       - hard-caps length again on the server.
+      - **logs every actual hit** so we have telemetry on injection
+        attempts; the audit (SEC-H4) called out that the silent regex
+        had no observability and could be bypassed via Unicode
+        homoglyphs without anyone noticing. We can't catch every
+        homoglyph here cheaply, but we can at least see when the
+        ASCII patterns are tripped — and use those signals for
+        rate-limit / abuse review later.
+
+    The ``context`` argument is included in injection logs so the team
+    can tell which surface area the attempt came from (listing title,
+    seller notes, etc.).
 
     Returns None if input is None/empty after cleaning.
     """
@@ -412,13 +428,22 @@ def sanitize_user_text(value: str | None, *, max_length: int = 1200) -> str | No
     text = str(value)
     if not text.strip():
         return None
-    text = _PROMPT_ROLE_MARKERS.sub("", text)
-    text = _PROMPT_INJECTION_PATTERNS.sub("[удалено]", text)
+    # Use subn() so we can count hits per pattern and log the totals.
+    text, role_hits = _PROMPT_ROLE_MARKERS.subn("", text)
+    text, injection_hits = _PROMPT_INJECTION_PATTERNS.subn("[удалено]", text)
     text = _TRIPLE_BACKTICK_RE.sub("`", text)
     text = _MULTILINE_COLLAPSE_RE.sub("\n\n", text)
     # Strip control characters but keep newlines and tabs.
     text = "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 0x20)
     text = text.strip()
+    if role_hits or injection_hits:
+        # WARNING level so it shows up in standard log scrapers; do
+        # NOT include the cleaned text — could itself contain attacker-
+        # controlled content. Just counts + context.
+        logger.warning(
+            "ai.prompt_injection_detected context=%s role_hits=%d injection_hits=%d",
+            context, role_hits, injection_hits,
+        )
     if not text:
         return None
     if max_length > 0 and len(text) > max_length:
