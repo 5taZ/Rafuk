@@ -100,8 +100,20 @@ class Settings(BaseSettings):
                 "DATABASE_URL — every request would share user_id=0."
             )
         return v
-    db_pool_size: int = 10
-    db_max_overflow: int = 20
+    # Connection-pool sizing.
+    #
+    # The API runs multiple uvicorn workers (PERF-H1, see Dockerfile —
+    # WORKERS=4 by default). Postgres ships with `max_connections=100`
+    # so we must size the pool such that
+    #   workers × (pool_size + max_overflow) <= ~80 (leaves headroom
+    #   for psql / migrations / backups).
+    # 4 workers × (5 + 10) = 60 — comfortably under the limit while
+    # giving each worker enough sockets for the request fan-out.
+    # If you bump WORKERS above 4 OR raise Postgres max_connections,
+    # adjust these accordingly (or move to PgBouncer for the next
+    # tier — DB-MED-2).
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
 
     # AI Analysis (Together API — OpenAI-compatible)
     ai_api_key: SecretStr | None = None

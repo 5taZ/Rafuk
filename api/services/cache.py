@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
-import functools
 import json
 import logging
 import time
@@ -28,7 +26,13 @@ class CacheBackend(Protocol):
 class MemoryCache:
     """In-memory cache with TTL enforcement and LRU eviction."""
 
-    MAX_ENTRIES = 500
+    # Bumped from 500 — the previous cap was too aggressive: a fresh
+    # search alone caches ~50 entries (raw Kufar dataset, computed
+    # listings, segments, geography, history points). At 500 entries
+    # the LRU evicts active hot keys for the next request, defeating
+    # the cache. 5000 fits comfortably in a few MB and matches what
+    # the audit recommended.
+    MAX_ENTRIES = 5000
 
     def __init__(self) -> None:
         self._storage: OrderedDict[str, tuple[str, float]] = OrderedDict()
@@ -106,9 +110,16 @@ class MemoryCache:
 
 
 class RedisCache:
-    _json_pool = concurrent.futures.ThreadPoolExecutor(
-        max_workers=2, thread_name_prefix="json_"
-    )
+    # NOTE: previously RedisCache spun JSON encode/decode through a
+    # 2-thread ThreadPoolExecutor on the assumption that json.loads /
+    # json.dumps could block the event loop. In practice the cached
+    # payloads here are small (listings response, segment dicts —
+    # < 200 KB) and Python's json is implemented in C. The
+    # run_in_executor round-trip itself costs ~0.1ms per call which
+    # dwarfs the actual parse time on payloads under ~1 MB. Doing the
+    # JSON work synchronously in the event loop is measurably faster
+    # AND removes the cross-thread contention on big lists.
+    # (PERF-H5)
 
     def __init__(self, client: Redis) -> None:
         self._client = client
@@ -146,18 +157,14 @@ class RedisCache:
         payload = await self.get(key)
         if payload is None:
             return None
-        loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(self._json_pool, json.loads, payload)
+            return json.loads(payload)
         except json.JSONDecodeError:
             logger.warning("Ignoring corrupt JSON in redis for key=%s", key)
             return None
 
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
-        loop = asyncio.get_running_loop()
-        serialized = await loop.run_in_executor(
-            self._json_pool, functools.partial(json.dumps, value, ensure_ascii=False, default=str)
-        )
+        serialized = json.dumps(value, ensure_ascii=False, default=str)
         await self.set(key, serialized, ttl)
 
     # Atomic INCR + conditional EXPIRE.

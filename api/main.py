@@ -72,8 +72,28 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.kufar_client = KufarClient(settings)
 
-    # Start background prune task for AI shadow stores
-    prune_task = asyncio.create_task(periodic_prune_shadow_stores())
+    # Start background prune task for AI shadow stores. Wrap a
+    # done-callback that surfaces any uncaught exception — without it
+    # `asyncio.create_task` swallows errors silently and the next
+    # event-loop iteration's GC may never get round to flagging the
+    # task; we'd then run with the prune task quietly dead and shadow
+    # stores growing forever (PERF-H3).
+    def _log_bg_task_exception(task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "background task %s raised: %r",
+                task.get_name() or "<unnamed>",
+                exc,
+                exc_info=exc,
+            )
+
+    prune_task = asyncio.create_task(
+        periodic_prune_shadow_stores(), name="periodic_prune_shadow_stores",
+    )
+    prune_task.add_done_callback(_log_bg_task_exception)
 
     # Loud warning at startup if auth is bypassed — this used to be tied
     # to `debug` and could silently turn into a production foot-gun.
@@ -244,20 +264,47 @@ def create_app() -> FastAPI:
                 )
         return await call_next(request)
 
-    # Auto-provision User row on first authenticated request
+    # Auto-provision User row on first authenticated request.
+    #
+    # PERF-H6: previously the body of this middleware did
+    #     response = await call_next(request)
+    #     ...do DB work synchronously...
+    #     return response
+    # That meant every request waited on a DB round-trip AFTER the
+    # response was already produced — keeping the connection open and
+    # blocking the worker for ~50ms per first-request just to make sure
+    # the User row exists. Move the upsert to a fire-and-forget task so
+    # the response returns immediately; the upsert itself is
+    # idempotent (INSERT … ON CONFLICT DO NOTHING) so it's safe to run
+    # without awaiting.
+    _provision_tasks: set[asyncio.Task[None]] = set()
+
+    async def _provision_user_async(
+        sf: Any, user_id: int, first_name: str,
+    ) -> None:
+        try:
+            await ensure_user_exists(sf, user_id, first_name)
+        except Exception:  # noqa: BLE001 — background task, must never raise
+            logger.warning(
+                "Auto-provision failed for telegram_user_id=%s",
+                user_id, exc_info=True,
+            )
+
     @app.middleware("http")
     async def auto_provision_user(request: Request, call_next):
         response = await call_next(request)
-        # After the request completes (so we don't delay the response),
-        # ensure the Telegram user exists in the DB to prevent FK violations.
         init_data = getattr(request.state, "telegram_user", None)
         if init_data is not None and init_data.user_id != 0:
             sf = getattr(request.app.state, "session_factory", None)
             if sf is not None:
-                try:
-                    await ensure_user_exists(sf, init_data.user_id, init_data.first_name)
-                except Exception as e:
-                    logger.warning("Auto-provision failed for telegram_user_id=%s: %s", init_data.user_id, e, exc_info=True)
+                # Strong-ref the task so the GC doesn't drop it before
+                # it runs; self-clean via done callback.
+                task = asyncio.create_task(
+                    _provision_user_async(sf, init_data.user_id, init_data.first_name),
+                    name=f"provision_user_{init_data.user_id}",
+                )
+                _provision_tasks.add(task)
+                task.add_done_callback(_provision_tasks.discard)
         return response
 
     # Add rate limiter to app state

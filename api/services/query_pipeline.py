@@ -504,19 +504,14 @@ async def fetch_category_totals(
             except (TypeError, ValueError):
                 pass
 
-    # Bound concurrent fan-out so we don't open too many sockets to
-    # Kufar at once — they occasionally time out under burst load
-    # (a single timed-out call adds 3+ seconds via the retry/backoff
-    # in client.search). Three is the tested sweet spot: enough
-    # parallelism that 10 cats finish in ~1.5 s, conservative enough
-    # that we don't trigger Kufar's connection limits.
-    sem = asyncio.Semaphore(3)
+    # PERF-H7: removed the local Semaphore(3) wrapper. KufarClient
+    # already enforces its own settings.kufar_parallel_semaphore, so
+    # adding another semaphore here just double-counted the parallelism
+    # budget without giving us extra protection. asyncio.gather +
+    # client-level semaphore = same effective concurrency, fewer
+    # moving parts.
 
     async def _fetch_one(cat_id: int) -> tuple[int, int | None]:
-        async with sem:
-            return await _fetch_one_inner(cat_id)
-
-    async def _fetch_one_inner(cat_id: int) -> tuple[int, int | None]:
         try:
             # bypass_delay=True: skip the 0.3s rate-limit lock so the
             # cat-totals fan-out runs truly concurrently. Each call is

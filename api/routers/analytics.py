@@ -161,19 +161,26 @@ async def get_lead_analytics(
         total_buy_cost = float(agg_row.total_buy_cost or 0)
 
         # Per-lead ROI + days-to-close (columns only, no ORM hydration).
-        won_rows = await session.execute(
+        # BE-H10: stream rows with yield_per(500) so we don't buffer
+        # the entire won-set in memory for users with thousands of
+        # deals. The aggregate stats above already gave us the totals;
+        # this loop only collects ROI percentile inputs and
+        # days-to-close samples — both fine to compute incrementally.
+        won_stream = await session.stream(
             select(
                 LeadItem.id,
                 LeadItem.buy_price_byn,
                 LeadItem.sold_price_byn,
                 LeadItem.sold_at,
                 LeadItem.created_at,
-            ).where(*window_where, window_won)
+            )
+            .where(*window_where, window_won)
+            .execution_options(yield_per=500)
         )
         won_expenses_total = 0.0
         roi_values: list[float] = []
         days_to_close: list[float] = []
-        for lid, buy, sold, sold_at_raw, created_at_raw in won_rows:
+        async for lid, buy, sold, sold_at_raw, created_at_raw in won_stream:
             buy_price = float(buy) if buy is not None else 0.0
             sold_price = float(sold or 0)
             expenses = expenses_by_lead.get(lid, 0.0)

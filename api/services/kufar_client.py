@@ -61,7 +61,21 @@ class KufarClient:
                 if self._closed:
                     raise RuntimeError("KufarClient is closed")
                 if self._http_client is None or self._http_client.is_closed:
-                    self._http_client = httpx.AsyncClient(timeout=self._settings.kufar_timeout)
+                    # Bound the connection pool. Without limits a burst
+                    # (e.g. the parallel category-totals fan-out racing
+                    # with a watchlist refresh) can open hundreds of
+                    # TCP sockets, exhaust file descriptors and slow
+                    # everything down. The semaphore in this class
+                    # already caps concurrency, but the pool limit
+                    # protects us if anyone bypasses it (tests,
+                    # background tasks, or future callers).
+                    self._http_client = httpx.AsyncClient(
+                        timeout=self._settings.kufar_timeout,
+                        limits=httpx.Limits(
+                            max_connections=20,
+                            max_keepalive_connections=10,
+                        ),
+                    )
         return self._http_client
 
     async def aclose(self) -> None:

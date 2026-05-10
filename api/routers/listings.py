@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Literal
+import logging
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -28,6 +29,8 @@ from api.services.listing_mapper import build_listing_item
 from api.services.query_pipeline import load_query_dataset_context_with_fallback
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["analytics"])
 
@@ -156,9 +159,17 @@ async def get_listings(
     # computed inside build_listing_item), we still need to build
     # the full result-set first, sort, then slice.
     page_capped_total = min(len(sorted_ads), _MAX_LISTINGS_PAGE)
-    if sort in {"cheap", "deal_score"}:
-        listings = [
-            build_listing_item(
+
+    # BE-H7: build_listing_item touches a lot of subsystems
+    # (price normalisation, category lookup, deal_score, flip
+    # estimates, anomaly flags, image URL building). Any one of
+    # those raising on a malformed Kufar payload would explode the
+    # entire response — even though every other ad on the page is
+    # fine. Wrap the per-ad call so a single bad ad is logged and
+    # skipped instead of taking the whole listing endpoint down.
+    def _safe_build(ad: dict[str, Any]):
+        try:
+            return build_listing_item(
                 ad,
                 query=query,
                 currency=currency,
@@ -170,8 +181,17 @@ async def get_listings(
                 liquidity=liquidity,
                 cluster_cache=cluster_cache,
             )
-            for ad in sorted_ads[:_MAX_LISTINGS_PAGE]
-        ]
+        except Exception as exc:  # noqa: BLE001 — graceful per-ad degrade
+            logger.warning(
+                "listings: failed to build item for ad_id=%s (%s: %s); skipping",
+                ad.get("ad_id"), type(exc).__name__, exc,
+                exc_info=True,
+            )
+            return None
+
+    if sort in {"cheap", "deal_score"}:
+        built = (_safe_build(ad) for ad in sorted_ads[:_MAX_LISTINGS_PAGE])
+        listings = [item for item in built if item is not None]
         listings.sort(
             key=lambda item: (
                 -float(item.deal_score or 0.0),
@@ -190,21 +210,8 @@ async def get_listings(
             page_slice = []
         elif offset + limit > _MAX_LISTINGS_PAGE:
             page_slice = sorted_ads[offset:_MAX_LISTINGS_PAGE]
-        listings = [
-            build_listing_item(
-                ad,
-                query=query,
-                currency=currency,
-                rates=rates,
-                currency_service=currency_service,
-                median_byn=median_byn,
-                market_stats=reference_dataset.price_stats,
-                category_price_stats=category_price_stats,
-                liquidity=liquidity,
-                cluster_cache=cluster_cache,
-            )
-            for ad in page_slice
-        ]
+        built = (_safe_build(ad) for ad in page_slice)
+        listings = [item for item in built if item is not None]
 
     # `total` is what the pill above the cards shows.
     #  - Broad query (category=None): use Kufar's raw `total` so the

@@ -1012,11 +1012,19 @@ class AIService:
         # through price comparisons without truncating the JSON output.
         # (The old 2200/2800 values were tuned for Gemma 4 which had no
         # thinking tokens but was prone to empty content with response_format.)
+        # BE-H5 note: the 1-second stagger is implemented as
+        # `asyncio.sleep` rather than time.sleep, so it does NOT block
+        # the event loop — it just delays Call B's start. While B's
+        # coroutine waits, Call A's HTTP request is already in flight.
+        # `asyncio.gather` creates tasks for both coroutines under the
+        # hood; we don't need a separate `create_task` wrapper.
         async def _call_a():
             return await self._chat(system=system_a, content=call_content, max_tokens=3200)
 
         async def _call_b():
-            # Stagger by 1s to avoid Together AI rate-limit (429) on concurrent requests
+            # Stagger to avoid Together AI rate-limit (429) on concurrent
+            # requests. asyncio.sleep yields to the event loop, so Call A
+            # progresses while we're holding here.
             await asyncio.sleep(1.0)
             # Call B includes scam_analysis + photo_authenticity — needs more tokens
             return await self._chat(system=system_b, content=call_content, max_tokens=4000)

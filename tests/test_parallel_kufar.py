@@ -39,25 +39,41 @@ async def test_parallel_search_returns_results_for_all_tasks(mock_settings: Magi
 
 @pytest.mark.asyncio
 async def test_parallel_search_respects_semaphore_limit(mock_settings: MagicMock) -> None:
+    """parallel_search no longer wraps calls in its own semaphore
+    (PERF-H7) — concurrency is now bounded by KufarClient's own
+    semaphore. Patch the inner http GET so the work still goes through
+    `client._semaphore`, then count concurrent enters."""
     concurrent_count = 0
     max_concurrent = 0
     lock = asyncio.Lock()
 
-    async def slow_search(**kwargs: object) -> dict:
-        del kwargs
+    from unittest.mock import AsyncMock, patch
+
+    async def slow_get(*args: object, **kwargs: object) -> object:
+        del args, kwargs
         nonlocal concurrent_count, max_concurrent
         async with lock:
             concurrent_count += 1
             max_concurrent = max(max_concurrent, concurrent_count)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.02)
         async with lock:
             concurrent_count -= 1
-        return {"ads": [], "pagination": {}}
+        # Build a minimal httpx-like response stub.
+        resp = MagicMock()
+        resp.json = MagicMock(return_value={"ads": [], "pagination": {}, "total": 0})
+        resp.raise_for_status = MagicMock()
+        return resp
 
     client = KufarClient(mock_settings)
-    client.search = slow_search  # type: ignore[method-assign]
-    await parallel_search(client, [{"query": "test"} for _ in range(6)], mock_settings)
-    assert max_concurrent <= 2
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=slow_get)):
+        await parallel_search(
+            client, [{"query": "test"} for _ in range(6)], mock_settings,
+        )
+    # mock_settings.kufar_parallel_semaphore = 2 — the in-client
+    # semaphore must keep concurrent calls at or below that.
+    assert max_concurrent <= 2, (
+        f"client-level semaphore should cap concurrency at 2; saw {max_concurrent}"
+    )
 
 
 @pytest.mark.asyncio

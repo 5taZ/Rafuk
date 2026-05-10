@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -117,36 +117,39 @@ async def get_leads(
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is None:
             return []
+        # BE-H8: single LEFT JOIN with sum(expenses) replaces the prior
+        # two-query pattern (leads then expenses with `IN (lead_ids)`).
+        # The old approach forced a second round-trip for every page
+        # AND fanned the IN-list to ~50 ids on every request — Postgres
+        # planning that turned into a hash join under load. Pushing the
+        # SUM into the same SELECT cuts the call count to one and lets
+        # the planner use the existing index on (lead_id) directly.
+        expense_totals = (
+            select(
+                DealExpense.lead_id.label("lead_id"),
+                func.coalesce(func.sum(DealExpense.amount_byn), 0).label("total"),
+            )
+            .group_by(DealExpense.lead_id)
+            .subquery()
+        )
         # Exclude `watching` items here — those are exposed via /watchlist
         # endpoints to keep the frontend contract unchanged.
         result = await session.execute(
-            select(LeadItem)
+            select(
+                LeadItem,
+                func.coalesce(expense_totals.c.total, 0).label("total_expenses"),
+            )
+            .outerjoin(expense_totals, LeadItem.id == expense_totals.c.lead_id)
             .where(LeadItem.user_id == user_id, LeadItem.status != WATCHING_STATUS)
             .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
             .limit(limit)
             .offset(offset)
         )
-        leads = list(result.scalars())
-
-        # Fetch all expenses for these leads in a single query (efficient)
-        lead_ids = [lead.id for lead in leads]
-        if lead_ids:
-            expense_result = await session.execute(
-                select(DealExpense.lead_id, DealExpense.amount_byn).where(
-                    DealExpense.lead_id.in_(lead_ids)
-                )
-            )
-            # Build a mapping: lead_id -> total_expenses
-            expenses_by_lead: dict[int, float] = defaultdict(float)
-            for lead_id, amount_byn in expense_result:
-                expenses_by_lead[lead_id] += float(amount_byn)
-        else:
-            expenses_by_lead = {}
 
         # Build response with computed fields
         output: list[LeadRead] = []
-        for lead in leads:
-            total_expenses = expenses_by_lead.get(lead.id, 0.0)
+        for lead, total_expenses_raw in result.all():
+            total_expenses = float(total_expenses_raw or 0.0)
             actual_profit: float | None = None
             roi_percent: float | None = None
 

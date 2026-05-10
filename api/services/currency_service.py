@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
 from api.services.cache import CacheBackend
+
+logger = logging.getLogger(__name__)
 
 NBRB_URL = "https://api.nbrb.by/exrates/rates?periodicity=0"
 DEFAULT_USD_RATE = 3.0
@@ -56,8 +59,18 @@ class CurrencyService:
                 items = response.json()
                 rates = self._extract_rates(items)
                 source = "nbrb"
-            except (httpx.HTTPError, ValueError, KeyError, TypeError, RuntimeError):
-                pass
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+                # BE-H6: previously the except body was a silent `pass`,
+                # so transient NBRB outages and parsing regressions never
+                # showed up in logs — the only signal was downstream
+                # users noticing stale rates. Log with traceback at
+                # WARNING; the fallback rate continues to serve traffic.
+                logger.warning(
+                    "currency_service: NBRB rate refresh failed (%s: %s); "
+                    "using fallback rates",
+                    type(exc).__name__, exc,
+                    exc_info=True,
+                )
 
             payload = {
                 "base": "BYN",
