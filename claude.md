@@ -2,11 +2,15 @@
 
 > Drop this file when you start helping with the Kufar Analytics
 > project. It captures the state of the codebase as of commit
-> `eeba8d9` (Wave 11), what we've already fixed, what's still open,
-> and the conventions used so far. The companion audit document is
-> `DEEP_DIVE_REVIEW_COMPREHENSIVE.md` — it lists 186 issues at four
-> severities (29 CRITICAL / 54 HIGH / 73 MEDIUM / 30 LOW). Numbers
-> in this file refer to the IDs from that document.
+> `ddeb8ca` (Wave 22 completed), what's been fixed across Waves
+> 0–22, and what's still genuinely worth doing. The companion audit
+> document is `DEEP_DIVE_REVIEW_COMPREHENSIVE.md` (gitignored) — it
+> lists 186 issues at four severities (29 CRITICAL / 54 HIGH /
+> 73 MEDIUM / 30 LOW). Numbers in this file refer to those audit IDs.
+>
+> The full per-wave change log lives in `CHANGELOG.md` — that's the
+> authoritative reference for "what changed when". This file is the
+> shorter mental-model handoff.
 
 ---
 
@@ -26,42 +30,46 @@ analytics + AI-assisted decisioning over them, and surfaces
   notifications.
 * **`frontend/`** — vanilla JS + plain CSS Mini App (no bundler,
   no JSX). Assets are served by nginx, see `nginx/default.conf`.
-* **`migrations/`** — Alembic; head revision is `20260510_0005`.
+* **`migrations/`** — Alembic; head revision is `20260510_0006`.
 
-**Deployment shape:** four Docker services (api / bot / scheduler
-/ frontend) plus Redis 7 and Cloudflare Tunnel. See
-`docker-compose.yml`.
+**Deployment shape:** five Docker services (migrate one-shot
++ api + bot + scheduler + frontend) plus Redis 7 and Cloudflare
+Tunnel. See `docker-compose.yml`.
 
-**Test suite:** 494 tests, all green. Runner is `pytest`. Local
-dev uses SQLite via `aiosqlite`; CI/PG via env override.
+**Test suite:** 500 tests, all green. Runner is `pytest`. Local
+dev uses SQLite via `aiosqlite`; CI/PG via env override. Static
+Alembic-chain checks (single head, walkable, unique IDs) plus a
+Postgres-gated round-trip smoke (skipped without
+`TEST_DATABASE_URL`).
 
 ---
 
 ## 2. How to run things
 
 ```bash
-# activate venv
-source .venv/bin/activate
+# install / activate venv
+uv sync --extra dev
 
 # tests (must stay green before committing)
-pytest --tb=short
+uv run pytest --tb=short
 
 # single file
-pytest tests/test_consent.py -x --tb=short
+uv run pytest tests/test_consent.py -x --tb=short
 
-# bump cache-busting tags after touching frontend/js or frontend/css
+# linter (CI matches this — ruff format is intentionally NOT enforced)
+uv run ruff check .
+
+# bump cache-busting tags after touching frontend/js, frontend/css, frontend/sw.js, frontend/offline.html, frontend/index.html
 scripts/bump_static_version.sh
 
 # alembic head revision
-alembic -c migrations/alembic.ini history --verbose | head -25
+uv run alembic -c migrations/alembic.ini current
 ```
 
-Tests rely on a custom `_CSRFTestClient` shim in
-`tests/conftest.py` that auto-injects `Origin` and
-`X-Requested-With` headers on every request — needed because of
-the CSRF middleware (FE-H7). Async tests that use httpx
-`AsyncClient` directly (e.g. `tests/test_consent.py`) must set
-both headers manually.
+CSRF-required tests use the `_CSRFTestClient` shim in
+`tests/conftest.py` — it auto-injects `Origin` and
+`X-Requested-With`. Async tests using `httpx.AsyncClient` directly
+(e.g. `tests/test_consent.py`) must set both headers manually.
 
 ---
 
@@ -75,10 +83,11 @@ both headers manually.
   the existing Origin check`. Future readers can grep for the
   ID and find both the audit entry and the fix.
 * **Backward-compat re-exports.** When a module is split (e.g.
-  `api/routers/ai_analysis.py` in Wave 10), keep the old import
-  surface working via re-exports rather than rewriting every
-  caller. Documented re-exports include a comment listing every
-  importer so you know what would break if you remove them.
+  `api/services/ai_service.py` in Wave 18, `ai_analysis.py` in
+  Wave 10), keep the old import surface working via re-exports
+  rather than rewriting every caller. Documented re-exports
+  include a comment listing every importer so you know what
+  would break if you remove them.
 * **`gh-flavoured commit trailer`** — every commit ends with:
 
   ```
@@ -88,7 +97,8 @@ both headers manually.
   ```
 
 * **Code style:** Compact, dense, idiomatic. Avoid excessive
-  try/except. Comments explain *why*, not *what*.
+  try/except. Comments explain *why*, not *what*. `ruff format`
+  is intentionally NOT enforced — see AGENTS.md.
 
 ---
 
@@ -103,7 +113,7 @@ both headers manually.
 2. **Local Redis on port 6380 has no password.** `REDIS_URL`
    stays plaintext for the host; `DOCKER_REDIS_URL` includes the
    password via `REDIS_PASSWORD` env var.
-3. **494 tests must stay green.** If a refactor breaks tests,
+3. **500 tests must stay green.** If a refactor breaks tests,
    either (a) update the tests with audit-ID comments explaining
    why, or (b) roll back the refactor. Do not commit with a red
    suite.
@@ -113,38 +123,54 @@ both headers manually.
 
 ---
 
-## 5. What's already been fixed (Waves 0–11)
+## 5. What's been fixed (Waves 0–22)
 
 29 of 29 **CRITICAL** items are either closed in code or
 explicitly deferred per user policy (secret rotation, HTTPS via
-Cloudflare). 50 of 54 **HIGH** items closed; the remaining 4 are
-operational (CI/CD, monitoring, backups) plus one partial
-(DB-H3 ai_audit_log partitioning — cleanup function works, true
-range-partitioning not done).
+Cloudflare). 51 of 54 **HIGH** items closed; the remaining 3 are
+operational (CD pipeline, monitoring, off-host backups). 46 of 73
+**MEDIUM** items closed; the remaining 27 are mostly
+deliberately-deferred (god-file splits with risk, `!important` CSS
+migration that needs visual review, scheduler loop architectural
+refactor) plus a long tail of ergonomic improvements that don't
+affect users.
 
-| Wave | Commit  | Theme                                              |
-|------|---------|----------------------------------------------------|
-| 0    | 80271c9 | .gitignore + redact secrets                        |
-| 1    | 2e0692a | CORS/CSRF, Redis auth, AUTH_BYPASS, CSP, limiter   |
-| 2    | a4beeae | Race-safe singleflight, shadow stores, breaker     |
-| 4    | c0e6372 | Resource limits, safe stop, O(n²) cluster stats    |
-| 5a   | 1d2fc8d | initData replay, blacklist, prompt-injection log   |
-| 5b   | 7790a66 | Atomic upsert, transactions, Lua rate-limit        |
-| 5c   | 156a4b9 | Multi-worker, bounded pools, perf hardening        |
-| 5d   | 8959d36 | Extract guidance JSON, ai_audit_log cleanup        |
-| 6    | b390a08 | a11y + CSRF X-Requested-With + structured logging  |
-| 7    | 2741f77 | Frontend request cancellation + signal cleanup     |
-| 8    | dec973d | DB CHECK + audit retention wiring                  |
-| 9    | 63a9e20 | Account deletion really clears every namespace     |
-| 10   | e06c1b3 | Split ai_analysis.py god-file into 4 services      |
-| 11   | eeba8d9 | CSP frame-ancestors / cache-busting / front image  |
+| Wave | Commit  | Theme                                                       |
+|------|---------|-------------------------------------------------------------|
+| 0    | 80271c9 | `.gitignore` + redact secrets                              |
+| 1    | 2e0692a | CORS/CSRF, Redis auth, AUTH_BYPASS, CSP, limiter           |
+| 2    | a4beeae | Race-safe singleflight, shadow stores, breaker             |
+| 4    | c0e6372 | Resource limits, safe stop, O(n²) cluster stats            |
+| 5a   | 1d2fc8d | initData replay, blacklist, prompt-injection log           |
+| 5b   | 7790a66 | Atomic upsert, transactions, Lua rate-limit                |
+| 5c   | 156a4b9 | Multi-worker, bounded pools, perf hardening                |
+| 5d   | 8959d36 | Extract guidance JSON, ai_audit_log cleanup                |
+| 6    | b390a08 | a11y + CSRF X-Requested-With + structured logging          |
+| 7    | 2741f77 | Frontend request cancellation + signal cleanup             |
+| 8    | dec973d | DB CHECK + audit retention wiring                          |
+| 9    | 63a9e20 | Account deletion really clears every namespace             |
+| 10   | e06c1b3 | Split `ai_analysis.py` god-file into 4 services            |
+| 11   | eeba8d9 | CSP frame-ancestors / cache-busting / front image          |
+| 12   | e603bd8 | MEDIUM/LOW dead code + type-safety sweep                   |
+| 13   | db55f04 | docs + CI security/parallelisation + compose migrate       |
+| 14   | 58f609d | test sweep — Alembic DAG checks + tightened assertions     |
+| 15   | 9dda1a6 | backend data integrity + UX (pagination, typed delete, FOR UPDATE) |
+| 16   | 9c39e82 | backend perf (AI semaphore, alias regex, graceful SIGTERM) |
+| 17   | 6531622 | DB tuning (LIFO pool, drop indexes, UNIQUE consents, widen links) |
+| 18   | 3b6a526 | split `ai_service.py` god-file into prompts/sanitize/dedupe |
+| 19   | be5939f | extract `ai_marketplace.py` lexicon to JSON                |
+| 20   | b444ff1 | frontend perf (image onerror, SW max-age, CSS preload)     |
+| 21   | 016efd2 | frontend code quality (strip console.log, INFLIGHT_GUARD_MS) |
+| 22   | ddeb8ca | a11y + UX polish (inert siblings, toast pause, offline page) |
 
-For the *exact* mapping of audit IDs → wave, see the commit
-messages — each one names every ID it touched.
+For the *exact* mapping of audit IDs → wave, see `CHANGELOG.md`
+or the per-commit messages — each one names every ID it touched.
+`git log --grep="BE-M11"` finds the wave that closed any given
+audit item.
 
 ---
 
-## 6. What's still open (in priority order)
+## 6. What's still open
 
 ### CRITICAL — operational, no code change planned
 
@@ -152,9 +178,9 @@ messages — each one names every ID it touched.
 * **INF-C2** HTTPS/TLS — *cloudflared already proxies, deeper TLS
   is a deployment concern*.
 * **INF-C3** `pkill -f` in `scripts/` — *local dev scripts only,
-  not used in production*.
+  not used in production; the script already prefers PID files*.
 
-### HIGH — operational
+### HIGH — operational, decision pending
 
 * **SEC-H2** Docker Secrets instead of `environment:` — needs a
   Compose Spec migration + secret-store decision (Vault?
@@ -165,6 +191,8 @@ messages — each one names every ID it touched.
 * **INF-H3** Push Docker image to a registry from CI.
 * **INF-H4** CD pipeline (`deploy.yml` GitHub Action).
 
+(One HIGH closed indirectly: UX-H1 verified-via-Wave-22 a11y posture.)
+
 ### HIGH — partially done
 
 * **DB-H3** `ai_audit_log` partitioning. Today we just have a
@@ -172,94 +200,59 @@ messages — each one names every ID it touched.
   `PARTITION BY RANGE (created_at)` with monthly children, but
   that's a non-trivial migration with a backfill — postponed.
 
-### MEDIUM (73) — biggest remaining buckets
+### MEDIUM — what's left after Waves 12–22
 
-The full breakdown is in `DEEP_DIVE_REVIEW_COMPREHENSIVE.md`
-sections "🟡 MEDIUM — Address in Next Sprint". Highlights:
+After 11 themed sweeps, the remaining 27 MEDIUM items split into
+three buckets:
 
-**Backend (18):**
+**Genuinely-impactful, deferred for scope or risk reasons (3):**
 
-* `api/routers/ai_analysis.py:periodic_prune_shadow_stores` —
-  the *outer* loop is fine after the Wave 10 split, but the
-  audit also flagged dead code in the same area; sweep when
-  touching the AI services again.
-* `api/routers/expenses.py:66-89` — `get_expenses` has no
-  pagination. Today the table is small but a power-user with
-  hundreds of leads would feel it.
-* `api/routers/consent.py:260-313` — account deletion has no
-  user-confirmation step. UX call: ask before adding a "type
-  your username to confirm" flow.
-* `api/services/ai_analysis_pipeline.py:359-437` — parallel
-  `search` calls inside the AI pipeline have no semaphore. Let's
-  bound them to keep us out of Kufar's rate-limit jail.
-* `api/routers/image_proxy.py:147-177` — CPU-bound Pillow encode
-  inside the request loop. Move to a thread pool / cache aggressively.
-* `api/services/history_service.py:80-86` — nested transaction
-  rollback is incomplete on error paths.
-* `api/services/ai_marketplace.py` — still ~1400 lines of mostly
-  static dicts; Wave 5d extracted *guidance*, not the rest.
-* `api/services/ai_service.py` — ~1800 lines, inline prompts.
-  Same kind of split BE-C5 did for ai_analysis.py.
-* Misc: `workflow.py:254-259` (status `"active"` not in
-  `LeadStatusEnum`), `history_service.py:254-256` (Decimal vs
-  float), `export.py:168-172` (dead code), `aggregator.py:166-175`
-  (O(n*m) alias map), `listing_detail.py:75-76` (no cache),
-  `config.py:59-66` (CIDR check incomplete), `trackers.py:141-207`
-  (no optimistic locking).
+* **PERF-M3** — scheduler Telegram notifications fire serially.
+  300 trackers × 3 alerts = 60 s of head-of-line blocking per
+  tick. Real power-user pain. Needs a phase split: collect
+  notification work during the DB pass, then fan out across
+  users with bounded concurrency. SQLAlchemy AsyncSession isn't
+  thread/coroutine-safe so a naive semaphore wrapper inside
+  the existing loop won't work.
+* **UX-M8** — `frontend/js/api_ai.js` is 1325 lines (~53 KB).
+  Natural split into 4 modules (modal lifecycle, analysis loop,
+  result rendering, PDF export) but they share closure-scoped
+  state (`_lastAiData`, progress refs, cancellation signals);
+  needs careful closure rewiring. Wave 18's
+  `api/services/ai_service.py` split was the equivalent
+  backend work; the FE AI flow has near-zero automated coverage
+  so a manual smoke pass is the safe cadence.
+* **FE-M5** — 31 `!important` CSS declarations across
+  `tokens.css`, `pipeline.css`, `modals.css`, `brand.css`,
+  `states.css`. Most fight Telegram-WebApp inline styles or the
+  global `[hidden]` attribute. Each removal needs paired visual
+  review, so a bulk strip isn't safe.
 
-**Frontend (14):**
+**Internal refactor / low user impact (a handful):**
 
-* `frontend/index.html:8` — CSS bundle is ~54K, served
-  synchronously. Could split critical CSS or use `media="print"
-  onload="this.media='all'"` trick.
-* `frontend/index.html:150-175` — AI modules load eagerly.
-  Lazy-import on first AI interaction.
-* `frontend/js/render_card_builders.js:30-45` — images are
-  eager-loaded on first render. `loading="lazy"` on the `<img>`
-  tag would defer below-the-fold thumbnails.
-* `api_events.js ↔ app_actions.js` — circular dependency.
-* `frontend/css/*` — 12+ `!important` in CSS. Slowly migrate
-  away when we touch each component.
-* `frontend/js/*` — many `console.log` left in production code.
-* `frontend/js/virtual_list.js` — pool grows without bound.
-* `frontend/js/sw.js` — cache version is manual; if forgotten,
-  users pin stale assets (related to INF-H8 cache-busting we just
-  scripted).
+* **BE-M8** — `_AC` analysis-context class is a god-object with
+  ~20 mutable attributes. Internal-only; works fine as is.
+* **DB-M5** — historical 4 migrations modify the same CHECK on
+  `tracker_events`. Cosmetic — the chain is well-formed, just
+  noisy.
+* **UX-M3** — no TypeScript / JSDoc type annotations on the
+  vanilla-JS frontend. Major rework.
+* **UX-M6** — no JS build system. Same scope as adding TS.
+* **DESIGN-M4** — Telegram initData (1-2 KB) sent on every API
+  call. Inherent to the auth model; would need a
+  short-lived-token redesign.
 
-**Database (9):**
+**Long tail (~20):** mostly operational/CI, design polish,
+migration cleanup, integration test gaps. See
+`DEEP_DIVE_REVIEW_COMPREHENSIVE.md` (gitignored) for the full
+list and `CHANGELOG.md` "Audit progress" for the running tally.
 
-* No `pool_use_lifo=True` — connections age and recycle more
-  often.
-* Missing index `idx_lead_items_user_created` was added in Wave 5;
-  audit flagged earlier rev. Verify this is current.
-* `lead_items.url` `String(512)` — may not be enough for some
-  Kufar URL params.
+### LOW (28 of 30 still open)
 
-**Tests (6):**
-
-* `tests/test_idor.py:test_user_b_cannot_delete_user_a_watchlist_item`
-  expects 204 instead of 404 — likely buggy assertion.
-* Some `assert resp.status_code in (200, 503)` patterns — too
-  loose, hides regressions.
-* Several `asyncio.sleep(0.01)` for "wait for semaphore" — flaky.
-* No integration tests against real PG, no migration tests.
-
-**Performance MEDIUM (6):**
-
-* Singleflight is in-process — multi-worker setups still cache-miss.
-* Scheduler sends Telegram notifications sequentially — 300
-  notifications = 60s of head-of-line blocking. Parallelise with
-  bounded concurrency.
-* No graceful SIGTERM handling — DB transactions can be killed.
-
-### LOW (30) — polish
-
-* Permissions-Policy headers added in Wave 11 (some sub-bullets
-  closed).
-* `README.md` is empty.
-* No `CHANGELOG.md`.
-* Various dead imports (`ai_export.py`), duplicated code
-  (`deal_workflow.py` ↔ `workflow.py`).
+`README.md` is no longer empty (Wave 13). Most remaining LOW
+items are dead-import polish, design micro-tweaks, and a few
+Redis-encryption-at-rest / `Permissions-Policy` extras that are
+configuration-side, not code.
 
 ---
 
@@ -268,35 +261,44 @@ sections "🟡 MEDIUM — Address in Next Sprint". Highlights:
 ```
 api/
   main.py                          FastAPI app factory + middlewares
-  config.py                        Settings (pydantic)
+  config.py                        Settings (pydantic) + _is_local_database_url
   models.py                        SQLAlchemy ORM
-  schemas.py                       Pydantic request/response
+  schemas.py                       Pydantic request/response (incl. AccountDeletionConfirmation)
+  database.py                      get_engine — pool_use_lifo=True (Wave 17)
   middleware/telegram_auth.py      HMAC verify of initData
   routers/
-    ai_analysis.py                 ← Wave 10: thin router + re-exports
+    ai_analysis.py                 Wave 10: thin router + re-exports
     ai_listing_assistant.py        Listing assistant endpoint
     ai_tools.py                    Negotiate / price advice
-    consent.py                     Law-91-Z consent / erasure
+    consent.py                     Law-91-Z consent / erasure (BE-M3 typed-delete + DB-M6 IntegrityError handler)
     workflow.py                    Leads/watchlist CRUD + refresh
+    expenses.py                    Pagination via limit/offset (BE-M2)
+    trackers.py                    create_tracker with FOR UPDATE on User row (BE-M16)
     listings.py / analytics.py / etc.
   services/
-    ai_audit.py                    ← Wave 10
-    ai_guards.py                   ← Wave 10 (consent / rate / coerce)
-    ai_privacy.py                  ← Wave 10 (clear_user_ai_data)
-    ai_shadow_store.py             ← Wave 10
-    ai_analysis_pipeline.py        AI pipeline (still ~1500 lines)
-    ai_service.py                  AI client wrapper (~1800 lines)
-    ai_marketplace.py              Static dicts (~1400 lines)
+    ai_audit.py                    Wave 10
+    ai_guards.py                   Wave 10 (consent / rate / coerce)
+    ai_privacy.py                  Wave 10 (clear_user_ai_data)
+    ai_shadow_store.py             Wave 10
+    ai_analysis_pipeline.py        AI pipeline (still ~900 lines)
+    ai_service.py                  AI client (1175 lines after Wave 18)
+    ai_prompts.py                  Wave 18: 6 prompt templates
+    ai_sanitize.py                 Wave 18: sanitize_user_text + injection regex
+    ai_dedupe.py                   Wave 18: paraphrase collapsing
+    ai_marketplace.py              1644 lines after Wave 19 (was 1824)
     cache.py                       Redis + MemoryCache backends
     kufar_client.py                Kufar HTTP client
     parallel_kufar.py              Parallel Kufar fanout helper
     workflow_store.py              ensure_user, leads CRUD
     session_security.py            initData replay tracking + blacklist
-    aggregator.py                  Price stats / detect_price_type
-    history_service.py             Trend reversal etc.
+    aggregator.py                  Wave 16: SEARCH_ALIASES → precompiled regex
+    history_service.py             Wave 12: Decimal coercion in price-drop detection
+  data/category_guidance.json      Wave 5d: extracted guidance
+  services/data/
+    category_guidance.json         (moved here in earlier wave)
+    marketplace_lexicon.json       Wave 19: 10 token groups
   healthcheck.py                   Wave 6: /health/{live,ready}
   logging_config.py                Wave 6: JSON structured logs
-  data/category_guidance.json      Wave 5d: extracted guidance
 
 bot/
   main.py                          Aiogram bot entry-point
@@ -304,51 +306,79 @@ bot/
   handlers/{start,analytics,callbacks}.py
 
 scheduler/
-  collector.py                     APScheduler jobs (~1300 lines)
+  collector.py                     APScheduler jobs (~1300 lines, PERF-M4 SIGTERM handler in main())
 
 frontend/
-  index.html                       Mini-App shell
+  index.html                       Mini-App shell (FE-M1 preload tag, 7 modal surfaces)
+  offline.html                     Wave 22: SW fallback page
+  sw.js                            CACHE_VERSION rafuk-cache-v7, max-age, offline pre-cache
   js/
-    api_core.js                    fetch wrapper, X-Requested-With
+    api_core.js                    fetch wrapper, X-Requested-With, deleteJson(url, payload?)
     api_listings.js                search() + abort hooks
     api_events.js                  event binders, debounce
     api_*.js                       per-domain
+    api_ai.js                      AI modal flow (still 1325 lines — UX-M8 deferred)
     app.js                         analyticsApp() bootstrap
-    app_actions.js                 cross-module action object
-    render_*.js                    pure-DOM renderers
-    dom_helpers.js                 trapFocus, longpress, ptr, …
+    app_actions.js                 cross-module action object + typed-delete-confirm modal
+    render_*.js                    pure-DOM renderers (incl. toast pause-on-hover)
+    render_card_builders.js        buildMediaNode (loading=lazy + onerror fallback)
+    dom_helpers.js                 trapFocus, openModalAnimated (with inert siblings),
+                                   INFLIGHT_GUARD_MS constant
+    virtual_list.js                bounded recycle pool
   css/
     parts/tokens.css               Design tokens (Wave 6 contrast bumps)
-    style.css                      Main stylesheet (~9K lines)
+    style.css                      Bundled stylesheet (~9.5K lines, ~54K)
 
 migrations/
   versions/
-    20260510_0005_deal_expenses_check.py     ← Wave 8 head
+    20260510_0006_wave17_db_tuning.py        ← head, current
+    20260510_0005_deal_expenses_check.py     ← Wave 8
     20260510_0004_ai_audit_cleanup.py        ← Wave 5d
     20260510_0003_add_price_type.py          ← price-type fix
     20260509_*.py                            ← DB hardening
+
+tests/
+  test_migrations.py               Wave 14: Alembic chain checks + Postgres round-trip
+  conftest.py                      _CSRFTestClient shim, env setup
+  test_consent.py                  4 BE-M3 tests for typed account deletion
+  test_models.py                   Pin post-DB-M4 index set
+  ...                              500 total
 ```
 
 ---
 
 ## 8. Suggested next moves for the next AI
 
-Pick one of:
+The themed sweeps are done. What's left is bigger / more deliberate:
 
-1. **Backend MEDIUM cluster** — ai_marketplace / ai_service splits
-   following the BE-C5 pattern. Keep the late-bound import trick
-   for tests (`from api.routers import ai_analysis as _aa`).
-2. **Frontend MEDIUM cluster** — lazy-load AI modules, swap eager
-   image loads for `loading="lazy"`, dedupe escapeHtml
-   (verify it's still single after Wave 7), strip `console.log`s.
-3. **DB-H3 partitioning** — the only HIGH that's only partially
-   addressed. Plan: monthly partitions on `ai_audit_log.created_at`,
-   a 24-month default rolling window, default partition for
+1. **PERF-M3 (scheduler notifications fan-out)** — biggest
+   user-impact remaining. Needs the loop split: pass 1 collects
+   `(user_id, message, kb)` tuples while DB session is active;
+   pass 2 fans out with `asyncio.gather` + per-user `Semaphore(1)`
+   to keep Telegram rate-limits happy across users. Largely
+   contained to `scheduler/collector.py`.
+
+2. **UX-M8 (api_ai.js split)** — most-visible internal refactor.
+   Take Wave 18's `ai_service.py` split as the template:
+   `api_ai_modal.js` (lifecycle + progress UI),
+   `api_ai_loop.js` (loadAIAnalysis + polling),
+   `api_ai_render.js` (result/error rendering),
+   `api_ai_pdf.js` (PDF export). Pass shared closure state
+   through a small `aiContext` object. Add a manual smoke pass
+   (the FE AI flow has near-zero automated coverage).
+
+3. **DB-H3 (`ai_audit_log` partitioning)** — only HIGH still
+   actually open. Plan: monthly partitions on `created_at`,
+   24-month default rolling window, default partition for
    safety. Migration needs `pg_partman` or hand-rolled DDL +
-   backfill.
-4. **Tests sweep** — fix the `expects 204 instead of 404` bug,
-   tighten loose `in (200, 503)` assertions, add an integration
-   harness.
+   backfill. The Wave 8 cleanup function buys time but the
+   real fix is partitioning.
+
+4. **Operational HIGHs (INF-H1/2/3/4 + SEC-H2)** — these need
+   ops-side decisions (backup target, monitoring stack, secret
+   store, deployment target) before code can land. Worth
+   surfacing to the user when one of these blockers comes up
+   organically.
 
 Whatever you pick: stay in the wave-per-commit cadence, mark
 each fix with its audit ID, and ping the user when something

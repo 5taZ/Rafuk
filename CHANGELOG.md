@@ -14,7 +14,82 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 22 — a11y + UX polish _(this commit)_
+### Wave 23 — PERF-M3 partial (parallel lead reminders) + handoff refresh _(this commit)_
+
+The highest-user-impact remaining MEDIUM item after Wave 22 was
+**PERF-M3** (scheduler Telegram notifications fire serially).
+This wave tackles the simpler half — the lead-reminder loop —
+and refreshes `claude.md` with the post-Wave-22 state.
+
+The deeper half of PERF-M3 (the tracker-check loop that
+interleaves per-tracker DB writes with notifications across
+six code paths) is still deferred; it needs a real phase
+split between DB work and notifications, plus per-user
+serialisation to respect Telegram's chat-rate limits. That's
+a dedicated wave's worth of careful work.
+
+* **PERF-M3 (reminders portion)** — `check_reminders` in
+  `scheduler/collector.py` used to be a sequential
+  ``for reminder in due_reminders: await notify_user(...)``
+  loop. With 50 due reminders × ~50 ms Telegram RTT that's
+  ~2.5 s of head-of-line blocking per tick. Refactored into
+  a 3-phase pipeline:
+
+    1. **Build phase** — single DB read, then per-row job
+       materialisation (message, keyboard). Reminders with no
+       lead or no Telegram user are marked ``sent=True``
+       immediately because retry would never help.
+    2. **Send phase** — `asyncio.gather` the prepared messages
+       through the new `_send_message_classified` helper with
+       a bounded `asyncio.Semaphore(_REMINDER_SEND_CONCURRENCY
+       = 5)`. The helper is pure I/O and does NOT touch the
+       SQLAlchemy session, which is what makes the parallelism
+       safe (AsyncSession isn't concurrency-safe).
+    3. **Apply phase** — one sequential pass writes outcomes
+       back: `sent=True` for success, accumulate blocked
+       `user_id`s, then issue a single bulk
+       ``UPDATE Tracker SET active=False WHERE user_id IN
+       (blocked)`` instead of one UPDATE per blocked user.
+       Single `session.commit()` at the end.
+
+  Expected wall-clock at 50 reminders: 2.5 s → ~500 ms (5×).
+  Telegram's ~30 msg/sec global limit stays well within reach
+  because each in-flight send is to a different user.
+
+* **`_send_message_classified` helper** — extracted the
+  classification logic (sent / blocked / retry) from
+  `notify_user` into a pure-I/O function. `notify_user` now
+  delegates to it, so the existing 7 tests for `notify_user`
+  (forbidden, not-found, unauthorized, retry-after, generic
+  API error, etc.) still exercise the same branches via
+  delegation. Single source of truth for "how does this
+  Telegram error map to a caller-visible outcome".
+
+* Three new tests in `tests/test_scheduler_collector.py` cover
+  the parallel path end-to-end:
+  `test_check_reminders_happy_path_marks_all_sent`,
+  `test_check_reminders_blocked_user_deactivates_trackers`,
+  `test_check_reminders_retry_error_leaves_reminder_pending`.
+
+* **`claude.md` refreshed** — the session-handoff file now
+  reflects the Waves 12–22 completion state. Updated:
+  head revision (`20260510_0006`), compose services (now
+  five, including the Wave-13 `migrate` one-shot), test count
+  (500 → 503 with this wave's additions), per-wave table
+  through `ddeb8ca`, "what's still open" bucket down from 27
+  to 26 MEDIUMs, and the "suggested next moves" list that
+  points the next AI at PERF-M3's larger half,
+  `api_ai.js` split, `ai_audit_log` partitioning, and the
+  ops-side HIGHs.
+
+Verification:
+* `ruff check . --select F` clean.
+* `pytest` 503 passed (+3 from Wave 22's 500), 1 skipped
+  (Postgres migration round-trip), no regressions.
+* Existing 7 `notify_user` tests still pass — confirms the
+  delegation refactor didn't change any branch's behaviour.
+
+### Wave 22 — a11y + UX polish `ddeb8ca`
 
 Five UX/FE-M items investigated; three landed real fixes, two
 verified as already-correct.
@@ -649,7 +724,8 @@ round-trip smoke), no regressions.
 | 19   | be5939f | extract `ai_marketplace.py` lexicon to JSON (BE-M17)                    |
 | 20   | b444ff1 | frontend performance (image onerror, SW max-age, CSS preload)            |
 | 21   | 016efd2 | frontend code quality (strip console.log, INFLIGHT_GUARD_MS dedupe)     |
-| 22   | _this_  | a11y + UX polish (inert siblings, toast pause-on-hover, offline page)   |
+| 22   | ddeb8ca | a11y + UX polish (inert siblings, toast pause-on-hover, offline page)   |
+| 23   | _this_  | PERF-M3 partial — parallel lead-reminder sends + handoff refresh        |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -657,13 +733,13 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 22:
+As of Wave 23:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
-| HIGH     | 54    | 51     | 3         | UX-H1 closed (verified-via-Wave-6); rest are ops/CI         |
-| MEDIUM   | 73    | 46     | 27        | FE-M5 + UX-M8 deferred; PERF-M3 deferred                    |
+| HIGH     | 54    | 51     | 3         | Rest are ops/CI (CD, monitoring, off-host backups)           |
+| MEDIUM   | 73    | 47     | 26        | PERF-M3 reminders portion closed; tracker-loop half deferred |
 | LOW      | 30    | 2      | 28        | FE-L6 closed via Wave 20 SW changes  |
 
 ## Conventions

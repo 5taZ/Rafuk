@@ -85,6 +85,53 @@ _TRACKER_QUERY_ERRORS: tuple[type[Exception], ...] = (
 )
 
 
+async def _send_message_classified(
+    bot: Bot,
+    telegram_user_id: int,
+    message: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> str:
+    """PERF-M3 helper: send one Telegram message and return a string
+    classifying the outcome — pure I/O, no SQLAlchemy session touched.
+
+    The classification is the same one ``notify_user`` derives, just
+    decoupled from the deactivation side-effect so this function is
+    safe to call from inside ``asyncio.gather`` (the AsyncSession
+    isn't safe under concurrent access).
+
+    Returns:
+      ``"sent"``    — Telegram accepted the message.
+      ``"blocked"`` — user blocked / deleted the bot, the chat is no
+                      longer reachable; caller should disable the
+                      user's trackers.
+      ``"retry"``   — transient Telegram error (rate limit, server
+                      error). Caller leaves the row's ``sent`` /
+                      tracker-active flags alone so the next tick
+                      retries.
+    """
+    try:
+        await bot.send_message(telegram_user_id, message, reply_markup=reply_markup)
+        return "sent"
+    except (TelegramForbiddenError, TelegramUnauthorizedError, TelegramNotFound):
+        return "blocked"
+    except TelegramRetryAfter as exc:
+        logger.warning(
+            "Telegram rate limit hit for user %d, retry_after=%ss",
+            telegram_user_id,
+            getattr(exc, "retry_after", "?"),
+        )
+        return "retry"
+    except TelegramAPIError as exc:
+        logger.warning(
+            "Telegram API error sending to user %d: [%s] %s",
+            telegram_user_id,
+            type(exc).__name__,
+            exc,
+        )
+        return "retry"
+
+
 async def notify_user(
     bot: Bot,
     telegram_user_id: int,
@@ -99,11 +146,19 @@ async def notify_user(
     Returns False if tracker should be deactivated (user blocked/deleted bot
     or chat is no longer reachable). Other transient telegram errors are
     logged but the tracker stays active so the next tick can retry.
+
+    Internally delegates the actual send to
+    ``_send_message_classified`` (Wave 23 / PERF-M3) so the
+    error-classification logic stays single-source-of-truth across
+    the sequential per-tracker callers and the new bounded-parallel
+    reminder loop.
     """
-    try:
-        await bot.send_message(telegram_user_id, message, reply_markup=reply_markup)
+    outcome = await _send_message_classified(
+        bot, telegram_user_id, message, reply_markup=reply_markup,
+    )
+    if outcome == "sent":
         return True
-    except (TelegramForbiddenError, TelegramUnauthorizedError, TelegramNotFound):
+    if outcome == "blocked":
         # User blocked the bot or deleted the chat — disable all their
         # active trackers so we stop spamming the failing chat_id.
         if internal_user_id is not None:
@@ -117,21 +172,8 @@ async def notify_user(
             )
             await session.flush()
         return False
-    except TelegramRetryAfter as exc:
-        logger.warning(
-            "Telegram rate limit hit for user %d, retry_after=%ss",
-            telegram_user_id,
-            getattr(exc, "retry_after", "?"),
-        )
-        return True  # Keep tracker active, next tick will retry
-    except TelegramAPIError as exc:
-        logger.warning(
-            "Telegram API error sending to user %d: [%s] %s",
-            telegram_user_id,
-            type(exc).__name__,
-            exc,
-        )
-        return True  # Keep tracker active for unknown / transient errors
+    # outcome == "retry" — keep state untouched
+    return True
 
 
 async def _recent_event_keys(
@@ -1026,12 +1068,46 @@ async def _check_trackers_inner(
             await client.aclose()
 
 
+# PERF-M3: cap on parallel ``check_reminders`` Telegram sends. Set
+# conservatively below Telegram's documented ~30 msg/sec global ceiling
+# so a tick with 100+ due reminders doesn't trip rate limits while
+# still cutting wall-clock by ~5×. Each in-flight send is to a
+# DIFFERENT user (one reminder per (lead, user)) so per-user rate
+# limits aren't a concern.
+_REMINDER_SEND_CONCURRENCY = 5
+
+
 async def check_reminders(
     bot: Bot,
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """Send due reminders via bot and mark them as sent."""
+    """Send due reminders via bot and mark them as sent.
+
+    PERF-M3: refactored from a sequential ``for reminder: await
+    notify_user`` loop into a 3-phase pipeline so a tick with many
+    due reminders doesn't block for ``count × telegram_rtt``.
+
+      1. Build phase — single DB read + per-row job materialisation.
+         No outbound calls; reminders that can't be sent (no lead,
+         no user) are marked ``sent=True`` immediately because the
+         retry would never succeed.
+      2. Send phase — ``asyncio.gather`` the prepared messages
+         through ``_send_message_classified`` with a bounded
+         semaphore. Each send is pure I/O against ``bot`` and does
+         not touch the SQLAlchemy session — that's what makes the
+         parallelism safe (AsyncSession is not concurrency-safe).
+      3. Apply phase — single sequential pass over the outcomes
+         that updates the session: mark ``sent=True`` for the
+         "sent" cases, accumulate distinct ``user_id`` values whose
+         users blocked the bot, then issue one bulk
+         ``UPDATE Tracker SET active=False WHERE user_id IN (...)``
+         per blocked user. Single ``session.commit()`` at the end
+         so a partial failure doesn't half-commit the tick.
+
+    Wall-clock for 50 reminders × ~50 ms RTT each: 2.5 s sequential
+    → ~500 ms with concurrency=5.
+    """
     async with session_factory() as session:
         now = datetime.now(UTC)
         result = await session.execute(
@@ -1045,10 +1121,18 @@ async def check_reminders(
             return
 
         logger.info("Processing %d due reminder(s)", len(due_reminders))
-        sent_count = 0
+
+        # ── Phase 1: build job list ──────────────────────────────────
+        jobs: list[tuple[LeadReminder, int, str, InlineKeyboardMarkup | None]] = []
         for reminder in due_reminders:
             lead = reminder.lead
             if lead is None:
+                # Stale reminder for a deleted lead — no point retrying.
+                reminder.sent = True
+                continue
+
+            telegram_user_id = lead.user.telegram_user_id if lead.user else None
+            if telegram_user_id is None:
                 reminder.sent = True
                 continue
 
@@ -1061,7 +1145,6 @@ async def check_reminders(
             if lead.link:
                 lines.append(lead.link)
 
-            # Build inline keyboard with "Открыть сделку" button
             keyboard_rows: list[list[InlineKeyboardButton]] = []
             if settings.mini_app_url and settings.mini_app_url.startswith("https://"):
                 deal_url = f"{settings.mini_app_url}?view=deals"
@@ -1076,28 +1159,58 @@ async def check_reminders(
                 if keyboard_rows
                 else None
             )
+            jobs.append((reminder, telegram_user_id, "\n".join(lines), keyboard))
 
-            telegram_user_id = lead.user.telegram_user_id if lead.user else None
-            if telegram_user_id is None:
+        # ── Phase 2: bounded-concurrency parallel send ───────────────
+        sem = asyncio.Semaphore(_REMINDER_SEND_CONCURRENCY)
+
+        async def _bounded_send(
+            tg_user_id: int,
+            text: str,
+            kb: InlineKeyboardMarkup | None,
+        ) -> str:
+            async with sem:
+                return await _send_message_classified(
+                    bot, tg_user_id, text, reply_markup=kb,
+                )
+
+        outcomes: list[str] = await asyncio.gather(
+            *[_bounded_send(uid, text, kb) for _, uid, text, kb in jobs],
+            return_exceptions=False,
+        )
+
+        # ── Phase 3: apply outcomes back to the session ──────────────
+        sent_count = 0
+        blocked_user_ids: set[int] = set()
+        for (reminder, _uid, _text, _kb), outcome in zip(jobs, outcomes):
+            if outcome == "sent":
                 reminder.sent = True
-                continue
-
-            can_notify = await notify_user(
-                bot,
-                telegram_user_id,
-                "\n".join(lines),
-                session,
-                internal_user_id=reminder.user_id,
-                reply_markup=keyboard,
-            )
-            if can_notify:
                 sent_count += 1
-                reminder.sent = True
-            # If notify_user returned False (user blocked bot), leave
-            # reminder.sent = False so a future cycle can retry.
+            elif outcome == "blocked":
+                # Don't mark ``sent`` so a future cycle (after the
+                # user re-enables the bot) can retry naturally.
+                if reminder.user_id is not None:
+                    blocked_user_ids.add(reminder.user_id)
+            # outcome == "retry": leave sent=False, no DB change.
+
+        if blocked_user_ids:
+            # Single bulk update per tick instead of one UPDATE per
+            # blocked user — same semantic as the per-call deactivation
+            # in ``notify_user``, just batched.
+            await session.execute(
+                update(Tracker)
+                .where(
+                    Tracker.user_id.in_(blocked_user_ids),
+                    Tracker.active.is_(True),
+                )
+                .values(active=False)
+            )
 
         await session.commit()
-        logger.info("Reminders sent: %d / %d", sent_count, len(due_reminders))
+        logger.info(
+            "Reminders sent: %d / %d (blocked users: %d)",
+            sent_count, len(due_reminders), len(blocked_user_ids),
+        )
 
 
 def create_scheduler(

@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_engine, get_session_factory
-from api.models import Base, QueryListingState, Tracker, TrackerEvent
+from api.models import Base, LeadItem, LeadReminder, QueryListingState, Tracker, TrackerEvent
 from api.services.history_service import QuerySyncResult, TrendReversal
 from scheduler.collector import (
     _build_new_listing_message,
@@ -21,6 +21,7 @@ from scheduler.collector import (
     _recent_event_keys,
     _recent_events_by_tracker,
     _recent_trend_event_tracker_ids,
+    check_reminders,
     cleanup_ai_audit_log,
     cleanup_inactive_listing_states,
     cleanup_old_events,
@@ -963,3 +964,155 @@ async def test_persist_tracker_events_with_ads(populated_session):
     assert len(events) == 1
     assert events[0].ad_id == 200
     assert events[0].seller_type == "Частное лицо"
+
+
+# ---------------------------------------------------------------------------
+# Wave 23 / PERF-M3: parallel check_reminders pipeline
+# ---------------------------------------------------------------------------
+
+
+async def _seed_due_reminder(session, *, telegram_user_id, ad_id=9001):
+    """Helper: create a user + lead + due reminder in ``session``."""
+    user = make_user(telegram_user_id=telegram_user_id, first_name=f"U{telegram_user_id}")
+    session.add(user)
+    await session.flush()
+    lead = LeadItem(
+        user_id=user.id,
+        ad_id=ad_id,
+        query="iphone",
+        title="iPhone 15",
+        link="https://www.kufar.by/item/9001",
+        price_byn=2000,
+        source="manual",
+    )
+    session.add(lead)
+    await session.flush()
+    reminder = LeadReminder(
+        lead_id=lead.id,
+        user_id=user.id,
+        remind_at=datetime.now(UTC) - timedelta(minutes=1),
+        message="Проверь сделку",
+        sent=False,
+    )
+    session.add(reminder)
+    await session.flush()
+    return user, lead, reminder
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_happy_path_marks_all_sent(mock_bot: AsyncMock):
+    """PERF-M3: three due reminders for three different users should
+    all come out with ``sent=True`` after a single ``check_reminders``
+    call, and the bot.send_message mock should have been awaited three
+    times — once per reminder."""
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        await _seed_due_reminder(session, telegram_user_id=101, ad_id=9001)
+        await _seed_due_reminder(session, telegram_user_id=102, ad_id=9002)
+        await _seed_due_reminder(session, telegram_user_id=103, ad_id=9003)
+        await session.commit()
+
+    settings = MagicMock()
+    settings.mini_app_url = "https://example.com/app"
+    await check_reminders(mock_bot, sf, settings)
+
+    assert mock_bot.send_message.await_count == 3
+
+    async with sf() as session:
+        from sqlalchemy import select
+        remaining = await session.execute(
+            select(LeadReminder).where(LeadReminder.sent.is_(False))
+        )
+        assert remaining.scalars().first() is None
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_blocked_user_deactivates_trackers(mock_bot: AsyncMock):
+    """PERF-M3: when a user has blocked the bot, the matching
+    TelegramForbiddenError must translate into the user's active
+    trackers being flipped to ``active=False`` in one bulk update.
+    The reminder itself stays ``sent=False`` so a future cycle can
+    retry if the user later re-enables the bot."""
+    from aiogram.exceptions import TelegramForbiddenError
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user, _lead, _reminder = await _seed_due_reminder(
+            session, telegram_user_id=201, ad_id=9004,
+        )
+        # Give the user an active tracker we can watch flip to inactive.
+        tracker = Tracker(user_id=user.id, query="macbook", strict_mode=False)
+        session.add(tracker)
+        await session.flush()
+        tracker_id = tracker.id
+        await session.commit()
+
+    mock_bot.send_message.side_effect = _make_tg_error(TelegramForbiddenError, "Forbidden")
+
+    settings = MagicMock()
+    settings.mini_app_url = "https://example.com/app"
+    await check_reminders(mock_bot, sf, settings)
+
+    async with sf() as session:
+        tracker_after = await session.get(Tracker, tracker_id)
+        assert tracker_after is not None
+        assert tracker_after.active is False
+        # Reminder kept at sent=False so a later cycle can retry.
+        from sqlalchemy import select
+        reminder_after = (
+            await session.execute(select(LeadReminder).limit(1))
+        ).scalars().first()
+        assert reminder_after is not None
+        assert reminder_after.sent is False
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_retry_error_leaves_reminder_pending(mock_bot: AsyncMock):
+    """PERF-M3: transient Telegram errors (rate limit, generic API
+    errors) must NOT mark the reminder as sent — the next tick needs
+    to pick it up again."""
+    from aiogram.exceptions import TelegramRetryAfter
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        await _seed_due_reminder(session, telegram_user_id=301, ad_id=9005)
+        await session.commit()
+
+    exc = TelegramRetryAfter(method=MagicMock(), message="Rate limited", retry_after=30)
+    mock_bot.send_message.side_effect = exc
+
+    settings = MagicMock()
+    settings.mini_app_url = "https://example.com/app"
+    await check_reminders(mock_bot, sf, settings)
+
+    async with sf() as session:
+        from sqlalchemy import select
+        reminder = (
+            await session.execute(select(LeadReminder).limit(1))
+        ).scalars().first()
+        assert reminder is not None
+        assert reminder.sent is False  # NOT sent — let the next tick retry
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
