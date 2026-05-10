@@ -55,7 +55,27 @@ function createRenderCardBuilders(context) {
             if (opts.fetchPriority) {
                 attrs.fetchpriority = opts.fetchPriority;
             }
-            return domEl("img", { className: imageClass, attrs });
+            const img = domEl("img", { className: imageClass, attrs });
+            // FE-M10: fall back to a placeholder when the proxied
+            // Kufar thumbnail 404s or the network is misbehaving.
+            // Without this the card renders a broken-image icon
+            // (Kufar occasionally garbage-collects URLs while a
+            // listing is still indexed). The replacement is a
+            // <div class={placeholderClass}> matching the layout
+            // box reserved by the <img>'s width/height attrs, so
+            // the swap is invisible from a layout perspective.
+            // ``once: true`` so a flaky network can't trigger an
+            // infinite loop of swap → re-fetch → error.
+            img.addEventListener("error", () => {
+                const fallback = domEl("div", {
+                    className: placeholderClass,
+                    text: placeholderText,
+                });
+                if (img.parentNode) {
+                    img.parentNode.replaceChild(fallback, img);
+                }
+            }, { once: true });
+            return img;
         }
         return domEl("div", { className: placeholderClass, text: placeholderText });
     }

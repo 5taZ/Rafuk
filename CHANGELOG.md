@@ -14,7 +14,67 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 19 — extract `ai_marketplace.py` lexicon to JSON _(this commit)_
+### Wave 20 — frontend performance _(this commit)_
+
+Six FE-M items investigated; three were already closed by earlier
+waves (no code change needed), three got fixed here.
+
+* **FE-M2 verified-closed** — lazy-loading the AI module bundle
+  was already wired up via `ensureAiLoaded` /
+  `context._loadScript` in `frontend/js/app_actions.js`. Neither
+  `js/api_ai.js` nor `js/api_listing_assistant.js` is referenced
+  from `index.html`; both load on demand the first time the user
+  triggers an AI flow. Removed `frontend/js/lazy_ai.js`, an
+  older incomplete prototype of the same pattern that was never
+  wired into `index.html` — pure dead code.
+* **FE-M3 verified-closed** — every card thumbnail built by
+  `buildMediaNode` (the single render path for listing /
+  watchlist / lead cards) already sets
+  `loading="lazy" decoding="async"` plus an explicit
+  width/height layout box and an optional `fetchpriority="low"`.
+  Below-the-fold images don't fetch until they scroll into view.
+* **FE-M10** — added an `error`-event fallback to
+  `buildMediaNode` so when a Kufar thumbnail 404s (the site
+  occasionally garbage-collects URLs while the listing is still
+  indexed) the `<img>` is replaced with the same `<div>`
+  placeholder we'd render for a missing URL, preserving the
+  reserved layout box. `{once: true}` ensures a flaky network
+  can't trigger a swap → re-fetch → error loop.
+* **FE-M9** — `staleWhileRevalidate` in `frontend/sw.js` now
+  enforces a 1-hour `RUNTIME_CACHE_MAX_AGE_SECONDS`. Without
+  this, a user who left the app open all morning could keep
+  reading analytics from before lunch — the background refetch
+  fires but the user is already acting on the stale data.
+  Implementation reads the cached response's `Date` header
+  (Starlette/FastAPI sets it on every reply); a missing header
+  is conservatively treated as "fresh" so we don't regress the
+  pre-FE-M9 behaviour for the rare case the header is absent.
+  Bumped `CACHE_VERSION` to `rafuk-cache-v6` so activation drops
+  any v5 entries that pre-date the age check.
+* **FE-M1 partial** — added
+  `<link rel="preload" as="style" href="css/style.css?…">` ahead
+  of the existing render-blocking stylesheet link. The browser
+  now starts fetching the 54 KB CSS bundle during HTML parse,
+  in parallel with the Google-Fonts request, so the subsequent
+  `<link rel="stylesheet">` resolves from the in-flight preload
+  entry. Saves one round-trip on the critical-path CSS.
+  Stopped short of the
+  `media="print" onload="this.media='all'"` async-load trick:
+  it requires an inline event handler that the current
+  `script-src` CSP (no `'unsafe-inline'`) blocks, and
+  bundle-splitting introduces FOUC risk that needs UX
+  validation across modal/pipeline surfaces — punted to a
+  follow-up wave with proper testing.
+
+Also: bumped frontend cache-busting tags via
+`scripts/bump_static_version.sh` (rewrote 24 asset refs).
+
+Verification:
+* `ruff check . --select F` clean.
+* `pytest` 500 passed, 1 skipped (Postgres migration round-trip),
+  no regressions.
+
+### Wave 19 — extract `ai_marketplace.py` lexicon to JSON `be5939f`
 
 Second half of the god-file sweep (first half: Wave 18 for
 `ai_service.py`). The audit called out ~200 lines of inline
@@ -438,7 +498,8 @@ round-trip smoke), no regressions.
 | 16   | 9c39e82 | backend performance (AI semaphore, alias regex, graceful SIGTERM)        |
 | 17   | 6531622 | database tuning (LIFO pool, drop indexes, UNIQUE consents, widen links)  |
 | 18   | 3b6a526 | split `ai_service.py` — prompts/sanitize/dedupe into sibling modules    |
-| 19   | _this_  | extract `ai_marketplace.py` lexicon to JSON (BE-M17)                    |
+| 19   | be5939f | extract `ai_marketplace.py` lexicon to JSON (BE-M17)                    |
+| 20   | _this_  | frontend performance (image onerror, SW max-age, CSS preload)            |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -446,13 +507,13 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 19:
+As of Wave 20:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
 | HIGH     | 54    | 50     | 4         | All 4 are ops/CI (CD, monitoring, backups, partitioning)    |
-| MEDIUM   | 73    | 32     | 41        | PERF-M3 deferred (needs scheduler loop refactor)            |
+| MEDIUM   | 73    | 37     | 36        | FE-M2/M3 verified, FE-M9/M10/M1 closed; PERF-M3 deferred    |
 | LOW      | 30    | 1      | 29        | Mostly polish (docs, dead imports)   |
 
 ## Conventions

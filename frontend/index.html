@@ -40,8 +40,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260510-58f609d">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260510-58f609d">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260510-be5939f">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260510-be5939f">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
@@ -55,31 +55,46 @@
         rel="stylesheet"
     >
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"></noscript>
-    <link rel="stylesheet" href="css/style.css?v=20260510-58f609d">
+    <!-- FE-M1: Preload the bundled stylesheet so the browser starts
+         fetching it during HTML parse, in parallel with the font
+         CSS request above. The subsequent ``<link rel="stylesheet">``
+         then resolves from the in-flight preload entry instead of
+         opening a fresh connection — saves one round-trip on the
+         render-blocking critical CSS. We deliberately stop short of
+         the ``media="print" onload="this.media='all'"`` async-load
+         trick: it requires an inline event handler that the
+         current ``script-src`` CSP (no ``'unsafe-inline'``) would
+         block, and splitting the bundle into critical + deferred
+         introduces FOUC risk that needs UX validation across all
+         modal/pipeline surfaces — a separate wave's worth of
+         careful testing. The preload alone is the safe-by-default
+         improvement. -->
+    <link rel="preload" as="style" href="css/style.css?v=20260510-be5939f">
+    <link rel="stylesheet" href="css/style.css?v=20260510-be5939f">
     <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers. -->
-    <script defer src="js/dom_helpers.js?v=20260510-58f609d"></script>
-    <script defer src="js/app_core_dom.js?v=20260510-58f609d"></script>
-    <script defer src="js/app_core.js?v=20260510-58f609d"></script>
-    <script defer src="js/render_core.js?v=20260510-58f609d"></script>
-    <script defer src="js/render_card_builders.js?v=20260510-58f609d"></script>
-    <script defer src="js/render_cards.js?v=20260510-58f609d"></script>
-    <script defer src="js/render_views.js?v=20260510-58f609d"></script>
-    <script defer src="js/render_modals.js?v=20260510-58f609d"></script>
-    <script defer src="js/render_charts.js?v=20260510-58f609d"></script>
-    <script defer src="js/render_trackers.js?v=20260510-58f609d"></script>
-    <script defer src="js/app_renderers.js?v=20260510-58f609d"></script>
-    <script defer src="js/api_core.js?v=20260510-58f609d"></script>
-    <script defer src="js/api_listings.js?v=20260510-58f609d"></script>
-    <script defer src="js/api_trackers.js?v=20260510-58f609d"></script>
-    <script defer src="js/api_leads.js?v=20260510-58f609d"></script>
-    <script defer src="js/api_watchlist.js?v=20260510-58f609d"></script>
-    <script defer src="js/api_events.js?v=20260510-58f609d"></script>
-    <script defer src="js/app_actions.js?v=20260510-58f609d"></script>
-    <script defer src="js/app.js?v=20260510-58f609d"></script>
+    <script defer src="js/dom_helpers.js?v=20260510-be5939f"></script>
+    <script defer src="js/app_core_dom.js?v=20260510-be5939f"></script>
+    <script defer src="js/app_core.js?v=20260510-be5939f"></script>
+    <script defer src="js/render_core.js?v=20260510-be5939f"></script>
+    <script defer src="js/render_card_builders.js?v=20260510-be5939f"></script>
+    <script defer src="js/render_cards.js?v=20260510-be5939f"></script>
+    <script defer src="js/render_views.js?v=20260510-be5939f"></script>
+    <script defer src="js/render_modals.js?v=20260510-be5939f"></script>
+    <script defer src="js/render_charts.js?v=20260510-be5939f"></script>
+    <script defer src="js/render_trackers.js?v=20260510-be5939f"></script>
+    <script defer src="js/app_renderers.js?v=20260510-be5939f"></script>
+    <script defer src="js/api_core.js?v=20260510-be5939f"></script>
+    <script defer src="js/api_listings.js?v=20260510-be5939f"></script>
+    <script defer src="js/api_trackers.js?v=20260510-be5939f"></script>
+    <script defer src="js/api_leads.js?v=20260510-be5939f"></script>
+    <script defer src="js/api_watchlist.js?v=20260510-be5939f"></script>
+    <script defer src="js/api_events.js?v=20260510-be5939f"></script>
+    <script defer src="js/app_actions.js?v=20260510-be5939f"></script>
+    <script defer src="js/app.js?v=20260510-be5939f"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -104,7 +119,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20260510-58f609d" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260510-be5939f" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">

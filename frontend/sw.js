@@ -22,7 +22,11 @@
  *     in-flight guards already protect the UI).
  */
 
-const CACHE_VERSION = "rafuk-cache-v5";
+// FE-M9: bumped to v6 alongside the staleWhileRevalidate max-age.
+// Activation drops the v5 RUNTIME_CACHE so any pre-FE-M9 entries
+// without a usable Date header get evicted in one shot instead
+// of being kept-but-aged forever by the new check.
+const CACHE_VERSION = "rafuk-cache-v6";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -162,6 +166,33 @@ async function networkFirst(request, cacheName) {
     }
 }
 
+// FE-M9: ceiling on how stale a runtime-cache hit may be. Without it,
+// a user who left the app open for hours could still see analytics
+// snapshots from before lunch — the background revalidate fires but
+// the user already started reading and acting on the stale data.
+// One hour is short enough to be barely-noticeable for CPU/network
+// (we spend one extra fetch per stale entry per hour) but long
+// enough to fully amortise away inside a typical "scroll the deals
+// list" session.
+const RUNTIME_CACHE_MAX_AGE_SECONDS = 60 * 60;
+
+
+function _cachedResponseAgeSeconds(response) {
+    // CacheStorage doesn't track an entry's insertion timestamp, so
+    // we read the response's own ``Date`` header (set by FastAPI on
+    // every reply via Starlette). A missing header means we have no
+    // way to age-check the entry, and we conservatively treat it as
+    // fresh — same behaviour as the pre-FE-M9 unbounded cache, but
+    // restricted to the rare case where the header is genuinely
+    // absent.
+    const dateHeader = response.headers.get("date");
+    if (!dateHeader) return 0;
+    const sentAt = Date.parse(dateHeader);
+    if (Number.isNaN(sentAt)) return 0;
+    return Math.max(0, (Date.now() - sentAt) / 1000);
+}
+
+
 async function staleWhileRevalidate(request, cacheName) {
     const cache = await caches.open(cacheName);
     const cached = await cache.match(request);
@@ -173,7 +204,19 @@ async function staleWhileRevalidate(request, cacheName) {
             return response;
         })
         .catch(() => null);
-    return cached || (await fetchPromise) || new Response(
+
+    // FE-M9: expire-then-network. Skip the cached entry if it's
+    // older than RUNTIME_CACHE_MAX_AGE_SECONDS so the user gets
+    // fresh data on next read; the background fetch above also
+    // refreshes the cache for the next call.
+    if (cached) {
+        const age = _cachedResponseAgeSeconds(cached);
+        if (age <= RUNTIME_CACHE_MAX_AGE_SECONDS) {
+            return cached;
+        }
+    }
+
+    return (await fetchPromise) || cached || new Response(
         JSON.stringify({ detail: "offline" }),
         {
             status: 503,
