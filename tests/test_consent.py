@@ -164,3 +164,100 @@ async def test_delete_account(client):
     )
     resp = await client.delete("/api/v1/account")
     assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
+    """BE-C6: clear_user_ai_data used to leave per-user Redis
+    namespaces behind because the matching call from delete_account
+    issued ``cache.delete("ai_rate:{tg}")`` (no trailing ``:*``) on
+    keys actually shaped ``ai_rate:{tg}:{endpoint}``. After the
+    fix, every documented per-user namespace must be empty for the
+    deleted user while a sibling user's data stays intact.
+
+    We swap RedisCache.from_url for a MemoryCache wrapped with a
+    tiny scan/delete adapter so the test never needs a real Redis.
+    """
+    import fnmatch
+
+    from api.routers.ai_analysis import clear_user_ai_data
+    from api.services.cache import MemoryCache, RedisCache
+
+    cache = MemoryCache()
+    target_uid = 4242
+    other_uid = 9999
+
+    # Seed entries for both users across every namespace
+    # clear_user_ai_data promises to wipe.
+    seeds = {
+        f"ai_task:u{target_uid}:abc": {"x": 1},
+        f"ai_rate:{target_uid}:default": {"count": 5},
+        f"ai_daily:{target_uid}": {"count": 2},
+        "ai_export:targettoken": {"_telegram_user_id": target_uid, "payload": "x"},
+        f"auth:blacklist:{target_uid}": {"reason": "test"},
+        "auth:initdata:targetdigest": {
+            "user_id": target_uid,
+            "ip": "10.0.0.1",
+            "first_seen_ts": 0,
+        },
+        # Sibling user — these MUST survive.
+        f"ai_task:u{other_uid}:keep": {"x": 1},
+        f"ai_rate:{other_uid}:default": {"count": 5},
+        "ai_export:othertoken": {"_telegram_user_id": other_uid, "payload": "y"},
+        "auth:initdata:otherdigest": {
+            "user_id": other_uid,
+            "ip": "10.0.0.2",
+            "first_seen_ts": 0,
+        },
+    }
+    for k, v in seeds.items():
+        await cache.set_json(k, v)
+
+    # Tiny adapter that exposes the redis-py methods clear_user_ai_data
+    # actually calls (scan + delete), backed by the MemoryCache's
+    # internal storage so set/get_json continue to work.
+    class _FakeRedis:
+        def __init__(self, storage):
+            self._storage = storage
+
+        async def scan(self, cursor, match="*", count=100):
+            keys = [k for k in self._storage if fnmatch.fnmatch(k, match)]
+            return 0, keys  # one-shot scan
+
+        async def delete(self, *keys):
+            for k in keys:
+                self._storage.pop(k, None)
+            return len(keys)
+
+    cache._client = _FakeRedis(cache._storage)
+
+    # Patch RedisCache.from_url to hand back our pre-seeded cache and
+    # short-circuit ping() so clear_user_ai_data takes the Redis branch.
+    monkeypatch.setattr(RedisCache, "from_url", staticmethod(lambda *a, **kw: cache))
+
+    async def _ping_true(self_):
+        return True
+
+    monkeypatch.setattr(RedisCache, "ping", _ping_true)
+
+    await clear_user_ai_data(target_uid)
+
+    # Target user's entries should all be gone.
+    for key in (
+        f"ai_task:u{target_uid}:abc",
+        f"ai_rate:{target_uid}:default",
+        f"ai_daily:{target_uid}",
+        "ai_export:targettoken",
+        f"auth:blacklist:{target_uid}",
+        "auth:initdata:targetdigest",
+    ):
+        assert await cache.get_json(key) is None, f"{key} should be cleared"
+
+    # Sibling user's entries must still be there.
+    for key in (
+        f"ai_task:u{other_uid}:keep",
+        f"ai_rate:{other_uid}:default",
+        "ai_export:othertoken",
+        "auth:initdata:otherdigest",
+    ):
+        assert await cache.get_json(key) is not None, f"{key} should survive"

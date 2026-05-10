@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import ipaddress
 import json
 import logging
@@ -14,7 +13,7 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.dependencies import get_cache, get_session_factory_dependency, get_telegram_user
+from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.models import DealExpense, LeadItem, Tracker, TrackerEvent, User, UserConsent
 from api.schemas import ConsentGrantRequest, ConsentStatusResponse
@@ -285,28 +284,21 @@ async def delete_account(
         await session.delete(user)
         await session.commit()
 
-    # Clear Redis/AI task caches for this user
-    try:
-        cache = get_cache(request)
-        for prefix in (
-            f"ai_rate:{_user.user_id}",
-            f"ai_daily:{_user.user_id}",
-        ):
-            with contextlib.suppress(Exception):
-                await cache.delete(prefix)
-    except Exception:
-        logger.warning(
-            "Failed to clear Redis caches for user %d during account deletion",
-            _user.user_id,
-            exc_info=True,
-        )
+    # BE-C6: Redis cleanup is owned end-to-end by clear_user_ai_data
+    # in ai_analysis.py — it scans every per-user namespace
+    # (ai_task / ai_rate / ai_daily / ai_export, plus auth:blacklist
+    # and auth:initdata) and clears the in-memory shadow stores.
+    # The previous direct ``cache.delete("ai_rate:{tg}")`` here was a
+    # no-op (real keys are ``ai_rate:{tg}:{endpoint}``) so it stayed
+    # silently broken until we audited it. Single call below = single
+    # source of truth.
     try:
         from api.routers.ai_analysis import clear_user_ai_data  # deferred to avoid circular import
 
         await clear_user_ai_data(_user.user_id)
     except Exception:
         logger.warning(
-            "Failed to clear AI shadow data for user %d during account deletion",
+            "Failed to clear per-user cache for user %d during account deletion",
             _user.user_id,
             exc_info=True,
         )

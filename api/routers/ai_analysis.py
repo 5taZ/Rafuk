@@ -143,7 +143,29 @@ async def _prune_old_exports() -> None:
 # ── AI data cleanup (called from consent.py during account deletion) ─────
 
 async def clear_user_ai_data(telegram_user_id: int) -> None:
-    """Remove all AI analysis data for a user from Redis cache."""
+    """Remove all per-user data for a Telegram user (Law-91-Z erasure).
+
+    BE-C6: this used to only touch the AI shadow stores plus a few
+    Redis namespaces; the matching call from delete_account also
+    issued ``cache.delete("ai_rate:{tg}")`` (without the trailing
+    ``:*``) which is a no-op against the actual key shape
+    ``ai_rate:{tg}:{endpoint}``. The fix is to put all the per-user
+    Redis cleanup behind a single function and have it cover every
+    namespace that stores a user_id, including the auth-side data
+    that was previously left behind:
+
+    * ``ai_task:u{tg}:*`` — AI task results (api/services/ai_task_store)
+    * ``ai_rate:{tg}:*`` — per-endpoint hourly limiter buckets
+    * ``ai_daily:{tg}`` — shared daily limiter counter
+    * ``ai_export:*``  — random tokens; value carries _telegram_user_id
+    * ``auth:blacklist:{tg}`` — session blacklist entry (if any)
+    * ``auth:initdata:*`` — IP-tracking entries (filter by user_id in value)
+    * in-memory ``_tasks`` / ``_exports`` shadow stores
+
+    The shared deterministic AI cache (``ai_analysis:v5:*``) is
+    intentionally untouched — it has no user_id, evicting it would
+    just hand cold caches to everyone else.
+    """
     from api.services.cache import RedisCache, MemoryCache
 
     settings = get_settings()
@@ -157,15 +179,16 @@ async def clear_user_ai_data(telegram_user_id: int) -> None:
     try:
         redis_client = getattr(cache, "_client", None)
         if redis_client is not None:
-            # NOTE: ai_analysis:v5:* is intentionally NOT cleaned here.
-            # It's a shared deterministic cache keyed by (ad_id, query, category)
-            # with no user_id — entries are reused across all users and expire
-            # via their own TTL. Wiping the entire cache on a single user's
-            # account deletion would punish unrelated users with cache misses.
+            # Patterns where the user id lives in the key. SCAN+DELETE
+            # rather than KEYS so we don't block Redis on big DBs.
             user_scoped_patterns = [
                 f"ai_task:u{telegram_user_id}:*",
                 f"ai_rate:{telegram_user_id}:*",
-                f"ai_daily:{telegram_user_id}:*",
+                f"ai_daily:{telegram_user_id}",
+                # Session blacklist key is a fixed shape, but reuse
+                # the same scan loop for symmetry — it's a 1-key scan
+                # in practice.
+                f"auth:blacklist:{telegram_user_id}",
             ]
             for pattern in user_scoped_patterns:
                 cursor = 0
@@ -176,16 +199,28 @@ async def clear_user_ai_data(telegram_user_id: int) -> None:
                     if cursor == 0:
                         break
 
-            # ai_export:* tokens are random; filter by stored user_id in the value.
-            cursor = 0
-            while True:
-                cursor, keys = await redis_client.scan(cursor, match="ai_export:*", count=100)
-                for key in keys:
-                    item = await cache.get_json(key.decode() if isinstance(key, bytes) else key)
-                    if item and item.get("_telegram_user_id") == telegram_user_id:
-                        await redis_client.delete(key)
-                if cursor == 0:
-                    break
+            # Patterns where the user_id is inside the value, not the
+            # key. Two namespaces today: ai_export (random token) and
+            # auth:initdata (sha256 digest of initData). For both we
+            # have to load each entry, check the user_id, and delete
+            # if it matches.
+            value_keyed_patterns = ("ai_export:*", "auth:initdata:*")
+            for pattern in value_keyed_patterns:
+                cursor = 0
+                while True:
+                    cursor, keys = await redis_client.scan(cursor, match=pattern, count=100)
+                    for key in keys:
+                        decoded = key.decode() if isinstance(key, bytes) else key
+                        item = await cache.get_json(decoded)
+                        if not item:
+                            continue
+                        # ai_export uses _telegram_user_id, initdata
+                        # uses user_id; accept either to keep one loop.
+                        owner = item.get("_telegram_user_id") or item.get("user_id")
+                        if owner == telegram_user_id:
+                            await redis_client.delete(key)
+                    if cursor == 0:
+                        break
         # Also clean shadow stores. The lock guards us from a
         # concurrent pruner walking the same keys.
         async with _get_shadow_lock():
