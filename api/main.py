@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -74,8 +75,36 @@ async def lifespan(app: FastAPI):
     # Start background prune task for AI shadow stores
     prune_task = asyncio.create_task(periodic_prune_shadow_stores())
 
+    # Loud warning at startup if auth is bypassed — this used to be tied
+    # to `debug` and could silently turn into a production foot-gun.
+    if settings.auth_bypass:
+        logger.warning(
+            "⚠ auth_bypass=True is set — unauthenticated requests are "
+            "treated as user_id=0. This MUST be disabled in any "
+            "non-local-development environment.",
+        )
     if settings.debug:
-        logger.warning("Debug mode is active — auth bypassed")
+        logger.warning("Debug mode is active (extra dev origins, verbose logs)")
+
+    # Rate limiter sanity check: if Redis was unreachable at import time
+    # the limiter silently fell back to in-memory storage, which makes
+    # per-user limits effectively useless with multiple workers. Refuse
+    # to start in production (fail-closed) and warn loudly in dev.
+    from api.limiter import rate_limiter_degraded  # noqa: PLC0415 — read latest value
+
+    if rate_limiter_degraded:
+        if os.environ.get("ENV") == "production":
+            raise RuntimeError(
+                "Rate limiter degraded (Redis unreachable) and ENV=production. "
+                "Refusing to start — running with in-memory limits across N "
+                "workers means abuse protection is effectively off. Fix "
+                "Redis connectivity and retry."
+            )
+        logger.warning(
+            "⚠ Rate limiter is in DEGRADED mode (in-memory fallback). "
+            "Limits are per-process, not shared across workers. "
+            "This is only acceptable for local development.",
+        )
 
     try:
         yield
@@ -106,12 +135,19 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Rafuk API", lifespan=lifespan)
 
     # Add CORS middleware
+    #
+    # NOTE: "null" origin is NOT allowed. A "null" Origin header is what
+    # browsers send from sandboxed iframes, file:// URLs, and data: URIs.
+    # Allowing it lets a malicious sandbox embed our API and replay any
+    # exfiltrated initData. Telegram Mini Apps run inside web.telegram.org
+    # (and webk.telegram.org) — their Origin is non-null. If a future
+    # client legitimately needs cross-origin POSTs, add its real origin
+    # explicitly rather than reopening "null".
     origins = [
         settings.mini_app_url,
         settings.api_base_url,
         "https://web.telegram.org",
         "https://webk.telegram.org",
-        "null",
     ]
     if settings.debug:
         origins.extend(
@@ -171,11 +207,11 @@ def create_app() -> FastAPI:
 
     # CSRF protection: validate Origin header on state-changing requests.
     # Prevents cross-origin POST/PATCH/DELETE from arbitrary websites.
+    # Same "null" origin restriction as CORS — see comment above.
     _csrf_allowed = frozenset(origins) | frozenset(
         [
             "https://web.telegram.org",
             "https://webk.telegram.org",
-            "null",
         ]
     )
     if settings.debug:

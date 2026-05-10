@@ -213,6 +213,20 @@ def test_user_a_expense_unchanged_after_user_b_attempts() -> None:
 
 
 def test_user_b_cannot_delete_user_a_watchlist_item() -> None:
+    """IDOR protection on DELETE /watchlist/{id}.
+
+    The endpoint is deliberately idempotent — it returns 204 whether the
+    item is missing, belongs to another user, or has been promoted past
+    the "watching" status. A 404 response for items owned by other users
+    would leak existence information (an attacker could enumerate which
+    IDs are in use across all users by diffing 204 vs 404).
+
+    Security is therefore verified here by two independent checks:
+      1. The DELETE returns 204 (API contract), NOT 200, NOT 200-with-body,
+         so no data about the item leaks.
+      2. The item is still visible in user A's watchlist afterwards —
+         the only real evidence that the delete was a no-op.
+    """
     app_a = _make_app_with_user(USER_A)
     with TestClient(app_a) as client:
         wl_resp = client.post(
@@ -231,13 +245,20 @@ def test_user_b_cannot_delete_user_a_watchlist_item() -> None:
     app_b = _make_app_with_user(USER_B)
     with TestClient(app_b) as client:
         resp = client.delete(f"/api/v1/watchlist/{wl_id}")
+        # Idempotent no-op: 204 regardless of ownership. Response body
+        # MUST be empty — any body content could leak that the item
+        # belongs to another user.
         assert resp.status_code == 204
+        assert resp.content == b"", "DELETE 204 must have empty body"
 
+    # The critical IDOR check: user A's item survived user B's DELETE attempt.
     app_a = _make_app_with_user(USER_A)
     with TestClient(app_a) as client:
         resp = client.get("/api/v1/watchlist")
         items = resp.json()
-        assert any(w["id"] == wl_id for w in items)
+        assert any(w["id"] == wl_id for w in items), (
+            "IDOR: user B successfully deleted user A's watchlist item"
+        )
 
 
 def test_user_b_cannot_patch_user_a_watchlist_item() -> None:

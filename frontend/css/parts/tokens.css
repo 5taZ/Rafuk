@@ -527,6 +527,13 @@ body {
     border: 0;
 }
 
+/* Filter button — needs relative positioning so the absolutely-positioned
+   .filter-active-badge dot anchors to it. Replaces a former
+   inline style="position:relative" on the button element. */
+.filter-btn {
+    position: relative;
+}
+
 /* Filter active badge — small indicator dot on the filter button */
 .filter-active-badge {
     position: absolute;

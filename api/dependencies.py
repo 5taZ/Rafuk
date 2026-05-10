@@ -66,11 +66,18 @@ def get_telegram_user(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ) -> TelegramInitData:
     settings = get_settings()
-    if settings.debug and os.environ.get("ENV") == "production":
-        raise RuntimeError("Debug mode is not allowed in production")
+    # Defensive: refuse any path that could enable auth bypass in
+    # production. The Settings validator already rejects auth_bypass=True
+    # on a non-local DB, but we double-check here so a misconfigured env
+    # never silently authenticates strangers as user_id=0.
+    if settings.auth_bypass and os.environ.get("ENV") == "production":
+        raise RuntimeError("auth_bypass is not allowed in production")
     if not x_telegram_init_data:
-        if settings.debug:
-            logger.warning("Debug mode: allowing request without Telegram initData")
+        if settings.auth_bypass:
+            logger.warning(
+                "auth_bypass=True: allowing request without Telegram initData "
+                "(user_id=0). This must never run in production.",
+            )
             user = TelegramInitData(user_id=0, first_name="Debug", raw={})
             request.state.telegram_user = user
             return user

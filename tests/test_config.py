@@ -13,6 +13,7 @@ def test_settings_loads_from_env_vars() -> None:
         "BOT_TOKEN": "7123456789:AAFtesttoken",
         "DATABASE_URL": "postgresql+asyncpg://user:pass@db:5432/kufar",
         "DEBUG": "false",
+        "AUTH_BYPASS": "false",
         "REDIS_URL": "redis://redis:6379/0",
         "API_BASE_URL": "https://kufar-analytics.example.com",
         "MINI_APP_URL": "https://kufar-analytics.example.com/app",
@@ -22,7 +23,10 @@ def test_settings_loads_from_env_vars() -> None:
 
         config.get_settings.cache_clear()
         importlib.reload(config)
-        s = config.Settings()
+        # _env_file=None — don't inherit from a developer's .env (which may
+        # legitimately set AUTH_BYPASS=true for local dev). The test must
+        # exercise pure-env behaviour.
+        s = config.Settings(_env_file=None)
         assert s.bot_token.get_secret_value() == "7123456789:AAFtesttoken"
         assert s.database_url == "postgresql+asyncpg://user:pass@db:5432/kufar"
         assert s.redis_url == "redis://redis:6379/0"
@@ -78,3 +82,82 @@ def test_settings_missing_required_raises() -> None:
         importlib.reload(config)
         with pytest.raises(ValidationError):
             config.Settings(_env_file=None)
+
+
+def test_auth_bypass_rejected_with_remote_database() -> None:
+    """Refuse auth_bypass=True if DATABASE_URL points at a non-local host."""
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "postgresql+asyncpg://user:pass@db.production.example.com:5432/kufar",
+        "REDIS_URL": "redis://redis:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "AUTH_BYPASS": "true",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        with pytest.raises(ValidationError, match="auth_bypass=True is not allowed"):
+            config.Settings(_env_file=None)
+
+
+def test_auth_bypass_allowed_with_localhost_database() -> None:
+    """auth_bypass=True is fine for local dev."""
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost:5432/kufar",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "AUTH_BYPASS": "true",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        s = config.Settings(_env_file=None)
+        assert s.auth_bypass is True
+
+
+def test_auth_bypass_rejected_with_env_production() -> None:
+    """Refuse auth_bypass=True if ENV=production, regardless of DB."""
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "AUTH_BYPASS": "true",
+        "ENV": "production",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        with pytest.raises(ValidationError, match="auth_bypass=True is not allowed"):
+            config.Settings(_env_file=None)
+
+
+def test_debug_independent_of_auth_bypass() -> None:
+    """debug=True alone must NOT bypass auth — that was the original bug."""
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "DEBUG": "true",
+        "AUTH_BYPASS": "false",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        s = config.Settings(_env_file=None)
+        assert s.debug is True
+        assert s.auth_bypass is False

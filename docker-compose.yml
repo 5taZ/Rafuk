@@ -5,7 +5,7 @@ services:
       SERVICE: api
       BOT_TOKEN: ${BOT_TOKEN}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
-      REDIS_URL: ${REDIS_URL}
+      REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
       KUFAR_REQUEST_DELAY: ${KUFAR_REQUEST_DELAY:-1.0}
@@ -38,7 +38,7 @@ services:
       SERVICE: bot
       BOT_TOKEN: ${BOT_TOKEN}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
-      REDIS_URL: ${REDIS_URL}
+      REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
     depends_on:
@@ -66,7 +66,7 @@ services:
       SERVICE: scheduler
       BOT_TOKEN: ${BOT_TOKEN}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
-      REDIS_URL: ${REDIS_URL}
+      REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
       ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
@@ -116,14 +116,20 @@ services:
     image: redis:7-alpine
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes
+    # Redis requires AUTH. REDIS_PASSWORD must be set in .env (generate
+    # with `openssl rand -hex 32`). Without --requirepass, anyone with
+    # localhost access can read every cache entry, session token, and
+    # rate-limit counter.
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     # Note: port 6380 exposed for local debugging. Remove in production.
     ports:
       - "6380:6379"
     networks:
       - kufar-net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "sh", "-c", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 3

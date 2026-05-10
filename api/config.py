@@ -35,7 +35,17 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = 300
     auto_remove_missing_days: int = 7
     max_trackers_per_user: int = 50
+    # `debug` controls non-security knobs only (extra dev origins in CORS,
+    # verbose logging, etc.). Auth bypass is a SEPARATE flag — historically
+    # `debug=True` would also let any LAN host hit the API as user_id=0,
+    # which silently turned every "dev convenience" toggle into an auth-
+    # bypass switch on misconfigured boxes.
     debug: bool = False
+    # auth_bypass=True allows requests without a valid Telegram initData
+    # header to be treated as a synthetic Debug user (user_id=0). Use this
+    # ONLY for local manual testing. The validators below refuse to load
+    # this in production / against a remote DB.
+    auth_bypass: bool = False
     # Telegram initData max age in seconds. Telegram generates initData once
     # when the Mini App opens and never refreshes it — so a short window
     # (e.g. 300s/5min) causes auth failures after the user spends a few
@@ -52,8 +62,7 @@ class Settings(BaseSettings):
             return False
         if os.getenv("ENV") == "production":
             raise ValueError(
-                "debug=True is not allowed when ENV=production. "
-                "All requests would share user_id=0."
+                "debug=True is not allowed when ENV=production."
             )
         db_url = info.data.get("database_url", "")
         if db_url and not any(
@@ -61,8 +70,34 @@ class Settings(BaseSettings):
             for h in ("localhost", "127.0.0.1", "10.0.2.2", "::1", "sqlite")
         ):
             raise ValueError(
-                "debug=True is not allowed with a non-localhost DATABASE_URL. "
-                "All requests would share user_id=0."
+                "debug=True is not allowed with a non-localhost DATABASE_URL."
+            )
+        return v
+
+    @field_validator("auth_bypass")
+    @classmethod
+    def _force_auth_bypass_off_in_production(cls, v: bool, info) -> bool:
+        """Refuse auth_bypass=True outside local development.
+
+        With auth_bypass on, every unauthenticated request becomes user_id=0,
+        which means *all such requests share the same fake user* — anyone on
+        the same network can read/write the Debug user's state. This must
+        never reach production or a remote DB.
+        """
+        if not v:
+            return False
+        if os.getenv("ENV") == "production":
+            raise ValueError(
+                "auth_bypass=True is not allowed when ENV=production."
+            )
+        db_url = info.data.get("database_url", "")
+        if db_url and not any(
+            h in db_url
+            for h in ("localhost", "127.0.0.1", "10.0.2.2", "::1", "sqlite")
+        ):
+            raise ValueError(
+                "auth_bypass=True is not allowed with a non-localhost "
+                "DATABASE_URL — every request would share user_id=0."
             )
         return v
     db_pool_size: int = 10
