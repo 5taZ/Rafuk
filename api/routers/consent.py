@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
@@ -203,7 +204,45 @@ async def grant_consent(
             ip_address=client_ip,
         )
         session.add(consent)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # DB-M6: the new UNIQUE partial index on
+            # (user_id, consent_type) WHERE revoked_at IS NULL makes
+            # two concurrent grant_consent calls for the same (user,
+            # type) pair impossible at the storage layer. The loser
+            # of the race lands here — we've rolled back, so re-open
+            # a fresh transaction, fetch whichever row did land, and
+            # return it. The user sees the same "granted" outcome
+            # they would have seen on a sequential retry.
+            await session.rollback()
+            winner = await session.scalar(
+                select(UserConsent)
+                .where(
+                    UserConsent.user_id == uid,
+                    UserConsent.consent_type == payload.consent_type,
+                    UserConsent.revoked_at.is_(None),
+                )
+                .order_by(UserConsent.granted_at.desc())
+                .limit(1)
+            )
+            if winner is None:
+                # Extremely unlikely — integrity error without a
+                # surviving row means some other code path deleted
+                # it between our commit and our re-read. Surface as
+                # 500 rather than pretend success.
+                raise
+            logger.info(
+                "User %d grant_consent raced with a sibling request; "
+                "returning the surviving active consent",
+                _user.user_id,
+            )
+            return ConsentStatusResponse(
+                consent_type=payload.consent_type,
+                granted=True,
+                version=winner.version,
+                granted_at=winner.granted_at,
+            )
         await session.refresh(consent)
 
     logger.info(

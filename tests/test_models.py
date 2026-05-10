@@ -65,7 +65,13 @@ def test_history_tables_have_indexes() -> None:
     state_indexes = {index.name for index in states.indexes}
     assert "uq_query_listing_state" in state_constraints
     assert "idx_query_listing_states_query" in state_indexes
-    assert "idx_query_listing_states_active" in state_indexes
+    # DB-M4: the standalone ``idx_query_listing_states_active`` was
+    # dropped in migration 20260510_0006 (boolean-only index, Postgres
+    # would seq scan anyway). The compound
+    # ``idx_query_listing_states_query_active`` still covers every
+    # query that filters on ``active``.
+    assert "idx_query_listing_states_query_active" in state_indexes
+    assert "idx_query_listing_states_active" not in state_indexes
 
     tracker_events = Base.metadata.tables["tracker_events"]
     tracker_event_indexes = {index.name for index in tracker_events.indexes}
@@ -78,7 +84,13 @@ def test_history_tables_have_indexes() -> None:
     lead_item_indexes = {index.name for index in lead_items.indexes}
     lead_item_constraints = {constraint.name for constraint in lead_items.constraints}
     assert "idx_lead_items_user" in lead_item_indexes
-    assert "idx_lead_items_status" in lead_item_indexes
+    # DB-M4: the single-column ``idx_lead_items_status`` was dropped in
+    # migration 20260510_0006 as redundant with the compound
+    # (user_id, status) index below. Assert the compound is still there
+    # so accidental removal can't slip through on a future refactor.
+    assert "idx_lead_items_user_status" in lead_item_indexes
+    assert "idx_lead_items_status" not in lead_item_indexes
+    assert "idx_lead_items_market_status" not in lead_item_indexes
     assert "uq_lead_items_user_ad" in lead_item_constraints
     # Watchlist-merged columns live on lead_items now.
     lead_item_columns = {column.name for column in lead_items.columns}

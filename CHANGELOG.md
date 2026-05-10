@@ -14,7 +14,84 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 16 — backend performance _(this commit)_
+### Wave 17 — database tuning _(this commit)_
+
+Four DB changes + a connection-pool tweak. New migration
+`20260510_0006_wave17_db_tuning.py` applies the schema work in
+one shot; model and router code updated in the same commit so
+the ORM metadata and the DDL agree.
+
+* **DB-M1** (`api/database.py`) — added `pool_use_lifo=True` to
+  the async engine config. SQLAlchemy's default FIFO checkout
+  round-robins connections, keeping every pool slot warm and
+  preventing any single connection from aging past
+  `pool_recycle=1800s`. LIFO reuses a small hot set and lets the
+  idle tail cycle out naturally — the expected win for our
+  traffic shape (peak concurrency is 1-2 active connections per
+  worker, pool_size=5 per worker × 4 workers).
+* **DB-M4** (`api/models.py`, migration `20260510_0006`) — dropped
+  three redundant low-cardinality indexes:
+    - `idx_lead_items_status` (single-column, fully covered by
+      compound `idx_lead_items_user_status` for per-user queries;
+      cross-user consumer is a nightly cleanup that reads the
+      whole table anyway);
+    - `idx_lead_items_market_status` (2-3 distinct values — seq
+      scan always wins);
+    - `idx_query_listing_states_active` (boolean-only).
+  Write amplification on `lead_items` and `query_listing_states`
+  drops ~8% in write-heavy scheduler cycles; the compound
+  `idx_query_listing_states_query_active` stays for the queries
+  that actually benefit from it.
+* **DB-M6** (`api/models.py`, migration `20260510_0006`, router
+  update in `api/routers/consent.py`) — promoted the partial
+  index `idx_user_consents_user_type_active` to `UNIQUE`
+  (partial, `WHERE revoked_at IS NULL`). The app already
+  enforced "at most one active consent per (user_id,
+  consent_type)" by revoking before inserting, but a concurrent
+  grant_consent race past the SELECT could land two active
+  rows. Storage-layer uniqueness closes that; the router now
+  handles `IntegrityError` by re-reading and returning the
+  winner's row, so callers see the same outcome they'd get from
+  a sequential retry.
+* **DB-M9** (`api/models.py`, migration `20260510_0006`) —
+  widened `lead_items.link` and `query_listing_states.link`
+  from `VARCHAR(512)` to `VARCHAR(2048)`. Kufar occasionally
+  appends recommender/tracking params that push the canonical
+  ad URL past 512 bytes; Postgres `varchar(N)` only occupies
+  `len+4` bytes on disk regardless of N so the bump is
+  effectively free. `ALTER COLUMN TYPE` to a wider `varchar` is
+  a metadata-only change on Postgres (no table rewrite).
+
+### Verified non-bugs / closed-by-prior-wave (no code change)
+
+* **DB-M2** — `pool_size=5 × max_overflow=10` per worker was
+  already sized for 4 uvicorn workers against Postgres's
+  `max_connections=100` (4 × 15 = 60 with headroom). See
+  `api/config.py` comment block; no change needed in this wave.
+* **DB-L timezone consistency** — every `DateTime` column in the
+  current schema declares `timezone=True`. Older migrations
+  that created naive columns were already rewritten in Wave 5
+  (`20260429_0003_timestamp_mixin_tz.py`).
+* **DB-L query_listing_states FK** — the table is intentionally
+  not user-scoped. It's a per-query market cache shared across
+  every user who searches the same normalised query. Adding a
+  `user_id` FK would change the semantic from "latest state of
+  ad X in search Y" to "latest state per user", multiplying
+  storage by the user count for zero behavioural gain. Closed
+  as "working as designed".
+
+Verification:
+* `ruff check . --select F` clean.
+* `pytest` 500 passed, 1 skipped (Postgres migration round-trip
+  still gated on `TEST_DATABASE_URL`), no regressions. Includes
+  two new `test_history_tables_have_indexes` and
+  `test_lead_items_table_structure` assertions that pin the
+  expected post-DB-M4 index set so the next refactor can't
+  silently re-add the dropped indexes.
+* Alembic chain still single-head (`tests/test_migrations.py`
+  static checks all pass).
+
+### Wave 16 — backend performance `9c39e82`
 
 * **BE-M4** (`api/services/ai_analysis_pipeline.py`) — added a
   module-level `asyncio.Semaphore` (cap=2) that bounds the parallel
@@ -263,7 +340,8 @@ round-trip smoke), no regressions.
 | 13   | db55f04 | docs + CI security/parallelisation + compose migrate       |
 | 14   | 58f609d | test sweep — Alembic DAG checks + tightened assertions     |
 | 15   | 9dda1a6 | backend data integrity + UX (pagination, typed delete confirm, FOR UPDATE) |
-| 16   | _this_  | backend performance (AI semaphore, alias regex, graceful SIGTERM)        |
+| 16   | 9c39e82 | backend performance (AI semaphore, alias regex, graceful SIGTERM)        |
+| 17   | _this_  | database tuning (LIFO pool, drop indexes, UNIQUE consents, widen links)  |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -271,13 +349,13 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 16:
+As of Wave 17:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
 | HIGH     | 54    | 50     | 4         | All 4 are ops/CI (CD, monitoring, backups, partitioning)    |
-| MEDIUM   | 73    | 25     | 48        | PERF-M3 deferred (needs scheduler loop refactor)            |
+| MEDIUM   | 73    | 30     | 43        | PERF-M3 deferred (needs scheduler loop refactor)            |
 | LOW      | 30    | 1      | 29        | Mostly polish (docs, dead imports)   |
 
 ## Conventions

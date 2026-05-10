@@ -218,7 +218,10 @@ class QueryListingState(Base):
     query: Mapped[str] = mapped_column(String(255), nullable=False)
     ad_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    link: Mapped[str] = mapped_column(String(512), nullable=False)
+    # DB-M9: widened from 512 → 2048 in migration 20260510_0006. Kufar
+    # sometimes appends recommender/tracking params to the canonical
+    # ad URL which can push the full link past 512 bytes.
+    link: Mapped[str] = mapped_column(String(2048), nullable=False)
     last_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     price_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     list_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -240,7 +243,10 @@ class QueryListingState(Base):
     __table_args__ = (
         UniqueConstraint("query", "ad_id", name="uq_query_listing_state"),
         Index("idx_query_listing_states_query", "query"),
-        Index("idx_query_listing_states_active", "active"),
+        # DB-M4: idx_query_listing_states_active dropped in migration
+        # 20260510_0006 — standalone boolean index was wasteful, the
+        # compound idx_query_listing_states_query_active below covers
+        # every query that actually filters by ``active``.
         Index("idx_query_listing_states_query_active", "query", "active"),
     )
 
@@ -302,7 +308,9 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     ad_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     query: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    link: Mapped[str] = mapped_column(String(512), nullable=False)
+    # DB-M9: widened from 512 → 2048 in migration 20260510_0006; see
+    # QueryListingState.link for the rationale.
+    link: Mapped[str] = mapped_column(String(2048), nullable=False)
     price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     buy_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     sold_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
@@ -370,8 +378,12 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
             name="chk_lead_items_status",
         ),
         Index("idx_lead_items_user", "user_id"),
-        Index("idx_lead_items_status", "status"),
-        Index("idx_lead_items_market_status", "market_status"),
+        # DB-M4: idx_lead_items_status and idx_lead_items_market_status
+        # were dropped in migration 20260510_0006. The former was
+        # redundant with the compound (user_id, status) index below
+        # for per-user queries (every user-scoped query combines the
+        # two); the latter indexed a 2-3 value column that Postgres
+        # would never pick over a seq scan.
         Index("idx_lead_items_user_status", "user_id", "status"),
     )
 
@@ -534,10 +546,21 @@ class UserConsent(Base):
     __table_args__ = (
         Index("idx_user_consents_user", "user_id"),
         Index("idx_user_consents_type", "consent_type"),
+        # DB-M6: UNIQUE partial index. Enforces "at most one active
+        # consent per (user_id, consent_type)" at the storage layer,
+        # belt-and-suspenders over the application-level "revoke old
+        # before insert new" pattern in routers/consent.grant_consent.
+        # Without it, two concurrent grant_consent requests could
+        # race past the SELECT and end up with duplicate active
+        # rows. Router handles the IntegrityError and returns the
+        # surviving row. Migration 20260510_0006 replaces the old
+        # non-unique partial index.
         Index(
             "idx_user_consents_user_type_active",
-            "user_id", "consent_type", "granted_at",
+            "user_id", "consent_type",
+            unique=True,
             postgresql_where=text("revoked_at IS NULL"),
+            sqlite_where=text("revoked_at IS NULL"),
         ),
     )
 
