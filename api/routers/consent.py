@@ -7,7 +7,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -15,7 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.models import DealExpense, LeadItem, Tracker, TrackerEvent, User, UserConsent
-from api.schemas import ConsentGrantRequest, ConsentStatusResponse
+from api.schemas import (
+    AccountDeletionConfirmation,
+    ConsentGrantRequest,
+    ConsentStatusResponse,
+)
 from api.services.workflow_store import ensure_user, resolve_user_id
 
 logger = logging.getLogger(__name__)
@@ -259,6 +263,7 @@ async def revoke_consent(
 @limiter.limit("10/minute")
 async def delete_account(
     request: Request,
+    payload: AccountDeletionConfirmation = Body(...),
     _user=Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(
         get_session_factory_dependency
@@ -267,7 +272,37 @@ async def delete_account(
     """Delete all user data (right to erasure under Belarus Law No. 91-Z).
 
     Cascade-deletes from all tables where the user has data.
+
+    BE-M3: requires an explicit ``confirmation`` JSON body that matches
+    the user's Telegram first_name (case-insensitive, stripped) OR the
+    string of their Telegram user id. Without a matching confirmation
+    we return 400 — a stray client-side click no longer triggers an
+    irreversible wipe. The check is server-side; the frontend modal is
+    a UX courtesy, not the security boundary.
     """
+    expected_name = (_user.first_name or "").strip().casefold()
+    expected_id_str = str(_user.user_id)
+    typed = (payload.confirmation or "").strip().casefold()
+
+    name_matches = bool(expected_name) and typed == expected_name
+    id_matches = typed == expected_id_str
+
+    if not (name_matches or id_matches):
+        # Log as info so ops can spot mass-typo / brute-force patterns
+        # without blowing up the warn channel — a single mistype is
+        # entirely normal user behaviour.
+        logger.info(
+            "Account deletion rejected for user %d: confirmation mismatch",
+            _user.user_id,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Confirmation does not match. Type your Telegram first "
+                "name to confirm account deletion."
+            ),
+        )
+
     user_internal_id: int | None = None
     async with session_factory() as session:
         # Find the internal user id

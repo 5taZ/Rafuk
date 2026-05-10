@@ -11,7 +11,7 @@ from api.config import get_settings
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import Tracker, TrackerEvent
+from api.models import Tracker, TrackerEvent, User
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead, TrackerUpdate
 from api.services.reseller_tools import default_config_keyword
 from api.services.workflow_store import ensure_user, resolve_user_id
@@ -161,48 +161,63 @@ async def create_tracker(
             first_name=telegram_user.first_name,
         )
 
-        # Enforce per-user max tracker limit (from config).
-        # Use a savepoint so the count check and insert are atomic —
-        # concurrent requests that both pass the count check will hit
-        # the IntegrityError handler below.
-        async with session.begin_nested():
-            max_trackers_per_user = get_settings().max_trackers_per_user
-            existing_count = await session.scalar(
-                select(func.count(Tracker.id)).where(
-                    Tracker.user_id == user_id,
-                    Tracker.active.is_(True),
-                )
-            )
-            if (existing_count or 0) >= max_trackers_per_user:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=f"Maximum {max_trackers_per_user} trackers per user",
-                )
+        # BE-M16: serialise concurrent tracker-create for the same user
+        # by taking a row-level FOR UPDATE lock on the User row before
+        # we count + insert. Without it, two simultaneous requests could
+        # both observe ``existing_count == max - 1``, both pass the
+        # check, and both insert — leaving the user one tracker over
+        # the configured limit. ``with_for_update`` is a no-op on
+        # SQLite (no row-level locking) so the test-suite still works;
+        # on Postgres the second concurrent request blocks here until
+        # the first commits, then sees the updated count.
+        await session.scalar(
+            select(User.id).where(User.id == user_id).with_for_update()
+        )
 
-            tracker = Tracker(
-                user_id=user_id,
-                query=query,
-                strict_mode=payload.strict_mode,
-                interval_min=payload.interval_min,
-                min_discount_percent=payload.min_discount_percent,
-                max_price_byn=payload.max_price_byn,
-                seller_type=payload.seller_type,
-                condition=payload.condition,
-                region_name=payload.region_name,
-                config_keyword=payload.config_keyword or default_config_keyword(query),
-                alert_price_threshold=payload.alert_price_threshold,
-                alert_discount_percent=payload.alert_discount_percent,
+        max_trackers_per_user = get_settings().max_trackers_per_user
+        existing_count = await session.scalar(
+            select(func.count(Tracker.id)).where(
+                Tracker.user_id == user_id,
+                Tracker.active.is_(True),
             )
-            session.add(tracker)
-            try:
-                await session.flush()
-            except IntegrityError as exc:
-                await session.rollback()
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="A tracker with this configuration already exists",
-                ) from exc
-        await session.commit()
+        )
+        if (existing_count or 0) >= max_trackers_per_user:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Maximum {max_trackers_per_user} trackers per user",
+            )
+
+        tracker = Tracker(
+            user_id=user_id,
+            query=query,
+            strict_mode=payload.strict_mode,
+            interval_min=payload.interval_min,
+            min_discount_percent=payload.min_discount_percent,
+            max_price_byn=payload.max_price_byn,
+            seller_type=payload.seller_type,
+            condition=payload.condition,
+            region_name=payload.region_name,
+            config_keyword=payload.config_keyword or default_config_keyword(query),
+            alert_price_threshold=payload.alert_price_threshold,
+            alert_discount_percent=payload.alert_discount_percent,
+        )
+        session.add(tracker)
+        # BE-M16: previously this lived inside ``session.begin_nested()``
+        # and called ``session.rollback()`` from within the savepoint on
+        # IntegrityError, which actually rolled back the *outer*
+        # transaction (the savepoint context manager auto-rolls back on
+        # exception, so the manual rollback was both redundant and
+        # incorrect). Plain ``session.commit()`` here under the FOR
+        # UPDATE lock is enough; any IntegrityError from the DB will
+        # leave the session in a rolled-back state and we surface it
+        # as a 409.
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A tracker with this configuration already exists",
+            ) from exc
         await session.refresh(tracker)
         return TrackerRead.model_validate(tracker)
 

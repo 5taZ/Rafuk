@@ -579,6 +579,19 @@ class ConsentRead(BaseModel):
     revoked_at: datetime | None = None
 
 
+# BE-M3: explicit confirmation payload for the right-to-erasure endpoint.
+# DELETE /api/v1/account requires the user to type their displayed
+# Telegram first name (case-insensitive, stripped) so a stray click on
+# the confirm button can't wipe data; the confirmation is also verified
+# server-side, never trusted from the frontend alone.
+class AccountDeletionConfirmation(BaseModel):
+    confirmation: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Must match the user's Telegram first_name (case-insensitive)",
+    )
+
+
 # ── AI Analysis ──────────────────────────────────────────────────────────
 
 

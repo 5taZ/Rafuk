@@ -584,15 +584,30 @@ function createAppActions(context) {
     }
 
     async function deleteAccount() {
-        // Use a custom confirmation dialog instead of window.confirm()
-        // which may not work in Telegram WebView.
-        const confirmed = await _showConfirmDialog(
+        // BE-M3: irreversible action — require the user to type their
+        // Telegram first_name (the same one shown in the bot header) to
+        // confirm. window.confirm() is unreliable in Telegram WebView,
+        // so we use a custom typed-input dialog. Server validates the
+        // confirmation independently — this modal is UX, not the
+        // security boundary.
+        const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user || {};
+        const firstName = (tgUser.first_name || "").trim();
+        const fallbackId = String(tgUser.id || "");
+        // Display the most recognisable identifier — first_name when
+        // present, otherwise the numeric id (server accepts either).
+        const expected = firstName || fallbackId;
+        if (!expected) {
+            showToast("Не удалось определить пользователя");
+            return;
+        }
+        const typed = await _showTypedConfirmDialog(
             "Удалить аккаунт?",
-            "Все ваши данные будут безвозвратно удалены. Это действие нельзя отменить."
+            "Все ваши данные будут безвозвратно удалены. Это действие нельзя отменить.",
+            expected,
         );
-        if (!confirmed) return;
+        if (typed === null) return;
         try {
-            await core.deleteJson("/api/v1/account");
+            await core.deleteJson("/api/v1/account", { confirmation: typed });
             showToast("Аккаунт удалён. Данные стёрты.");
             setTimeout(() => window.location.reload(), 1500);
         } catch (err) {
@@ -600,7 +615,12 @@ function createAppActions(context) {
         }
     }
 
-    function _showConfirmDialog(title, message) {
+    function _showTypedConfirmDialog(title, message, expectedText) {
+        // BE-M3: typed-input variant of the confirm dialog. Resolves to
+        // the entered text on confirm, or ``null`` on cancel. The input
+        // has to *exactly* match ``expectedText`` (case-insensitive,
+        // stripped) before the confirm button activates — clients that
+        // skip this check still hit the server-side validator.
         return new Promise((resolve) => {
             const overlay = document.createElement("div");
             overlay.className = "detail-modal";
@@ -614,8 +634,25 @@ function createAppActions(context) {
             h3.textContent = title;
 
             const p = document.createElement("p");
-            p.style.cssText = "margin:0 0 20px;color:var(--text-secondary);font-size:14px;";
+            p.style.cssText = "margin:0 0 12px;color:var(--text-secondary);font-size:14px;";
             p.textContent = message;
+
+            const hint = document.createElement("p");
+            hint.style.cssText = "margin:0 0 12px;font-size:13px;color:var(--text-secondary);";
+            // Build via DOM (not innerHTML) — keeps user-controlled
+            // ``expectedText`` away from the HTML parser entirely.
+            hint.append("Введите ");
+            const expectedSpan = document.createElement("strong");
+            expectedSpan.style.cssText = "color:var(--text-color);";
+            expectedSpan.textContent = expectedText;
+            hint.append(expectedSpan, " для подтверждения:");
+
+            const input = document.createElement("input");
+            input.type = "text";
+            input.autocomplete = "off";
+            input.autocapitalize = "off";
+            input.spellcheck = false;
+            input.style.cssText = "width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--surface-color);color:var(--text-color);font-size:14px;margin:0 0 16px;box-sizing:border-box;";
 
             const btnRow = document.createElement("div");
             btnRow.style.cssText = "display:flex;gap:10px;justify-content:center;";
@@ -627,17 +664,33 @@ function createAppActions(context) {
 
             const confirmBtn = document.createElement("button");
             confirmBtn.setAttribute("data-role", "confirm");
-            confirmBtn.style.cssText = "flex:1;padding:10px;border-radius:10px;border:none;background:var(--danger-color,#e53935);color:#fff;font-size:14px;font-weight:600;";
+            confirmBtn.style.cssText = "flex:1;padding:10px;border-radius:10px;border:none;background:var(--danger-color,#e53935);color:#fff;font-size:14px;font-weight:600;opacity:0.5;cursor:not-allowed;";
             confirmBtn.textContent = "Удалить";
+            confirmBtn.disabled = true;
 
             btnRow.append(cancelBtn, confirmBtn);
-            sheet.append(h3, p, btnRow);
+            sheet.append(h3, p, hint, input, btnRow);
             overlay.appendChild(sheet);
             document.body.appendChild(overlay);
             document.body.classList.add("modal-open");
             let focusCleanup = null;
             if (typeof trapFocus === "function") focusCleanup = trapFocus(sheet);
-            cancelBtn.focus();
+            // Focus the input so the user can start typing immediately —
+            // a typed-confirm dialog where you have to click into the
+            // box first is hostile UX.
+            setTimeout(() => input.focus(), 0);
+
+            const expectedNorm = expectedText.trim().toLowerCase();
+            function refreshConfirm() {
+                const matches = input.value.trim().toLowerCase() === expectedNorm;
+                confirmBtn.disabled = !matches;
+                confirmBtn.style.opacity = matches ? "1" : "0.5";
+                confirmBtn.style.cursor = matches ? "pointer" : "not-allowed";
+            }
+            input.addEventListener("input", refreshConfirm);
+            input.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" && !confirmBtn.disabled) close(input.value);
+            });
 
             function close(result) {
                 document.body.classList.remove("modal-open");
@@ -646,13 +699,16 @@ function createAppActions(context) {
                 resolve(result);
             }
 
-            sheet.querySelector('[data-role="cancel"]').addEventListener("click", () => close(false));
-            sheet.querySelector('[data-role="confirm"]').addEventListener("click", () => close(true));
+            cancelBtn.addEventListener("click", () => close(null));
+            confirmBtn.addEventListener("click", () => {
+                if (!confirmBtn.disabled) close(input.value);
+            });
             overlay.addEventListener("click", (e) => {
-                if (e.target === overlay) close(false);
+                if (e.target === overlay) close(null);
             });
         });
     }
+
 
     async function exportAccountData() {
         try {

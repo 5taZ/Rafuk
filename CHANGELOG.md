@@ -14,7 +14,64 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 14 — test sweep _(this commit)_
+### Wave 15 — backend data integrity + UX _(this commit)_
+
+* **BE-M2** — `GET /leads/{id}/expenses` now paginates via `limit`
+  (1-500, default 100) and `offset` (≥0) query params. Previously
+  unbounded; a power-user with hundreds of expense rows would
+  return >256 KB of JSON in one shot. Default page size is plenty
+  for the detail view; the cap is a backstop against runaway
+  fetches.
+* **BE-M3** — `DELETE /api/v1/account` requires a JSON body
+  ``{"confirmation": "<typed>"}``. Server validates that the typed
+  value matches the user's Telegram `first_name` (case-insensitive,
+  stripped) **or** the string of their numeric Telegram id. Any
+  other value returns 400; missing body returns 422 from FastAPI.
+  The frontend modal was upgraded from a simple "Удалить?" confirm
+  to a typed-input dialog that disables the confirm button until
+  the input matches — the dialog is UX, not the security boundary.
+  Three new tests cover the matching, missing, and mismatched
+  cases.
+* **BE-M16** — `POST /trackers` now takes a row-level FOR UPDATE
+  lock on the user row before the count + insert dance, so two
+  concurrent tracker-creates for the same user no longer both
+  pass the per-user limit check. Also dropped the broken
+  ``await session.rollback()`` that previously lived inside a
+  ``session.begin_nested()`` block — it was rolling back the
+  *outer* transaction and was redundant with the savepoint
+  context manager's automatic rollback. The savepoint itself was
+  also dropped because the FOR UPDATE lock is enough; we now
+  surface IntegrityError from a normal commit as a 409.
+* Side: `core.deleteJson(url, payload?)` in `frontend/js/api_core.js`
+  now optionally carries a JSON body so the BE-M3 confirmation can
+  travel on a DELETE. Backward compatible — existing call sites
+  that omit `payload` keep the historical no-body behaviour.
+* Removed dead `_showConfirmDialog` (only consumer was the old
+  `deleteAccount`; replaced by `_showTypedConfirmDialog`).
+
+### Verified non-bugs / closed-by-prior-wave (no code change)
+
+* **BE-M7** — `history_service.py` nested transaction rollback is
+  already correct: `async with session.begin_nested()` rolls back
+  the savepoint automatically on exception, and the inline comment
+  at line 91 explicitly documents that no manual `session.rollback`
+  is needed (it would kill the outer transaction). Wave 8's
+  cleanup left this in good shape.
+* **BE-M9** — `ensure_user` / `ensure_user_exists` already use
+  PostgreSQL ``INSERT ... ON CONFLICT DO NOTHING`` for atomicity
+  (closed in Wave 5b under BE-H3). The audit was tracking the
+  same root cause from a slightly different angle.
+* **BE-M14** — `routers/listing_detail.py` already caches the full
+  response payload (median, market_stats, liquidity, risk, …)
+  under a query-shaped key at line 95 with `cache_ttl_seconds`
+  TTL. Per-listing `compute_category_price_stats` only runs on
+  cache miss; on a hit the whole object is returned without any
+  computation. No additional intermediate cache layer needed.
+
+Verification: 500 passed (+3 from Wave 14's 497), 1 skipped
+(Postgres migration round-trip), no regressions. ruff F clean.
+
+### Wave 14 — test sweep `58f609d`
 
 * **TEST-M2** — replaced loose ``status_code in (200, 503)`` and
   ``in (400, 422)`` assertions with deterministic single-value
@@ -137,7 +194,8 @@ round-trip smoke), no regressions.
 | 11   | eeba8d9 | CSP frame-ancestors / cache-busting / front image          |
 | 12   | e603bd8 | MEDIUM/LOW dead code + type-safety sweep                   |
 | 13   | db55f04 | docs + CI security/parallelisation + compose migrate       |
-| 14   | _this_  | test sweep — Alembic DAG checks + tightened assertions     |
+| 14   | 58f609d | test sweep — Alembic DAG checks + tightened assertions     |
+| 15   | _this_  | backend data integrity + UX (pagination, typed delete confirm, FOR UPDATE) |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -145,13 +203,13 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 14:
+As of Wave 15:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
 | HIGH     | 54    | 50     | 4         | All 4 are ops/CI (CD, monitoring, backups, partitioning)    |
-| MEDIUM   | 73    | 13     | 60        | Wave 15+ continues the sweep         |
+| MEDIUM   | 73    | 19     | 54        | Wave 16+ continues the sweep         |
 | LOW      | 30    | 1      | 29        | Mostly polish (docs, dead imports)   |
 
 ## Conventions

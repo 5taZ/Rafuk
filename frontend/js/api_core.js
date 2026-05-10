@@ -112,8 +112,17 @@ function createApiCore(context) {
         });
     }
 
-    function deleteJson(url) {
-        return requestJson(url, { method: "DELETE" });
+    function deleteJson(url, payload) {
+        // BE-M3: DELETE may carry a JSON body (e.g. account-deletion
+        // confirmation). When ``payload`` is omitted we keep the
+        // historical no-body behaviour so existing callers don't need
+        // to change.
+        const opts = { method: "DELETE" };
+        if (payload !== undefined) {
+            opts.headers = { "Content-Type": "application/json" };
+            opts.body = JSON.stringify(payload);
+        }
+        return requestJson(url, opts);
     }
 
     // ── Query builder ────────────────────────────────────────────────────

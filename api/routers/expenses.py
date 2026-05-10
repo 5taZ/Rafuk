@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -68,10 +68,18 @@ async def create_expense(
 async def get_expenses(
     request: Request,
     lead_id: int,
+    # BE-M2: cap and paginate. The previous unbounded SELECT was fine for
+    # a freshly-onboarded user but a power-user with hundreds of expense
+    # rows on a single lead would feel the per-request size growth (and
+    # the response would balloon past the typical 256 KB Mini-App
+    # tolerance for chunky JSON). Default page is 100 — plenty for the
+    # detail view; ``limit=500`` is the hard ceiling.
+    limit: int = Query(100, ge=1, le=500, description="Max expenses to return"),
+    offset: int = Query(0, ge=0, description="Number of expenses to skip"),
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[DealExpenseRead]:
-    """List all expenses for a lead."""
+    """List expenses for a lead (paginated, newest first)."""
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user.user_id)
         if user_id is None:
@@ -85,6 +93,8 @@ async def get_expenses(
             select(DealExpense)
             .where(DealExpense.lead_id == lead_id, DealExpense.user_id == user_id)
             .order_by(DealExpense.expense_date.desc(), DealExpense.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
         return [DealExpenseRead.model_validate(e) for e in result.scalars()]
 

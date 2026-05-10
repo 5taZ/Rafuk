@@ -162,7 +162,52 @@ async def test_delete_account(client):
         "/api/v1/account/consent",
         json={"consent_type": "pd_processing", "version": "2026.1"},
     )
-    resp = await client.delete("/api/v1/account")
+    # BE-M3: confirmation must match the user's Telegram first_name
+    # (case-insensitive). _fake_telegram_user returns "ConsentTest".
+    resp = await client.request(
+        "DELETE",
+        "/api/v1/account",
+        json={"confirmation": "consenttest"},
+    )
+    assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_delete_account_requires_confirmation(client):
+    """BE-M3: DELETE /account without a confirmation body returns 422
+    (Pydantic missing-field) — a stray click on the confirm button or
+    a CSRF-replay attempt against an old endpoint shape is rejected
+    before any data is touched."""
+    resp = await client.request("DELETE", "/api/v1/account")
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_delete_account_rejects_mismatched_confirmation(client):
+    """BE-M3: server-side validation, not just frontend modal — typing
+    the wrong name returns 400 even if the request reaches us."""
+    resp = await client.request(
+        "DELETE",
+        "/api/v1/account",
+        json={"confirmation": "Eve"},
+    )
+    assert resp.status_code == 400
+    assert "Confirmation does not match" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_account_accepts_telegram_id_as_confirmation(client):
+    """BE-M3: users without a usable first_name (e.g. emoji-only or
+    blank) can still confirm by typing their numeric Telegram id."""
+    await client.post(
+        "/api/v1/account/consent",
+        json={"consent_type": "pd_processing", "version": "2026.1"},
+    )
+    resp = await client.request(
+        "DELETE",
+        "/api/v1/account",
+        json={"confirmation": "999888"},  # _fake_telegram_user user_id
+    )
     assert resp.status_code == 204
 
 
