@@ -14,7 +14,49 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 25 — UX-M8 (split api_ai.js into 4 modules) _(this commit)_
+### Wave 25.1 — nginx upstream DNS deferred to runtime _(this commit)_
+
+Hot-fix for the local dev build. After Wave 25 (`api_ai.js` split)
+the user ran `./start-local.sh --with-tunnel`, which rebuilds the
+frontend image, and the build failed at `RUN nginx -t`:
+
+```
+[emerg] host not found in upstream "host.docker.internal"
+        in /etc/nginx/conf.d/default.conf:77
+```
+
+Pre-existing issue (the `proxy_pass http://host.docker.internal:8010/api/`
+line predates Wave 25 by many waves) — the build sandbox simply doesn't
+see the `extra_hosts` mapping that Docker injects at container start,
+so `nginx -t`'s synchronous DNS lookup for the literal upstream hostname
+fails. The build had been passing on the user's machine for unrelated
+reasons (cached image layer); the Wave-25 frontend changes invalidated
+that cache and made the latent bug bite.
+
+Fix in `nginx/default.conf`:
+
+* Add `resolver 127.0.0.11 valid=10s ipv6=off;` (Docker's embedded
+  DNS) to the `/api/` location.
+* Replace the literal `proxy_pass http://host.docker.internal:8010/api/`
+  with a variable form: `set $api_upstream "host.docker.internal:8010";
+  proxy_pass http://$api_upstream;`.
+
+This forces nginx to defer the hostname lookup to per-request time
+(via Docker's embedded DNS, which DOES see `extra_hosts`) instead of
+config-load time. The build-time `nginx -t` only validates syntax
+now, not resolvability.
+
+Path-rewriting is preserved: the old form
+`proxy_pass http://host:8010/api/` strips the `/api/` location prefix
+and replaces it with the same `/api/` from the proxy_pass URI — a
+no-op. The new form `proxy_pass http://$var;` (no URI) passes the
+original request URI verbatim, which yields the same `/api/v1/...`
+upstream path. Verified by running `docker build -f Dockerfile.frontend .`
+end-to-end: build succeeds, `nginx -t` reports OK.
+
+507 passed, 1 skipped.
+
+### Wave 25 — UX-M8 (split api_ai.js into 4 modules)
 
 `frontend/js/api_ai.js` had grown to a **1318-line god-file** that
 spanned modal lifecycle, async polling, DOM rendering, and PDF
