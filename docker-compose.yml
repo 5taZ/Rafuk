@@ -137,12 +137,20 @@ services:
         max-file: "3"
 
   frontend:
-    image: nginx:1.27-alpine
+    # INF-H7: previously this used the upstream nginx:1.27-alpine
+    # image with three :ro bind mounts (frontend/, assets/, the
+    # nginx config). Now we bake the bundle into a dedicated image
+    # — single deploy artifact, atomic rollouts, immutable in
+    # production. See Dockerfile.frontend for the build.
+    #
+    # In local dev you can still get hot-reload by overriding the
+    # build with a docker-compose.override.yml that re-adds the
+    # bind mounts; we don't ship that file because it is per-developer
+    # ergonomics, not a service contract.
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
     restart: unless-stopped
-    volumes:
-      - ./frontend:/usr/share/nginx/html:ro
-      - ./assets:/usr/share/nginx/assets:ro
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

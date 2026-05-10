@@ -1,0 +1,45 @@
+# INF-H7: dedicated nginx image for the Mini-App frontend.
+#
+# The previous setup bind-mounted ./frontend, ./assets and
+# ./nginx/default.conf into the upstream nginx:1.27-alpine image at
+# runtime. That works for local dev but is fragile in production:
+#
+#   * the image isn't a self-contained artifact — pushing/rolling
+#     back means moving three host directories in lock-step.
+#   * read-only mounts are still mutable on the host filesystem —
+#     a compromised CI runner can rewrite the static bundle without
+#     re-tagging anything.
+#   * cache-busting (INF-H8) only works if every replica picks up
+#     the new index.html *and* the new sibling assets atomically.
+#     With bind mounts, any stale tab can pin a node to one rev
+#     of index.html while another node serves the new one.
+#
+# Building the static bundle into the image fixes all three: the
+# image is the contract, the registry tag is the rollout pointer,
+# and replicas serve identical bytes by construction.
+#
+# Single-stage is enough — we have no JS bundler / SCSS step today
+# (everything is hand-written ES modules + plain CSS), so the only
+# work is COPY + a permissions check.
+
+FROM nginx:1.27-alpine
+
+# Drop the upstream default and replace it with ours. The site
+# config carries every cache/CSP/CORS rule the front-end relies on,
+# so leaving the stock /etc/nginx/conf.d/default.conf in place
+# would mask the local one.
+RUN rm -f /etc/nginx/conf.d/default.conf
+COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+
+# Static bundle. The paths match what default.conf expects:
+#   * /                      → /usr/share/nginx/html (Mini-App SPA)
+#   * /assets/               → /usr/share/nginx/assets (logos, icons)
+COPY frontend /usr/share/nginx/html
+COPY assets /usr/share/nginx/assets
+
+# Smoke-test the nginx config at build time. Catches typos before
+# the image ever boots; failed config = failed build = no broken
+# rollout in prod.
+RUN nginx -t
+
+# Default nginx CMD already exposes 80; no override needed.

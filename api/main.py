@@ -252,6 +252,21 @@ def create_app() -> FastAPI:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # FE-H6 / SEC-LOW: API responses are JSON, no <script>/<style>
+        # contexts to lock down — but the modern cross-origin trio
+        # still pays off:
+        #   * Permissions-Policy clamps device APIs even if a future
+        #     route accidentally serves HTML.
+        #   * COOP cuts a window opener off from this origin, blocking
+        #     a class of XS-leak attacks via window.opener.
+        #   * CORP says "this resource isn't shareable cross-origin",
+        #     stopping a malicious page from `<img src=...>`-loading
+        #     our JSON to probe for side-channels.
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+        )
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-site"
         return response
 
     # Cache-Control middleware
