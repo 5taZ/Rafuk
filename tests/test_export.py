@@ -99,8 +99,15 @@ def test_export_xlsx_returns_valid_workbook() -> None:
 
 
 def test_export_rejects_unknown_format() -> None:
-    """An invalid `format=` query value gives a 400 (or 422 from
-    FastAPI's Literal validator) instead of silently picking one."""
+    """An invalid `format=` query value must be rejected by FastAPI's
+    Literal validator with 422 — not silently picked.
+
+    TEST-M2 / BE-M12: was previously ``status_code in (400, 422)``
+    because the handler had a redundant ``if fmt not in (...): 400``
+    check on top of the Literal validation. Wave 12 removed the
+    handler-side branch (it was unreachable), so now the response is
+    deterministically 422 from Pydantic / FastAPI.
+    """
     from api.dependencies import get_telegram_user
     from api.main import create_app
 
@@ -109,4 +116,4 @@ def test_export_rejects_unknown_format() -> None:
 
     with TestClient(app) as client:
         response = client.get("/api/v1/leads/export?format=pdf")
-        assert response.status_code in (400, 422)
+        assert response.status_code == 422

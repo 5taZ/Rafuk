@@ -14,7 +14,45 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 13 — docs + CI quick win _(this commit)_
+### Wave 14 — test sweep _(this commit)_
+
+* **TEST-M2** — replaced loose ``status_code in (200, 503)`` and
+  ``in (400, 422)`` assertions with deterministic single-value
+  checks. ``test_health.py`` was papering over a 503 branch that
+  the lifespan fallback (RedisCache → MemoryCache) makes
+  unreachable in tests; ``test_export.py`` was hedging on a 400
+  branch that Wave 12 (BE-M12) removed entirely.
+* **TEST-M6** — new ``tests/test_migrations.py`` adds three static
+  Alembic chain checks (single head, walkable base→head, unique
+  revision IDs) that run everywhere, plus a Postgres-gated
+  round-trip smoke test (``head → -1 → head``) that catches missing
+  or inverse-incorrect ``downgrade()`` implementations. Static
+  checks add ~0.3s to local runs; the round-trip smoke is skipped
+  unless ``TEST_DATABASE_URL`` points at Postgres.
+* **TEST-M1 verified non-bug** — the IDOR test
+  ``test_user_b_cannot_delete_user_a_watchlist_item`` deliberately
+  asserts 204 (not 404) because the endpoint is intentionally
+  idempotent: a 404 response would leak which watchlist IDs exist
+  across all users via timing/status diffing. The docstring
+  already explains this; no change needed. The audit entry was
+  incorrect.
+* **TEST-M3 verified non-bug** — the audit's complaint about
+  ``asyncio.sleep(0.01)`` doesn't match the current code: the only
+  short sleeps live inside fake handlers in
+  ``test_parallel_kufar.py`` (0.02s) and ``test_listings.py``
+  (0.05s) and are *inducing* concurrency, not waiting on it. The
+  rate-limit timing test in ``test_kufar_client.py`` measures real
+  delay and is correct as written.
+* **TEST-M5 deferred** — adding a graceful-shutdown harness needs
+  ``PERF-M4`` (graceful SIGTERM handling) wired into the app code
+  first. Lined up for Wave 15.
+* Side note: silenced an Alembic 1.18+ deprecation warning by
+  adding ``path_separator = os`` to ``migrations/alembic.ini``.
+
+Verification: 497 passed (+3 from Wave 13), 1 skipped (Postgres
+round-trip smoke), no regressions.
+
+### Wave 13 — docs + CI quick win `db55f04`
 
 * **INF-M1** — added a `security` job in CI running `pip-audit`
   against `uv export --no-dev` output. Found and fixed a real CVE
@@ -98,6 +136,8 @@ cut across all three.
 | 10   | e06c1b3 | Split `ai_analysis.py` god-file into 4 services            |
 | 11   | eeba8d9 | CSP frame-ancestors / cache-busting / front image          |
 | 12   | e603bd8 | MEDIUM/LOW dead code + type-safety sweep                   |
+| 13   | db55f04 | docs + CI security/parallelisation + compose migrate       |
+| 14   | _this_  | test sweep — Alembic DAG checks + tightened assertions     |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -105,13 +145,13 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 12:
+As of Wave 14:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
 | HIGH     | 54    | 50     | 4         | All 4 are ops/CI (CD, monitoring, backups, partitioning)    |
-| MEDIUM   | 73    | 7      | 66        | Wave 13+ continues the sweep         |
+| MEDIUM   | 73    | 13     | 60        | Wave 15+ continues the sweep         |
 | LOW      | 30    | 1      | 29        | Mostly polish (docs, dead imports)   |
 
 ## Conventions
