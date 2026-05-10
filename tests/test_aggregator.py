@@ -11,11 +11,13 @@ from api.services.aggregator import (
     compute_price_vs_median,
     compute_price_vs_reference,
     compute_segments,
+    detect_price_type,
     extract_category_distribution,
     extract_prices,
     extract_search_refinements,
     filter_deal_ads,
     is_strict_match,
+    normalize_price_byn,
     normalize_search_text,
     sort_listings,
 )
@@ -312,3 +314,119 @@ def test_extract_search_refinements_caps_at_limit() -> None:
     ]
     refinements = extract_search_refinements(ads, "item", limit=3, min_support=2)
     assert len(refinements) == 3
+
+
+# ── detect_price_type & normalize_price_byn ──────────────────────────────
+#
+# Kufar returns price=0 for both "договорная" (price unknown) and
+# "бесплатно" (giveaway). detect_price_type discriminates the two by
+# inspecting ad text. The default is "negotiable" — only contextual
+# giveaway phrases escalate to "free", because mis-labelling a
+# negotiable listing as free poisons the market median.
+
+
+class TestDetectPriceTypePositives:
+    """Ads that genuinely give the item away — must be 'free'."""
+
+    @pytest.mark.parametrize(
+        "ad",
+        [
+            {"subject": "Стол", "body": "Отдам бесплатно в хорошие руки"},
+            {"subject": "Коробки", "body": "Забери даром"},
+            {"subject": "Хлам", "body": "Безвозмездно отдадим коробки"},
+            {"subject": "Бесплатно стол самовывоз", "body": ""},
+            {"subject": "Доска", "body": "Отдам даром"},
+            {"subject": "ДАРОМ ШКАФ", "body": ""},
+            {"subject": "Кресло", "body": "Возьмите бесплатно"},
+            {"subject": "Холодильник", "body": "Забирайте бесплатно сегодня"},
+            {"subject": "Кніга", "body": "Аддам бясплатна"},  # Belarusian
+            {"subject": "Стиралка", "body_short": "Отдам бесплатно нерабочую"},
+        ],
+    )
+    def test_giveaway_phrases_detected_as_free(self, ad: dict) -> None:
+        assert detect_price_type(ad) == "free"
+
+
+class TestDetectPriceTypeFalsePositiveProtection:
+    """Ads that look free-ish but aren't — must stay 'negotiable'."""
+
+    @pytest.mark.parametrize(
+        ("name", "ad"),
+        [
+            ("free assembly service", {"subject": "Шкаф", "body": "Сборка бесплатно"}),
+            ("free demo", {"subject": "Велосипед", "body": "Покажу бесплатно перед покупкой"}),
+            ("free shipping en", {"subject": "Headphones", "body": "Free shipping worldwide"}),
+            ("ne nuzhen", {"subject": "Велосипед", "body": "Велосипед не нужен мне"}),
+            ("ne nuzhny", {"subject": "Диски", "body": "Эти диски не нужны"}),
+            ("zaberite alone", {"subject": "Стол", "body": "Заберите завтра вечером"}),
+            ("free in middle", {"subject": "Товар", "body": "Покажу товар бесплатно"}),
+            ("explicit negation", {"subject": "Машина", "body": "Не бесплатно, цена 500"}),
+            ("negation za", {"subject": "Машина", "body": "Не за бесплатно отдам"}),
+            ("free delivery in title", {"subject": "Телефон бесплатная доставка", "body": ""}),
+            ("free demo in title", {"subject": "Стол бесплатно осмотр", "body": ""}),
+            ("free install in title", {"subject": "Кондиционер бесплатно установка", "body": ""}),
+            ("plain", {"subject": "Стол", "body": "Торг уместен"}),
+            ("substring 'бесплатная'", {"subject": "Телефон", "body": "Бесплатная доставка"}),
+        ],
+    )
+    def test_no_false_positive(self, name: str, ad: dict) -> None:
+        assert detect_price_type(ad) == "negotiable", name
+
+
+class TestNormalizePriceBynSemantic:
+    """Verify the contract: None=excluded from metrics, 0.0=included as 0."""
+
+    def test_zero_with_negotiable_text_returns_none(self) -> None:
+        # Negotiable -> None -> excluded from median/mean
+        ad = {"price_byn": 0, "subject": "Велосипед", "body": "Торг уместен"}
+        assert normalize_price_byn(0, ad) is None
+
+    def test_zero_with_free_text_returns_zero(self) -> None:
+        # Free -> 0.0 -> included in median/mean as 0
+        ad = {"price_byn": 0, "subject": "Стол", "body": "Отдам бесплатно"}
+        assert normalize_price_byn(0, ad) == 0.0
+
+    def test_zero_without_ad_returns_none(self) -> None:
+        # Without ad context, can't know -> safer is None (negotiable)
+        assert normalize_price_byn(0) is None
+
+    def test_positive_price_unaffected_by_ad_text(self) -> None:
+        # Real price 100 BYN, body mentions "бесплатно" — must NOT be misread
+        ad = {"price_byn": 10000, "subject": "Велосипед", "body": "Доставка бесплатно"}
+        assert normalize_price_byn(10000, ad) == 100.0
+
+
+class TestExtractPricesSemantic:
+    """Verify metrics excluded negotiable, include free as 0."""
+
+    def test_negotiable_excluded_from_metrics(self) -> None:
+        ads = [
+            {"price_byn": 100000, "subject": "A", "body": ""},        # 1000 BYN
+            {"price_byn": 0, "subject": "B", "body": "Торг"},         # negotiable -> excluded
+            {"price_byn": 200000, "subject": "C", "body": ""},        # 2000 BYN
+        ]
+        prices = extract_prices(ads)
+        assert prices == [1000.0, 2000.0]
+
+    def test_free_included_as_zero(self) -> None:
+        ads = [
+            {"price_byn": 100000, "subject": "A", "body": ""},          # 1000 BYN
+            {"price_byn": 0, "subject": "Free", "body": "Отдам даром"},  # free -> 0.0
+            {"price_byn": 200000, "subject": "C", "body": ""},          # 2000 BYN
+        ]
+        prices = extract_prices(ads)
+        assert prices == [1000.0, 0.0, 2000.0]
+
+    def test_free_drives_discount_to_minus_100(self) -> None:
+        # "Скидка %" is computed by compute_price_vs_median.
+        # A free item (price=0) vs median=1000 should be -100%.
+        free_ad = {"price_byn": 0, "subject": "Стол", "body": "Отдам бесплатно"}
+        delta = compute_price_vs_median(free_ad, median=1000.0)
+        assert delta == -100.0
+
+    def test_negotiable_has_zero_delta_not_minus_100(self) -> None:
+        # Negotiable items are excluded from delta calc — returns 0.0,
+        # NOT -100% (which would falsely indicate a huge discount).
+        negotiable_ad = {"price_byn": 0, "subject": "Стол", "body": "Торг"}
+        delta = compute_price_vs_median(negotiable_ad, median=1000.0)
+        assert delta == 0.0

@@ -134,8 +134,13 @@ def build_listing_detail(
     price_byn = raw_price_byn
     description = _stringify_value(ad.get("body")) or _stringify_value(ad.get("body_short"))
     reference = resolve_price_reference(ad, market_stats, category_price_stats)
-    price_delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
-    fair_band = fair_price_band(price_delta)
+    # For negotiable listings the price is unknown — we must NOT report
+    # a delta vs market (the metric function returns 0.0 in that case,
+    # which the UI would render as "≈ по рынку", masking the unknown
+    # price as "fair"). Surface it as None so the badge is suppressed.
+    price_delta_raw = compute_price_vs_reference(ad, market_stats, category_price_stats)
+    price_delta: float | None = None if price_type == "negotiable" else price_delta_raw
+    fair_band = fair_price_band(price_delta_raw)
     flags = detect_anomaly_flags(ad, reference.stats)
     query_insights = analyze_query_text(query)
     deal_score = compute_deal_score(
@@ -240,6 +245,10 @@ def build_listing_item(
         )
     active_reference = cluster_stats if cluster_applied else reference.stats
     fair_band = fair_price_band(price_delta)
+    # Negotiable listings have an unknown price — don't surface a delta
+    # (otherwise the 0.0 default reads as "≈ по рынку" in the UI).
+    # Free listings legitimately get -100% (full discount) and stay numeric.
+    price_delta_for_response: float | None = None if price_type == "negotiable" else price_delta
     flags = detect_anomaly_flags(ad, active_reference)
     deal_score = compute_deal_score(
         ad,
@@ -266,7 +275,7 @@ def build_listing_item(
             or ("shop" if ad.get("company_ad") else "private")
         ),
         company_ad=bool(ad.get("company_ad")),
-        price_vs_median=price_delta,
+        price_vs_median=price_delta_for_response,
         price_reference_scope=reference.scope,
         price_reference_label=reference.label,
         config_summary=deal_score.config_summary,

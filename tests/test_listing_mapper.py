@@ -269,6 +269,28 @@ class TestBuildListingItem:
         # "бесплатно" keyword -> free -> price 0.0
         assert item.price == 0.0
         assert item.price_type == "free"
+        # Free vs market median is -100% (full discount), surfaced for UI
+        assert item.price_vs_median == -100.0
+
+    def test_negotiable_suppresses_price_delta(self) -> None:
+        # The metric function returns 0.0 for negotiable (no signal),
+        # but the UI would render that as "≈ по рынку" — falsely
+        # implying a fair price. Listing must surface price_vs_median
+        # as None so the delta badge is hidden.
+        ad = _ad(price_byn=0)
+        ad["body"] = "Цена обсуждается, торг уместен"
+        item = build_listing_item(
+            ad,
+            query="x",
+            currency="BYN",
+            rates=RATES,
+            currency_service=_currency_service(),
+            median_byn=2000.0,
+            market_stats=_make_stats(),
+        )
+        assert item.price is None
+        assert item.price_type == "negotiable"
+        assert item.price_vs_median is None
 
     def test_with_thumbnail(self) -> None:
         ad = _ad(images=[{"path": "thumb.jpg"}])

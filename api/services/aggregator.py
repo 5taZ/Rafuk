@@ -283,18 +283,99 @@ def precompute_cluster_stats(
     return result
 
 
+# ── Price-type detection (free vs negotiable) ─────────────────────────
+#
+# Kufar returns price=0 for both "договорная" (price unknown / "ask the
+# seller") and "бесплатно" (genuine giveaway). The two are semantically
+# different: negotiable items must be EXCLUDED from price metrics
+# (median, mean, stats, %vs market), free items must be INCLUDED as 0
+# (a 100% discount). Wrongly labelling a negotiable listing as free
+# poisons the market median; wrongly labelling free as negotiable
+# hides genuine giveaways from users. The default is therefore the
+# safer "negotiable" — only explicit, contextual giveaway phrases
+# escalate to "free".
+#
+# Sources of false positives we deliberately reject:
+# * "Бесплатная доставка / установка / сборка / осмотр" — describes a
+#   service, not the item itself.
+# * "Покажу/осмотр товара бесплатно" — describes the demo, not the price.
+# * "Free shipping" — same in English.
+# * Standalone "не нужен / не нужны" — common in body text ("этот мне
+#   уже не нужен"), doesn't imply giveaway.
+# * Naked "заберите" — just means "come pick it up after payment".
+
+# Russian + Belarusian "free" tokens
+_FREE_WORD = r"(?:бесплатно|бясплатна|даром|дарма|безвозмездно)"
+
+# Verbs of giving / taking (Russian + Belarusian inflections)
+_GIVE_VERB = (
+    r"(?:"
+    r"отда[мйёт]\w{0,3}|отдаю|отдадим|отдают|"        # Russian
+    r"адда[мйёт]\w{0,3}|аддаю|аддадзім|"               # Belarusian "addam"
+    r"забер[иёы]\w*|заберите?|забирай(?:це|те)?|"      # Russian "zaberi"
+    r"забіра[ею]|забіра[йю]ц[ея]|"                    # Belarusian
+    r"возьми(?:те|це)?"
+    r")"
+)
+
+# Explicit "give-it-away" phrasing — verb + free-word in either order,
+# allowing up to 3 intervening words (e.g. "отдам в хорошие руки бесплатно").
+_GIVEAWAY_RE = (
+    re.compile(rf"\b{_GIVE_VERB}\b(?:\s+\w+){{0,3}}\s+{_FREE_WORD}\b"),
+    re.compile(rf"\b{_FREE_WORD}\b(?:\s+\w+){{0,3}}\s+{_GIVE_VERB}\b"),
+)
+
+# English giveaway phrases
+_EN_GIVEAWAY_RE = re.compile(
+    r"\b(?:take it for free|grab it free|free to a good home|giving away|free to take)\b"
+)
+
+# Negation kills any positive match: "не бесплатно", "не за бесплатно",
+# "не даром", "не за даром".
+_NEGATION_RE = re.compile(rf"\bне\s+(?:за\s+)?{_FREE_WORD}\b")
+
+# When _FREE_WORD appears in subject (title), it's usually a real signal
+# unless the next word is a "service" compound like "доставка" or "установка".
+_TITLE_BLACKLIST_RE = re.compile(
+    rf"\b{_FREE_WORD}\s+("
+    r"доставк|перевозк|перевоз|осмотр|установк|сборк|разборк|"
+    r"проб|испытан|монтаж|ремонт|получит|оценк|консультац|"
+    r"сервис|подключен|настройк|обучен|пример|просмотр"
+    r")"
+)
+
+
 def detect_price_type(ad: dict[str, Any]) -> str:
-    """Detect if a zero-price listing is 'free' or 'negotiable' based on text."""
-    text = f"{ad.get('subject', '')} {ad.get('body', '')} {ad.get('body_short', '')}".lower()
-    free_keywords = [
-        "бесплатно", "даром", "отдам бесплатно", "отдам даром",
-        "безвозмездно", "не нужны", "не нужен", "заберите", "забрать бесплатно",
-        "отдаю бесплатно", "отдаю даром", "free", "отдам в хорошие руки бесплатно",
-        "отдам за шоколадку", "отдам даром", "отдам бесплатно",
-    ]
-    for kw in free_keywords:
-        if kw in text:
+    """Decide if a zero-price ad is 'free' (genuine giveaway) or 'negotiable'.
+
+    Default: 'negotiable' (the safer choice — unknown price).
+    Returns 'free' only when the ad text contains a contextual giveaway
+    phrase (verb of giving + free-word) OR a standalone free-word in the
+    title that isn't followed by a service-compound stop-word.
+    """
+    subject = (ad.get("subject") or "").lower()
+    body = (ad.get("body") or "").lower()
+    body_short = (ad.get("body_short") or "").lower()
+    full_text = f"{subject}\n{body}\n{body_short}"
+
+    # Negation overrides everything
+    if _NEGATION_RE.search(full_text):
+        return "negotiable"
+
+    # 1. Contextual giveaway phrases anywhere
+    for pat in _GIVEAWAY_RE:
+        if pat.search(full_text):
             return "free"
+
+    # 2. English explicit giveaway
+    if _EN_GIVEAWAY_RE.search(full_text):
+        return "free"
+
+    # 3. Standalone free-word in title — but not in service-compound context
+    if re.search(rf"\b{_FREE_WORD}\b", subject):
+        if not _TITLE_BLACKLIST_RE.search(subject):
+            return "free"
+
     return "negotiable"
 
 
