@@ -252,7 +252,10 @@ function createAppActions(context) {
 
     function _guardAdMutation(adId) {
         _inflightAdMutations.add(adId);
-        setTimeout(() => _inflightAdMutations.delete(adId), 30000);
+        // FE-M14: shared INFLIGHT_GUARD_MS from dom_helpers.js — same
+        // window as api_watchlist's per-row dedupe so a click in one
+        // surface and a click in the other can't race past each other.
+        setTimeout(() => _inflightAdMutations.delete(adId), INFLIGHT_GUARD_MS);
     }
 
     async function addLeadFromListing(item, source = "manual", queryOverride = null) {

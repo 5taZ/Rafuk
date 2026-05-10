@@ -1,3 +1,18 @@
+// FE-M14: shared UI/UX timing constants. Each value is named where
+// the previous "magic number" was duplicated across ≥2 modules and
+// the magnitude (multi-second / sub-second) carries product meaning.
+// Adding a new one is fine; mutating an existing one needs a comment
+// explaining the user-visible effect.
+
+// In-flight optimistic-mutation guard. ad_ids and watchlist row ids
+// stay in the dedupe set for this long after a click that fires a
+// POST/PATCH/DELETE — long enough to absorb a slow 3G round-trip
+// plus the local re-render, short enough that a stuck request
+// doesn't permanently lock the user out of re-clicking. Used by
+// app_actions.js (cross-pipeline ad-mutation guard) and
+// api_watchlist.js (per-row guard).
+const INFLIGHT_GUARD_MS = 30_000;
+
 // HapticFeedback requires Telegram WebApp version >= 6.1.
 // Returns the HapticFeedback object if available, null otherwise.
 function _tgHaptic() {

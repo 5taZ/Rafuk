@@ -315,7 +315,6 @@ function createApiAi(context) {
 
             // Cached result returned immediately
             if (startResp.cached && startResp.result) {
-                console.log("[AI] Cached result received");
                 const result = startResp.result;
                 state.detail.ai = { adId, loading: false, result, error: "", source: "ai" };
                 _stopLoadingAnimation(false);
@@ -327,9 +326,6 @@ function createApiAi(context) {
             if (!taskId) {
                 throw new Error("Сервер не вернул идентификатор задачи");
             }
-
-            console.log("[AI] Task started:", taskId);
-
             // Poll for result every 3 seconds
             const POLL_INTERVAL = 3000;
             const POLL_TIMEOUT = 12000;
@@ -358,7 +354,6 @@ function createApiAi(context) {
                         consecutivePollErrors = 0;
                         if (status.stage) {
                             _setStageLabel(status.stage);
-                            console.log("[AI] stage:", status.stage, "progress:", status.progress);
                         }
                         if (status.status === "done") {
                             resolve(status.result);
@@ -394,7 +389,6 @@ function createApiAi(context) {
             });
 
             if (isCancelled() || result == null) return;
-            console.log("[AI] Analysis complete");
             state.detail.ai = { adId, loading: false, result, error: "", source: "ai" };
             _showCompletionThen(() => {
                 if (isCancelled()) return;
@@ -906,7 +900,6 @@ function createApiAi(context) {
     }
 
     function _renderAIModalResult(data) {
-        console.log("[AI] Rendering result, data keys:", data ? Object.keys(data).join(",") : "null");
         _lastAiData = data;
 
         if (elements.aiModalLoading) elements.aiModalLoading.hidden = true;

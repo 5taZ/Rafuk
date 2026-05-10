@@ -14,7 +14,85 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 20 — frontend performance _(this commit)_
+### Wave 21 — frontend code quality _(this commit)_
+
+Seven FE/UX-M items investigated; two real cleanups landed, four
+verified as already-correct (audit was over-eager), one
+intentionally deferred to a dedicated wave.
+
+* **FE-M12** — stripped 5 stale `console.log` debug
+  breadcrumbs from `frontend/js/api_ai.js`. They were the only
+  remaining `console.log` calls anywhere in the production
+  bundle; `console.error`/`console.warn` calls (kept) all
+  surface real failure modes (render errors, tracker save
+  failures, etc.) so they stay where they are.
+* **FE-M14 partial** — extracted the duplicated 30-second
+  in-flight-mutation cleanup magic number into a single
+  `INFLIGHT_GUARD_MS` constant in `frontend/js/dom_helpers.js`.
+  Both `app_actions.js` (cross-pipeline ad-mutation guard) and
+  `api_watchlist.js` (per-row guard) now reference it, so a
+  click in the leads surface and a click in the watchlist
+  surface for the same ad can't race past each other due to a
+  drift between the two timeouts. Other "magic" numbers in the
+  bundle are mostly animation timings (140/180/240/320 ms) that
+  carry product meaning — they stay inline next to the CSS
+  transition they're paired with.
+
+### Verified non-bugs / closed-by-prior-wave (no code change)
+
+* **FE-M4** — the audit complained about a circular dependency
+  between `api_events.js` and `app_actions.js`. There isn't one:
+  `api_events.js` is loaded first (per `index.html` script
+  order) and exposes `createApiEvents(context)` as a global;
+  `app_actions.js` then populates a `context` object with all
+  action functions and invokes `createApiEvents(context)` once.
+  Events read action references off the shared `context` at
+  runtime — classic dependency-injection, not a cycle.
+* **FE-M13** — the audit said the `virtual_list.js` recycle pool
+  "grows without bound". It doesn't: `renderedMap` is the only
+  pool, and `renderVisibleItems` removes any entry whose index
+  scrolls outside the viewport range (`renderedMap.delete(idx)`
+  + `el.remove()`) on every scroll tick. Worst-case size is
+  `(visible_end - visible_start) + 2 × bufferSize`, bounded by
+  the container height divided by item height. `setItems` also
+  clears the map outright when data changes.
+* **FE-L6** — Service Worker API cache-busting was already
+  closed by Wave 20: `CACHE_VERSION` bumps drop both static and
+  runtime caches on activate, plus the new
+  `RUNTIME_CACHE_MAX_AGE_SECONDS` (FE-M9) bounds how long any
+  individual entry can pin the user to stale data.
+
+### Deferred (intentionally, with reasoning)
+
+* **FE-M5** (`!important` migration) — 31 declarations across
+  `tokens.css` (8), `pipeline.css` (6), `modals.css` (11),
+  `brand.css` (4), `states.css` (2). Spot-checked: most are
+  intentional fights against either Telegram WebApp's inline
+  styles (`body`, `[data-theme]` overrides, modal overlays) or
+  the global `[hidden]` attribute (`display:none !important`
+  beats flex/grid display values that downstream rules want).
+  The pre-reduce-motion media query also relies on `!important`
+  to override component-level animation rules. Each removal
+  needs paired visual review; the bulk-strip a future wave
+  can do is small.
+* **UX-M8** (`api_ai.js` 1325-line split) — the natural split
+  points are 4 modules (modal lifecycle, analysis loop, result
+  rendering, PDF export). All four share the same closure-
+  scoped state (`_lastAiData`, progress refs, cancellation
+  signals) so the split needs careful closure-rewiring through
+  a new `context` shape. Not in this wave's scope; the
+  service-side `api/services/ai_service.py` split (Wave 18)
+  did the equivalent backend work and the AI flow on FE has
+  near-zero automated coverage, so a dedicated wave with a
+  manual smoke pass is the safer cadence.
+
+Also: bumped frontend cache-busting tags (`bump_static_version.sh`).
+
+Verification:
+* `ruff check . --select F` clean.
+* `pytest` 500 passed, 1 skipped, no regressions.
+
+### Wave 20 — frontend performance `b444ff1`
 
 Six FE-M items investigated; three were already closed by earlier
 waves (no code change needed), three got fixed here.
@@ -499,7 +577,8 @@ round-trip smoke), no regressions.
 | 17   | 6531622 | database tuning (LIFO pool, drop indexes, UNIQUE consents, widen links)  |
 | 18   | 3b6a526 | split `ai_service.py` — prompts/sanitize/dedupe into sibling modules    |
 | 19   | be5939f | extract `ai_marketplace.py` lexicon to JSON (BE-M17)                    |
-| 20   | _this_  | frontend performance (image onerror, SW max-age, CSS preload)            |
+| 20   | b444ff1 | frontend performance (image onerror, SW max-age, CSS preload)            |
+| 21   | _this_  | frontend code quality (strip console.log, INFLIGHT_GUARD_MS dedupe)     |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -507,14 +586,14 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 20:
+As of Wave 21:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
 | HIGH     | 54    | 50     | 4         | All 4 are ops/CI (CD, monitoring, backups, partitioning)    |
-| MEDIUM   | 73    | 37     | 36        | FE-M2/M3 verified, FE-M9/M10/M1 closed; PERF-M3 deferred    |
-| LOW      | 30    | 1      | 29        | Mostly polish (docs, dead imports)   |
+| MEDIUM   | 73    | 41     | 32        | FE-M5 + UX-M8 deferred; PERF-M3 deferred                    |
+| LOW      | 30    | 2      | 28        | FE-L6 closed via Wave 20 SW changes  |
 
 ## Conventions
 
