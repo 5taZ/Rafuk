@@ -14,7 +14,61 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 25.2 — fix nginx upstream resolution (revert + better fix) _(this commit)_
+### Wave 25.3 — fix modal inert regression (UX-M2 was broken since Wave 22) _(this commit)_
+
+User reported: **no scroll, no clicks inside any modal** (detail
+sheet, AI analysis, listing assistant). Root cause: a Wave 22
+regression that nobody had caught because there were no behavioural
+tests for the inert helper — only a static node-syntax sweep.
+
+Wave 22 (UX-M2 / a11y) added `_applyInertToSiblings(modalEl)` that
+iterates `document.body.children` and sets `inert=""` on every
+sibling except the modal. The code assumed modals were direct
+children of `<body>`. They aren't — in `frontend/index.html` every
+modal lives inside `<div class="app" id="app-root">`, which IS a
+direct body child. The Wave-22 loop saw `#app-root` as a "sibling"
+(`sibling === modalEl` was false for `#app-root` because the modal
+was DEEP inside it), so it inerted `#app-root`. The `inert`
+attribute propagates to all descendants per the WHATWG spec —
+including the modal itself. Result: every modal opened as inert
+and lost scroll/click/touch handling.
+
+Fix in `frontend/js/dom_helpers.js`:
+
+* Walk DOWN from `<body>` to the modal. At each level, inert the
+  children that are NOT on the path to the modal. The modal and its
+  ancestors back to `<body>` stay non-inert; everything else does.
+* For nested modals (e.g. AI analysis opened over a detail sheet),
+  also LIFT `inert` from the modal and its ancestors at this level —
+  because the outer modal's sweep had marked them inert. Stash the
+  lifted entries so the close-time restore puts them back.
+* On close, the new `_restoreInertSiblings` restores both the
+  newly-inerted siblings (un-inert) AND the lifted ones (re-inert)
+  in lockstep, preserving the outer modal's state.
+
+Behavioural test added (`test_inert_walk_handles_nested_modals`):
+runs the actual JS function against a minimal in-process DOM mock
+via Node, asserting three scenarios:
+
+* **flat** — modal as direct body child: modal stays active,
+  siblings get inert.
+* **nested** — modal inside `#app-root` (the real DOM shape): modal
+  AND `#app-root` stay active, all siblings at every level get
+  inert. This is the case Wave 22 silently broke.
+* **stacked** — second modal opens over the first: the inner modal
+  becomes active, the outer stays inert. Closing the inner restores
+  the outer to active; closing the outer un-inerts everything.
+
+Test suite: 508 passed (was 507), 1 skipped. Static version stamp
+bumped to `?v=20260510-91bfac2`. Frontend container rebuilt.
+
+After pulling the new build, all four affected modals (detail sheet,
+AI analysis, listing assistant, expenses, privacy) should scroll and
+respond to taps again. Nothing else in the audit list was directly
+affected by this regression, but it's worth a quick smoke-pass on
+each modal after redeploy.
+
+### Wave 25.2 — fix nginx upstream resolution (revert + better fix)
 
 Wave 25.1 was **wrong**. It tried to defer `host.docker.internal`
 resolution to runtime via nginx's `resolver 127.0.0.11` (Docker's

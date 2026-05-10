@@ -51,6 +51,170 @@ def test_node_syntax_check() -> None:
         assert result.returncode == 0, f"{script}: {result.stderr}"
 
 
+def test_inert_walk_handles_nested_modals() -> None:
+    """Wave 25.3 regression test: _applyInertToSiblings must walk DOWN
+    from <body> to the modal, inerting siblings at each level. The
+    Wave 22 version assumed modals were direct children of <body>,
+    but in this codebase they live inside ``<div class="app">``.
+    The broken version inerted ``<div class="app">`` and the
+    inheritance propagated to the modal itself — symptom was
+    no scroll / no clicks inside any modal.
+
+    This test runs the actual JS function against a minimal DOM
+    mock through Node, exercising both the flat case (modal as
+    body child) and the nested case (modal inside #app-root).
+    """
+    helpers_src = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    # Extract just the two inert functions so the runner doesn't need
+    # to load the rest of dom_helpers.js (which references browser-
+    # specific APIs we don't mock).
+    apply_match = re.search(
+        r"function _applyInertToSiblings\(modalEl\)\s*\{.*?\n\}\n",
+        helpers_src, re.DOTALL,
+    )
+    restore_match = re.search(
+        r"function _restoreInertSiblings\(modalEl\)\s*\{.*?\n\}\n",
+        helpers_src, re.DOTALL,
+    )
+    assert apply_match and restore_match, "inert helpers not found"
+
+    harness = r"""
+// Minimal element mock supporting the operations the inert helpers use.
+function makeEl(name) {
+    const el = {
+        _name: name,
+        _parent: null,
+        children: [],
+        _attrs: new Map(),
+        isConnected: true,
+        setAttribute(k, v) { this._attrs.set(k, v); },
+        removeAttribute(k) { this._attrs.delete(k); },
+        hasAttribute(k) { return this._attrs.has(k); },
+        contains(other) {
+            if (other === this) return true;
+            for (const c of this.children) if (c.contains(other)) return true;
+            return false;
+        },
+        _appendChild(child) { child._parent = this; this.children.push(child); },
+    };
+    return el;
+}
+
+function isInert(el) { return el.hasAttribute("inert"); }
+
+// __APPLY__
+// __RESTORE__
+
+// ── Case 1: flat (modal is direct body child) ─────────────────────────
+{
+    const body = makeEl("body");
+    const offline = makeEl("offline");
+    const ptr = makeEl("ptr");
+    const modal = makeEl("modal");
+    body._appendChild(offline);
+    body._appendChild(ptr);
+    body._appendChild(modal);
+    globalThis.document = { body };
+
+    _applyInertToSiblings(modal);
+    if (isInert(modal)) throw new Error("flat: modal must not be inert");
+    if (!isInert(offline)) throw new Error("flat: offline must be inert");
+    if (!isInert(ptr)) throw new Error("flat: ptr must be inert");
+
+    _restoreInertSiblings(modal);
+    if (isInert(offline) || isInert(ptr)) throw new Error("flat: restore failed");
+}
+
+// ── Case 2: nested (modal inside #app-root, matching real index.html) ─
+{
+    const body = makeEl("body");
+    const offline = makeEl("offline");
+    const ptr = makeEl("ptr");
+    const appRoot = makeEl("appRoot");
+    const header = makeEl("header");
+    const main = makeEl("main");
+    const modal = makeEl("modal");
+    body._appendChild(offline);
+    body._appendChild(ptr);
+    body._appendChild(appRoot);
+    appRoot._appendChild(header);
+    appRoot._appendChild(main);
+    appRoot._appendChild(modal);
+    globalThis.document = { body };
+
+    _applyInertToSiblings(modal);
+    if (isInert(modal)) throw new Error("nested: modal itself must not be inert");
+    if (isInert(appRoot)) throw new Error("nested: app-root must not be inert (it's on the path)");
+    if (!isInert(offline)) throw new Error("nested: offline must be inert");
+    if (!isInert(ptr)) throw new Error("nested: ptr must be inert");
+    if (!isInert(header)) throw new Error("nested: header must be inert");
+    if (!isInert(main)) throw new Error("nested: main must be inert");
+
+    _restoreInertSiblings(modal);
+    if (isInert(offline) || isInert(ptr) || isInert(header) || isInert(main)) {
+        throw new Error("nested: restore must un-inert everything we set");
+    }
+}
+
+// ── Case 3: nested modal opened over another modal ────────────────────
+{
+    const body = makeEl("body");
+    const appRoot = makeEl("appRoot");
+    const header = makeEl("header");
+    const outer = makeEl("outer");
+    const inner = makeEl("inner");
+    body._appendChild(appRoot);
+    appRoot._appendChild(header);
+    appRoot._appendChild(outer);
+    appRoot._appendChild(inner);  // sibling of outer at app-root level
+    globalThis.document = { body };
+
+    _applyInertToSiblings(outer);
+    if (!isInert(inner)) throw new Error("stacked: inner must be inert after outer opens");
+    if (!isInert(header)) throw new Error("stacked: header must be inert");
+    if (isInert(outer)) throw new Error("stacked: outer must not be inert");
+
+    _applyInertToSiblings(inner);
+    if (isInert(inner)) throw new Error("stacked: inner must not be inert after IT opens (lift)");
+    if (!isInert(outer)) throw new Error("stacked: outer stays inert (it's behind inner)");
+    if (!isInert(header)) throw new Error("stacked: header stays inert");
+
+    _restoreInertSiblings(inner);
+    // Inner closing restores the state-before-inner-opened: inner was
+    // inert (from outer's sweep), outer was active (it was the open
+    // modal), header was inert.
+    if (!isInert(inner)) throw new Error("stacked: closing inner re-applies inert it lifted");
+    if (isInert(outer)) throw new Error("stacked: outer is the open modal again, must not be inert");
+    if (!isInert(header)) throw new Error("stacked: header stays inert (outer is still open)");
+
+    _restoreInertSiblings(outer);
+    if (isInert(inner) || isInert(outer) || isInert(header)) {
+        throw new Error("stacked: closing outer un-inerts everything");
+    }
+}
+
+console.log("OK");
+"""
+    harness = harness.replace("// __APPLY__", apply_match.group(0))
+    harness = harness.replace("// __RESTORE__", restore_match.group(0))
+
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as tmp:
+        tmp.write(harness)
+        tmp_path = tmp.name
+    try:
+        result = subprocess.run(
+            ["node", tmp_path], capture_output=True, text=True, timeout=15,
+        )
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+    assert result.returncode == 0, (
+        f"inert behaviour test failed:\nstdout: {result.stdout}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert "OK" in result.stdout, f"unexpected output: {result.stdout!r}"
+
+
 def test_close_ai_modal_cancels_polling() -> None:
     """closeAIModal used to leave the AI polling loop running for up to 6
     minutes, blocking re-opening AI Analysis. Verify the cancel-by-session

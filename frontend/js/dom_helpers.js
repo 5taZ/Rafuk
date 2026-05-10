@@ -172,40 +172,98 @@ function unlockBodyScroll() {
  * then wait for `animationend` before flipping `[hidden]=true` so the
  * slide-down actually plays.
  */
-// UX-M2: every direct child of <body> that isn't the open modal gets
-// the ``inert`` attribute applied so the page underneath becomes
-// non-focusable AND announced-as-hidden by assistive tech for the
-// duration the modal is up. ``inert`` is a one-shot equivalent of
-// the older "set tabindex=-1 + aria-hidden=true on every sibling"
-// dance and is supported by every browser the Mini App targets
-// (Telegram WebView is Blink/WebKit, both shipped inert in 2022).
+// UX-M2: while a modal is open, mark everything ELSE on the page as
+// ``inert`` so the user can't tab/click through to background chrome
+// and assistive tech doesn't announce a mix of dialog + page. ``inert``
+// is a one-shot equivalent of the older "set tabindex=-1 +
+// aria-hidden=true on every sibling" dance and is supported by every
+// browser the Mini App targets (Telegram WebView is Blink/WebKit,
+// both shipped inert in 2022).
 //
-// The original element list is stashed on the modal so we restore
-// exactly the elements we touched, even if the DOM re-renders new
-// siblings while the modal is open.
+// Wave 25.3: the original Wave 22 implementation only inerted **direct
+// children of <body>** and assumed the modal itself was one of them.
+// In this codebase the modals live INSIDE ``<div class="app"
+// id="app-root">``, which IS a direct child of body — so the loop
+// inerted ``#app-root`` too, and ``inert`` inherits down the subtree.
+// Result: the modal that was supposed to stay interactive became
+// inert along with everything else. Symptom: no scroll / no clicks
+// inside any modal.
+//
+// Correct algorithm: walk DOWN from <body> to the modal. At each
+// level, inert the children that are NOT on the path to the modal.
+// For nested modals (e.g. AI modal opened over the detail sheet),
+// also LIFT inert from the modal itself + each ancestor on the path,
+// because an outer modal's walk would have inerted them at THIS
+// modal's body-level. Both the "newly inerted" and "lifted from"
+// sets are stashed so close-time restore is exact.
 function _applyInertToSiblings(modalEl) {
     if (!document.body) return;
-    const previouslyInert = [];
-    for (const sibling of document.body.children) {
-        if (sibling === modalEl) continue;
-        if (sibling.hasAttribute("inert")) continue;  // already inert (e.g. another open modal)
-        sibling.setAttribute("inert", "");
-        previouslyInert.push(sibling);
+    if (!document.body.contains(modalEl)) return;
+
+    const newlyInert = [];   // we set inert here — must remove on close
+    const liftedInert = [];  // we removed inert here — must restore on close
+
+    let current = document.body;
+    while (true) {
+        // Find which child of `current` contains (or is) the modal —
+        // this is the next step on the path.
+        let pathChild = null;
+        for (const child of current.children) {
+            if (child === modalEl || child.contains(modalEl)) {
+                pathChild = child;
+                break;
+            }
+        }
+        if (!pathChild) break;
+
+        // Inert everything else at this level.
+        for (const sibling of current.children) {
+            if (sibling === pathChild) continue;
+            if (sibling.hasAttribute("inert")) continue;  // outer modal already inerted it
+            sibling.setAttribute("inert", "");
+            newlyInert.push(sibling);
+        }
+
+        // Lift inert from pathChild if some outer modal had set it
+        // (nested-modal case). Without this, the modal subtree stays
+        // inert and the user can't interact with it.
+        if (pathChild.hasAttribute("inert")) {
+            pathChild.removeAttribute("inert");
+            liftedInert.push(pathChild);
+        }
+
+        if (pathChild === modalEl) break;
+        current = pathChild;
     }
-    modalEl._inertSiblings = previouslyInert;
+
+    modalEl._inertSiblings = newlyInert;
+    modalEl._liftedInert = liftedInert;
 }
 
 function _restoreInertSiblings(modalEl) {
-    const siblings = modalEl._inertSiblings;
-    if (!Array.isArray(siblings)) return;
-    for (const sibling of siblings) {
-        // Only remove inert if WE applied it — never strip an inert
-        // that some outer modal placed on top of us.
-        if (sibling.isConnected) {
-            sibling.removeAttribute("inert");
+    const newlyInert = modalEl._inertSiblings;
+    const liftedInert = modalEl._liftedInert;
+    if (Array.isArray(newlyInert)) {
+        for (const sibling of newlyInert) {
+            // Only remove inert if WE applied it — never strip an inert
+            // that some outer modal placed on top of us.
+            if (sibling.isConnected) {
+                sibling.removeAttribute("inert");
+            }
+        }
+    }
+    if (Array.isArray(liftedInert)) {
+        for (const sibling of liftedInert) {
+            // We had temporarily un-inerted these because an outer
+            // modal had inerted them. Now that this modal is closing,
+            // hand them back to the outer modal in their inert state.
+            if (sibling.isConnected) {
+                sibling.setAttribute("inert", "");
+            }
         }
     }
     modalEl._inertSiblings = null;
+    modalEl._liftedInert = null;
 }
 
 function openModalAnimated(modalEl, { lockScroll = true } = {}) {
