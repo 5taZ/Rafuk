@@ -3,6 +3,14 @@ __pycache__/
 .venv/
 *.egg-info/
 .env
+.env.local
+.env.production
+.env.*.local
+*.pem
+*.key
+secrets.yml
+secrets.yaml
+.secrets/
 .ruff_cache/
 .pytest_cache/
 htmlcov/
@@ -20,4 +28,6 @@ FINAL_AUDIT_VERIFICATION.md
 FIX_RECENT_SEARCHES_CLEAR.md
 FIX_SEARCH_DEBOUNCE.md
 FIX_VIRTUAL_SCROLLING.md
+DEEP_DIVE_REVIEW_COMPREHENSIVE.md
+notmyfault.md
 .gstack/
