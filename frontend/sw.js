@@ -22,11 +22,13 @@
  *     in-flight guards already protect the UI).
  */
 
-// FE-M9: bumped to v6 alongside the staleWhileRevalidate max-age.
-// Activation drops the v5 RUNTIME_CACHE so any pre-FE-M9 entries
-// without a usable Date header get evicted in one shot instead
-// of being kept-but-aged forever by the new check.
-const CACHE_VERSION = "rafuk-cache-v6";
+// FE-M8 / FE-M9: bumped to v7. v6 added the staleWhileRevalidate
+// max-age check; v7 adds the offline-fallback page that
+// networkFirst falls through to when both the network and the
+// cached shell are unavailable. Activation evicts every older
+// runtime entry in one shot.
+const CACHE_VERSION = "rafuk-cache-v7";
+const OFFLINE_FALLBACK_URL = "/offline.html";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -73,9 +75,24 @@ const BYPASS_PATHS = [
 ];
 
 self.addEventListener("install", (event) => {
-    // Don't pre-cache anything — users on slow connections shouldn't
-    // pay for a "warm-up" download. The runtime cache fills as they
-    // navigate.
+    // FE-M8: pre-cache *only* the offline fallback page so the SW
+    // can serve a meaningful response on the very first offline
+    // navigation, before the user has had a chance to load the
+    // shell at least once. Everything else (CSS, JS, API) still
+    // fills the runtime cache lazily as the user navigates — we
+    // don't want a "warm-up download" tax on slow connections.
+    event.waitUntil(
+        caches
+            .open(STATIC_CACHE)
+            .then((cache) => cache.add(OFFLINE_FALLBACK_URL))
+            .catch(() => {
+                // If pre-cache fails (e.g. the file is briefly 404
+                // during a deploy) the SW still installs; the
+                // navigateOrOffline handler below falls back to
+                // ``throw err`` and the browser shows its native
+                // offline UI as before.
+            }),
+    );
     self.skipWaiting();
 });
 
@@ -161,6 +178,14 @@ async function networkFirst(request, cacheName) {
         if (request.mode === "navigate") {
             const fallback = await cache.match("/index.html");
             if (fallback) return fallback;
+            // FE-M8: if even the SPA shell isn't cached (first visit
+            // happened offline), fall through to the dedicated
+            // offline page. This lives in STATIC_CACHE because we
+            // pre-fetch it on install.
+            const offline = await cache.match(OFFLINE_FALLBACK_URL);
+            if (offline) return offline;
+            const offlineFromStatic = await caches.match(OFFLINE_FALLBACK_URL);
+            if (offlineFromStatic) return offlineFromStatic;
         }
         throw err;
     }

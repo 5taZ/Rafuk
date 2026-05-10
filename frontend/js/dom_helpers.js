@@ -172,6 +172,42 @@ function unlockBodyScroll() {
  * then wait for `animationend` before flipping `[hidden]=true` so the
  * slide-down actually plays.
  */
+// UX-M2: every direct child of <body> that isn't the open modal gets
+// the ``inert`` attribute applied so the page underneath becomes
+// non-focusable AND announced-as-hidden by assistive tech for the
+// duration the modal is up. ``inert`` is a one-shot equivalent of
+// the older "set tabindex=-1 + aria-hidden=true on every sibling"
+// dance and is supported by every browser the Mini App targets
+// (Telegram WebView is Blink/WebKit, both shipped inert in 2022).
+//
+// The original element list is stashed on the modal so we restore
+// exactly the elements we touched, even if the DOM re-renders new
+// siblings while the modal is open.
+function _applyInertToSiblings(modalEl) {
+    if (!document.body) return;
+    const previouslyInert = [];
+    for (const sibling of document.body.children) {
+        if (sibling === modalEl) continue;
+        if (sibling.hasAttribute("inert")) continue;  // already inert (e.g. another open modal)
+        sibling.setAttribute("inert", "");
+        previouslyInert.push(sibling);
+    }
+    modalEl._inertSiblings = previouslyInert;
+}
+
+function _restoreInertSiblings(modalEl) {
+    const siblings = modalEl._inertSiblings;
+    if (!Array.isArray(siblings)) return;
+    for (const sibling of siblings) {
+        // Only remove inert if WE applied it — never strip an inert
+        // that some outer modal placed on top of us.
+        if (sibling.isConnected) {
+            sibling.removeAttribute("inert");
+        }
+    }
+    modalEl._inertSiblings = null;
+}
+
 function openModalAnimated(modalEl, { lockScroll = true } = {}) {
     if (!modalEl) return;
     // If the modal is already on-screen (e.g. re-render after state update),
@@ -189,6 +225,10 @@ function openModalAnimated(modalEl, { lockScroll = true } = {}) {
     modalEl.hidden = false;
     if (lockScroll && wasHidden) lockBodyScroll();
     if (wasHidden) {
+        // UX-M2: hide the page from assistive tech BEFORE focus moves
+        // into the modal so screen readers announce only the dialog
+        // content, not a mix of dialog + still-visible page chrome.
+        _applyInertToSiblings(modalEl);
         const cleanup = trapFocus(modalEl);
         if (typeof cleanup === "function") {
             modalEl._focusTrapCleanup = cleanup;
@@ -214,6 +254,11 @@ function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
             modalEl._focusTrapCleanup();
             modalEl._focusTrapCleanup = null;
         }
+        // UX-M2: pop ``inert`` from the siblings BEFORE restoring focus
+        // — otherwise the previously-focused element is still inside an
+        // inert subtree at the moment ``focus()`` is called and the
+        // browser would refuse the focus move.
+        _restoreInertSiblings(modalEl);
         const prev = modalEl._previousFocus;
         if (prev && typeof prev.focus === "function") {
             try { prev.focus(); } catch (_) { /* element may have been removed */ }

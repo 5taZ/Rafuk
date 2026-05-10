@@ -516,6 +516,9 @@ function createAppActions(context) {
         // cleanup() on every exit path.
         let focusCleanup = null;
         if (typeof trapFocus === "function") focusCleanup = trapFocus(modal);
+        // UX-M2: also hide everything else from assistive tech for
+        // the duration of the consent gate.
+        if (typeof _applyInertToSiblings === "function") _applyInertToSiblings(modal);
 
         function updateAcceptBtn() {
             acceptBtn.disabled = !(aiCb.checked && crossCb.checked && pdCb.checked);
@@ -558,6 +561,10 @@ function createAppActions(context) {
             cancelBtn.removeEventListener("click", onCancel);
             if (privacyLink) privacyLink.removeEventListener("click", onPrivacyLink);
             if (typeof focusCleanup === "function") focusCleanup();
+            // UX-M2: restore inert AFTER the focus trap cleanup so the
+            // restored focus target isn't itself sitting in an inert
+            // subtree.
+            if (typeof _restoreInertSiblings === "function") _restoreInertSiblings(modal);
         }
 
         acceptBtn.addEventListener("click", onAccept);
@@ -574,11 +581,18 @@ function createAppActions(context) {
         document.body.classList.add("modal-open");
         let focusCleanup = null;
         if (typeof trapFocus === "function") focusCleanup = trapFocus(modal);
+        // UX-M2: hide rest of the app from assistive tech while the
+        // privacy text is open. The consent modal is usually open
+        // underneath this one — the second-call guard inside
+        // _applyInertToSiblings (skip already-inert siblings) makes
+        // sure we don't double-stamp and mis-restore.
+        if (typeof _applyInertToSiblings === "function") _applyInertToSiblings(modal);
 
         function close() {
             modal.hidden = true;
             document.body.classList.remove("modal-open");
             if (typeof focusCleanup === "function") focusCleanup();
+            if (typeof _restoreInertSiblings === "function") _restoreInertSiblings(modal);
             closeBtn?.removeEventListener("click", close);
             overlay?.removeEventListener("click", close);
         }
@@ -678,6 +692,11 @@ function createAppActions(context) {
             document.body.classList.add("modal-open");
             let focusCleanup = null;
             if (typeof trapFocus === "function") focusCleanup = trapFocus(sheet);
+            // UX-M2: hide the rest of the page from assistive tech
+            // while the typed-delete-confirm dialog is open. The
+            // overlay was just appended to body so it's a body
+            // child by the time we apply.
+            if (typeof _applyInertToSiblings === "function") _applyInertToSiblings(overlay);
             // Focus the input so the user can start typing immediately —
             // a typed-confirm dialog where you have to click into the
             // box first is hostile UX.
@@ -698,6 +717,10 @@ function createAppActions(context) {
             function close(result) {
                 document.body.classList.remove("modal-open");
                 if (typeof focusCleanup === "function") focusCleanup();
+                // UX-M2: restore inert siblings BEFORE removing the
+                // overlay — once it's gone, ``_inertSiblings`` is
+                // unreachable and the page would stay frozen.
+                if (typeof _restoreInertSiblings === "function") _restoreInertSiblings(overlay);
                 overlay.remove();
                 resolve(result);
             }

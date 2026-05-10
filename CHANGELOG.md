@@ -14,7 +14,77 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 21 — frontend code quality _(this commit)_
+### Wave 22 — a11y + UX polish _(this commit)_
+
+Five UX/FE-M items investigated; three landed real fixes, two
+verified as already-correct.
+
+* **UX-M2** (`frontend/js/dom_helpers.js` +
+  `frontend/js/app_actions.js`): `openModalAnimated` now applies
+  `inert` to every direct child of `<body>` other than the
+  modal itself, restored on close. Same treatment extended by
+  hand to the three manual modal paths (consent gate, privacy
+  text, typed-delete-confirm) so all 10 modal surfaces share
+  the same a11y posture. The `inert` attribute is the modern
+  one-shot replacement for the `tabindex=-1 + aria-hidden=true`
+  dance — Telegram WebView (Blink/WebKit) has supported it
+  since 2022. The restore step runs **before** focus is moved
+  back to `_previousFocus` so the restored target isn't itself
+  sitting in an inert subtree.
+
+* **FE-M11** (`frontend/js/render_core.js`): added
+  pause-on-hover/focus to the toast component. `pointerenter`
+  and `focusin` clear the dismiss timer; `pointerleave` and
+  `focusout` reschedule it for whatever time was left when the
+  pause started. A user who hovers a 3 s toast 1 s in and lets
+  go after 5 s still gets the remaining 2 s to read the
+  message. Floor of 400 ms on the resumed timer prevents a
+  fast hover-out from cutting the message before the user can
+  finish reading it.
+
+* **FE-M8** (`frontend/offline.html` + `frontend/sw.js`): added
+  a self-contained offline fallback page. The Service Worker
+  pre-caches it during `install` (the only resource it
+  pre-caches; everything else still fills lazily). When
+  `networkFirst` for a navigation request misses both the
+  network and the cached SPA shell, it now serves
+  `offline.html` instead of throwing — the browser's native
+  "no internet" page is no longer the user's last line of
+  defence. Bumped `CACHE_VERSION` to `rafuk-cache-v7` so older
+  installs eviction-cycle into v7 cleanly.
+
+### Verified non-bugs (no code change)
+
+* **UX-M1** — Wave 6 (`b390a08`) already added
+  `role="dialog" aria-modal="true" aria-labelledby="…"` to
+  every modal in `frontend/index.html` (7 surfaces) and
+  `aria-hidden="true"` to every decorative SVG, skeleton, and
+  spacer. Spot-checked: charts (`render_charts.js`),
+  card-builder placeholders (`render_card_builders.js`),
+  virtual-list spacers (`virtual_list.js`), AI warning icon
+  (`api_ai.js`), tracker-status spinner (`render_trackers.js`).
+  The only `setAttribute("aria-hidden")` calls in the bundle
+  are intentional, and the audit's complaint about missing
+  ARIA labels on interactive elements doesn't match the
+  current DOM.
+
+* **UX-H1** — focus trap is wired into every modal open path:
+  `openModalAnimated` (used by listing detail, expenses,
+  AI analysis, AI listing assistant, edit-tracker — installs
+  `trapFocus` + saves `_previousFocus` for restore) and the
+  three manual paths (consent / privacy / typed-confirm)
+  which all install `trapFocus(modal)` next to their
+  `modal.hidden = false`. The audit was tracking a slice of
+  reality from before Wave 6's a11y wave.
+
+Also: bumped frontend cache-busting tags
+(`bump_static_version.sh`).
+
+Verification:
+* `ruff check . --select F` clean.
+* `pytest` 500 passed, 1 skipped, no regressions.
+
+### Wave 21 — frontend code quality `016efd2`
 
 Seven FE/UX-M items investigated; two real cleanups landed, four
 verified as already-correct (audit was over-eager), one
@@ -578,7 +648,8 @@ round-trip smoke), no regressions.
 | 18   | 3b6a526 | split `ai_service.py` — prompts/sanitize/dedupe into sibling modules    |
 | 19   | be5939f | extract `ai_marketplace.py` lexicon to JSON (BE-M17)                    |
 | 20   | b444ff1 | frontend performance (image onerror, SW max-age, CSS preload)            |
-| 21   | _this_  | frontend code quality (strip console.log, INFLIGHT_GUARD_MS dedupe)     |
+| 21   | 016efd2 | frontend code quality (strip console.log, INFLIGHT_GUARD_MS dedupe)     |
+| 22   | _this_  | a11y + UX polish (inert siblings, toast pause-on-hover, offline page)   |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -586,13 +657,13 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 21:
+As of Wave 22:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
-| HIGH     | 54    | 50     | 4         | All 4 are ops/CI (CD, monitoring, backups, partitioning)    |
-| MEDIUM   | 73    | 41     | 32        | FE-M5 + UX-M8 deferred; PERF-M3 deferred                    |
+| HIGH     | 54    | 51     | 3         | UX-H1 closed (verified-via-Wave-6); rest are ops/CI         |
+| MEDIUM   | 73    | 46     | 27        | FE-M5 + UX-M8 deferred; PERF-M3 deferred                    |
 | LOW      | 30    | 2      | 28        | FE-L6 closed via Wave 20 SW changes  |
 
 ## Conventions

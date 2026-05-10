@@ -177,6 +177,38 @@ function createRenderCore(context) {
         const dismissTimer = setTimeout(() => dismissToast(toast), duration);
         toast.dataset.dismissTimer = String(dismissTimer);
 
+        // FE-M11: pause the auto-dismiss timer while the user is
+        // hovering the toast or has keyboard focus inside it. The
+        // remaining time after a pause/resume cycle is what was left
+        // when the pause started — so a user who hovers a 3 s toast
+        // 1 s in and lets go after another 5 s still gets 2 s to
+        // read the message before it slides out. ``pointerenter`` /
+        // ``pointerleave`` fire on the same element regardless of
+        // mouse vs touch (touch hovers don't fire on iOS Safari
+        // mid-tap, but we restart on ``focusout`` from the close
+        // button anyway). Mouse-only listeners are intentional;
+        // touch users dismiss with the × button or wait it out.
+        let _remainingMs = duration;
+        let _pauseStart = 0;
+        function _pauseDismiss() {
+            const timerId = Number(toast.dataset.dismissTimer || 0);
+            if (!timerId) return;
+            clearTimeout(timerId);
+            toast.dataset.dismissTimer = "0";
+            _pauseStart = Date.now();
+        }
+        function _resumeDismiss() {
+            if (!_pauseStart) return;
+            _remainingMs = Math.max(400, _remainingMs - (Date.now() - _pauseStart));
+            _pauseStart = 0;
+            const next = setTimeout(() => dismissToast(toast), _remainingMs);
+            toast.dataset.dismissTimer = String(next);
+        }
+        toast.addEventListener("pointerenter", _pauseDismiss);
+        toast.addEventListener("pointerleave", _resumeDismiss);
+        toast.addEventListener("focusin", _pauseDismiss);
+        toast.addEventListener("focusout", _resumeDismiss);
+
         const closeBtn = toast.querySelector(".toast-close");
         closeBtn.addEventListener("click", () => {
             const timerId = Number(toast.dataset.dismissTimer || 0);
