@@ -1,0 +1,234 @@
+{
+  "_comment": "Wave 19 / BE-M17 — static lexical tokens extracted from api/services/ai_marketplace.py. Pure data edited by product/linguistics, not engineering. Loaded once at import time in ai_marketplace.py and materialised into frozenset / tuple structures. Adding a new token here requires no Python change; the service picks it up on next boot.",
+  "ignored_param_keys": [
+    "condition",
+    "currency",
+    "price",
+    "users_synonyms"
+  ],
+  "stop_tokens": [
+    "купить",
+    "продам",
+    "продаю",
+    "в",
+    "на",
+    "для",
+    "и",
+    "с",
+    "без",
+    "по",
+    "из",
+    "от",
+    "до"
+  ],
+  "fuel_words": {
+    "diesel": ["дизель", "tdi", "dci", "hdi", "cdi"],
+    "petrol": ["бензин", "fsi", "tsi", "tfsi", "gdi"],
+    "hybrid": ["гибрид", "hybrid"],
+    "electric": ["электро", "electric", "ev"],
+    "gas": ["газ", "lpg", "метан"]
+  },
+  "transmission_words": {
+    "auto": ["автомат", "акпп", "tiptronic", "вариатор", "dsg", "робот"],
+    "manual": ["механика", "мкпп"]
+  },
+  "hot_word_groups": {
+    "finance": [
+      "кредит",
+      "лизинг",
+      "рассрочка",
+      "платеж",
+      "платёж",
+      "/мес",
+      "в месяц",
+      "без взноса"
+    ],
+    "reseller": [
+      "перекуп",
+      "автохаус",
+      "автосалон",
+      "площадка",
+      "комиссион",
+      "магазин",
+      "trade-in",
+      "трейд ин"
+    ],
+    "sales": [
+      "доставка",
+      "гарантия",
+      "оформим",
+      "подберем",
+      "подберём",
+      "в наличии",
+      "под заказ"
+    ]
+  },
+  "auto_part_stems": [
+    "форсунк",
+    "тнвд",
+    "датчик",
+    "бампер",
+    "капот",
+    "двер",
+    "крыл",
+    "фар",
+    "фонар",
+    "турбин",
+    "амортиз",
+    "насос",
+    "рейк",
+    "коробк",
+    "акпп",
+    "мкпп",
+    "двигател",
+    "мотор",
+    "стартер",
+    "генератор",
+    "радиатор",
+    "интеркулер",
+    "зеркал",
+    "сиден",
+    "салон",
+    "рул"
+  ],
+  "color_words": [
+    "black",
+    "white",
+    "blue",
+    "green",
+    "red",
+    "pink",
+    "gold",
+    "silver",
+    "purple",
+    "gray",
+    "grey",
+    "space gray",
+    "черный",
+    "чёрный",
+    "белый",
+    "синий",
+    "голубой",
+    "зеленый",
+    "зелёный",
+    "красный",
+    "розовый",
+    "золотой",
+    "серый",
+    "фиолетовый"
+  ],
+  "auto_brand_tokens": [
+    "audi",
+    "bmw",
+    "mercedes",
+    "volkswagen",
+    "toyota",
+    "honda",
+    "ford",
+    "hyundai",
+    "kia",
+    "nissan",
+    "skoda",
+    "mazda",
+    "opel",
+    "renault",
+    "peugeot",
+    "q7",
+    "q5",
+    "q3",
+    "x5",
+    "x3",
+    "a4",
+    "a6",
+    "a8"
+  ],
+  "category_generic_tokens": {
+    "headphones": [
+      "наушники",
+      "headphones",
+      "buds",
+      "airpods",
+      "pro",
+      "max",
+      "wireless",
+      "bluetooth"
+    ],
+    "watch": [
+      "watch",
+      "часы",
+      "smartwatch",
+      "series",
+      "ultra",
+      "classic",
+      "band"
+    ],
+    "camera": [
+      "camera",
+      "камера",
+      "объектив",
+      "lens",
+      "зеркалка",
+      "беззеркалка",
+      "body"
+    ],
+    "phone": [
+      "iphone",
+      "phone",
+      "телефон",
+      "смартфон",
+      "pro",
+      "max",
+      "plus",
+      "mini"
+    ],
+    "tablet": [
+      "tablet",
+      "планшет",
+      "ipad",
+      "tab"
+    ],
+    "laptop": [
+      "laptop",
+      "ноутбук",
+      "macbook",
+      "ультрабук",
+      "gaming",
+      "игровой"
+    ]
+  },
+  "accessory_type_tokens": {
+    "phone_accessory": [
+      "чехол", "стекло", "защитное", "пленка", "накладка", "бампер",
+      "зарядка", "кабель", "повербанк", "powerbank", "держатель",
+      "попсокет", "кольцо", "стилос", "ручка"
+    ],
+    "auto_accessory": [
+      "коврики", "коврик", "держатель", "зарядка", "регистратор",
+      "видеорегистратор", "чехол", "накидка", "органайзер"
+    ],
+    "computer_accessory": [
+      "мышь", "клавиатура", "ssd", "hdd", "флешка", "хаб", "монитор",
+      "webcam", "коврик", "подставка"
+    ],
+    "photo_accessory": [
+      "штатив", "вспышка", "фильтр", "карта", "памяти", "гимбал",
+      "сумка", "аккумулятор", "батарея"
+    ],
+    "gaming_accessory": [
+      "руль", "контроллер", "геймпад", "наушники", "зарядная",
+      "станция", "vr", "очки"
+    ],
+    "home_accessory": [
+      "органайзер", "ковер", "коврик", "штора", "занавеска", "лампа",
+      "светильник", "декор", "ваза", "полка"
+    ],
+    "bicycle_accessory": [
+      "фара", "замок", "насос", "шлем", "крыло", "крылья", "звонок",
+      "держатель", "сумка", "корзина"
+    ],
+    "watch_accessory": [
+      "ремешок", "браслет", "зарядка", "кабель", "чехол", "стекло",
+      "защитное"
+    ]
+  }
+}

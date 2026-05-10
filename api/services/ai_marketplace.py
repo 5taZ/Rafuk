@@ -18,64 +18,56 @@ from api.services.ai_service import detect_category, normalize_condition_label
 from api.services.listing_mapper import first_image_url
 from api.services.reseller_tools import analyze_query_text
 
-_IGNORED_PARAM_KEYS = {"condition", "currency", "price", "users_synonyms"}
-_STOP_TOKENS = {
-    "купить",
-    "продам",
-    "продаю",
-    "в",
-    "на",
-    "для",
-    "и",
-    "с",
-    "без",
-    "по",
-    "из",
-    "от",
-    "до",
+# ── Static lexicon ───────────────────────────────────────────────────────
+# Wave 19 (BE-M17 / ai_marketplace split): ~200 lines of inline Russian /
+# English token dictionaries used to live here. They were pure data
+# (product-tuned lexical lists), which made every ``git blame`` on this
+# file cluttered and every token-addition a Python commit.  The data
+# now lives alongside category_guidance.json in api/services/data/
+# marketplace_lexicon.json; we materialise it once at import time into
+# the same frozenset / tuple shapes the similarity scorer expected,
+# so nothing downstream changes.
+_DATA_DIR = Path(__file__).parent / "data"
+
+
+def _load_marketplace_lexicon() -> dict[str, Any]:
+    with open(_DATA_DIR / "marketplace_lexicon.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+_LEXICON = _load_marketplace_lexicon()
+_IGNORED_PARAM_KEYS: frozenset[str] = frozenset(_LEXICON["ignored_param_keys"])
+_STOP_TOKENS: frozenset[str] = frozenset(_LEXICON["stop_tokens"])
+_FUEL_WORDS: dict[str, tuple[str, ...]] = {
+    k: tuple(v) for k, v in _LEXICON["fuel_words"].items()
 }
-_FUEL_WORDS = {
-    "diesel": ("дизель", "tdi", "dci", "hdi", "cdi"),
-    "petrol": ("бензин", "fsi", "tsi", "tfsi", "gdi"),
-    "hybrid": ("гибрид", "hybrid"),
-    "electric": ("электро", "electric", "ev"),
-    "gas": ("газ", "lpg", "метан"),
-}
-_TRANS_WORDS = {
-    "auto": ("автомат", "акпп", "tiptronic", "вариатор", "dsg", "робот"),
-    "manual": ("механика", "мкпп"),
+_TRANS_WORDS: dict[str, tuple[str, ...]] = {
+    k: tuple(v) for k, v in _LEXICON["transmission_words"].items()
 }
 _HOT_WORD_GROUPS: dict[str, tuple[str, ...]] = {
-    "finance": (
-        "кредит",
-        "лизинг",
-        "рассрочка",
-        "платеж",
-        "платёж",
-        "/мес",
-        "в месяц",
-        "без взноса",
-    ),
-    "reseller": (
-        "перекуп",
-        "автохаус",
-        "автосалон",
-        "площадка",
-        "комиссион",
-        "магазин",
-        "trade-in",
-        "трейд ин",
-    ),
-    "sales": (
-        "доставка",
-        "гарантия",
-        "оформим",
-        "подберем",
-        "подберём",
-        "в наличии",
-        "под заказ",
-    ),
+    k: tuple(v) for k, v in _LEXICON["hot_word_groups"].items()
 }
+_AUTO_PART_STEMS: tuple[str, ...] = tuple(_LEXICON["auto_part_stems"])
+_COLOR_WORDS: tuple[str, ...] = tuple(_LEXICON["color_words"])
+_AUTO_BRAND_TOKENS: frozenset[str] = frozenset(_LEXICON["auto_brand_tokens"])
+_CATEGORY_GENERIC_TOKENS: dict[str, frozenset[str]] = {
+    cat: frozenset(tokens)
+    for cat, tokens in _LEXICON["category_generic_tokens"].items()
+}
+# Accessory product-type tokens — the word that identifies WHAT the accessory
+# is (case, screen protector, charger, etc.).  When the target is a "чехол"
+# and a candidate is a "стекло", they share the phone model tokens but are
+# fundamentally different products.  This map lets the similarity scorer
+# penalise cross-type matches.
+_ACCESSORY_TYPE_TOKENS: dict[str, frozenset[str]] = {
+    kind: frozenset(tokens)
+    for kind, tokens in _LEXICON["accessory_type_tokens"].items()
+}
+
+# Regex patterns stay inline — they carry behaviour (the DFA compile
+# step is part of the pattern), not data, and keeping them next to
+# the functions that use them keeps the regex → usage relationship
+# obvious.
 _YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
 _ENGINE_RE = re.compile(r"\b([1-8]\.\d)\b")
 _AUTO_GEN_RE = re.compile(r"\b([a-z]?\d{1,3}[a-z]{0,2})\b")
@@ -83,180 +75,6 @@ _SCREEN_RE = re.compile(r"\b(\d{1,2}(?:[.,]\d)?)\s*(?:['\"″]|дюйм)")
 _MM_RE = re.compile(r"\b(\d{2,3})\s*мм\b")
 _FOCAL_RE = re.compile(r"\b(\d{2,3})\s*mm\b")
 _APERTURE_RE = re.compile(r"\bf/?(\d(?:\.\d)?)\b")
-_AUTO_PART_STEMS = (
-    "форсунк",
-    "тнвд",
-    "датчик",
-    "бампер",
-    "капот",
-    "двер",
-    "крыл",
-    "фар",
-    "фонар",
-    "турбин",
-    "амортиз",
-    "насос",
-    "рейк",
-    "коробк",
-    "акпп",
-    "мкпп",
-    "двигател",
-    "мотор",
-    "стартер",
-    "генератор",
-    "радиатор",
-    "интеркулер",
-    "зеркал",
-    "сиден",
-    "салон",
-    "рул",
-)
-_COLOR_WORDS = (
-    "black",
-    "white",
-    "blue",
-    "green",
-    "red",
-    "pink",
-    "gold",
-    "silver",
-    "purple",
-    "gray",
-    "grey",
-    "space gray",
-    "черный",
-    "чёрный",
-    "белый",
-    "синий",
-    "голубой",
-    "зеленый",
-    "зелёный",
-    "красный",
-    "розовый",
-    "золотой",
-    "серый",
-    "фиолетовый",
-)
-_AUTO_BRAND_TOKENS = {
-    "audi",
-    "bmw",
-    "mercedes",
-    "volkswagen",
-    "toyota",
-    "honda",
-    "ford",
-    "hyundai",
-    "kia",
-    "nissan",
-    "skoda",
-    "mazda",
-    "opel",
-    "renault",
-    "peugeot",
-    "q7",
-    "q5",
-    "q3",
-    "x5",
-    "x3",
-    "a4",
-    "a6",
-    "a8",
-}
-_CATEGORY_GENERIC_TOKENS: dict[str, set[str]] = {
-    "headphones": {
-        "наушники",
-        "headphones",
-        "buds",
-        "airpods",
-        "pro",
-        "max",
-        "wireless",
-        "bluetooth",
-    },
-    "watch": {
-        "watch",
-        "часы",
-        "smartwatch",
-        "series",
-        "ultra",
-        "classic",
-        "band",
-    },
-    "camera": {
-        "camera",
-        "камера",
-        "объектив",
-        "lens",
-        "зеркалка",
-        "беззеркалка",
-        "body",
-    },
-    "phone": {
-        "iphone",
-        "phone",
-        "телефон",
-        "смартфон",
-        "pro",
-        "max",
-        "plus",
-        "mini",
-    },
-    "tablet": {
-        "tablet",
-        "планшет",
-        "ipad",
-        "tab",
-    },
-    "laptop": {
-        "laptop",
-        "ноутбук",
-        "macbook",
-        "ультрабук",
-        "gaming",
-        "игровой",
-    },
-}
-
-# Accessory product-type tokens — the word that identifies WHAT the accessory
-# is (case, screen protector, charger, etc.).  When the target is a "чехол"
-# and a candidate is a "стекло", they share the phone model tokens but are
-# fundamentally different products.  This map lets the similarity scorer
-# penalise cross-type matches.
-_ACCESSORY_TYPE_TOKENS: dict[str, set[str]] = {
-    "phone_accessory": {
-        "чехол", "стекло", "защитное", "пленка", "накладка", "бампер",
-        "зарядка", "кабель", "повербанк", "powerbank", "держатель",
-        "попсокет", "кольцо", "стилос", "ручка",
-    },
-    "auto_accessory": {
-        "коврики", "коврик", "держатель", "зарядка", "регистратор",
-        "видеорегистратор", "чехол", "накидка", "органайзер",
-    },
-    "computer_accessory": {
-        "мышь", "клавиатура", "ssd", "hdd", "флешка", "хаб", "монитор",
-        "webcam", "коврик", "подставка",
-    },
-    "photo_accessory": {
-        "штатив", "вспышка", "фильтр", "карта", "памяти", "гимбал",
-        "сумка", "аккумулятор", "батарея",
-    },
-    "gaming_accessory": {
-        "руль", "контроллер", "геймпад", "наушники", "зарядная",
-        "станция", "vr", "очки",
-    },
-    "home_accessory": {
-        "органайзер", "ковер", "коврик", "штора", "занавеска", "лампа",
-        "светильник", "декор", "ваза", "полка",
-    },
-    "bicycle_accessory": {
-        "фара", "замок", "насос", "шлем", "крыло", "крылья", "звонок",
-        "держатель", "сумка", "корзина",
-    },
-    "watch_accessory": {
-        "ремешок", "браслет", "зарядка", "кабель", "чехол", "стекло",
-        "защитное",
-    },
-}
 
 
 # ── Similarity scoring weights ────────────────────────────────────────────
@@ -686,13 +504,15 @@ def build_market_context_fallback(
     return fallback or base
 
 
-# BE-H9: the per-category guidance dictionaries below used to live as
-# ~600 lines of inline Python literals. They are PURE data — translation-
-# style content edited by product, not engineering — so they now live in
-# api/services/data/category_guidance.json. The runtime structure is
-# unchanged: ``_CATEGORY_WATCH_OUT`` and ``_CATEGORY_CHECKLIST`` are
-# rebuilt at import time from the JSON, so callers don't need to change.
-_DATA_DIR = Path(__file__).parent / "data"
+# BE-H9 (Wave 5d): the per-category guidance dictionaries below used to
+# live as ~600 lines of inline Python literals. They are PURE data —
+# translation-style content edited by product, not engineering — so
+# they now live in api/services/data/category_guidance.json. The
+# runtime structure is unchanged: ``_CATEGORY_WATCH_OUT`` and
+# ``_CATEGORY_CHECKLIST`` are rebuilt at import time from the JSON,
+# so callers don't need to change. ``_DATA_DIR`` is defined once at
+# the top of this module (Wave 19 consolidated both JSON loaders to
+# share the path).
 
 
 def _load_category_guidance() -> dict[str, Any]:

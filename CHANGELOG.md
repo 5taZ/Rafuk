@@ -14,7 +14,53 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 18 — split `ai_service.py` god-file _(this commit)_
+### Wave 19 — extract `ai_marketplace.py` lexicon to JSON _(this commit)_
+
+Second half of the god-file sweep (first half: Wave 18 for
+`ai_service.py`). The audit called out ~200 lines of inline
+Russian/English token dictionaries at the top of
+`ai_marketplace.py` as "pure data edited by product, not
+engineering". Same pattern Wave 5d established for
+`category_guidance.json`: move the data to a JSON file under
+`api/services/data/` and materialise it at import time into the
+exact same runtime structures (frozenset / tuple) the scorer
+expected.
+
+* New `api/services/data/marketplace_lexicon.json` holds nine
+  token groups (234 lines):
+    - `ignored_param_keys` (4 entries)
+    - `stop_tokens` (13)
+    - `fuel_words` / `transmission_words` / `hot_word_groups`
+    - `auto_part_stems` (26)
+    - `color_words` (24)
+    - `auto_brand_tokens` (23)
+    - `category_generic_tokens` (6 categories)
+    - `accessory_type_tokens` (8 accessory types)
+* `api/services/ai_marketplace.py` shrank from 1824 → 1644 lines
+  (−180). The loader (`_load_marketplace_lexicon`) runs once at
+  import and builds the `_IGNORED_PARAM_KEYS` / `_STOP_TOKENS` /
+  `_FUEL_WORDS` / `_TRANS_WORDS` / `_HOT_WORD_GROUPS` /
+  `_AUTO_PART_STEMS` / `_COLOR_WORDS` / `_AUTO_BRAND_TOKENS` /
+  `_CATEGORY_GENERIC_TOKENS` / `_ACCESSORY_TYPE_TOKENS` constants
+  that the similarity scorer already consumed — no downstream
+  call sites changed. Regex patterns and scoring weights stay
+  inline because they encode behaviour, not data.
+* The duplicate `_DATA_DIR = Path(__file__).parent / "data"` that
+  existed twice in the file (once for the lexicon introduced
+  in this wave and once for the Wave-5d guidance loader) was
+  consolidated to a single top-of-module definition.
+
+Verified at runtime that all 10 structures survive the JSON
+round-trip with the same element types and membership
+(`frozenset("audi" in _AUTO_BRAND_TOKENS) → True`, etc.), and
+that `_CATEGORY_WATCH_OUT` / `_CATEGORY_CHECKLIST` from Wave 5d
+still load correctly against the same `_DATA_DIR`.
+
+Verification:
+* `ruff check . --select F` clean.
+* `pytest` 500 passed, 1 skipped, no regressions.
+
+### Wave 18 — split `ai_service.py` god-file `3b6a526`
 
 Follow-up to Wave 10's **BE-C5** split of `ai_analysis.py`, applied
 to the other big AI file flagged in the audit. `ai_service.py`
@@ -391,7 +437,8 @@ round-trip smoke), no regressions.
 | 15   | 9dda1a6 | backend data integrity + UX (pagination, typed delete confirm, FOR UPDATE) |
 | 16   | 9c39e82 | backend performance (AI semaphore, alias regex, graceful SIGTERM)        |
 | 17   | 6531622 | database tuning (LIFO pool, drop indexes, UNIQUE consents, widen links)  |
-| 18   | _this_  | split `ai_service.py` — prompts/sanitize/dedupe into sibling modules    |
+| 18   | 3b6a526 | split `ai_service.py` — prompts/sanitize/dedupe into sibling modules    |
+| 19   | _this_  | extract `ai_marketplace.py` lexicon to JSON (BE-M17)                    |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -399,13 +446,13 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 18:
+As of Wave 19:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
 | HIGH     | 54    | 50     | 4         | All 4 are ops/CI (CD, monitoring, backups, partitioning)    |
-| MEDIUM   | 73    | 31     | 42        | PERF-M3 deferred (needs scheduler loop refactor)            |
+| MEDIUM   | 73    | 32     | 41        | PERF-M3 deferred (needs scheduler loop refactor)            |
 | LOW      | 30    | 1      | 29        | Mostly polish (docs, dead imports)   |
 
 ## Conventions
