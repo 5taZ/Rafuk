@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import desc, func, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,18 +21,39 @@ async def ensure_user(
     """Return the ``users.id`` for a Telegram user, creating the row if missing.
 
     Returns the internal auto-increment ``users.id``, **not** the Telegram user ID.
+
+    The previous implementation did SELECT-then-INSERT, which races with
+    concurrent first-time requests for the same telegram_user_id and
+    raises IntegrityError on the loser. We now use Postgres
+    INSERT ... ON CONFLICT DO NOTHING RETURNING id, which is atomic at
+    the database level — only one inserter wins, the others see no
+    returned row and read the existing id via a follow-up SELECT.
     """
-    existing = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
-    if existing is not None:
-        return existing.id
-    user = User(
-        telegram_user_id=telegram_user_id,
-        first_name=first_name,
-        username=username,
+    stmt = (
+        pg_insert(User)
+        .values(
+            telegram_user_id=telegram_user_id,
+            first_name=first_name,
+            username=username,
+        )
+        .on_conflict_do_nothing(index_elements=["telegram_user_id"])
+        .returning(User.id)
     )
-    session.add(user)
-    await session.flush()
-    return user.id
+    inserted_id = await session.scalar(stmt)
+    if inserted_id is not None:
+        return int(inserted_id)
+    # Lost the race (or row already existed) — fetch the existing id.
+    existing_id = await session.scalar(
+        select(User.id).where(User.telegram_user_id == telegram_user_id)
+    )
+    if existing_id is None:
+        # Should never happen — INSERT either succeeded or hit a conflict.
+        # Surface loudly rather than returning a bogus id.
+        raise RuntimeError(
+            f"ensure_user: telegram_user_id={telegram_user_id} neither "
+            "inserted nor present after upsert"
+        )
+    return int(existing_id)
 
 
 async def resolve_user_id(session: AsyncSession, telegram_user_id: int) -> int | None:

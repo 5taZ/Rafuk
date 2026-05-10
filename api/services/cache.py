@@ -160,21 +160,38 @@ class RedisCache:
         )
         await self.set(key, serialized, ttl)
 
-    async def incr(self, key: str, ttl: int | None = None) -> int:
-        """Atomically increment a counter using Redis INCR. Returns the new value.
+    # Atomic INCR + conditional EXPIRE.
+    #
+    # The previous implementation issued two separate commands. Between
+    # them the event loop can yield to another coroutine, and on the
+    # network round-trip a transient timeout would leave the key with
+    # no TTL — counters then accumulated forever and an attacker could
+    # silently slip past the rate limit once the key was orphaned.
+    #
+    # Redis runs the whole script atomically: no other command can land
+    # between the INCR and the EXPIRE, and a network failure either
+    # delivers both ops or neither.
+    _INCR_TTL_LUA = (
+        "local n = redis.call('INCR', KEYS[1]) "
+        "if n == 1 and ARGV[1] ~= '0' then "
+        "  redis.call('EXPIRE', KEYS[1], ARGV[1]) "
+        "end "
+        "return n"
+    )
 
-        INCR auto-creates the key at 0 and increments to 1.  We set TTL
-        only on the first increment to avoid the SET NX + INCR race where
-        the key expires between the two commands.
+    async def incr(self, key: str, ttl: int | None = None) -> int:
+        """Atomically increment a counter and apply TTL on first set.
+
+        Uses a tiny Lua script so INCR + EXPIRE land in the same Redis
+        operation — no inter-command race.
 
         On Redis failure returns a very high number so rate-limit checks
         fail **closed** (deny the request) instead of silently allowing it.
         """
+        ttl_arg = str(int(ttl)) if ttl else "0"
         try:
-            count = await self._client.incr(key)
-            if ttl and count == 1:
-                await self._client.expire(key, ttl)
-            return count
+            count = await self._client.eval(self._INCR_TTL_LUA, 1, key, ttl_arg)
+            return int(count)
         except RedisError:
             logger.warning("Redis incr failed for key=%s", key, exc_info=True)
             return 999_999

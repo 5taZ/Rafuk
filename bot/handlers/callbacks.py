@@ -9,21 +9,12 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from api.config import get_settings
+from bot.api_client import get_http_client
 from bot.auth import build_init_data_header
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="callbacks")
-
-# Shared httpx client — avoids creating a new TCP+TLS connection per API call.
-_shared_client: httpx.AsyncClient | None = None
-
-
-def _get_http_client(base_url: str) -> httpx.AsyncClient:
-    global _shared_client
-    if _shared_client is None or _shared_client.is_closed:
-        _shared_client = httpx.AsyncClient(base_url=base_url, timeout=30.0)
-    return _shared_client
 
 
 async def _api_post(
@@ -39,7 +30,10 @@ async def _api_post(
     headers = {"X-Telegram-Init-Data": init_data}
     base_url = settings.api_base_url
 
-    client = _get_http_client(base_url)
+    # Reuse the process-wide locked client (see bot/api_client.py) —
+    # avoids the duplicate-pool / no-cleanup bug from the previous
+    # handler-local client (BE-H11/H12).
+    client = await get_http_client(base_url)
     try:
         resp = await client.post(path, json=json_body, headers=headers)
         if resp.status_code == 409:

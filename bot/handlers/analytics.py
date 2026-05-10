@@ -11,21 +11,12 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from api.config import get_settings
+from bot.api_client import get_http_client
 from bot.auth import build_init_data_header
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="analytics")
-
-# Shared httpx client — avoids creating a new TCP+TLS connection per API call.
-_shared_client: httpx.AsyncClient | None = None
-
-
-def _get_http_client(base_url: str) -> httpx.AsyncClient:
-    global _shared_client
-    if _shared_client is None or _shared_client.is_closed:
-        _shared_client = httpx.AsyncClient(base_url=base_url, timeout=30.0)
-    return _shared_client
 
 
 def _fmt_byn(value: float | None) -> str:
@@ -43,7 +34,11 @@ async def _api_get(path: str, telegram_user_id: int, *, params: dict | None = No
     headers = {"X-Telegram-Init-Data": init_data}
     base_url = settings.api_base_url
 
-    client = _get_http_client(base_url)
+    # Reuse the process-wide locked client so we don't create a second
+    # connection pool here — the previous handler-local _shared_client
+    # was a duplicate of the one in bot/api_client.py and never closed
+    # (BE-H11/H12).
+    client = await get_http_client(base_url)
     try:
         resp = await client.get(path, params=params, headers=headers)
         resp.raise_for_status()

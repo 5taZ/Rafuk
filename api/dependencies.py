@@ -5,7 +5,7 @@ import os
 
 from fastapi import Header, HTTPException, Request, status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings, get_settings
@@ -146,20 +146,22 @@ async def ensure_user_exists(
     """Upsert a User row for the given telegram_user_id.
 
     Called after Telegram auth to prevent FK violations on first request.
-    Best-effort: if the DB is unreachable the error will surface downstream.
+    Atomic: uses Postgres INSERT ... ON CONFLICT DO NOTHING so concurrent
+    auto-provision calls for the same user can't race into duplicate
+    inserts (the previous SELECT-then-INSERT pattern raised IntegrityError
+    on the loser, which had to be caught and rolled back, dirtying the
+    session). Best-effort: a DB outage will surface downstream.
     """
     if telegram_user_id == 0:
         return  # Debug mode — no real user to persist
     async with session_factory() as session:
-        existing = await session.execute(
-            select(User.id).where(User.telegram_user_id == telegram_user_id)
+        stmt = (
+            pg_insert(User)
+            .values(
+                telegram_user_id=telegram_user_id,
+                first_name=first_name[:128],
+            )
+            .on_conflict_do_nothing(index_elements=["telegram_user_id"])
         )
-        if existing.scalar_one_or_none() is None:
-            try:
-                session.add(
-                    User(telegram_user_id=telegram_user_id, first_name=first_name[:128])
-                )
-                await session.commit()
-            except IntegrityError:
-                # Concurrent request already inserted this user — rollback and continue
-                await session.rollback()
+        await session.execute(stmt)
+        await session.commit()

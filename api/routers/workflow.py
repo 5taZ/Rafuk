@@ -566,7 +566,15 @@ async def refresh_watchlist(
     settings: Settings = Depends(get_settings_dependency),
     kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> WatchlistRefreshResponse:
-    async with session_factory() as session:
+    # Wrap the whole refresh in an explicit `session.begin()` block.
+    # The previous code relied on close-time rollback of an implicit
+    # transaction — if an exception fired between updating items and
+    # the final `commit()`, partial state could leak through depending
+    # on SQLAlchemy's transaction state. With an explicit transaction
+    # the contract is enforced by the context manager: either every
+    # item update + snapshot insert + auto-remove deletion lands
+    # together, or none of them do.
+    async with session_factory() as session, session.begin():
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is None:
             return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, auto_removed=0)
@@ -676,7 +684,8 @@ async def refresh_watchlist(
                 await session.delete(item)
                 auto_removed += 1
 
-        await session.commit()
+        # session.begin() commits at the end of the block; an exception
+        # rolls everything back, so no explicit commit/rollback here.
         return WatchlistRefreshResponse(
             updated=updated,
             missing=max(missing - auto_removed, 0),
@@ -698,7 +707,9 @@ async def refresh_leads(
 
     Marks missing ones but does NOT auto-delete them.
     """
-    async with session_factory() as session:
+    # Same explicit-transaction pattern as refresh_watchlist — see the
+    # comment there for the rationale.
+    async with session_factory() as session, session.begin():
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is None:
             return LeadsRefreshResponse(checked=0, active=0, missing=0)
@@ -756,5 +767,5 @@ async def refresh_leads(
                     lead.missing_since_at = None
                     active_count += 1
 
-        await session.commit()
+        # session.begin() handles commit/rollback at block exit.
         return LeadsRefreshResponse(checked=checked, active=active_count, missing=missing_count)

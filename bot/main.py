@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 
 from api.config import get_settings
+from bot.api_client import close_http_client
 from bot.database import close_bot_engine, init_bot_engine
 from bot.handlers.analytics import router as analytics_router
 from bot.handlers.callbacks import router as callbacks_router
@@ -40,6 +41,10 @@ async def main() -> None:
     try:
         await dispatcher.start_polling(bot)
     finally:
+        # Order matters slightly: drain the API client pool BEFORE closing
+        # the DB engine, since some shutdown paths could still try to make
+        # outbound calls. Both are best-effort idempotent.
+        await close_http_client()
         await close_bot_engine()
         await bot.session.close()
 
