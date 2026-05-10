@@ -14,7 +14,56 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 17 — database tuning _(this commit)_
+### Wave 18 — split `ai_service.py` god-file _(this commit)_
+
+Follow-up to Wave 10's **BE-C5** split of `ai_analysis.py`, applied
+to the other big AI file flagged in the audit. `ai_service.py`
+was 1696 lines; most of the volume was inline Russian prompt text
+plus payload-normalisation helpers that had no dependency on the
+AI client itself. Three new sibling modules now hold those
+concerns, and `ai_service.py` drops to 1175 lines focused on the
+HTTP client + orchestration it actually owns.
+
+* `api/services/ai_prompts.py` _(new, 315 lines)_ —
+  `_PRICE_MARKET_PROMPT_TEMPLATE`, `_PRICE_MARKET_SCHEMA`,
+  `_CONDITION_RISKS_PROMPT_TEMPLATE`, `_CONDITION_RISKS_SCHEMA`,
+  `LISTING_ASSISTANT_PROMPT`, `QUICK_CONDITION_PROMPT`.
+  Prompt-engineering iterations now show up as diffs in one
+  focused file, not hidden in a 1700-line service.
+* `api/services/ai_sanitize.py` _(new, 122 lines)_ —
+  `sanitize_user_text` + the four `_PROMPT_*` regex patterns.
+  The SEC-H4 telemetry (logging injection-pattern hits with the
+  calling context) lives with the detector instead of drowning
+  in a client module.
+* `api/services/ai_dedupe.py` _(new, 204 lines)_ —
+  `_normalize_for_dedupe`, `_is_paraphrase`, `_dedupe_text_list`,
+  `_dedupe_dict_list`, `_dedupe_listing_payload`,
+  `dedupe_analysis_payload`. Self-contained paraphrase
+  collapsing that the AI client calls once per response.
+* `api/services/ai_service.py` — shrank from 1696 → 1175 lines.
+  All moved symbols are re-exported with a documented list of
+  importers (six sibling routers/services + the test module)
+  so back-compat is intentional, not accidental. Header comment
+  spells out which importer depends on which re-export so the
+  next wave can drop them cleanly when it's time.
+* Kept in `ai_service.py` (single-use, tight coupling to the
+  client): `_entry_price_guidance`, `_clean_photo_notes`,
+  `_repair_truncated_json`, the `AIService` class itself, and
+  the `get_ai_service()` module-level factory.
+
+Verification:
+* `ruff check . --select F` clean on the whole repo.
+* `pytest` 500 passed, 1 skipped (Postgres migration round-trip),
+  no regressions.
+* Confirmed at import time that the re-exported symbols are the
+  *same* objects as their new-module originals (`is` check
+  passes for `LISTING_ASSISTANT_PROMPT`, `sanitize_user_text`,
+  `dedupe_analysis_payload`) — no double-definition risk.
+* Outdated `# TODO: Extract prompt templates…` comment at the
+  top of the service was removed (it described exactly this
+  refactor).
+
+### Wave 17 — database tuning `6531622`
 
 Four DB changes + a connection-pool tweak. New migration
 `20260510_0006_wave17_db_tuning.py` applies the schema work in
@@ -341,7 +390,8 @@ round-trip smoke), no regressions.
 | 14   | 58f609d | test sweep — Alembic DAG checks + tightened assertions     |
 | 15   | 9dda1a6 | backend data integrity + UX (pagination, typed delete confirm, FOR UPDATE) |
 | 16   | 9c39e82 | backend performance (AI semaphore, alias regex, graceful SIGTERM)        |
-| 17   | _this_  | database tuning (LIFO pool, drop indexes, UNIQUE consents, widen links)  |
+| 17   | 6531622 | database tuning (LIFO pool, drop indexes, UNIQUE consents, widen links)  |
+| 18   | _this_  | split `ai_service.py` — prompts/sanitize/dedupe into sibling modules    |
 
 For the exact mapping of audit IDs → wave, the per-commit messages
 list every ID they touched. Use `git log --grep="BE-M11"` (or any
@@ -349,13 +399,13 @@ audit ID) to find the wave that closed a particular item.
 
 ## Audit progress
 
-As of Wave 17:
+As of Wave 18:
 
 | Severity | Total | Closed | Remaining | Notes                                |
 |----------|-------|--------|-----------|--------------------------------------|
 | CRITICAL | 29    | 26     | 3         | All 3 are operational (HTTPS, secret rotation, dev `pkill`) |
 | HIGH     | 54    | 50     | 4         | All 4 are ops/CI (CD, monitoring, backups, partitioning)    |
-| MEDIUM   | 73    | 30     | 43        | PERF-M3 deferred (needs scheduler loop refactor)            |
+| MEDIUM   | 73    | 31     | 42        | PERF-M3 deferred (needs scheduler loop refactor)            |
 | LOW      | 30    | 1      | 29        | Mostly polish (docs, dead imports)   |
 
 ## Conventions
