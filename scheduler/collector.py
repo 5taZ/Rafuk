@@ -5,6 +5,7 @@ import logging
 import math
 import signal
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -781,8 +782,12 @@ async def _check_trackers_inner(
         try:
             observed_at = datetime.now(UTC)
             bucket_at = snapshot_bucket(observed_at)
-            total_notified = 0
             total_errors = 0
+            # PERF-M3: collect all per-listing / trend / threshold
+            # notifications during the DB pass and dispatch them AFTER
+            # the outer commit so a slow Telegram doesn't block DB
+            # writes. See ``_dispatch_tracker_notifications``.
+            pending_notifications: list[_TrackerNotifyJob] = []
 
             for (query, strict_mode), query_trackers in trackers_by_query.items():
                 # Use a savepoint per query group so that a rollback only
@@ -922,18 +927,16 @@ async def _check_trackers_inner(
                                     ad_id=state.ad_id,
                                     listing_url=state.link,
                                 )
-                                can_notify = await notify_user(
-                                    bot,
-                                    tracker.user.telegram_user_id,
-                                    listing_msg,
-                                    session,
+                                # PERF-M3: queue instead of sending now.
+                                # Dispatch after the outer commit so
+                                # Telegram latency doesn't hold the DB
+                                # transaction open.
+                                pending_notifications.append(_TrackerNotifyJob(
+                                    telegram_user_id=tracker.user.telegram_user_id,
                                     internal_user_id=tracker.user_id,
+                                    message=listing_msg,
                                     reply_markup=keyboard,
-                                )
-                                if can_notify:
-                                    total_notified += 1
-                                else:
-                                    break  # User blocked — stop sending
+                                ))
 
                             # Send per-listing enhanced notifications for price drops
                             for state, delta in tracker_sync_result.price_drops[:3]:
@@ -959,18 +962,13 @@ async def _check_trackers_inner(
                                     ad_id=state.ad_id,
                                     listing_url=state.link,
                                 )
-                                can_notify = await notify_user(
-                                    bot,
-                                    tracker.user.telegram_user_id,
-                                    drop_msg,
-                                    session,
+                                # PERF-M3: queue; see new_listings block above.
+                                pending_notifications.append(_TrackerNotifyJob(
+                                    telegram_user_id=tracker.user.telegram_user_id,
                                     internal_user_id=tracker.user_id,
+                                    message=drop_msg,
                                     reply_markup=keyboard,
-                                )
-                                if can_notify:
-                                    total_notified += 1
-                                else:
-                                    break  # User blocked — stop sending
+                                ))
 
                             # Send trend reversal as a separate message (uses old keyboard)
                             if trend_signal is not None and not trend_already_sent:
@@ -992,14 +990,13 @@ async def _check_trackers_inner(
                                         query=query,
                                         listing_url=None,
                                     )
-                                    await notify_user(
-                                        bot,
-                                        tracker.user.telegram_user_id,
-                                        trend_msg,
-                                        session,
+                                    # PERF-M3: queue; see new_listings block.
+                                    pending_notifications.append(_TrackerNotifyJob(
+                                        telegram_user_id=tracker.user.telegram_user_id,
                                         internal_user_id=tracker.user_id,
+                                        message=trend_msg,
                                         reply_markup=keyboard,
-                                    )
+                                    ))
 
                             tracker.last_seen_ad_id = newest_id
                             tracker.last_seen_price_byn = newest_price_byn
@@ -1027,23 +1024,20 @@ async def _check_trackers_inner(
                                         query=primary.query,
                                         listing_url=primary.link,
                                     )
-                                    can_notify = await notify_user(
-                                        bot,
-                                        tracker.user.telegram_user_id,
-                                        threshold_msg,
-                                        session,
+                                    # PERF-M3: queue; see new_listings block.
+                                    pending_notifications.append(_TrackerNotifyJob(
+                                        telegram_user_id=tracker.user.telegram_user_id,
                                         internal_user_id=tracker.user_id,
+                                        message=threshold_msg,
                                         reply_markup=keyboard,
+                                    ))
+                                    logger.info(
+                                        "Tracker %d (user %d): threshold alert queued "
+                                        "(%d events)",
+                                        tracker.id,
+                                        tracker.user_id,
+                                        len(threshold_events),
                                     )
-                                    if can_notify:
-                                        total_notified += 1
-                                        logger.info(
-                                            "Tracker %d (user %d): threshold alert "
-                                            "(%d events)",
-                                            tracker.id,
-                                            tracker.user_id,
-                                            len(threshold_events),
-                                        )
 
                         # Savepoint auto-commits on clean exit, preserving
                         # this group's data even if a later group fails.
@@ -1059,9 +1053,20 @@ async def _check_trackers_inner(
 
             # Commit whatever succeeded — errors are logged but don't block
             await session.commit()
+
+            # PERF-M3: dispatch queued notifications AFTER the commit.
+            # If Telegram is slow or flaky, the DB state is already safe
+            # (snapshots upserted, tracker.last_seen_* advanced, events
+            # persisted) and the worst case is a notification gets lost
+            # for one tick — same failure mode as before, just without
+            # holding an open transaction for the duration of the sends.
+            total_notified = await _dispatch_tracker_notifications(
+                bot, pending_notifications, session_factory,
+            )
             logger.info(
-                "Tracker check complete: notified %d, errors %d",
+                "Tracker check complete: notified %d (of %d queued), errors %d",
                 total_notified,
+                len(pending_notifications),
                 total_errors,
             )
         finally:
@@ -1075,6 +1080,119 @@ async def _check_trackers_inner(
 # DIFFERENT user (one reminder per (lead, user)) so per-user rate
 # limits aren't a concern.
 _REMINDER_SEND_CONCURRENCY = 5
+
+
+# PERF-M3: tracker-loop concurrency cap. Lower than the reminder cap
+# because each unit of work is "all jobs for one user" (possibly up to
+# 8 sends per tracker × N trackers per user), not a single message.
+# 5 concurrent users × up to ~8 in-flight per-user serial sends is still
+# well under Telegram's 30 msg/sec global limit. Per-user serialization
+# is intentional — Telegram rate-limits individual chats to ~1 msg/sec,
+# so we must never parallelize within a single telegram_user_id.
+_TRACKER_USER_CONCURRENCY = 5
+
+
+@dataclass(slots=True)
+class _TrackerNotifyJob:
+    """PERF-M3: a single pending Telegram notification collected during
+    the ``check_trackers`` DB pass and dispatched afterwards.
+
+    Decoupling the "what should be sent" from the "send it now" lets us
+    fan out across users with bounded concurrency instead of blocking
+    the tick on ``300 trackers × 3 notif × RTT`` of sequential Telegram
+    latency. The fields are a strict subset of the ``notify_user``
+    argument list — internal_user_id is kept so a blocked-user outcome
+    can trigger the same per-user tracker deactivation as before,
+    batched across the whole tick.
+    """
+    telegram_user_id: int
+    internal_user_id: int
+    message: str
+    reply_markup: InlineKeyboardMarkup | None
+
+
+async def _dispatch_tracker_notifications(
+    bot: Bot,
+    jobs: list[_TrackerNotifyJob],
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """PERF-M3: fan out collected tracker notifications after the DB
+    transaction commits.
+
+    Group jobs by ``telegram_user_id`` and send each user's batch
+    **serially** (Telegram rate-limits individual chats to ~1 msg/sec)
+    but schedule up to ``_TRACKER_USER_CONCURRENCY`` user-batches
+    **in parallel** across distinct chats. On the first ``blocked``
+    outcome for a user, drop the rest of that user's jobs and mark
+    their ``internal_user_id`` for bulk tracker deactivation.
+
+    Returns the number of successfully sent messages (i.e. only
+    ``"sent"`` outcomes; ``"retry"`` is not counted, matching the
+    ``check_reminders`` accounting established in Wave 23).
+
+    After the fan-out, if any users turned out to be blocked, a single
+    ``UPDATE Tracker SET active=False WHERE user_id IN (...)`` is
+    issued in a fresh session. Same semantic as the per-call
+    deactivation ``notify_user`` performed before, just batched so a
+    tick with K blocked users does 1 UPDATE instead of up to
+    K × jobs-per-user.
+    """
+    if not jobs:
+        return 0
+
+    by_user: dict[int, list[_TrackerNotifyJob]] = defaultdict(list)
+    for job in jobs:
+        by_user[job.telegram_user_id].append(job)
+
+    sem = asyncio.Semaphore(_TRACKER_USER_CONCURRENCY)
+
+    async def _send_for_user(
+        user_jobs: list[_TrackerNotifyJob],
+    ) -> tuple[int, int | None]:
+        """Serial send loop for one user. Returns (sent_count, blocked_user_id|None)."""
+        async with sem:
+            sent = 0
+            for job in user_jobs:
+                outcome = await _send_message_classified(
+                    bot,
+                    job.telegram_user_id,
+                    job.message,
+                    reply_markup=job.reply_markup,
+                )
+                if outcome == "sent":
+                    sent += 1
+                elif outcome == "blocked":
+                    # Skip the rest of this user's queue — same effect
+                    # as the old inline ``break`` but now applied across
+                    # ALL of that user's trackers, not just one.
+                    return sent, job.internal_user_id
+                # outcome == "retry": keep trying; a transient error on
+                # one job doesn't imply the next will fail too.
+            return sent, None
+
+    results = await asyncio.gather(
+        *[_send_for_user(user_jobs) for user_jobs in by_user.values()]
+    )
+    total_sent = sum(s for s, _ in results)
+    blocked_user_ids = {uid for _, uid in results if uid is not None}
+
+    if blocked_user_ids:
+        async with session_factory() as session:
+            await session.execute(
+                update(Tracker)
+                .where(
+                    Tracker.user_id.in_(blocked_user_ids),
+                    Tracker.active.is_(True),
+                )
+                .values(active=False)
+            )
+            await session.commit()
+            logger.info(
+                "Tracker notifications: deactivated trackers for %d blocked user(s)",
+                len(blocked_user_ids),
+            )
+
+    return total_sent
 
 
 async def check_reminders(

@@ -14,7 +14,73 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 23 — PERF-M3 partial (parallel lead reminders) + handoff refresh _(this commit)_
+### Wave 24 — PERF-M3 complete (parallel tracker notifications) _(this commit)_
+
+Closes the deeper half of **PERF-M3** that Wave 23 explicitly
+deferred: the tracker-check loop in `scheduler/collector.py`
+interleaved per-tracker DB writes with up to 8 Telegram sends
+per tracker across four code paths (new listings, price drops,
+trend reversals, threshold alerts). With 300 trackers × ~3
+notifications × ~50 ms RTT that's ~45 s of head-of-line
+blocking per tick — and since the DB transaction stays open
+the whole time, a slow Telegram actively holds row locks
+against the API/bot processes.
+
+* **PERF-M3 (tracker portion)** — refactored
+  `_check_trackers_inner` from "DB work + `await notify_user`"
+  interleaved inside a savepoint-per-query-group to a clean
+  two-phase pipeline:
+
+    1. **Collect phase** (inside the savepoints): every place
+       that used to call `await notify_user(...)` now appends
+       a `_TrackerNotifyJob(telegram_user_id, internal_user_id,
+       message, reply_markup)` to a per-tick
+       `pending_notifications` list. No Telegram I/O, no
+       blocking — the tick commits the DB changes as fast as
+       Postgres can take them.
+    2. **Dispatch phase** (after `session.commit()`): the new
+       `_dispatch_tracker_notifications` helper groups jobs by
+       `telegram_user_id`, then schedules up to
+       `_TRACKER_USER_CONCURRENCY = 5` **user-batches** in
+       parallel via `asyncio.gather`. Within each user's batch
+       sends stay **serial** because Telegram rate-limits
+       individual chats to ~1 msg/sec. On the first `blocked`
+       outcome for a user, the rest of that user's queue is
+       dropped and the `internal_user_id` is collected for
+       a single bulk `UPDATE Tracker SET active=False WHERE
+       user_id IN (...)` at the end of the dispatch.
+
+* **Bonus correctness improvements** (all fall out naturally
+  from the refactor):
+
+    * The old inline `break` on "user blocked" fired per-loop
+      (new_listings, price_drops), so a blocked user could
+      still generate up to 4 failed send attempts per tracker.
+      The new design drops ALL remaining jobs for that user
+      across every tracker they own after the first block —
+      strictly fewer wasted Telegram calls.
+    * `total_notified` now counts only genuine `"sent"`
+      outcomes, matching the accounting established in Wave
+      23's reminder refactor (the old path counted `"retry"`
+      as notified, which was misleading).
+    * Per-blocked-user tracker deactivation used to emit one
+      UPDATE per failed send; now it's one UPDATE per tick per
+      set of blocked users.
+
+* **Tests**: 4 new focused tests in `test_scheduler_collector.py`
+  exercising the dispatch helper directly — empty job list is a
+  no-op (doesn't even open a session); happy-path sends all
+  jobs and leaves trackers active; blocked user short-circuits
+  remaining jobs AND deactivates both of their trackers in one
+  bulk UPDATE while a sibling user's send still succeeds;
+  `TelegramRetryAfter` counts as "not sent" without deactivating
+  the tracker. 507 passed, 1 skipped (was 503 + 1).
+
+* Expected wall-clock: 45 s → ~9 s at 300 trackers. The DB
+  transaction commits before any Telegram I/O, so a Telegram
+  outage no longer holds row locks.
+
+### Wave 23 — PERF-M3 partial (parallel lead reminders) + handoff refresh
 
 The highest-user-impact remaining MEDIUM item after Wave 22 was
 **PERF-M3** (scheduler Telegram notifications fire serially).

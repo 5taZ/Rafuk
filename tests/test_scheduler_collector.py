@@ -17,10 +17,12 @@ from scheduler.collector import (
     _build_price_drop_message,
     _build_threshold_message,
     _build_tracker_message,
+    _dispatch_tracker_notifications,
     _format_price_byn,
     _recent_event_keys,
     _recent_events_by_tracker,
     _recent_trend_event_tracker_ids,
+    _TrackerNotifyJob,
     check_reminders,
     cleanup_ai_audit_log,
     cleanup_inactive_listing_states,
@@ -1112,6 +1114,179 @@ async def test_check_reminders_retry_error_leaves_reminder_pending(mock_bot: Asy
         ).scalars().first()
         assert reminder is not None
         assert reminder.sent is False  # NOT sent — let the next tick retry
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# PERF-M3: _dispatch_tracker_notifications — tracker-loop parallel fan-out
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dispatch_tracker_notifications_empty_is_noop(mock_bot: AsyncMock):
+    """Empty job list → return 0 without touching the session factory."""
+
+    def _sf():  # pragma: no cover — must NOT be called
+        raise AssertionError("session_factory must not run for empty jobs")
+
+    total = await _dispatch_tracker_notifications(mock_bot, [], _sf)
+    assert total == 0
+    mock_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tracker_notifications_sends_all(mock_bot: AsyncMock):
+    """Happy path: every ``sent`` outcome is counted, no deactivation."""
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        u1 = make_user(telegram_user_id=501, first_name="A")
+        u2 = make_user(telegram_user_id=502, first_name="B")
+        session.add_all([u1, u2])
+        await session.flush()
+        session.add(Tracker(user_id=u1.id, query="q1", strict_mode=False))
+        session.add(Tracker(user_id=u2.id, query="q2", strict_mode=False))
+        await session.commit()
+        u1_id, u2_id = u1.id, u2.id
+
+    jobs = [
+        _TrackerNotifyJob(501, u1_id, "msg-1a", None),
+        _TrackerNotifyJob(501, u1_id, "msg-1b", None),
+        _TrackerNotifyJob(502, u2_id, "msg-2a", None),
+    ]
+    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+
+    assert total == 3
+    assert mock_bot.send_message.await_count == 3
+
+    async with sf() as session:
+        from sqlalchemy import select
+        actives = (
+            await session.execute(select(Tracker.active))
+        ).scalars().all()
+        assert all(actives)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tracker_notifications_blocked_skips_user_rest(
+    mock_bot: AsyncMock,
+):
+    """Blocked user → remaining jobs for that user dropped, other
+    users unaffected, trackers for blocked user deactivated in ONE
+    bulk UPDATE."""
+    from aiogram.exceptions import TelegramForbiddenError
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        blocked_user = make_user(telegram_user_id=601, first_name="Blocked")
+        other_user = make_user(telegram_user_id=602, first_name="Other")
+        session.add_all([blocked_user, other_user])
+        await session.flush()
+        session.add(Tracker(user_id=blocked_user.id, query="q1", strict_mode=False))
+        session.add(Tracker(user_id=blocked_user.id, query="q2", strict_mode=False))
+        session.add(Tracker(user_id=other_user.id, query="q3", strict_mode=False))
+        await session.commit()
+        b_id, o_id = blocked_user.id, other_user.id
+
+    call_log: list[int] = []
+
+    async def _fake_send(tg_id, msg, reply_markup=None):
+        call_log.append(tg_id)
+        if tg_id == 601:
+            raise _make_tg_error(TelegramForbiddenError, "Forbidden")
+        return MagicMock()
+
+    mock_bot.send_message.side_effect = _fake_send
+
+    jobs = [
+        _TrackerNotifyJob(601, b_id, "b1", None),
+        _TrackerNotifyJob(601, b_id, "b2", None),
+        _TrackerNotifyJob(601, b_id, "b3", None),
+        _TrackerNotifyJob(602, o_id, "o1", None),
+    ]
+    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+
+    # Only user 602's single job counts as sent. User 601 gets 1
+    # attempt, discovers the block, short-circuits → 2 send_message
+    # calls total (1 blocked + 1 other).
+    assert total == 1
+    assert call_log.count(601) == 1
+    assert call_log.count(602) == 1
+
+    async with sf() as session:
+        from sqlalchemy import select
+        b_trackers = (
+            await session.execute(
+                select(Tracker.active).where(Tracker.user_id == b_id)
+            )
+        ).scalars().all()
+        o_trackers = (
+            await session.execute(
+                select(Tracker.active).where(Tracker.user_id == o_id)
+            )
+        ).scalars().all()
+        assert b_trackers == [False, False]
+        assert o_trackers == [True]
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tracker_notifications_retry_does_not_count(
+    mock_bot: AsyncMock,
+):
+    """Transient ``TelegramRetryAfter`` → outcome is ``retry``, which
+    is NOT counted in total and does NOT deactivate trackers; the job
+    loop continues with the user's next job."""
+    from aiogram.exceptions import TelegramRetryAfter
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=701, first_name="R")
+        session.add(user)
+        await session.flush()
+        session.add(Tracker(user_id=user.id, query="q", strict_mode=False))
+        await session.commit()
+        uid = user.id
+
+    retry_exc = TelegramRetryAfter(method=MagicMock(), message="rl", retry_after=10)
+    mock_bot.send_message.side_effect = [retry_exc, MagicMock()]
+
+    jobs = [
+        _TrackerNotifyJob(701, uid, "a", None),
+        _TrackerNotifyJob(701, uid, "b", None),
+    ]
+    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+
+    assert total == 1
+    assert mock_bot.send_message.await_count == 2
+    async with sf() as session:
+        from sqlalchemy import select
+        active = (
+            await session.execute(
+                select(Tracker.active).where(Tracker.user_id == uid)
+            )
+        ).scalar_one()
+        assert active is True
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
