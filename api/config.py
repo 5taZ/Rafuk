@@ -1,10 +1,51 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 from functools import lru_cache
+from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _is_local_database_url(db_url: str) -> bool:
+    """BE-M15: return True if ``db_url`` points at the local host.
+
+    The previous implementation relied on substring matching against
+    ``("localhost", "127.0.0.1", "10.0.2.2", "::1", "sqlite")`` which
+    has two problems: it falsely accepts hostile hosts that *contain*
+    one of those tokens (e.g. ``db.localhost.attacker.com``,
+    ``user:pass@127.0.0.1.evil.example`` or a DSN whose password
+    happens to spell ``sqlitebackup``) and it falsely rejects valid
+    private-network DSNs (``192.168.x.x``, ``10.x.x.x`` outside the
+    Android-emulator gateway, IPv6 ULA). Parse the URL and inspect the
+    real host instead.
+
+    Accepts:
+    * SQLite URLs (no host component)
+    * Hostname ``localhost``
+    * IPv4/IPv6 loopback (``127.0.0.0/8`` and ``::1``)
+    * ``10.0.2.2`` — the Android-emulator host gateway, kept as a
+      named exception for the existing local-dev workflow.
+    """
+    if not db_url:
+        return False
+    if db_url.startswith("sqlite"):
+        return True
+    try:
+        parsed = urlparse(db_url)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    if host in ("localhost", "10.0.2.2"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 class Settings(BaseSettings):
@@ -65,10 +106,7 @@ class Settings(BaseSettings):
                 "debug=True is not allowed when ENV=production."
             )
         db_url = info.data.get("database_url", "")
-        if db_url and not any(
-            h in db_url
-            for h in ("localhost", "127.0.0.1", "10.0.2.2", "::1", "sqlite")
-        ):
+        if db_url and not _is_local_database_url(db_url):
             raise ValueError(
                 "debug=True is not allowed with a non-localhost DATABASE_URL."
             )
@@ -91,10 +129,7 @@ class Settings(BaseSettings):
                 "auth_bypass=True is not allowed when ENV=production."
             )
         db_url = info.data.get("database_url", "")
-        if db_url and not any(
-            h in db_url
-            for h in ("localhost", "127.0.0.1", "10.0.2.2", "::1", "sqlite")
-        ):
+        if db_url and not _is_local_database_url(db_url):
             raise ValueError(
                 "auth_bypass=True is not allowed with a non-localhost "
                 "DATABASE_URL — every request would share user_id=0."

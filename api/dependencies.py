@@ -4,7 +4,6 @@ import logging
 import os
 
 from fastapi import Header, HTTPException, Request, status
-from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 

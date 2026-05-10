@@ -28,7 +28,7 @@ revenue numbers are scoped to ``leads.created_at >= cutoff``.
 from __future__ import annotations
 
 import statistics
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request

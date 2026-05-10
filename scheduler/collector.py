@@ -40,7 +40,6 @@ from api.services.aggregator import (
     compute_category_price_stats,
     compute_price_stats,
     compute_price_vs_reference,
-    detect_price_type,
     extract_prices,
     normalize_price_byn,
 )

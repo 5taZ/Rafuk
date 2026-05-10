@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.models import QueryListingState, QuerySnapshot
 from api.services.aggregator import (
     compute_price_stats,
-    detect_price_type,
     extract_prices,
     normalize_price_byn,
 )
@@ -263,13 +262,23 @@ async def sync_query_listing_states(
             new_listings.append(existing)
             continue
 
-        if (
-            existing.last_price_byn is not None
-            and price_byn is not None
-            and price_byn < existing.last_price_byn
-            and (existing.last_price_byn - price_byn) >= Decimal("0.5")
-        ):
-            price_drops.append((existing, existing.last_price_byn - price_byn))
+        # BE-M11: ``existing.last_price_byn`` comes back as ``Decimal`` from
+        # the Numeric(12,2) column under PostgreSQL, while ``price_byn`` is
+        # a ``float`` from ``normalize_price_byn``. Mixing them raises
+        # ``TypeError: unsupported operand type(s) for -: 'Decimal' and
+        # 'float'`` at runtime — SQLite happens to dodge it because the
+        # NUMERIC affinity returns the value as the type it was inserted
+        # with, hiding the bug from the test-suite. Coerce both to Decimal
+        # for the comparison and the delta we hand back.
+        if existing.last_price_byn is not None and price_byn is not None:
+            last_dec = (
+                existing.last_price_byn
+                if isinstance(existing.last_price_byn, Decimal)
+                else Decimal(str(existing.last_price_byn))
+            )
+            price_dec = Decimal(str(price_byn))
+            if price_dec < last_dec and (last_dec - price_dec) >= Decimal("0.5"):
+                price_drops.append((existing, last_dec - price_dec))
 
         existing.title = title
         existing.link = link

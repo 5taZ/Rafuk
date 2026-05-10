@@ -6,7 +6,7 @@ import io
 from collections import defaultdict
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -165,11 +165,10 @@ async def export_leads(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     """Export leads to a file. Supports CSV (default) and XLSX."""
-    if fmt not in ("csv", "xlsx"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="format must be 'csv' or 'xlsx'",
-        )
+    # BE-M12: the explicit re-validation that lived here was unreachable —
+    # ``fmt: _FORMAT`` (Literal["csv", "xlsx"]) is enforced by FastAPI's
+    # query validation before the handler runs, so any non-allowed value
+    # already returns 422 from the framework. Removing the dead branch.
 
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user.user_id)

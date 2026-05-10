@@ -24,6 +24,7 @@ from api.schemas import (
     LeadCreate,
     LeadRead,
     LeadsRefreshResponse,
+    LeadStatusEnum,
     LeadUpdate,
     WatchlistCreate,
     WatchlistRead,
@@ -258,7 +259,14 @@ async def update_lead(
                 lead.status = "sold"
                 lead.sold_at = datetime.now(UTC)
             elif payload.sold_price_byn is None and lead.status == "sold":
-                lead.status = "active"
+                # BE-M10: revert un-sold deal to a real LeadStatusEnum value.
+                # The previous "active" string was not in the enum and would
+                # fail any downstream consumer that round-trips through the
+                # Pydantic schema. The user has bought the item but no longer
+                # has a sale recorded, so "bought" is the correct pre-sold
+                # state — frontend render_card_builders.js treats new/bought
+                # symmetrically when computing deal potential.
+                lead.status = LeadStatusEnum.bought.value
                 lead.sold_at = None
         await session.commit()
         await session.refresh(lead)  # Refresh to get server-generated updated_at
