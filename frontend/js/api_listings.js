@@ -41,6 +41,29 @@ function createApiListings(context) {
     let _detailAbortController = null;
     let _historyAbortController = null;
 
+    // FE-C4: explicit abort hooks so callers in the modal/view
+    // lifecycle (closeDetailModal, view-tab change, etc.) can drop
+    // in-flight requests instead of letting them resolve into stale
+    // state. Each hook is a no-op when nothing is pending.
+    function abortDetailRequest() {
+        if (_detailAbortController) {
+            _detailAbortController.abort();
+            _detailAbortController = null;
+        }
+    }
+    function abortHistoryRequest() {
+        if (_historyAbortController) {
+            _historyAbortController.abort();
+            _historyAbortController = null;
+        }
+    }
+    function abortSearchRequests() {
+        if (state.search.searchAbortController) {
+            state.search.searchAbortController.abort();
+            state.search.searchAbortController = null;
+        }
+    }
+
     function buildListingsQuery(params = {}) {
         const query = new URLSearchParams(buildCommonQuery(params));
         if (state.filters.category != null) {
@@ -411,8 +434,25 @@ function createApiListings(context) {
         markDirty('loading', 'error', 'summary', 'helper', 'stats');
         renderAll();
 
+        // FE-C2: cancel any in-flight /price-stats from a previous
+        // search before kicking off a new one. Without this, fast
+        // typers race two stats requests against each other and the
+        // older one's response can clobber the fresh state — even
+        // with isActiveRequest() guarding the .then() branch, the
+        // socket and DB query keep running on the server. We reuse
+        // the same searchAbortController that loadSearchDependencies
+        // wires up, so abort() drops both groups in one call.
+        if (state.search.searchAbortController) {
+            state.search.searchAbortController.abort();
+        }
+        state.search.searchAbortController = new AbortController();
+        const searchSignal = state.search.searchAbortController.signal;
+
         try {
-            const stats = await getJson(`/api/v1/price-stats?${buildCommonQuery()}`);
+            const stats = await getJson(
+                `/api/v1/price-stats?${buildCommonQuery()}`,
+                { signal: searchSignal },
+            );
             if (!isActiveRequest(requestId)) {
                 return;
             }
@@ -450,6 +490,13 @@ function createApiListings(context) {
             if (!isActiveRequest(requestId)) {
                 return;
             }
+            // FE-C2: AbortError is the expected outcome when a
+            // newer search() supersedes us; don't surface it as a
+            // user-facing failure. Only "real" errors (network/HTTP)
+            // get the toast and the retry button.
+            if (error?.name === "AbortError") {
+                return;
+            }
             clearSearchData();
             state.ui.error = error.message || "Не удалось загрузить аналитику.";
             state.ui.loading = false;
@@ -467,5 +514,10 @@ function createApiListings(context) {
         clearSearchData,
         resetCategoryFilter,
         loadHistory,
+        // FE-C4: abort hooks exposed for callers (closeDetailModal,
+        // view changes) to drop pending requests on unmount.
+        abortDetailRequest,
+        abortHistoryRequest,
+        abortSearchRequests,
     };
 }

@@ -716,6 +716,12 @@ function createAppActions(context) {
         closeEditTracker: trackers.closeEditTracker,
         saveTracker: trackers.saveTracker,
         openListingDetail: listings.openListingDetail,
+        // FE-C4: expose abort hooks so closeDetailModal and any
+        // future cleanup paths (view tab change, route navigation)
+        // can drop pending fetches before clearing UI state.
+        abortDetailRequest: listings.abortDetailRequest,
+        abortHistoryRequest: listings.abortHistoryRequest,
+        abortSearchRequests: listings.abortSearchRequests,
         applyLaunchParams,
         loadExpenses,
         createExpense,

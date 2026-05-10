@@ -198,6 +198,14 @@ function createRenderModals(context) {
     }
 
     function closeDetailModal() {
+        // FE-C4: drop the in-flight detail/AI fetch (if any) before
+        // we tear the modal down. Otherwise a slow /listing-detail
+        // call can resolve into already-cleared state.detail and
+        // either flash the modal back open or trip a "Cannot read
+        // properties of null" in renderDetailModal.
+        if (typeof actions.abortDetailRequest === "function") {
+            actions.abortDetailRequest();
+        }
         if (state.misc.modalCleanup) {
             state.misc.modalCleanup();
             state.misc.modalCleanup = null;
