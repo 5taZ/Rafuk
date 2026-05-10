@@ -301,7 +301,94 @@ def test_ai_negotiable_price_context_does_not_use_zero_as_real_price() -> None:
     assert "цена покупки 0 BYN" not in context
     assert "на 1580 BYN дороже" not in context
     assert "ниже медианы" in context
-    assert "Разумный вход после торга" in context
+
+
+def test_ai_free_price_context_distinguishes_giveaway_from_negotiable() -> None:
+    """Free items (price=0, is_negotiable_price=False) must NOT be treated
+    as договорная in the AI prompt — that wrecks resale guidance and
+    misleads the user. The previous bug labelled both as договорная.
+    """
+    service = AIService()
+
+    context = service._build_listing_context(
+        title="Старый стол",
+        description="Отдам бесплатно, нужно вывезти самому",
+        price_byn=0,
+        is_negotiable_price=False,  # genuine free, NOT negotiable
+        condition="Б/у",
+        parameters=[],
+        market_median=500,
+        market_count=10,
+        market_q1=400,
+        market_q3=600,
+        market_min=300,
+        market_max=700,
+        seller_type="private",
+        photo_count=2,
+    )
+
+    # Must explicitly call out "БЕСПЛАТНО" — never "договорная"
+    assert "БЕСПЛАТНО" in context
+    assert "договорная" not in context.lower() or "не договорная" in context.lower()
+    # Resale section must run for free items (was previously skipped because
+    # `elif price_byn:` treated 0 as falsy)
+    assert "ПЕРЕПРОДАЖА" in context
+    assert "достаётся бесплатно" in context
+    # Must NOT pretend the price is unknown
+    assert "цена не указана" not in context.lower()
+    # Must NOT say "below Q1" — for free, market position is "full discount"
+    assert "НИЖЕ Q1" not in context
+    # Market median is included as the "выгода" reference for free items
+    assert "ориентир выгоды" in context
+    # Must NOT push "Разумный вход после торга" — that's negotiable-only;
+    # for free items the price is already agreed at 0.
+    assert "Разумный вход после торга" not in context
+
+
+def test_stage_extract_classifies_three_price_states_correctly() -> None:
+    """_stage_extract is the source of truth: it must set is_negotiable_price
+    and is_free_price independently so AI prompts can render all three
+    cases (negotiable / free / fixed) correctly. The previous bug used
+    `or 0.0` which conflated free with negotiable.
+    """
+    from api.services.ai_analysis_pipeline import _AC, _stage_extract
+    from api.services.aggregator import PriceStats
+
+    def _make_ctx(ad: dict) -> "_AC":
+        c = _AC()
+        c.target_ad = ad
+        c.payload = SimpleNamespace(ad_id=int(ad.get("ad_id", 1)), query="x", category=None)
+        # _stage_extract reaches into c.dataset / .datasets_by_cohort after
+        # price extraction; provide minimal stubs so the function can run.
+        stats = PriceStats(
+            mean=1500.0, median=1500.0, q1=1300.0, q3=1700.0,
+            min=1000.0, max=2000.0, count=10,
+        )
+        c.dataset = SimpleNamespace(ads=[ad], price_stats=stats)
+        c.datasets_by_cohort = [("broad_category", c.dataset)]
+        return c
+
+    # Case 1: negotiable (price=0, no giveaway phrasing)
+    c = _make_ctx({"price_byn": 0, "subject": "iPhone", "body": "Торг уместен"})
+    _stage_extract(c)
+    assert c.is_negotiable_price is True
+    assert c.is_free_price is False
+    assert c.price_byn == 0.0
+
+    # Case 2: free (price=0, "отдам бесплатно")
+    c = _make_ctx({"price_byn": 0, "subject": "Стол", "body": "Отдам бесплатно"})
+    _stage_extract(c)
+    assert c.is_negotiable_price is False
+    assert c.is_free_price is True
+    assert c.price_byn == 0.0
+
+    # Case 3: priced (real price) — body mentioning "бесплатно" must NOT
+    # corrupt the classification (e.g. "доставка бесплатно")
+    c = _make_ctx({"price_byn": 150000, "subject": "Велосипед", "body": "Доставка бесплатно"})
+    _stage_extract(c)
+    assert c.is_negotiable_price is False
+    assert c.is_free_price is False
+    assert c.price_byn == 1500.0  # 150000 kopecks -> 1500 BYN
 
 
 def test_ai_guardrails_clamp_outlier_price_for_negotiable_financing_bait(monkeypatch) -> None:

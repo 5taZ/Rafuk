@@ -247,6 +247,7 @@ async def persist_tracker_events(
             title=state.title,
             link=state.link,
             price_byn=state.last_price_byn,
+            price_type=state.price_type,
             thumbnail=thumbnail,
             seller_type=seller_type,
             region_name=region_name,
@@ -273,6 +274,7 @@ async def persist_tracker_events(
             title=state.title,
             link=state.link,
             price_byn=state.last_price_byn,
+            price_type=state.price_type,
             delta_byn=delta,
             thumbnail=thumbnail,
             seller_type=seller_type,
@@ -412,9 +414,16 @@ def _detect_threshold_alerts(
         ):
             continue
 
-        price_byn = normalize_price_byn(ad.get("price_byn"))
+        # Pass the raw ad so detect_price_type can return 0.0 for genuine
+        # free listings instead of None — otherwise free items would be
+        # silently dropped from "below threshold" alerts (they trivially
+        # satisfy any threshold) and from "discount" alerts (they're 100%
+        # off, the strongest possible signal).
+        price_byn = normalize_price_byn(ad.get("price_byn"), ad)
         if price_byn is None:
+            # negotiable — unknown price, can't evaluate either alert
             continue
+        price_type = "free" if price_byn == 0.0 else "fixed"
 
         # Price threshold alert
         if tracker.alert_price_threshold and price_byn <= float(tracker.alert_price_threshold):
@@ -436,6 +445,7 @@ def _detect_threshold_alerts(
                 title=title,
                 link=link,
                 price_byn=price_byn,
+                price_type=price_type,
                 parameters={
                     "threshold": float(tracker.alert_price_threshold),
                 },
@@ -468,6 +478,7 @@ def _detect_threshold_alerts(
                     title=title,
                     link=link,
                     price_byn=price_byn,
+                    price_type=price_type,
                     delta_byn=discount_pct,
                     parameters={
                         "discount_percent": round(discount_pct, 1),
@@ -547,7 +558,7 @@ def _build_tracker_message(
         lines.append(f'Запрос "{label}"')
         lines.append(f"Новые объявления: {len(sync_result.new_listings)}")
         for state in sync_result.new_listings[:3]:
-            lines.append(f"• {state.title} - {_format_price_byn(state.last_price_byn)}")
+            lines.append(f"• {state.title} - {_format_price_byn(state.last_price_byn, state.price_type)}")
             if state.link:
                 lines.append(state.link)
         if len(sync_result.new_listings) > 3:
@@ -562,7 +573,7 @@ def _build_tracker_message(
         for state, delta in sync_result.price_drops[:3]:
             delta_str = f"(-{math.ceil(float(delta))} р.)" if float(delta) >= 0.5 else ""
             lines.append(
-                f"• {state.title} - {_format_price_byn(state.last_price_byn)} {delta_str}".rstrip()
+                f"• {state.title} - {_format_price_byn(state.last_price_byn, state.price_type)} {delta_str}".rstrip()
             )
             if state.link:
                 lines.append(state.link)
@@ -604,7 +615,7 @@ def _build_new_listing_message(
     Includes median price, discount from median, and a liquidity hint
     so the user can decide at a glance whether the deal is worth pursuing.
     """
-    price = _format_price_byn(state.last_price_byn)
+    price = _format_price_byn(state.last_price_byn, state.price_type)
     title = (state.title or "Без названия").replace("\n", " ")[:120]
 
     lines = [f"🔔 НОВЫЙ ЛОТ: {title}"]
@@ -630,7 +641,7 @@ def _build_price_drop_message(
     discount_pct: float | None = None,
 ) -> str:
     """Format a single price-drop notification with market context."""
-    price = _format_price_byn(state.last_price_byn)
+    price = _format_price_byn(state.last_price_byn, state.price_type)
     title = (state.title or "Без названия").replace("\n", " ")[:120]
     delta_str = f"(-{round(float(delta))} р.)" if round(float(delta)) > 0 else ""
 

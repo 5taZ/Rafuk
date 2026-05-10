@@ -12,7 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models import QueryListingState, QuerySnapshot
-from api.services.aggregator import compute_price_stats, extract_prices, normalize_price_byn
+from api.services.aggregator import (
+    compute_price_stats,
+    detect_price_type,
+    extract_prices,
+    normalize_price_byn,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -210,7 +215,17 @@ async def sync_query_listing_states(
     for ad in listing_candidates(ads):
         ad_id = int(ad.get("ad_id", 0))
         seen_ids.add(ad_id)
-        price_byn = normalize_price_byn(ad.get("price_byn"))
+        # Pass the raw ad so detect_price_type can distinguish "free"
+        # (price=0, giveaway phrasing) from "negotiable" (price unknown).
+        # Without this, both are stored as last_price_byn=NULL and the
+        # bot announces free items as "договорная" instead of "бесплатно".
+        price_byn = normalize_price_byn(ad.get("price_byn"), ad)
+        if price_byn is None:
+            price_type = "negotiable"
+        elif price_byn == 0.0:
+            price_type = "free"
+        else:
+            price_type = "fixed"
         title = str(ad.get("subject", ""))
         link = str(ad.get("ad_link", ""))
         list_time = ad.get("list_time")
@@ -223,6 +238,7 @@ async def sync_query_listing_states(
                 title=title,
                 link=link,
                 last_price_byn=price_byn,
+                price_type=price_type,
                 list_time=list_time,
                 active=True,
                 first_seen_at=observed_at,
@@ -259,6 +275,7 @@ async def sync_query_listing_states(
         existing.link = link
         existing.list_time = list_time
         existing.last_price_byn = price_byn
+        existing.price_type = price_type
         existing.last_seen_at = observed_at
         existing.active = True
 

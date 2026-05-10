@@ -1248,11 +1248,19 @@ class AIService:
         safe_title = sanitize_user_text(title, max_length=240) or ""
         parts = [f"## ОБЪЯВЛЕНИЕ: {safe_title}"]
 
+        # Three-state price classification:
+        #   is_negotiable_price  -> цена не указана продавцом ("договорная")
+        #   is_free_price        -> явно отдают даром (price_byn == 0)
+        #   neither              -> обычная фиксированная цена
+        is_free_price = (not is_negotiable_price) and price_byn == 0
+
         # Price position
         price_pos = "позиция неизвестна"
         price_delta_pct = None
         if is_negotiable_price:
             price_pos = "цена договорная, точная сумма не указана"
+        elif is_free_price:
+            price_pos = "товар отдают бесплатно (полная скидка к рынку)"
         elif market_median and market_q1 and market_q3:
             price_delta_pct = (price_byn - market_median) / market_median * 100
             if price_byn <= market_q1:
@@ -1278,6 +1286,10 @@ class AIService:
             parts.append(f"Цена: договорная ({price_pos})")
             if market_median:
                 parts.append(f"Рыночный ориентир: медиана {market_median:.0f} BYN")
+        elif is_free_price:
+            parts.append("Цена: 0 BYN — БЕСПЛАТНО (отдают даром)")
+            if market_median:
+                parts.append(f"Рыночная медиана: {market_median:.0f} BYN — это и есть ориентир выгоды.")
         else:
             parts.append(f"Цена: {price_byn:.0f} BYN ({price_pos})")
             if price_delta_pct is not None:
@@ -1375,6 +1387,13 @@ class AIService:
                     "\nПЕРЕПРОДАЖА: цена покупки ещё не согласована. "
                     "Оцени resale_potential по рынку и укажи, при какой цене входа "
                     "сделка выглядит разумной."
+                )
+            elif is_free_price:
+                parts.append(
+                    "\nПЕРЕПРОДАЖА: товар достаётся бесплатно (0 BYN). "
+                    "Любая ненулевая цена перепродажи — это чистая прибыль; "
+                    "оцени resale_potential по рынку и обрати внимание прежде "
+                    "всего на состояние и логистику самовывоза."
                 )
             elif price_byn:
                 parts.append(

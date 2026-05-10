@@ -299,8 +299,12 @@ def _init_analysis_state(
     c.analysis_timeout = getattr(settings, "ai_analysis_timeout", 150)
     c.photo_precheck_timeout = getattr(settings, "ai_photo_precheck_timeout", 30)
     c.fallback_cache_ttl = getattr(settings, "ai_fallback_cache_ttl", 1800)
+    # Defaults assume "negotiable" (price unknown) — the safer fallback if
+    # the extract stage never runs (e.g. early failure). Free items must
+    # set is_free_price=True explicitly in _stage_extract.
     c.price_byn = 0.0
     c.is_negotiable_price = True
+    c.is_free_price = False
     c.median = None
     c.q1 = None
     c.q3 = None
@@ -445,8 +449,19 @@ def _stage_extract(c: _AC) -> None:
     """Extract target ad fields and compute market statistics."""
     c.title = c.target_ad.get("subject", "") or c.target_ad.get("title", "")
     c.description = c.target_ad.get("body", "") or c.target_ad.get("description", "")
-    c.price_byn = normalize_price_byn(c.target_ad.get("price_byn")) or 0.0
-    c.is_negotiable_price = c.price_byn <= 0
+    # Pass the full ad dict so detect_price_type can distinguish "free"
+    # (genuine giveaway, normalize -> 0.0) from "negotiable" (unknown
+    # price, normalize -> None). Conflating them was a silent bug:
+    # genuine free items were being announced to the AI as "цена не
+    # указана", which wrecked resale guidance and red-flag analysis.
+    raw_normalized = normalize_price_byn(c.target_ad.get("price_byn"), c.target_ad)
+    c.is_negotiable_price = raw_normalized is None
+    c.is_free_price = raw_normalized == 0.0
+    # Downstream code expects price_byn as float for math safety. Use 0.0
+    # for both negotiable and free; the boolean flags carry the semantic
+    # distinction so callers (especially AI prompts) can render them
+    # differently.
+    c.price_byn = raw_normalized if raw_normalized is not None else 0.0
 
     c.condition = None
     for param in c.target_ad.get("ad_parameters", []):
