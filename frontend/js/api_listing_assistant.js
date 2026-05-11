@@ -311,7 +311,7 @@ function createApiListingAssistant(context) {
             document.body.removeChild(ta);
         };
         const finalize = () => {
-            showToast("✓ Скопировано", "success", 1400);
+            showToast("Скопировано", "success", 1400);
             if (sourceBtn) {
                 const original = sourceBtn.textContent;
                 sourceBtn.textContent = "Скопировано";

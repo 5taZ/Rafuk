@@ -162,11 +162,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-0214ab8"),
-            context._loadScript("js/api_ai_render.js?v=20260511-0214ab8"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-0214ab8"),
-            context._loadScript("js/api_ai.js?v=20260511-0214ab8"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-0214ab8"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-5835195"),
+            context._loadScript("js/api_ai_render.js?v=20260511-5835195"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-5835195"),
+            context._loadScript("js/api_ai.js?v=20260511-5835195"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-5835195"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -393,7 +393,7 @@ function createAppActions(baseContext) {
             await core.deleteJson(`/api/v1/leads/${leadId}`);
             state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
             renderLeads();
-            showToast("✓ Сделка удалена из истории");
+            showToast("Сделка удалена из истории");
             await leads.loadLeads();
         } catch (error) {
             showToast(error.message || "Не удалось удалить сделку");

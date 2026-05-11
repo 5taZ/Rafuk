@@ -89,7 +89,9 @@ function createRenderCore(context) {
     function showToast(message, type = "info", duration = 3000) {
         if (!elements.toastContainer) return null;
 
-        const messageStr = String(message ?? "").replace(/^[\s✓✕↩]+/, "").trim();
+        const messageStr = String(message ?? "")
+            .replace(/^[\s✓✔✅☑✕✖❌×↩←→★⭐❤🔥⚠\uFE0F]+/u, "")
+            .trim();
         const label = {
             success: "Готово",
             error: "Ошибка",

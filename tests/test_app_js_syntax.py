@@ -439,6 +439,21 @@ def test_toasts_are_minimal_and_fast() -> None:
     assert "animation: toast-in 120ms" in css
 
 
+def test_toast_messages_do_not_duplicate_status_symbols() -> None:
+    decorative_prefix_re = re.compile(
+        r"showToast\(\s*([\"'`])[\s✓✔✅☑✕✖❌×↩←→★⭐❤🔥⚠\ufe0f]+"
+    )
+    for path in sorted(JS_DIR.glob("*.js")):
+        if path.name == "app_bundle.js" or path.parent.name == "vendor":
+            continue
+        text = path.read_text(encoding="utf-8")
+        assert not decorative_prefix_re.search(text), f"{path} has decorative toast prefix"
+
+    render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+    for symbol in ("✓", "✔", "✅", "✕", "✖", "❌", "↩", "⚠"):
+        assert symbol in render_core
+
+
 def test_unified_item_card_replaces_lead_and_watchlist_builders() -> None:
     """Roadmap milestone: lead/watchlist surfaces share one builder.
     The wrappers stay only as thin aliases for the unified function."""

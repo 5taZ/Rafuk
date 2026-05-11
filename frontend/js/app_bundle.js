@@ -1946,7 +1946,9 @@ function createRenderCore(context) {
     function showToast(message, type = "info", duration = 3000) {
         if (!elements.toastContainer) return null;
 
-        const messageStr = String(message ?? "").replace(/^[\s✓✕↩]+/, "").trim();
+        const messageStr = String(message ?? "")
+            .replace(/^[\s✓✔✅☑✕✖❌×↩←→★⭐❤🔥⚠\uFE0F]+/u, "")
+            .trim();
         const label = {
             success: "Готово",
             error: "Ошибка",
@@ -7850,7 +7852,7 @@ function createApiLeads(context) {
             await deleteJson(`/api/v1/leads/${leadId}`);
             state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
             renderLeads();
-            showToast("✓ Сделка отменена", "info");
+            showToast("Сделка отменена", "info");
             await loadLeads();
         } catch (error) {
             showToast(error.message || "Не удалось отменить сделку");
@@ -8452,7 +8454,7 @@ function createApiWatchlist(context) {
             await deleteJson(`/api/v1/watchlist/${watchlistId}`);
             // Confirmation toast was missing — users couldn't tell
             // delete actually fired vs the card just animating out.
-            showToast("✓ Удалено из избранного", "info");
+            showToast("Удалено из избранного", "info");
             await loadWatchlist();
         } catch (error) {
             // Rollback the optimistic removal so the user can see the
@@ -9799,11 +9801,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-0214ab8"),
-            context._loadScript("js/api_ai_render.js?v=20260511-0214ab8"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-0214ab8"),
-            context._loadScript("js/api_ai.js?v=20260511-0214ab8"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-0214ab8"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-5835195"),
+            context._loadScript("js/api_ai_render.js?v=20260511-5835195"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-5835195"),
+            context._loadScript("js/api_ai.js?v=20260511-5835195"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-5835195"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -10030,7 +10032,7 @@ function createAppActions(baseContext) {
             await core.deleteJson(`/api/v1/leads/${leadId}`);
             state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
             renderLeads();
-            showToast("✓ Сделка удалена из истории");
+            showToast("Сделка удалена из истории");
             await leads.loadLeads();
         } catch (error) {
             showToast(error.message || "Не удалось удалить сделку");

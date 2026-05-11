@@ -244,7 +244,7 @@ function createApiLeads(context) {
             await deleteJson(`/api/v1/leads/${leadId}`);
             state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
             renderLeads();
-            showToast("✓ Сделка отменена", "info");
+            showToast("Сделка отменена", "info");
             await loadLeads();
         } catch (error) {
             showToast(error.message || "Не удалось отменить сделку");

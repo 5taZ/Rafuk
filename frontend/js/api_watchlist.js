@@ -355,7 +355,7 @@ function createApiWatchlist(context) {
             await deleteJson(`/api/v1/watchlist/${watchlistId}`);
             // Confirmation toast was missing — users couldn't tell
             // delete actually fired vs the card just animating out.
-            showToast("✓ Удалено из избранного", "info");
+            showToast("Удалено из избранного", "info");
             await loadWatchlist();
         } catch (error) {
             // Rollback the optimistic removal so the user can see the
