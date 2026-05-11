@@ -10,7 +10,15 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_engine, get_session_factory
-from api.models import Base, LeadItem, LeadReminder, QueryListingState, Tracker, TrackerEvent
+from api.models import (
+    Base,
+    LeadItem,
+    LeadReminder,
+    QueryListingState,
+    TelegramNotificationDLQ,
+    Tracker,
+    TrackerEvent,
+)
 from api.services.history_service import QuerySyncResult, TrendReversal
 from scheduler.collector import (
     _build_new_listing_message,
@@ -400,6 +408,7 @@ async def test_notify_user_unauthorized_deactivates_tracker(
 @pytest.mark.asyncio
 async def test_notify_user_retry_after_keeps_active(mock_bot: AsyncMock, populated_session):
     from aiogram.exceptions import TelegramRetryAfter
+    from sqlalchemy import select
 
     session, user, tracker = populated_session
     exc = TelegramRetryAfter(method=MagicMock(), message="Rate limited", retry_after=30)
@@ -413,6 +422,13 @@ async def test_notify_user_retry_after_keeps_active(mock_bot: AsyncMock, populat
         internal_user_id=user.id,
     )
     assert result is True
+    queued = (
+        await session.execute(select(TelegramNotificationDLQ))
+    ).scalar_one()
+    assert queued.user_id == user.id
+    assert queued.telegram_user_id == 123456
+    assert queued.source == "notify_user"
+    assert queued.message == "Hello"
 
 
 @pytest.mark.asyncio
@@ -1287,6 +1303,13 @@ async def test_dispatch_tracker_notifications_retry_does_not_count(
             )
         ).scalar_one()
         assert active is True
+        queued = (
+            await session.execute(select(TelegramNotificationDLQ))
+        ).scalar_one()
+        assert queued.user_id == uid
+        assert queued.telegram_user_id == 701
+        assert queued.source == "tracker"
+        assert queued.message == "a"
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

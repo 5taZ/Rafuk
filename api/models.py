@@ -537,6 +537,33 @@ class LeadReminder(Base):
     )
 
 
+class TelegramNotificationDLQ(Base):
+    __tablename__ = "telegram_notification_dlq"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    message: Mapped[str] = mapped_column(String(4096), nullable=False)
+    error_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    retry_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_telegram_notification_dlq_created", "created_at"),
+        Index("idx_telegram_notification_dlq_user", "user_id"),
+    )
+
+
 class UserConsent(Base):
     """User consent records for PD processing and AI analysis."""
 

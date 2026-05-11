@@ -112,6 +112,16 @@ def test_user_consents_version_constraint() -> None:
     assert "chk_user_consents_version_current" in constraint_names
 
 
+def test_telegram_notification_dlq_table_shape() -> None:
+    dlq = Base.metadata.tables["telegram_notification_dlq"]
+    assert "telegram_user_id" in dlq.columns
+    assert "source" in dlq.columns
+    assert "message" in dlq.columns
+    indexes = {index.name for index in dlq.indexes}
+    assert "idx_telegram_notification_dlq_created" in indexes
+    assert "idx_telegram_notification_dlq_user" in indexes
+
+
 def test_get_engine_returns_async_engine() -> None:
     from sqlalchemy.ext.asyncio import AsyncEngine
 

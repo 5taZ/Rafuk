@@ -32,6 +32,7 @@ from api.models import (
     LeadReminder,
     QueryListingState,
     QuerySnapshot,
+    TelegramNotificationDLQ,
     Tracker,
     TrackerEvent,
 )
@@ -133,6 +134,30 @@ async def _send_message_classified(
         return "retry"
 
 
+def _queue_notification_dlq(
+    session: AsyncSession,
+    *,
+    telegram_user_id: int,
+    message: str,
+    source: str,
+    internal_user_id: int | None = None,
+    error_kind: str = "retry",
+    error_message: str | None = None,
+    retry_after_seconds: int | None = None,
+) -> None:
+    session.add(
+        TelegramNotificationDLQ(
+            user_id=internal_user_id,
+            telegram_user_id=telegram_user_id,
+            source=source,
+            message=message[:4096],
+            error_kind=error_kind[:64],
+            error_message=error_message[:512] if error_message else None,
+            retry_after_seconds=retry_after_seconds,
+        )
+    )
+
+
 async def notify_user(
     bot: Bot,
     telegram_user_id: int,
@@ -174,6 +199,13 @@ async def notify_user(
             await session.flush()
         return False
     # outcome == "retry" — keep state untouched
+    _queue_notification_dlq(
+        session,
+        telegram_user_id=telegram_user_id,
+        message=message,
+        source="notify_user",
+        internal_user_id=internal_user_id,
+    )
     return True
 
 
@@ -1188,10 +1220,11 @@ async def _dispatch_tracker_notifications(
 
     async def _send_for_user(
         user_jobs: list[_TrackerNotifyJob],
-    ) -> tuple[int, int | None]:
-        """Serial send loop for one user. Returns (sent_count, blocked_user_id|None)."""
+    ) -> tuple[int, int | None, list[_TrackerNotifyJob]]:
+        """Serial send loop for one user."""
         async with sem:
             sent = 0
+            retries: list[_TrackerNotifyJob] = []
             for job in user_jobs:
                 outcome = await _send_message_classified(
                     bot,
@@ -1205,32 +1238,45 @@ async def _dispatch_tracker_notifications(
                     # Skip the rest of this user's queue — same effect
                     # as the old inline ``break`` but now applied across
                     # ALL of that user's trackers, not just one.
-                    return sent, job.internal_user_id
+                    return sent, job.internal_user_id, retries
                 # outcome == "retry": keep trying; a transient error on
                 # one job doesn't imply the next will fail too.
-            return sent, None
+                elif outcome == "retry":
+                    retries.append(job)
+            return sent, None, retries
 
     results = await asyncio.gather(
         *[_send_for_user(user_jobs) for user_jobs in by_user.values()]
     )
-    total_sent = sum(s for s, _ in results)
-    blocked_user_ids = {uid for _, uid in results if uid is not None}
+    total_sent = sum(s for s, _, _ in results)
+    blocked_user_ids = {uid for _, uid, _ in results if uid is not None}
+    retry_jobs = [job for _, _, retries in results for job in retries]
 
-    if blocked_user_ids:
+    if blocked_user_ids or retry_jobs:
         async with session_factory() as session:
-            await session.execute(
-                update(Tracker)
-                .where(
-                    Tracker.user_id.in_(blocked_user_ids),
-                    Tracker.active.is_(True),
+            if blocked_user_ids:
+                await session.execute(
+                    update(Tracker)
+                    .where(
+                        Tracker.user_id.in_(blocked_user_ids),
+                        Tracker.active.is_(True),
+                    )
+                    .values(active=False)
                 )
-                .values(active=False)
-            )
+            for job in retry_jobs:
+                _queue_notification_dlq(
+                    session,
+                    telegram_user_id=job.telegram_user_id,
+                    message=job.message,
+                    source="tracker",
+                    internal_user_id=job.internal_user_id,
+                )
             await session.commit()
-            logger.info(
-                "Tracker notifications: deactivated trackers for %d blocked user(s)",
-                len(blocked_user_ids),
-            )
+            if blocked_user_ids:
+                logger.info(
+                    "Tracker notifications: deactivated trackers for %d blocked user(s)",
+                    len(blocked_user_ids),
+                )
 
     return total_sent
 
@@ -1340,7 +1386,7 @@ async def check_reminders(
         # ── Phase 3: apply outcomes back to the session ──────────────
         sent_count = 0
         blocked_user_ids: set[int] = set()
-        for (reminder, _uid, _text, _kb), outcome in zip(jobs, outcomes):
+        for (reminder, _uid, _text, _kb), outcome in zip(jobs, outcomes, strict=True):
             if outcome == "sent":
                 reminder.sent = True
                 sent_count += 1
@@ -1349,7 +1395,14 @@ async def check_reminders(
                 # user re-enables the bot) can retry naturally.
                 if reminder.user_id is not None:
                     blocked_user_ids.add(reminder.user_id)
-            # outcome == "retry": leave sent=False, no DB change.
+            elif outcome == "retry":
+                _queue_notification_dlq(
+                    session,
+                    telegram_user_id=_uid,
+                    message=_text,
+                    source="reminder",
+                    internal_user_id=reminder.user_id,
+                )
 
         if blocked_user_ids:
             # Single bulk update per tick instead of one UPDATE per
