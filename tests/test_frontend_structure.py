@@ -50,12 +50,15 @@ def test_html_has_viewport_meta(soup: BeautifulSoup) -> None:
 def test_html_loads_required_scripts(soup: BeautifulSoup) -> None:
     scripts = [script.get("src", "") for script in soup.find_all("script")]
     assert any("telegram-web-app.js" in script for script in scripts)
-    assert any("app.js" in script for script in scripts)
-    assert any("virtual_list.js" in script for script in scripts)
+    assert any("app_bundle.js" in script for script in scripts)
+    assert len([script for script in scripts if script.startswith("js/")]) == 1
+    bundle = (FRONTEND / "js" / "app_bundle.js").read_text(encoding="utf-8")
+    assert "function analyticsApp" in bundle
+    assert "function createVirtualList" in bundle
     # Chart.js is now lazy-loaded by render_charts.js on first paint —
     # keep the loader file in the bundle but make sure no <script> tag
     # blocks the initial document on the chart library directly.
-    assert any("render_charts.js" in script for script in scripts)
+    assert "ensureChartLib" in bundle
     assert not any(
         "chart.umd" in script or "chart.min.js" in script for script in scripts
     ), "Chart.js must be lazy-loaded, not preloaded by <script> tag"
