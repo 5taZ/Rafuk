@@ -77,6 +77,12 @@ def test_pinch_zoom_caches_viewport_size_for_gestures() -> None:
     assert "let viewportSize = null" in text
     assert "function ensureViewportSize()" in text
     assert "const viewport = ensureViewportSize()" in text
+    pinch = text[
+        text.index("function attachPinchZoom"):
+        text.index("/* ─── Long-press action menu")
+    ]
+    assert "getBoundingClientRect" not in pinch
+    assert "style.transform = \"none\"" not in pinch
 
 
 def test_node_syntax_check() -> None:
@@ -218,7 +224,7 @@ function isInert(el) { return el.hasAttribute("inert"); }
     // inert (from outer's sweep), outer was active (it was the open
     // modal), header was inert.
     if (!isInert(inner)) throw new Error("stacked: closing inner re-applies inert it lifted");
-    if (isInert(outer)) throw new Error("stacked: outer is the open modal again, must not be inert");
+    if (isInert(outer)) throw new Error("stacked: outer active modal is inert");
     if (!isInert(header)) throw new Error("stacked: header stays inert (outer is still open)");
 
     _restoreInertSiblings(outer);
@@ -489,8 +495,8 @@ def test_detail_modal_supports_pinch_zoom_with_swipe_deferral() -> None:
 
     The zoom uses a transform-origin: 0 0 model with anchor-point
     math so the zoom focuses on the pinch center, not the image
-    center. No getBoundingClientRect() is called on touchmove —
-    the base rect is snapshotted once on touchstart."""
+    center. No getBoundingClientRect() is called in the pinch helper;
+    it clamps against cached viewport dimensions instead."""
     helpers = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
     events = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
     modals = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
@@ -505,8 +511,13 @@ def test_detail_modal_supports_pinch_zoom_with_swipe_deferral() -> None:
     assert "pinchAnchorPx" in helpers
     assert "pinchAnchorPy" in helpers
 
-    # Base rect is snapshotted on touchstart, not recalculated on move
-    assert "baseRect" in helpers
+    # Clamping uses cached viewport dimensions instead of layout reads
+    pinch = helpers[
+        helpers.index("function attachPinchZoom"):
+        helpers.index("/* ─── Long-press action menu")
+    ]
+    assert "getBoundingClientRect" not in pinch
+    assert "style.transform = \"none\"" not in pinch
     assert "clampTranslate" in helpers
 
     # The swipe-between-photos handler must short-circuit while zoomed

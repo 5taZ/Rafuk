@@ -736,24 +736,10 @@ function attachPinchZoom(img, options) {
     let lastTapX = 0;
     let lastTapY = 0;
 
-    // Cached base rect (before transform) — computed lazily once
-    let baseRect = null;
     let viewportSize = null;
 
     // Active gesture type to prevent pinch→pan jump
     let activeGesture = null; // "pinch" | "pan" | null
-
-    function ensureBaseRect() {
-        if (baseRect) return baseRect;
-        // Temporarily strip transform to measure natural size.
-        // Use CSS class to avoid visual flash: set a will-change hint
-        // so the browser batches the layout change.
-        const saved = img.style.transform;
-        img.style.transform = "none";
-        baseRect = img.getBoundingClientRect();
-        img.style.transform = saved;
-        return baseRect;
-    }
 
     function ensureViewportSize() {
         if (viewportSize) return viewportSize;
@@ -783,7 +769,6 @@ function attachPinchZoom(img, options) {
         tx = 0;
         ty = 0;
         activeGesture = null;
-        baseRect = null; // Invalidate cached rect for next interaction
         viewportSize = null;
         if (animate) {
             img.style.transition = "transform 220ms cubic-bezier(0.2,0.8,0.2,1)";
@@ -802,20 +787,20 @@ function attachPinchZoom(img, options) {
     }
 
     /** Clamp translate so the image cannot be dragged entirely off-screen.
-     *  Uses baseRect (the element's un-transformed bounding box) so the
-     *  calculation is independent of the current transform. */
+     *  Uses the cached viewport dimensions as the untransformed image box:
+     *  detail images fill their modal viewport, so this avoids a
+     *  transform mutation plus a forced layout read. */
     function clampTranslate() {
         if (s <= 1) {
             tx = 0;
             ty = 0;
             return;
         }
-        const rect = ensureBaseRect();
         const viewport = ensureViewportSize();
         const vw = viewport.width;
         const vh = viewport.height;
-        const iw = rect.width * s;
-        const ih = rect.height * s;
+        const iw = vw * s;
+        const ih = vh * s;
 
         // The image rectangle in viewport coords is (tx, ty, iw, ih).
         // Require at least 40px of the image to remain visible on each side.
@@ -854,7 +839,6 @@ function attachPinchZoom(img, options) {
         if (e.touches.length === 2) {
             e.preventDefault();
             activeGesture = "pinch";
-            ensureBaseRect();
             ensureViewportSize();
 
             pinchStartDist = dist(e.touches);
@@ -880,7 +864,6 @@ function attachPinchZoom(img, options) {
                 if (s > 1.001) {
                     reset(true);
                 } else {
-                    ensureBaseRect();
                     ensureViewportSize();
                     // Zoom towards the tap point
                     const local = viewportToImage(t.clientX, t.clientY);
@@ -9700,11 +9683,11 @@ function createAppActions(context) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-222568f"),
-            context._loadScript("js/api_ai_render.js?v=20260511-222568f"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-222568f"),
-            context._loadScript("js/api_ai.js?v=20260511-222568f"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-222568f"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-c3a963e"),
+            context._loadScript("js/api_ai_render.js?v=20260511-c3a963e"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-c3a963e"),
+            context._loadScript("js/api_ai.js?v=20260511-c3a963e"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-c3a963e"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
