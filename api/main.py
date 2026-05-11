@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -13,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from slowapi.errors import RateLimitExceeded
 
-from api.config import get_settings
+from api.config import get_settings, is_production_like_deployment
 from api.database import get_engine, get_session_factory
 from api.dependencies import ensure_user_exists
 from api.limiter import limiter
@@ -113,16 +112,17 @@ async def lifespan(app: FastAPI):
     # Rate limiter sanity check: if Redis was unreachable at import time
     # the limiter silently fell back to in-memory storage, which makes
     # per-user limits effectively useless with multiple workers. Refuse
-    # to start in production (fail-closed) and warn loudly in dev.
+    # to start in production-like deployments (fail-closed) and warn
+    # loudly in local dev.
     from api.limiter import rate_limiter_degraded  # noqa: PLC0415 — read latest value
 
     if rate_limiter_degraded:
-        if os.environ.get("ENV") == "production":
+        if is_production_like_deployment(settings):
             raise RuntimeError(
-                "Rate limiter degraded (Redis unreachable) and ENV=production. "
-                "Refusing to start — running with in-memory limits across N "
-                "workers means abuse protection is effectively off. Fix "
-                "Redis connectivity and retry."
+                "Rate limiter degraded (Redis unreachable) in a production-like "
+                "deployment. Refusing to start — running with in-memory limits "
+                "across N workers means abuse protection is effectively off. "
+                "Fix Redis connectivity and retry."
             )
         logger.warning(
             "⚠ Rate limiter is in DEGRADED mode (in-memory fallback). "

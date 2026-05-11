@@ -199,6 +199,12 @@ class Settings(BaseSettings):
         return v
 
 
+def is_production_like_deployment(settings: Settings) -> bool:
+    if os.getenv("ENV") == "production":
+        return True
+    return not _is_local_database_url(settings.database_url)
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
