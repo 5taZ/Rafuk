@@ -305,7 +305,10 @@ function createAppActions(context) {
                 await core.requestJson(`/api/v1/leads/${watchingItem.id}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ status: "new" }),
+                    body: JSON.stringify({
+                        status: "new",
+                        version: watchingItem.version,
+                    }),
                 });
                 // Optimistic: remove from watchlist immediately.
                 state.watchlist.items = state.watchlist.items.filter((w) => w.id !== watchingItem.id);

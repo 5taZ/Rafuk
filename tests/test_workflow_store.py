@@ -10,6 +10,7 @@ from api.database import get_engine, get_session_factory
 from api.models import Base, LeadItem, LeadItemPriceSnapshot
 from api.services.workflow_store import (
     load_last_snapshot_prices,
+    prune_price_snapshots,
     record_price_snapshot,
 )
 
@@ -121,6 +122,48 @@ async def test_record_price_snapshot_skips_db_round_trip_when_hint_provided() ->
         assert snap is not None
         await session.commit()
 
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_prune_price_snapshots_deletes_rows_outside_retention_window() -> None:
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = make_user(telegram_user_id=44, first_name="Prune")
+        session.add(user)
+        await session.flush()
+        item = LeadItem(
+            user_id=user.id, ad_id=11, query="iphone", title="Y",
+            link="https://x", status="watching",
+        )
+        session.add(item)
+        await session.flush()
+
+        now = datetime.now(UTC)
+        session.add_all([
+            LeadItemPriceSnapshot(
+                lead_item_id=item.id,
+                price_byn=1000.0,
+                snapped_at=now - timedelta(days=91),
+            ),
+            LeadItemPriceSnapshot(
+                lead_item_id=item.id,
+                price_byn=950.0,
+                snapped_at=now - timedelta(days=30),
+            ),
+        ])
+        await session.flush()
+
+        deleted = await prune_price_snapshots(session, [item.id], days=90, now=now)
+        await session.commit()
+        remaining = await load_last_snapshot_prices(session, [item.id])
+
+    assert deleted == 1
+    assert remaining == {item.id: 950.0}
     await engine.dispose()
 
 

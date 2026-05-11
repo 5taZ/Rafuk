@@ -168,9 +168,10 @@ function createApiLeads(context) {
                 buy_price_byn: buyPriceNum,
                 sold_price_byn: soldPriceNum,
                 status: "sold",
+                version: lead.version,
             };
 
-            await requestJson(`/api/v1/leads/${lead.id}`, {
+            const updatedLead = await requestJson(`/api/v1/leads/${lead.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
@@ -178,9 +179,7 @@ function createApiLeads(context) {
 
             const leadInState = state.leads.items.find((l) => l.id === lead.id);
             if (leadInState) {
-                leadInState.buy_price_byn = buyPriceNum;
-                leadInState.sold_price_byn = soldPriceNum;
-                leadInState.status = "sold";
+                Object.assign(leadInState, updatedLead);
             }
 
             renderLeads();
@@ -229,14 +228,14 @@ function createApiLeads(context) {
 
             const profit = soldPriceByn - buyPriceByn;
 
-            await requestJson(`/api/v1/leads/${leadId}`, {
+            const updatedLead = await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "closed" }),
+                body: JSON.stringify({ status: "closed", version: lead?.version }),
             });
 
             if (lead) {
-                lead.status = "closed";
+                Object.assign(lead, updatedLead);
             }
             renderLeads();
 
@@ -254,21 +253,20 @@ function createApiLeads(context) {
     // ── Revert lead stage (back to new) ──────────────────────────────────
     async function revertLeadStage(leadId, currentStatus) {
         try {
-            await requestJson(`/api/v1/leads/${leadId}`, {
+            const leadInState = state.leads.items.find((l) => l.id === leadId);
+            const updatedLead = await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     status: "new",
                     buy_price_byn: null,
                     sold_price_byn: null,
+                    version: leadInState?.version,
                 }),
             });
 
-            const leadInState = state.leads.items.find((l) => l.id === leadId);
             if (leadInState) {
-                leadInState.status = "new";
-                leadInState.buy_price_byn = null;
-                leadInState.sold_price_byn = null;
+                Object.assign(leadInState, updatedLead);
             }
             renderLeads();
 
@@ -303,10 +301,14 @@ function createApiLeads(context) {
     // ── Update lead metadata ─────────────────────────────────────────────
     async function updateLeadMeta(leadId, payload) {
         try {
+            const lead = state.leads.items.find((l) => l.id === leadId);
             await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
+                body: JSON.stringify({
+                    ...payload,
+                    version: payload.version ?? lead?.version,
+                }),
             });
             await loadLeads();
             return true;
@@ -329,19 +331,19 @@ function createApiLeads(context) {
         }
 
         try {
-            await requestJson(`/api/v1/leads/${lead.id}`, {
+            const updatedLead = await requestJson(`/api/v1/leads/${lead.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     status: "sold",
                     sold_price_byn: priceNum,
+                    version: lead.version,
                 }),
             });
 
             const leadInState = state.leads.items.find((l) => l.id === lead.id);
             if (leadInState) {
-                leadInState.status = "sold";
-                leadInState.sold_price_byn = priceNum;
+                Object.assign(leadInState, updatedLead);
             }
             renderLeads();
 

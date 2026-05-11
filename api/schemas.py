@@ -364,6 +364,7 @@ class LeadCreate(BaseModel):
 
 
 class LeadUpdate(BaseModel):
+    version: int | None = Field(default=None, ge=1)
     status: LeadStatusEnum | None = None
     target_resale_byn: float | None = None
     buy_price_byn: float | None = None
@@ -396,6 +397,7 @@ class LeadRead(BaseModel):
     duplicate_count: int = Field(default=0)
     last_seen_at: datetime | None = None
     notes: str | None = None
+    version: int
     # Computed fields (not in DB)
     total_expenses: float = Field(default=0.0)
     actual_profit: float | None = None
@@ -418,6 +420,7 @@ class WatchlistCreate(BaseModel):
 
 
 class WatchlistUpdate(BaseModel):
+    version: int | None = Field(default=None, ge=1)
     workflow_status: WatchlistStatusEnum | None = None
     notes: str | None = None
 
@@ -452,6 +455,7 @@ class WatchlistRead(BaseModel):
     last_seen_at: datetime | None = None
     missing_since_at: datetime | None = None
     updated_at: datetime
+    version: int
     # Compact 30-day price trend (newest last) so the watchlist card
     # can render a sparkline without a per-row round-trip. Empty list
     # means "no movement recorded yet" — frontend renders a flat line.

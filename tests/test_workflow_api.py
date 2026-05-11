@@ -79,34 +79,56 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
         lead = lead_response.json()
         assert lead["status"] == "new"
         assert lead["target_resale_byn"] == 2250
+        assert lead["version"] == 1
 
         update_lead_response = client.patch(
             f"/api/v1/leads/{lead['id']}",
-            json={"status": "in_progress"},
+            json={"status": "in_progress", "version": lead["version"]},
         )
         assert update_lead_response.status_code == 200
-        assert update_lead_response.json()["status"] == "in_progress"
+        lead = update_lead_response.json()
+        assert lead["status"] == "in_progress"
+        assert lead["version"] == 2
+
+        stale_update_response = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"status": "reviewing", "version": 1},
+        )
+        assert stale_update_response.status_code == 409
+        missing_version_response = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"status": "reviewing"},
+        )
+        assert missing_version_response.status_code == 428
 
         update_lead_meta_response = client.patch(
             f"/api/v1/leads/{lead['id']}",
-            json={"target_resale_byn": None},
+            json={"target_resale_byn": None, "version": lead["version"]},
         )
         assert update_lead_meta_response.status_code == 200
-        assert update_lead_meta_response.json()["target_resale_byn"] is None
+        lead = update_lead_meta_response.json()
+        assert lead["target_resale_byn"] is None
 
         sell_lead_response = client.patch(
             f"/api/v1/leads/{lead['id']}",
-            json={"status": "sold", "buy_price_byn": 1700, "sold_price_byn": 2100},
+            json={
+                "status": "sold",
+                "buy_price_byn": 1700,
+                "sold_price_byn": 2100,
+                "version": lead["version"],
+            },
         )
         assert sell_lead_response.status_code == 200
-        assert sell_lead_response.json()["status"] == "sold"
+        lead = sell_lead_response.json()
+        assert lead["status"] == "sold"
 
         close_lead_response = client.patch(
             f"/api/v1/leads/{lead['id']}",
-            json={"status": "closed"},
+            json={"status": "closed", "version": lead["version"]},
         )
         assert close_lead_response.status_code == 200
-        assert close_lead_response.json()["status"] == "closed"
+        lead = close_lead_response.json()
+        assert lead["status"] == "closed"
 
         list_leads_response = client.get("/api/v1/leads")
         assert list_leads_response.status_code == 200
@@ -128,7 +150,12 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
         assert (
             client.patch(
                 f"/api/v1/leads/{sold_lead['id']}",
-                json={"status": "sold", "buy_price_byn": 1800, "sold_price_byn": 2200},
+                json={
+                    "status": "sold",
+                    "buy_price_byn": 1800,
+                    "sold_price_byn": 2200,
+                    "version": sold_lead["version"],
+                },
             ).status_code
             == 200
         )
@@ -161,7 +188,11 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
 
         update_watchlist_response = client.patch(
             f"/api/v1/watchlist/{watchlist_item['id']}",
-            json={"workflow_status": "reviewing", "notes": "сравнить вечером"},
+            json={
+                "workflow_status": "reviewing",
+                "notes": "сравнить вечером",
+                "version": watchlist_item["version"],
+            },
         )
         assert update_watchlist_response.status_code == 200
         # workflow_status is intentionally fixed at "default"; only notes mutates.

@@ -39,6 +39,7 @@ from api.services.workflow_store import (
     ensure_user,
     load_last_snapshot_prices,
     make_price_snapshot,
+    prune_price_snapshots,
     record_price_snapshot,
     resolve_user_id,
     upsert_lead,
@@ -51,6 +52,23 @@ router = APIRouter(tags=["workflow"])
 WATCHING_STATUS = "watching"
 
 _REFRESH_SEMAPHORE = asyncio.Semaphore(3)
+
+
+def _check_lead_version(item: LeadItem, expected: int | None) -> None:
+    if expected is None:
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail="Lead version is required for updates",
+        )
+    if item.version != expected:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Lead was updated elsewhere; reload and retry",
+        )
+
+
+def _bump_lead_version(item: LeadItem) -> None:
+    item.version = int(item.version or 1) + 1
 
 
 async def _limited_query(coro):
@@ -101,6 +119,7 @@ def _serialize_watchlist(
         last_seen_at=item.last_seen_at,
         missing_since_at=item.missing_since_at,
         updated_at=item.updated_at,
+        version=item.version,
         price_history=price_history or [],
     )
 
@@ -247,6 +266,7 @@ async def update_lead(
         )
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        _check_lead_version(lead, payload.version)
         if "status" in payload.model_fields_set:
             lead.status = payload.status.value
         if "target_resale_byn" in payload.model_fields_set:
@@ -268,6 +288,7 @@ async def update_lead(
                 # symmetrically when computing deal potential.
                 lead.status = LeadStatusEnum.bought.value
                 lead.sold_at = None
+        _bump_lead_version(lead)
         await session.commit()
         await session.refresh(lead)  # Refresh to get server-generated updated_at
         return LeadRead.model_validate(lead)
@@ -482,10 +503,12 @@ async def update_watchlist_item(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Watchlist item not found",
             )
+        _check_lead_version(item, payload.version)
         # `workflow_status` is intentionally a no-op now (priority chip removed
         # from the UI). Notes update is the only real mutation.
         if "notes" in payload.model_fields_set:
             item.notes = payload.notes
+            _bump_lead_version(item)
         await session.commit()
         await session.refresh(item)  # Refresh to get server-generated updated_at
         return _serialize_watchlist(item)
@@ -671,9 +694,14 @@ async def refresh_watchlist(
                 )
                 if snapshot:
                     snapshots_to_insert.append(snapshot)
+                if item.version is not None:
+                    _bump_lead_version(item)
 
         if snapshots_to_insert:
             await session.execute(insert(LeadItemPriceSnapshot).values(snapshots_to_insert))
+        await prune_price_snapshots(
+            session, [item.id for item in items if item.id is not None]
+        )
 
         # Auto-remove watchlist items that have been missing too long
         auto_remove_cutoff = datetime.now(UTC) - timedelta(days=settings.auto_remove_missing_days)

@@ -59,7 +59,9 @@ class User(Base):
     consents = relationship("UserConsent", back_populates="user", cascade="all, delete-orphan")
     reminders = relationship("LeadReminder", back_populates="user", cascade="all, delete-orphan")
     ai_audit_logs = relationship("AIAuditLog", back_populates="user", cascade="all, delete-orphan")
-    saved_searches = relationship("SavedSearch", back_populates="user", cascade="all, delete-orphan")
+    saved_searches = relationship(
+        "SavedSearch", back_populates="user", cascade="all, delete-orphan"
+    )
     contacts = relationship("Contact", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
@@ -179,7 +181,12 @@ class Tracker(
         Index("idx_trackers_user", "user_id"),
         Index("idx_trackers_paused", "paused"),
         Index("idx_trackers_user_active", "user_id", "active"),
-        Index("idx_trackers_user_active_partial", "user_id", "active", postgresql_where=text("active = true")),
+        Index(
+            "idx_trackers_user_active_partial",
+            "user_id",
+            "active",
+            postgresql_where=text("active = true"),
+        ),
         Index("idx_trackers_last_checked", "last_checked_at"),
         Index("idx_trackers_active_paused", "active", "paused"),
     )
@@ -362,6 +369,12 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
     # NOTE: onupdate only fires on ORM-level attribute changes.
     # Bulk updates via session.execute(update(...)) will NOT trigger this.
     # For bulk updates, set updated_at=datetime.now(UTC) explicitly.
@@ -390,6 +403,7 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
             "'abandoned', 'bought', 'sold', 'skipped')",
             name="chk_lead_items_status",
         ),
+        CheckConstraint("version >= 1", name="chk_lead_items_version_positive"),
         Index("idx_lead_items_user", "user_id"),
         # DB-M4: idx_lead_items_status and idx_lead_items_market_status
         # were dropped in migration 20260510_0006. The former was

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models import LeadItem, LeadItemPriceSnapshot, User
+
+PRICE_SNAPSHOT_RETENTION_DAYS = 90
 
 
 async def ensure_user(
@@ -94,6 +96,25 @@ async def load_last_snapshot_prices(
     return {row.lead_item_id: float(row.price_byn) for row in rows}
 
 
+async def prune_price_snapshots(
+    session: AsyncSession,
+    lead_item_ids: list[int],
+    *,
+    days: int = PRICE_SNAPSHOT_RETENTION_DAYS,
+    now: datetime | None = None,
+) -> int:
+    if not lead_item_ids:
+        return 0
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=days)
+    result = await session.execute(
+        delete(LeadItemPriceSnapshot).where(
+            LeadItemPriceSnapshot.lead_item_id.in_(lead_item_ids),
+            LeadItemPriceSnapshot.snapped_at < cutoff,
+        )
+    )
+    return int(result.rowcount or 0)
+
+
 def make_price_snapshot(
     *,
     lead_item: LeadItem,
@@ -117,9 +138,12 @@ def make_price_snapshot(
     if price_value <= 0:
         return None
 
-    if last_known_price is not None:
-        if last_known_price >= 0 and abs(last_known_price - price_value) < epsilon:
-            return None
+    if (
+        last_known_price is not None
+        and last_known_price >= 0
+        and abs(last_known_price - price_value) < epsilon
+    ):
+        return None
     # When last_known_price is None the caller hasn't pre-fetched;
     # bulk callers should always pre-fetch to avoid per-row SELECTs.
 
@@ -281,4 +305,5 @@ async def upsert_lead(
     if not keep_existing_status:
         existing.status = status_value or existing.status
         existing.source = source or existing.source
+    existing.version = int(existing.version or 1) + 1
     return existing

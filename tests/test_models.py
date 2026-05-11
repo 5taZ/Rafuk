@@ -100,8 +100,10 @@ def test_history_tables_have_indexes() -> None:
         "duplicate_count",
         "last_seen_at",
         "notes",
+        "version",
     ):
         assert col in lead_item_columns, f"missing watchlist-merged column: {col}"
+    assert "chk_lead_items_version_positive" in lead_item_constraints
 
 
 def test_user_consents_version_constraint() -> None:

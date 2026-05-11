@@ -170,10 +170,14 @@ function createApiWatchlist(context) {
     // ── Update watchlist item metadata ───────────────────────────────────
     async function updateWatchlistMeta(watchlistId, payload) {
         try {
+            const item = state.watchlist.items.find((w) => w.id === watchlistId);
             await requestJson(`/api/v1/watchlist/${watchlistId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
+                body: JSON.stringify({
+                    ...payload,
+                    version: payload.version ?? item?.version,
+                }),
             });
             await loadWatchlist();
         } catch (error) {
@@ -217,7 +221,7 @@ function createApiWatchlist(context) {
             await requestJson(`/api/v1/leads/${item.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "new" }),
+                body: JSON.stringify({ status: "new", version: item.version }),
             });
             showToast("Добавлено в покупки", "success");
             // Optimistic local state cleanup so the UI reflects the move
