@@ -90,16 +90,20 @@ function createRenderViews(context) {
                 const displayCategory = state.filters.pendingCategory !== undefined ? state.filters.pendingCategory : state.filters.category;
                 
                 const allButton = document.createElement("button");
-                allButton.className = `filter-chip ${displayCategory == null ? 'active' : ''}`;
+                const allActive = displayCategory == null;
+                allButton.className = `filter-chip ${allActive ? 'active' : ''}`;
                 allButton.dataset.category = "";
                 allButton.type = "button";
+                allButton.setAttribute("aria-pressed", String(allActive));
                 allButton.textContent = `Все (${displayTotal})`;
                 elements.filterCategories.appendChild(allButton);
                 for (const cat of state.filters.categories) {
                     const button = document.createElement("button");
-                    button.className = `filter-chip ${displayCategory === cat.id ? 'active' : ''}`;
+                    const active = displayCategory === cat.id;
+                    button.className = `filter-chip ${active ? 'active' : ''}`;
                     button.dataset.category = String(cat.id);
                     button.type = "button";
+                    button.setAttribute("aria-pressed", String(active));
                     button.textContent = `${cat.label} (${cat.count})`;
                     elements.filterCategories.appendChild(button);
                 }
@@ -121,12 +125,16 @@ function createRenderViews(context) {
             // Update condition/seller chip states with PENDING values
             if (elements.filterConditions) {
                 for (const chip of elements.filterConditions.querySelectorAll("[data-condition]")) {
-                    chip.classList.toggle("active", chip.dataset.condition === state.filters.pendingCondition);
+                    const active = chip.dataset.condition === state.filters.pendingCondition;
+                    chip.classList.toggle("active", active);
+                    chip.setAttribute("aria-pressed", String(active));
                 }
             }
             if (elements.filterSellers) {
                 for (const chip of elements.filterSellers.querySelectorAll("[data-seller]")) {
-                    chip.classList.toggle("active", chip.dataset.seller === state.filters.pendingSellerType);
+                    const active = chip.dataset.seller === state.filters.pendingSellerType;
+                    chip.classList.toggle("active", active);
+                    chip.setAttribute("aria-pressed", String(active));
                 }
             }
 
@@ -148,7 +156,9 @@ function createRenderViews(context) {
 
     function renderSortButtons() {
         for (const button of elements.sortButtons) {
-            button.classList.toggle("active", button.dataset.sort === state.search.sort);
+            const active = button.dataset.sort === state.search.sort;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-pressed", String(active));
         }
     }
 
@@ -156,10 +166,10 @@ function createRenderViews(context) {
         for (const button of elements.discountButtons) {
             const from = Number(button.dataset.discountFrom);
             const to = Number(button.dataset.discountTo);
-            button.classList.toggle(
-                "active",
-                from === state.filters.discountFromPercent && to === state.filters.discountToPercent
-            );
+            const active = from === state.filters.discountFromPercent
+                && to === state.filters.discountToPercent;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-pressed", String(active));
         }
     }
 
@@ -168,10 +178,9 @@ function createRenderViews(context) {
             elements.historyBadge.textContent = `${state.misc.historyDays} дней`;
         }
         for (const button of elements.historyRangeButtons) {
-            button.classList.toggle(
-                "active",
-                Number(button.dataset.historyDays) === state.misc.historyDays
-            );
+            const active = Number(button.dataset.historyDays) === state.misc.historyDays;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-pressed", String(active));
         }
     }
 

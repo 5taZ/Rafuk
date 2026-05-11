@@ -281,6 +281,33 @@ def test_large_lists_do_not_use_noisy_live_regions(soup: BeautifulSoup) -> None:
         assert element.get("aria-live") is None
 
 
+def test_filter_controls_have_accessible_state_and_labels(soup: BeautifulSoup) -> None:
+    region = soup.find(id="filter-region")
+    assert region is not None
+    assert region.get("aria-label") == "Регион и город"
+
+    edit_query = soup.find(id="edit-tracker-query")
+    assert edit_query is not None
+    edit_label = soup.find("label", attrs={"for": "edit-tracker-query"})
+    assert edit_label is not None
+    assert edit_label.get_text(strip=True) == "Запрос"
+
+    for selector in (
+        "[data-condition]",
+        "[data-seller]",
+        "[data-sort]",
+        "[data-discount-from]",
+        "[data-history-days]",
+    ):
+        controls = soup.select(selector)
+        assert controls
+        assert all(control.get("aria-pressed") in {"true", "false"} for control in controls)
+
+    render_views = (JS_DIR / "render_views.js").read_text(encoding="utf-8")
+    assert 'setAttribute("aria-pressed", String(active))' in render_views
+    assert 'setAttribute("aria-pressed", String(allActive))' in render_views
+
+
 def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
     assert ".summary-refinement-chip" in css_text
     assert ".empty-state-action" in css_text

@@ -359,9 +359,9 @@
             </div>
             <div class="section-body" id="history-body">
                 <div class="sort-row history-range-row" id="history-range-row">
-                    <button class="s-tab active" data-history-days="7" type="button">7 дней</button>
-                    <button class="s-tab" data-history-days="30" type="button">30 дней</button>
-                    <button class="s-tab" data-history-days="90" type="button">90 дней</button>
+                    <button class="s-tab active" data-history-days="7" type="button" aria-pressed="true">7 дней</button>
+                    <button class="s-tab" data-history-days="30" type="button" aria-pressed="false">30 дней</button>
+                    <button class="s-tab" data-history-days="90" type="button" aria-pressed="false">90 дней</button>
                 </div>
                 <div class="history-summary" id="history-summary" hidden></div>
                 <div class="chart-box history-chart-box">
@@ -419,23 +419,23 @@
                 <div class="filter-group">
                     <span class="filter-group-label">Состояние</span>
                     <div class="filter-chips" id="filter-conditions">
-                        <button class="filter-chip active" data-condition="" type="button">Все</button>
-                        <button class="filter-chip" data-condition="new" type="button">Новое</button>
-                        <button class="filter-chip" data-condition="used" type="button">Б/у</button>
+                        <button class="filter-chip active" data-condition="" type="button" aria-pressed="true">Все</button>
+                        <button class="filter-chip" data-condition="new" type="button" aria-pressed="false">Новое</button>
+                        <button class="filter-chip" data-condition="used" type="button" aria-pressed="false">Б/у</button>
                     </div>
                 </div>
                 <div class="filter-group">
                     <span class="filter-group-label">Продавец</span>
                     <div class="filter-chips" id="filter-sellers">
-                        <button class="filter-chip active" data-seller="" type="button">Все</button>
-                        <button class="filter-chip" data-seller="private" type="button">Частное</button>
-                        <button class="filter-chip" data-seller="shop" type="button">Магазин</button>
+                        <button class="filter-chip active" data-seller="" type="button" aria-pressed="true">Все</button>
+                        <button class="filter-chip" data-seller="private" type="button" aria-pressed="false">Частное</button>
+                        <button class="filter-chip" data-seller="shop" type="button" aria-pressed="false">Магазин</button>
                     </div>
                 </div>
                 <div class="filter-group">
                     <span class="filter-group-label">Регион и город</span>
                     <div class="filter-region-select">
-                        <select id="filter-region" class="filter-select">
+                        <select id="filter-region" class="filter-select" aria-label="Регион и город">
                             <option value="">Все регионы</option>
                         </select>
                     </div>
@@ -447,11 +447,11 @@
             </div>
 
             <div class="sort-row">
-                <button class="s-tab active" data-sort="newest" type="button">Новые</button>
-                <button class="s-tab" data-sort="cheap" type="button">Выгодные</button>
-                <button class="s-tab" data-sort="price_asc" type="button">Дешевле</button>
-                <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
-                <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
+                <button class="s-tab active" data-sort="newest" type="button" aria-pressed="true">Новые</button>
+                <button class="s-tab" data-sort="cheap" type="button" aria-pressed="false">Выгодные</button>
+                <button class="s-tab" data-sort="price_asc" type="button" aria-pressed="false">Дешевле</button>
+                <button class="s-tab" data-sort="price_desc" type="button" aria-pressed="false">Дороже</button>
+                <button class="s-tab" data-sort="near_median" type="button" aria-pressed="false">≈ Медиана</button>
             </div>
             <!-- Discount-range controls — visible only when sort=cheap.
                  Used to live in its own "Выгодно" tab; merged here so
@@ -479,9 +479,9 @@
                     <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
                 </div>
                 <div class="sort-row" id="deal-threshold-row">
-                    <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button">10-20%</button>
-                    <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
-                    <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
+                    <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button" aria-pressed="true">10-20%</button>
+                    <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button" aria-pressed="false">10-30%</button>
+                    <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button" aria-pressed="false">20-40%</button>
                 </div>
             </div>
             <div class="listings-list" id="listings-list" role="list"></div>
@@ -875,7 +875,7 @@
             <div class="modal-body">
                 <div class="edit-tracker-form">
                     <div class="form-field">
-                        <label class="form-field-label">Запрос</label>
+                        <label class="form-field-label" for="edit-tracker-query">Запрос</label>
                         <input id="edit-tracker-query" type="text" disabled class="form-input-disabled">
                     </div>
                     <div class="form-row">
