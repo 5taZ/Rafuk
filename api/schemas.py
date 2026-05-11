@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
+
+AI_LISTING_PHOTO_MAX_CHARS = 1_500_000
 
 
 class LeadStatusEnum(StrEnum):
@@ -758,8 +761,7 @@ class AIListingAssistantRequest(BaseModel):
     generated improved title. `category` is optional but improves market
     targeting. `draft_price_byn` is what the user *thinks* of asking; the
     model uses it only as one anchor among several. `photos` is a list of
-    `data:image/...;base64,...` URLs (already compressed on the frontend);
-    we hard-cap count and per-photo size in the router.
+    `data:image/...;base64,...` URLs (already compressed on the frontend).
     """
 
     title: str = Field(min_length=3, max_length=200)
@@ -768,10 +770,10 @@ class AIListingAssistantRequest(BaseModel):
     draft_price_byn: float | None = Field(None, ge=0, le=10_000_000)
     is_negotiable: bool = False
     extra_notes: str | None = Field(None, max_length=1200)
-    # Hard cap on items is enforced server-side in `_coerce_listing_photos`
-    # so that an extra photo doesn't 422 the whole request — we just drop
-    # the overflow. Per-item byte-cap is also done there.
-    photos: list[str] = Field(default_factory=list, max_length=8)
+    photos: list[Annotated[str, Field(max_length=AI_LISTING_PHOTO_MAX_CHARS)]] = Field(
+        default_factory=list,
+        max_length=8,
+    )
 
 
 class AIListingPriceTier(BaseModel):

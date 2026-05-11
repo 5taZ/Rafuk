@@ -21,6 +21,7 @@ from api.routers.ai_analysis import (
     _log_ai_audit,
 )
 from api.schemas import (
+    AI_LISTING_PHOTO_MAX_CHARS,
     AIListingAssistantRequest,
     AIListingAssistantResponse,
     AIListingCompetitor,
@@ -177,7 +178,7 @@ def _coerce_competitors(
 
 
 # A single user-uploaded photo capped at ~1.5MB of base64 (~1MB binary).
-_LISTING_PHOTO_MAX_BYTES = 1_500_000
+_LISTING_PHOTO_MAX_BYTES = AI_LISTING_PHOTO_MAX_CHARS
 _LISTING_PHOTO_RE = _re.compile(
     r"^data:image/(jpeg|png|webp|jpg);base64,[A-Za-z0-9+/=]+$",
 )

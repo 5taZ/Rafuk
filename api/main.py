@@ -348,12 +348,16 @@ def create_app() -> FastAPI:
     # idempotent (INSERT … ON CONFLICT DO NOTHING) so it's safe to run
     # without awaiting.
     _provision_tasks: set[asyncio.Task[None]] = set()
+    _provision_user_timeout_seconds = 5.0
 
     async def _provision_user_async(
         sf: Any, user_id: int, first_name: str,
     ) -> None:
         try:
-            await ensure_user_exists(sf, user_id, first_name)
+            await asyncio.wait_for(
+                ensure_user_exists(sf, user_id, first_name),
+                timeout=_provision_user_timeout_seconds,
+            )
         except Exception:  # noqa: BLE001 — background task, must never raise
             logger.warning(
                 "Auto-provision failed for telegram_user_id=%s",

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+from time import monotonic
+
 import pytest
 from fastapi.testclient import TestClient
 
+from api.dependencies import get_session_factory_dependency
 from api.main import create_app
+from api.routers import health as health_router
 
 
 @pytest.fixture
@@ -35,3 +40,53 @@ def test_readiness_check_returns_200(client) -> None:
     # we want to catch, not silently accept.
     resp = client.get("/api/v1/health/ready")
     assert resp.status_code == 200
+
+
+def test_health_db_probe_times_out(monkeypatch) -> None:
+    class SlowSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, _stmt):
+            await asyncio.sleep(60)
+
+    app = create_app()
+    app.dependency_overrides[get_session_factory_dependency] = lambda: lambda: SlowSession()
+    monkeypatch.setattr(health_router, "_DB_TIMEOUT_SECONDS", 0.01)
+
+    with TestClient(app) as c:
+        start = monotonic()
+        resp = c.get("/api/v1/health")
+        elapsed = monotonic() - start
+
+    assert elapsed < 1
+    assert resp.status_code == 200
+    assert resp.json()["database"] == "unavailable"
+    assert resp.json()["status"] == "degraded"
+
+
+def test_readiness_db_probe_times_out(monkeypatch) -> None:
+    class SlowSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, _stmt):
+            await asyncio.sleep(60)
+
+    app = create_app()
+    app.dependency_overrides[get_session_factory_dependency] = lambda: lambda: SlowSession()
+    monkeypatch.setattr(health_router, "_DB_TIMEOUT_SECONDS", 0.01)
+
+    with TestClient(app) as c:
+        start = monotonic()
+        resp = c.get("/api/v1/health/ready")
+        elapsed = monotonic() - start
+
+    assert elapsed < 1
+    assert resp.status_code == 503

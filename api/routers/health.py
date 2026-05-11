@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -10,6 +12,7 @@ from api.dependencies import get_session_factory_dependency
 from api.limiter import rate_limiter_degraded
 
 router = APIRouter()
+_DB_TIMEOUT_SECONDS = 2.0
 
 
 @router.get("/health", status_code=status.HTTP_200_OK)
@@ -18,7 +21,10 @@ async def health_check(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> dict:
     """Check database connectivity and return service status."""
-    if not hasattr(request.app.state, "session_factory") or request.app.state.session_factory is None:
+    if (
+        not hasattr(request.app.state, "session_factory")
+        or request.app.state.session_factory is None
+    ):
         return {"status": "unhealthy", "database": "not initialized"}
 
     checks: dict[str, str] = {"status": "healthy"}
@@ -26,7 +32,10 @@ async def health_check(
     # Database health check
     try:
         async with session_factory() as session:
-            await session.execute(text("SELECT 1"))
+            await asyncio.wait_for(
+                session.execute(text("SELECT 1")),
+                timeout=_DB_TIMEOUT_SECONDS,
+            )
             checks["database"] = "ok"
     except Exception:
         checks["database"] = "unavailable"
@@ -50,7 +59,10 @@ async def readiness_check(
     """Readiness probe — returns 200 only if DB and Redis are reachable."""
     try:
         async with session_factory() as session:
-            await session.execute(text("SELECT 1"))
+            await asyncio.wait_for(
+                session.execute(text("SELECT 1")),
+                timeout=_DB_TIMEOUT_SECONDS,
+            )
     except Exception:
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
