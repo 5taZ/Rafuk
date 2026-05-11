@@ -188,9 +188,9 @@
 }
 
 .listing-btn--ai {
-    color: var(--accent-secondary);
-    border-color: color-mix(in srgb, var(--accent-secondary) 36%, transparent);
-    background: color-mix(in srgb, var(--bg-card) 82%, var(--accent-secondary) 18%);
+    color: color-mix(in srgb, var(--accent) 84%, var(--text));
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
 }
 
 /* AI modal: clean neutral background — no purple tint */

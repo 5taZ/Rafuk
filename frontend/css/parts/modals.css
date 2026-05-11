@@ -406,14 +406,35 @@ body.modal-open {
 
 .detail-bottom-actions {
     margin-top: var(--space-5);
-    padding-top: var(--space-4);
+    padding: var(--space-4) 0 0;
     border-top: 1px solid var(--border);
 }
 
 .detail-bottom-actions .listing-btn {
-    padding: var(--space-3) 0;
+    padding: var(--space-3) var(--space-2);
     font-size: var(--text-sm);
     font-weight: 700;
+    background: color-mix(in srgb, var(--bg-card) 92%, var(--bg-elevated));
+    border-color: color-mix(in srgb, var(--border) 86%, transparent);
+    color: var(--text-secondary);
+}
+
+.detail-bottom-actions .listing-btn:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border-hover);
+    color: var(--text);
+}
+
+.detail-bottom-actions .listing-btn--ai {
+    color: color-mix(in srgb, var(--accent) 86%, var(--text));
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+}
+
+.detail-bottom-actions .listing-btn--ai:hover {
+    color: color-mix(in srgb, var(--accent) 92%, var(--text));
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
 }
 
 .detail-block {

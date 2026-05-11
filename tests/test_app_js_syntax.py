@@ -41,6 +41,19 @@ def test_runtime_frontend_sources_do_not_use_gradients() -> None:
     assert offenders == []
 
 
+def test_listing_detail_ai_action_uses_primary_accent_not_violet() -> None:
+    css = _read_all_css()
+    index_html = Path("frontend/index.html").read_text(encoding="utf-8")
+    ai_rules = "\n".join(
+        match.group(0)
+        for match in re.finditer(r"\.listing-btn--ai[^{]*\{[^}]+\}", css)
+    )
+    assert "var(--accent-secondary)" not in ai_rules
+    assert "var(--violet)" not in ai_rules
+    assert "var(--accent)" in ai_rules
+    assert 'id="detail-ai-btn" type="button">Анализ</button>' in index_html
+
+
 def test_file_is_not_empty() -> None:
     text = APP_JS.read_text(encoding="utf-8")
     assert len(text.strip()) > 200

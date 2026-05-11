@@ -686,12 +686,12 @@
 /* ── AI Analysis Block ───────────────────────────────────────────────── */
 
 .listing-btn--ai {
-    color: var(--accent-secondary);
-    border-color: var(--accent-secondary-soft);
+    color: color-mix(in srgb, var(--accent) 84%, var(--text));
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
 }
 
 .listing-btn--ai:hover {
-    background: var(--accent-secondary-soft);
-    border-color: var(--accent-secondary);
-    color: var(--accent-secondary);
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    color: color-mix(in srgb, var(--accent) 90%, var(--text));
 }
