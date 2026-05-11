@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -19,6 +20,7 @@ from api.services.currency_service import CurrencyService
 logger = logging.getLogger(__name__)
 
 PRICE_STATS_FIELDS = ("mean", "median", "q1", "q3", "min", "max")
+_CATEGORY_TOTAL_MAX_CALLS = 8
 
 # Condition-based API tasks — seller_type filtering is done client-side
 # because Kufar API no longer accepts the "otype" parameter.
@@ -497,6 +499,14 @@ async def fetch_category_totals(
     search_method = getattr(client, "search", None)
     if not callable(search_method):
         return {}
+    unique_category_ids = list(dict.fromkeys(category_ids))
+    selected_category_ids = unique_category_ids[:_CATEGORY_TOTAL_MAX_CALLS]
+    if len(unique_category_ids) > len(selected_category_ids):
+        logger.info(
+            "Kufar category-total fan-out capped at %s/%s categories",
+            len(selected_category_ids),
+            len(unique_category_ids),
+        )
 
     cache_key: str | None = None
     if cache is not None:
@@ -504,7 +514,7 @@ async def fetch_category_totals(
             "query": query.strip().casefold(),
             "currency": currency,
             "strict_search": bool(strict_search),
-            "category_ids": sorted(set(category_ids)),
+            "category_ids": sorted(selected_category_ids),
         })
         cached = await cache.get_json(cache_key)
         if isinstance(cached, dict):
@@ -514,26 +524,13 @@ async def fetch_category_totals(
             except (TypeError, ValueError):
                 pass
 
-    # PERF-H7: removed the local Semaphore(3) wrapper. KufarClient
-    # already enforces its own settings.kufar_parallel_semaphore, so
-    # adding another semaphore here just double-counted the parallelism
-    # budget without giving us extra protection. asyncio.gather +
-    # client-level semaphore = same effective concurrency, fewer
-    # moving parts.
-
     async def _fetch_one(cat_id: int) -> tuple[int, int | None]:
         try:
-            # bypass_delay=True: skip the 0.3s rate-limit lock so the
-            # cat-totals fan-out runs truly concurrently. Each call is
-            # an independent HTTP request to Kufar; sharing a token
-            # bucket with the main pagination would force them to
-            # serialise and dominate cold-cache latency.
             resp = await search_method(
                 query=query,
                 size=200,
                 currency=currency,
                 category=cat_id,
-                bypass_delay=True,
             )
         except Exception as exc:  # noqa: BLE001 — log + degrade
             logger.warning("Kufar category-total fetch failed cat=%s: %s", cat_id, exc)
@@ -556,8 +553,9 @@ async def fetch_category_totals(
             return cat_id, kufar_total
         return cat_id, len(filtered)
 
+    started_at = time.monotonic()
     results = await asyncio.gather(
-        *[_fetch_one(cid) for cid in category_ids],
+        *[_fetch_one(cid) for cid in selected_category_ids],
         return_exceptions=True,
     )
     out: dict[int, int] = {}
@@ -570,6 +568,12 @@ async def fetch_category_totals(
         # count for ~5 min is harmless next to the latency win.
         with contextlib.suppress(Exception):
             await cache.set_json(cache_key, out, ttl=300)
+    logger.info(
+        "Kufar category-total fan-out finished categories=%s hits=%s duration_ms=%s",
+        len(selected_category_ids),
+        len(out),
+        int((time.monotonic() - started_at) * 1000),
+    )
     return out
 
 
