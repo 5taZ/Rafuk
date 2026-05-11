@@ -27,7 +27,7 @@
                    script-src 'self' https://telegram.org https://cdn.jsdelivr.net 'sha256-ieoeWczDHkReVBsRBqaal5AFMlBtNjMzgwKvLqi/tSU=';
                    style-src 'self' https://fonts.googleapis.com;
                    font-src 'self' https://fonts.gstatic.com;
-                   connect-src 'self' https://cdn.jsdelivr.net;
+                   connect-src 'self';
                    img-src 'self' https://rms.kufar.by https://*.kufar.by data:;
                    object-src 'none';
                    base-uri 'self';
@@ -37,10 +37,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260511-0f9edf0">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260511-0f9edf0">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260511-222568f">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260511-222568f">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
@@ -66,8 +67,13 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20260511-0f9edf0">
-    <link rel="stylesheet" href="css/style.css?v=20260511-0f9edf0">
+    <link rel="preload" as="style" href="css/style.css?v=20260511-222568f">
+    <link rel="stylesheet" href="css/style.css?v=20260511-222568f">
+    <link rel="preload"
+          as="script"
+          href="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+          integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
+          crossorigin="anonymous">
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -84,14 +90,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20260511-0f9edf0"
+            src="vendor/telegram-web-app.js?v=20260511-222568f"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers. -->
-    <script defer src="js/app_bundle.js?v=20260511-0f9edf0"></script>
+    <script defer src="js/app_bundle.js?v=20260511-222568f"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -116,7 +122,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20260511-0f9edf0" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260511-222568f" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">

@@ -150,6 +150,24 @@ def test_chart_js_loads_lazily_only_on_first_chart_paint() -> None:
     assert text.count('typeof window.Chart !== "function"') >= 2
 
 
+def test_chart_js_has_preconnect_and_sri_preload_hint(soup: BeautifulSoup) -> None:
+    """Chart.js still loads lazily, but overview users should not pay
+    connection setup plus download after the first chart paint starts."""
+    chart_url = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+    preconnect = soup.find("link", attrs={"rel": "preconnect", "href": "https://cdn.jsdelivr.net"})
+    assert preconnect is not None
+    preload = soup.find("link", attrs={"rel": "preload", "as": "script", "href": chart_url})
+    assert preload is not None
+    assert preload.get("integrity") == (
+        "sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
+    )
+    assert preload.get("crossorigin") == "anonymous"
+    index_text = HTML_FILE.read_text(encoding="utf-8")
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    assert "connect-src 'self';" in index_text
+    assert "connect-src 'self';" in nginx_conf
+
+
 def test_html_has_stats_and_listings(soup: BeautifulSoup) -> None:
     canvases = soup.find_all("canvas")
     assert len(canvases) >= 2
