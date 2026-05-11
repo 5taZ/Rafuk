@@ -622,15 +622,7 @@ async def refresh_watchlist(
     settings: Settings = Depends(get_settings_dependency),
     kufar_client: KufarClient = Depends(get_kufar_client),
 ) -> WatchlistRefreshResponse:
-    # Wrap the whole refresh in an explicit `session.begin()` block.
-    # The previous code relied on close-time rollback of an implicit
-    # transaction — if an exception fired between updating items and
-    # the final `commit()`, partial state could leak through depending
-    # on SQLAlchemy's transaction state. With an explicit transaction
-    # the contract is enforced by the context manager: either every
-    # item update + snapshot insert + auto-remove deletion lands
-    # together, or none of them do.
-    async with session_factory() as session, session.begin():
+    async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is None:
             return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, auto_removed=0)
@@ -644,42 +636,55 @@ async def refresh_watchlist(
         if not items:
             return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, auto_removed=0)
 
-        grouped: dict[str, list[LeadItem]] = defaultdict(list)
-        for item in items:
-            grouped[item.query].append(item)
+        item_ids = [item.id for item in items if item.id is not None]
+        unique_queries = list(dict.fromkeys(item.query for item in items))
 
         # Bulk-load the last snapshot price for every watched item in
         # one query — avoids an N+1 inside record_price_snapshot below.
         # Items without a snapshot row aren't in the dict; we treat
         # those as "always record" by passing -1 as the sentinel.
-        last_prices = await load_last_snapshot_prices(
-            session, [item.id for item in items if item.id is not None]
-        )
+        last_prices = await load_last_snapshot_prices(session, item_ids)
 
-        # Batch Kufar queries in parallel instead of sequential N+1
-        unique_queries = list(grouped.keys())
-        datasets = await asyncio.gather(
-            *[_limited_query(
-                load_query_dataset(
-                    query=q,
-                    currency="BYN",
-                    strict_search=False,
-                    settings=settings,
-                    client=kufar_client,
-                )
-            ) for q in unique_queries],
-            return_exceptions=True,
+    # Batch Kufar queries outside any DB transaction/connection hold.
+    datasets = await asyncio.gather(
+        *[_limited_query(
+            load_query_dataset(
+                query=q,
+                currency="BYN",
+                strict_search=False,
+                settings=settings,
+                client=kufar_client,
+            )
+        ) for q in unique_queries],
+        return_exceptions=True,
+    )
+    datasets_by_query = dict(zip(unique_queries, datasets, strict=True))
+
+    async with session_factory() as session, session.begin():
+        result = await session.execute(
+            select(LeadItem).where(
+                LeadItem.id.in_(item_ids),
+                LeadItem.user_id == user_id,
+                LeadItem.status == WATCHING_STATUS,
+            )
         )
+        items = list(result.scalars())
+        if not items:
+            return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, auto_removed=0)
+
+        grouped: dict[str, list[LeadItem]] = defaultdict(list)
+        for item in items:
+            grouped[item.query].append(item)
 
         updated = 0
         missing = 0
         price_drops = 0
         snapshots_to_insert: list[dict[str, Any]] = []
-        for query, dataset in zip(unique_queries, datasets, strict=True):
+        for query, query_items in grouped.items():
+            dataset = datasets_by_query.get(query)
             if isinstance(dataset, Exception):
                 logger.warning("Watchlist refresh: query %r failed: %s", query, dataset)
                 continue
-            query_items = grouped[query]
             ads_by_id = {
                 int(ad.get("ad_id", 0)): ad for ad in dataset.ads if int(ad.get("ad_id", 0)) > 0
             }
@@ -745,8 +750,6 @@ async def refresh_watchlist(
                 await session.delete(item)
                 auto_removed += 1
 
-        # session.begin() commits at the end of the block; an exception
-        # rolls everything back, so no explicit commit/rollback here.
         return WatchlistRefreshResponse(
             updated=updated,
             missing=max(missing - auto_removed, 0),
@@ -768,9 +771,7 @@ async def refresh_leads(
 
     Marks missing ones but does NOT auto-delete them.
     """
-    # Same explicit-transaction pattern as refresh_watchlist — see the
-    # comment there for the rationale.
-    async with session_factory() as session, session.begin():
+    async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is None:
             return LeadsRefreshResponse(checked=0, active=0, missing=0)
@@ -784,33 +785,48 @@ async def refresh_leads(
         if not leads:
             return LeadsRefreshResponse(checked=0, active=0, missing=0)
 
+        lead_ids = [lead.id for lead in leads if lead.id is not None]
+        unique_queries = list(dict.fromkeys(lead.query for lead in leads))
+
+    # Batch Kufar queries outside any DB transaction/connection hold.
+    datasets = await asyncio.gather(
+        *[_limited_query(
+            load_query_dataset(
+                query=q,
+                currency="BYN",
+                strict_search=False,
+                settings=settings,
+                client=kufar_client,
+            )
+        ) for q in unique_queries],
+        return_exceptions=True,
+    )
+    datasets_by_query = dict(zip(unique_queries, datasets, strict=True))
+
+    async with session_factory() as session, session.begin():
+        result = await session.execute(
+            select(LeadItem).where(
+                LeadItem.id.in_(lead_ids),
+                LeadItem.user_id == user_id,
+                LeadItem.status.notin_(["sold", "skipped", WATCHING_STATUS]),
+            )
+        )
+        leads = list(result.scalars())
+        if not leads:
+            return LeadsRefreshResponse(checked=0, active=0, missing=0)
+
         grouped: dict[str, list[LeadItem]] = defaultdict(list)
         for lead in leads:
             grouped[lead.query].append(lead)
 
-        # Batch Kufar queries in parallel instead of sequential N+1
-        unique_queries = list(grouped.keys())
-        datasets = await asyncio.gather(
-            *[_limited_query(
-                load_query_dataset(
-                    query=q,
-                    currency="BYN",
-                    strict_search=False,
-                    settings=settings,
-                    client=kufar_client,
-                )
-            ) for q in unique_queries],
-            return_exceptions=True,
-        )
-
         checked = 0
         active_count = 0
         missing_count = 0
-        for query, dataset in zip(unique_queries, datasets, strict=True):
+        for query, query_leads in grouped.items():
+            dataset = datasets_by_query.get(query)
             if isinstance(dataset, Exception):
                 logger.warning("Leads refresh: query %r failed: %s", query, dataset)
                 continue
-            query_leads = grouped[query]
             ads_by_id = {
                 int(ad.get("ad_id", 0)): ad for ad in dataset.ads if int(ad.get("ad_id", 0)) > 0
             }
@@ -828,5 +844,4 @@ async def refresh_leads(
                     lead.missing_since_at = None
                     active_count += 1
 
-        # session.begin() handles commit/rollback at block exit.
         return LeadsRefreshResponse(checked=checked, active=active_count, missing=missing_count)
