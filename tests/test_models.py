@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sqlalchemy.sql.elements import TextClause
+
 from api.models import Base
 
 
@@ -120,6 +122,15 @@ def test_telegram_notification_dlq_table_shape() -> None:
     indexes = {index.name for index in dlq.indexes}
     assert "idx_telegram_notification_dlq_created" in indexes
     assert "idx_telegram_notification_dlq_user" in indexes
+
+
+def test_model_indexes_do_not_use_text_clause_expressions() -> None:
+    for table in Base.metadata.tables.values():
+        for index in table.indexes:
+            assert not any(isinstance(expr, TextClause) for expr in index.expressions)
+            for dialect_options in index.dialect_options.values():
+                where = dialect_options.get("where")
+                assert not isinstance(where, TextClause)
 
 
 def test_get_engine_returns_async_engine() -> None:

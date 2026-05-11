@@ -14,8 +14,8 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    column,
     func,
-    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -185,7 +185,7 @@ class Tracker(
             "idx_trackers_user_active_partial",
             "user_id",
             "active",
-            postgresql_where=text("active = true"),
+            postgresql_where=column("active", Boolean).is_(True),
         ),
         Index("idx_trackers_last_checked", "last_checked_at"),
         Index("idx_trackers_active_paused", "active", "paused"),
@@ -265,8 +265,8 @@ class QueryListingState(Base):
         Index(
             "idx_query_listing_states_cleanup",
             "last_seen_at",
-            postgresql_where=text("active = false"),
-            sqlite_where=text("active = false"),
+            postgresql_where=column("active", Boolean).is_(False),
+            sqlite_where=column("active", Boolean).is_(False),
         ),
     )
 
@@ -312,7 +312,7 @@ class TrackerEvent(Base, UserIDMixin):
     __table_args__ = (
         Index("idx_tracker_events_user", "user_id"),
         Index("idx_tracker_events_created", "created_at"),
-        Index("idx_tracker_events_tracker_created", "tracker_id", text("created_at DESC")),
+        Index("idx_tracker_events_tracker_created", "tracker_id", column("created_at").desc()),
         CheckConstraint(
             "event_type IN ('new_listing', 'price_drop', 'trend_reversal', "
             "'price_threshold_alert', 'discount_alert')",
@@ -617,8 +617,8 @@ class UserConsent(Base):
             "idx_user_consents_user_type_active",
             "user_id", "consent_type",
             unique=True,
-            postgresql_where=text("revoked_at IS NULL"),
-            sqlite_where=text("revoked_at IS NULL"),
+            postgresql_where=column("revoked_at").is_(None),
+            sqlite_where=column("revoked_at").is_(None),
         ),
     )
 
