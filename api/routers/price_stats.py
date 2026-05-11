@@ -24,7 +24,7 @@ from api.services.aggregator import (
     extract_category_distribution,
     extract_search_refinements,
 )
-from api.services.cache import CacheBackend
+from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.history_service import snapshot_bucket, upsert_query_snapshot
 from api.services.kufar_client import KufarClient
@@ -39,6 +39,24 @@ from api.validators import MAX_QUERY_LENGTH
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
+
+
+def _price_stats_cache_key(
+    *,
+    query: str,
+    currency: str,
+    strict_search: bool,
+    category: int | None,
+) -> str:
+    return digest_cache_key(
+        "price-stats",
+        {
+            "query": query,
+            "currency": currency,
+            "strict_search": strict_search,
+            "category": category,
+        },
+    )
 
 
 async def _persist_snapshot_safe(
@@ -80,7 +98,12 @@ async def get_price_stats(
     kufar_client: KufarClient = Depends(get_kufar_client),
     _user=Depends(get_telegram_user),
 ) -> PriceStatsResponse:
-    cache_key = f"price-stats:{query}:{currency}:{strict_search}:{category}"
+    cache_key = _price_stats_cache_key(
+        query=query,
+        currency=currency,
+        strict_search=strict_search,
+        category=category,
+    )
     cached = await cache.get_json(cache_key)
     if cached:
         return PriceStatsResponse(**cached)

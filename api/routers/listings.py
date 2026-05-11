@@ -21,7 +21,7 @@ from api.services.aggregator import (
     precompute_cluster_stats,
     sort_listings,
 )
-from api.services.cache import CacheBackend
+from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
@@ -42,6 +42,38 @@ router = APIRouter(tags=["analytics"])
 # come in as the user scrolls.
 _MAX_LISTINGS_PAGE = 200
 _DEFAULT_LISTINGS_PAGE = 50
+
+
+def _listings_cache_key(
+    *,
+    query: str,
+    sort: str,
+    currency: str,
+    discount_percent: float,
+    effective_from: float,
+    effective_to: float | None,
+    strict_search: bool,
+    category: int | None,
+    reference_context: str,
+    limit: int,
+    offset: int,
+) -> str:
+    return digest_cache_key(
+        "listings",
+        {
+            "query": query,
+            "sort": sort,
+            "currency": currency,
+            "discount_percent": discount_percent,
+            "effective_from": effective_from,
+            "effective_to": effective_to,
+            "strict_search": strict_search,
+            "category": category,
+            "reference_context": reference_context,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
 
 
 @router.get("/listings", response_model=ListingsResponse)
@@ -76,10 +108,18 @@ async def get_listings(
         effective_from, effective_to = effective_to, effective_from
 
     fallback_used = False
-    cache_key = (
-        f"listings:{query}:{sort}:{currency}:{discount_percent}:"
-        f"{effective_from}:{effective_to}:{strict_search}:{category}:"
-        f"{reference_context}:{limit}:{offset}"
+    cache_key = _listings_cache_key(
+        query=query,
+        sort=sort,
+        currency=currency,
+        discount_percent=discount_percent,
+        effective_from=effective_from,
+        effective_to=effective_to,
+        strict_search=strict_search,
+        category=category,
+        reference_context=reference_context,
+        limit=limit,
+        offset=offset,
     )
     cached = await cache.get_json(cache_key)
     if cached:

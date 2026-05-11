@@ -24,6 +24,7 @@ from api.schemas import (
     AIPriceAdviceResponse,
 )
 from api.services.ai_service import sanitize_user_text
+from api.services.cache import digest_cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,17 @@ _PRICE_ADVICE_SYSTEM = """\
   "confidence": 0.0-1.0
 }
 """
+
+
+def _ai_price_advice_cache_key(payload: AIPriceAdviceRequest) -> str:
+    return digest_cache_key(
+        "ai_price_advice",
+        {
+            "query": payload.query,
+            "current_price_byn": payload.current_price_byn,
+            "category": payload.category,
+        },
+    )
 
 
 # ── Negotiate ─────────────────────────────────────────────────────────────
@@ -175,7 +187,7 @@ async def price_advice(
     )
 
     cache = get_cache(request)
-    cache_key = f"ai_price_advice:{payload.query}:{payload.current_price_byn}:{payload.category}"
+    cache_key = _ai_price_advice_cache_key(payload)
     cached = await cache.get_json(cache_key)
     if isinstance(cached, dict):
         try:

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -15,6 +13,7 @@ from api.services.aggregator import (
     compute_price_stats,
     extract_prices,
 )
+from api.services.cache import digest_cache_key
 from api.services.currency_service import CurrencyService
 
 logger = logging.getLogger(__name__)
@@ -34,8 +33,7 @@ _API_CONDITION_TASKS = (
 
 
 def _cache_digest(prefix: str, payload: dict[str, Any]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return f"{prefix}:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
+    return digest_cache_key(prefix, payload)
 
 
 # Seller type classification: company_ad==True means shop, else private
