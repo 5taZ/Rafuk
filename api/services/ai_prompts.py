@@ -26,7 +26,6 @@ Running concurrently means wall-clock time ≈ max(A, B), not A + B.
 
 from __future__ import annotations
 
-
 _PRICE_MARKET_PROMPT_TEMPLATE = """\
 Ты — Rafuk AI, эксперт-аналитик объявлений Kufar.by. Отвечай ТОЛЬКО на русском.
 

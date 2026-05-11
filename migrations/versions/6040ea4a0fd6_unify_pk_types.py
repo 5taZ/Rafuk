@@ -5,7 +5,7 @@ Revises: 20260501_0001
 Create Date: 2026-05-09 03:24:18.228676
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
@@ -13,9 +13,9 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '6040ea4a0fd6'
-down_revision: Union[str, None] = '20260501_0001'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '20260501_0001'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -24,7 +24,12 @@ def upgrade() -> None:
     op.alter_column('contacts', 'phone',
                existing_type=sa.VARCHAR(length=32),
                nullable=False)
-    op.create_index(op.f('ix_lead_item_price_snapshots_lead_item_id'), 'lead_item_price_snapshots', ['lead_item_id'], unique=False)
+    op.create_index(
+        op.f('ix_lead_item_price_snapshots_lead_item_id'),
+        'lead_item_price_snapshots',
+        ['lead_item_id'],
+        unique=False,
+    )
     op.create_index('idx_lead_items_market_status', 'lead_items', ['market_status'], unique=False)
     op.create_index(op.f('ix_lead_items_user_id'), 'lead_items', ['user_id'], unique=False)
     op.alter_column('query_listing_states', 'updated_at',
@@ -32,8 +37,17 @@ def upgrade() -> None:
                type_=sa.DateTime(timezone=True),
                existing_nullable=False,
                existing_server_default=sa.text('now()'))
-    op.drop_index(op.f('idx_query_listing_states_query_active'), table_name='query_listing_states', postgresql_where='(active = true)')
-    op.create_index('idx_query_listing_states_query_active', 'query_listing_states', ['query', 'active'], unique=False)
+    op.drop_index(
+        op.f('idx_query_listing_states_query_active'),
+        table_name='query_listing_states',
+        postgresql_where='(active = true)',
+    )
+    op.create_index(
+        'idx_query_listing_states_query_active',
+        'query_listing_states',
+        ['query', 'active'],
+        unique=False,
+    )
     op.alter_column('query_snapshots', 'created_at',
                existing_type=postgresql.TIMESTAMP(),
                type_=sa.DateTime(timezone=True),
@@ -54,7 +68,11 @@ def upgrade() -> None:
                type_=sa.DateTime(timezone=True),
                existing_nullable=False,
                existing_server_default=sa.text('now()'))
-    op.drop_index(op.f('idx_saved_searches_user_active'), table_name='saved_searches', postgresql_where='(active = true)')
+    op.drop_index(
+        op.f('idx_saved_searches_user_active'),
+        table_name='saved_searches',
+        postgresql_where='(active = true)',
+    )
     op.create_index(op.f('ix_saved_searches_user_id'), 'saved_searches', ['user_id'], unique=False)
     op.drop_column('saved_searches', 'deleted_at')
     op.drop_column('saved_searches', 'alert_price_threshold')
@@ -66,8 +84,18 @@ def upgrade() -> None:
     op.drop_index(op.f('idx_tracker_events_tracker_id'), table_name='tracker_events')
     op.drop_index(op.f('idx_tracker_events_user_created'), table_name='tracker_events')
     op.drop_index(op.f('idx_tracker_events_tracker_created'), table_name='tracker_events')
-    op.create_index('idx_tracker_events_tracker_created', 'tracker_events', ['tracker_id', sa.literal_column('created_at DESC')], unique=False)
-    op.create_index(op.f('ix_tracker_events_tracker_id'), 'tracker_events', ['tracker_id'], unique=False)
+    op.create_index(
+        'idx_tracker_events_tracker_created',
+        'tracker_events',
+        ['tracker_id', sa.literal_column('created_at DESC')],
+        unique=False,
+    )
+    op.create_index(
+        op.f('ix_tracker_events_tracker_id'),
+        'tracker_events',
+        ['tracker_id'],
+        unique=False,
+    )
     op.create_index(op.f('ix_tracker_events_user_id'), 'tracker_events', ['user_id'], unique=False)
     op.alter_column('trackers', 'paused',
                existing_type=sa.BOOLEAN(),
@@ -76,7 +104,13 @@ def upgrade() -> None:
     op.create_index('idx_trackers_active_paused', 'trackers', ['active', 'paused'], unique=False)
     op.create_index('idx_trackers_last_checked', 'trackers', ['last_checked_at'], unique=False)
     op.create_index('idx_trackers_paused', 'trackers', ['paused'], unique=False)
-    op.create_index('idx_trackers_user_active_partial', 'trackers', ['user_id', 'active'], unique=False, postgresql_where=sa.text('active = true'))
+    op.create_index(
+        'idx_trackers_user_active_partial',
+        'trackers',
+        ['user_id', 'active'],
+        unique=False,
+        postgresql_where=sa.text('active = true'),
+    )
     op.create_index(op.f('ix_trackers_user_id'), 'trackers', ['user_id'], unique=False)
     op.create_index(op.f('ix_user_consents_user_id'), 'user_consents', ['user_id'], unique=False)
     op.alter_column('users', 'id',
@@ -96,7 +130,11 @@ def downgrade() -> None:
                existing_nullable=False)
     op.drop_index(op.f('ix_user_consents_user_id'), table_name='user_consents')
     op.drop_index(op.f('ix_trackers_user_id'), table_name='trackers')
-    op.drop_index('idx_trackers_user_active_partial', table_name='trackers', postgresql_where=sa.text('active = true'))
+    op.drop_index(
+        'idx_trackers_user_active_partial',
+        table_name='trackers',
+        postgresql_where=sa.text('active = true'),
+    )
     op.drop_index('idx_trackers_paused', table_name='trackers')
     op.drop_index('idx_trackers_last_checked', table_name='trackers')
     op.drop_index('idx_trackers_active_paused', table_name='trackers')
@@ -107,18 +145,63 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_tracker_events_user_id'), table_name='tracker_events')
     op.drop_index(op.f('ix_tracker_events_tracker_id'), table_name='tracker_events')
     op.drop_index('idx_tracker_events_tracker_created', table_name='tracker_events')
-    op.create_index(op.f('idx_tracker_events_tracker_created'), 'tracker_events', ['tracker_id', 'created_at'], unique=False)
-    op.create_index(op.f('idx_tracker_events_user_created'), 'tracker_events', ['user_id', 'created_at'], unique=False)
-    op.create_index(op.f('idx_tracker_events_tracker_id'), 'tracker_events', ['tracker_id'], unique=False)
+    op.create_index(
+        op.f('idx_tracker_events_tracker_created'),
+        'tracker_events',
+        ['tracker_id', 'created_at'],
+        unique=False,
+    )
+    op.create_index(
+        op.f('idx_tracker_events_user_created'),
+        'tracker_events',
+        ['user_id', 'created_at'],
+        unique=False,
+    )
+    op.create_index(
+        op.f('idx_tracker_events_tracker_id'),
+        'tracker_events',
+        ['tracker_id'],
+        unique=False,
+    )
     op.alter_column('tracker_events', 'parameters',
                existing_type=sa.JSON(),
                type_=postgresql.JSONB(astext_type=sa.Text()),
                existing_nullable=True)
-    op.add_column('saved_searches', sa.Column('alert_discount_percent', sa.DOUBLE_PRECISION(precision=53), autoincrement=False, nullable=True))
-    op.add_column('saved_searches', sa.Column('alert_price_threshold', sa.DOUBLE_PRECISION(precision=53), autoincrement=False, nullable=True))
-    op.add_column('saved_searches', sa.Column('deleted_at', postgresql.TIMESTAMP(timezone=True), autoincrement=False, nullable=True))
+    op.add_column(
+        'saved_searches',
+        sa.Column(
+            'alert_discount_percent',
+            sa.DOUBLE_PRECISION(precision=53),
+            autoincrement=False,
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        'saved_searches',
+        sa.Column(
+            'alert_price_threshold',
+            sa.DOUBLE_PRECISION(precision=53),
+            autoincrement=False,
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        'saved_searches',
+        sa.Column(
+            'deleted_at',
+            postgresql.TIMESTAMP(timezone=True),
+            autoincrement=False,
+            nullable=True,
+        ),
+    )
     op.drop_index(op.f('ix_saved_searches_user_id'), table_name='saved_searches')
-    op.create_index(op.f('idx_saved_searches_user_active'), 'saved_searches', ['user_id', 'active'], unique=False, postgresql_where='(active = true)')
+    op.create_index(
+        op.f('idx_saved_searches_user_active'),
+        'saved_searches',
+        ['user_id', 'active'],
+        unique=False,
+        postgresql_where='(active = true)',
+    )
     op.alter_column('saved_searches', 'created_at',
                existing_type=sa.DateTime(timezone=True),
                type_=postgresql.TIMESTAMP(),
@@ -133,14 +216,25 @@ def downgrade() -> None:
                type_=sa.DOUBLE_PRECISION(precision=53),
                existing_nullable=False,
                existing_server_default=sa.text("'10'::double precision"))
-    op.create_index(op.f('idx_query_snapshots_query_time'), 'query_snapshots', ['query', 'snapshot_at'], unique=False)
+    op.create_index(
+        op.f('idx_query_snapshots_query_time'),
+        'query_snapshots',
+        ['query', 'snapshot_at'],
+        unique=False,
+    )
     op.alter_column('query_snapshots', 'created_at',
                existing_type=sa.DateTime(timezone=True),
                type_=postgresql.TIMESTAMP(),
                existing_nullable=False,
                existing_server_default=sa.text('now()'))
     op.drop_index('idx_query_listing_states_query_active', table_name='query_listing_states')
-    op.create_index(op.f('idx_query_listing_states_query_active'), 'query_listing_states', ['query'], unique=False, postgresql_where='(active = true)')
+    op.create_index(
+        op.f('idx_query_listing_states_query_active'),
+        'query_listing_states',
+        ['query'],
+        unique=False,
+        postgresql_where='(active = true)',
+    )
     op.alter_column('query_listing_states', 'updated_at',
                existing_type=sa.DateTime(timezone=True),
                type_=postgresql.TIMESTAMP(),
@@ -148,7 +242,10 @@ def downgrade() -> None:
                existing_server_default=sa.text('now()'))
     op.drop_index(op.f('ix_lead_items_user_id'), table_name='lead_items')
     op.drop_index('idx_lead_items_market_status', table_name='lead_items')
-    op.drop_index(op.f('ix_lead_item_price_snapshots_lead_item_id'), table_name='lead_item_price_snapshots')
+    op.drop_index(
+        op.f('ix_lead_item_price_snapshots_lead_item_id'),
+        table_name='lead_item_price_snapshots',
+    )
     op.alter_column('contacts', 'phone',
                existing_type=sa.VARCHAR(length=32),
                nullable=True)

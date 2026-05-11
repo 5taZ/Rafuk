@@ -198,7 +198,7 @@ _ALIAS_PATTERN = re.compile(
 _ALIAS_MAX_PASSES = 4
 
 
-def _alias_sub(match: "re.Match[str]") -> str:
+def _alias_sub(match: re.Match[str]) -> str:
     return SEARCH_ALIASES[match.group(0)]
 
 
@@ -485,9 +485,8 @@ def detect_price_type(ad: dict[str, Any]) -> str:
         return "free"
 
     # 3. Standalone free-word in title — but not in service-compound context
-    if re.search(rf"\b{_FREE_WORD}\b", subject):
-        if not _TITLE_BLACKLIST_RE.search(subject):
-            return "free"
+    if re.search(rf"\b{_FREE_WORD}\b", subject) and not _TITLE_BLACKLIST_RE.search(subject):
+        return "free"
 
     return "negotiable"
 

@@ -130,7 +130,9 @@ def build_listing_detail(
     liquidity: LiquidityInsight | None = None,
 ) -> ListingDetailResponse:
     raw_price_byn = normalize_price_byn(ad.get("price_byn"), ad)
-    price_type = detect_price_type(ad) if raw_price_byn is None or raw_price_byn == 0.0 else "fixed"
+    price_type = (
+        detect_price_type(ad) if raw_price_byn is None or raw_price_byn == 0.0 else "fixed"
+    )
     price_byn = raw_price_byn
     description = _stringify_value(ad.get("body")) or _stringify_value(ad.get("body_short"))
     reference = resolve_price_reference(ad, market_stats, category_price_stats)
@@ -149,7 +151,11 @@ def build_listing_detail(
         market_stats=reference.stats,
     )
 
-    price = currency_service.convert_from_byn(price_byn, currency, rates) if price_byn is not None else None
+    price = (
+        currency_service.convert_from_byn(price_byn, currency, rates)
+        if price_byn is not None
+        else None
+    )
 
     return ListingDetailResponse(
         query=query,
@@ -212,7 +218,9 @@ def build_listing_item(
     cluster_cache: dict[int, PriceStats | None] | None = None,
 ) -> ListingItem:
     raw_price_byn = normalize_price_byn(ad.get("price_byn"), ad)
-    price_type = detect_price_type(ad) if raw_price_byn is None or raw_price_byn == 0.0 else "fixed"
+    price_type = (
+        detect_price_type(ad) if raw_price_byn is None or raw_price_byn == 0.0 else "fixed"
+    )
     price_byn = raw_price_byn
     reference = resolve_price_reference(ad, market_stats, category_price_stats)
     price_delta = 0.0
@@ -256,7 +264,11 @@ def build_listing_item(
         market_stats=active_reference,
     )
 
-    price = currency_service.convert_from_byn(price_byn, currency, rates) if price_byn is not None else None
+    price = (
+        currency_service.convert_from_byn(price_byn, currency, rates)
+        if price_byn is not None
+        else None
+    )
 
     return ListingItem(
         ad_id=int(ad.get("ad_id", 0)),

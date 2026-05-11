@@ -81,7 +81,9 @@ def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
     async def _fake_load_query_dataset(**kwargs):
         del kwargs
         return SimpleNamespace(
-            price_stats=SimpleNamespace(median=1000.0, count=10, q1=900.0, q3=1100.0, min=800.0, max=1200.0),
+            price_stats=SimpleNamespace(
+                median=1000.0, count=10, q1=900.0, q3=1100.0, min=800.0, max=1200.0,
+            ),
         )
 
     monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)

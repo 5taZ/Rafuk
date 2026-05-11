@@ -634,7 +634,8 @@ def _build_tracker_message(
         lines.append(f'Запрос "{label}"')
         lines.append(f"Новые объявления: {len(sync_result.new_listings)}")
         for state in sync_result.new_listings[:3]:
-            lines.append(f"• {state.title} - {_format_price_byn(state.last_price_byn, state.price_type)}")
+            price_label = _format_price_byn(state.last_price_byn, state.price_type)
+            lines.append(f"• {state.title} - {price_label}")
             if state.link:
                 lines.append(state.link)
         if len(sync_result.new_listings) > 3:
@@ -649,7 +650,10 @@ def _build_tracker_message(
         for state, delta in sync_result.price_drops[:3]:
             delta_str = f"(-{math.ceil(float(delta))} р.)" if float(delta) >= 0.5 else ""
             lines.append(
-                f"• {state.title} - {_format_price_byn(state.last_price_byn, state.price_type)} {delta_str}".rstrip()
+                (
+                    f"• {state.title} - "
+                    f"{_format_price_byn(state.last_price_byn, state.price_type)} {delta_str}"
+                ).rstrip()
             )
             if state.link:
                 lines.append(state.link)
@@ -1658,7 +1662,7 @@ async def main() -> None:
                 scheduler.start()
             try:
                 await asyncio.wait_for(shutdown_event.wait(), timeout=300)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # 5 minutes elapsed without a shutdown signal — fall
                 # through to the next health-check iteration.
                 continue

@@ -680,7 +680,13 @@ async def test_persist_tracker_events_trend_reversal(populated_session):
     )
 
     events = await persist_tracker_events(
-        session, tracker, sync, ads_by_id={}, seen=set(), trend_signal=trend, trend_already_sent=False
+        session,
+        tracker,
+        sync,
+        ads_by_id={},
+        seen=set(),
+        trend_signal=trend,
+        trend_already_sent=False,
     )
     await session.flush()
 
@@ -704,7 +710,13 @@ async def test_persist_tracker_events_trend_already_sent(populated_session):
     )
 
     events = await persist_tracker_events(
-        session, tracker, sync, ads_by_id={}, seen=set(), trend_signal=trend, trend_already_sent=True
+        session,
+        tracker,
+        sync,
+        ads_by_id={},
+        seen=set(),
+        trend_signal=trend,
+        trend_already_sent=True,
     )
     await session.flush()
 

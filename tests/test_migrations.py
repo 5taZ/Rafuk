@@ -23,7 +23,6 @@ import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "migrations" / "alembic.ini"
 

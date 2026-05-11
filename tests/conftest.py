@@ -4,7 +4,9 @@ import itertools
 from datetime import UTC, datetime
 from pathlib import Path
 
+import fastapi.testclient as _ftc
 import pytest
+from sqlalchemy import Integer as _Integer
 
 
 @pytest.fixture(autouse=True)
@@ -47,8 +49,6 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 #      they don't trip the 403 guard.
 # Wrapping TestClient in one place keeps every test file clean.
 
-import fastapi.testclient as _ftc
-
 _OriginalTestClient = _ftc.TestClient
 
 
@@ -67,8 +67,6 @@ _ftc.TestClient = _CSRFTestClient
 # SQLite only auto-increments INTEGER PRIMARY KEY, not BIGINT PRIMARY KEY.
 # The User model uses BigInteger for id. Patch the column type so DDL
 # generates INTEGER PRIMARY KEY which auto-increments correctly.
-
-from sqlalchemy import Integer as _Integer
 
 try:
     from api.models import User as _User

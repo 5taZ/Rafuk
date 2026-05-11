@@ -102,7 +102,10 @@ def test_compute_deal_score_anomaly_penalty() -> None:
 
     ad = _make_ad(price_byn=100000)
     stats = _make_stats(median=1000.0)
-    with patch("api.services.reseller_tools.detect_anomaly_flags", return_value=["anomaly1", "anomaly2"]):
+    with patch(
+        "api.services.reseller_tools.detect_anomaly_flags",
+        return_value=["anomaly1", "anomaly2"],
+    ):
         result = compute_deal_score(ad, query="iphone 15", market_stats=stats)
     assert "есть аномалии" in result.reasons
     assert result.score < SCORING.base_score
@@ -165,8 +168,14 @@ def test_matches_tracker_filters_config_keyword() -> None:
     ad_match = _make_ad(price_byn=100000, subject="iPhone 15 Pro Max 256GB")
     ad_no_match = _make_ad(price_byn=100000, subject="Samsung Galaxy S25")
     stats = _make_stats(median=1000.0)
-    assert matches_tracker_filters(ad_match, market_stats=stats, config_keyword="iphone 15 pro") is True
-    assert matches_tracker_filters(ad_no_match, market_stats=stats, config_keyword="iphone 15 pro") is False
+    assert (
+        matches_tracker_filters(ad_match, market_stats=stats, config_keyword="iphone 15 pro")
+        is True
+    )
+    assert (
+        matches_tracker_filters(ad_no_match, market_stats=stats, config_keyword="iphone 15 pro")
+        is False
+    )
 
 
 def test_matches_tracker_filters_combined_filters() -> None:
