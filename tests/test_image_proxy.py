@@ -254,3 +254,71 @@ def test_image_proxy_disabled_via_settings(
         assert response.status_code == 404
     finally:
         settings.image_proxy_enabled = True
+
+
+# ── SEC-08 / INF-09 (Wave 29): per-user concurrency cap ─────────────────
+# Unit-level tests over the per-user semaphore helper. End-to-end
+# concurrency is harder to exercise through TestClient (which runs
+# requests serially on the same loop), so we validate the mechanism
+# directly: same key returns the same Semaphore, distinct keys get
+# distinct semaphores, and ``locked()`` flips once the cap is hit.
+
+
+def test_user_semaphore_reuses_same_instance_per_key() -> None:
+    from api.routers.image_proxy import _get_user_semaphore, _user_semaphores
+
+    _user_semaphores.clear()
+    sem1 = _get_user_semaphore("tg:42")
+    sem2 = _get_user_semaphore("tg:42")
+    sem_other = _get_user_semaphore("tg:99")
+    assert sem1 is sem2, "Same user key must return the same semaphore"
+    assert sem1 is not sem_other, "Different users must get distinct semaphores"
+
+
+def test_user_semaphore_locks_at_limit_and_unlocks_on_release() -> None:
+    from api.routers.image_proxy import (
+        _USER_TRANSCODE_LIMIT,
+        _get_user_semaphore,
+        _user_semaphores,
+    )
+
+    _user_semaphores.clear()
+    sem = _get_user_semaphore("tg:42")
+    # Fresh semaphore: has _USER_TRANSCODE_LIMIT slots, not locked.
+    assert not sem.locked()
+    # Exhaust all slots synchronously — asyncio.Semaphore.acquire() on
+    # an already-available value returns a done future, so the awaits
+    # below complete in the same tick without an event loop.
+    import asyncio
+
+    async def _exhaust() -> None:
+        for _ in range(_USER_TRANSCODE_LIMIT):
+            await sem.acquire()
+        # All slots held — handler code would raise 429 here.
+        assert sem.locked()
+        sem.release()
+        # One slot freed — parallel request can proceed again.
+        assert not sem.locked()
+
+    asyncio.run(_exhaust())
+
+
+def test_user_semaphore_registry_evicts_oldest_over_cap() -> None:
+    from api.routers.image_proxy import (
+        _MAX_USER_SEMAPHORES,
+        _get_user_semaphore,
+        _user_semaphores,
+    )
+
+    _user_semaphores.clear()
+    # Fill to the cap.
+    for i in range(_MAX_USER_SEMAPHORES):
+        _get_user_semaphore(f"tg:{i}")
+    assert len(_user_semaphores) == _MAX_USER_SEMAPHORES
+    # One more entry — should trip the FIFO eviction path and drop
+    # half of the oldest keys.
+    _get_user_semaphore(f"tg:{_MAX_USER_SEMAPHORES}")
+    assert len(_user_semaphores) <= _MAX_USER_SEMAPHORES
+    # The newest key must still be present; the oldest half must be gone.
+    assert f"tg:{_MAX_USER_SEMAPHORES}" in _user_semaphores
+    assert "tg:0" not in _user_semaphores

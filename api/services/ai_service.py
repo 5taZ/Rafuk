@@ -751,8 +751,22 @@ class AIService:
                 type(results[1]).__name__,
                 results[1],
             )
-        # If BOTH failed, re-raise the first error so the router fallback path kicks in
+        # AI-08 / Wave 29: when both staggered calls fail there is a
+        # single failure mode worth grepping for — surface it as one
+        # structured log line so on-call sees a single AI_DUAL_FAIL
+        # signature instead of having to correlate two per-call
+        # WARN lines. Carries both error types and a one-line
+        # signature for each so we can tell apart e.g. "both 429"
+        # (Together rate-limit) from "A=ReadTimeout, B=BillingError".
         if isinstance(results[0], Exception) and isinstance(results[1], Exception):
+            logger.error(
+                "AI_DUAL_FAIL parallel analyse: call_a=%s(%s) call_b=%s(%s)",
+                type(results[0]).__name__,
+                str(results[0])[:200],
+                type(results[1]).__name__,
+                str(results[1])[:200],
+            )
+            # Re-raise the first error so the router fallback path kicks in
             raise results[0]
 
         # Merge: Call B sections take priority for overlapping keys,

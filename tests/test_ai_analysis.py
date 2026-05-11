@@ -80,6 +80,64 @@ def test_export_sanitizer_keeps_report_css_but_strips_active_content() -> None:
     assert "Report" in sanitized
 
 
+# ── SEC-10 / Wave 29: domain allow-list for <img src> / <a href> ────────
+
+
+def test_export_sanitizer_keeps_kufar_image_and_listing_links() -> None:
+    """Trusted Kufar hosts must survive the attribute filter."""
+    html = (
+        '<img src="https://rms.kufar.by/v1/gallery/ad/abc.jpg" alt="ok">'
+        '<a href="https://www.kufar.by/item/123456">Открыть</a>'
+        '<a href="https://kufar.by/item/789">Bare host</a>'
+        '<a href="https://re.kufar.by/region/minsk">Subdomain</a>'
+    )
+    sanitized = _sanitize_export_html(html)
+    assert "https://rms.kufar.by/v1/gallery/ad/abc.jpg" in sanitized
+    assert "https://www.kufar.by/item/123456" in sanitized
+    assert "https://kufar.by/item/789" in sanitized
+    assert "https://re.kufar.by/region/minsk" in sanitized
+
+
+def test_export_sanitizer_strips_untrusted_image_and_anchor_targets() -> None:
+    """Anything outside the allow-list must lose its src/href attribute.
+
+    Tag itself stays (so layout doesn't collapse), but the URL is gone —
+    a tracking pixel renders as a broken-image placeholder, an attacker
+    link renders as inert text.
+    """
+    html = (
+        '<img src="https://evil.test/tracker.gif" alt="x">'
+        '<a href="https://evil.test/phish">click</a>'
+    )
+    sanitized = _sanitize_export_html(html)
+    # Tag survives — body text and structure intact.
+    assert "<img" in sanitized
+    assert "<a" in sanitized
+    # Untrusted URLs are gone.
+    assert "evil.test" not in sanitized
+    # The src/href attribute for the untrusted host was dropped.
+    assert 'src="https://evil.test' not in sanitized
+    assert 'href="https://evil.test' not in sanitized
+
+
+def test_export_sanitizer_rejects_http_scheme_on_kufar_host() -> None:
+    """Even a kufar.by URL over plain HTTP is denied — the export
+    page sits inside an https:// context and would block the request
+    anyway, but we drop it server-side too for the structured log."""
+    html = '<img src="http://rms.kufar.by/v1/gallery/ad/abc.jpg" alt="x">'
+    sanitized = _sanitize_export_html(html)
+    assert "http://rms.kufar.by" not in sanitized
+
+
+def test_export_sanitizer_drops_javascript_scheme_in_anchor() -> None:
+    """The earlier ``url_schemes={'https'}`` already blocks this, but
+    the per-attribute filter is a defence-in-depth — make sure adding
+    the filter didn't accidentally re-allow a non-https scheme."""
+    html = '<a href="javascript:alert(1)">x</a>'
+    sanitized = _sanitize_export_html(html)
+    assert "javascript:" not in sanitized
+
+
 class FakeAIService:
     available = True
 

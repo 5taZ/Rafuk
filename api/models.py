@@ -248,6 +248,19 @@ class QueryListingState(Base):
         # compound idx_query_listing_states_query_active below covers
         # every query that actually filters by ``active``.
         Index("idx_query_listing_states_query_active", "query", "active"),
+        # BE-06 / Wave 29: partial index for the nightly cleanup
+        # ``WHERE active=false AND last_seen_at < cutoff``. Created in
+        # migration 20260511_0007 as a partial index keyed on
+        # last_seen_at with ``WHERE active = false`` — the model-level
+        # declaration here uses the same ``postgresql_where`` pattern
+        # as ``idx_trackers_user_active_partial`` so autogenerate
+        # diff stays clean.
+        Index(
+            "idx_query_listing_states_cleanup",
+            "last_seen_at",
+            postgresql_where=text("active = false"),
+            sqlite_where=text("active = false"),
+        ),
     )
 
 

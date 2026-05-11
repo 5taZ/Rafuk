@@ -71,6 +71,35 @@ def _get_transcode_semaphore() -> asyncio.Semaphore:
     return _transcode_semaphore
 
 
+# SEC-08 / INF-09: per-user concurrency cap on top of the global
+# transcode semaphore. Without this, a single abusive client can open
+# 4+ parallel image-proxy requests, occupy every slot of
+# ``_transcode_semaphore`` and starve every other user. The global
+# slowapi limiter caps total request *rate* per user but not concurrency
+# — a burst that completes one transcode every couple of seconds slips
+# under 60/min while still hogging Pillow workers.
+#
+# Each authenticated user (telegram user_id) gets their own
+# ``asyncio.Semaphore(_USER_TRANSCODE_LIMIT)``. The lazy registry below
+# is bounded by ``_MAX_USER_SEMAPHORES`` and FIFO-evicts stale entries
+# the same way ``ai_task_store._task_locks`` does — Python dicts
+# preserve insertion order, so popping from the front evicts oldest.
+_USER_TRANSCODE_LIMIT = 2
+_MAX_USER_SEMAPHORES = 1024
+_user_semaphores: dict[str, asyncio.Semaphore] = {}
+
+
+def _get_user_semaphore(user_key: str) -> asyncio.Semaphore:
+    sem = _user_semaphores.get(user_key)
+    if sem is None:
+        if len(_user_semaphores) >= _MAX_USER_SEMAPHORES:
+            for stale_key in list(_user_semaphores.keys())[: _MAX_USER_SEMAPHORES // 2]:
+                _user_semaphores.pop(stale_key, None)
+        sem = asyncio.Semaphore(_USER_TRANSCODE_LIMIT)
+        _user_semaphores[user_key] = sem
+    return sem
+
+
 # In-process LRU for transcoded bytes. Browser cache does the
 # cross-request work (30-day Cache-Control), so this only catches
 # duplicate hits within a session — same listing thumbnail visible
@@ -112,11 +141,16 @@ def _clear_cache_for_tests() -> None:
     ``patch("...httpx.AsyncClient", FakeClient)`` is honoured —
     the singleton would otherwise hold a real client built before
     the patch took effect.
+
+    SEC-08 / Wave 29: also drops the per-user semaphore registry so
+    a test that triggers the 429-on-concurrency path doesn't leave a
+    held slot behind to spoil the next test's setup.
     """
     global _http_client, _client_lock
     _transcoded_cache.clear()
     _http_client = None
     _client_lock = None
+    _user_semaphores.clear()
 
 
 def _pick_format(requested: str, accept: str) -> Literal["webp", "avif", "jpeg"]:
@@ -233,7 +267,12 @@ async def aclose_http_client() -> None:
 
 
 @router.get("/img/{path:path}")
-@limiter.limit("300/minute")
+# SEC-08 / Wave 29: tightened from 300/minute (the audit's original
+# global cap, which was actually per-user via slowapi's tg:{user_id}
+# key) to 60/minute. 60 covers a normal session — a power user opening
+# 3-4 long lists with ~15 cards each — without giving an abusive
+# client room to slow-drain the transcode pool.
+@limiter.limit("60/minute")
 async def get_optimized_image(
     request: Request,
     path: str,
@@ -256,39 +295,62 @@ async def get_optimized_image(
     if cached_body is not None:
         return _build_response(cached_body, chosen_fmt, hit="lru")
 
-    upstream_url = f"{_KUFAR_BASE}{path}"
+    # SEC-08 / INF-09: per-user concurrency cap on top of the global
+    # transcode pool. Claim the user's slot synchronously — no ``await``
+    # between ``locked()`` and ``acquire_nowait`` (via the cheap-path
+    # acquire below) means a parallel request from the same user
+    # observes ``locked() == True`` on its check and gets 429 instead
+    # of queueing into the global pool. Held across the upstream fetch
+    # AND the transcode so a slow Kufar upstream also counts toward
+    # the user's budget — otherwise an abuser would just stack 100
+    # in-flight upstream gets cheaply.
+    user_sem = _get_user_semaphore(f"tg:{_user.user_id}")
+    if user_sem.locked():
+        raise HTTPException(
+            status_code=429,
+            detail="Too many concurrent image requests; please slow down",
+        )
+    # Synchronous acquire path: when value > 0, ``acquire()`` returns
+    # an already-completed future and the ``await`` is a single tick.
+    await user_sem.acquire()
     try:
-        client = await _get_http_client(settings)
-        upstream = await client.get(upstream_url)
-    except httpx.HTTPError as exc:
-        logger.warning("Image fetch failed for %s: %s", path, exc)
-        raise HTTPException(status_code=502, detail="Upstream image fetch failed") from exc
-
-    if upstream.status_code != 200:
-        raise HTTPException(status_code=upstream.status_code, detail="Upstream not OK")
-    if len(upstream.content) > settings.image_proxy_max_bytes:
-        raise HTTPException(status_code=413, detail="Upstream image too large")
-
-    # Pillow is sync and CPU-bound — handing it off to a worker
-    # thread + bounding concurrency keeps the event loop responsive
-    # while many list cards request thumbnails in parallel.
-    semaphore = _get_transcode_semaphore()
-    async with semaphore:
+        upstream_url = f"{_KUFAR_BASE}{path}"
         try:
-            body = await asyncio.to_thread(
-                _transcode,
-                upstream.content,
-                fmt=chosen_fmt,
-                max_width=target_width,
-                quality=settings.image_proxy_quality,
-            )
-        except (UnidentifiedImageError, OSError, ValueError) as exc:
-            logger.warning("Image transcode failed for %s: %s", path, exc)
-            raise HTTPException(status_code=415, detail="Unsupported source image") from exc
+            client = await _get_http_client(settings)
+            upstream = await client.get(upstream_url)
+        except httpx.HTTPError as exc:
+            logger.warning("Image fetch failed for %s: %s", path, exc)
+            raise HTTPException(status_code=502, detail="Upstream image fetch failed") from exc
 
-    async with _get_cache_lock():
-        _cache_put(cache_key, body)
-    return _build_response(body, chosen_fmt, hit="miss")
+        if upstream.status_code != 200:
+            raise HTTPException(status_code=upstream.status_code, detail="Upstream not OK")
+        if len(upstream.content) > settings.image_proxy_max_bytes:
+            raise HTTPException(status_code=413, detail="Upstream image too large")
+
+        # Pillow is sync and CPU-bound — handing it off to a worker
+        # thread + bounding concurrency keeps the event loop responsive
+        # while many list cards request thumbnails in parallel. The
+        # per-user semaphore above wraps this one so a single abuser
+        # can never consume all _TRANSCODE_LIMIT slots.
+        semaphore = _get_transcode_semaphore()
+        async with semaphore:
+            try:
+                body = await asyncio.to_thread(
+                    _transcode,
+                    upstream.content,
+                    fmt=chosen_fmt,
+                    max_width=target_width,
+                    quality=settings.image_proxy_quality,
+                )
+            except (UnidentifiedImageError, OSError, ValueError) as exc:
+                logger.warning("Image transcode failed for %s: %s", path, exc)
+                raise HTTPException(status_code=415, detail="Unsupported source image") from exc
+
+        async with _get_cache_lock():
+            _cache_put(cache_key, body)
+        return _build_response(body, chosen_fmt, hit="miss")
+    finally:
+        user_sem.release()
 
 
 def _build_response(body: bytes, chosen_fmt: str, *, hit: str) -> Response:

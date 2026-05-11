@@ -22,6 +22,96 @@ function createRenderTrackers(context) {
         safeRender: safeRender,
     } = context;
 
+    // FE-05 / Wave 29: emoji-prefixed labels need a tiny shim so screen
+    // readers don't pronounce the emoji glyph (Unicode names like
+    // "BACKHAND INDEX POINTING DOWN" are unreadable as price-drop
+    // markers). Wrap the emoji in an aria-hidden span and let the
+    // following text node carry the meaningful label.
+    function emojiSpan(emoji) {
+        const span = document.createElement("span");
+        span.setAttribute("aria-hidden", "true");
+        span.textContent = emoji;
+        return span;
+    }
+
+    function emojiLabel(className, emoji, text) {
+        // Returns a span whose visible content is "📍 Минск" but whose
+        // accessible name reads as plain "Минск". Used for chip-style
+        // labels in tracker event cards.
+        return domEl("span", { className }, emojiSpan(emoji), ` ${text}`);
+    }
+
+    // FE-08 / Wave 29: build SVG icons via createElementNS instead of
+    // ``innerHTML = "<svg...>"``. The previous code worked because
+    // every SVG payload was a hardcoded source-code constant, but a
+    // future refactor that interpolates ANY runtime value into one
+    // of these strings would have re-introduced an XSS vector. The
+    // descriptor form below is forced to go through DOM APIs that
+    // can never execute injected script regardless of input.
+    const SVG_NS = "http://www.w3.org/2000/svg";
+
+    function buildSvgIcon(viewBox, attrs, children) {
+        const svg = document.createElementNS(SVG_NS, "svg");
+        svg.setAttribute("viewBox", viewBox);
+        svg.setAttribute("aria-hidden", "true");
+        for (const [k, v] of Object.entries(attrs || {})) svg.setAttribute(k, String(v));
+        for (const child of children) {
+            const el = document.createElementNS(SVG_NS, child.tag);
+            for (const [k, v] of Object.entries(child)) {
+                if (k === "tag") continue;
+                el.setAttribute(k, String(v));
+            }
+            svg.appendChild(el);
+        }
+        return svg;
+    }
+
+    // Common attribute presets for the action / search icons.
+    const _STROKE_ATTRS = {
+        fill: "none",
+        stroke: "currentColor",
+        "stroke-width": "2",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+    };
+
+    function iconPlay() {
+        return buildSvgIcon("0 0 24 24",
+            { width: 14, height: 14, fill: "currentColor" },
+            [{ tag: "path", d: "M8 5v14l11-7z" }]);
+    }
+    function iconPause() {
+        return buildSvgIcon("0 0 24 24",
+            { width: 14, height: 14, fill: "currentColor" },
+            [{ tag: "path", d: "M6 4h4v16H6zM14 4h4v16h-4z" }]);
+    }
+    function iconEdit() {
+        return buildSvgIcon("0 0 24 24",
+            { width: 14, height: 14, ..._STROKE_ATTRS },
+            [
+                { tag: "path", d: "M12 20h9" },
+                { tag: "path", d: "M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z" },
+            ]);
+    }
+    function iconDelete() {
+        return buildSvgIcon("0 0 24 24",
+            { width: 14, height: 14, ..._STROKE_ATTRS },
+            [
+                { tag: "polyline", points: "3 6 5 6 21 6" },
+                { tag: "path", d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" },
+                { tag: "path", d: "M10 11v6M14 11v6" },
+                { tag: "path", d: "M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" },
+            ]);
+    }
+    function iconSearch() {
+        return buildSvgIcon("0 0 24 24",
+            { width: 16, height: 16, ..._STROKE_ATTRS },
+            [
+                { tag: "circle", cx: "11", cy: "11", r: "7" },
+                { tag: "line", x1: "21", y1: "21", x2: "16.65", y2: "16.65" },
+            ]);
+    }
+
     /* ===== Tracker Status ===== */
 
     function renderTrackerStatus() {
@@ -96,7 +186,13 @@ function createRenderTrackers(context) {
                 const skel = document.createElement("div");
                 skel.className = "skeleton-card";
                 skel.setAttribute("aria-hidden", "true");
-                skel.innerHTML = '<div class="skel-bar" style="width:60%"></div><div class="skel-bar" style="width:40%"></div><div class="skel-bar" style="width:30%"></div>';
+                // FE-08: build children via DOM API instead of innerHTML.
+                for (const width of ["60%", "40%", "30%"]) {
+                    const bar = document.createElement("div");
+                    bar.className = "skel-bar";
+                    bar.style.width = width;
+                    skel.appendChild(bar);
+                }
                 elements.trackersList.appendChild(skel);
             }
             return;
@@ -164,25 +260,20 @@ function createRenderTrackers(context) {
 
             const actionRole = tracker.paused ? "resume" : "pause";
             const actionLabel = tracker.paused ? "Возобновить" : "Пауза";
-            // SVG icon picked at render time so the button gets a clean
-            // monochrome glyph instead of platform-specific emoji.
-            const actionIconSvg = tracker.paused
-                ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
-                : '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
-            const editIconSvg =
-                '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>';
-            const deleteIconSvg =
-                '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+            // FE-08: SVG icons constructed via createElementNS (see
+            // helpers at top of module). Picked at render time so the
+            // button gets a clean monochrome glyph instead of a
+            // platform-specific emoji.
+            const actionIconNode = tracker.paused ? iconPlay() : iconPause();
 
-            const buildIconButton = (className, role, label, iconHtml) => {
+            const buildIconButton = (className, role, label, iconNode) => {
                 const btn = domEl(
                     "button",
                     { className, type: "button", dataset: { role } },
                 );
                 const icon = document.createElement("span");
                 icon.className = "tracker-action-icon";
-                // Hardcoded SVG — safe for innerHTML (no dynamic attributes)
-                icon.innerHTML = iconHtml;
+                icon.appendChild(iconNode);
                 btn.append(icon, document.createTextNode(label));
                 return btn;
             };
@@ -195,9 +286,8 @@ function createRenderTrackers(context) {
                     (() => {
                         const iconWrap = document.createElement("div");
                         iconWrap.className = "tracker-icon";
-                        // Hardcoded SVG — safe for innerHTML (no dynamic attributes)
-                        iconWrap.innerHTML =
-                            '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+                        // FE-08: see iconSearch() at top of module.
+                        iconWrap.appendChild(iconSearch());
                         return iconWrap;
                     })(),
                     domEl(
@@ -214,13 +304,13 @@ function createRenderTrackers(context) {
                     buildStat("В среднем", `${tracker.avg_events_per_day || 0}/день`),
                     buildStat("Посл. событие", formatLastEventTime(tracker.last_event_at)),
                 ),
-                lastCheckedLabel ? domEl("div", { className: "tracker-last-checked", text: `🕐 ${lastCheckedLabel}` }) : null,
+                lastCheckedLabel ? emojiLabel("tracker-last-checked", "🕐", lastCheckedLabel) : null,
                 domEl(
                     "div",
                     { className: "tracker-card-actions" },
-                    buildIconButton("ghost-btn small tracker-action-btn", actionRole, actionLabel, actionIconSvg),
-                    buildIconButton("ghost-btn small tracker-action-btn", "edit", "Изменить", editIconSvg),
-                    buildIconButton("ghost-btn small tracker-action-btn danger", "delete", "Удалить", deleteIconSvg),
+                    buildIconButton("ghost-btn small tracker-action-btn", actionRole, actionLabel, actionIconNode),
+                    buildIconButton("ghost-btn small tracker-action-btn", "edit", "Изменить", iconEdit()),
+                    buildIconButton("ghost-btn small tracker-action-btn danger", "delete", "Удалить", iconDelete()),
                 ),
             );
 
@@ -396,10 +486,16 @@ function createRenderTrackers(context) {
                     className: "event-thumbnail",
                     attrs: { src: thumbSrc, alt: event.title || "Объявление", loading: "lazy" },
                 })
-                : domEl("div", { className: "event-thumbnail-placeholder", text: "📱" });
+                // FE-05: aria-label exposes "Нет фото" instead of the
+                // SR pronouncing the bare 📱 glyph as "MOBILE PHONE".
+                : domEl("div", {
+                    className: "event-thumbnail-placeholder",
+                    text: "📱",
+                    attrs: { "aria-label": "Нет фото", role: "img" },
+                });
             const eventMeta = domEl("div", { className: "event-meta" });
-            if (event.region_name) eventMeta.appendChild(domEl("span", { className: "event-meta-item", text: `📍 ${event.region_name}` }));
-            if (event.seller_type) eventMeta.appendChild(domEl("span", { className: "event-meta-item", text: `👤 ${event.seller_type}` }));
+            if (event.region_name) eventMeta.appendChild(emojiLabel("event-meta-item", "📍", event.region_name));
+            if (event.seller_type) eventMeta.appendChild(emojiLabel("event-meta-item", "👤", event.seller_type));
             const priceRow = domEl(
                 "div",
                 { className: "event-price-row" },
@@ -415,22 +511,30 @@ function createRenderTrackers(context) {
                 priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `-${Math.round(event.parameters.discount_percent)}% от медианы` }));
             }
 
+            // FE-05: badges carry both an emoji and a text label; the
+            // emoji is decorative duplication of the label, so it goes
+            // into an aria-hidden span and screen readers announce
+            // only the meaningful suffix (e.g. "Новый лот").
             let badgeClass = "new";
-            let badgeText = "🆕 Новый лот";
+            let badgeEmoji = "🆕";
+            let badgeLabel = "Новый лот";
             let cardModifier = "";
             if (isPriceDrop) {
                 badgeClass = "drop";
-                badgeText = "🔽 Падение цены";
+                badgeEmoji = "🔽";
+                badgeLabel = "Падение цены";
                 cardModifier = " price-drop";
             }
             if (event.event_type === "price_threshold_alert") {
                 badgeClass = "alert";
-                badgeText = "🎯 Порог цены";
+                badgeEmoji = "🎯";
+                badgeLabel = "Порог цены";
                 cardModifier = " threshold-alert";
             }
             if (event.event_type === "discount_alert") {
                 badgeClass = "alert";
-                badgeText = "📉 Скидка от медианы";
+                badgeEmoji = "📉";
+                badgeLabel = "Скидка от медианы";
                 cardModifier = " discount-alert";
             }
 
@@ -447,13 +551,7 @@ function createRenderTrackers(context) {
                         domEl(
                             "div",
                             { className: "event-top-row" },
-                            domEl(
-                                "span",
-                                {
-                                    className: `event-type-badge ${badgeClass}`,
-                                    text: badgeText,
-                                },
-                            ),
+                            emojiLabel(`event-type-badge ${badgeClass}`, badgeEmoji, badgeLabel),
                             domEl("span", { className: "event-time", text: formatDate(event.created_at) }),
                         ),
                         domEl("strong", { className: "event-title", text: event.title }),

@@ -434,3 +434,53 @@ async def test_bg_task_watchdog_passes_through_normal_completion(monkeypatch) ->
         return 42
 
     assert await ai_task_store._bg_task_watchdog(fast()) == 42
+
+
+# ── AI-08 / Wave 29: structured AI_DUAL_FAIL log ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dual_failure_emits_structured_ai_dual_fail_log(
+    monkeypatch, caplog
+) -> None:
+    """When both staggered AI sub-calls fail, the merge branch must
+    surface a single ``AI_DUAL_FAIL`` ERROR line carrying both
+    exception types — that's the grep signature on-call uses to
+    distinguish a real bilateral outage from a unilateral 429."""
+    svc = _build_ai_service(monkeypatch)
+
+    chat_calls = 0
+
+    async def _failing_chat(*args, **kwargs):
+        nonlocal chat_calls
+        chat_calls += 1
+        if chat_calls == 1:
+            raise RuntimeError("AI 429 rate-limited by upstream")
+        raise TimeoutError("read timeout")
+
+    monkeypatch.setattr(svc, "_chat", _failing_chat)
+
+    caplog.set_level("ERROR", logger="api.services.ai_service")
+
+    with pytest.raises(RuntimeError, match="429"):
+        await svc.analyze_listing_parallel(
+            title="iPhone 13 128GB",
+            description="состояние хорошее, оригинал",
+            price_byn=1500.0,
+            condition="Б/у",
+            parameters=[],
+            market_median=1600.0,
+            market_count=10,
+        )
+
+    dual_fail_records = [
+        r for r in caplog.records if "AI_DUAL_FAIL" in r.getMessage()
+    ]
+    assert dual_fail_records, "Expected exactly one AI_DUAL_FAIL ERROR record"
+    msg = dual_fail_records[0].getMessage()
+    # The structured line carries both exception class names so
+    # ``grep "AI_DUAL_FAIL.*ReadTimeout" logs`` works on-call.
+    assert "RuntimeError" in msg
+    assert "TimeoutError" in msg
+    assert "429" in msg
+    assert dual_fail_records[0].levelname == "ERROR"

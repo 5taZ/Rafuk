@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 import nh3
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,11 +15,66 @@ from pydantic import BaseModel
 from api.dependencies import get_cache, get_telegram_user
 from api.services.ai_task_store import _export_delete, _export_get, _export_set
 
+logger = logging.getLogger(__name__)
 export_router = APIRouter()
 
 
 class AIExportReportRequest(BaseModel):
     html: str
+
+
+# SEC-10 / Wave 29: trusted hosts for ``<img src>`` and ``<a href>`` in
+# AI-exported HTML reports. The frontend pipeline that builds these
+# reports (see ``frontend/js/api_ai_pdf.js``) only ever references
+#
+#   * Kufar's image CDN (``rms.kufar.by``) for listing thumbnails
+#   * Kufar listing URLs (``www.kufar.by/item/...``, sometimes
+#     bare ``kufar.by`` redirects)
+#
+# Anything else — tracking pixels, attacker-controlled domains, or
+# CSP-bypass beacons — is dropped by the attribute filter below. Using
+# an explicit allow-list (rather than relying on
+# ``nh3.clean(url_schemes={"https"})`` alone) means a future
+# refactor that introduces a new image source needs a deliberate
+# audit-bearing edit to this file, not a silent accept.
+_ALLOWED_EXPORT_HOSTS: frozenset[str] = frozenset({
+    "kufar.by",
+    "www.kufar.by",
+    "rms.kufar.by",
+    "cre.kufar.by",
+    "re.kufar.by",
+})
+
+
+def _is_allowed_export_url(url: str) -> bool:
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    return host in _ALLOWED_EXPORT_HOSTS
+
+
+def _export_attribute_filter(tag: str, attr: str, value: str) -> str | None:
+    """Drop ``src`` / ``href`` attributes pointing outside the Kufar
+    domain set. Returning ``None`` strips the attribute (leaving the
+    tag rendered without it) which is preferable to dropping the whole
+    tag — text content survives and the broken-image placeholder is
+    obvious feedback during debugging."""
+    is_url_attr = (tag == "img" and attr == "src") or (tag == "a" and attr == "href")
+    if is_url_attr and not _is_allowed_export_url(value):
+        logger.info(
+            "ai_export: dropped %s.%s pointing to untrusted URL (head=%r)",
+            tag,
+            attr,
+            value[:64],
+        )
+        return None
+    return value
 
 
 def _sanitize_export_html(html: str) -> str:
@@ -37,8 +94,11 @@ def _sanitize_export_html(html: str) -> str:
             "th": {"colspan", "rowspan"},
         },
         clean_content_tags={"script", "style"},
-        # Only allow https: URLs — blocks data: and javascript: schemes
+        # Only allow https: URLs — blocks data: and javascript: schemes.
+        # The per-attribute filter below narrows further to a host
+        # allow-list (SEC-10).
         url_schemes={"https"},
+        attribute_filter=_export_attribute_filter,
     )
 
 

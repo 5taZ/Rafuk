@@ -459,7 +459,12 @@ function createAppActions(context) {
             a.href = url;
             a.download = fmt === "xlsx" ? "leads_export.xlsx" : "leads_export.csv";
             a.click();
-            URL.revokeObjectURL(url);
+            // FE-07: defer revoke so the browser actually has time to
+            // start the download. On slow Android WebViews / weak
+            // CPUs ``a.click()`` queues the navigation but doesn't
+            // commit it before the next microtask tick — revoking
+            // immediately after caused empty downloads in practice.
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
             showToast("Файл загружен");
         } catch (error) {
             if (error.name === "AbortError") {
@@ -784,7 +789,8 @@ function createAppActions(context) {
             a.href = url;
             a.download = "rafuks_data_export.json";
             a.click();
-            URL.revokeObjectURL(url);
+            // FE-07: see note above the CSV/XLSX revoke — same fix.
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
             showToast("Данные экспортированы");
         } catch (err) {
             showToast(err.message || "Не удалось экспортировать данные");

