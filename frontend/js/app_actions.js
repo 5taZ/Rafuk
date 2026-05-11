@@ -38,6 +38,7 @@ function createAppActions(baseContext) {
         closeDetailModal,
         setPanelOpen,
         showToast,
+        dismissToast,
         renderExpensesModal,
         openExpensesModal,
         closeExpensesModal,
@@ -161,11 +162,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-253e4d3"),
-            context._loadScript("js/api_ai_render.js?v=20260511-253e4d3"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-253e4d3"),
-            context._loadScript("js/api_ai.js?v=20260511-253e4d3"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-253e4d3"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-2ea3292"),
+            context._loadScript("js/api_ai_render.js?v=20260511-2ea3292"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-2ea3292"),
+            context._loadScript("js/api_ai.js?v=20260511-2ea3292"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-2ea3292"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -271,6 +272,19 @@ function createAppActions(baseContext) {
         setTimeout(() => _inflightAdMutations.delete(adId), INFLIGHT_GUARD_MS);
     }
 
+    function _validVersion(value) {
+        const numeric = Number(value);
+        return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
+    }
+
+    async function _resolveWatchingVersion(item) {
+        const current = state.watchlist.items.find((w) => w.id === item?.id) || item;
+        const version = _validVersion(current?.version);
+        if (version) return version;
+        await watchlist.loadWatchlist();
+        return _validVersion(state.watchlist.items.find((w) => w.id === item?.id)?.version);
+    }
+
     async function addLeadFromListing(item, source = "manual", queryOverride = null) {
         if (!hasTelegramInitData() || !item?.ad_id) {
             return;
@@ -294,7 +308,7 @@ function createAppActions(baseContext) {
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
-            showToast("Уже в покупках");
+            showToast("Уже в покупках", "info", 1600);
             return;
         }
 
@@ -305,14 +319,21 @@ function createAppActions(baseContext) {
         const watchingItem = state.watchlist.items.find((w) => w.ad_id === item.ad_id);
 
         _guardAdMutation(item.ad_id);
+        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             if (watchingItem) {
+                const version = await _resolveWatchingVersion(watchingItem);
+                if (!version) {
+                    if (pendingToast) dismissToast(pendingToast);
+                    showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
+                    return;
+                }
                 await core.requestJson(`/api/v1/leads/${watchingItem.id}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         status: "new",
-                        version: watchingItem.version,
+                        version,
                     }),
                 });
                 // Optimistic: remove from watchlist immediately.
@@ -333,11 +354,13 @@ function createAppActions(baseContext) {
                     thumbnail: item.thumbnail || null,
                 });
             }
-            showToast("Добавлено в покупки", "success");
+            if (pendingToast) dismissToast(pendingToast);
+            showToast("В покупках", "success", 1600);
             // Refresh both surfaces so a once-watched item disappears
             // from "Избранное" and shows up in "Покупки" together.
             await Promise.all([leads.loadLeads(), watchlist.loadWatchlist()]);
         } catch (error) {
+            if (pendingToast) dismissToast(pendingToast);
             showToast(error.message || "Не удалось добавить в покупки", "error");
         } finally {
             _inflightAdMutations.delete(item.ad_id);

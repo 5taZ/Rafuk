@@ -358,6 +358,76 @@ def test_lead_and_watchlist_mutations_have_inflight_guard() -> None:
     assert "_inflightWatchId.has(watchlistId)" in watchlist_js
 
 
+def test_lead_and_watchlist_mutations_resolve_versions_before_patch() -> None:
+    leads_js = (JS_DIR / "api_leads.js").read_text(encoding="utf-8")
+    watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    core_js = (JS_DIR / "api_core.js").read_text(encoding="utf-8")
+
+    assert "async function _resolveLeadVersion" in leads_js
+    for fn_name in (
+        "confirmLead",
+        "closeDeal",
+        "revertLeadStage",
+        "updateLeadMeta",
+        "markLeadAsSold",
+    ):
+        fn_start = leads_js.index(f"function {fn_name}")
+        fn_body = leads_js[fn_start:leads_js.index("\n    // ──", fn_start + 1)]
+        assert "_resolveLeadVersion" in fn_body, f"{fn_name} can PATCH without fresh version"
+        assert "version," in fn_body, f"{fn_name} must send resolved version"
+
+    assert "async function _resolveWatchlistVersion" in watchlist_js
+    for fn_name in ("updateWatchlistMeta", "promoteWatchlistToLead"):
+        fn_start = watchlist_js.index(f"function {fn_name}")
+        fn_body = watchlist_js[fn_start:watchlist_js.index("\n    // ──", fn_start + 1)]
+        assert "_resolveWatchlistVersion" in fn_body, f"{fn_name} can PATCH without version"
+        assert "version," in fn_body, f"{fn_name} must send resolved version"
+
+    add_lead_start = actions_js.index("async function addLeadFromListing")
+    add_lead_body = actions_js[add_lead_start:actions_js.index("\n    // Make", add_lead_start)]
+    assert "_resolveWatchingVersion" in add_lead_body
+    assert "version," in add_lead_body
+    assert "Lead version is required for updates" in core_js
+    assert "Данные устарели" in core_js
+
+
+def test_collection_actions_show_immediate_pending_toasts() -> None:
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+
+    add_lead = actions_js[
+        actions_js.index("async function addLeadFromListing"):
+        actions_js.index("\n    // Make", actions_js.index("async function addLeadFromListing"))
+    ]
+    assert 'showToast("Добавляю…", "info"' in add_lead
+    assert 'showToast("В покупках", "success"' in add_lead
+    assert "dismissToast(pendingToast)" in add_lead
+
+    for fn_name, success_text in (
+        ("addWatchlistFromListing", "В избранном"),
+        ("promoteWatchlistToLead", "В покупках"),
+    ):
+        fn_start = watchlist_js.index(f"function {fn_name}")
+        fn_body = watchlist_js[fn_start:watchlist_js.index("\n    // ──", fn_start + 1)]
+        assert 'showToast("Добавляю…", "info"' in fn_body
+        assert f'showToast("{success_text}", "success"' in fn_body
+        assert "dismissToast(pendingToast)" in fn_body
+
+
+def test_toasts_are_minimal_and_fast() -> None:
+    render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+    css = _read_all_css()
+
+    assert "toast-dot" in render_core
+    assert "iconMap" not in render_core
+    assert "const animationDuration = prefersReducedMotion ? 10 : 120" in render_core
+    assert ".toast-dot" in css
+    assert ".toast-icon" not in css
+    assert ".toast.entering:nth-child(2)" not in css
+    assert "animation: toast-in 120ms" in css
+
+
 def test_unified_item_card_replaces_lead_and_watchlist_builders() -> None:
     """Roadmap milestone: lead/watchlist surfaces share one builder.
     The wrappers stay only as thin aliases for the unified function."""

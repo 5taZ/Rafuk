@@ -89,7 +89,7 @@ function createRenderCore(context) {
     function showToast(message, type = "info", duration = 3000) {
         if (!elements.toastContainer) return null;
 
-        const messageStr = String(message ?? "");
+        const messageStr = String(message ?? "").replace(/^[\s✓✕↩]+/, "").trim();
 
         // Deduplication: if the same (message, type) is already visible
         // and not already in the exit animation, just reset its timer
@@ -127,19 +127,16 @@ function createRenderCore(context) {
             return existing;
         }
 
-        const iconMap = {
-            success: "✓",
-            error: "✕",
-            info: "ℹ",
-        };
-
         const toast = domEl(
             "div",
             {
                 className: `toast toast-${type} entering`,
                 attrs: { role: "status", "aria-live": "polite" },
             },
-            domEl("span", { className: `toast-icon ${type}`, text: iconMap[type] || iconMap.info }),
+            domEl("span", {
+                className: `toast-dot ${type}`,
+                attrs: { "aria-hidden": "true" },
+            }),
             domEl("span", { className: "toast-message", text: messageStr }),
             domEl("button", {
                 className: "toast-close",
@@ -169,7 +166,7 @@ function createRenderCore(context) {
 
         // Remove entering class after animation completes
         const prefersReducedMotion = _prefersReducedMotion();
-        const animationDuration = prefersReducedMotion ? 10 : 200;
+        const animationDuration = prefersReducedMotion ? 10 : 120;
         setTimeout(() => {
             toast.classList.remove("entering");
         }, animationDuration);
@@ -234,7 +231,7 @@ function createRenderCore(context) {
         const timerId = Number(toast.dataset.dismissTimer || 0);
         if (timerId) clearTimeout(timerId);
         const prefersReducedMotion = _prefersReducedMotion();
-        const exitDuration = prefersReducedMotion ? 10 : 200;
+        const exitDuration = prefersReducedMotion ? 10 : 120;
         toast.classList.add("toast-exit");
         setTimeout(() => {
             if (toast.parentNode) {

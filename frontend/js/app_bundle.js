@@ -1946,7 +1946,7 @@ function createRenderCore(context) {
     function showToast(message, type = "info", duration = 3000) {
         if (!elements.toastContainer) return null;
 
-        const messageStr = String(message ?? "");
+        const messageStr = String(message ?? "").replace(/^[\s✓✕↩]+/, "").trim();
 
         // Deduplication: if the same (message, type) is already visible
         // and not already in the exit animation, just reset its timer
@@ -1984,19 +1984,16 @@ function createRenderCore(context) {
             return existing;
         }
 
-        const iconMap = {
-            success: "✓",
-            error: "✕",
-            info: "ℹ",
-        };
-
         const toast = domEl(
             "div",
             {
                 className: `toast toast-${type} entering`,
                 attrs: { role: "status", "aria-live": "polite" },
             },
-            domEl("span", { className: `toast-icon ${type}`, text: iconMap[type] || iconMap.info }),
+            domEl("span", {
+                className: `toast-dot ${type}`,
+                attrs: { "aria-hidden": "true" },
+            }),
             domEl("span", { className: "toast-message", text: messageStr }),
             domEl("button", {
                 className: "toast-close",
@@ -2026,7 +2023,7 @@ function createRenderCore(context) {
 
         // Remove entering class after animation completes
         const prefersReducedMotion = _prefersReducedMotion();
-        const animationDuration = prefersReducedMotion ? 10 : 200;
+        const animationDuration = prefersReducedMotion ? 10 : 120;
         setTimeout(() => {
             toast.classList.remove("entering");
         }, animationDuration);
@@ -2091,7 +2088,7 @@ function createRenderCore(context) {
         const timerId = Number(toast.dataset.dismissTimer || 0);
         if (timerId) clearTimeout(timerId);
         const prefersReducedMotion = _prefersReducedMotion();
-        const exitDuration = prefersReducedMotion ? 10 : 200;
+        const exitDuration = prefersReducedMotion ? 10 : 120;
         toast.classList.add("toast-exit");
         setTimeout(() => {
             if (toast.parentNode) {
@@ -6600,6 +6597,13 @@ function createApiCore(context) {
         });
     }
 
+    function _friendlyErrorMessage(message) {
+        if (/Lead version is required for updates|Lead was updated elsewhere/i.test(message)) {
+            return "Данные устарели. Обновите список и попробуйте ещё раз.";
+        }
+        return message;
+    }
+
     // ── Telegram headers ─────────────────────────────────────────────────
     function telegramHeaders() {
         const initData = window.Telegram?.WebApp?.initData;
@@ -6676,7 +6680,7 @@ function createApiCore(context) {
             try {
                 const payload = await response.json();
                 if (typeof payload.detail === "string" && payload.detail.trim()) {
-                    message = payload.detail.trim();
+                    message = _friendlyErrorMessage(payload.detail.trim());
                 }
             } catch (_) {
                 if (response.status >= 500) {
@@ -7619,6 +7623,28 @@ function createApiLeads(context) {
     let _leadDetailAbortController = null;
     let _analyticsAbortController = null;
 
+    function _validVersion(value) {
+        const numeric = Number(value);
+        return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
+    }
+
+    function _findLeadSnapshot(leadOrId) {
+        const leadId = typeof leadOrId === "object" ? leadOrId?.id : leadOrId;
+        return state.leads.items.find((l) => l.id === leadId) || null;
+    }
+
+    async function _resolveLeadVersion(leadOrId) {
+        const snapshot = _findLeadSnapshot(leadOrId) || (typeof leadOrId === "object" ? leadOrId : null);
+        const version = _validVersion(snapshot?.version);
+        if (version) return version;
+        await loadLeads();
+        return _validVersion(_findLeadSnapshot(leadOrId)?.version);
+    }
+
+    function _showStaleLeadToast() {
+        showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
+    }
+
     // ── Load leads ───────────────────────────────────────────────────────
     async function loadLeads() {
         if (!hasTelegramInitData()) {
@@ -7755,12 +7781,19 @@ function createApiLeads(context) {
             return;
         }
 
+        const version = await _resolveLeadVersion(lead);
+        if (!version) {
+            _showStaleLeadToast();
+            return;
+        }
+
+        const pendingToast = showToast("Сохраняю…", "info", 8000);
         try {
             const payload = {
                 buy_price_byn: buyPriceNum,
                 sold_price_byn: soldPriceNum,
                 status: "sold",
-                version: lead.version,
+                version,
             };
 
             const updatedLead = await requestJson(`/api/v1/leads/${lead.id}`, {
@@ -7778,7 +7811,8 @@ function createApiLeads(context) {
 
             const profit = soldPriceNum - buyPriceNum;
             const profitSign = profit >= 0 ? "+" : "";
-            showToast(`✓ Сделка подтверждена! ${profitSign}${Math.round(profit)} BYN`, "success");
+            if (pendingToast) dismissToast(pendingToast);
+            showToast(`Сделка подтверждена: ${profitSign}${Math.round(profit)} BYN`, "success");
 
             // Full reload to refresh analytics/profit dashboard data
             await loadLeads();
@@ -7793,6 +7827,7 @@ function createApiLeads(context) {
             }, 100);
         } catch (error) {
             // Revert optimistic state by reloading from server
+            if (pendingToast) dismissToast(pendingToast);
             showToast(error.message || "Не удалось подтвердить сделку");
             await loadLeads();
         }
@@ -7815,6 +7850,11 @@ function createApiLeads(context) {
     async function closeDeal(leadId) {
         try {
             const lead = state.leads.items.find((l) => l.id === leadId);
+            const version = await _resolveLeadVersion(lead || leadId);
+            if (!version) {
+                _showStaleLeadToast();
+                return;
+            }
             const buyPriceByn = lead?.buy_price_byn || 0;
             const soldPriceByn = lead?.sold_price_byn || 0;
 
@@ -7823,7 +7863,10 @@ function createApiLeads(context) {
             const updatedLead = await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "closed", version: lead?.version }),
+                body: JSON.stringify({
+                    status: "closed",
+                    version,
+                }),
             });
 
             if (lead) {
@@ -7833,9 +7876,9 @@ function createApiLeads(context) {
 
             const profitSign = profit >= 0 ? "+" : "";
             if (profit >= 0) {
-                showToast(`✓ Сделка закрыта. Результат: ${profitSign}${Math.round(profit)} BYN`);
+                showToast(`Сделка закрыта: ${profitSign}${Math.round(profit)} BYN`);
             } else {
-                showToast(`✓ Сделка закрыта. Результат: ${Math.round(profit)} BYN`);
+                showToast(`Сделка закрыта: ${Math.round(profit)} BYN`);
             }
         } catch (error) {
             showToast(error.message || "Не удалось закрыть сделку");
@@ -7846,6 +7889,11 @@ function createApiLeads(context) {
     async function revertLeadStage(leadId, currentStatus) {
         try {
             const leadInState = state.leads.items.find((l) => l.id === leadId);
+            const version = await _resolveLeadVersion(leadInState || leadId);
+            if (!version) {
+                _showStaleLeadToast();
+                return;
+            }
             const updatedLead = await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
@@ -7853,7 +7901,7 @@ function createApiLeads(context) {
                     status: "new",
                     buy_price_byn: null,
                     sold_price_byn: null,
-                    version: leadInState?.version,
+                    version,
                 }),
             });
 
@@ -7862,7 +7910,7 @@ function createApiLeads(context) {
             }
             renderLeads();
 
-            showToast("↩ Сделка возвращена на этап «Новая»");
+            showToast("Сделка возвращена");
 
             setTimeout(() => {
                 const updatedCard = elements.leadInboxList?.querySelector(
@@ -7894,12 +7942,17 @@ function createApiLeads(context) {
     async function updateLeadMeta(leadId, payload) {
         try {
             const lead = state.leads.items.find((l) => l.id === leadId);
+            const version = payload.version ?? await _resolveLeadVersion(lead || leadId);
+            if (!version) {
+                _showStaleLeadToast();
+                return false;
+            }
             await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     ...payload,
-                    version: payload.version ?? lead?.version,
+                    version,
                 }),
             });
             await loadLeads();
@@ -7923,13 +7976,19 @@ function createApiLeads(context) {
         }
 
         try {
+            const version = await _resolveLeadVersion(lead);
+            if (!version) {
+                _showStaleLeadToast();
+                return;
+            }
+
             const updatedLead = await requestJson(`/api/v1/leads/${lead.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     status: "sold",
                     sold_price_byn: priceNum,
-                    version: lead.version,
+                    version,
                 }),
             });
 
@@ -7942,7 +8001,7 @@ function createApiLeads(context) {
             const priceBynRaw = lead.price_byn || 0;
             const profit = priceNum - priceBynRaw;
             const profitSign = profit >= 0 ? "+" : "";
-            showToast(`✓ Сделка продана! Результат: ${profitSign}${Math.round(profit)} BYN`);
+            showToast(`Сделка продана: ${profitSign}${Math.round(profit)} BYN`);
         } catch (err) {
             showToast(err.message || "Не удалось отметить сделку как проданную");
             await loadLeads();
@@ -8083,6 +8142,29 @@ function createApiWatchlist(context) {
         setTimeout(() => _inflightWatchId.delete(watchId), INFLIGHT_GUARD_MS);
     }
 
+    function _validVersion(value) {
+        const numeric = Number(value);
+        return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
+    }
+
+    function _findWatchlistSnapshot(itemOrId) {
+        const itemId = typeof itemOrId === "object" ? itemOrId?.id : itemOrId;
+        return state.watchlist.items.find((w) => w.id === itemId) || null;
+    }
+
+    async function _resolveWatchlistVersion(itemOrId) {
+        const snapshot = _findWatchlistSnapshot(itemOrId)
+            || (typeof itemOrId === "object" ? itemOrId : null);
+        const version = _validVersion(snapshot?.version);
+        if (version) return version;
+        await loadWatchlist();
+        return _validVersion(_findWatchlistSnapshot(itemOrId)?.version);
+    }
+
+    function _showStaleWatchlistToast() {
+        showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
+    }
+
     // ── Load watchlist ───────────────────────────────────────────────────
     async function loadWatchlist() {
         if (!hasTelegramInitData()) {
@@ -8163,6 +8245,7 @@ function createApiWatchlist(context) {
         }
 
         _guardInflightAd(item.ad_id);
+        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             await postJson("/api/v1/watchlist", {
                 query: queryOverride || state.search.query || "",
@@ -8173,9 +8256,11 @@ function createApiWatchlist(context) {
                 thumbnail: item.thumbnail || null,
                 market_median_byn: state.misc.stats?.median ? Number(state.misc.stats.median) : null,
             });
-            showToast("Добавлено в избранное", "success");
+            if (pendingToast) dismissToast(pendingToast);
+            showToast("В избранном", "success", 1600);
             await loadWatchlist();
         } catch (error) {
+            if (pendingToast) dismissToast(pendingToast);
             // Server returns 409 with detail "Этот лот уже в покупках"
             // when the ad already has a non-watching lead. Surface a
             // friendly toast instead of the generic "internal error".
@@ -8198,12 +8283,17 @@ function createApiWatchlist(context) {
     async function updateWatchlistMeta(watchlistId, payload) {
         try {
             const item = state.watchlist.items.find((w) => w.id === watchlistId);
+            const version = payload.version ?? await _resolveWatchlistVersion(item || watchlistId);
+            if (!version) {
+                _showStaleWatchlistToast();
+                return;
+            }
             await requestJson(`/api/v1/watchlist/${watchlistId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     ...payload,
-                    version: payload.version ?? item?.version,
+                    version,
                 }),
             });
             await loadWatchlist();
@@ -8244,13 +8334,24 @@ function createApiWatchlist(context) {
         }
 
         _guardInflightWatchId(item.id);
+        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
+            const version = await _resolveWatchlistVersion(item);
+            if (!version) {
+                if (pendingToast) dismissToast(pendingToast);
+                _showStaleWatchlistToast();
+                return;
+            }
             await requestJson(`/api/v1/leads/${item.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "new", version: item.version }),
+                body: JSON.stringify({
+                    status: "new",
+                    version,
+                }),
             });
-            showToast("Добавлено в покупки", "success");
+            if (pendingToast) dismissToast(pendingToast);
+            showToast("В покупках", "success", 1600);
             // Optimistic local state cleanup so the UI reflects the move
             // immediately, even before the parallel reloads finish.
             state.watchlist.items = state.watchlist.items.filter((w) => w.id !== item.id);
@@ -8260,6 +8361,7 @@ function createApiWatchlist(context) {
                 typeof context.loadLeads === "function" ? context.loadLeads() : null,
             ]);
         } catch (error) {
+            if (pendingToast) dismissToast(pendingToast);
             showToast(error?.message || "Не удалось перевести в покупки", "error");
         } finally {
             _inflightWatchId.delete(item.id);
@@ -9562,6 +9664,7 @@ function createAppActions(baseContext) {
         closeDetailModal,
         setPanelOpen,
         showToast,
+        dismissToast,
         renderExpensesModal,
         openExpensesModal,
         closeExpensesModal,
@@ -9685,11 +9788,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-253e4d3"),
-            context._loadScript("js/api_ai_render.js?v=20260511-253e4d3"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-253e4d3"),
-            context._loadScript("js/api_ai.js?v=20260511-253e4d3"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-253e4d3"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-2ea3292"),
+            context._loadScript("js/api_ai_render.js?v=20260511-2ea3292"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-2ea3292"),
+            context._loadScript("js/api_ai.js?v=20260511-2ea3292"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-2ea3292"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -9795,6 +9898,19 @@ function createAppActions(baseContext) {
         setTimeout(() => _inflightAdMutations.delete(adId), INFLIGHT_GUARD_MS);
     }
 
+    function _validVersion(value) {
+        const numeric = Number(value);
+        return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
+    }
+
+    async function _resolveWatchingVersion(item) {
+        const current = state.watchlist.items.find((w) => w.id === item?.id) || item;
+        const version = _validVersion(current?.version);
+        if (version) return version;
+        await watchlist.loadWatchlist();
+        return _validVersion(state.watchlist.items.find((w) => w.id === item?.id)?.version);
+    }
+
     async function addLeadFromListing(item, source = "manual", queryOverride = null) {
         if (!hasTelegramInitData() || !item?.ad_id) {
             return;
@@ -9818,7 +9934,7 @@ function createAppActions(baseContext) {
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
-            showToast("Уже в покупках");
+            showToast("Уже в покупках", "info", 1600);
             return;
         }
 
@@ -9829,14 +9945,21 @@ function createAppActions(baseContext) {
         const watchingItem = state.watchlist.items.find((w) => w.ad_id === item.ad_id);
 
         _guardAdMutation(item.ad_id);
+        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             if (watchingItem) {
+                const version = await _resolveWatchingVersion(watchingItem);
+                if (!version) {
+                    if (pendingToast) dismissToast(pendingToast);
+                    showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
+                    return;
+                }
                 await core.requestJson(`/api/v1/leads/${watchingItem.id}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         status: "new",
-                        version: watchingItem.version,
+                        version,
                     }),
                 });
                 // Optimistic: remove from watchlist immediately.
@@ -9857,11 +9980,13 @@ function createAppActions(baseContext) {
                     thumbnail: item.thumbnail || null,
                 });
             }
-            showToast("Добавлено в покупки", "success");
+            if (pendingToast) dismissToast(pendingToast);
+            showToast("В покупках", "success", 1600);
             // Refresh both surfaces so a once-watched item disappears
             // from "Избранное" and shows up in "Покупки" together.
             await Promise.all([leads.loadLeads(), watchlist.loadWatchlist()]);
         } catch (error) {
+            if (pendingToast) dismissToast(pendingToast);
             showToast(error.message || "Не удалось добавить в покупки", "error");
         } finally {
             _inflightAdMutations.delete(item.ad_id);

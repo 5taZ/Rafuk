@@ -27,6 +27,28 @@ function createApiLeads(context) {
     let _leadDetailAbortController = null;
     let _analyticsAbortController = null;
 
+    function _validVersion(value) {
+        const numeric = Number(value);
+        return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
+    }
+
+    function _findLeadSnapshot(leadOrId) {
+        const leadId = typeof leadOrId === "object" ? leadOrId?.id : leadOrId;
+        return state.leads.items.find((l) => l.id === leadId) || null;
+    }
+
+    async function _resolveLeadVersion(leadOrId) {
+        const snapshot = _findLeadSnapshot(leadOrId) || (typeof leadOrId === "object" ? leadOrId : null);
+        const version = _validVersion(snapshot?.version);
+        if (version) return version;
+        await loadLeads();
+        return _validVersion(_findLeadSnapshot(leadOrId)?.version);
+    }
+
+    function _showStaleLeadToast() {
+        showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
+    }
+
     // ── Load leads ───────────────────────────────────────────────────────
     async function loadLeads() {
         if (!hasTelegramInitData()) {
@@ -163,12 +185,19 @@ function createApiLeads(context) {
             return;
         }
 
+        const version = await _resolveLeadVersion(lead);
+        if (!version) {
+            _showStaleLeadToast();
+            return;
+        }
+
+        const pendingToast = showToast("Сохраняю…", "info", 8000);
         try {
             const payload = {
                 buy_price_byn: buyPriceNum,
                 sold_price_byn: soldPriceNum,
                 status: "sold",
-                version: lead.version,
+                version,
             };
 
             const updatedLead = await requestJson(`/api/v1/leads/${lead.id}`, {
@@ -186,7 +215,8 @@ function createApiLeads(context) {
 
             const profit = soldPriceNum - buyPriceNum;
             const profitSign = profit >= 0 ? "+" : "";
-            showToast(`✓ Сделка подтверждена! ${profitSign}${Math.round(profit)} BYN`, "success");
+            if (pendingToast) dismissToast(pendingToast);
+            showToast(`Сделка подтверждена: ${profitSign}${Math.round(profit)} BYN`, "success");
 
             // Full reload to refresh analytics/profit dashboard data
             await loadLeads();
@@ -201,6 +231,7 @@ function createApiLeads(context) {
             }, 100);
         } catch (error) {
             // Revert optimistic state by reloading from server
+            if (pendingToast) dismissToast(pendingToast);
             showToast(error.message || "Не удалось подтвердить сделку");
             await loadLeads();
         }
@@ -223,6 +254,11 @@ function createApiLeads(context) {
     async function closeDeal(leadId) {
         try {
             const lead = state.leads.items.find((l) => l.id === leadId);
+            const version = await _resolveLeadVersion(lead || leadId);
+            if (!version) {
+                _showStaleLeadToast();
+                return;
+            }
             const buyPriceByn = lead?.buy_price_byn || 0;
             const soldPriceByn = lead?.sold_price_byn || 0;
 
@@ -231,7 +267,10 @@ function createApiLeads(context) {
             const updatedLead = await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "closed", version: lead?.version }),
+                body: JSON.stringify({
+                    status: "closed",
+                    version,
+                }),
             });
 
             if (lead) {
@@ -241,9 +280,9 @@ function createApiLeads(context) {
 
             const profitSign = profit >= 0 ? "+" : "";
             if (profit >= 0) {
-                showToast(`✓ Сделка закрыта. Результат: ${profitSign}${Math.round(profit)} BYN`);
+                showToast(`Сделка закрыта: ${profitSign}${Math.round(profit)} BYN`);
             } else {
-                showToast(`✓ Сделка закрыта. Результат: ${Math.round(profit)} BYN`);
+                showToast(`Сделка закрыта: ${Math.round(profit)} BYN`);
             }
         } catch (error) {
             showToast(error.message || "Не удалось закрыть сделку");
@@ -254,6 +293,11 @@ function createApiLeads(context) {
     async function revertLeadStage(leadId, currentStatus) {
         try {
             const leadInState = state.leads.items.find((l) => l.id === leadId);
+            const version = await _resolveLeadVersion(leadInState || leadId);
+            if (!version) {
+                _showStaleLeadToast();
+                return;
+            }
             const updatedLead = await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
@@ -261,7 +305,7 @@ function createApiLeads(context) {
                     status: "new",
                     buy_price_byn: null,
                     sold_price_byn: null,
-                    version: leadInState?.version,
+                    version,
                 }),
             });
 
@@ -270,7 +314,7 @@ function createApiLeads(context) {
             }
             renderLeads();
 
-            showToast("↩ Сделка возвращена на этап «Новая»");
+            showToast("Сделка возвращена");
 
             setTimeout(() => {
                 const updatedCard = elements.leadInboxList?.querySelector(
@@ -302,12 +346,17 @@ function createApiLeads(context) {
     async function updateLeadMeta(leadId, payload) {
         try {
             const lead = state.leads.items.find((l) => l.id === leadId);
+            const version = payload.version ?? await _resolveLeadVersion(lead || leadId);
+            if (!version) {
+                _showStaleLeadToast();
+                return false;
+            }
             await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     ...payload,
-                    version: payload.version ?? lead?.version,
+                    version,
                 }),
             });
             await loadLeads();
@@ -331,13 +380,19 @@ function createApiLeads(context) {
         }
 
         try {
+            const version = await _resolveLeadVersion(lead);
+            if (!version) {
+                _showStaleLeadToast();
+                return;
+            }
+
             const updatedLead = await requestJson(`/api/v1/leads/${lead.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     status: "sold",
                     sold_price_byn: priceNum,
-                    version: lead.version,
+                    version,
                 }),
             });
 
@@ -350,7 +405,7 @@ function createApiLeads(context) {
             const priceBynRaw = lead.price_byn || 0;
             const profit = priceNum - priceBynRaw;
             const profitSign = profit >= 0 ? "+" : "";
-            showToast(`✓ Сделка продана! Результат: ${profitSign}${Math.round(profit)} BYN`);
+            showToast(`Сделка продана: ${profitSign}${Math.round(profit)} BYN`);
         } catch (err) {
             showToast(err.message || "Не удалось отметить сделку как проданную");
             await loadLeads();

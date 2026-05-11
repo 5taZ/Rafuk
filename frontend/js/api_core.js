@@ -50,6 +50,13 @@ function createApiCore(context) {
         });
     }
 
+    function _friendlyErrorMessage(message) {
+        if (/Lead version is required for updates|Lead was updated elsewhere/i.test(message)) {
+            return "Данные устарели. Обновите список и попробуйте ещё раз.";
+        }
+        return message;
+    }
+
     // ── Telegram headers ─────────────────────────────────────────────────
     function telegramHeaders() {
         const initData = window.Telegram?.WebApp?.initData;
@@ -126,7 +133,7 @@ function createApiCore(context) {
             try {
                 const payload = await response.json();
                 if (typeof payload.detail === "string" && payload.detail.trim()) {
-                    message = payload.detail.trim();
+                    message = _friendlyErrorMessage(payload.detail.trim());
                 }
             } catch (_) {
                 if (response.status >= 500) {

@@ -56,6 +56,29 @@ function createApiWatchlist(context) {
         setTimeout(() => _inflightWatchId.delete(watchId), INFLIGHT_GUARD_MS);
     }
 
+    function _validVersion(value) {
+        const numeric = Number(value);
+        return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
+    }
+
+    function _findWatchlistSnapshot(itemOrId) {
+        const itemId = typeof itemOrId === "object" ? itemOrId?.id : itemOrId;
+        return state.watchlist.items.find((w) => w.id === itemId) || null;
+    }
+
+    async function _resolveWatchlistVersion(itemOrId) {
+        const snapshot = _findWatchlistSnapshot(itemOrId)
+            || (typeof itemOrId === "object" ? itemOrId : null);
+        const version = _validVersion(snapshot?.version);
+        if (version) return version;
+        await loadWatchlist();
+        return _validVersion(_findWatchlistSnapshot(itemOrId)?.version);
+    }
+
+    function _showStaleWatchlistToast() {
+        showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
+    }
+
     // ── Load watchlist ───────────────────────────────────────────────────
     async function loadWatchlist() {
         if (!hasTelegramInitData()) {
@@ -136,6 +159,7 @@ function createApiWatchlist(context) {
         }
 
         _guardInflightAd(item.ad_id);
+        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             await postJson("/api/v1/watchlist", {
                 query: queryOverride || state.search.query || "",
@@ -146,9 +170,11 @@ function createApiWatchlist(context) {
                 thumbnail: item.thumbnail || null,
                 market_median_byn: state.misc.stats?.median ? Number(state.misc.stats.median) : null,
             });
-            showToast("Добавлено в избранное", "success");
+            if (pendingToast) dismissToast(pendingToast);
+            showToast("В избранном", "success", 1600);
             await loadWatchlist();
         } catch (error) {
+            if (pendingToast) dismissToast(pendingToast);
             // Server returns 409 with detail "Этот лот уже в покупках"
             // when the ad already has a non-watching lead. Surface a
             // friendly toast instead of the generic "internal error".
@@ -171,12 +197,17 @@ function createApiWatchlist(context) {
     async function updateWatchlistMeta(watchlistId, payload) {
         try {
             const item = state.watchlist.items.find((w) => w.id === watchlistId);
+            const version = payload.version ?? await _resolveWatchlistVersion(item || watchlistId);
+            if (!version) {
+                _showStaleWatchlistToast();
+                return;
+            }
             await requestJson(`/api/v1/watchlist/${watchlistId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     ...payload,
-                    version: payload.version ?? item?.version,
+                    version,
                 }),
             });
             await loadWatchlist();
@@ -217,13 +248,24 @@ function createApiWatchlist(context) {
         }
 
         _guardInflightWatchId(item.id);
+        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
+            const version = await _resolveWatchlistVersion(item);
+            if (!version) {
+                if (pendingToast) dismissToast(pendingToast);
+                _showStaleWatchlistToast();
+                return;
+            }
             await requestJson(`/api/v1/leads/${item.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "new", version: item.version }),
+                body: JSON.stringify({
+                    status: "new",
+                    version,
+                }),
             });
-            showToast("Добавлено в покупки", "success");
+            if (pendingToast) dismissToast(pendingToast);
+            showToast("В покупках", "success", 1600);
             // Optimistic local state cleanup so the UI reflects the move
             // immediately, even before the parallel reloads finish.
             state.watchlist.items = state.watchlist.items.filter((w) => w.id !== item.id);
@@ -233,6 +275,7 @@ function createApiWatchlist(context) {
                 typeof context.loadLeads === "function" ? context.loadLeads() : null,
             ]);
         } catch (error) {
+            if (pendingToast) dismissToast(pendingToast);
             showToast(error?.message || "Не удалось перевести в покупки", "error");
         } finally {
             _inflightWatchId.delete(item.id);
