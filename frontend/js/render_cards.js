@@ -489,6 +489,11 @@ function createRenderCards(context) {
                 });
         }
 
+        if (filter === "watching" && state.watchlist._loading && !entries.length) {
+            for (let i = 0; i < 3; i++) container.appendChild(_buildSkeletonCard());
+            return;
+        }
+
         if (!entries.length) {
             container.appendChild(buildItemsEmpty(filter));
             return;

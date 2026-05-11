@@ -340,6 +340,32 @@ def test_load_leads_and_watchlist_have_stale_response_guard() -> None:
     assert "if (requestId !== state.watchlist._requestId)" in watchlist_js
 
 
+def test_watchlist_reload_does_not_flash_empty_state() -> None:
+    watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+    render_cards_js = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
+
+    load_start = watchlist_js.index("async function loadWatchlist")
+    load_body = watchlist_js[load_start:watchlist_js.index("\n    // ── Clear", load_start)]
+    loading_start = load_body.index("state.watchlist._loading = true")
+    stale_guard_start = load_body.index("// Stale-response guard")
+    assert "state.watchlist.items = []" not in load_body[loading_start:stale_guard_start]
+
+    delete_start = watchlist_js.index("async function deleteWatchlistItem")
+    delete_end = watchlist_js.index("\n    // ── Delete all", delete_start)
+    delete_body = watchlist_js[delete_start:delete_end]
+    assert delete_body.index("_nextWatchlistRequestId();") < delete_body.index(
+        "state.watchlist.items ="
+    )
+
+    render_start = render_cards_js.index("function renderLeads")
+    render_end = render_cards_js.index("\n    /* ===== Watchlist", render_start)
+    render_body = render_cards_js[render_start:render_end]
+    loading_empty_guard = 'filter === "watching" && state.watchlist._loading && !entries.length'
+    assert loading_empty_guard in render_body
+    assert render_body.index(loading_empty_guard) < render_body.index("if (!entries.length)")
+    assert "_buildSkeletonCard()" in render_body
+
+
 def test_lead_and_watchlist_mutations_have_inflight_guard() -> None:
     """A double-click on "В покупки" / "В избранное" used to fire two
     POST /api/v1/leads or /api/v1/watchlist round-trips because state

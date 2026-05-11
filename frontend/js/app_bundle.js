@@ -4104,6 +4104,11 @@ function createRenderCards(context) {
                 });
         }
 
+        if (filter === "watching" && state.watchlist._loading && !entries.length) {
+            for (let i = 0; i < 3; i++) container.appendChild(_buildSkeletonCard());
+            return;
+        }
+
         if (!entries.length) {
             container.appendChild(buildItemsEmpty(filter));
             return;
@@ -8141,6 +8146,11 @@ function createApiWatchlist(context) {
         return state.watchlist.items.find((w) => w.id === itemId) || null;
     }
 
+    function _nextWatchlistRequestId() {
+        state.watchlist._requestId = (state.watchlist._requestId + 1) % 1_000_000;
+        return state.watchlist._requestId;
+    }
+
     async function _resolveWatchlistVersion(itemOrId) {
         const snapshot = _findWatchlistSnapshot(itemOrId)
             || (typeof itemOrId === "object" ? itemOrId : null);
@@ -8161,8 +8171,6 @@ function createApiWatchlist(context) {
             refreshAfterWatchlistChange();
             return;
         }
-        // Show skeleton cards while loading
-        state.watchlist.items = [];
         state.watchlist._loading = true;
         refreshAfterWatchlistChange();
 
@@ -8170,8 +8178,7 @@ function createApiWatchlist(context) {
         // and leads share the same lead_items table, so a stale
         // watchlist GET arriving after a promote/delete can resurrect
         // a row that no longer belongs there.
-        const requestId = (state.watchlist._requestId =
-            (state.watchlist._requestId + 1) % 1_000_000);
+        const requestId = _nextWatchlistRequestId();
         let nextWatchlist;
         try {
             nextWatchlist = await getJson("/api/v1/watchlist");
@@ -8409,6 +8416,7 @@ function createApiWatchlist(context) {
             return;
         }
         _guardInflightWatchId(watchlistId);
+        _nextWatchlistRequestId();
         // Optimistic remove so the card disappears immediately even
         // when the network is slow. The server-side DELETE is
         // idempotent (always 204), so a duplicate click later — even
@@ -9766,11 +9774,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-2f8a4b2"),
-            context._loadScript("js/api_ai_render.js?v=20260511-2f8a4b2"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-2f8a4b2"),
-            context._loadScript("js/api_ai.js?v=20260511-2f8a4b2"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-2f8a4b2"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-40c588b"),
+            context._loadScript("js/api_ai_render.js?v=20260511-40c588b"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-40c588b"),
+            context._loadScript("js/api_ai.js?v=20260511-40c588b"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-40c588b"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

@@ -65,6 +65,11 @@ function createApiWatchlist(context) {
         return state.watchlist.items.find((w) => w.id === itemId) || null;
     }
 
+    function _nextWatchlistRequestId() {
+        state.watchlist._requestId = (state.watchlist._requestId + 1) % 1_000_000;
+        return state.watchlist._requestId;
+    }
+
     async function _resolveWatchlistVersion(itemOrId) {
         const snapshot = _findWatchlistSnapshot(itemOrId)
             || (typeof itemOrId === "object" ? itemOrId : null);
@@ -85,8 +90,6 @@ function createApiWatchlist(context) {
             refreshAfterWatchlistChange();
             return;
         }
-        // Show skeleton cards while loading
-        state.watchlist.items = [];
         state.watchlist._loading = true;
         refreshAfterWatchlistChange();
 
@@ -94,8 +97,7 @@ function createApiWatchlist(context) {
         // and leads share the same lead_items table, so a stale
         // watchlist GET arriving after a promote/delete can resurrect
         // a row that no longer belongs there.
-        const requestId = (state.watchlist._requestId =
-            (state.watchlist._requestId + 1) % 1_000_000);
+        const requestId = _nextWatchlistRequestId();
         let nextWatchlist;
         try {
             nextWatchlist = await getJson("/api/v1/watchlist");
@@ -333,6 +335,7 @@ function createApiWatchlist(context) {
             return;
         }
         _guardInflightWatchId(watchlistId);
+        _nextWatchlistRequestId();
         // Optimistic remove so the card disappears immediately even
         // when the network is slow. The server-side DELETE is
         // idempotent (always 204), so a duplicate click later — even
