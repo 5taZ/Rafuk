@@ -57,6 +57,9 @@ class ExpenseTypeEnum(StrEnum):
 
     delivery = "delivery"
     repair = "repair"
+    customs = "customs"
+    packaging = "packaging"
+    transport = "transport"
     other = "other"
 
 
@@ -515,7 +518,7 @@ class LeadAnalyticsResponse(BaseModel):
 
 # Deal Expenses schemas
 class DealExpenseCreate(BaseModel):
-    expense_type: ExpenseTypeEnum  # delivery, repair, other
+    expense_type: ExpenseTypeEnum
     amount_byn: float = Field(gt=0, description="Expense amount in BYN (must be positive)")
     notes: str | None = None
     expense_date: datetime | None = None

@@ -52,6 +52,26 @@ def test_create_expense_happy_path() -> None:
         assert body["notes"] == "курьерская доставка"
 
 
+def test_create_expense_accepts_full_contract_type_set() -> None:
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        for expense_type in (
+            "delivery",
+            "repair",
+            "customs",
+            "packaging",
+            "transport",
+            "other",
+        ):
+            resp = client.post(
+                f"/api/v1/leads/{lead['id']}/expenses",
+                json={"expense_type": expense_type, "amount_byn": 10.0},
+            )
+            assert resp.status_code == 201, resp.text
+            assert resp.json()["expense_type"] == expense_type
+
+
 def test_list_expenses_happy_path() -> None:
     app = _make_app(USER_A)
     with TestClient(app) as client:
