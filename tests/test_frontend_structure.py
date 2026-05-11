@@ -181,6 +181,31 @@ def test_chart_js_has_preconnect_and_sri_preload_hint(soup: BeautifulSoup) -> No
     assert "connect-src 'self';" in nginx_conf
 
 
+def test_ai_loading_states_use_market_radar_visuals(soup: BeautifulSoup, css_text: str) -> None:
+    loader = soup.find(id="ai-modal-loading")
+    assert loader is not None
+    assert [chip.get_text(strip=True) for chip in loader.select(".ai-scan-chip")] == [
+        "Фото",
+        "Рынок",
+        "Риски",
+    ]
+
+    ai_js = (JS_DIR / "api_ai_modal.js").read_text(encoding="utf-8")
+    la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+    assert "Сравниваю с рынком Kufar" in ai_js
+    assert "Оцениваю риски сделки" in ai_js
+    assert "Оцениваю похожие лоты" in la_js
+    for label in ('text: "Цена"', 'text: "Текст"', 'text: "Торг"'):
+        assert label in la_js
+
+    radar_block = css_text[css_text.index(".ai-modal-loading"):css_text.index(".ai-time-notice")]
+    assert "@keyframes aiRadarSweep" in css_text
+    assert "conic-gradient(from -90deg" in radar_block
+    assert "border-top-color: var(--text-muted)" not in radar_block
+    assert ".ai-scan-chip" in css_text
+    assert "@media (prefers-reduced-motion: reduce)" in css_text
+
+
 def test_html_has_stats_and_listings(soup: BeautifulSoup) -> None:
     canvases = soup.find_all("canvas")
     assert len(canvases) >= 2

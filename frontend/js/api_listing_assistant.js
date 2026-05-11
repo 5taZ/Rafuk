@@ -555,11 +555,11 @@ function createApiListingAssistant(context) {
 
     // ── Progress animation (AI-style) ──────────────────────────────────
     const LA_LOADING_STEPS = [
-        "Считаю рынок…",
-        "Подбираю цену…",
-        "Пишу заголовок и описание…",
+        "Оцениваю похожие лоты…",
+        "Считаю ценовой коридор…",
+        "Собираю продающий текст…",
         "Формирую план торга…",
-        "Осталось немного…",
+        "Финализирую карточку…",
     ];
     const LA_PROGRESS_EXPECTED_MS = 18000;
     const LA_PROGRESS_SOFT_CAP = 96;
@@ -645,11 +645,16 @@ function createApiListingAssistant(context) {
                 el("div", { className: "la-loader-ring" }),
                 el("span", { className: "la-loader-icon", text: "AI" }),
             ),
+            el("div", { className: "ai-scan-chips la-scan-chips" },
+                el("span", { className: "ai-scan-chip", text: "Цена" }),
+                el("span", { className: "ai-scan-chip", text: "Текст" }),
+                el("span", { className: "ai-scan-chip", text: "Торг" }),
+            ),
             el("div", { className: "la-progress" },
                 el("div", { className: "la-progress-bar" }),
             ),
             el("span", { className: "la-progress-pct", text: "3%" }),
-            el("p", { className: "la-loading-text", text: "Считаю рынок и собираю текст…" }),
+            el("p", { className: "la-loading-text", text: "Оцениваю похожие лоты…" }),
             el("p", { className: "la-loading-sub", text: "Обычно 10–25 секунд" }),
         );
         resultBox.appendChild(wrap);
