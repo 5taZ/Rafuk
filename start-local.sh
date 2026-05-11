@@ -83,6 +83,7 @@ stop_existing() {
     _kill_pid_file "$RUN_DIR/api.pid"
     _kill_pid_file "$RUN_DIR/bot.pid"
     _kill_pid_file "$RUN_DIR/scheduler.pid"
+    docker compose stop api bot scheduler migrate >/dev/null 2>&1 || true
 
     # Last-resort cleanup: if the API port is still bound (PID file was
     # missing or stale and a real listener is leftover), free :8010 by
@@ -150,7 +151,7 @@ start_infra() {
 
 start_frontend() {
     echo "Starting frontend container on http://127.0.0.1:8081 ..."
-    docker compose up -d frontend --no-deps --force-recreate
+    docker compose up -d --build frontend --no-deps --force-recreate
 }
 
 start_tunnel() {

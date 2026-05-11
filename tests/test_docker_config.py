@@ -16,6 +16,10 @@ def test_compose_has_core_services() -> None:
     assert "scheduler:" in compose
     assert "redis:" in compose
     assert "127.0.0.1:6380:6379" in compose
+    assert "AI_API_KEY:" in compose
+    assert "AI_BASE_URL:" in compose
+    assert "AI_CHAT_MIN_INTERVAL_SECONDS:" in compose
+    assert "AI_PHOTO_PRECHECK_ENABLED:" in compose
 
 
 def test_nginx_has_cors_header() -> None:
