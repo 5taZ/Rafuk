@@ -1018,6 +1018,14 @@
                             <span>Не знаю цену (подбери цену)</span>
                         </label>
 
+                        <label class="la-field la-field--checkbox">
+                            <input type="checkbox" id="la-save-history-checkbox" checked>
+                            <span>Сохранять запросы в истории 30 дней</span>
+                        </label>
+                        <p class="la-field-help la-history-privacy-note">
+                            История хранится только в этом браузере. Можно отключить сохранение или очистить список.
+                        </p>
+
                         <label class="la-field la-field--wide">
                             <span class="la-field-label">Характеристики и нюансы</span>
                             <span class="la-field-help">Чем подробнее напишешь — тем точнее цена.</span>
@@ -1036,6 +1044,12 @@
                 </section>
 
                 <section class="la-pane" id="la-pane-history" role="tabpanel" hidden>
+                    <div class="la-history-tools">
+                        <p class="la-field-help">Запросы хранятся локально до 30 дней.</p>
+                        <button class="ghost-btn small danger" id="la-history-clear" type="button" disabled>
+                            Очистить историю
+                        </button>
+                    </div>
                     <div class="la-history-list" id="la-history-list"></div>
                     <p class="la-history-empty" id="la-history-empty" hidden>
                         Здесь будут сохраняться твои запросы. Открой первый — он появится в списке.

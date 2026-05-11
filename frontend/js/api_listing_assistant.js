@@ -50,6 +50,8 @@ function createApiListingAssistant(context) {
     const resultBackBtn = document.getElementById("la-result-back");
     const historyList = document.getElementById("la-history-list");
     const historyEmpty = document.getElementById("la-history-empty");
+    const historyClearBtn = document.getElementById("la-history-clear");
+    const saveHistoryCheckbox = document.getElementById("la-save-history-checkbox");
 
     if (!modal || !form || !resultBox) {
         return { destroy() {} };
@@ -62,7 +64,9 @@ function createApiListingAssistant(context) {
     // We intentionally don't persist the draft itself — the modal opens
     // fresh every time, with optional re-population via the History tab.
     const HISTORY_KEY = "rafuk:listing-assistant:history";
+    const HISTORY_SAVE_KEY = "rafuk:listing-assistant:save-history";
     const HISTORY_MAX = 20;
+    const HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
     /** @type {{data: string, w: number, h: number}[]} */
     const photos = [];
@@ -72,10 +76,40 @@ function createApiListingAssistant(context) {
             const raw = localStorage.getItem(HISTORY_KEY);
             if (!raw) return [];
             const parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed : [];
+            if (!Array.isArray(parsed)) return [];
+            const entries = _prepareHistoryForStorage(parsed);
+            if (entries.length !== parsed.length) {
+                localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+            }
+            return entries;
         } catch (_) {
             return [];
         }
+    }
+
+    function isHistorySavingEnabled() {
+        return !saveHistoryCheckbox || saveHistoryCheckbox.checked;
+    }
+
+    function initHistoryPreference() {
+        if (!saveHistoryCheckbox) return;
+        try {
+            saveHistoryCheckbox.checked = localStorage.getItem(HISTORY_SAVE_KEY) !== "0";
+        } catch (_) {
+            saveHistoryCheckbox.checked = true;
+        }
+    }
+
+    function saveHistoryPreference() {
+        if (!saveHistoryCheckbox) return;
+        try {
+            localStorage.setItem(HISTORY_SAVE_KEY, saveHistoryCheckbox.checked ? "1" : "0");
+        } catch (_) {}
+    }
+
+    function isHistoryEntryFresh(entry, now = Date.now()) {
+        const ts = Date.parse(entry?.ts || "");
+        return Number.isFinite(ts) && now - ts <= HISTORY_TTL_MS;
     }
 
     function _trimEntryForStorage(entry) {
@@ -93,17 +127,25 @@ function createApiListingAssistant(context) {
         return out;
     }
 
+    function _prepareHistoryForStorage(list) {
+        const now = Date.now();
+        return list
+            .filter((entry) => isHistoryEntryFresh(entry, now))
+            .slice(0, HISTORY_MAX)
+            .map(_trimEntryForStorage);
+    }
+
     function saveHistory(list) {
         try {
-            const trimmed = list.slice(0, HISTORY_MAX).map(_trimEntryForStorage);
+            const trimmed = _prepareHistoryForStorage(list);
             localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
         } catch (_) {
             try {
-                while (list.length > 1) {
-                    list.pop();
+                const fallback = _prepareHistoryForStorage(list);
+                while (fallback.length > 1) {
+                    fallback.pop();
                     try {
-                        const trimmed = list.map(_trimEntryForStorage);
-                        localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+                        localStorage.setItem(HISTORY_KEY, JSON.stringify(fallback));
                         break;
                     } catch (_) {}
                 }
@@ -112,6 +154,7 @@ function createApiListingAssistant(context) {
     }
 
     function pushHistoryEntry(entry) {
+        if (!isHistorySavingEnabled()) return;
         const list = loadHistory();
         list.unshift(entry);
         saveHistory(list);
@@ -125,6 +168,7 @@ function createApiListingAssistant(context) {
             tabHistoryCount.textContent = String(count);
             tabHistoryCount.hidden = count === 0;
         }
+        if (historyClearBtn) historyClearBtn.disabled = count === 0;
     }
 
     function clearForm() {
@@ -811,6 +855,17 @@ function createApiListingAssistant(context) {
         }
     }
 
+    function clearHistory() {
+        try {
+            localStorage.removeItem(HISTORY_KEY);
+        } catch (_) {
+            saveHistory([]);
+        }
+        renderHistoryCounts();
+        renderHistoryList();
+        showToast("История помощника очищена", "success", 1400);
+    }
+
     // ── Submit flow ─────────────────────────────────────────────────────
 
     function setBusy(busy) {
@@ -919,6 +974,17 @@ function createApiListingAssistant(context) {
             switchTab("history");
         }
     };
+    const _saveHistoryPreferenceHandler = () => {
+        saveHistoryPreference();
+        showToast(
+            isHistorySavingEnabled()
+                ? "История будет храниться 30 дней"
+                : "Новые запросы не будут сохраняться",
+            "info",
+            1800,
+        );
+    };
+    const _clearHistoryHandler = () => clearHistory();
     const _modalBackdropHandler = () => {
         if (resultOverlay && !resultOverlay.hidden) {
             _resultBackHandler();
@@ -935,6 +1001,8 @@ function createApiListingAssistant(context) {
     closeBtn?.addEventListener("click", _closeHandler);
     overlay?.addEventListener("click", _overlayHandler);
     resultBackBtn?.addEventListener("click", _resultBackHandler);
+    saveHistoryCheckbox?.addEventListener("change", _saveHistoryPreferenceHandler);
+    historyClearBtn?.addEventListener("click", _clearHistoryHandler);
     const _keydownHandler = (e) => {
         if (e.key === "Escape" && !modal.hidden) {
             if (resultOverlay && !resultOverlay.hidden) {
@@ -946,6 +1014,7 @@ function createApiListingAssistant(context) {
     };
     document.addEventListener("keydown", _keydownHandler);
 
+    initHistoryPreference();
     renderHistoryCounts();
     updateNotesCounter();
 
@@ -960,6 +1029,8 @@ function createApiListingAssistant(context) {
             closeBtn?.removeEventListener("click", _closeHandler);
             overlay?.removeEventListener("click", _overlayHandler);
             resultBackBtn?.removeEventListener("click", _resultBackHandler);
+            saveHistoryCheckbox?.removeEventListener("change", _saveHistoryPreferenceHandler);
+            historyClearBtn?.removeEventListener("click", _clearHistoryHandler);
         },
     };
 }

@@ -9295,6 +9295,18 @@ body.lp-menu-open {
     font-weight: 500;
 }
 
+.la-history-privacy-note {
+    margin-top: -6px;
+}
+
+.la-history-tools {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
 .la-textarea-counter {
     color: var(--text-dim);
 }

@@ -366,6 +366,34 @@ def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
         assert "min-width: 44px" in width_blocks[-1]
 
 
+def test_listing_assistant_history_has_privacy_controls(
+    soup: BeautifulSoup, css_text: str
+) -> None:
+    save_checkbox = soup.find(id="la-save-history-checkbox")
+    assert save_checkbox is not None
+    assert save_checkbox.get("type") == "checkbox"
+    assert save_checkbox.has_attr("checked")
+
+    clear_button = soup.find(id="la-history-clear")
+    assert clear_button is not None
+    assert clear_button.get("type") == "button"
+    assert clear_button.has_attr("disabled")
+    assert "Очистить историю" in clear_button.get_text(strip=True)
+    assert "Сохранять запросы в истории 30 дней" in soup.get_text(" ", strip=True)
+    assert "История хранится только в этом браузере" in soup.get_text(" ", strip=True)
+
+    la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+    assert 'const HISTORY_SAVE_KEY = "rafuk:listing-assistant:save-history";' in la_js
+    assert "const HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000;" in la_js
+    assert "Date.parse(entry?.ts || "")" in la_js
+    assert "if (!isHistorySavingEnabled()) return;" in la_js
+    assert "localStorage.removeItem(HISTORY_KEY)" in la_js
+    assert 'saveHistoryCheckbox?.addEventListener("change"' in la_js
+    assert 'historyClearBtn?.addEventListener("click"' in la_js
+    assert ".la-history-tools" in css_text
+    assert ".la-history-privacy-note" in css_text
+
+
 def test_service_worker_present_with_safe_strategies() -> None:
     """The Mini App ships a service worker so the SPA shell + read-only
     API responses survive flaky networks. Make sure the worker:
