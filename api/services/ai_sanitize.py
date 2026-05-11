@@ -52,6 +52,70 @@ _TRIPLE_BACKTICK_RE = re.compile(r"```+|~~~+")
 _MULTILINE_COLLAPSE_RE = re.compile(r"\n{3,}")
 
 
+# ── PII scrubbing patterns (SEC-02) ──────────────────────────────────
+#
+# Kufar listings routinely contain seller contact info (phones, emails,
+# Telegram handles) and the occasional document-ish identifier (IMEI,
+# Belarusian passport series). Before we splice any of that into a
+# prompt bound for Together AI / Gemini we mask it — the AI provider
+# has no business holding raw PII, and the regulator (Belarus Law
+# No. 91-Z) doesn't permit transferring identifying data without
+# explicit purpose-bound consent.
+#
+# The patterns are intentionally conservative: a 9+ digit run is the
+# floor for "phone-like", well above Kufar's 1-6 digit prices. Latin
+# *and* Cyrillic prefixes are accepted for Belarus document series.
+
+_PII_EMAIL_RE = re.compile(
+    r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"
+)
+# Phone-shaped: optional leading +, then 9-15 digits with the usual
+# punctuation between groups. Anchored on word-ish boundaries so it
+# doesn't gnaw into the surrounding text.
+_PII_PHONE_RE = re.compile(
+    r"(?<!\d)\+?\d(?:[\s\-.()]?\d){7,14}(?!\d)"
+)
+# Telegram username (5-32 chars, must start with a letter). Anything
+# shorter is most likely an @-mention of a model/brand.
+_PII_TG_HANDLE_RE = re.compile(
+    r"(?<!\w)@[A-Za-z][A-Za-z0-9_]{4,31}\b"
+)
+# Belarusian passport: two letters (Latin or Cyrillic, BLR series like
+# "HB", "МР", "AB") + optional space + 7 digits. Covers the common
+# series the listings tend to expose.
+_PII_BLR_DOC_RE = re.compile(
+    r"\b[A-ZА-Я]{2}\s?\d{7}\b"
+)
+# Long digit run — catches IMEI (15), card PANs (13-19), IBANs (digit
+# tail), etc. Anything below 12 digits is left to _PII_PHONE_RE.
+_PII_LONG_DIGITS_RE = re.compile(
+    r"(?<!\d)\d{12,}(?!\d)"
+)
+
+
+def scrub_pii(text: str) -> tuple[str, int]:
+    """Mask identifying information before AI submission.
+
+    Returns ``(cleaned_text, hit_count)``. Each PII class is replaced
+    with a stable placeholder so the AI can still reason about
+    "there is a phone here" without seeing the actual digits.
+    """
+    if not text:
+        return text, 0
+    hits = 0
+    text, n = _PII_EMAIL_RE.subn("[email]", text)
+    hits += n
+    text, n = _PII_TG_HANDLE_RE.subn("[handle]", text)
+    hits += n
+    text, n = _PII_BLR_DOC_RE.subn("[doc]", text)
+    hits += n
+    text, n = _PII_LONG_DIGITS_RE.subn("[id]", text)
+    hits += n
+    text, n = _PII_PHONE_RE.subn("[phone]", text)
+    hits += n
+    return text, hits
+
+
 def sanitize_user_text(
     value: str | None,
     *,
@@ -97,6 +161,13 @@ def sanitize_user_text(
     text = _MULTILINE_COLLAPSE_RE.sub("\n\n", text)
     # Strip control characters but keep newlines and tabs.
     text = "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 0x20)
+    # SEC-02: mask PII (phones, emails, Telegram handles, document
+    # numbers, IMEI) BEFORE the AI sees it. sanitize_user_text is the
+    # final gate for every AI-bound free text field, so wiring the
+    # scrubber here covers every existing caller without per-call
+    # plumbing. Length cap is applied AFTER scrubbing so we don't
+    # accidentally truncate inside a "[phone]" placeholder.
+    text, pii_hits = scrub_pii(text)
     text = text.strip()
     if role_hits or injection_hits:
         # WARNING level so it shows up in standard log scrapers; do
@@ -105,6 +176,11 @@ def sanitize_user_text(
         logger.warning(
             "ai.prompt_injection_detected context=%s role_hits=%d injection_hits=%d",
             context, role_hits, injection_hits,
+        )
+    if pii_hits:
+        logger.info(
+            "ai.pii_scrubbed context=%s hits=%d",
+            context, pii_hits,
         )
     if not text:
         return None
@@ -115,8 +191,14 @@ def sanitize_user_text(
 
 __all__ = [
     "sanitize_user_text",
+    "scrub_pii",
     "_PROMPT_ROLE_MARKERS",
     "_PROMPT_INJECTION_PATTERNS",
     "_TRIPLE_BACKTICK_RE",
     "_MULTILINE_COLLAPSE_RE",
+    "_PII_EMAIL_RE",
+    "_PII_PHONE_RE",
+    "_PII_TG_HANDLE_RE",
+    "_PII_BLR_DOC_RE",
+    "_PII_LONG_DIGITS_RE",
 ]

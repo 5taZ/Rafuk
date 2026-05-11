@@ -40,12 +40,42 @@ async def _export_delete(cache: CacheBackend, token: str) -> None:
 # this set in their done callback.
 _bg_tasks: set[asyncio.Task[Any]] = set()
 
+# INF-02: Hard cap on in-flight AI background tasks.
+#
+# Each AI analysis can take 60-150s talking to Together AI / Gemini.
+# Without an upper bound the same user (or anyone with a valid Mini-App
+# initData token) can spam ``POST /ai/analyze`` and put 50+ live tasks
+# in flight, each holding an httpx connection, a Kufar dataset, and the
+# response payload. Memory grows linearly, the AI provider starts
+# rate-limiting at the workspace level, and uvicorn's worker eventually
+# OOM-kills.
+#
+# 16 is sized for the api service's 1 GB memory ceiling (docker-compose)
+# minus the FastAPI app + cache pools; it leaves ample headroom for the
+# burst of normal HTTP traffic while preventing a single bad actor from
+# saturating the AI budget. Lower it in production if you see memory
+# pressure; raise it if AI rps stays well below the provider rate limit
+# AND you have monitoring in place to catch leaks.
+#
+# Previous value (50) was effectively no limit — it just protected
+# against runaway code rather than abusive request rate.
+_BG_TASK_LIMIT = 16
+
 
 def _spawn_bg_task(coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
-    """Spawn a background task that survives GC until completion."""
+    """Spawn a background task that survives GC until completion.
+
+    Raises ``RuntimeError`` when the in-flight cap is reached so callers
+    can map the failure to a 503 response (the alternative — queueing
+    silently — leaves the user staring at a "pending" task that may
+    never start).
+    """
     _bg_tasks.difference_update(t for t in list(_bg_tasks) if t.done())
-    if len(_bg_tasks) > 50:
-        logger.warning("_bg_tasks at capacity (%d), refusing new task", len(_bg_tasks))
+    if len(_bg_tasks) >= _BG_TASK_LIMIT:
+        logger.warning(
+            "_bg_tasks at capacity (%d/%d), refusing new task",
+            len(_bg_tasks), _BG_TASK_LIMIT,
+        )
         raise RuntimeError("Too many background tasks")
     task = asyncio.create_task(coro, name=name)
     _bg_tasks.add(task)

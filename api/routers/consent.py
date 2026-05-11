@@ -398,6 +398,17 @@ async def export_account_data(
 
         uid = user.id
 
+        # BE-02: every collection in this export is bounded with an
+        # explicit LIMIT so a single power user with tens of thousands
+        # of leads / expenses can't OOM the worker. Each cap is large
+        # enough to cover the practical 99th-percentile user but small
+        # enough that the JSON payload stays well under the response
+        # buffer ceiling. If we ever hit the cap, the response will
+        # include the most recent rows (ORDER BY created_at DESC) and
+        # the truncated flag below tells the client to use the API for
+        # the full history rather than the JSON dump.
+        export_row_cap = 5000
+
         profile = {
             "telegram_user_id": user.telegram_user_id,
             "first_name": user.first_name,
@@ -408,7 +419,12 @@ async def export_account_data(
 
         # Trackers
         trackers = (
-            await session.execute(select(Tracker).where(Tracker.user_id == uid))
+            await session.execute(
+                select(Tracker)
+                .where(Tracker.user_id == uid)
+                .order_by(Tracker.created_at.desc())
+                .limit(export_row_cap)
+            )
         ).scalars().all()
         trackers_data = [
             {
@@ -453,7 +469,10 @@ async def export_account_data(
         # Leads (excluding watching — those are in watchlist_data)
         leads = (
             await session.execute(
-                select(LeadItem).where(LeadItem.user_id == uid, LeadItem.status != "watching")
+                select(LeadItem)
+                .where(LeadItem.user_id == uid, LeadItem.status != "watching")
+                .order_by(LeadItem.created_at.desc())
+                .limit(export_row_cap)
             )
         ).scalars().all()
         leads_data = [
@@ -481,7 +500,12 @@ async def export_account_data(
 
         # Expenses
         expenses = (
-            await session.execute(select(DealExpense).where(DealExpense.user_id == uid))
+            await session.execute(
+                select(DealExpense)
+                .where(DealExpense.user_id == uid)
+                .order_by(DealExpense.created_at.desc())
+                .limit(export_row_cap)
+            )
         ).scalars().all()
         expenses_data = [
             {
@@ -497,7 +521,12 @@ async def export_account_data(
 
         # Consents
         consents = (
-            await session.execute(select(UserConsent).where(UserConsent.user_id == uid))
+            await session.execute(
+                select(UserConsent)
+                .where(UserConsent.user_id == uid)
+                .order_by(UserConsent.granted_at.desc())
+                .limit(export_row_cap)
+            )
         ).scalars().all()
         consents_data = [
             {
@@ -513,7 +542,10 @@ async def export_account_data(
         # Watchlist items (LeadItem with status='watching')
         watchlist = (
             await session.execute(
-                select(LeadItem).where(LeadItem.user_id == uid, LeadItem.status == "watching")
+                select(LeadItem)
+                .where(LeadItem.user_id == uid, LeadItem.status == "watching")
+                .order_by(LeadItem.created_at.desc())
+                .limit(export_row_cap)
             )
         ).scalars().all()
         watchlist_data = [
@@ -537,6 +569,19 @@ async def export_account_data(
             for w in watchlist
         ]
 
+    # BE-02: surface per-collection truncation so a power user knows
+    # their export is partial. Each collection caps at export_row_cap
+    # (most-recent first); the API provides full history via the
+    # individual endpoints if the user actually needs it.
+    truncated = {
+        "trackers": len(trackers_data) >= export_row_cap,
+        "tracker_events": len(events_data) >= 500,
+        "leads": len(leads_data) >= export_row_cap,
+        "expenses": len(expenses_data) >= export_row_cap,
+        "consents": len(consents_data) >= export_row_cap,
+        "watchlist": len(watchlist_data) >= export_row_cap,
+    }
+
     payload = {
         "profile": profile,
         "trackers": trackers_data,
@@ -546,6 +591,8 @@ async def export_account_data(
         "watchlist": watchlist_data,
         "consents": consents_data,
         "exported_at": datetime.now(UTC).isoformat(),
+        "truncated": truncated,
+        "export_row_cap": export_row_cap,
     }
 
     return Response(

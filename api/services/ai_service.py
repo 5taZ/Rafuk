@@ -79,6 +79,7 @@ from api.services.ai_sanitize import (  # noqa: F401 — re-export
     _PROMPT_ROLE_MARKERS,
     _TRIPLE_BACKTICK_RE,
     sanitize_user_text,
+    scrub_pii,
 )
 
 logger = logging.getLogger(__name__)
@@ -970,9 +971,20 @@ class AIService:
                 if ds is not None:
                     deal_str = f", оценка: {ds:.0f}/100"
 
+                # SEC-01: similar_listings come from other Kufar sellers —
+                # treat title/description as untrusted UGC and strip
+                # role markers / "ignore previous instructions" payloads
+                # before splicing them into the analyse prompt. Target
+                # listing is already sanitised at line 760/936; alternatives
+                # were the missing surface.
+                safe_sl_title = sanitize_user_text(
+                    str(sl.get("title", "")),
+                    max_length=80,
+                    context="similar_listing_title",
+                ) or ""
                 parts.append(
                     f"  {i}. [{sl.get('ad_id')}] "
-                    f"{sl.get('title', '')[:80]} — "
+                    f"{safe_sl_title} — "
                     f"{sl.get('price_byn', 0):.0f} BYN ({diff_str}), "
                     f"{sl.get('condition') or 'не указано'}, "
                     f"{sl.get('seller_type', '?')}{age_str}{deal_str}"
@@ -982,9 +994,13 @@ class AIService:
                 ) or ""
                 if params:
                     parts.append(f"     Параметры: {params[:120]}")
-                desc = (sl.get("description") or "").strip()
-                if desc:
-                    parts.append(f"     Описание: {desc[:100]}")
+                safe_sl_desc = sanitize_user_text(
+                    str(sl.get("description") or ""),
+                    max_length=100,
+                    context="similar_listing_desc",
+                )
+                if safe_sl_desc:
+                    parts.append(f"     Описание: {safe_sl_desc}")
 
         return "\n".join(parts)
 

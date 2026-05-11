@@ -293,6 +293,41 @@ def _get_pipeline_search_semaphore() -> asyncio.Semaphore:
     return _pipeline_search_semaphore
 
 
+# INF-02: concurrency limit for the entire AI analysis pipeline.
+#
+# ``_BG_TASK_LIMIT`` (in ai_task_store) gates *registered* tasks; this
+# semaphore gates how many of them are actually doing AI work at the
+# same instant. The two layers are complementary:
+#   - _BG_TASK_LIMIT prevents abusive request rates from piling up
+#     half-finished tasks and growing memory without bound;
+#   - _ANALYSIS_RUN_LIMIT prevents N>1 simultaneous tasks from
+#     hammering the AI provider (the listing analysis makes up to
+#     2 parallel calls per task, so 4 concurrent analyses is already
+#     8 in-flight Gemini requests).
+#
+# Lazily bound to the running loop so test runs that create fresh
+# loops don't inherit the previous loop's semaphore (TEST-05 covers
+# the loop-bound bug class).
+_ANALYSIS_RUN_LIMIT = 4
+_analysis_run_semaphore: asyncio.Semaphore | None = None
+_analysis_run_semaphore_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_analysis_run_semaphore() -> asyncio.Semaphore:
+    global _analysis_run_semaphore, _analysis_run_semaphore_loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if (
+        _analysis_run_semaphore is None
+        or _analysis_run_semaphore_loop is not loop
+    ):
+        _analysis_run_semaphore = asyncio.Semaphore(_ANALYSIS_RUN_LIMIT)
+        _analysis_run_semaphore_loop = loop
+    return _analysis_run_semaphore
+
+
 class _AnalysisComplete(Exception):  # noqa: N818
     """Signal early completion of analysis (e.g. target ad not found)."""
 
@@ -905,13 +940,31 @@ async def _run_analysis(
         "AI async task %s: starting for ad_id=%d query=%s",
         task_id, payload.ad_id, safe_query,
     )
+    # INF-02: gate concurrent pipelines. Tasks past _BG_TASK_LIMIT
+    # were already refused before we got here; this semaphore makes
+    # sure the ones that DID get in don't all hit the AI provider at
+    # the same instant. Acquire status is reported back as "queued"
+    # via the task store so the client polling /ai/task/<id> doesn't
+    # see a stuck "pending" while we wait for a slot.
+    run_sem = _get_analysis_run_semaphore()
+    if run_sem.locked():
+        try:
+            await _update_task(
+                c.cache, c.task_id,
+                user_id=c.user_id,
+                stage="queued",
+                progress=0,
+            )
+        except Exception:  # noqa: BLE001 — task store is best-effort
+            logger.debug("AI task %s: queued-stage update failed", task_id, exc_info=True)
     try:
-        await _stage_search(c)
-        _stage_extract(c)
-        _stage_scoring(c)
-        await _stage_photo(c)
-        await _stage_ai(c)
-        await _stage_response(c)
+        async with run_sem:
+            await _stage_search(c)
+            _stage_extract(c)
+            _stage_scoring(c)
+            await _stage_photo(c)
+            await _stage_ai(c)
+            await _stage_response(c)
     except _AnalysisComplete:
         return
     except TimeoutError:
