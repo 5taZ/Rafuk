@@ -511,8 +511,7 @@ body.modal-open {
     min-height: 40px;
     padding: 9px 9px 9px 14px;
     border-radius: var(--r-lg);
-    background:
-        linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 96%, transparent), color-mix(in srgb, var(--bg-card) 92%, transparent));
+    background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
     border: 1px solid color-mix(in srgb, var(--toast-accent) 18%, var(--border) 82%);
     color: var(--text);
     font-size: var(--text-sm);

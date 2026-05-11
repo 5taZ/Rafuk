@@ -1446,8 +1446,7 @@
     height: 60px;
     border-radius: var(--r-md);
     color: color-mix(in srgb, var(--accent) 68%, var(--text-muted));
-    background:
-        linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, var(--bg-elevated)), var(--bg-elevated));
+    background: color-mix(in srgb, var(--accent) 7%, var(--bg-elevated));
     border: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border));
     display: flex;
     align-items: center;

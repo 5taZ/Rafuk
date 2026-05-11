@@ -23,6 +23,24 @@ def _read_all_css() -> str:
     return "\n".join(chunks)
 
 
+def test_runtime_frontend_sources_do_not_use_gradients() -> None:
+    runtime_paths = [
+        Path("frontend/index.html"),
+        *sorted((CSS_DIR / "parts").glob("*.css")),
+        CSS_DIR / "style.css",
+        *[path for path in JS_MODULES if path.parent.name != "vendor"],
+    ]
+    gradient_re = re.compile(
+        r"\b(?:linear|radial|conic|repeating-linear|repeating-radial)-gradient\b"
+    )
+    offenders = [
+        str(path)
+        for path in runtime_paths
+        if gradient_re.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == []
+
+
 def test_file_is_not_empty() -> None:
     text = APP_JS.read_text(encoding="utf-8")
     assert len(text.strip()) > 200
