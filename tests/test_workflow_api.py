@@ -99,7 +99,9 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
             f"/api/v1/leads/{lead['id']}",
             json={"status": "reviewing"},
         )
-        assert missing_version_response.status_code == 428
+        assert missing_version_response.status_code == 200
+        lead = missing_version_response.json()
+        assert lead["status"] == "reviewing"
 
         update_lead_meta_response = client.patch(
             f"/api/v1/leads/{lead['id']}",
@@ -147,18 +149,16 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
         )
         assert sold_lead_response.status_code == 201
         sold_lead = sold_lead_response.json()
-        assert (
-            client.patch(
-                f"/api/v1/leads/{sold_lead['id']}",
-                json={
-                    "status": "sold",
-                    "buy_price_byn": 1800,
-                    "sold_price_byn": 2200,
-                    "version": sold_lead["version"],
-                },
-            ).status_code
-            == 200
+        legacy_sell_response = client.patch(
+            f"/api/v1/leads/{sold_lead['id']}",
+            json={
+                "status": "sold",
+                "buy_price_byn": 1800,
+                "sold_price_byn": 2200,
+            },
         )
+        assert legacy_sell_response.status_code == 200
+        assert legacy_sell_response.json()["status"] == "sold"
 
         delete_active_leads_response = client.delete("/api/v1/leads/all")
         assert delete_active_leads_response.status_code == 204
@@ -227,4 +227,24 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
 
         delete_response = client.delete(f"/api/v1/watchlist/{watchlist_item['id']}")
         assert delete_response.status_code == 204
+        assert client.get("/api/v1/watchlist").json() == []
+
+        legacy_watchlist_response = client.post(
+            "/api/v1/watchlist",
+            json={
+                "query": "iphone 15 128",
+                "ad_id": 202,
+                "title": "iPhone 15 128GB",
+                "link": "https://www.kufar.by/item/202",
+                "price_byn": 1990,
+            },
+        )
+        assert legacy_watchlist_response.status_code == 201
+        legacy_watchlist_item = legacy_watchlist_response.json()
+        legacy_promote_response = client.patch(
+            f"/api/v1/leads/{legacy_watchlist_item['id']}",
+            json={"status": "new"},
+        )
+        assert legacy_promote_response.status_code == 200
+        assert legacy_promote_response.json()["status"] == "new"
         assert client.get("/api/v1/watchlist").json() == []

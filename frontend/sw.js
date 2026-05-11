@@ -22,11 +22,11 @@
  *     in-flight guards already protect the UI).
  */
 
-// FE-M8 / FE-M9: bumped to v8. v6 added the staleWhileRevalidate
+// FE-M8 / FE-M9: bumped to v9. v6 added the staleWhileRevalidate
 // max-age check; v7 added the offline-fallback page; v8 moves that
-// fallback's CSS out of inline <style> so CSP can drop unsafe-inline.
-// Activation evicts every older runtime entry in one shot.
-const CACHE_VERSION = "rafuk-cache-v8";
+// fallback's CSS out of inline <style>; v9 evicts stale frontend
+// bundles after the lead-version compatibility fix.
+const CACHE_VERSION = "rafuk-cache-v9";
 const OFFLINE_FALLBACK_URL = "/offline.html";
 const OFFLINE_FALLBACK_ASSETS = [OFFLINE_FALLBACK_URL, "/offline.css"];
 const STATIC_CACHE = `${CACHE_VERSION}-static`;

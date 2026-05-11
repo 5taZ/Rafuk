@@ -54,8 +54,15 @@ WATCHING_STATUS = "watching"
 _REFRESH_SEMAPHORE = asyncio.Semaphore(3)
 
 
-def _check_lead_version(item: LeadItem, expected: int | None) -> None:
+def _check_lead_version(
+    item: LeadItem,
+    expected: int | None,
+    *,
+    allow_missing: bool = False,
+) -> None:
     if expected is None:
+        if allow_missing:
+            return
         raise HTTPException(
             status_code=status.HTTP_428_PRECONDITION_REQUIRED,
             detail="Lead version is required for updates",
@@ -69,6 +76,13 @@ def _check_lead_version(item: LeadItem, expected: int | None) -> None:
 
 def _bump_lead_version(item: LeadItem) -> None:
     item.version = int(item.version or 1) + 1
+
+
+# WebViews can keep an older frontend bundle alive after deploy; explicit
+# stale versions still conflict, but missing versions from that bundle should
+# not brick the user's primary deal actions.
+def _allow_missing_lead_version(request: Request) -> bool:
+    return request.headers.get("x-requested-with", "").lower() == "xmlhttprequest"
 
 
 async def _limited_query(coro):
@@ -266,7 +280,11 @@ async def update_lead(
         )
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
-        _check_lead_version(lead, payload.version)
+        _check_lead_version(
+            lead,
+            payload.version,
+            allow_missing=_allow_missing_lead_version(request),
+        )
         if "status" in payload.model_fields_set:
             lead.status = payload.status.value
         if "target_resale_byn" in payload.model_fields_set:
@@ -503,7 +521,11 @@ async def update_watchlist_item(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Watchlist item not found",
             )
-        _check_lead_version(item, payload.version)
+        _check_lead_version(
+            item,
+            payload.version,
+            allow_missing=_allow_missing_lead_version(request),
+        )
         # `workflow_status` is intentionally a no-op now (priority chip removed
         # from the UI). Notes update is the only real mutation.
         if "notes" in payload.model_fields_set:
