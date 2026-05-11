@@ -121,6 +121,27 @@ def test_lazy_ai_modules_register_on_app_namespace() -> None:
     assert "createApiAi(context)" not in actions.replace("app.createApiAi(context)", "")
 
 
+def test_ai_pdf_export_uses_design_system_styles() -> None:
+    import re as _re
+
+    pdf_js = (JS_DIR / "api_ai_pdf.js").read_text(encoding="utf-8")
+    style = pdf_js.split("<style>", 1)[1].split("</style>", 1)[0]
+    root_start = style.index(":root")
+    root_end = style.index("}\n  *", root_start)
+    non_token_styles = style[:root_start] + style[root_end + 1 :]
+    hex_literals = _re.findall(r"#[0-9a-fA-F]{6}\b", non_token_styles)
+
+    assert 'font-family: "Rubik"' in style
+    assert '.mono { font-family: "JetBrains Mono"' in style
+    assert "--pdf-accent: #3b82f6;" in style
+    assert "var(--pdf-accent)" in style
+    assert "Arial" not in style
+    assert "Courier" not in style
+    assert "border-left" not in style
+    assert ".report-head::after" not in style
+    assert not hex_literals
+
+
 def test_lazy_script_cache_busters_match_main_bundle(soup: BeautifulSoup) -> None:
     scripts = [script.get("src", "") for script in soup.find_all("script")]
     app_bundle_src = next(script for script in scripts if "app_bundle.js" in script)

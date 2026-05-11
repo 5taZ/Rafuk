@@ -231,73 +231,101 @@ ${others.slice(0, 8).map(s => `    <div class="similar-row">
 <title>${escapeHtml(title)}</title>
 <style>
   @page { margin: 14mm; size: A4; }
+  :root {
+    --pdf-bg: #f6f8fb;
+    --pdf-canvas: #ffffff;
+    --pdf-surface: #ffffff;
+    --pdf-surface-muted: #f8fafc;
+    --pdf-text: #111827;
+    --pdf-text-soft: #334155;
+    --pdf-muted: #64748b;
+    --pdf-faint: #94a3b8;
+    --pdf-border: #e5e7eb;
+    --pdf-soft-blue: #eff6ff;
+    --pdf-border-blue: #bfdbfe;
+    --pdf-accent: #3b82f6;
+    --pdf-accent-strong: #1d4ed8;
+    --pdf-accent-ink: #1e3a8a;
+    --pdf-header: #0f172a;
+    --pdf-header-muted: #cbd5e1;
+    --pdf-green: #16a34a;
+    --pdf-green-ink: #166534;
+    --pdf-green-soft: #f0fdf4;
+    --pdf-green-border: #bbf7d0;
+    --pdf-amber: #d97706;
+    --pdf-amber-ink: #92400e;
+    --pdf-amber-soft: #fffbeb;
+    --pdf-amber-border: #fde68a;
+    --pdf-red: #dc2626;
+    --pdf-red-ink: #be123c;
+    --pdf-red-soft: #fff1f2;
+    --pdf-red-border: #fecdd3;
+    --pdf-shadow: 0 18px 45px rgba(15, 23, 42, 0.10);
+    --pdf-page-shadow: 0 24px 80px rgba(15, 23, 42, 0.16);
+  }
   * { box-sizing: border-box; }
-  html { background: #eef2f7; }
-  body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #111827; font-size: 9.6pt; line-height: 1.52; background: #f8fafc; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  a { color: #2563eb; text-decoration: none; word-break: break-word; }
-  .mono { font-family: "Courier New", Courier, monospace; font-variant-numeric: tabular-nums; }
-  .print-banner { display: none; padding: 12px 16px; background: #eff6ff; border-bottom: 1px solid #bfdbfe; color: #1e3a8a; font-size: 9pt; }
-  .page-shell { max-width: 820px; margin: 0 auto; background: #ffffff; min-height: 100vh; }
-  .report-head { padding: 24px 28px 18px; color: #f8fafc; background: #0f172a; border-radius: 0 0 22px 22px; position: relative; overflow: hidden; }
-  .report-head::after { content: ""; position: absolute; right: -72px; top: -92px; width: 220px; height: 220px; border: 1px solid rgba(147, 197, 253, 0.25); border-radius: 999px; box-shadow: 0 0 0 22px rgba(59, 130, 246, 0.055); }
-  .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; position: relative; z-index: 1; }
+  html { background: var(--pdf-bg); }
+  body { margin: 0; font-family: "Rubik", "Geist", "Segoe UI", sans-serif; color: var(--pdf-text); font-size: 9.6pt; line-height: 1.52; background: var(--pdf-bg); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  a { color: var(--pdf-accent-strong); text-decoration: none; word-break: break-word; }
+  .mono { font-family: "JetBrains Mono", "SFMono-Regular", monospace; font-variant-numeric: tabular-nums; }
+  .print-banner { display: none; padding: 12px 16px; background: var(--pdf-soft-blue); border-bottom: 1px solid var(--pdf-border-blue); color: var(--pdf-accent-ink); font-size: 9pt; }
+  .page-shell { max-width: 820px; margin: 0 auto; background: var(--pdf-canvas); min-height: 100vh; }
+  .report-head { padding: 24px 28px 18px; color: var(--pdf-canvas); background: var(--pdf-header); border-radius: 0 0 18px 18px; position: relative; overflow: hidden; }
+  .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -0.03em; }
-  .brand-mark { width: 32px; height: 32px; border-radius: 11px; display: grid; place-items: center; background: #0b1220; color: #bfdbfe; border: 1px solid rgba(147, 197, 253, 0.35); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); font-size: 11pt; }
-  .report-meta { color: rgba(226, 232, 240, 0.72); font-size: 8.3pt; text-align: right; }
-  .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: start; position: relative; z-index: 1; }
-  .eyebrow { display: inline-flex; margin-bottom: 9px; padding: 3px 9px; border-radius: 999px; background: rgba(59, 130, 246, 0.18); border: 1px solid rgba(147, 197, 253, 0.22); color: #bfdbfe; font-size: 7.8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; }
+  .brand-mark { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: var(--pdf-soft-blue); color: var(--pdf-accent-ink); font-size: 11pt; }
+  .report-meta { color: var(--pdf-header-muted); font-size: 8.3pt; text-align: right; }
+  .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: start; }
+  .eyebrow { display: inline-flex; margin-bottom: 9px; padding: 3px 9px; border-radius: 999px; background: var(--pdf-soft-blue); color: var(--pdf-accent-ink); font-size: 7.8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; }
   h1 { margin: 0; max-width: 560px; font-size: 18pt; line-height: 1.16; letter-spacing: -0.045em; }
-  .hero-price { margin-top: 10px; font-size: 19pt; line-height: 1; color: #93c5fd; font-weight: 800; }
-  .hero-link { display: block; margin-top: 10px; max-width: 560px; color: rgba(219, 234, 254, 0.82); font-size: 8.2pt; }
+  .hero-price { margin-top: 10px; font-size: 19pt; line-height: 1; color: var(--pdf-border-blue); font-weight: 800; }
+  .hero-link { display: block; margin-top: 10px; max-width: 560px; color: var(--pdf-header-muted); font-size: 8.2pt; }
   .photo-strip { display: grid; grid-template-columns: repeat(2, 58px); gap: 7px; }
-  .photo-strip img { width: 58px; height: 58px; object-fit: cover; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); }
-  .verdict-card { margin: -10px 28px 18px; padding: 15px 16px; display: grid; grid-template-columns: 42px 1fr; gap: 13px; align-items: center; border-radius: 17px; background: #ffffff; border: 1px solid #e5e7eb; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.11); position: relative; z-index: 2; break-inside: avoid; }
-  .verdict-card.good { border-left: 5px solid #16a34a; }
-  .verdict-card.warn { border-left: 5px solid #d97706; }
-  .verdict-card.bad { border-left: 5px solid #dc2626; }
-  .verdict-icon { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; font-size: 16pt; font-weight: 900; }
-  .good .verdict-icon { background: #dcfce7; color: #15803d; }
-  .warn .verdict-icon { background: #fef3c7; color: #b45309; }
-  .bad .verdict-icon { background: #fee2e2; color: #dc2626; }
-  .verdict-text { font-size: 14pt; font-weight: 850; letter-spacing: -0.035em; }
-  .verdict-summary { margin-top: 3px; color: #475569; font-size: 9.2pt; }
+  .photo-strip img { width: 58px; height: 58px; object-fit: cover; border-radius: 12px; border: 1px solid var(--pdf-border-blue); background: var(--pdf-soft-blue); }
+  .verdict-card { margin: -10px 28px 18px; padding: 15px 16px; display: grid; grid-template-columns: 42px 1fr; gap: 13px; align-items: center; border-radius: 17px; background: var(--pdf-surface); border: 1px solid var(--verdict-border, var(--pdf-border)); box-shadow: var(--pdf-shadow); position: relative; z-index: 2; break-inside: avoid; }
+  .verdict-card.good { --verdict-color: var(--pdf-green); --verdict-bg: var(--pdf-green-soft); --verdict-border: var(--pdf-green-border); }
+  .verdict-card.warn { --verdict-color: var(--pdf-amber); --verdict-bg: var(--pdf-amber-soft); --verdict-border: var(--pdf-amber-border); }
+  .verdict-card.bad { --verdict-color: var(--pdf-red); --verdict-bg: var(--pdf-red-soft); --verdict-border: var(--pdf-red-border); }
+  .verdict-icon { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; font-size: 16pt; font-weight: 900; color: var(--verdict-color); background: var(--verdict-bg); border: 1px solid var(--verdict-border); }
+  .verdict-text { color: var(--verdict-color); font-size: 14pt; font-weight: 850; letter-spacing: -0.035em; }
+  .verdict-summary { margin-top: 3px; color: var(--pdf-muted); font-size: 9.2pt; }
   .facts-grid { margin: 0 28px 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; break-inside: avoid; }
-  .fact { padding: 10px 11px; border: 1px solid #e5e7eb; border-radius: 13px; background: #f8fafc; min-width: 0; }
-  .fact-label { display: block; color: #64748b; font-size: 7.3pt; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
-  .fact-value { display: block; margin-top: 2px; color: #111827; font-size: 10pt; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fact { padding: 10px 11px; border: 1px solid var(--pdf-border); border-radius: 13px; background: var(--pdf-surface-muted); min-width: 0; }
+  .fact-label { display: block; color: var(--pdf-muted); font-size: 7.3pt; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+  .fact-value { display: block; margin-top: 2px; color: var(--pdf-text); font-size: 10pt; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .params-strip { margin: 0 28px 18px; display: flex; flex-wrap: wrap; gap: 6px; break-inside: avoid; }
-  .param-chip { padding: 4px 8px; border-radius: 999px; background: #eff6ff; color: #334155; font-size: 7.8pt; border: 1px solid #dbeafe; }
-  .param-chip b { color: #1d4ed8; }
+  .param-chip { padding: 4px 8px; border-radius: 999px; background: var(--pdf-soft-blue); color: var(--pdf-text-soft); font-size: 7.8pt; border: 1px solid var(--pdf-border-blue); }
+  .param-chip b { color: var(--pdf-accent-strong); }
   .content { padding: 0 28px 28px; display: grid; gap: 11px; }
-  .section { padding: 13px 14px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 15px; break-inside: avoid; }
-  .section--price { background: #eff6ff; border-color: #bfdbfe; }
-  .section--flags { background: #fff1f2; border-color: #fecdd3; }
+  .section { padding: 13px 14px; background: var(--pdf-surface); border: 1px solid var(--pdf-border); border-radius: 15px; break-inside: avoid; }
+  .section--price { background: var(--pdf-soft-blue); border-color: var(--pdf-border-blue); }
+  .section--flags { background: var(--pdf-red-soft); border-color: var(--pdf-red-border); }
   .section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
-  .section-dot { width: 7px; height: 7px; border-radius: 99px; background: #2563eb; flex: 0 0 auto; }
-  .section--flags .section-dot { background: #e11d48; }
-  .section--best .section-dot { background: #16a34a; }
-  .section-title { color: #1e3a8a; font-size: 8pt; font-weight: 850; text-transform: uppercase; letter-spacing: 0.08em; }
-  .section--flags .section-title { color: #be123c; }
-  .section--best .section-title { color: #166534; }
-  .section-body { color: #334155; white-space: pre-wrap; }
-  .section--price .section-body { color: #0f172a; font-size: 10.8pt; font-weight: 750; }
-  .alt-card { display: grid; grid-template-columns: 68px 1fr; gap: 11px; padding: 10px; border-radius: 13px; background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .section-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--pdf-accent); flex: 0 0 auto; }
+  .section--flags .section-dot { background: var(--pdf-red); }
+  .section--best .section-dot { background: var(--pdf-green); }
+  .section-title { color: var(--pdf-accent-ink); font-size: 8pt; font-weight: 850; text-transform: uppercase; letter-spacing: 0.08em; }
+  .section--flags .section-title { color: var(--pdf-red-ink); }
+  .section--best .section-title { color: var(--pdf-green-ink); }
+  .section-body { color: var(--pdf-text-soft); white-space: pre-wrap; }
+  .section--price .section-body { color: var(--pdf-text); font-size: 10.8pt; font-weight: 750; }
+  .alt-card { display: grid; grid-template-columns: 68px 1fr; gap: 11px; padding: 10px; border-radius: 13px; background: var(--pdf-green-soft); border: 1px solid var(--pdf-green-border); }
   .alt-thumb { width: 68px; height: 68px; object-fit: cover; border-radius: 10px; }
-  .alt-title { color: #0f172a; font-weight: 800; line-height: 1.25; }
-  .alt-meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 8px; color: #64748b; font-size: 8.5pt; }
-  .alt-price { color: #15803d; font-size: 11pt; font-weight: 900; }
-  .alt-reason { margin-top: 5px; color: #475569; font-size: 8.6pt; }
+  .alt-title { color: var(--pdf-text); font-weight: 800; line-height: 1.25; }
+  .alt-meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 8px; color: var(--pdf-muted); font-size: 8.5pt; }
+  .alt-price { color: var(--pdf-green); font-size: 11pt; font-weight: 900; }
+  .alt-reason { margin-top: 5px; color: var(--pdf-muted); font-size: 8.6pt; }
   .alt-link { display: inline-block; margin-top: 5px; font-size: 8.2pt; }
   .similar-list { display: grid; gap: 6px; }
-  .similar-row { display: grid; grid-template-columns: 42px 1fr auto; gap: 9px; align-items: center; padding: 7px; border-radius: 11px; background: #f8fafc; border: 1px solid #e5e7eb; }
+  .similar-row { display: grid; grid-template-columns: 42px 1fr auto; gap: 9px; align-items: center; padding: 7px; border-radius: 11px; background: var(--pdf-surface-muted); border: 1px solid var(--pdf-border); }
   .similar-thumb { width: 42px; height: 42px; object-fit: cover; border-radius: 9px; }
-  .similar-title { color: #1f2937; font-weight: 750; font-size: 8.8pt; line-height: 1.25; max-height: 2.5em; overflow: hidden; }
-  .similar-meta { color: #64748b; font-size: 7.8pt; }
-  .similar-price { color: #111827; font-weight: 900; font-size: 9pt; white-space: nowrap; }
-  .footer { padding: 14px 28px 18px; color: #94a3b8; font-size: 7.5pt; border-top: 1px solid #e5e7eb; }
-  .footer-brand { color: #475569; font-weight: 850; }
-  @media screen { body { padding: 24px 0; } .page-shell { box-shadow: 0 24px 80px rgba(15, 23, 42, 0.18); border-radius: 24px; overflow: hidden; } .print-banner { display: block; max-width: 820px; margin: 0 auto; border-radius: 16px 16px 0 0; } }
-  @media print { html, body { background: #ffffff; } .page-shell { max-width: none; } .print-banner { display: none !important; } .report-head { border-radius: 0 0 18px 18px; } .content { gap: 8px; } .section { padding: 10px 11px; } }
+  .similar-title { color: var(--pdf-text-soft); font-weight: 750; font-size: 8.8pt; line-height: 1.25; max-height: 2.5em; overflow: hidden; }
+  .similar-meta { color: var(--pdf-muted); font-size: 7.8pt; }
+  .similar-price { color: var(--pdf-text); font-weight: 900; font-size: 9pt; white-space: nowrap; }
+  .footer { padding: 14px 28px 18px; color: var(--pdf-faint); font-size: 7.5pt; border-top: 1px solid var(--pdf-border); }
+  .footer-brand { color: var(--pdf-muted); font-weight: 850; }
+  @media screen { body { padding: 24px 0; } .page-shell { box-shadow: var(--pdf-page-shadow); border-radius: 24px; overflow: hidden; } .print-banner { display: block; max-width: 820px; margin: 0 auto; border-radius: 16px 16px 0 0; } }
+  @media print { html, body { background: var(--pdf-canvas); } .page-shell { max-width: none; } .print-banner { display: none !important; } .report-head { border-radius: 0 0 18px 18px; } .content { gap: 8px; } .section { padding: 10px 11px; } }
 </style>
 </head>
 <body>
