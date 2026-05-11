@@ -265,7 +265,7 @@ ${others.slice(0, 8).map(s => `    <div class="similar-row">
   }
   * { box-sizing: border-box; }
   html { background: var(--pdf-bg); }
-  body { margin: 0; font-family: "Rubik", "Geist", "Segoe UI", sans-serif; color: var(--pdf-text); font-size: 9.6pt; line-height: 1.52; background: var(--pdf-bg); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { margin: 0; font-family: "Geist", "Segoe UI", sans-serif; color: var(--pdf-text); font-size: 9.6pt; line-height: 1.52; background: var(--pdf-bg); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   a { color: var(--pdf-accent-strong); text-decoration: none; word-break: break-word; }
   .mono { font-family: "JetBrains Mono", "SFMono-Regular", monospace; font-variant-numeric: tabular-nums; }
   .print-banner { display: none; padding: 12px 16px; background: var(--pdf-soft-blue); border-bottom: 1px solid var(--pdf-border-blue); color: var(--pdf-accent-ink); font-size: 9pt; }

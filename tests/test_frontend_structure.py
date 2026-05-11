@@ -131,7 +131,7 @@ def test_ai_pdf_export_uses_design_system_styles() -> None:
     non_token_styles = style[:root_start] + style[root_end + 1 :]
     hex_literals = _re.findall(r"#[0-9a-fA-F]{6}\b", non_token_styles)
 
-    assert 'font-family: "Rubik"' in style
+    assert 'font-family: "Geist"' in style
     assert '.mono { font-family: "JetBrains Mono"' in style
     assert "--pdf-accent: #3b82f6;" in style
     assert "var(--pdf-accent)" in style
@@ -140,6 +140,15 @@ def test_ai_pdf_export_uses_design_system_styles() -> None:
     assert "border-left" not in style
     assert ".report-head::after" not in style
     assert not hex_literals
+
+
+def test_design_context_matches_loaded_font_stack(soup: BeautifulSoup) -> None:
+    context_text = Path(".impeccable.md").read_text(encoding="utf-8")
+    font_links = " ".join(link.get("href", "") for link in soup.find_all("link"))
+    assert "family=Geist" in font_links
+    assert "family=JetBrains+Mono" in font_links
+    assert "Geist (sans-serif) + JetBrains Mono" in context_text
+    assert "Rubik (sans-serif)" not in context_text
 
 
 def test_lazy_script_cache_busters_match_main_bundle(soup: BeautifulSoup) -> None:
