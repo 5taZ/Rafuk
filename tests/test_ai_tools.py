@@ -115,4 +115,11 @@ def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
         body = resp.json()
         assert body["advice"] in ("buy_now", "wait", "neutral")
         assert body["reasoning"]
+        assert "market_context" in body
+        assert "медиана" in body["market_context"].lower()
+        assert "price_trend" not in body
+        assert "historical_context" not in body
         assert "disclaimer" in body
+        assert fake_ai.calls
+        assert "текущий рыночный срез" in fake_ai.calls[0]["system"].lower()
+        assert "исторические данные" not in fake_ai.calls[0]["system"].lower()

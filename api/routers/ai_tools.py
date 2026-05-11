@@ -56,27 +56,27 @@ _NEGOTIATE_SYSTEM = """\
 
 _PRICE_ADVICE_SYSTEM = """\
 Ты — Rafuk AI, аналитик цен на белорусском Kufar. Ты помогаешь покупателю
-решить: купить сейчас или подождать снижения цены.
+решить: купить сейчас или подождать другого объявления.
 
 КРИТИЧЕСКИ ВАЖНО: Твоя оценка НЕ является инвестиционной рекомендацией.
-Ты анализируешь только исторические данные объявлений Kufar.
+Ты анализируешь только текущий рыночный срез объявлений Kufar.
 Рыночные цены могут изменяться непредсказуемо.
 
 Правила:
 - Аудитория — Беларусь, Kufar. Все цены в BYN.
-- Опирайся на предоставленные рыночные данные (медиана, тренд, количество).
+- Опирайся на предоставленные рыночные данные (медиана, квартиль, количество).
+- Не утверждай, что цены растут, падают или стабильны во времени: временного ряда нет.
 - Если данных недостаточно для вывода — честно скажи "neutral".
 - advice — строго одно из: "buy_now" (цена выгодная, редкий товар),
-  "wait" (есть шанс снижения), "neutral" (недостаточно данных).
-- Будь конкретен: указывай суммы, сроки, проценты.
-- НЕ гарантируй снижение или рост цены.
+  "wait" (текущая цена выше сопоставимого среза), "neutral" (недостаточно данных).
+- Будь конкретен: указывай суммы и проценты относительно текущего среза.
+- НЕ гарантируй снижение или рост цены и не делай выводов о динамике рынка.
 
 Ответь строго JSON:
 {
   "advice": "buy_now или wait или neutral",
   "reasoning": "обоснование с конкретными данными",
-  "price_trend": "rising или stable или declining или volatile",
-  "historical_context": "2-3 предложения о динамике цен",
+  "market_context": "1-2 предложения о текущем рыночном срезе без динамики во времени",
   "confidence": 0.0-1.0
 }
 """
@@ -86,6 +86,7 @@ def _ai_price_advice_cache_key(payload: AIPriceAdviceRequest) -> str:
     return digest_cache_key(
         "ai_price_advice",
         {
+            "contract": "current-market-v1",
             "query": payload.query,
             "current_price_byn": payload.current_price_byn,
             "category": payload.category,
@@ -211,6 +212,7 @@ async def price_advice(
     # Build context with market data
     stats = dataset.price_stats if dataset else None
     market_info = ""
+    current_market_context = "Недостаточно текущих рыночных данных для уверенного сравнения."
     if stats:
         market_info = (
             f"Медиана рынка: {stats.median:.0f} BYN\n"
@@ -219,6 +221,11 @@ async def price_advice(
             f"Количество объявлений: {stats.count}\n"
             f"Минимальная цена: {stats.min:.0f} BYN\n"
             f"Максимальная цена: {stats.max:.0f} BYN\n"
+        )
+        current_market_context = (
+            f"Текущий рыночный срез: медиана {stats.median:.0f} BYN, "
+            f"межквартильный диапазон {stats.q1:.0f}–{stats.q3:.0f} BYN, "
+            f"выборка {stats.count} объявлений."
         )
 
     safe_query = sanitize_user_text(payload.query) or ""
@@ -248,8 +255,7 @@ async def price_advice(
     response = AIPriceAdviceResponse(
         advice=advice,
         reasoning=str(result.get("reasoning") or "")[:500],
-        price_trend=str(result.get("price_trend") or "")[:20],
-        historical_context=str(result.get("historical_context") or "")[:400],
+        market_context=current_market_context[:400],
         confidence=float(result.get("confidence") or 0.0),
     )
 
