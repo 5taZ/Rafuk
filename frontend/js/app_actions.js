@@ -8,7 +8,8 @@
  * on the returned object so app.js and renderers continue to work without changes.
  */
 
-function createAppActions(context) {
+function createAppActions(baseContext) {
+    const context = { ...baseContext };
     const {
         state,
         elements,
@@ -160,11 +161,11 @@ function createAppActions(context) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-c3a963e"),
-            context._loadScript("js/api_ai_render.js?v=20260511-c3a963e"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-c3a963e"),
-            context._loadScript("js/api_ai.js?v=20260511-c3a963e"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-c3a963e"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-66be3dd"),
+            context._loadScript("js/api_ai_render.js?v=20260511-66be3dd"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-66be3dd"),
+            context._loadScript("js/api_ai.js?v=20260511-66be3dd"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-66be3dd"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

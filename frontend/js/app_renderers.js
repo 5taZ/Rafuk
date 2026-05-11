@@ -7,7 +7,8 @@
  * returned object so app_actions.js continues to work without changes.
  */
 
-function createAppRenderers(context) {
+function createAppRenderers(baseContext) {
+    const context = { ...baseContext };
     const {
         state,
         elements,

@@ -1,8 +1,9 @@
 function analyticsApp() {
     const core = createAppCore();
-    const actions = {};
-    const renderers = createAppRenderers({ ...core, actions });
-    Object.assign(actions, createAppActions({ ...core, ...renderers }));
+    const actionRegistry = {};
+    const renderers = createAppRenderers({ ...core, actions: actionRegistry });
+    const actions = createAppActions({ ...core, ...renderers });
+    Object.assign(actionRegistry, actions);
 
     // FE-H8: module-scoped handle for the pull-to-refresh uninstall
     // function returned by setupPullToRefresh(). Declared up-front so

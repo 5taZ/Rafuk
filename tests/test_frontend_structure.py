@@ -136,6 +136,19 @@ def test_lazy_script_cache_busters_match_main_bundle(soup: BeautifulSoup) -> Non
         assert f"js/{module}?v={version}" in actions
 
 
+def test_frontend_composition_clones_mutable_contexts() -> None:
+    app = (JS_DIR / "app.js").read_text(encoding="utf-8")
+    renderers = (JS_DIR / "app_renderers.js").read_text(encoding="utf-8")
+    actions = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    assert "const actionRegistry = {}" in app
+    assert "actions: actionRegistry" in app
+    assert "Object.assign(actionRegistry, actions)" in app
+    assert "function createAppRenderers(baseContext)" in renderers
+    assert "function createAppActions(baseContext)" in actions
+    assert "const context = { ...baseContext };" in renderers
+    assert "const context = { ...baseContext };" in actions
+
+
 def test_chart_js_loads_lazily_only_on_first_chart_paint() -> None:
     """Chart.js is ~80 KB gzipped — users who only use watchlist /
     trackers / leads should never download it. render_charts.js must
