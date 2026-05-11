@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 AI_LISTING_PHOTO_MAX_CHARS = 1_500_000
+AI_LISTING_PHOTO_MAX_COUNT = 4
 
 
 class LeadStatusEnum(StrEnum):
@@ -779,7 +780,7 @@ class AIListingAssistantRequest(BaseModel):
     extra_notes: str | None = Field(None, max_length=1200)
     photos: list[Annotated[str, Field(max_length=AI_LISTING_PHOTO_MAX_CHARS)]] = Field(
         default_factory=list,
-        max_length=8,
+        max_length=AI_LISTING_PHOTO_MAX_COUNT,
     )
 
 

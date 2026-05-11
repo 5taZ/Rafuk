@@ -22,6 +22,7 @@ from api.routers.ai_analysis import (
 )
 from api.schemas import (
     AI_LISTING_PHOTO_MAX_CHARS,
+    AI_LISTING_PHOTO_MAX_COUNT,
     AIListingAssistantRequest,
     AIListingAssistantResponse,
     AIListingCompetitor,
@@ -204,7 +205,7 @@ def _coerce_listing_photos(raw: list[str] | None) -> list[str]:
         if len(entry) > _LISTING_PHOTO_MAX_BYTES:
             continue
         cleaned.append(entry)
-        if len(cleaned) >= 4:
+        if len(cleaned) >= AI_LISTING_PHOTO_MAX_COUNT:
             break
     return cleaned
 

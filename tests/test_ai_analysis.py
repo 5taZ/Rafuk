@@ -1383,17 +1383,17 @@ def test_listing_assistant_passes_photos_to_ai_and_drops_invalid_ones(monkeypatc
             "/api/v1/ai/listing-assistant",
             json={
                 "title": "Тестовый товар XYZ",
-                "photos": [real, invalid_scheme, invalid_mime, real, real, real, real],
+                "photos": [real, invalid_scheme, invalid_mime, real],
             },
         )
 
     assert response.status_code == 200, response.text
     call = fake_ai.calls[0]
     forwarded = call["photo_data_urls"] or []
-    # All 4 forwarded entries must be the valid one — invalid scheme and wrong mime
+    # All forwarded entries must be the valid one — invalid scheme and wrong mime
     # are filtered out.
     assert all(p == real for p in forwarded)
-    assert 1 <= len(forwarded) <= 4
+    assert len(forwarded) == 2
     # And we must never exceed the router's forwarding cap.
     assert len(forwarded) <= 4
 
@@ -1407,6 +1407,16 @@ def test_listing_assistant_rejects_oversized_photo_at_schema_layer() -> None:
 
     with pytest.raises(ValidationError):
         AIListingAssistantRequest(title="Тестовый товар", photos=[too_big])
+
+
+def test_listing_assistant_rejects_more_than_four_photos_at_schema_layer() -> None:
+    from pydantic import ValidationError
+
+    from api.schemas import AIListingAssistantRequest
+
+    real = "data:image/jpeg;base64," + ("A" * 200)
+    with pytest.raises(ValidationError):
+        AIListingAssistantRequest(title="Тестовый товар", photos=[real] * 5)
 
 
 def test_listing_assistant_handles_empty_market_gracefully(monkeypatch) -> None:
