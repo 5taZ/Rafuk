@@ -99,6 +99,10 @@ def scrub_pii(text: str) -> tuple[str, int]:
     Returns ``(cleaned_text, hit_count)``. Each PII class is replaced
     with a stable placeholder so the AI can still reason about
     "there is a phone here" without seeing the actual digits.
+
+    Order matters: phone numbers are run BEFORE the long-digit
+    catch-all so a "+375 29 1234567" call gets labelled as [phone],
+    not stripped of its country code and left as "+[id]".
     """
     if not text:
         return text, 0
@@ -109,9 +113,9 @@ def scrub_pii(text: str) -> tuple[str, int]:
     hits += n
     text, n = _PII_BLR_DOC_RE.subn("[doc]", text)
     hits += n
-    text, n = _PII_LONG_DIGITS_RE.subn("[id]", text)
-    hits += n
     text, n = _PII_PHONE_RE.subn("[phone]", text)
+    hits += n
+    text, n = _PII_LONG_DIGITS_RE.subn("[id]", text)
     hits += n
     return text, hits
 
