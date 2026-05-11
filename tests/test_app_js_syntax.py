@@ -393,18 +393,19 @@ def test_lead_and_watchlist_mutations_resolve_versions_before_patch() -> None:
     assert "Данные устарели" in core_js
 
 
-def test_collection_actions_show_immediate_pending_toasts() -> None:
+def test_collection_actions_only_show_final_toasts() -> None:
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
     watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
     leads_js = (JS_DIR / "api_leads.js").read_text(encoding="utf-8")
+    listings_js = (JS_DIR / "api_listings.js").read_text(encoding="utf-8")
+    trackers_js = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
 
     add_lead = actions_js[
         actions_js.index("async function addLeadFromListing"):
         actions_js.index("\n    // Make", actions_js.index("async function addLeadFromListing"))
     ]
-    assert 'showToast("Добавляю…", "info"' in add_lead
+    assert 'showToast("Добавляю…", "info"' not in add_lead
     assert 'showToast("В покупках", "success"' in add_lead
-    assert "dismissToast(pendingToast)" in add_lead
 
     for fn_name, success_text in (
         ("addWatchlistFromListing", "В избранном"),
@@ -412,28 +413,31 @@ def test_collection_actions_show_immediate_pending_toasts() -> None:
     ):
         fn_start = watchlist_js.index(f"function {fn_name}")
         fn_body = watchlist_js[fn_start:watchlist_js.index("\n    // ──", fn_start + 1)]
-        assert 'showToast("Добавляю…", "info"' in fn_body
+        assert 'showToast("Добавляю…", "info"' not in fn_body
         assert f'showToast("{success_text}", "success"' in fn_body
-        assert "dismissToast(pendingToast)" in fn_body
 
     confirm_start = leads_js.index("async function confirmLead")
     confirm_body = leads_js[confirm_start:leads_js.index("\n    // ──", confirm_start + 1)]
-    assert confirm_body.index('showToast("Сохраняю…", "info"') < confirm_body.index(
-        "_resolveLeadVersion"
-    )
+    assert 'showToast("Сохраняю…", "info"' not in confirm_body
+    assert "_resolveLeadVersion" in confirm_body
     assert 'showToast(error.message || "Не удалось подтвердить сделку", "error")' in confirm_body
+    for text in (actions_js, watchlist_js, leads_js, listings_js, trackers_js):
+        assert 'showToast("Загружаю..."' not in text
 
 
 def test_toasts_are_minimal_and_fast() -> None:
     render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     css = _read_all_css()
 
-    assert "toast-dot" in render_core
-    assert "toast-label" in render_core
+    assert "toast-dot" not in render_core
+    assert "toast-label" not in render_core
     assert "iconMap" not in render_core
     assert "const animationDuration = prefersReducedMotion ? 10 : 120" in render_core
-    assert ".toast-dot" in css
-    assert ".toast-label" in css
+    assert ".toast::before" in css
+    assert ".toast-success { --toast-accent: var(--green); }" in css
+    assert ".toast-error { --toast-accent: var(--red); }" in css
+    assert ".toast-dot" not in css
+    assert ".toast-label" not in css
     assert ".toast-icon" not in css
     assert ".toast.entering:nth-child(2)" not in css
     assert "animation: toast-in 120ms" in css

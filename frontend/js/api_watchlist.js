@@ -16,7 +16,6 @@ function createApiWatchlist(context) {
         renderLeads,
         renderDetailModal,
         showToast,
-        dismissToast,
         getJson,
         postJson,
         deleteJson,
@@ -159,7 +158,6 @@ function createApiWatchlist(context) {
         }
 
         _guardInflightAd(item.ad_id);
-        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             await postJson("/api/v1/watchlist", {
                 query: queryOverride || state.search.query || "",
@@ -170,11 +168,9 @@ function createApiWatchlist(context) {
                 thumbnail: item.thumbnail || null,
                 market_median_byn: state.misc.stats?.median ? Number(state.misc.stats.median) : null,
             });
-            if (pendingToast) dismissToast(pendingToast);
             showToast("В избранном", "success", 1600);
             await loadWatchlist();
         } catch (error) {
-            if (pendingToast) dismissToast(pendingToast);
             // Server returns 409 with detail "Этот лот уже в покупках"
             // when the ad already has a non-watching lead. Surface a
             // friendly toast instead of the generic "internal error".
@@ -248,11 +244,9 @@ function createApiWatchlist(context) {
         }
 
         _guardInflightWatchId(item.id);
-        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             const version = await _resolveWatchlistVersion(item);
             if (!version) {
-                if (pendingToast) dismissToast(pendingToast);
                 _showStaleWatchlistToast();
                 return;
             }
@@ -264,7 +258,6 @@ function createApiWatchlist(context) {
                     version,
                 }),
             });
-            if (pendingToast) dismissToast(pendingToast);
             showToast("В покупках", "success", 1600);
             // Optimistic local state cleanup so the UI reflects the move
             // immediately, even before the parallel reloads finish.
@@ -275,7 +268,6 @@ function createApiWatchlist(context) {
                 typeof context.loadLeads === "function" ? context.loadLeads() : null,
             ]);
         } catch (error) {
-            if (pendingToast) dismissToast(pendingToast);
             showToast(error?.message || "Не удалось перевести в покупки", "error");
         } finally {
             _inflightWatchId.delete(item.id);
@@ -305,7 +297,6 @@ function createApiWatchlist(context) {
         const requestId = (state.detail._requestId =
             (state.detail._requestId + 1) % 1_000_000);
 
-        const loadingToast = showToast("Загружаю...", "info", 1400);
         state.ui.error = null;
         renderError();
         try {
@@ -333,8 +324,6 @@ function createApiWatchlist(context) {
             if (requestId !== state.detail._requestId) return;
             state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
-        } finally {
-            if (loadingToast) dismissToast(loadingToast);
         }
     }
 

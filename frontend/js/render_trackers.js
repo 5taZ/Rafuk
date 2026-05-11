@@ -342,7 +342,6 @@ function createRenderTrackers(context) {
                 void actions.deleteTracker(tracker.id);
             });
             card.querySelector('[data-role="open"]')?.addEventListener("click", () => {
-                if (context._hooks?.showToast) context._hooks.showToast("Загружаю...");
                 elements.searchInput.value = tracker.query;
                 state.search.query = tracker.query;
                 state.search.strictSearch = Boolean(tracker.strict_mode);

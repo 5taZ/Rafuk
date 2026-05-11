@@ -20,7 +20,6 @@ function createApiListings(context) {
         renderDetailModal,
         closeDetailModal,
         showToast,
-        dismissToast,
         buildCommonQuery,
         getJson,
         deleteJson,
@@ -365,7 +364,6 @@ function createApiListings(context) {
         const requestId = (state.detail._requestId =
             (state.detail._requestId + 1) % 1_000_000);
 
-        const loadingToast = showToast("Загружаю...", "info", 1400);
         state.ui.error = null;
         renderError();
         try {
@@ -402,8 +400,6 @@ function createApiListings(context) {
             if (requestId !== state.detail._requestId) return;
             state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
-        } finally {
-            if (loadingToast) dismissToast(loadingToast);
         }
     }
 

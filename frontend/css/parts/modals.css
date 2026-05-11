@@ -499,29 +499,49 @@ body.modal-open {
     z-index: 1100;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 6px;
     pointer-events: none;
     max-width: 340px;
     width: calc(100% - 24px);
 }
 
 .toast {
+    --toast-accent: var(--accent);
+    position: relative;
     min-height: 40px;
-    padding: 8px 8px 8px 12px;
+    padding: 9px 9px 9px 14px;
     border-radius: var(--r-lg);
-    background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
-    border: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 96%, transparent), color-mix(in srgb, var(--bg-card) 92%, transparent));
+    border: 1px solid color-mix(in srgb, var(--toast-accent) 18%, var(--border) 82%);
     color: var(--text);
     font-size: var(--text-sm);
-    font-weight: 600;
-    box-shadow: 0 10px 24px color-mix(in srgb, var(--text) 10%, transparent);
+    font-weight: 650;
+    box-shadow:
+        0 14px 34px rgba(0, 0, 0, 0.34),
+        inset 0 1px 0 color-mix(in srgb, var(--white) 6%, transparent);
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     pointer-events: auto;
     word-break: break-word;
-    backdrop-filter: blur(16px);
+    backdrop-filter: blur(18px);
+    overflow: hidden;
 }
+
+.toast::before {
+    content: "";
+    position: absolute;
+    inset: 8px auto 8px 7px;
+    width: 3px;
+    border-radius: 999px;
+    background: var(--toast-accent);
+    opacity: 0.95;
+}
+
+.toast-success { --toast-accent: var(--green); }
+.toast-error { --toast-accent: var(--red); }
+.toast-info { --toast-accent: var(--accent); }
 
 .toast.entering {
     opacity: 0;
@@ -533,44 +553,11 @@ body.modal-open {
     animation: toast-out 120ms ease-in forwards;
 }
 
-.toast-dot {
-    flex-shrink: 0;
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: var(--accent);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.toast-dot.success {
-    background: var(--green);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 10%, transparent);
-}
-
-.toast-dot.error {
-    background: var(--red);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 10%, transparent);
-}
-
-.toast-dot.info {
-    background: var(--accent);
-}
-
 .toast-body {
     flex: 1;
     display: flex;
     min-width: 0;
-    flex-direction: column;
-    gap: 1px;
-}
-
-.toast-label {
-    color: var(--text-muted);
-    font-size: 9px;
-    font-weight: 760;
-    line-height: 1;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    padding-left: 4px;
 }
 
 .toast-message {
@@ -588,8 +575,8 @@ body.modal-open {
     padding: 0 6px;
     margin-left: 2px;
     border-radius: var(--radius-full);
-    background: color-mix(in srgb, var(--text) 12%, transparent);
-    color: var(--text);
+    background: color-mix(in srgb, var(--toast-accent) 16%, transparent);
+    color: color-mix(in srgb, var(--toast-accent) 72%, var(--text));
     font-size: var(--text-xs);
     font-weight: 700;
     line-height: 18px;

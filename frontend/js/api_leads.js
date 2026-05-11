@@ -17,7 +17,6 @@ function createApiLeads(context) {
         renderProfitDashboard,
         renderDetailModal,
         showToast,
-        dismissToast,
         getJson,
         postJson,
         deleteJson,
@@ -185,10 +184,8 @@ function createApiLeads(context) {
             return;
         }
 
-        const pendingToast = showToast("Сохраняю…", "info", 8000);
         const version = await _resolveLeadVersion(lead);
         if (!version) {
-            if (pendingToast) dismissToast(pendingToast);
             _showStaleLeadToast();
             return;
         }
@@ -216,7 +213,6 @@ function createApiLeads(context) {
 
             const profit = soldPriceNum - buyPriceNum;
             const profitSign = profit >= 0 ? "+" : "";
-            if (pendingToast) dismissToast(pendingToast);
             showToast(`Сделка подтверждена: ${profitSign}${Math.round(profit)} BYN`, "success");
 
             // Full reload to refresh analytics/profit dashboard data
@@ -232,7 +228,6 @@ function createApiLeads(context) {
             }, 100);
         } catch (error) {
             // Revert optimistic state by reloading from server
-            if (pendingToast) dismissToast(pendingToast);
             showToast(error.message || "Не удалось подтвердить сделку", "error");
             await loadLeads();
         }
@@ -438,7 +433,6 @@ function createApiLeads(context) {
         const requestId = (state.detail._requestId =
             (state.detail._requestId + 1) % 1_000_000);
 
-        const loadingToast = showToast("Загружаю...", "info", 1400);
         state.ui.error = null;
         renderError();
         try {
@@ -466,8 +460,6 @@ function createApiLeads(context) {
             if (requestId !== state.detail._requestId) return;
             state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
-        } finally {
-            if (loadingToast) dismissToast(loadingToast);
         }
     }
 

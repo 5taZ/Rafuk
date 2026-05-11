@@ -38,7 +38,6 @@ function createAppActions(baseContext) {
         closeDetailModal,
         setPanelOpen,
         showToast,
-        dismissToast,
         renderExpensesModal,
         openExpensesModal,
         closeExpensesModal,
@@ -162,11 +161,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-362e51e"),
-            context._loadScript("js/api_ai_render.js?v=20260511-362e51e"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-362e51e"),
-            context._loadScript("js/api_ai.js?v=20260511-362e51e"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-362e51e"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-2f8a4b2"),
+            context._loadScript("js/api_ai_render.js?v=20260511-2f8a4b2"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-2f8a4b2"),
+            context._loadScript("js/api_ai.js?v=20260511-2f8a4b2"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-2f8a4b2"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -332,7 +331,6 @@ function createAppActions(baseContext) {
         let watchingItem = _findWatchingSnapshot(item);
 
         _guardAdMutation(item.ad_id);
-        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             if (!watchingItem && source === "detail_modal" && state.detail.fromWatchlist) {
                 watchingItem = await _resolveWatchingItem(item);
@@ -340,7 +338,6 @@ function createAppActions(baseContext) {
             if (watchingItem) {
                 const version = await _resolveWatchingVersion(watchingItem);
                 if (!version) {
-                    if (pendingToast) dismissToast(pendingToast);
                     showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
                     return;
                 }
@@ -370,13 +367,11 @@ function createAppActions(baseContext) {
                     thumbnail: item.thumbnail || null,
                 });
             }
-            if (pendingToast) dismissToast(pendingToast);
             showToast("В покупках", "success", 1600);
             // Refresh both surfaces so a once-watched item disappears
             // from "Избранное" and shows up in "Покупки" together.
             await Promise.all([leads.loadLeads(), watchlist.loadWatchlist()]);
         } catch (error) {
-            if (pendingToast) dismissToast(pendingToast);
             showToast(error.message || "Не удалось добавить в покупки", "error");
         } finally {
             _inflightAdMutations.delete(item.ad_id);

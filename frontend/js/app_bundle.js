@@ -1949,12 +1949,6 @@ function createRenderCore(context) {
         const messageStr = String(message ?? "")
             .replace(/^[\s✓✔✅☑✕✖❌×↩←→★⭐❤🔥⚠\uFE0F]+/u, "")
             .trim();
-        const label = {
-            success: "Готово",
-            error: "Ошибка",
-            info: "Статус",
-        }[type] || "Статус";
-
         // Deduplication: if the same (message, type) is already visible
         // and not already in the exit animation, just reset its timer
         // and bump a small "×N" counter on it instead of stacking a
@@ -1997,14 +1991,9 @@ function createRenderCore(context) {
                 className: `toast toast-${type} entering`,
                 attrs: { role: "status", "aria-live": "polite" },
             },
-            domEl("span", {
-                className: `toast-dot ${type}`,
-                attrs: { "aria-hidden": "true" },
-            }),
             domEl(
                 "span",
                 { className: "toast-body" },
-                domEl("span", { className: "toast-label", text: label }),
                 domEl("span", { className: "toast-message", text: messageStr }),
             ),
             domEl("button", {
@@ -5933,7 +5922,6 @@ function createRenderTrackers(context) {
                 void actions.deleteTracker(tracker.id);
             });
             card.querySelector('[data-role="open"]')?.addEventListener("click", () => {
-                if (context._hooks?.showToast) context._hooks.showToast("Загружаю...");
                 elements.searchInput.value = tracker.query;
                 state.search.query = tracker.query;
                 state.search.strictSearch = Boolean(tracker.strict_mode);
@@ -6792,7 +6780,6 @@ function createApiListings(context) {
         renderDetailModal,
         closeDetailModal,
         showToast,
-        dismissToast,
         buildCommonQuery,
         getJson,
         deleteJson,
@@ -7137,7 +7124,6 @@ function createApiListings(context) {
         const requestId = (state.detail._requestId =
             (state.detail._requestId + 1) % 1_000_000);
 
-        const loadingToast = showToast("Загружаю...", "info", 1400);
         state.ui.error = null;
         renderError();
         try {
@@ -7174,8 +7160,6 @@ function createApiListings(context) {
             if (requestId !== state.detail._requestId) return;
             state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
-        } finally {
-            if (loadingToast) dismissToast(loadingToast);
         }
     }
 
@@ -7626,7 +7610,6 @@ function createApiLeads(context) {
         renderProfitDashboard,
         renderDetailModal,
         showToast,
-        dismissToast,
         getJson,
         postJson,
         deleteJson,
@@ -7794,10 +7777,8 @@ function createApiLeads(context) {
             return;
         }
 
-        const pendingToast = showToast("Сохраняю…", "info", 8000);
         const version = await _resolveLeadVersion(lead);
         if (!version) {
-            if (pendingToast) dismissToast(pendingToast);
             _showStaleLeadToast();
             return;
         }
@@ -7825,7 +7806,6 @@ function createApiLeads(context) {
 
             const profit = soldPriceNum - buyPriceNum;
             const profitSign = profit >= 0 ? "+" : "";
-            if (pendingToast) dismissToast(pendingToast);
             showToast(`Сделка подтверждена: ${profitSign}${Math.round(profit)} BYN`, "success");
 
             // Full reload to refresh analytics/profit dashboard data
@@ -7841,7 +7821,6 @@ function createApiLeads(context) {
             }, 100);
         } catch (error) {
             // Revert optimistic state by reloading from server
-            if (pendingToast) dismissToast(pendingToast);
             showToast(error.message || "Не удалось подтвердить сделку", "error");
             await loadLeads();
         }
@@ -8047,7 +8026,6 @@ function createApiLeads(context) {
         const requestId = (state.detail._requestId =
             (state.detail._requestId + 1) % 1_000_000);
 
-        const loadingToast = showToast("Загружаю...", "info", 1400);
         state.ui.error = null;
         renderError();
         try {
@@ -8075,8 +8053,6 @@ function createApiLeads(context) {
             if (requestId !== state.detail._requestId) return;
             state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
-        } finally {
-            if (loadingToast) dismissToast(loadingToast);
         }
     }
 
@@ -8116,7 +8092,6 @@ function createApiWatchlist(context) {
         renderLeads,
         renderDetailModal,
         showToast,
-        dismissToast,
         getJson,
         postJson,
         deleteJson,
@@ -8259,7 +8234,6 @@ function createApiWatchlist(context) {
         }
 
         _guardInflightAd(item.ad_id);
-        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             await postJson("/api/v1/watchlist", {
                 query: queryOverride || state.search.query || "",
@@ -8270,11 +8244,9 @@ function createApiWatchlist(context) {
                 thumbnail: item.thumbnail || null,
                 market_median_byn: state.misc.stats?.median ? Number(state.misc.stats.median) : null,
             });
-            if (pendingToast) dismissToast(pendingToast);
             showToast("В избранном", "success", 1600);
             await loadWatchlist();
         } catch (error) {
-            if (pendingToast) dismissToast(pendingToast);
             // Server returns 409 with detail "Этот лот уже в покупках"
             // when the ad already has a non-watching lead. Surface a
             // friendly toast instead of the generic "internal error".
@@ -8348,11 +8320,9 @@ function createApiWatchlist(context) {
         }
 
         _guardInflightWatchId(item.id);
-        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             const version = await _resolveWatchlistVersion(item);
             if (!version) {
-                if (pendingToast) dismissToast(pendingToast);
                 _showStaleWatchlistToast();
                 return;
             }
@@ -8364,7 +8334,6 @@ function createApiWatchlist(context) {
                     version,
                 }),
             });
-            if (pendingToast) dismissToast(pendingToast);
             showToast("В покупках", "success", 1600);
             // Optimistic local state cleanup so the UI reflects the move
             // immediately, even before the parallel reloads finish.
@@ -8375,7 +8344,6 @@ function createApiWatchlist(context) {
                 typeof context.loadLeads === "function" ? context.loadLeads() : null,
             ]);
         } catch (error) {
-            if (pendingToast) dismissToast(pendingToast);
             showToast(error?.message || "Не удалось перевести в покупки", "error");
         } finally {
             _inflightWatchId.delete(item.id);
@@ -8405,7 +8373,6 @@ function createApiWatchlist(context) {
         const requestId = (state.detail._requestId =
             (state.detail._requestId + 1) % 1_000_000);
 
-        const loadingToast = showToast("Загружаю...", "info", 1400);
         state.ui.error = null;
         renderError();
         try {
@@ -8433,8 +8400,6 @@ function createApiWatchlist(context) {
             if (requestId !== state.detail._requestId) return;
             state.ui.error = error.message || "Не удалось загрузить детали";
             renderError();
-        } finally {
-            if (loadingToast) dismissToast(loadingToast);
         }
     }
 
@@ -9678,7 +9643,6 @@ function createAppActions(baseContext) {
         closeDetailModal,
         setPanelOpen,
         showToast,
-        dismissToast,
         renderExpensesModal,
         openExpensesModal,
         closeExpensesModal,
@@ -9802,11 +9766,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-362e51e"),
-            context._loadScript("js/api_ai_render.js?v=20260511-362e51e"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-362e51e"),
-            context._loadScript("js/api_ai.js?v=20260511-362e51e"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-362e51e"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-2f8a4b2"),
+            context._loadScript("js/api_ai_render.js?v=20260511-2f8a4b2"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-2f8a4b2"),
+            context._loadScript("js/api_ai.js?v=20260511-2f8a4b2"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-2f8a4b2"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -9972,7 +9936,6 @@ function createAppActions(baseContext) {
         let watchingItem = _findWatchingSnapshot(item);
 
         _guardAdMutation(item.ad_id);
-        const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
             if (!watchingItem && source === "detail_modal" && state.detail.fromWatchlist) {
                 watchingItem = await _resolveWatchingItem(item);
@@ -9980,7 +9943,6 @@ function createAppActions(baseContext) {
             if (watchingItem) {
                 const version = await _resolveWatchingVersion(watchingItem);
                 if (!version) {
-                    if (pendingToast) dismissToast(pendingToast);
                     showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
                     return;
                 }
@@ -10010,13 +9972,11 @@ function createAppActions(baseContext) {
                     thumbnail: item.thumbnail || null,
                 });
             }
-            if (pendingToast) dismissToast(pendingToast);
             showToast("В покупках", "success", 1600);
             // Refresh both surfaces so a once-watched item disappears
             // from "Избранное" and shows up in "Покупки" together.
             await Promise.all([leads.loadLeads(), watchlist.loadWatchlist()]);
         } catch (error) {
-            if (pendingToast) dismissToast(pendingToast);
             showToast(error.message || "Не удалось добавить в покупки", "error");
         } finally {
             _inflightAdMutations.delete(item.ad_id);

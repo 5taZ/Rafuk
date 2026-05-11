@@ -92,12 +92,6 @@ function createRenderCore(context) {
         const messageStr = String(message ?? "")
             .replace(/^[\s✓✔✅☑✕✖❌×↩←→★⭐❤🔥⚠\uFE0F]+/u, "")
             .trim();
-        const label = {
-            success: "Готово",
-            error: "Ошибка",
-            info: "Статус",
-        }[type] || "Статус";
-
         // Deduplication: if the same (message, type) is already visible
         // and not already in the exit animation, just reset its timer
         // and bump a small "×N" counter on it instead of stacking a
@@ -140,14 +134,9 @@ function createRenderCore(context) {
                 className: `toast toast-${type} entering`,
                 attrs: { role: "status", "aria-live": "polite" },
             },
-            domEl("span", {
-                className: `toast-dot ${type}`,
-                attrs: { "aria-hidden": "true" },
-            }),
             domEl(
                 "span",
                 { className: "toast-body" },
-                domEl("span", { className: "toast-label", text: label }),
                 domEl("span", { className: "toast-message", text: messageStr }),
             ),
             domEl("button", {
