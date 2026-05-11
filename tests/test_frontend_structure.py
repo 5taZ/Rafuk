@@ -312,15 +312,33 @@ def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
     assert ".summary-refinement-chip" in css_text
     assert ".empty-state-action" in css_text
     assert ".list-pagination-button" in css_text
+    def declarations(selector: str, prop: str) -> list[str]:
+        blocks: list[str] = []
+        start = 0
+        while True:
+            pos = css_text.find(selector, start)
+            if pos < 0:
+                return blocks
+            end = css_text.index("}", pos)
+            block = css_text[pos:end]
+            if prop in block:
+                blocks.append(block)
+            start = end + 1
+
     for selector in (
         ".summary-refinement-chip",
         ".empty-state-action",
         ".list-pagination-button",
+        ".filter-chip",
+        ".period-chip",
+        ".la-history-delete",
     ):
-        start = css_text.index(selector)
-        block = css_text[start:css_text.index("}", start)]
-        assert "min-height: 44px" in block
-        assert "min-width: 44px" in block
+        height_blocks = declarations(selector, "min-height")
+        width_blocks = declarations(selector, "min-width")
+        assert height_blocks
+        assert width_blocks
+        assert "min-height: 44px" in height_blocks[-1]
+        assert "min-width: 44px" in width_blocks[-1]
 
 
 def test_service_worker_present_with_safe_strategies() -> None:

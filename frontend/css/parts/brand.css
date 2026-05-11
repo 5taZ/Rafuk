@@ -925,14 +925,17 @@
 
 .la-history-delete {
     appearance: none;
-    width: 28px;
-    height: 28px;
+    min-width: 44px;
+    min-height: 44px;
     border: 1px solid var(--border);
     border-radius: var(--radius-full);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
     line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .la-history-delete:hover {

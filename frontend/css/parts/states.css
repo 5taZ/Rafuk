@@ -377,7 +377,8 @@
     cursor: pointer;
     transition: background var(--tr-fast), color var(--tr-fast), border-color var(--tr-fast);
     white-space: nowrap;
-    min-height: 32px;
+    min-height: 44px;
+    min-width: 44px;
 }
 
 .filter-chip:hover {

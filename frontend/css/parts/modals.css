@@ -701,6 +701,8 @@ body.modal-open {
     font-weight: 600;
     border-radius: var(--radius-full);
     cursor: pointer;
+    min-height: 44px;
+    min-width: 44px;
     transition: background var(--t-fast) var(--easing-standard), color var(--t-fast) var(--easing-standard);
     -webkit-tap-highlight-color: transparent;
 }

@@ -3557,6 +3557,8 @@ body.modal-open {
     font-weight: 600;
     border-radius: var(--radius-full);
     cursor: pointer;
+    min-height: 44px;
+    min-width: 44px;
     transition: background var(--t-fast) var(--easing-standard), color var(--t-fast) var(--easing-standard);
     -webkit-tap-highlight-color: transparent;
 }
@@ -6578,7 +6580,8 @@ body.lp-menu-open {
     cursor: pointer;
     transition: background var(--tr-fast), color var(--tr-fast), border-color var(--tr-fast);
     white-space: nowrap;
-    min-height: 32px;
+    min-height: 44px;
+    min-width: 44px;
 }
 
 .filter-chip:hover {
@@ -8964,14 +8967,17 @@ body.lp-menu-open {
 
 .la-history-delete {
     appearance: none;
-    width: 28px;
-    height: 28px;
+    min-width: 44px;
+    min-height: 44px;
     border: 1px solid var(--border);
     border-radius: var(--radius-full);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
     line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .la-history-delete:hover {
