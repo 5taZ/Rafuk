@@ -44,7 +44,7 @@ import json
 import logging
 import re
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -1040,7 +1040,9 @@ class AIService:
         elif is_free_price:
             parts.append("Цена: 0 BYN — БЕСПЛАТНО (отдают даром)")
             if market_median:
-                parts.append(f"Рыночная медиана: {market_median:.0f} BYN — это и есть ориентир выгоды.")
+                parts.append(
+                    f"Рыночная медиана: {market_median:.0f} BYN — это и есть ориентир выгоды."
+                )
         else:
             parts.append(f"Цена: {price_byn:.0f} BYN ({price_pos})")
             if price_delta_pct is not None:
@@ -1268,43 +1270,58 @@ class AIService:
     async def _fetch_image_bytes(self, url: str) -> bytes | None:
         """Download image bytes using shared httpx client.
 
-        Uses follow_redirects=True with a max_redirects limit to avoid
-        manual redirect handling. Streams the response to enforce the
-        byte limit without loading the entire body into memory first.
+        Re-validates every redirect target before following it. Streams
+        the final response to enforce the byte limit without loading the
+        entire body into memory first.
         """
         if not self._is_allowed_image_url(url):
             logger.warning("Skipped AI image fetch from unsupported host: %s", url[:80])
             return None
         try:
             client = await self._get_client()
-            # Use streaming to check size before loading entire body
-            async with client.stream(
-                "GET", url, timeout=8, follow_redirects=True,
-            ) as resp:
-                if resp.status_code != 200:
+            current_url = url
+            for _ in range(_MAX_AI_REDIRECTS + 1):
+                if not self._is_allowed_image_url(current_url):
+                    logger.warning(
+                        "Skipped AI image fetch redirect to unsupported host: %s",
+                        current_url[:80],
+                    )
                     return None
-                content_type = resp.headers.get("content-type", "")
-                if not content_type.lower().startswith("image/"):
-                    logger.warning("Skipped AI image fetch with content-type=%s", content_type)
-                    return None
-                content_length = resp.headers.get("content-length")
-                if content_length:
-                    try:
-                        if int(content_length) > _MAX_AI_IMAGE_BYTES:
-                            logger.warning("Skipped AI image fetch larger than byte limit")
+                async with client.stream(
+                    "GET", current_url, timeout=8, follow_redirects=False,
+                ) as resp:
+                    if resp.is_redirect:
+                        location = resp.headers.get("location")
+                        if not location:
                             return None
-                    except ValueError:
-                        pass
-                # Read in chunks, enforcing the byte limit
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in resp.aiter_bytes(chunk_size=65536):
-                    total += len(chunk)
-                    if total > _MAX_AI_IMAGE_BYTES:
-                        logger.warning("Skipped AI image fetch larger than byte limit (streaming)")
+                        current_url = urljoin(current_url, location)
+                        continue
+                    if resp.status_code != 200:
                         return None
-                    chunks.append(chunk)
-                return b"".join(chunks)
+                    content_type = resp.headers.get("content-type", "")
+                    if not content_type.lower().startswith("image/"):
+                        logger.warning("Skipped AI image fetch with content-type=%s", content_type)
+                        return None
+                    content_length = resp.headers.get("content-length")
+                    if content_length:
+                        try:
+                            if int(content_length) > _MAX_AI_IMAGE_BYTES:
+                                logger.warning("Skipped AI image fetch larger than byte limit")
+                                return None
+                        except ValueError:
+                            pass
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        total += len(chunk)
+                        if total > _MAX_AI_IMAGE_BYTES:
+                            logger.warning(
+                                "Skipped AI image fetch larger than byte limit (streaming)"
+                            )
+                            return None
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+            logger.warning("Skipped AI image fetch after too many redirects")
         except httpx.HTTPError as e:
             logger.warning("Failed to fetch image %s: %s", url[:80], e)
         return None

@@ -15,6 +15,7 @@ def test_compose_has_core_services() -> None:
     assert "bot:" in compose
     assert "scheduler:" in compose
     assert "redis:" in compose
+    assert "127.0.0.1:6380:6379" in compose
 
 
 def test_nginx_has_cors_header() -> None:

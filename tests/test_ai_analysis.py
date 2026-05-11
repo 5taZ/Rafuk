@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from time import monotonic, sleep
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -54,6 +55,53 @@ def test_ai_image_fetch_allows_only_kufar_gallery_https_urls() -> None:
     assert AIService._is_allowed_image_url("https://notrms.kufar.by/v1/gallery/x.jpg") is False
     assert AIService._is_allowed_image_url("https://rms6.kufar.by.evil.com/x.jpg") is False
     assert AIService._is_allowed_image_url("https://example.com/x.jpg") is False
+
+
+@pytest.mark.asyncio
+async def test_ai_image_fetch_rejects_redirect_to_untrusted_host() -> None:
+    svc = AIService.__new__(AIService)
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if str(request.url) == "https://rms.kufar.by/v1/gallery/x.jpg":
+            return httpx.Response(302, headers={"location": "https://169.254.169.254/latest"})
+        return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=b"secret")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async def fake_client() -> httpx.AsyncClient:
+            return client
+
+        svc._get_client = fake_client
+        data = await svc._fetch_image_bytes("https://rms.kufar.by/v1/gallery/x.jpg")
+
+    assert data is None
+    assert requested == ["https://rms.kufar.by/v1/gallery/x.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_ai_image_fetch_allows_valid_kufar_redirect() -> None:
+    svc = AIService.__new__(AIService)
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if str(request.url) == "https://rms.kufar.by/v1/gallery/x.jpg":
+            return httpx.Response(302, headers={"location": "https://rms6.kufar.by/v1/gallery/y.jpg"})
+        return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=b"image")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async def fake_client() -> httpx.AsyncClient:
+            return client
+
+        svc._get_client = fake_client
+        data = await svc._fetch_image_bytes("https://rms.kufar.by/v1/gallery/x.jpg")
+
+    assert data == b"image"
+    assert requested == [
+        "https://rms.kufar.by/v1/gallery/x.jpg",
+        "https://rms6.kufar.by/v1/gallery/y.jpg",
+    ]
 
 
 def test_detect_category_covers_belarus_marketplace_categories() -> None:
