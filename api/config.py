@@ -181,6 +181,7 @@ class Settings(BaseSettings):
     image_proxy_quality: int = 80
     image_proxy_fetch_timeout: float = 5.0
     image_proxy_max_bytes: int = 5 * 1024 * 1024
+    metrics_bearer_token: SecretStr | None = None
 
     @field_validator("api_base_url", "mini_app_url")
     @classmethod

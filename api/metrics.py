@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from secrets import compare_digest
 from threading import Lock
+
+from api.config import Settings, is_production_like_deployment
 
 _lock = Lock()
 _requests: Counter[tuple[str, str, str]] = Counter()
@@ -63,6 +66,15 @@ def render_prometheus_metrics() -> str:
             f"}} {value}"
         )
     return "\n".join(lines) + "\n"
+
+
+def is_metrics_request_allowed(settings: Settings, authorization: str | None) -> bool:
+    configured_token = settings.metrics_bearer_token
+    token = configured_token.get_secret_value() if configured_token is not None else ""
+    if not token:
+        return not is_production_like_deployment(settings)
+    scheme, _, credentials = (authorization or "").partition(" ")
+    return scheme.lower() == "bearer" and compare_digest(credentials.strip(), token)
 
 
 def _reset_metrics_for_tests() -> None:

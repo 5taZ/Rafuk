@@ -17,7 +17,11 @@ from api.database import get_engine, get_session_factory
 from api.dependencies import ensure_user_exists
 from api.limiter import limiter
 from api.logging_config import configure_logging, request_id_ctxvar
-from api.metrics import observe_http_request, render_prometheus_metrics
+from api.metrics import (
+    is_metrics_request_allowed,
+    observe_http_request,
+    render_prometheus_metrics,
+)
 from api.routers import (
     ai_analysis,
     ai_listing_assistant,
@@ -163,7 +167,9 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Rafuk API", lifespan=lifespan)
 
     @app.get("/metrics", include_in_schema=False)
-    async def metrics_endpoint() -> Response:
+    async def metrics_endpoint(request: Request) -> Response:
+        if not is_metrics_request_allowed(settings, request.headers.get("authorization")):
+            return Response(status_code=403)
         return Response(
             render_prometheus_metrics(),
             media_type="text/plain; version=0.0.4; charset=utf-8",
