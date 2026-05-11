@@ -14,7 +14,7 @@
 (function (app) {
 "use strict";
 
-const { domEl } = app;
+const { domEl, domFragment } = app;
 
 function createAiRender(context, aiCtx) {
     const { elements, safeUrl, formatPrice } = context;

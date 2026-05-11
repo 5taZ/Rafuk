@@ -51,6 +51,8 @@ window.App = Object.assign(window.App || {}, {
   analyticsApp,
   createAppCore,
   domEl,
+  domFragment,
+  _prefersReducedMotion,
   openModalAnimated,
   closeModalAnimated,
 });

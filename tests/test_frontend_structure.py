@@ -94,6 +94,8 @@ def test_app_bundle_uses_single_namespace_wrapper() -> None:
         "analyticsApp",
         "createAppCore",
         "domEl",
+        "domFragment",
+        "_prefersReducedMotion",
         "openModalAnimated",
         "closeModalAnimated",
     ):

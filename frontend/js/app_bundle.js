@@ -9810,11 +9810,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-5835195"),
-            context._loadScript("js/api_ai_render.js?v=20260511-5835195"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-5835195"),
-            context._loadScript("js/api_ai.js?v=20260511-5835195"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-5835195"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-362e51e"),
+            context._loadScript("js/api_ai_render.js?v=20260511-362e51e"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-362e51e"),
+            context._loadScript("js/api_ai.js?v=20260511-362e51e"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-362e51e"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -10812,6 +10812,8 @@ window.App = Object.assign(window.App || {}, {
   analyticsApp,
   createAppCore,
   domEl,
+  domFragment,
+  _prefersReducedMotion,
   openModalAnimated,
   closeModalAnimated,
 });
