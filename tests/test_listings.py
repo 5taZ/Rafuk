@@ -107,6 +107,82 @@ def test_listings_endpoint_supports_cheap_sort(monkeypatch) -> None:
     assert payload["discount_to_percent"] == 30
 
 
+def test_cheap_sort_total_counts_only_filtered_deals(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    class CheapCountClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            return {
+                "total": 99,
+                "ads": [
+                    {
+                        "ad_id": 1,
+                        "subject": "iPhone deal 1",
+                        "price_byn": 800,
+                        "ad_link": "https://www.kufar.by/item/1",
+                        "list_time": "2026-04-01T10:00:00",
+                        "region_id": 6,
+                    },
+                    {
+                        "ad_id": 2,
+                        "subject": "iPhone deal 2",
+                        "price_byn": 1000,
+                        "ad_link": "https://www.kufar.by/item/2",
+                        "list_time": "2026-04-01T11:00:00",
+                        "region_id": 6,
+                    },
+                    {
+                        "ad_id": 3,
+                        "subject": "iPhone deal 3",
+                        "price_byn": 1001,
+                        "ad_link": "https://www.kufar.by/item/3",
+                        "list_time": "2026-04-01T12:00:00",
+                        "region_id": 6,
+                    },
+                    {
+                        "ad_id": 4,
+                        "subject": "iPhone deal 4",
+                        "price_byn": 1200,
+                        "ad_link": "https://www.kufar.by/item/4",
+                        "list_time": "2026-04-01T13:00:00",
+                        "region_id": 6,
+                    },
+                ],
+            }
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", CheapCountClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: CheapCountClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/listings",
+            params={
+                "query": "iphone",
+                "currency": "BYN",
+                "sort": "cheap",
+                "discount_from_percent": 10,
+                "discount_to_percent": 30,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["returned"] == 1
+    assert [item["ad_id"] for item in payload["listings"]] == [1]
+
+
 def test_listings_endpoint_supports_strict_search(monkeypatch) -> None:
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app

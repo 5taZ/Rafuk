@@ -268,6 +268,9 @@ async def get_listings(
         listings = [item for item in built if item is not None]
 
     # `total` is what the pill above the cards shows.
+    #  - Cheap sort: show the post-discount count, not Kufar's raw
+    #    broad total, otherwise the "Выгодные" tab repeats the "Новые"
+    #    badge even though it renders a much smaller filtered set.
     #  - Broad query (category=None): use Kufar's raw `total` so the
     #    pill matches kufar.by's header ("Polo → 33 776"), not the
     #    pagination cap.
@@ -278,7 +281,9 @@ async def get_listings(
     #    pagination cap (≥200 ads), fall back to Kufar's `total` so
     #    big categories like "Polo + Легковые авто" still display
     #    the real number instead of a capped "200".
-    if category is None:
+    if sort == "cheap":
+        filtered_total = len(deal_ads)
+    elif category is None:
         filtered_total = visible_dataset.total_results
     else:
         filtered_count = len(visible_dataset.ads)
