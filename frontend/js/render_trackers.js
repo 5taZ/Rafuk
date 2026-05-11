@@ -111,6 +111,16 @@ function createRenderTrackers(context) {
                 { tag: "line", x1: "21", y1: "21", x2: "16.65", y2: "16.65" },
             ]);
     }
+    function iconListingPlaceholder() {
+        return buildSvgIcon("0 0 24 24",
+            { width: 24, height: 24, ..._STROKE_ATTRS },
+            [
+                { tag: "rect", x: "4", y: "5", width: "16", height: "14", rx: "2" },
+                { tag: "path", d: "M8 9h8" },
+                { tag: "path", d: "M8 13h5" },
+                { tag: "path", d: "M15 17h1" },
+            ]);
+    }
 
     /* ===== Tracker Status ===== */
 
@@ -486,13 +496,16 @@ function createRenderTrackers(context) {
                     className: "event-thumbnail",
                     attrs: { src: thumbSrc, alt: event.title || "Объявление", loading: "lazy" },
                 })
-                // FE-05: aria-label exposes "Нет фото" instead of the
-                // SR pronouncing the bare 📱 glyph as "MOBILE PHONE".
-                : domEl("div", {
-                    className: "event-thumbnail-placeholder",
-                    text: "📱",
-                    attrs: { "aria-label": "Нет фото", role: "img" },
-                });
+                // FE-05: aria-label exposes "Нет фото" while the
+                // decorative SVG stays hidden from screen readers.
+                : (() => {
+                    const node = domEl("div", {
+                        className: "event-thumbnail-placeholder",
+                        attrs: { "aria-label": "Нет фото", role: "img" },
+                    });
+                    node.appendChild(iconListingPlaceholder());
+                    return node;
+                })();
             const eventMeta = domEl("div", { className: "event-meta" });
             if (event.region_name) eventMeta.appendChild(emojiLabel("event-meta-item", "📍", event.region_name));
             if (event.seller_type) eventMeta.appendChild(emojiLabel("event-meta-item", "👤", event.seller_type));

@@ -2140,9 +2140,9 @@ function createRenderCore(context) {
         leads:
             '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/><polyline points="9 11 12 8 15 11"/><line x1="12" y1="2" x2="12" y2="14"/></svg>',
         trackers:
-            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h8"/><path d="M4 12h6"/><path d="M4 17h8"/><path d="M16 8l4 4-4 4"/><path d="M13 12h7"/></svg>',
         events:
-            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h3l2-5 4 10 3-7 2 2h2"/><path d="M4 19h16"/></svg>',
         search:
             '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
         deals:
@@ -4327,27 +4327,6 @@ function createRenderViews(context) {
         const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
         domClear(elements.dealsHeroStats);
         appendHeroStat(elements.dealsHeroStats, String(activeLeads.length), "сделок");
-
-        // Pipeline progress indicator — show status distribution
-        if (activeLeads.length > 0) {
-            const statusOrder = ["new", "researching", "bought", "sold"];
-            const statusLabels = { new: "Новые", researching: "В работе", bought: "Куплено", sold: "Продано" };
-            const pipeline = document.createElement("div");
-            pipeline.className = "pipeline-bar";
-            pipeline.setAttribute("role", "meter");
-            pipeline.setAttribute("aria-label", "Прогресс сделок");
-            for (const status of statusOrder) {
-                const count = activeLeads.filter((l) => l.status === status).length;
-                if (count > 0) {
-                    const seg = document.createElement("span");
-                    seg.className = `pipeline-seg pipeline-seg--${status}`;
-                    seg.style.width = `${(count / activeLeads.length) * 100}%`;
-                    seg.textContent = `${statusLabels[status] || status} ${count}`;
-                    pipeline.appendChild(seg);
-                }
-            }
-            elements.dealsHeroStats.appendChild(pipeline);
-        }
     }
 
     /* ===== Sort / Discount / Filter buttons ===== */
@@ -5723,6 +5702,16 @@ function createRenderTrackers(context) {
                 { tag: "line", x1: "21", y1: "21", x2: "16.65", y2: "16.65" },
             ]);
     }
+    function iconListingPlaceholder() {
+        return buildSvgIcon("0 0 24 24",
+            { width: 24, height: 24, ..._STROKE_ATTRS },
+            [
+                { tag: "rect", x: "4", y: "5", width: "16", height: "14", rx: "2" },
+                { tag: "path", d: "M8 9h8" },
+                { tag: "path", d: "M8 13h5" },
+                { tag: "path", d: "M15 17h1" },
+            ]);
+    }
 
     /* ===== Tracker Status ===== */
 
@@ -6098,13 +6087,16 @@ function createRenderTrackers(context) {
                     className: "event-thumbnail",
                     attrs: { src: thumbSrc, alt: event.title || "Объявление", loading: "lazy" },
                 })
-                // FE-05: aria-label exposes "Нет фото" instead of the
-                // SR pronouncing the bare 📱 glyph as "MOBILE PHONE".
-                : domEl("div", {
-                    className: "event-thumbnail-placeholder",
-                    text: "📱",
-                    attrs: { "aria-label": "Нет фото", role: "img" },
-                });
+                // FE-05: aria-label exposes "Нет фото" while the
+                // decorative SVG stays hidden from screen readers.
+                : (() => {
+                    const node = domEl("div", {
+                        className: "event-thumbnail-placeholder",
+                        attrs: { "aria-label": "Нет фото", role: "img" },
+                    });
+                    node.appendChild(iconListingPlaceholder());
+                    return node;
+                })();
             const eventMeta = domEl("div", { className: "event-meta" });
             if (event.region_name) eventMeta.appendChild(emojiLabel("event-meta-item", "📍", event.region_name));
             if (event.seller_type) eventMeta.appendChild(emojiLabel("event-meta-item", "👤", event.seller_type));

@@ -39,27 +39,6 @@ function createRenderViews(context) {
         const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
         domClear(elements.dealsHeroStats);
         appendHeroStat(elements.dealsHeroStats, String(activeLeads.length), "сделок");
-
-        // Pipeline progress indicator — show status distribution
-        if (activeLeads.length > 0) {
-            const statusOrder = ["new", "researching", "bought", "sold"];
-            const statusLabels = { new: "Новые", researching: "В работе", bought: "Куплено", sold: "Продано" };
-            const pipeline = document.createElement("div");
-            pipeline.className = "pipeline-bar";
-            pipeline.setAttribute("role", "meter");
-            pipeline.setAttribute("aria-label", "Прогресс сделок");
-            for (const status of statusOrder) {
-                const count = activeLeads.filter((l) => l.status === status).length;
-                if (count > 0) {
-                    const seg = document.createElement("span");
-                    seg.className = `pipeline-seg pipeline-seg--${status}`;
-                    seg.style.width = `${(count / activeLeads.length) * 100}%`;
-                    seg.textContent = `${statusLabels[status] || status} ${count}`;
-                    pipeline.appendChild(seg);
-                }
-            }
-            elements.dealsHeroStats.appendChild(pipeline);
-        }
     }
 
     /* ===== Sort / Discount / Filter buttons ===== */
