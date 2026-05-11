@@ -64,6 +64,21 @@ def test_frontend_requests_and_ai_polling_have_jittered_retries() -> None:
     assert "Math.random()" in api_ai
 
 
+def test_pull_to_refresh_does_not_translate_app_root() -> None:
+    text = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    setup = text[text.index("function setupPullToRefresh"):text.index("/* ─── Pinch-zoom")]
+    assert "document.querySelector('.app')" not in setup
+    assert "target.style.transform" not in setup
+    assert "indicatorEl.style.transform" in setup
+
+
+def test_pinch_zoom_caches_viewport_size_for_gestures() -> None:
+    text = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    assert "let viewportSize = null" in text
+    assert "function ensureViewportSize()" in text
+    assert "const viewport = ensureViewportSize()" in text
+
+
 def test_node_syntax_check() -> None:
     for script in JS_MODULES:
         result = subprocess.run(["node", "--check", str(script)], capture_output=True, text=True)

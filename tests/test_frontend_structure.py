@@ -51,6 +51,7 @@ def test_html_loads_required_scripts(soup: BeautifulSoup) -> None:
     scripts = [script.get("src", "") for script in soup.find_all("script")]
     assert any("telegram-web-app.js" in script for script in scripts)
     assert any("app.js" in script for script in scripts)
+    assert any("virtual_list.js" in script for script in scripts)
     # Chart.js is now lazy-loaded by render_charts.js on first paint —
     # keep the loader file in the bundle but make sure no <script> tag
     # blocks the initial document on the chart library directly.
@@ -135,6 +136,33 @@ def test_css_defines_motion_tokens(css_text: str) -> None:
     assert "--t-base:" in css_text
     assert "--t-slow:" in css_text
     assert "--easing-standard:" in css_text
+
+
+def test_large_lists_do_not_use_noisy_live_regions(soup: BeautifulSoup) -> None:
+    for element_id in (
+        "listings-list",
+        "trackers-list",
+        "tracker-events-list",
+        "history-deals-list",
+    ):
+        element = soup.find(id=element_id)
+        assert element is not None
+        assert element.get("aria-live") is None
+
+
+def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
+    assert ".summary-refinement-chip" in css_text
+    assert ".empty-state-action" in css_text
+    assert ".list-pagination-button" in css_text
+    for selector in (
+        ".summary-refinement-chip",
+        ".empty-state-action",
+        ".list-pagination-button",
+    ):
+        start = css_text.index(selector)
+        block = css_text[start:css_text.index("}", start)]
+        assert "min-height: 44px" in block
+        assert "min-width: 44px" in block
 
 
 def test_service_worker_present_with_safe_strategies() -> None:

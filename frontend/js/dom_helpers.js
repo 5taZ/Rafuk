@@ -547,8 +547,6 @@ function setupPullToRefresh(options) {
     let pullDistance = 0;
     let refreshing = false;
 
-    const target = document.querySelector('.app') || document.documentElement;
-
     function setIndicatorState(stage, ratio = 0) {
         if (!indicatorEl) return;
         indicatorEl.dataset.stage = stage;
@@ -570,7 +568,6 @@ function setupPullToRefresh(options) {
 
     function reset() {
         pullDistance = 0;
-        target.style.transform = "";
         setIndicatorState("idle");
         dragging = false;
         decided = false;
@@ -621,7 +618,6 @@ function setupPullToRefresh(options) {
             if (!dragging) return;
             // Rubber-band so the pull feels like a finger-on-elastic.
             pullDistance = Math.min(maxPullPx, dy * 0.6);
-            target.style.transform = `translateY(${pullDistance}px)`;
             const ratio = pullDistance / thresholdPx;
             setIndicatorState(ratio >= 1 ? "ready" : "pulling", ratio);
     }
@@ -637,11 +633,8 @@ function setupPullToRefresh(options) {
         const committed = pullDistance >= thresholdPx;
         if (!committed) {
             // Spring back without firing.
-            target.style.transition = "transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)";
-            target.style.transform = "";
             setIndicatorState("idle");
             setTimeout(() => {
-                target.style.transition = "";
                 reset();
             }, 240);
             return;
@@ -655,16 +648,11 @@ function setupPullToRefresh(options) {
         }
         refreshing = true;
         setIndicatorState("refreshing");
-        target.style.transition = "transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)";
-        target.style.transform = `translateY(${thresholdPx}px)`;
 
         const handler = getRefreshHandler();
         const cleanup = () => {
-            target.style.transition = "transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)";
-            target.style.transform = "";
             setIndicatorState("idle");
             setTimeout(() => {
-                target.style.transition = "";
                 refreshing = false;
                 reset();
             }, 240);
@@ -744,6 +732,7 @@ function attachPinchZoom(img, options) {
 
     // Cached base rect (before transform) — computed lazily once
     let baseRect = null;
+    let viewportSize = null;
 
     // Active gesture type to prevent pinch→pan jump
     let activeGesture = null; // "pinch" | "pan" | null
@@ -758,6 +747,17 @@ function attachPinchZoom(img, options) {
         baseRect = img.getBoundingClientRect();
         img.style.transform = saved;
         return baseRect;
+    }
+
+    function ensureViewportSize() {
+        if (viewportSize) return viewportSize;
+        const parent = img.closest(".detail-sheet-content, .ai-modal-body")
+            || img.parentElement;
+        viewportSize = {
+            width: parent ? parent.clientWidth : window.innerWidth,
+            height: parent ? parent.clientHeight : window.innerHeight,
+        };
+        return viewportSize;
     }
 
     function apply() {
@@ -778,6 +778,7 @@ function attachPinchZoom(img, options) {
         ty = 0;
         activeGesture = null;
         baseRect = null; // Invalidate cached rect for next interaction
+        viewportSize = null;
         if (animate) {
             img.style.transition = "transform 220ms cubic-bezier(0.2,0.8,0.2,1)";
         } else {
@@ -804,13 +805,9 @@ function attachPinchZoom(img, options) {
             return;
         }
         const rect = ensureBaseRect();
-        // Use the scrollable parent (detail-sheet-content or ai-modal-body)
-        // as the viewport boundary instead of window, so clamping works
-        // correctly inside a modal.
-        const parent = img.closest(".detail-sheet-content, .ai-modal-body")
-            || img.parentElement;
-        const vw = parent ? parent.clientWidth : window.innerWidth;
-        const vh = parent ? parent.clientHeight : window.innerHeight;
+        const viewport = ensureViewportSize();
+        const vw = viewport.width;
+        const vh = viewport.height;
         const iw = rect.width * s;
         const ih = rect.height * s;
 
@@ -852,6 +849,7 @@ function attachPinchZoom(img, options) {
             e.preventDefault();
             activeGesture = "pinch";
             ensureBaseRect();
+            ensureViewportSize();
 
             pinchStartDist = dist(e.touches);
             pinchStartScale = s;
@@ -877,6 +875,7 @@ function attachPinchZoom(img, options) {
                     reset(true);
                 } else {
                     ensureBaseRect();
+                    ensureViewportSize();
                     // Zoom towards the tap point
                     const local = viewportToImage(t.clientX, t.clientY);
                     s = DOUBLE_TAP;
@@ -897,6 +896,7 @@ function attachPinchZoom(img, options) {
 
             if (s > 1.001) {
                 activeGesture = "pan";
+                ensureViewportSize();
                 panStartX = t.clientX;
                 panStartY = t.clientY;
                 panBaseTx = tx;
