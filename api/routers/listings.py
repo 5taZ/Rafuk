@@ -25,7 +25,7 @@ from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
-from api.services.listing_mapper import build_listing_item
+from api.services.listing_mapper import build_listing_item, compute_listing_sort_key
 from api.services.query_pipeline import load_query_dataset_context_with_fallback
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
@@ -188,16 +188,15 @@ async def get_listings(
         market_stats=reference_dataset.price_stats,
         category_price_stats=category_price_stats,
     )
-    cluster_cache = precompute_cluster_stats(sorted_ads[:_MAX_LISTINGS_PAGE])
+    capped_ads = sorted_ads[:_MAX_LISTINGS_PAGE]
+    cluster_cache = precompute_cluster_stats(capped_ads)
     # Build ListingItem only for the slice the client is going to
     # actually render — saves several ms per skipped ad on big
     # result sets, since build_listing_item normalises params,
     # computes deal_score, fetches flip_estimates, etc.
     #
-    # For sorts where the order changes after build_listing_item
-    # (cheap / deal_score depend on item.deal_score which is
-    # computed inside build_listing_item), we still need to build
-    # the full result-set first, sort, then slice.
+    # For computed sorts, rank raw ads with the same deal-score inputs
+    # before slicing so off-page cards don't pay the full ListingItem cost.
     page_capped_total = min(len(sorted_ads), _MAX_LISTINGS_PAGE)
 
     # BE-H7: build_listing_item touches a lot of subsystems
@@ -230,16 +229,31 @@ async def get_listings(
             return None
 
     if sort in {"cheap", "deal_score"}:
-        built = (_safe_build(ad) for ad in sorted_ads[:_MAX_LISTINGS_PAGE])
-        listings = [item for item in built if item is not None]
-        listings.sort(
-            key=lambda item: (
-                -float(item.deal_score or 0.0),
-                float(item.price_vs_median or 0.0),
-                item.title,
-            )
+        ranked_ads: list[tuple[tuple[float, float, str], dict[str, Any]]] = []
+        for ad in capped_ads:
+            try:
+                ranked_ads.append((
+                    compute_listing_sort_key(
+                        ad,
+                        query=query,
+                        market_stats=reference_dataset.price_stats,
+                        category_price_stats=category_price_stats,
+                        cluster_cache=cluster_cache,
+                    ),
+                    ad,
+                ))
+            except Exception as exc:  # noqa: BLE001 — graceful per-ad degrade
+                logger.warning(
+                    "listings: failed to rank item for ad_id=%s (%s: %s); skipping",
+                    ad.get("ad_id"), type(exc).__name__, exc,
+                    exc_info=True,
+                )
+        ranked_ads.sort(key=lambda item: item[0])
+        built = (
+            _safe_build(ad)
+            for _, ad in ranked_ads[offset : offset + limit]
         )
-        listings = listings[offset : offset + limit]
+        listings = [item for item in built if item is not None]
     else:
         # newest / nearest_to_median etc. — sort_listings already
         # ordered the underlying ads, so we can slice before

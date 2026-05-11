@@ -544,6 +544,65 @@ def test_listings_pagination_returns_first_page_only(monkeypatch) -> None:
     assert page1_ids.isdisjoint(page2_ids)
 
 
+def test_listings_computed_sort_builds_only_requested_page(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    big_ads = [
+        {
+            "ad_id": 3000 + i,
+            "subject": f"iPhone 15 {i}",
+            "price_byn": 1500 + i * 10,
+            "ad_link": f"https://www.kufar.by/item/{3000 + i}",
+            "list_time": f"2026-04-01T{i % 24:02d}:00:00",
+            "region_id": 6,
+            "category": "1000",
+            "ad_parameters": [
+                {"p": "condition", "v": "Б/у"},
+                {"p": "category", "v": "1000", "vl": "Телефоны"},
+            ],
+        }
+        for i in range(80)
+    ]
+
+    class _BigClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            return {"total": len(big_ads), "ads": big_ads}
+
+        async def aclose(self) -> None:
+            return None
+
+    build_calls = 0
+    original_build_listing_item = listings.build_listing_item
+
+    def _counting_build_listing_item(*args, **kwargs):
+        nonlocal build_calls
+        build_calls += 1
+        return original_build_listing_item(*args, **kwargs)
+
+    monkeypatch.setattr(listings, "KufarClient", _BigClient)
+    monkeypatch.setattr(listings, "build_listing_item", _counting_build_listing_item)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: _BigClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "sort": "deal_score", "limit": 10, "offset": 20},
+        )
+
+    assert response.status_code == 200
+    assert len(response.json()["listings"]) == 10
+    assert build_calls == 10
+
+
 def test_listings_pagination_signals_no_more_on_last_page(monkeypatch) -> None:
     """When ``offset + returned >= cap``, ``has_more`` flips to False
     so the frontend's IntersectionObserver stops asking for more.

@@ -203,6 +203,60 @@ def build_listing_detail(
     )
 
 
+def compute_listing_sort_key(
+    ad: dict[str, Any],
+    *,
+    query: str,
+    market_stats: PriceStats,
+    category_price_stats: dict[int, PriceStats] | None = None,
+    cluster_cache: dict[int, PriceStats | None] | None = None,
+) -> tuple[float, float, str]:
+    raw_price_byn = normalize_price_byn(ad.get("price_byn"), ad)
+    price_type = (
+        detect_price_type(ad) if raw_price_byn is None or raw_price_byn == 0.0 else "fixed"
+    )
+    reference = resolve_price_reference(ad, market_stats, category_price_stats)
+    price_delta = 0.0
+    cluster_applied = False
+    cluster_stats: PriceStats | None = None
+    try:
+        ad_id = int(ad.get("ad_id", 0))
+    except (TypeError, ValueError):
+        ad_id = 0
+    if cluster_cache is not None:
+        cluster_stats = cluster_cache.get(ad_id)
+    if cluster_stats is not None:
+        cluster_delta = compute_price_vs_median(ad, cluster_stats.median)
+        reference_delta = compute_price_vs_reference(
+            ad, market_stats, category_price_stats,
+        )
+        price_spread = (
+            (cluster_stats.q3 - cluster_stats.q1) / cluster_stats.median
+            if cluster_stats.median > 0 else 0.0
+        )
+        if abs(cluster_delta - reference_delta) <= 25 and price_spread <= 0.5:
+            price_delta = cluster_delta
+            cluster_applied = True
+        else:
+            price_delta = reference_delta
+    if not cluster_applied:
+        price_delta = compute_price_vs_reference(
+            ad, market_stats, category_price_stats,
+        )
+    active_reference = cluster_stats if cluster_applied else reference.stats
+    price_delta_for_sort: float | None = None if price_type == "negotiable" else price_delta
+    deal_score = compute_deal_score(
+        ad,
+        query=query,
+        market_stats=active_reference,
+    )
+    return (
+        -float(deal_score.score or 0.0),
+        float(price_delta_for_sort or 0.0),
+        str(ad.get("subject", "")),
+    )
+
+
 def build_listing_item(
     ad: dict[str, Any],
     *,
