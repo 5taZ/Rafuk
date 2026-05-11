@@ -142,16 +142,19 @@ async def analyze_listing(
     cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
     cached = await cache.get_json(cache_key)
     if cached:
-        await _log_ai_audit(
-            request.app.state.session_factory,
-            telegram_user_id=_user.user_id,
-            endpoint="analyze",
-            ad_id=str(payload.ad_id),
-            query=payload.query,
-            model=get_settings().ai_model,
-            cached=True,
-        )
-        return {"task_id": None, "cached": True, "result": cached}
+        if isinstance(cached, dict) and cached.get("_ai_warning"):
+            await cache.delete(cache_key)
+        else:
+            await _log_ai_audit(
+                request.app.state.session_factory,
+                telegram_user_id=_user.user_id,
+                endpoint="analyze",
+                ad_id=str(payload.ad_id),
+                query=payload.query,
+                model=get_settings().ai_model,
+                cached=True,
+            )
+            return {"task_id": None, "cached": True, "result": cached}
 
     await _check_rate_limit(request, _user.user_id, endpoint="analyze")
 
@@ -183,7 +186,9 @@ async def analyze_listing(
 
     try:
         _spawn_bg_task(
-            _run_analysis(task_id, payload, settings, cache, kufar_client, user_id=_user.user_id),
+            _run_analysis(
+                task_id, payload, settings, cache, kufar_client, user_id=_user.user_id,
+            ),
             name=f"ai-analysis-{task_id[:8]}",
         )
     except RuntimeError:

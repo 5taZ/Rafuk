@@ -43,6 +43,7 @@ from api.services.ai_service import (
     CATEGORY_HINTS,
     detect_category,
     normalize_condition_label,
+    sanitize_user_text,
 )
 from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.query_pipeline import load_query_dataset
@@ -88,9 +89,15 @@ def _coerce_pricing(
     raw: Any, *, market_anchors: dict[str, float | int | None]
 ) -> AIListingPricing:
     pricing = AIListingPricing(
-        market_median_byn=float(market_anchors["median"]) if market_anchors.get("median") is not None else None,
-        market_q1_byn=float(market_anchors["q1"]) if market_anchors.get("q1") is not None else None,
-        market_q3_byn=float(market_anchors["q3"]) if market_anchors.get("q3") is not None else None,
+        market_median_byn=(
+            float(market_anchors["median"]) if market_anchors.get("median") is not None else None
+        ),
+        market_q1_byn=(
+            float(market_anchors["q1"]) if market_anchors.get("q1") is not None else None
+        ),
+        market_q3_byn=(
+            float(market_anchors["q3"]) if market_anchors.get("q3") is not None else None
+        ),
         competing_count=int(market_anchors.get("count") or 0),
     )
     if not isinstance(raw, dict):
@@ -293,6 +300,138 @@ def _first_image_url(ad: dict[str, Any]) -> str | None:
     return None
 
 
+def _build_listing_fallback_response(
+    *,
+    payload: AIListingAssistantRequest,
+    title: str,
+    market_anchors: dict[str, float | int | None],
+    competitors: list[dict[str, Any]],
+) -> AIListingAssistantResponse:
+    safe_title = sanitize_user_text(title, max_length=160) or title[:160]
+    safe_condition = (
+        sanitize_user_text(payload.condition, max_length=64) if payload.condition else ""
+    )
+    safe_notes = (
+        sanitize_user_text(payload.extra_notes, max_length=320) if payload.extra_notes else ""
+    )
+    median = _coerce_price(market_anchors.get("median"))
+    q1 = _coerce_price(market_anchors.get("q1"))
+    q3 = _coerce_price(market_anchors.get("q3"))
+    count = int(market_anchors.get("count") or 0)
+    draft = _coerce_price(payload.draft_price_byn)
+    anchor = median or draft
+
+    pricing = AIListingPricing(
+        market_median_byn=median,
+        market_q1_byn=q1,
+        market_q3_byn=q3,
+        competing_count=count,
+    )
+    if anchor:
+        fast = q1 or round(anchor * 0.92, 2)
+        market = median or anchor
+        patient = q3 or round(anchor * 1.08, 2)
+        pricing.fast = AIListingPriceTier(
+            label="Быстро",
+            price_byn=fast,
+            weeks_to_sell="быстрее рынка",
+            reasoning="Ниже основного ориентира, чтобы быстрее получить отклики.",
+        )
+        pricing.market = AIListingPriceTier(
+            label="Рынок",
+            price_byn=market,
+            weeks_to_sell="средний темп",
+            reasoning="Базовый ориентир по текущей выборке Kufar.",
+        )
+        pricing.patient = AIListingPriceTier(
+            label="Терпеливо",
+            price_byn=patient,
+            weeks_to_sell="дольше",
+            reasoning="Верхний ориентир, если состояние и комплект сильные.",
+        )
+        pricing.floor_byn = round(fast * 0.90, 2)
+
+    description_bits = [f"Продаю {safe_title}."]
+    if safe_condition:
+        description_bits.append(f"Состояние: {safe_condition}.")
+    if safe_notes:
+        description_bits.append(safe_notes.rstrip(".") + ".")
+    description_bits.append(
+        "Перед продажей можно уточнить комплект, состояние и удобное время встречи."
+    )
+    if payload.is_negotiable:
+        description_bits.append("Разумный торг обсуждается при осмотре.")
+
+    selling_points = ["Актуальное состояние и комплект лучше показать на фото"]
+    if count:
+        selling_points.append(f"Цена сверена с {count} похожими объявлениями Kufar")
+    if safe_condition:
+        selling_points.append(f"Состояние: {safe_condition}")
+    if payload.is_negotiable:
+        selling_points.append("Можно заранее обозначить границы торга")
+
+    fallback_competitors = []
+    for item in competitors[:4]:
+        price = _coerce_price(item.get("price_byn"))
+        if price is None:
+            continue
+        fallback_competitors.append(AIListingCompetitor(
+            title=str(item.get("title") or "")[:120],
+            price_byn=price,
+            advantage="Ориентир для сравнения цены",
+            image_url=item.get("image_url"),
+            link=str(item.get("link") or ""),
+        ))
+
+    if count and median:
+        market_summary = (
+            "AI-сервис сейчас недоступен, поэтому показан рыночный черновик "
+            f"по данным Kufar: {count} похожих объявлений, медианный ориентир "
+            f"около {round(median)} BYN."
+        )
+    elif draft:
+        market_summary = (
+            "AI-сервис сейчас недоступен, поэтому показан базовый черновик от вашей цены. "
+            "Уточните название или категорию, чтобы получить больше рыночных аналогов."
+        )
+    else:
+        market_summary = (
+            "AI-сервис сейчас недоступен, поэтому показан базовый черновик. "
+            "Добавьте цену, состояние или больше характеристик для точнее ориентира."
+        )
+
+    playbook = []
+    if pricing.floor_byn:
+        playbook.append(AINegotiationCounter(
+            scenario="Покупатель предлагает сильно ниже ориентира",
+            response=(
+                f"Готов обсудить торг, но ниже {round(pricing.floor_byn)} BYN "
+                "не планирую — цена сверена с рынком."
+            ),
+        ))
+    elif payload.is_negotiable:
+        playbook.append(AINegotiationCounter(
+            scenario="Покупатель просит скидку",
+            response="Можем обсудить разумный торг после осмотра и понимания условий сделки.",
+        ))
+
+    return AIListingAssistantResponse(
+        title_suggestion=safe_title[:200],
+        description=" ".join(description_bits)[:2000],
+        description_short=f"{safe_title}. Состояние и комплект уточню в сообщениях."[:400],
+        selling_points=selling_points[:6],
+        pricing=pricing,
+        negotiation_playbook=playbook,
+        photo_tips=[
+            "Сделайте общий кадр при хорошем дневном свете",
+            "Покажите крупно состояние, комплект и возможные следы использования",
+            "Добавьте фото серийника или маркировки, если это безопасно",
+        ],
+        competitors=fallback_competitors,
+        market_summary=market_summary[:600],
+    )
+
+
 # ── Endpoint ──────────────────────────────────────────────────────────────
 
 
@@ -428,12 +567,13 @@ async def listing_assistant(
             timeout=timeout_s,
         )
     except (TimeoutError, *_AI_ANALYSIS_ERRORS) as exc:
-        logger.error("Listing assistant failed: %s", exc)
-        err_msg = "AI сервис недоступен"
-        text = str(exc)
-        if "429" in text or "RESOURCE_EXHAUSTED" in text:
-            err_msg = "Лимит AI-анализов исчерпан. Попробуйте через минуту."
-        raise HTTPException(status_code=502, detail=err_msg) from None
+        logger.warning("Listing assistant AI failed, returning market fallback: %s", exc)
+        return _build_listing_fallback_response(
+            payload=payload,
+            title=title,
+            market_anchors=market_anchors,
+            competitors=competitors,
+        )
 
     raw_pricing = ai_result.get("pricing") if isinstance(ai_result.get("pricing"), dict) else {}
     normalised_pricing = normalize_listing_pricing(

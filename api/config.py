@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     # AI Analysis (Together API — OpenAI-compatible)
     ai_api_key: SecretStr | None = None
     ai_base_url: str = "https://api.together.xyz/v1"
-    ai_model: str = "gemini-3-flash"
+    ai_model: str = "gemini-2.5-flash"
     ai_max_images: int = 3
     ai_cache_hours: int = 1
     ai_hourly_limit: int = 10
@@ -162,6 +162,8 @@ class Settings(BaseSettings):
     ai_analysis_timeout: int = 150
     ai_quick_condition_timeout: int = 45
     ai_photo_precheck_timeout: int = 30
+    ai_photo_precheck_enabled: bool = False
+    ai_chat_min_interval_seconds: float = 12.0
     ai_task_ttl: int = 3600
     ai_export_ttl: int = 900
     ai_fallback_cache_ttl: int = 1800

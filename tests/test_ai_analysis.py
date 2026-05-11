@@ -462,7 +462,7 @@ def test_stage_extract_classifies_three_price_states_correctly() -> None:
     from api.services.aggregator import PriceStats
     from api.services.ai_analysis_pipeline import _AC, _stage_extract
 
-    def _make_ctx(ad: dict) -> "_AC":
+    def _make_ctx(ad: dict) -> _AC:
         c = _AC()
         c.target_ad = ad
         c.payload = SimpleNamespace(ad_id=int(ad.get("ad_id", 1)), query="x", category=None)
@@ -497,6 +497,32 @@ def test_stage_extract_classifies_three_price_states_correctly() -> None:
     assert c.is_negotiable_price is False
     assert c.is_free_price is False
     assert c.price_byn == 1500.0  # 150000 kopecks -> 1500 BYN
+
+
+@pytest.mark.asyncio
+async def test_stage_photo_skips_optional_precheck_when_disabled() -> None:
+    from api.services.ai_analysis_pipeline import _AC, _stage_photo
+    from api.services.cache import MemoryCache
+
+    class FailingQuickAI:
+        async def quick_condition(self, image_urls):
+            del image_urls
+            raise AssertionError("photo precheck should be skipped")
+
+    c = _AC()
+    c.cache = MemoryCache()
+    c.task_id = "skip-photo-precheck"
+    c.user_id = 123
+    c.images = ["https://rms.kufar.by/v1/gallery/test.jpg"]
+    c.ai = FailingQuickAI()
+    c.photo_precheck_enabled = False
+    c.photo_condition_label = ""
+    c.photo_condition_notes = []
+
+    await _stage_photo(c)
+
+    assert c.photo_condition_label == ""
+    assert c.photo_condition_notes == []
 
 
 def test_ai_guardrails_clamp_outlier_price_for_negotiable_financing_bait(monkeypatch) -> None:
@@ -1220,6 +1246,86 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
     # Competitor list is built from dataset ads.
     assert call["similar_listings"]
     assert call["similar_listings"][0]["price_byn"] == 2500.0
+
+
+def test_listing_assistant_returns_market_fallback_when_ai_fails(monkeypatch) -> None:
+    import api.routers.ai_listing_assistant as _la
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            ads=[
+                {
+                    "ad_id": 501,
+                    "subject": "Volkswagen Polo 2012",
+                    "price_byn": 1850000,
+                    "ad_link": "https://www.kufar.by/item/501",
+                    "ad_parameters": [{"p": "condition", "v": "Б/у"}],
+                },
+            ],
+            price_stats=SimpleNamespace(
+                median=18500.0,
+                count=8,
+                q1=17000.0,
+                q3=19900.0,
+                min=16000.0,
+                max=22000.0,
+            ),
+        )
+
+    class FailingAI:
+        available = True
+
+        async def generate_listing(self, **kwargs):
+            del kwargs
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(_la, "_check_ai_available", lambda: FailingAI())
+    monkeypatch.setattr(_la, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={
+                "title": "Volkswagen Polo",
+                "draft_price_byn": 19000,
+                "condition": "Хорошее",
+                "is_negotiable": True,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "AI-сервис сейчас недоступен" in payload["market_summary"]
+    assert payload["title_suggestion"] == "Volkswagen Polo"
+    assert payload["description"]
+    assert payload["pricing"]["market_median_byn"] == 18500.0
+    assert payload["pricing"]["fast"]["price_byn"] == 17000.0
+    assert payload["pricing"]["market"]["price_byn"] == 18500.0
+    assert payload["pricing"]["patient"]["price_byn"] == 19900.0
+    assert payload["negotiation_playbook"]
+    assert payload["competitors"]
+
+
+def test_analysis_fallback_warning_is_rate_limit_aware() -> None:
+    from api.services.ai_analysis_pipeline import (
+        _analysis_fallback_cache_ttl,
+        _analysis_fallback_warning,
+    )
+
+    rate_limited = RuntimeError("429 RATE_LIMITED")
+    generic = RuntimeError("provider unavailable")
+
+    assert "AI сейчас на лимите" in (_analysis_fallback_warning(rate_limited) or "")
+    assert _analysis_fallback_cache_ttl(1800, rate_limited) == 60
+    assert _analysis_fallback_warning(generic) == (
+        "AI не ответил. Показан рыночный черновик по данным рынка."
+    )
 
 
 def test_listing_assistant_passes_photos_to_ai_and_drops_invalid_ones(monkeypatch) -> None:

@@ -177,6 +177,10 @@ def _build_ai_service(monkeypatch) -> AIService:
     svc._proxy_url = None
     svc._httpx_client = None
     svc._client_lock = asyncio.Lock()
+    svc._chat_min_interval_seconds = 0.0
+    svc._chat_lock = None
+    svc._chat_lock_loop = None
+    svc._last_chat_started_at = 0.0
     svc._cb_state = "closed"
     svc._cb_consecutive_errors = 0
     svc._cb_open_until = 0.0
@@ -276,6 +280,93 @@ async def test_post_with_retry_does_not_retry_on_402_billing(monkeypatch) -> Non
             )
     # 402 isn't in the retry set — exactly one call should have gone out.
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_spaces_provider_starts_without_serializing_http(monkeypatch) -> None:
+    svc = _build_ai_service(monkeypatch)
+    svc._chat_min_interval_seconds = 5.0
+    real_sleep = asyncio.sleep
+    sleeps: list[float] = []
+    posts = 0
+    post_entered = asyncio.Event()
+    release_posts = asyncio.Event()
+
+    async def tracking_sleep(delay):
+        sleeps.append(delay)
+        await real_sleep(0)
+
+    async def fake_client():
+        return object()
+
+    async def fake_post_with_retry(*args, **kwargs):
+        nonlocal posts
+        del args, kwargs
+        posts += 1
+        if posts == 2:
+            post_entered.set()
+        await release_posts.wait()
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"summary":"ok"}'}}]},
+        )
+
+    monkeypatch.setattr("api.services.ai_service.asyncio.sleep", tracking_sleep)
+    monkeypatch.setattr(svc, "_get_client", fake_client)
+    monkeypatch.setattr(svc, "_post_with_retry", fake_post_with_retry)
+
+    tasks = [
+        asyncio.create_task(svc._chat(system="s", content="a")),
+        asyncio.create_task(svc._chat(system="s", content="b")),
+    ]
+    try:
+        await asyncio.wait_for(post_entered.wait(), timeout=1.0)
+    finally:
+        release_posts.set()
+    await asyncio.gather(
+        *tasks,
+    )
+
+    assert posts == 2
+    assert any(delay >= 4.9 for delay in sleeps)
+
+
+@pytest.mark.asyncio
+async def test_multimodal_rate_limit_retries_text_only(monkeypatch) -> None:
+    svc = _build_ai_service(monkeypatch)
+    calls: list[list[dict] | str] = []
+
+    async def fake_fetch_image_b64(_url):
+        return {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AA=="}}
+
+    async def fake_chat(*, system, content, max_tokens, reasoning_effort=None):
+        del system, max_tokens, reasoning_effort
+        calls.append(content)
+        if len(calls) <= 2:
+            raise RuntimeError("429 RATE_LIMITED")
+        return {"summary": "ok"} if len(calls) == 3 else {"condition": {"label": "Хорошее"}}
+
+    monkeypatch.setattr(svc, "_fetch_image_b64", fake_fetch_image_b64)
+    monkeypatch.setattr(svc, "_chat", fake_chat)
+
+    result = await svc.analyze_listing_parallel(
+        title="iPhone 13 128GB",
+        description="состояние хорошее, оригинал",
+        price_byn=1500.0,
+        condition="Б/у",
+        parameters=[],
+        market_median=1600.0,
+        market_count=10,
+        image_urls=["https://rms.kufar.by/v1/gallery/test.jpg"],
+    )
+
+    assert len(calls) == 4
+    assert isinstance(calls[0], list)
+    assert isinstance(calls[1], list)
+    assert isinstance(calls[2], str)
+    assert isinstance(calls[3], str)
+    assert result["summary"] == "ok"
+    assert result["condition"]["label"] == "Хорошее"
 
 
 # ──────────────────────────────────────────────────────────────────────

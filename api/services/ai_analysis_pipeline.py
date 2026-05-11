@@ -300,15 +300,13 @@ def _get_pipeline_search_semaphore() -> asyncio.Semaphore:
 # same instant. The two layers are complementary:
 #   - _BG_TASK_LIMIT prevents abusive request rates from piling up
 #     half-finished tasks and growing memory without bound;
-#   - _ANALYSIS_RUN_LIMIT prevents N>1 simultaneous tasks from
-#     hammering the AI provider (the listing analysis makes up to
-#     2 parallel calls per task, so 4 concurrent analyses is already
-#     8 in-flight Gemini requests).
+#   - _ANALYSIS_RUN_LIMIT keeps Gemini/proxy quotas from turning one
+#     user-visible analyse action into a burst of provider calls.
 #
 # Lazily bound to the running loop so test runs that create fresh
 # loops don't inherit the previous loop's semaphore (TEST-05 covers
 # the loop-bound bug class).
-_ANALYSIS_RUN_LIMIT = 4
+_ANALYSIS_RUN_LIMIT = 1
 _analysis_run_semaphore: asyncio.Semaphore | None = None
 _analysis_run_semaphore_loop: asyncio.AbstractEventLoop | None = None
 
@@ -355,6 +353,7 @@ def _init_analysis_state(
     c.ai = get_ai_service()
     c.analysis_timeout = getattr(settings, "ai_analysis_timeout", 150)
     c.photo_precheck_timeout = getattr(settings, "ai_photo_precheck_timeout", 30)
+    c.photo_precheck_enabled = bool(getattr(settings, "ai_photo_precheck_enabled", False))
     c.fallback_cache_ttl = getattr(settings, "ai_fallback_cache_ttl", 1800)
     # Defaults assume "negotiable" (price unknown) — the safer fallback if
     # the extract stage never runs (e.g. early failure). Free items must
@@ -387,11 +386,8 @@ async def _analysis_fallback(c: _AC, exc: BaseException | None = None) -> None:
             "AI async task %s failed: [%s] %s",
             c.task_id, type(exc).__name__, exc,
         )
-    warning = (
-        "AI-сервис временно недоступен. Показан упрощённый анализ."
-        if exc is not None and not isinstance(exc, TimeoutError)
-        else None
-    )
+    warning = _analysis_fallback_warning(exc)
+    fallback_cache_ttl = _analysis_fallback_cache_ttl(c.fallback_cache_ttl, exc)
     await _deliver_fallback_result(
         c.cache, c.task_id, user_id=c.user_id,
         payload=c.payload,
@@ -407,7 +403,7 @@ async def _analysis_fallback(c: _AC, exc: BaseException | None = None) -> None:
         photo_condition_notes=c.photo_condition_notes,
         title=c.title,
         parameters=c.parameters,
-        fallback_cache_ttl=c.fallback_cache_ttl,
+        fallback_cache_ttl=fallback_cache_ttl,
         warning=warning,
     )
     if exc is not None and not isinstance(exc, TimeoutError):
@@ -415,6 +411,28 @@ async def _analysis_fallback(c: _AC, exc: BaseException | None = None) -> None:
             "AI task %s: fallback result delivered (error: %s) for ad_id=%d",
             c.task_id, type(exc).__name__, c.payload.ad_id,
         )
+
+
+def _is_ai_rate_limit_error(exc: BaseException | None) -> bool:
+    text = str(exc or "").upper()
+    return "429" in text or "RATE_LIMIT" in text or "RESOURCE_EXHAUSTED" in text
+
+
+def _analysis_fallback_warning(exc: BaseException | None) -> str | None:
+    if exc is None or isinstance(exc, TimeoutError):
+        return None
+    if _is_ai_rate_limit_error(exc):
+        return (
+            "AI сейчас на лимите. Показан рыночный черновик по данным рынка — "
+            "полный анализ можно повторить чуть позже."
+        )
+    return "AI не ответил. Показан рыночный черновик по данным рынка."
+
+
+def _analysis_fallback_cache_ttl(default_ttl: int, exc: BaseException | None) -> int:
+    if _is_ai_rate_limit_error(exc):
+        return min(int(default_ttl or 1800), 60)
+    return int(default_ttl or 1800)
 
 
 async def _stage_search(c: _AC) -> None:
@@ -657,7 +675,7 @@ def _stage_scoring(c: _AC) -> None:
 
 async def _stage_photo(c: _AC) -> None:
     """AI photo condition precheck."""
-    if c.images:
+    if c.images and getattr(c, "photo_precheck_enabled", True):
         await _update_task(
             c.cache, c.task_id, user_id=c.user_id,
             progress=40, stage="photo_precheck",

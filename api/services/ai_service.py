@@ -3,7 +3,7 @@
 Configure via .env:
   AI_API_KEY=<key>
   AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
-  AI_MODEL=gemini-3-flash
+  AI_MODEL=gemini-2.5-flash
 
 Wave 18 (BE-C5 follow-up) — this module used to be ~1700 lines with
 most of the volume taken up by inline Russian prompt text and
@@ -130,6 +130,11 @@ def _parse_retry_after(value: str | None) -> float | None:
     if delta < 0 or delta > 600:
         return None
     return delta
+
+
+def _is_rate_limit_exception(exc: BaseException) -> bool:
+    text = str(exc).upper()
+    return "429" in text or "RATE_LIMIT" in text or "RESOURCE_EXHAUSTED" in text
 
 
 def _entry_price_guidance(
@@ -275,11 +280,17 @@ class AIService:
         settings = get_settings()
         self._api_key = settings.ai_api_key
         self._base_url = (settings.ai_base_url or "https://api.together.xyz/v1").rstrip("/")
-        self._model = settings.ai_model or "gemini-3-flash"
+        self._model = settings.ai_model or "gemini-2.5-flash"
         self._max_images = settings.ai_max_images
         self._proxy_url = settings.ai_proxy_url
+        self._chat_min_interval_seconds = max(
+            0.0, float(getattr(settings, "ai_chat_min_interval_seconds", 12.0) or 0.0)
+        )
         self._httpx_client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
+        self._chat_lock: asyncio.Lock | None = None
+        self._chat_lock_loop: asyncio.AbstractEventLoop | None = None
+        self._last_chat_started_at = 0.0
         # SEC-05: simple per-process circuit breaker. State lives on
         # the singleton AIService instance (returned by get_ai_service).
         # _cb_state ∈ {"closed", "open", "half_open"}.
@@ -328,6 +339,14 @@ class AIService:
         """
         model = self._model.lower()
         return model.startswith(("google/gemma-", "google/gemma_")) or "gemma-3n" in model
+
+    def _get_chat_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._chat_lock is None or self._chat_lock_loop is not loop:
+            self._chat_lock = asyncio.Lock()
+            self._chat_lock_loop = loop
+            self._last_chat_started_at = 0.0
+        return self._chat_lock
 
     async def _cb_check_and_acquire(self) -> None:
         """Raise RuntimeError if the breaker is open; allow probe in half-open.
@@ -536,6 +555,18 @@ class AIService:
             "yes" if self._proxy_url else "no",
             len(content) if isinstance(content, list) else 1,
         )
+        async with self._get_chat_lock():
+            if self._chat_min_interval_seconds > 0:
+                loop = asyncio.get_running_loop()
+                wait_s = (
+                    self._last_chat_started_at
+                    + self._chat_min_interval_seconds
+                    - loop.time()
+                )
+                if wait_s > 0:
+                    logger.info("AI _chat throttle: sleeping %.1fs before provider call", wait_s)
+                    await asyncio.sleep(wait_s)
+                self._last_chat_started_at = loop.time()
         resp = await self._post_with_retry(
             client,
             f"{self._base_url}/chat/completions",
@@ -722,20 +753,32 @@ class AIService:
         # coroutine waits, Call A's HTTP request is already in flight.
         # `asyncio.gather` creates tasks for both coroutines under the
         # hood; we don't need a separate `create_task` wrapper.
-        async def _call_a():
-            return await self._chat(system=system_a, content=call_content, max_tokens=3200)
+        async def _run_subcalls(content: list[dict] | str):
+            async def _call_a():
+                return await self._chat(system=system_a, content=content, max_tokens=3200)
 
-        async def _call_b():
-            # Stagger to avoid Together AI rate-limit (429) on concurrent
-            # requests. asyncio.sleep yields to the event loop, so Call A
-            # progresses while we're holding here.
-            await asyncio.sleep(1.0)
-            # Call B includes scam_analysis + photo_authenticity — needs more tokens
-            return await self._chat(system=system_b, content=call_content, max_tokens=4000)
+            async def _call_b():
+                # Stagger to avoid Together AI rate-limit (429) on concurrent
+                # requests. asyncio.sleep yields to the event loop, so Call A
+                # progresses while we're holding here.
+                await asyncio.sleep(1.0)
+                # Call B includes scam_analysis + photo_authenticity — needs more tokens
+                return await self._chat(system=system_b, content=content, max_tokens=4000)
+
+            return await asyncio.gather(_call_a(), _call_b(), return_exceptions=True)
 
         logger.warning("AI analyze_listing_parallel: starting staggered sub-calls")
         # Use return_exceptions so one failure doesn't kill the other
-        results = await asyncio.gather(_call_a(), _call_b(), return_exceptions=True)
+        results = await _run_subcalls(call_content)
+        if (
+            image_content
+            and isinstance(results[0], Exception)
+            and isinstance(results[1], Exception)
+            and _is_rate_limit_exception(results[0])
+            and _is_rate_limit_exception(results[1])
+        ):
+            logger.warning("AI multimodal analyse rate-limited; retrying text-only")
+            results = await _run_subcalls(context)
 
         result_a = results[0] if not isinstance(results[0], Exception) else {}
         result_b = results[1] if not isinstance(results[1], Exception) else {}
