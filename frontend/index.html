@@ -8,12 +8,9 @@
         external (<script src=...>), no inline handlers in HTML, so the
         allowlist is enough. Reintroducing 'unsafe-inline' would undo
         the XSS protection the policy exists for.
-      * style-src still carries 'unsafe-inline' because the app mutates
-        element style via `el.style.X = y` in 80+ sites. Migrating
-        those to classList/CSS-variables is tracked as a separate
-        cleanup; until then, allowing inline styles is the pragmatic
-        choice (inline styles can't execute script, so the exposure is
-        much smaller than inline script).
+      * style-src does NOT include 'unsafe-inline'. The app shell has
+        no inline <style> blocks or style="" attributes, so stylesheets
+        can stay on the explicit self/fonts allowlist.
       * cdn.jsdelivr.net is permitted only to lazy-load Chart.js (with
         an SRI hash in render_charts.js).
       * frame-ancestors locks us to web.telegram.org / webk.telegram.org
@@ -28,7 +25,7 @@
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self';
                    script-src 'self' https://telegram.org https://cdn.jsdelivr.net 'sha256-ieoeWczDHkReVBsRBqaal5AFMlBtNjMzgwKvLqi/tSU=';
-                   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                   style-src 'self' https://fonts.googleapis.com;
                    font-src 'self' https://fonts.gstatic.com;
                    connect-src 'self' https://cdn.jsdelivr.net;
                    img-src 'self' https://rms.kufar.by https://*.kufar.by data:;
@@ -40,8 +37,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260511-b713131">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260511-b713131">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260511-0f9edf0">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260511-0f9edf0">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
@@ -69,8 +66,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20260511-b713131">
-    <link rel="stylesheet" href="css/style.css?v=20260511-b713131">
+    <link rel="preload" as="style" href="css/style.css?v=20260511-0f9edf0">
+    <link rel="stylesheet" href="css/style.css?v=20260511-0f9edf0">
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -87,14 +84,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20260511-b713131"
+            src="vendor/telegram-web-app.js?v=20260511-0f9edf0"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers. -->
-    <script defer src="js/app_bundle.js?v=20260511-b713131"></script>
+    <script defer src="js/app_bundle.js?v=20260511-0f9edf0"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -119,7 +116,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20260511-b713131" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260511-0f9edf0" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">

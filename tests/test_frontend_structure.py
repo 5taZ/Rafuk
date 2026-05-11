@@ -65,6 +65,27 @@ def test_html_loads_required_scripts(soup: BeautifulSoup) -> None:
     ), "Chart.js must be lazy-loaded, not preloaded by <script> tag"
 
 
+def test_frontend_csp_does_not_allow_inline_styles() -> None:
+    index_text = HTML_FILE.read_text(encoding="utf-8")
+    offline_text = (FRONTEND / "offline.html").read_text(encoding="utf-8")
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    ai_export = Path("api/services/ai_export.py").read_text(encoding="utf-8")
+    combined = "\n".join([index_text, offline_text, nginx_conf, ai_export])
+    assert "style-src 'unsafe-inline'" not in combined
+    assert "style-src 'self' https://fonts.googleapis.com" in index_text
+    assert "style-src 'self' https://fonts.googleapis.com" in nginx_conf
+    assert "style-src 'none'" in ai_export
+    assert "<style" not in offline_text
+    assert 'href="/offline.css"' in offline_text
+
+
+def test_service_worker_precaches_offline_stylesheet() -> None:
+    sw = (FRONTEND / "sw.js").read_text(encoding="utf-8")
+    assert '"/offline.css"' in sw
+    assert "OFFLINE_FALLBACK_ASSETS" in sw
+    assert "cache.addAll(OFFLINE_FALLBACK_ASSETS)" in sw
+
+
 def test_app_bundle_uses_single_namespace_wrapper() -> None:
     bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
     assert bundle.startswith('(function (window) {\n"use strict";\nwindow.App = window.App || {};')

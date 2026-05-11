@@ -5,84 +5,17 @@
     <!--
       FE-M8: minimal offline fallback served by the Service Worker
       when both network and the runtime cache miss for a navigation
-      request.  Self-contained (no external CSS, no fetches) so this
-      page renders even if the SW just installed and has nothing
-      else cached.  CSP-safe: no inline scripts, no inline event
-      handlers — the only interactivity is a vanilla <a href> back
-      to "/" which the SW can route to the cached shell.
+      request. CSP-safe: no inline scripts, no inline styles, no inline
+      event handlers — the only interactivity is a vanilla <a href>
+      back to "/" which the SW can route to the cached shell.
     -->
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'self'; form-action 'none'; object-src 'none'; frame-ancestors 'none';">
+          content="default-src 'self'; img-src 'self' data:; style-src 'self'; base-uri 'self'; form-action 'none'; object-src 'none'; frame-ancestors 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
     <title>Rafuk — Нет связи</title>
     <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
-    <style>
-        :root {
-            color-scheme: dark light;
-            --bg: #0d1117;
-            --fg: #e6edf3;
-            --muted: #8b949e;
-            --accent: #58a6ff;
-            --border: rgba(255, 255, 255, 0.08);
-        }
-        @media (prefers-color-scheme: light) {
-            :root {
-                --bg: #ffffff;
-                --fg: #1f2328;
-                --muted: #6b7177;
-                --border: rgba(0, 0, 0, 0.08);
-            }
-        }
-        * { box-sizing: border-box; }
-        html, body { height: 100%; margin: 0; }
-        body {
-            background: var(--bg);
-            color: var(--fg);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 32px;
-            line-height: 1.5;
-        }
-        .card {
-            max-width: 420px;
-            width: 100%;
-            text-align: center;
-        }
-        .icon {
-            width: 64px;
-            height: 64px;
-            margin: 0 auto 24px;
-            opacity: 0.7;
-        }
-        h1 {
-            font-size: 22px;
-            font-weight: 700;
-            margin: 0 0 8px;
-        }
-        p {
-            color: var(--muted);
-            margin: 0 0 24px;
-            font-size: 15px;
-        }
-        a.retry {
-            display: inline-block;
-            padding: 10px 24px;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            color: var(--accent);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 15px;
-            background: transparent;
-        }
-        a.retry:hover, a.retry:focus-visible {
-            background: var(--border);
-            outline: none;
-        }
-    </style>
+    <link rel="stylesheet" href="/offline.css">
 </head>
 <body>
 <main class="card" role="main">

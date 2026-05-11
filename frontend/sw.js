@@ -22,13 +22,13 @@
  *     in-flight guards already protect the UI).
  */
 
-// FE-M8 / FE-M9: bumped to v7. v6 added the staleWhileRevalidate
-// max-age check; v7 adds the offline-fallback page that
-// networkFirst falls through to when both the network and the
-// cached shell are unavailable. Activation evicts every older
-// runtime entry in one shot.
-const CACHE_VERSION = "rafuk-cache-v7";
+// FE-M8 / FE-M9: bumped to v8. v6 added the staleWhileRevalidate
+// max-age check; v7 added the offline-fallback page; v8 moves that
+// fallback's CSS out of inline <style> so CSP can drop unsafe-inline.
+// Activation evicts every older runtime entry in one shot.
+const CACHE_VERSION = "rafuk-cache-v8";
 const OFFLINE_FALLBACK_URL = "/offline.html";
+const OFFLINE_FALLBACK_ASSETS = [OFFLINE_FALLBACK_URL, "/offline.css"];
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -75,16 +75,16 @@ const BYPASS_PATHS = [
 ];
 
 self.addEventListener("install", (event) => {
-    // FE-M8: pre-cache *only* the offline fallback page so the SW
-    // can serve a meaningful response on the very first offline
-    // navigation, before the user has had a chance to load the
-    // shell at least once. Everything else (CSS, JS, API) still
-    // fills the runtime cache lazily as the user navigates — we
+    // FE-M8: pre-cache *only* the offline fallback page and its tiny
+    // stylesheet so the SW can serve a meaningful response on the
+    // very first offline navigation, before the user has had a chance
+    // to load the shell at least once. Everything else (CSS, JS, API)
+    // still fills the runtime cache lazily as the user navigates — we
     // don't want a "warm-up download" tax on slow connections.
     event.waitUntil(
         caches
             .open(STATIC_CACHE)
-            .then((cache) => cache.add(OFFLINE_FALLBACK_URL))
+            .then((cache) => cache.addAll(OFFLINE_FALLBACK_ASSETS))
             .catch(() => {
                 // If pre-cache fails (e.g. the file is briefly 404
                 // during a deploy) the SW still installs; the

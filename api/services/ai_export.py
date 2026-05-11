@@ -152,7 +152,7 @@ async def get_export_report(
             "Content-Security-Policy": (
                 "default-src 'none'; "
                 "img-src https:; "
-                "style-src 'unsafe-inline'; "
+                "style-src 'none'; "
                 "script-src 'none'; "
                 "base-uri 'none'; "
                 "form-action 'none'; "

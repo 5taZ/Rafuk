@@ -9700,11 +9700,11 @@ function createAppActions(context) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-b713131"),
-            context._loadScript("js/api_ai_render.js?v=20260511-b713131"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-b713131"),
-            context._loadScript("js/api_ai.js?v=20260511-b713131"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-b713131"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-0f9edf0"),
+            context._loadScript("js/api_ai_render.js?v=20260511-0f9edf0"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-0f9edf0"),
+            context._loadScript("js/api_ai.js?v=20260511-0f9edf0"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-0f9edf0"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
