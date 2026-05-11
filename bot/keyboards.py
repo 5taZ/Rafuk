@@ -53,6 +53,31 @@ def tracker_alert_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
+def lead_reminder_keyboard(
+    mini_app_url: str,
+) -> InlineKeyboardMarkup | None:
+    """Build the inline keyboard for lead reminder messages.
+
+    Single WebApp button opening the deals view. The scheduler calls
+    this instead of constructing aiogram types directly — keeps the
+    architectural layering clean (scheduler → bot/keyboards, not
+    scheduler → aiogram.types).
+    """
+    if not mini_app_url or not mini_app_url.startswith("https://"):
+        return None
+    deal_url = f"{mini_app_url}?view=deals"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📌 Открыть сделку",
+                    web_app=WebAppInfo(url=deal_url),
+                )
+            ]
+        ]
+    )
+
+
 def enhanced_alert_keyboard(
     *,
     ad_id: int,

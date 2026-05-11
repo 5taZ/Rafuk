@@ -17,7 +17,6 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramUnauthorizedError,
 )
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
@@ -58,7 +57,7 @@ from api.services.history_service import (
 from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.market_signals import region_label
 from api.services.reseller_tools import compute_deal_score, matches_tracker_filters
-from bot.keyboards import enhanced_alert_keyboard, tracker_alert_keyboard
+from bot.keyboards import enhanced_alert_keyboard, lead_reminder_keyboard, tracker_alert_keyboard
 
 # Maximum time (seconds) for a single tracker check cycle.
 # Prevents the cycle from running indefinitely when Kufar is slow.
@@ -92,7 +91,7 @@ async def _send_message_classified(
     telegram_user_id: int,
     message: str,
     *,
-    reply_markup: InlineKeyboardMarkup | None = None,
+    reply_markup: object | None = None,
 ) -> str:
     """PERF-M3 helper: send one Telegram message and return a string
     classifying the outcome — pure I/O, no SQLAlchemy session touched.
@@ -165,7 +164,7 @@ async def notify_user(
     session: AsyncSession,
     *,
     internal_user_id: int | None = None,
-    reply_markup: InlineKeyboardMarkup | None = None,
+    reply_markup: object | None = None,
 ) -> bool:
     """Send message to user via telegram_user_id.
 
@@ -1180,7 +1179,7 @@ class _TrackerNotifyJob:
     telegram_user_id: int
     internal_user_id: int
     message: str
-    reply_markup: InlineKeyboardMarkup | None
+    reply_markup: object | None
 
 
 async def _dispatch_tracker_notifications(
@@ -1327,7 +1326,7 @@ async def check_reminders(
         logger.info("Processing %d due reminder(s)", len(due_reminders))
 
         # ── Phase 1: build job list ──────────────────────────────────
-        jobs: list[tuple[LeadReminder, int, str, InlineKeyboardMarkup | None]] = []
+        jobs: list[tuple[LeadReminder, int, str, object | None]] = []
         for reminder in due_reminders:
             lead = reminder.lead
             if lead is None:
@@ -1349,20 +1348,7 @@ async def check_reminders(
             if lead.link:
                 lines.append(lead.link)
 
-            keyboard_rows: list[list[InlineKeyboardButton]] = []
-            if settings.mini_app_url and settings.mini_app_url.startswith("https://"):
-                deal_url = f"{settings.mini_app_url}?view=deals"
-                keyboard_rows.append([
-                    InlineKeyboardButton(
-                        text="📌 Открыть сделку",
-                        web_app=WebAppInfo(url=deal_url),
-                    )
-                ])
-            keyboard = (
-                InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
-                if keyboard_rows
-                else None
-            )
+            keyboard = lead_reminder_keyboard(settings.mini_app_url)
             jobs.append((reminder, telegram_user_id, "\n".join(lines), keyboard))
 
         # ── Phase 2: bounded-concurrency parallel send ───────────────
@@ -1371,7 +1357,7 @@ async def check_reminders(
         async def _bounded_send(
             tg_user_id: int,
             text: str,
-            kb: InlineKeyboardMarkup | None,
+            kb: object | None,
         ) -> str:
             async with sem:
                 return await _send_message_classified(

@@ -1314,3 +1314,15 @@ async def test_dispatch_tracker_notifications_retry_does_not_count(
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+def test_scheduler_does_not_import_aiogram_types() -> None:
+    """ARC-P1: scheduler must not reach into aiogram.types to construct
+    keyboards. Keyboard factories live in bot/keyboards.py; the scheduler
+    calls them as opaque helpers."""
+    source = Path("scheduler/collector.py").read_text(encoding="utf-8")
+    assert "from aiogram.types import" not in source
+    assert "InlineKeyboardButton(" not in source
+    assert "WebAppInfo(" not in source
+    assert "InlineKeyboardMarkup(" not in source
+    assert "lead_reminder_keyboard" in source
