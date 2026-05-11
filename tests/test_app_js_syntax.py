@@ -45,6 +45,15 @@ def test_has_required_methods_and_endpoints() -> None:
     assert "Telegram.WebApp" in all_js
 
 
+def test_telegram_back_button_stack_is_registered() -> None:
+    text = APP_JS.read_text(encoding="utf-8")
+    assert "setupTelegramBackButton" in text
+    assert "BackButton" in text
+    assert ".onClick(onBack)" in text
+    assert ".offClick?.(onBack)" in text
+    assert "MutationObserver" in text
+
+
 def test_node_syntax_check() -> None:
     for script in JS_MODULES:
         result = subprocess.run(["node", "--check", str(script)], capture_output=True, text=True)

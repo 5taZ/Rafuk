@@ -9,6 +9,7 @@ function analyticsApp() {
     // init() can both re-arm it (idempotency) and pagehide can tear
     // it down without races.
     let _ptrUninstall = null;
+    let _telegramBackButtonCleanup = null;
 
     /**
      * Pick the right "refresh this view" function based on the active
@@ -39,6 +40,64 @@ function analyticsApp() {
                 : null;
         }
         return null;
+    }
+
+    function setupTelegramBackButton() {
+        const tg = window.Telegram?.WebApp;
+        const backButton = tg?.BackButton;
+        if (!backButton || typeof backButton.onClick !== "function") return () => {};
+
+        const isOpen = (el) => Boolean(el && !el.hidden);
+        const click = (selector) => {
+            const el = document.querySelector(selector);
+            if (el && typeof el.click === "function") el.click();
+        };
+        const topmostClose = () => {
+            if (document.querySelector(".typed-confirm-modal")) {
+                return () => click(".typed-confirm-modal [data-role='cancel']");
+            }
+            if (isOpen(document.getElementById("privacy-modal"))) return () => click("#privacy-modal-close");
+            if (isOpen(document.getElementById("consent-modal"))) return () => click("#consent-cancel-btn");
+            if (isOpen(document.getElementById("la-result-overlay"))) return () => click("#la-result-back");
+            if (isOpen(document.getElementById("la-modal"))) return () => click("#la-modal-close");
+            if (isOpen(core.elements.aiModal)) return () => actions.closeAIModal?.();
+            if (isOpen(core.elements.expensesModal)) return () => renderers.closeExpensesModal?.();
+            if (isOpen(core.elements.detailModal)) return () => renderers.closeDetailModal?.();
+            if (isOpen(core.elements.editTrackerModal)) return () => actions.closeEditTracker?.();
+            return null;
+        };
+        const sync = () => {
+            try {
+                if (topmostClose()) backButton.show();
+                else backButton.hide();
+            } catch (_) {}
+        };
+        const onBack = () => {
+            const close = topmostClose();
+            if (!close) {
+                sync();
+                return;
+            }
+            close();
+            setTimeout(sync, 0);
+            setTimeout(sync, 420);
+        };
+
+        backButton.onClick(onBack);
+        const observer = new MutationObserver(sync);
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ["hidden", "class"],
+        });
+        sync();
+
+        return () => {
+            observer.disconnect();
+            try { backButton.offClick?.(onBack); } catch (_) {}
+            try { backButton.hide(); } catch (_) {}
+        };
     }
 
     function init() {
@@ -92,6 +151,11 @@ function analyticsApp() {
                 indicatorEl: document.getElementById("ptr-indicator"),
             });
         }
+        if (typeof _telegramBackButtonCleanup === "function") {
+            try { _telegramBackButtonCleanup(); } catch (_) { /* already gone */ }
+            _telegramBackButtonCleanup = null;
+        }
+        _telegramBackButtonCleanup = setupTelegramBackButton();
     }
 
     // Detach listeners when the page is unloaded or put into bfcache;
@@ -102,6 +166,10 @@ function analyticsApp() {
         if (typeof _ptrUninstall === "function") {
             try { _ptrUninstall(); } catch (_) { /* noop */ }
             _ptrUninstall = null;
+        }
+        if (typeof _telegramBackButtonCleanup === "function") {
+            try { _telegramBackButtonCleanup(); } catch (_) { /* noop */ }
+            _telegramBackButtonCleanup = null;
         }
     });
 
