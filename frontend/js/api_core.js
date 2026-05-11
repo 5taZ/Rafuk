@@ -20,6 +20,36 @@ function createApiCore(context) {
         search,
     } = context;
 
+    const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+    const RETRY_BASE_DELAY_MS = 300;
+    const RETRY_MAX_ATTEMPTS = 3;
+
+    function _retryDelayMs(attempt, response) {
+        const retryAfter = response?.headers?.get?.("retry-after");
+        if (retryAfter) {
+            const seconds = Number(retryAfter);
+            if (Number.isFinite(seconds) && seconds >= 0) {
+                return Math.min(5000, seconds * 1000);
+            }
+        }
+        return Math.min(4000, RETRY_BASE_DELAY_MS * (2 ** (attempt - 1)))
+            + Math.floor(Math.random() * 180);
+    }
+
+    function _sleep(ms, signal) {
+        return new Promise((resolve, reject) => {
+            if (signal?.aborted) {
+                reject(new DOMException("Aborted", "AbortError"));
+                return;
+            }
+            const timer = setTimeout(resolve, ms);
+            signal?.addEventListener("abort", () => {
+                clearTimeout(timer);
+                reject(new DOMException("Aborted", "AbortError"));
+            }, { once: true });
+        });
+    }
+
     // ── Telegram headers ─────────────────────────────────────────────────
     function telegramHeaders() {
         const initData = window.Telegram?.WebApp?.initData;
@@ -44,39 +74,54 @@ function createApiCore(context) {
             ...(options.headers || {}),
         };
 
-        // Default 90s timeout via AbortController (can be overridden per-request)
+        const canRetry = method === "GET" || method === "HEAD";
+        const maxAttempts = canRetry && options.retry !== false
+            ? (options.retryAttempts || RETRY_MAX_ATTEMPTS)
+            : 1;
         const timeoutMs = options.timeout || 90000;
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-        // Link external signal so caller abort also triggers our controller
-        if (options.signal) {
-            options.signal.addEventListener("abort", () => controller.abort(), { once: true });
-        }
-
-        let response;
         let timedOut = false;
-        try {
-            response = await fetch(url, {
-                ...options,
-                headers,
-                signal: controller.signal,
-            });
-            // Clear timeout immediately on successful response
-            clearTimeout(timer);
-        } catch (fetchErr) {
-            clearTimeout(timer);
-            if (fetchErr.name === "AbortError") {
-                if (options.signal?.aborted) {
-                    // Caller aborted (e.g. stale request) — suppress silently
-                    throw fetchErr;
-                }
-                throw new Error("Превышено время ожидания. Попробуйте ещё раз.");
+        let response;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => {
+                timedOut = true;
+                controller.abort();
+            }, timeoutMs);
+            const onExternalAbort = () => controller.abort();
+            if (options.signal) {
+                options.signal.addEventListener("abort", onExternalAbort, { once: true });
             }
-            throw fetchErr;
+            try {
+                response = await fetch(url, {
+                    ...options,
+                    headers,
+                    signal: controller.signal,
+                });
+                if (
+                    attempt < maxAttempts
+                    && RETRYABLE_STATUSES.has(response.status)
+                ) {
+                    await _sleep(_retryDelayMs(attempt, response), options.signal);
+                    continue;
+                }
+                break;
+            } catch (fetchErr) {
+                if (fetchErr.name === "AbortError") {
+                    if (options.signal?.aborted) throw fetchErr;
+                    throw new Error("Превышено время ожидания. Попробуйте ещё раз.");
+                }
+                if (attempt >= maxAttempts) throw fetchErr;
+                await _sleep(_retryDelayMs(attempt), options.signal);
+            } finally {
+                clearTimeout(timer);
+                if (options.signal) {
+                    options.signal.removeEventListener("abort", onExternalAbort);
+                }
+            }
         }
 
-        if (!response.ok) {
+        if (!response || !response.ok) {
             let message = "Не удалось выполнить запрос.";
             try {
                 const payload = await response.json();

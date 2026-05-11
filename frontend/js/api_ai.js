@@ -103,6 +103,7 @@ function createApiAi(context) {
             const MAX_CONSECUTIVE_POLL_ERRORS = 4;
             let pollCount = 0;
             let consecutivePollErrors = 0;
+            const nextPollDelay = () => POLL_INTERVAL + Math.floor(Math.random() * 700);
 
             const result = await new Promise((resolve, reject) => {
                 const poll = async () => {
@@ -131,7 +132,7 @@ function createApiAi(context) {
                             reject(new Error(status.error || "Ошибка AI анализа"));
                         } else {
                             // Still pending/processing — poll again
-                            setTimeout(poll, POLL_INTERVAL);
+                            setTimeout(poll, nextPollDelay());
                         }
                     } catch (err) {
                         if (isCancelled()) {
@@ -152,10 +153,10 @@ function createApiAi(context) {
                             return;
                         }
 
-                        setTimeout(poll, POLL_INTERVAL);
+                        setTimeout(poll, nextPollDelay());
                     }
                 };
-                setTimeout(poll, POLL_INTERVAL);
+                setTimeout(poll, nextPollDelay());
             });
 
             if (isCancelled() || result == null) return;

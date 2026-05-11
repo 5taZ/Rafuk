@@ -40,8 +40,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260511-e769bcb">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260511-e769bcb">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260511-6b54948">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260511-6b54948">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
@@ -69,8 +69,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20260511-e769bcb">
-    <link rel="stylesheet" href="css/style.css?v=20260511-e769bcb">
+    <link rel="preload" as="style" href="css/style.css?v=20260511-6b54948">
+    <link rel="stylesheet" href="css/style.css?v=20260511-6b54948">
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -87,32 +87,32 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20260511-e769bcb"
+            src="vendor/telegram-web-app.js?v=20260511-6b54948"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers. -->
-    <script defer src="js/dom_helpers.js?v=20260511-e769bcb"></script>
-    <script defer src="js/app_core_dom.js?v=20260511-e769bcb"></script>
-    <script defer src="js/app_core.js?v=20260511-e769bcb"></script>
-    <script defer src="js/render_core.js?v=20260511-e769bcb"></script>
-    <script defer src="js/render_card_builders.js?v=20260511-e769bcb"></script>
-    <script defer src="js/render_cards.js?v=20260511-e769bcb"></script>
-    <script defer src="js/render_views.js?v=20260511-e769bcb"></script>
-    <script defer src="js/render_modals.js?v=20260511-e769bcb"></script>
-    <script defer src="js/render_charts.js?v=20260511-e769bcb"></script>
-    <script defer src="js/render_trackers.js?v=20260511-e769bcb"></script>
-    <script defer src="js/app_renderers.js?v=20260511-e769bcb"></script>
-    <script defer src="js/api_core.js?v=20260511-e769bcb"></script>
-    <script defer src="js/api_listings.js?v=20260511-e769bcb"></script>
-    <script defer src="js/api_trackers.js?v=20260511-e769bcb"></script>
-    <script defer src="js/api_leads.js?v=20260511-e769bcb"></script>
-    <script defer src="js/api_watchlist.js?v=20260511-e769bcb"></script>
-    <script defer src="js/api_events.js?v=20260511-e769bcb"></script>
-    <script defer src="js/app_actions.js?v=20260511-e769bcb"></script>
-    <script defer src="js/app.js?v=20260511-e769bcb"></script>
+    <script defer src="js/dom_helpers.js?v=20260511-6b54948"></script>
+    <script defer src="js/app_core_dom.js?v=20260511-6b54948"></script>
+    <script defer src="js/app_core.js?v=20260511-6b54948"></script>
+    <script defer src="js/render_core.js?v=20260511-6b54948"></script>
+    <script defer src="js/render_card_builders.js?v=20260511-6b54948"></script>
+    <script defer src="js/render_cards.js?v=20260511-6b54948"></script>
+    <script defer src="js/render_views.js?v=20260511-6b54948"></script>
+    <script defer src="js/render_modals.js?v=20260511-6b54948"></script>
+    <script defer src="js/render_charts.js?v=20260511-6b54948"></script>
+    <script defer src="js/render_trackers.js?v=20260511-6b54948"></script>
+    <script defer src="js/app_renderers.js?v=20260511-6b54948"></script>
+    <script defer src="js/api_core.js?v=20260511-6b54948"></script>
+    <script defer src="js/api_listings.js?v=20260511-6b54948"></script>
+    <script defer src="js/api_trackers.js?v=20260511-6b54948"></script>
+    <script defer src="js/api_leads.js?v=20260511-6b54948"></script>
+    <script defer src="js/api_watchlist.js?v=20260511-6b54948"></script>
+    <script defer src="js/api_events.js?v=20260511-6b54948"></script>
+    <script defer src="js/app_actions.js?v=20260511-6b54948"></script>
+    <script defer src="js/app.js?v=20260511-6b54948"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -137,7 +137,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20260511-e769bcb" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260511-6b54948" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">

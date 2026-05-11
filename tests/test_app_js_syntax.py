@@ -54,6 +54,16 @@ def test_telegram_back_button_stack_is_registered() -> None:
     assert "MutationObserver" in text
 
 
+def test_frontend_requests_and_ai_polling_have_jittered_retries() -> None:
+    api_core = (JS_DIR / "api_core.js").read_text(encoding="utf-8")
+    api_ai = (JS_DIR / "api_ai.js").read_text(encoding="utf-8")
+    assert "RETRYABLE_STATUSES" in api_core
+    assert "retry-after" in api_core
+    assert "Math.random()" in api_core
+    assert "nextPollDelay" in api_ai
+    assert "Math.random()" in api_ai
+
+
 def test_node_syntax_check() -> None:
     for script in JS_MODULES:
         result = subprocess.run(["node", "--check", str(script)], capture_output=True, text=True)
