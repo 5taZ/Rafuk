@@ -12,3 +12,4 @@ def test_create_app_has_expected_routes() -> None:
     assert "/api/v1/geography" in paths
     assert "/api/v1/leads" in paths
     assert "/api/v1/watchlist" in paths
+    assert "/metrics" in paths

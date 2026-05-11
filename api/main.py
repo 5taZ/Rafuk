@@ -4,12 +4,13 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from slowapi.errors import RateLimitExceeded
 
 from api.config import get_settings
@@ -17,6 +18,7 @@ from api.database import get_engine, get_session_factory
 from api.dependencies import ensure_user_exists
 from api.limiter import limiter
 from api.logging_config import configure_logging, request_id_ctxvar
+from api.metrics import observe_http_request, render_prometheus_metrics
 from api.routers import (
     ai_analysis,
     ai_listing_assistant,
@@ -160,6 +162,13 @@ def create_app() -> FastAPI:
     configure_logging(service="api")
     app = FastAPI(title="Rafuk API", lifespan=lifespan)
 
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics_endpoint() -> Response:
+        return Response(
+            render_prometheus_metrics(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
+
     # Add CORS middleware
     #
     # NOTE: "null" origin is NOT allowed. A "null" Origin header is what
@@ -280,6 +289,21 @@ def create_app() -> FastAPI:
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         elif request.url.path.startswith(("/api/v1/price-stats", "/api/v1/listings")):
             response.headers["Cache-Control"] = "max-age=300"
+        return response
+
+    @app.middleware("http")
+    async def collect_http_metrics(request: Request, call_next):
+        started = time.perf_counter()
+        response = await call_next(request)
+        if request.url.path != "/metrics":
+            route = request.scope.get("route")
+            route_path = getattr(route, "path", None) or "__unmatched__"
+            observe_http_request(
+                method=request.method,
+                path=route_path,
+                status_code=response.status_code,
+                duration_seconds=time.perf_counter() - started,
+            )
         return response
 
     # CSRF protection: validate Origin header on state-changing requests.
