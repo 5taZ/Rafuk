@@ -126,13 +126,29 @@ class RedisCache:
 
     @classmethod
     def from_url(cls, url: str) -> RedisCache:
+        # INF-04: enable connection health checks + TCP keepalive so a
+        # silently-dropped Redis socket (NAT timeout, load balancer
+        # rolling restart, network blip) reconnects on the next call
+        # instead of surfacing as a long httpx-timeout-shaped read
+        # error and requiring a worker restart.
+        #
+        #   health_check_interval=30 — redis-py PINGs the server every
+        #     30 s on idle pool connections and recycles any that fail.
+        #   socket_keepalive=True   — kernel-level keepalive probes
+        #     drop dead sockets even when the redis-py heartbeat is
+        #     itself stuck.
+        #   max_connections=20      — pool ceiling so a stampeding
+        #     watch-list fan-out can't open hundreds of sockets.
         return cls(
             Redis.from_url(
                 url,
                 decode_responses=True,
                 socket_connect_timeout=0.5,
                 socket_timeout=3.0,
+                socket_keepalive=True,
                 retry_on_timeout=True,
+                health_check_interval=30,
+                max_connections=20,
             )
         )
 

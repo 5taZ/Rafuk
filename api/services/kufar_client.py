@@ -52,6 +52,16 @@ class KufarClient:
         self._circuit_lock = asyncio.Lock()
         self._consecutive_errors = 0
         self._circuit_open_until: float = 0.0
+        # SEC-06: half-open state. After _circuit_open_until elapses,
+        # the FIRST request to grab the lock transitions to half_open
+        # and is allowed through as a probe. Concurrent callers see
+        # half_open and short-circuit so the upstream isn't slammed
+        # with a "thundering herd" the moment the open window expires.
+        # Probe outcome decides the next state:
+        #   success → closed (counter reset)
+        #   failure → open again for another window
+        # State ∈ {"closed", "open", "half_open"}.
+        self._circuit_state: str = "closed"
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._closed:
@@ -108,15 +118,28 @@ class KufarClient:
         category: int | None = None,
         bypass_delay: bool = False,
     ) -> dict[str, Any]:
-        # Circuit breaker check.
-        # Reading _circuit_open_until is a single 64-bit float load —
-        # CPython makes that atomic, so we don't need the lock here.
-        # (We only need the lock around READ-MODIFY-WRITE on the
-        # counter, see below.)
-        now = asyncio.get_running_loop().time()
-        if now < self._circuit_open_until:
-            logger.warning("Circuit breaker open for query=%s; returning empty stub", query)
-            return {"ads": [], "total": 0}
+        # SEC-06: 3-state circuit breaker (closed / open / half_open).
+        # The state machine lives behind _circuit_lock so concurrent
+        # callers can't race through the half-open probe in lockstep.
+        async with self._circuit_lock:
+            now = asyncio.get_running_loop().time()
+            if self._circuit_state == "open":
+                if now < self._circuit_open_until:
+                    logger.warning(
+                        "Circuit breaker open for query=%s; returning empty stub",
+                        query,
+                    )
+                    return {"ads": [], "total": 0}
+                # Open window expired — this caller becomes the probe.
+                self._circuit_state = "half_open"
+                logger.info("Kufar circuit breaker → half_open (probing)")
+            elif self._circuit_state == "half_open":
+                # Another caller already owns the probe; don't pile on.
+                logger.warning(
+                    "Circuit breaker half_open for query=%s; returning empty stub",
+                    query,
+                )
+                return {"ads": [], "total": 0}
 
         params: dict[str, Any] = {
             "query": query,
@@ -152,9 +175,17 @@ class KufarClient:
                 response.raise_for_status()
                 # Success — reset error counter under the lock so a
                 # concurrent failure path can't observe an old (high)
-                # counter mid-update.
+                # counter mid-update. SEC-06: also close the breaker
+                # if we were the half-open probe.
                 async with self._circuit_lock:
                     self._consecutive_errors = 0
+                    if self._circuit_state != "closed":
+                        logger.info(
+                            "Kufar circuit breaker → closed (was %s)",
+                            self._circuit_state,
+                        )
+                    self._circuit_state = "closed"
+                    self._circuit_open_until = 0.0
                 return response.json()
             except (httpx.HTTPError, httpx.TimeoutException) as exc:
                 last_error = exc
@@ -165,7 +196,19 @@ class KufarClient:
                 async with self._circuit_lock:
                     self._consecutive_errors += 1
                     consecutive = self._consecutive_errors
-                    if consecutive >= 5:
+                    if self._circuit_state == "half_open":
+                        # SEC-06: half-open probe failed → re-open for
+                        # another full window so we don't immediately
+                        # send another probe.
+                        self._circuit_state = "open"
+                        self._circuit_open_until = (
+                            asyncio.get_running_loop().time() + 30.0
+                        )
+                        logger.warning(
+                            "Kufar circuit breaker → open (half_open probe failed)",
+                        )
+                    elif consecutive >= 5:
+                        self._circuit_state = "open"
                         self._circuit_open_until = (
                             asyncio.get_running_loop().time() + 30.0
                         )

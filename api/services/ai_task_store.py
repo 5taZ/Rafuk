@@ -62,6 +62,34 @@ _bg_tasks: set[asyncio.Task[Any]] = set()
 _BG_TASK_LIMIT = 16
 
 
+# AI-06: hard upper bound on how long a background AI task is allowed
+# to run before we force-cancel it. The AI analysis pipeline already
+# has its own per-stage timeouts and the httpx client has a 45 s read
+# timeout, but a zombie task with a hung downstream connection (or
+# stuck inside a non-cooperative await) was previously kept alive
+# forever in _bg_tasks — every zombie burnt a slot until 50 zombies
+# DoS'd the bg-task queue.
+#
+# 240 seconds covers the realistic worst case (search + scoring +
+# parallel AI calls + photo download + retries) with margin; tasks
+# that exceed it are demonstrably stuck and need to die.
+_BG_TASK_TIMEOUT = 240.0
+
+
+async def _bg_task_watchdog(coro: Any) -> Any:
+    """Wrap ``coro`` so it can't outlive _BG_TASK_TIMEOUT seconds."""
+    try:
+        return await asyncio.wait_for(coro, timeout=_BG_TASK_TIMEOUT)
+    except TimeoutError:
+        # asyncio.wait_for already requested cancellation on the inner
+        # coroutine. Logged here so on-call has a single grep pattern.
+        logger.warning(
+            "Background task exceeded %.0fs watchdog timeout — cancelled",
+            _BG_TASK_TIMEOUT,
+        )
+        raise
+
+
 def _spawn_bg_task(coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
     """Spawn a background task that survives GC until completion.
 
@@ -69,6 +97,9 @@ def _spawn_bg_task(coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
     can map the failure to a 503 response (the alternative — queueing
     silently — leaves the user staring at a "pending" task that may
     never start).
+
+    AI-06: the spawned coroutine is wrapped with an ``asyncio.wait_for``
+    watchdog so it can't camp on a bg-task slot indefinitely.
     """
     _bg_tasks.difference_update(t for t in list(_bg_tasks) if t.done())
     if len(_bg_tasks) >= _BG_TASK_LIMIT:
@@ -77,7 +108,7 @@ def _spawn_bg_task(coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
             len(_bg_tasks), _BG_TASK_LIMIT,
         )
         raise RuntimeError("Too many background tasks")
-    task = asyncio.create_task(coro, name=name)
+    task = asyncio.create_task(_bg_task_watchdog(coro), name=name)
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
     return task
@@ -125,17 +156,46 @@ async def _set_task(cache: CacheBackend, task_id: str, task: dict[str, Any]) -> 
     return task
 
 
+# AI-05: per-task asyncio.Lock so concurrent _update_task calls inside
+# a single worker can't read-modify-write race against each other. The
+# common case (sequential stages of one bg task) doesn't even contend
+# for the lock; the lock matters for the rare path where the endpoint
+# initialiser and the spawned bg task both write within the same tick.
+#
+# Locks are weakly-keyed by task_id and cleaned out when the task
+# eventually expires from Redis — we cap the dict size as a hedge
+# against unbounded growth if a worker handles many short-lived tasks.
+_task_locks: dict[str, asyncio.Lock] = {}
+_MAX_TASK_LOCKS = 1024
+
+
+def _task_lock(task_id: str) -> asyncio.Lock:
+    lock = _task_locks.get(task_id)
+    if lock is None:
+        if len(_task_locks) >= _MAX_TASK_LOCKS:
+            # Drop the oldest entries — Python dicts preserve insertion
+            # order, so popping from the front evicts the stalest keys.
+            for stale_key in list(_task_locks.keys())[: _MAX_TASK_LOCKS // 2]:
+                _task_locks.pop(stale_key, None)
+        lock = asyncio.Lock()
+        _task_locks[task_id] = lock
+    return lock
+
+
 async def _update_task(
     cache: CacheBackend, task_id: str, *, user_id: int | None = None, **updates: Any,
 ) -> dict[str, Any]:
-    task = await _get_task(cache, task_id, user_id=user_id) or {
-        "status": "pending",
-        "progress": 0,
-        "result": None,
-        "error": None,
-        "_created_ts": datetime.now(UTC).timestamp(),
-        "_updated_ts": datetime.now(UTC).timestamp(),
-    }
-    task.update(updates)
-    task["_updated_ts"] = datetime.now(UTC).timestamp()
-    return await _set_task(cache, task_id, task)
+    # AI-05: serialise the read-modify-write so a parallel update can't
+    # overwrite a freshly-merged task with a stale snapshot.
+    async with _task_lock(task_id):
+        task = await _get_task(cache, task_id, user_id=user_id) or {
+            "status": "pending",
+            "progress": 0,
+            "result": None,
+            "error": None,
+            "_created_ts": datetime.now(UTC).timestamp(),
+            "_updated_ts": datetime.now(UTC).timestamp(),
+        }
+        task.update(updates)
+        task["_updated_ts"] = datetime.now(UTC).timestamp()
+        return await _set_task(cache, task_id, task)

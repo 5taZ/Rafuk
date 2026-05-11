@@ -89,6 +89,49 @@ _MAX_AI_IMAGE_BYTES = 5_000_000
 _MAX_AI_REDIRECTS = 2
 
 
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a Retry-After response header into a delay in seconds.
+
+    SEC-09: per RFC 7231 §7.1.3 a Retry-After header can be either an
+    HTTP-date OR a delta-seconds integer. Together AI and Gemini both
+    emit the integer form, but we parse both to be robust against
+    proxy quirks. Returns None when the header is absent, malformed,
+    or specifies a clearly bogus delay (negative, or absurdly large).
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    # Integer / float seconds.
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = None
+    if seconds is not None:
+        if seconds < 0 or seconds > 600:
+            # Treat anything >10 minutes as a probable typo / provider
+            # quirk and fall back to our own backoff schedule.
+            return None
+        return seconds
+    # HTTP-date — RFC 1123 or RFC 850. The stdlib helper handles both.
+    from email.utils import parsedate_to_datetime
+    try:
+        target = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if target is None:
+        return None
+    from datetime import UTC, datetime
+    now = datetime.now(UTC)
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=UTC)
+    delta = (target - now).total_seconds()
+    if delta < 0 or delta > 600:
+        return None
+    return delta
+
+
 def _entry_price_guidance(
     *,
     market_median: float | None,
@@ -210,6 +253,21 @@ def _repair_truncated_json(text: str) -> dict:
         return {"summary": text.strip()[:500], "condition": None, "fair_price": None}
 
 
+# SEC-05: AI-provider circuit breaker constants. Once the provider has
+# returned a hard error N times in a row (after _post_with_retry has
+# already done its 3-attempt budget per call), we stop trying for
+# AI_CB_OPEN_SECONDS. During that window every new chat call short-
+# circuits with a fast RuntimeError so the user's analyse task can
+# fall back to its non-AI degraded result instead of waiting on the
+# 45s read timeout × 3 retries.
+#
+# After AI_CB_OPEN_SECONDS we move to half-open: exactly one probe
+# request is allowed through. If it succeeds we close the circuit,
+# if it fails we re-open for another window.
+_AI_CB_THRESHOLD = 4
+_AI_CB_OPEN_SECONDS = 60.0
+
+
 class AIService:
     """AI service using OpenAI-compatible chat completions API."""
 
@@ -222,6 +280,17 @@ class AIService:
         self._proxy_url = settings.ai_proxy_url
         self._httpx_client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
+        # SEC-05: simple per-process circuit breaker. State lives on
+        # the singleton AIService instance (returned by get_ai_service).
+        # _cb_state ∈ {"closed", "open", "half_open"}.
+        #   closed     — normal operation
+        #   open       — short-circuit every call until _cb_open_until
+        #   half_open  — exactly one probe allowed; success → closed,
+        #                failure → open again
+        self._cb_state: str = "closed"
+        self._cb_consecutive_errors = 0
+        self._cb_open_until: float = 0.0
+        self._cb_lock = asyncio.Lock()
 
     @property
     def available(self) -> bool:
@@ -259,6 +328,170 @@ class AIService:
         """
         model = self._model.lower()
         return model.startswith(("google/gemma-", "google/gemma_")) or "gemma-3n" in model
+
+    async def _cb_check_and_acquire(self) -> None:
+        """Raise RuntimeError if the breaker is open; allow probe in half-open.
+
+        SEC-05: called BEFORE every AI HTTP call.
+          * closed     → return immediately (normal path).
+          * open       → raise if open-until not yet elapsed;
+                         otherwise transition to half-open and let
+                         exactly THIS caller through as the probe.
+          * half_open  → another caller already owns the probe;
+                         short-circuit until they finish.
+
+        The state transitions out of half_open are owned by
+        _cb_record_success / _cb_record_failure.
+        """
+        async with self._cb_lock:
+            if self._cb_state == "open":
+                now = asyncio.get_running_loop().time()
+                if now < self._cb_open_until:
+                    raise RuntimeError("AI circuit breaker open")
+                # Open window expired — this caller owns the probe.
+                self._cb_state = "half_open"
+                logger.info("AI circuit breaker → half_open (probing)")
+                return
+            if self._cb_state == "half_open":
+                # Another caller is mid-probe; don't pile on.
+                raise RuntimeError(
+                    "AI circuit breaker half_open (probe in flight)"
+                )
+
+    async def _cb_record_success(self) -> None:
+        async with self._cb_lock:
+            if self._cb_state != "closed":
+                logger.info(
+                    "AI circuit breaker → closed (was %s)", self._cb_state,
+                )
+            self._cb_state = "closed"
+            self._cb_consecutive_errors = 0
+            self._cb_open_until = 0.0
+
+    async def _cb_record_failure(self) -> None:
+        async with self._cb_lock:
+            self._cb_consecutive_errors += 1
+            if self._cb_state == "half_open":
+                # Half-open probe failed → re-open for another window.
+                self._cb_state = "open"
+                self._cb_open_until = (
+                    asyncio.get_running_loop().time() + _AI_CB_OPEN_SECONDS
+                )
+                logger.warning(
+                    "AI circuit breaker → open (half-open probe failed)",
+                )
+                return
+            if (
+                self._cb_state == "closed"
+                and self._cb_consecutive_errors >= _AI_CB_THRESHOLD
+            ):
+                self._cb_state = "open"
+                self._cb_open_until = (
+                    asyncio.get_running_loop().time() + _AI_CB_OPEN_SECONDS
+                )
+                logger.warning(
+                    "AI circuit breaker → open (%d consecutive errors)",
+                    self._cb_consecutive_errors,
+                )
+
+    async def _post_with_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict,
+    ) -> httpx.Response:
+        """POST with bounded exponential-backoff retry on transient AI failures.
+
+        SEC-04 / SEC-09: previously a single 429 / 5xx response was
+        propagated straight to the user as a generic error. Together AI
+        and Gemini both routinely emit short-lived 429s during traffic
+        bursts and the OpenAI-compatible APIs always carry a
+        ``Retry-After`` hint — we should honour it instead of failing
+        on the first transient blip.
+
+        The retry budget is intentionally small (3 attempts total) so
+        a permanently-degraded provider still surfaces inside the AI
+        analysis timeout window (90-150s end-to-end). The circuit
+        breaker (_cb_*) short-circuits the retry loop entirely when
+        the provider has been down for a while — see SEC-05.
+        """
+        # SEC-05: check the breaker BEFORE we even open a socket.
+        await self._cb_check_and_acquire()
+
+        # Status codes that justify a retry — everything else short-
+        # circuits straight back. 408 = client read timeout (rare here,
+        # but cheap to treat the same). 5xx = upstream blip. 429 = rate
+        # limited; we honour Retry-After when supplied.
+        retryable_statuses = {408, 429, 500, 502, 503, 504}
+        max_attempts = 3
+        base_delay = 1.0  # seconds — multiplied by 2**attempt
+        max_delay = 8.0
+        last_exc: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                resp = await client.post(url, headers=headers, json=json)
+            except httpx.HTTPError as e:
+                last_exc = e
+                logger.warning(
+                    "AI _chat attempt %d/%d failed: %s: %s",
+                    attempt + 1, max_attempts, type(e).__name__, e,
+                )
+                if attempt + 1 >= max_attempts:
+                    await self._cb_record_failure()
+                    raise
+                delay = min(max_delay, base_delay * (2 ** attempt))
+                await asyncio.sleep(delay)
+                continue
+
+            if resp.status_code in retryable_statuses and attempt + 1 < max_attempts:
+                retry_after = _parse_retry_after(
+                    resp.headers.get("retry-after")
+                )
+                delay = retry_after if retry_after is not None else min(
+                    max_delay, base_delay * (2 ** attempt)
+                )
+                logger.warning(
+                    "AI _chat got %d on attempt %d/%d, sleeping %.1fs",
+                    resp.status_code, attempt + 1, max_attempts, delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            # Terminal mapping — these used to live inline in _chat;
+            # keeping the surface stable so callers' RuntimeError
+            # handlers still match.
+            if resp.status_code == 429:
+                await self._cb_record_failure()
+                raise RuntimeError("429 RATE_LIMITED")
+            if resp.status_code == 402:
+                # Billing failures aren't a "broken provider" — don't
+                # trip the breaker, but propagate so the analyse path
+                # can fall back to non-AI output.
+                raise RuntimeError("Insufficient balance")
+            if resp.status_code >= 500:
+                await self._cb_record_failure()
+                resp.raise_for_status()
+            elif resp.status_code >= 400:
+                # 4xx other than 429/402 — bad request, model name
+                # typo, schema mismatch. Don't flip the breaker for
+                # caller bugs.
+                resp.raise_for_status()
+            logger.info(
+                "AI _chat response: status=%d (attempt %d)",
+                resp.status_code, attempt + 1,
+            )
+            await self._cb_record_success()
+            return resp
+
+        # Loop exhausted with only retryable exceptions caught above —
+        # re-raise the last one if we have it. The status-code branch
+        # explicitly raises inside the loop on the final attempt.
+        await self._cb_record_failure()
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("AI _chat retries exhausted")
 
     async def _chat(
         self,
@@ -303,24 +536,15 @@ class AIService:
             "yes" if self._proxy_url else "no",
             len(content) if isinstance(content, list) else 1,
         )
-        try:
-            resp = await client.post(
-                f"{self._base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-            )
-        except httpx.HTTPError as e:
-            logger.error("AI _chat request failed: %s: %s", type(e).__name__, e)
-            raise
-        logger.info("AI _chat response: status=%d", resp.status_code)
-        if resp.status_code == 429:
-            raise RuntimeError("429 RATE_LIMITED")
-        if resp.status_code == 402:
-            raise RuntimeError("Insufficient balance")
-        resp.raise_for_status()
+        resp = await self._post_with_retry(
+            client,
+            f"{self._base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=body,
+        )
         data = resp.json()
         choices = data.get("choices") or []
         if not choices:

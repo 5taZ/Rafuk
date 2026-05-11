@@ -802,19 +802,29 @@ function createApiEvents(context) {
         // clicks anywhere) and the focus trapped inside the now-
         // hidden modal — UI completely frozen until the user
         // refreshed.
-        document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape") {
-                if (!elements.aiModal?.hidden) {
-                    closeAIModal();
-                } else if (!elements.expensesModal?.hidden) {
-                    closeExpensesModal();
-                } else if (state.detail.data) {
-                    closeDetailModal();
-                } else if (!elements.editTrackerModal?.hidden) {
-                    closeEditTrackerAction();
-                }
+        //
+        // FE-04: previously this used an anonymous arrow which made
+        // ``bindEvents()`` idempotency impossible — a re-init would
+        // pile a second listener on top, and Escape would close two
+        // modals at once. Now we hang the handler off ``document``
+        // under a sentinel attribute so we can dedupe.
+        if (document._kufarEscapeHandler) {
+            document.removeEventListener("keydown", document._kufarEscapeHandler);
+        }
+        const escapeHandler = (event) => {
+            if (event.key !== "Escape") return;
+            if (!elements.aiModal?.hidden) {
+                closeAIModal();
+            } else if (!elements.expensesModal?.hidden) {
+                closeExpensesModal();
+            } else if (state.detail.data) {
+                closeDetailModal();
+            } else if (!elements.editTrackerModal?.hidden) {
+                closeEditTrackerAction();
             }
-        });
+        };
+        document._kufarEscapeHandler = escapeHandler;
+        document.addEventListener("keydown", escapeHandler);
     }
 
     function bindCarouselEvents() {
@@ -971,14 +981,22 @@ function createApiEvents(context) {
         elements.detailModal?.addEventListener("transitionend", _preloadOnOpen, { passive: true });
 
         // Keyboard arrows — only react when the detail modal is open.
-        document.addEventListener("keydown", (event) => {
+        // FE-04: dedupe via the same sentinel-attribute trick used for
+        // the global Escape handler — a second bindEvents() must not
+        // pile up arrow handlers.
+        if (document._kufarArrowHandler) {
+            document.removeEventListener("keydown", document._kufarArrowHandler);
+        }
+        const arrowHandler = (event) => {
             if (!state.detail.data) return;
             if (event.key === "ArrowLeft") {
                 void navigateDetailImage(-1);
             } else if (event.key === "ArrowRight") {
                 void navigateDetailImage(1);
             }
-        });
+        };
+        document._kufarArrowHandler = arrowHandler;
+        document.addEventListener("keydown", arrowHandler);
     }
 
     function bindExpenseEvents() {

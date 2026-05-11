@@ -189,12 +189,18 @@ function createApiListings(context) {
             },
         ];
 
-        for (const dependency of dependencies) {
+        // FE-03: each dependency still applies its slice as it lands
+        // (so the user sees progressive paint of history → segments →
+        // geography → listings), but we ONLY clear ``listings._pending``
+        // — i.e. drop the skeletons — once EVERY dependency has
+        // settled. The previous code flipped _pending = false the
+        // moment any single dependency rejected, which made the
+        // listings skeleton vanish while the other three were still
+        // in flight, replacing it with a half-empty page.
+        const settled = dependencies.map((dependency) =>
             dependency.request
                 .then((payload) => {
-                    if (!isActiveRequest(requestId)) {
-                        return;
-                    }
+                    if (!isActiveRequest(requestId)) return;
                     dependency.apply(payload);
                     markDirty('stats', 'history', 'segments', 'geography', 'listings');
                     scheduleRender();
@@ -203,11 +209,19 @@ function createApiListings(context) {
                     if (err.name === "AbortError" || !isActiveRequest(requestId)) {
                         return;
                     }
-                    state.listings._pending = false;
+                    // Don't clear _pending here — wait for the whole
+                    // fan-out to settle so other still-loading slots
+                    // keep their skeletons.
                     markDirty('stats', 'history', 'segments', 'geography', 'listings');
                     scheduleRender();
-                });
-        }
+                })
+        );
+        Promise.allSettled(settled).then(() => {
+            if (!isActiveRequest(requestId)) return;
+            state.listings._pending = false;
+            markDirty('listings');
+            scheduleRender();
+        });
     }
 
     // ── Load listings (ads view) ─────────────────────────────────────────

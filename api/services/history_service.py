@@ -186,8 +186,23 @@ async def load_listing_states(
     *,
     query: str,
 ) -> dict[int, QueryListingState]:
+    # BE-05: A popular query like "iphone" can accumulate tens of
+    # thousands of QueryListingState rows over time as listings cycle
+    # in and out of Kufar. The scheduler reaches for this map every
+    # sync cycle — without a bound we end up materialising hundreds
+    # of MB into memory just to diff a single page (~200 ads).
+    #
+    # 5000 most-recent rows is enough headroom for any realistic
+    # query: the active sync window is "currently listed on Kufar"
+    # (at most a few thousand ads per page-walk) plus a tail of
+    # recently-deactivated ones used for re-activation detection.
+    # Older states are stale and will be re-populated naturally on
+    # next observation.
     result = await session.execute(
-        select(QueryListingState).where(QueryListingState.query == query)
+        select(QueryListingState)
+        .where(QueryListingState.query == query)
+        .order_by(QueryListingState.last_seen_at.desc())
+        .limit(5000)
     )
     rows = list(result.scalars())
     return {row.ad_id: row for row in rows}

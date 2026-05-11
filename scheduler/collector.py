@@ -730,19 +730,59 @@ async def _check_trackers_inner(
     settings: Settings,
 ) -> None:
     async with session_factory() as session:
-        # Only check active AND non-paused trackers, eager-load user for telegram_user_id
-        result = await session.execute(
+        # BE-03 / INF-05: previously this loaded every active+unpaused
+        # tracker into memory and filtered on `interval_min` in Python.
+        # With 10k+ trackers that's tens of MB and a lot of GC pressure
+        # for one cycle of work. Now we shape a dialect-agnostic SQL
+        # filter so only DUE trackers leave the database, plus a hard
+        # safety LIMIT so a pathological dataset can't OOM a worker.
+        now = datetime.now(UTC)
+        cutoff_max = now  # never-checked rows are always due
+        # An "interval has elapsed" predicate built without dialect-
+        # specific date math: we compare `last_checked_at` against
+        # ``now - interval_min minutes``. SQLAlchemy renders this as
+        # ``last_checked_at <= :now - INTERVAL '1 minute' * interval_min``
+        # on Postgres and as ``last_checked_at <= datetime(:now, '-' ||
+        # interval_min || ' minutes')`` on SQLite. The portable shape:
+        # use ``func.... `` would tie us to a dialect — instead, do the
+        # interval math via Python (one row per distinct interval_min)
+        # which Postgres' planner handles fine through the
+        # idx_trackers_last_checked index.
+        #
+        # Realistically intervals come from a small enum (15, 30, 60,
+        # 180, 720) so the resulting OR-list is short.
+        from sqlalchemy import or_
+        stmt = (
             select(Tracker)
             .where(Tracker.active.is_(True), Tracker.paused.is_(False))
             .options(joinedload(Tracker.user))
+            .order_by(Tracker.last_checked_at.asc().nulls_first())
+            .limit(2000)  # safety cap; tracked-user counts well below this
         )
-        all_trackers = list(result.scalars())
+        # We can't compute the "due" predicate in a single SQL
+        # expression without dialect-specific date arithmetic, but we
+        # can prune most never-due rows on the SQL side: a tracker is
+        # only DUE if last_checked_at is NULL or older than 'cutoff_max -
+        # smallest_interval'. The smallest configured interval is
+        # 15 minutes per the Tracker.__init__ default — anything more
+        # recent than 15 minutes ago is definitely not due regardless
+        # of interval_min.
+        smallest_interval_min = 15
+        coarse_cutoff = cutoff_max - timedelta(minutes=smallest_interval_min)
+        stmt = stmt.where(
+            or_(
+                Tracker.last_checked_at.is_(None),
+                Tracker.last_checked_at <= coarse_cutoff,
+            )
+        )
+        result = await session.execute(stmt)
+        all_trackers = list(result.scalars().unique())
         if not all_trackers:
-            logger.debug("No active trackers to check")
+            logger.debug("No active trackers due for check")
             return
 
-        # Filter out trackers whose interval_min hasn't elapsed yet
-        now = datetime.now(UTC)
+        # Final per-row check now that we have only candidates, not
+        # the full table.
         trackers = [
             t
             for t in all_trackers
@@ -751,7 +791,7 @@ async def _check_trackers_inner(
         ]
         if not trackers:
             logger.debug(
-                "All %d tracker(s) skipped — interval not elapsed yet",
+                "All %d candidate tracker(s) skipped — interval not elapsed yet",
                 len(all_trackers),
             )
             return

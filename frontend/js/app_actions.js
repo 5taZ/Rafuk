@@ -563,11 +563,31 @@ function createAppActions(context) {
             openPrivacyModal();
         }
 
+        // FE-02: close the consent gate on Escape so keyboard users
+        // aren't trapped. The global Escape handler in api_events.js
+        // doesn't know about this modal (it pre-dates the consent
+        // flow), and the focus trap installed above keeps Tab inside
+        // the modal — without an Escape exit there is literally no
+        // keyboard-only way out except submitting the form. Closing
+        // is equivalent to clicking Cancel (rejects the consent
+        // Promise) so the call site treats it as denial. The privacy
+        // modal is allowed to absorb Escape first when it's open on
+        // top, otherwise we'd close both modals together.
+        function onKeydown(e) {
+            if (e.key !== "Escape") return;
+            // If the privacy modal is open ON TOP, let it handle the
+            // Escape first.
+            const privacyModal = document.getElementById("privacy-modal");
+            if (privacyModal && !privacyModal.hidden) return;
+            onCancel();
+        }
+
         function cleanup() {
             ac.abort(); // removes all checkbox change listeners
             acceptBtn.removeEventListener("click", onAccept);
             cancelBtn.removeEventListener("click", onCancel);
             if (privacyLink) privacyLink.removeEventListener("click", onPrivacyLink);
+            document.removeEventListener("keydown", onKeydown);
             if (typeof focusCleanup === "function") focusCleanup();
             // UX-M2: restore inert AFTER the focus trap cleanup so the
             // restored focus target isn't itself sitting in an inert
@@ -578,6 +598,7 @@ function createAppActions(context) {
         acceptBtn.addEventListener("click", onAccept);
         cancelBtn.addEventListener("click", onCancel);
         if (privacyLink) privacyLink.addEventListener("click", onPrivacyLink);
+        document.addEventListener("keydown", onKeydown);
     }
 
     function openPrivacyModal() {
@@ -603,9 +624,16 @@ function createAppActions(context) {
             if (typeof _restoreInertSiblings === "function") _restoreInertSiblings(modal);
             closeBtn?.removeEventListener("click", close);
             overlay?.removeEventListener("click", close);
+            document.removeEventListener("keydown", onKeydown);
+        }
+        // FE-02: Escape closes the privacy modal too — it's a
+        // read-only secondary modal on top of the consent gate.
+        function onKeydown(e) {
+            if (e.key === "Escape") close();
         }
         closeBtn?.addEventListener("click", close);
         overlay?.addEventListener("click", close);
+        document.addEventListener("keydown", onKeydown);
     }
 
     async function deleteAccount() {
