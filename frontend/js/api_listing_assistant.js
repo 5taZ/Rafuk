@@ -7,6 +7,11 @@
  * в localStorage. Все диалоги пользователя остаются доступными
  * через вкладку «История» внутри модалки.
  */
+(function (app) {
+"use strict";
+
+const { openModalAnimated, closeModalAnimated } = app;
+
 
 function createApiListingAssistant(context) {
     const {
@@ -953,3 +958,6 @@ function createApiListingAssistant(context) {
         },
     };
 }
+
+app.createApiListingAssistant = createApiListingAssistant;
+})(window.App = window.App || {});

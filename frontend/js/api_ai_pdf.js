@@ -10,6 +10,9 @@
  * then open the returned URL via `openLink`. Non-Telegram fallback:
  * open the HTML in a new tab and trigger window.print().
  */
+(function (app) {
+"use strict";
+
 function createAiPdf(context, aiCtx) {
     const { state, postJson, safeUrl, formatPrice } = context;
 
@@ -386,3 +389,6 @@ ${similarHtml}
         exportToPdf,
     };
 }
+
+app.createAiPdf = createAiPdf;
+})(window.App = window.App || {});

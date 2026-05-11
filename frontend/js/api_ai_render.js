@@ -11,6 +11,11 @@
  * The only cross-module mutation is `aiCtx.lastData = data` set in
  * `renderAIModalResult` — the PDF module reads it on export.
  */
+(function (app) {
+"use strict";
+
+const { domEl } = app;
+
 function createAiRender(context, aiCtx) {
     const { elements, safeUrl, formatPrice } = context;
 
@@ -524,3 +529,6 @@ function createAiRender(context, aiCtx) {
         renderAiErrorState,
     };
 }
+
+app.createAiRender = createAiRender;
+})(window.App = window.App || {});

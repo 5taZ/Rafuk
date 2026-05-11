@@ -28,7 +28,12 @@ modules=(
   app.js
 )
 
-: > "$OUT"
+{
+  printf '(function (window) {\n'
+  printf '"use strict";\n'
+  printf 'window.App = window.App || {};\n'
+  printf '\n'
+} > "$OUT"
 for module in "${modules[@]}"; do
   path="$JS_DIR/$module"
   if [[ ! -f "$path" ]]; then
@@ -39,6 +44,18 @@ for module in "${modules[@]}"; do
   cat "$path" >> "$OUT"
   printf '\n' >> "$OUT"
 done
+
+cat >> "$OUT" <<'EOF'
+
+window.App = Object.assign(window.App || {}, {
+  analyticsApp,
+  createAppCore,
+  domEl,
+  openModalAnimated,
+  closeModalAnimated,
+});
+})(window);
+EOF
 
 node --check "$OUT" >/dev/null
 printf 'built %s from %d modules\n' "$OUT" "${#modules[@]}"

@@ -9,6 +9,7 @@ FRONTEND = Path("frontend")
 HTML_FILE = FRONTEND / "index.html"
 CSS_FILE = FRONTEND / "css" / "style.css"
 CSS_PARTS_DIR = FRONTEND / "css" / "parts"
+JS_DIR = FRONTEND / "js"
 
 
 @pytest.fixture(scope="module")
@@ -62,6 +63,56 @@ def test_html_loads_required_scripts(soup: BeautifulSoup) -> None:
     assert not any(
         "chart.umd" in script or "chart.min.js" in script for script in scripts
     ), "Chart.js must be lazy-loaded, not preloaded by <script> tag"
+
+
+def test_app_bundle_uses_single_namespace_wrapper() -> None:
+    bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
+    assert bundle.startswith('(function (window) {\n"use strict";\nwindow.App = window.App || {};')
+    assert "window.App = Object.assign(window.App || {}, {" in bundle
+    for name in (
+        "analyticsApp",
+        "createAppCore",
+        "domEl",
+        "openModalAnimated",
+        "closeModalAnimated",
+    ):
+        assert f"  {name}," in bundle
+    assert "window.analyticsApp" not in bundle
+    assert "window.createAppCore" not in bundle
+
+
+def test_lazy_ai_modules_register_on_app_namespace() -> None:
+    registrations = {
+        "api_ai_modal.js": "createAiModal",
+        "api_ai_render.js": "createAiRender",
+        "api_ai_pdf.js": "createAiPdf",
+        "api_ai.js": "createApiAi",
+        "api_listing_assistant.js": "createApiListingAssistant",
+    }
+    for module, factory in registrations.items():
+        text = (JS_DIR / module).read_text(encoding="utf-8")
+        assert "(function (app) {" in text
+        assert f"app.{factory} = {factory};" in text
+        assert "})(window.App = window.App || {});" in text
+
+    actions = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    assert "app.createApiAi(context)" in actions
+    assert "createApiAi(context)" not in actions.replace("app.createApiAi(context)", "")
+
+
+def test_lazy_script_cache_busters_match_main_bundle(soup: BeautifulSoup) -> None:
+    scripts = [script.get("src", "") for script in soup.find_all("script")]
+    app_bundle_src = next(script for script in scripts if "app_bundle.js" in script)
+    version = app_bundle_src.split("?v=", 1)[1]
+    actions = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    for module in (
+        "api_ai_modal.js",
+        "api_ai_render.js",
+        "api_ai_pdf.js",
+        "api_ai.js",
+        "api_listing_assistant.js",
+    ):
+        assert f"js/{module}?v={version}" in actions
 
 
 def test_chart_js_loads_lazily_only_on_first_chart_paint() -> None:

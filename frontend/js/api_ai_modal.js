@@ -10,6 +10,11 @@
  * state object (`aiCtx`) carrying only the cross-module mutable bits
  * (`loading`, `pollSession`, `lastData`). Everything else is module-local.
  */
+(function (app) {
+"use strict";
+
+const { domEl, openModalAnimated, closeModalAnimated } = app;
+
 function createAiModal(context, aiCtx) {
     const { elements } = context;
 
@@ -283,3 +288,6 @@ function createAiModal(context, aiCtx) {
         setStageLabel,
     };
 }
+
+app.createAiModal = createAiModal;
+})(window.App = window.App || {});

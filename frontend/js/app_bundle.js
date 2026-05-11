@@ -1,3 +1,7 @@
+(function (window) {
+"use strict";
+window.App = window.App || {};
+
 
 ;
 // FE-M14: shared UI/UX timing constants. Each value is named where
@@ -9692,19 +9696,23 @@ function createAppActions(context) {
         if (_aiModule) return;
         // UX-M8 (Wave 25): api_ai.js was split into 4 files. Load the
         // 3 sub-modules (modal/render/pdf) BEFORE the orchestrator
-        // (api_ai.js) so the sub-factories are global by the time
-        // createApiAi calls them. They're loaded in parallel and
-        // share the same cache-busting version stamp.
+        // (api_ai.js) so their App namespace registrations are ready
+        // by the time createApiAi calls them. They're loaded in
+        // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260510-cd8fa23"),
-            context._loadScript("js/api_ai_render.js?v=20260510-cd8fa23"),
-            context._loadScript("js/api_ai_pdf.js?v=20260510-cd8fa23"),
-            context._loadScript("js/api_ai.js?v=20260510-cd8fa23"),
-            context._loadScript("js/api_listing_assistant.js?v=20260510-cd8fa23"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-b713131"),
+            context._loadScript("js/api_ai_render.js?v=20260511-b713131"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-b713131"),
+            context._loadScript("js/api_ai.js?v=20260511-b713131"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-b713131"),
         ]);
-        _aiModule = createApiAi(context);
-        _listingAssistantModule = (typeof createApiListingAssistant === "function")
-            ? createApiListingAssistant(context)
+        const app = window.App || {};
+        if (typeof app.createApiAi !== "function") {
+            throw new Error("AI module failed to register");
+        }
+        _aiModule = app.createApiAi(context);
+        _listingAssistantModule = (typeof app.createApiListingAssistant === "function")
+            ? app.createApiListingAssistant(context)
             : null;
     }
 
@@ -10650,3 +10658,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 });
 
+
+window.App = Object.assign(window.App || {}, {
+  analyticsApp,
+  createAppCore,
+  domEl,
+  openModalAnimated,
+  closeModalAnimated,
+});
+})(window);

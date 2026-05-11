@@ -12,7 +12,8 @@
  *   • api_ai_pdf.js     — printable HTML / PDF export
  *
  * All four files are loaded together by app_actions.js#ensureAiLoaded,
- * so the sub-factories are global by the time `createApiAi` runs.
+ * so the sub-factories are registered on window.App by the time
+ * `createApiAi` runs.
  *
  * Shared state (`aiCtx`):
  *   loading      — guards re-entrancy across `loadAIAnalysis` calls.
@@ -20,6 +21,9 @@
  *                  sees its session is stale and exits silently.
  *   lastData     — last successful AI result, read by the PDF export.
  */
+(function (app) {
+"use strict";
+
 function createApiAi(context) {
     const { state, elements, postJson, getJson } = context;
 
@@ -31,9 +35,16 @@ function createApiAi(context) {
         lastData: null,
     };
 
-    const modal = createAiModal(context, aiCtx);
-    const render = createAiRender(context, aiCtx);
-    const pdf = createAiPdf(context, aiCtx);
+    if (
+        typeof app.createAiModal !== "function" ||
+        typeof app.createAiRender !== "function" ||
+        typeof app.createAiPdf !== "function"
+    ) {
+        throw new Error("AI submodules failed to register");
+    }
+    const modal = app.createAiModal(context, aiCtx);
+    const render = app.createAiRender(context, aiCtx);
+    const pdf = app.createAiPdf(context, aiCtx);
 
     async function loadAIAnalysis(adId) {
         const query = (state.detail.data?.query || state.search.query || "").trim();
@@ -223,3 +234,6 @@ function createApiAi(context) {
         exportToPdf: pdf.exportToPdf,
     };
 }
+
+app.createApiAi = createApiAi;
+})(window.App = window.App || {});
