@@ -327,11 +327,13 @@
 .ai-progress-bar,
 .la-progress-bar {
     height: 100%;
-    width: 5%;
+    width: 100%;
     background: linear-gradient(90deg, var(--accent), var(--violet), var(--cyan));
     border-radius: inherit;
     box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 30%, transparent);
-    transition: width 160ms linear, background 0.4s ease;
+    transform: scaleX(0.05);
+    transform-origin: left center;
+    transition: transform 160ms linear, background 0.4s ease;
 }
 
 .ai-progress-pct,

@@ -51,7 +51,7 @@ function createAiModal(context, aiCtx) {
         _aiProgress = Math.max(0, Math.min(100, pct));
         const barEl = elements.aiProgressBar;
         const pctEl = elements.aiProgressPct;
-        if (barEl) barEl.style.width = _aiProgress + "%";
+        if (barEl) barEl.style.transform = `scaleX(${_aiProgress / 100})`;
         if (pctEl) pctEl.textContent = Math.round(_aiProgress) + "%";
     }
 

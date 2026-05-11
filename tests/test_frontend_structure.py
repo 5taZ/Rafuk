@@ -269,6 +269,31 @@ def test_css_defines_motion_tokens(css_text: str) -> None:
     assert "--easing-standard:" in css_text
 
 
+def test_ai_loading_motion_avoids_layout_property_animation(css_text: str) -> None:
+    ai_js = (JS_DIR / "api_ai_modal.js").read_text(encoding="utf-8")
+    la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+    assert "barEl.style.transform = `scaleX(${_aiProgress / 100})`" in ai_js
+    assert "barEl.style.transform = `scaleX(${Math.max(0, Math.min(100, pct)) / 100})`" in la_js
+    assert "barEl.style.width = _aiProgress" not in ai_js
+    assert "barEl.style.width = Math.max(0, Math.min(100, pct))" not in la_js
+
+    progress_start = css_text.index(".ai-progress-bar,\n.la-progress-bar")
+    progress_end = css_text.index(".ai-progress-pct", progress_start)
+    progress_css = css_text[progress_start:progress_end]
+    assert "width: 100%" in progress_css
+    assert "transform: scaleX(0.05)" in progress_css
+    assert "transform-origin: left center" in progress_css
+    assert "transition: transform 160ms" in progress_css
+    assert "transition: width" not in progress_css
+
+    recent_start = css_text.index(".recent-strip {")
+    recent_end = css_text.index(".recent-kicker", recent_start)
+    recent_css = css_text[recent_start:recent_end]
+    assert "transition: opacity 0.15s ease-out, transform 0.2s ease-out" in recent_css
+    assert "max-height 0.2s" not in recent_css
+    assert "transform: translateY(-4px)" in recent_css
+
+
 def test_large_lists_do_not_use_noisy_live_regions(soup: BeautifulSoup) -> None:
     for element_id in (
         "listings-list",

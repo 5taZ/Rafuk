@@ -6312,7 +6312,8 @@ body.lp-menu-open {
     gap: var(--space-2);
     padding: 0;
     margin: var(--space-2) 0 0;
-    transition: opacity 0.15s ease-out, max-height 0.2s ease-out;
+    transition: opacity 0.15s ease-out, transform 0.2s ease-out;
+    transform: translateY(0);
     overflow: hidden;
     max-height: 60px;
 }
@@ -6321,6 +6322,7 @@ body.lp-menu-open {
 .recent-strip[hidden] {
     display: flex !important;
     opacity: 0;
+    transform: translateY(-4px);
     max-height: 0;
     pointer-events: none;
 }
@@ -7233,11 +7235,13 @@ body.lp-menu-open {
 .ai-progress-bar,
 .la-progress-bar {
     height: 100%;
-    width: 5%;
+    width: 100%;
     background: linear-gradient(90deg, var(--accent), var(--violet), var(--cyan));
     border-radius: inherit;
     box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 30%, transparent);
-    transition: width 160ms linear, background 0.4s ease;
+    transform: scaleX(0.05);
+    transform-origin: left center;
+    transition: transform 160ms linear, background 0.4s ease;
 }
 
 .ai-progress-pct,

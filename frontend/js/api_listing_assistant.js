@@ -576,7 +576,7 @@ function createApiListingAssistant(context) {
     function _updateLaProgress(pct) {
         const barEl = resultBox?.querySelector(".la-progress-bar");
         const pctEl = resultBox?.querySelector(".la-progress-pct");
-        if (barEl) barEl.style.width = Math.max(0, Math.min(100, pct)) + "%";
+        if (barEl) barEl.style.transform = `scaleX(${Math.max(0, Math.min(100, pct)) / 100})`;
         if (pctEl) pctEl.textContent = Math.round(pct) + "%";
     }
 
