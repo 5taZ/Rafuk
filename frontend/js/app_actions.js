@@ -162,11 +162,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-2ea3292"),
-            context._loadScript("js/api_ai_render.js?v=20260511-2ea3292"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-2ea3292"),
-            context._loadScript("js/api_ai.js?v=20260511-2ea3292"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-2ea3292"),
+            context._loadScript("js/api_ai_modal.js?v=20260511-0214ab8"),
+            context._loadScript("js/api_ai_render.js?v=20260511-0214ab8"),
+            context._loadScript("js/api_ai_pdf.js?v=20260511-0214ab8"),
+            context._loadScript("js/api_ai.js?v=20260511-0214ab8"),
+            context._loadScript("js/api_listing_assistant.js?v=20260511-0214ab8"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -277,12 +277,25 @@ function createAppActions(baseContext) {
         return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
     }
 
+    function _findWatchingSnapshot(item) {
+        return state.watchlist.items.find(
+            (w) => w.id === item?.id || w.ad_id === item?.ad_id,
+        ) || null;
+    }
+
     async function _resolveWatchingVersion(item) {
-        const current = state.watchlist.items.find((w) => w.id === item?.id) || item;
+        const current = _findWatchingSnapshot(item) || item;
         const version = _validVersion(current?.version);
         if (version) return version;
         await watchlist.loadWatchlist();
-        return _validVersion(state.watchlist.items.find((w) => w.id === item?.id)?.version);
+        return _validVersion(_findWatchingSnapshot(item)?.version);
+    }
+
+    async function _resolveWatchingItem(item) {
+        const current = _findWatchingSnapshot(item);
+        if (current) return current;
+        await watchlist.loadWatchlist();
+        return _findWatchingSnapshot(item);
     }
 
     async function addLeadFromListing(item, source = "manual", queryOverride = null) {
@@ -316,11 +329,14 @@ function createAppActions(baseContext) {
         // promotion is a single PATCH on the same lead_items row — no
         // need for a fresh POST. This also avoids race-condition 500s
         // when the user rapid-fires "В избранное" then "В покупки".
-        const watchingItem = state.watchlist.items.find((w) => w.ad_id === item.ad_id);
+        let watchingItem = _findWatchingSnapshot(item);
 
         _guardAdMutation(item.ad_id);
         const pendingToast = showToast("Добавляю…", "info", 8000);
         try {
+            if (!watchingItem && source === "detail_modal" && state.detail.fromWatchlist) {
+                watchingItem = await _resolveWatchingItem(item);
+            }
             if (watchingItem) {
                 const version = await _resolveWatchingVersion(watchingItem);
                 if (!version) {

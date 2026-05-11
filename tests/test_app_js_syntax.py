@@ -387,6 +387,7 @@ def test_lead_and_watchlist_mutations_resolve_versions_before_patch() -> None:
     add_lead_start = actions_js.index("async function addLeadFromListing")
     add_lead_body = actions_js[add_lead_start:actions_js.index("\n    // Make", add_lead_start)]
     assert "_resolveWatchingVersion" in add_lead_body
+    assert "_resolveWatchingItem" in add_lead_body
     assert "version," in add_lead_body
     assert "Lead version is required for updates" in core_js
     assert "Данные устарели" in core_js
@@ -395,6 +396,7 @@ def test_lead_and_watchlist_mutations_resolve_versions_before_patch() -> None:
 def test_collection_actions_show_immediate_pending_toasts() -> None:
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
     watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+    leads_js = (JS_DIR / "api_leads.js").read_text(encoding="utf-8")
 
     add_lead = actions_js[
         actions_js.index("async function addLeadFromListing"):
@@ -414,15 +416,24 @@ def test_collection_actions_show_immediate_pending_toasts() -> None:
         assert f'showToast("{success_text}", "success"' in fn_body
         assert "dismissToast(pendingToast)" in fn_body
 
+    confirm_start = leads_js.index("async function confirmLead")
+    confirm_body = leads_js[confirm_start:leads_js.index("\n    // ──", confirm_start + 1)]
+    assert confirm_body.index('showToast("Сохраняю…", "info"') < confirm_body.index(
+        "_resolveLeadVersion"
+    )
+    assert 'showToast(error.message || "Не удалось подтвердить сделку", "error")' in confirm_body
+
 
 def test_toasts_are_minimal_and_fast() -> None:
     render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     css = _read_all_css()
 
     assert "toast-dot" in render_core
+    assert "toast-label" in render_core
     assert "iconMap" not in render_core
     assert "const animationDuration = prefersReducedMotion ? 10 : 120" in render_core
     assert ".toast-dot" in css
+    assert ".toast-label" in css
     assert ".toast-icon" not in css
     assert ".toast.entering:nth-child(2)" not in css
     assert "animation: toast-in 120ms" in css

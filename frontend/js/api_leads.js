@@ -185,13 +185,14 @@ function createApiLeads(context) {
             return;
         }
 
+        const pendingToast = showToast("Сохраняю…", "info", 8000);
         const version = await _resolveLeadVersion(lead);
         if (!version) {
+            if (pendingToast) dismissToast(pendingToast);
             _showStaleLeadToast();
             return;
         }
 
-        const pendingToast = showToast("Сохраняю…", "info", 8000);
         try {
             const payload = {
                 buy_price_byn: buyPriceNum,
@@ -232,7 +233,7 @@ function createApiLeads(context) {
         } catch (error) {
             // Revert optimistic state by reloading from server
             if (pendingToast) dismissToast(pendingToast);
-            showToast(error.message || "Не удалось подтвердить сделку");
+            showToast(error.message || "Не удалось подтвердить сделку", "error");
             await loadLeads();
         }
     }

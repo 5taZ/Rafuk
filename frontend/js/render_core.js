@@ -90,6 +90,11 @@ function createRenderCore(context) {
         if (!elements.toastContainer) return null;
 
         const messageStr = String(message ?? "").replace(/^[\s✓✕↩]+/, "").trim();
+        const label = {
+            success: "Готово",
+            error: "Ошибка",
+            info: "Статус",
+        }[type] || "Статус";
 
         // Deduplication: if the same (message, type) is already visible
         // and not already in the exit animation, just reset its timer
@@ -137,7 +142,12 @@ function createRenderCore(context) {
                 className: `toast-dot ${type}`,
                 attrs: { "aria-hidden": "true" },
             }),
-            domEl("span", { className: "toast-message", text: messageStr }),
+            domEl(
+                "span",
+                { className: "toast-body" },
+                domEl("span", { className: "toast-label", text: label }),
+                domEl("span", { className: "toast-message", text: messageStr }),
+            ),
             domEl("button", {
                 className: "toast-close",
                 type: "button",

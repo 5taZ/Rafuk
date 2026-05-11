@@ -3345,7 +3345,7 @@ body.modal-open {
 
 .toast-container {
     position: fixed;
-    bottom: calc(env(safe-area-inset-bottom, 16px) + 16px);
+    bottom: calc(env(safe-area-inset-bottom, 16px) + 14px);
     left: 50%;
     transform: translateX(-50%);
     /* Toasts must sit above every modal (detail-modal=500, ai-modal=600,
@@ -3355,28 +3355,28 @@ body.modal-open {
     z-index: 1100;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 5px;
     pointer-events: none;
-    max-width: 320px;
-    width: calc(100% - 28px);
+    max-width: 340px;
+    width: calc(100% - 24px);
 }
 
 .toast {
-    min-height: 42px;
-    padding: 9px 10px 9px 12px;
-    border-radius: var(--r-md);
-    background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
-    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    min-height: 40px;
+    padding: 8px 8px 8px 12px;
+    border-radius: var(--r-lg);
+    background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
     color: var(--text);
     font-size: var(--text-sm);
-    font-weight: 560;
-    box-shadow: 0 12px 30px color-mix(in srgb, var(--text) 12%, transparent);
+    font-weight: 600;
+    box-shadow: 0 10px 24px color-mix(in srgb, var(--text) 10%, transparent);
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 10px;
     pointer-events: auto;
     word-break: break-word;
-    backdrop-filter: blur(12px);
+    backdrop-filter: blur(16px);
 }
 
 .toast.entering {
@@ -3391,29 +3391,45 @@ body.modal-open {
 
 .toast-dot {
     flex-shrink: 0;
-    width: 7px;
-    height: 7px;
+    width: 8px;
+    height: 8px;
     border-radius: 999px;
     background: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .toast-dot.success {
     background: var(--green);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 12%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 10%, transparent);
 }
 
 .toast-dot.error {
     background: var(--red);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 12%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 10%, transparent);
 }
 
 .toast-dot.info {
     background: var(--accent);
 }
 
-.toast-message {
+.toast-body {
     flex: 1;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.toast-label {
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 760;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.toast-message {
     line-height: 1.35;
 }
 
@@ -3449,19 +3465,19 @@ body.modal-open {
 
 .toast-close {
     flex-shrink: 0;
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: none;
     border: none;
     color: var(--text-muted);
-    font-size: var(--text-semi);
+    font-size: var(--text-sm);
     line-height: 1;
     padding: 0;
-    margin: -5px -4px -5px 0;
-    border-radius: var(--r-xs);
+    margin: -3px -2px -3px 0;
+    border-radius: var(--r-sm);
     transition: background-color var(--tr-base), color var(--tr-base);
     cursor: pointer;
 }
