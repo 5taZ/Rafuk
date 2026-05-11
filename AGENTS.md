@@ -132,6 +132,8 @@ list of importers so removing them is a deliberate decision.
 | INF-H3 | Push image to registry | Needs CD pipeline first |
 | INF-H4 | `deploy.yml` | CD pipeline — needs deployment target |
 | DB-H3  | `ai_audit_log` partitioning | Cleanup function works; true range-partitioning postponed |
+| INF-H5 | IaC (Terraform/Pulumi) | Needs deployment target + cloud-provider decision |
+| SEC-H3 | Secret management (Vault/K8s secrets) | Needs secret-store decision (see SEC-H2) |
 
 If you cross one of these "ops decision" lines (introducing a new
 external service, secret rotation, destructive migration), **ping the
