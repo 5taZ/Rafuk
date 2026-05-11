@@ -161,21 +161,54 @@ start_tunnel() {
 
     : >"$CLOUDFLARED_LOG"
     echo "Starting Cloudflare Tunnel ..."
-    nohup cloudflared tunnel --url http://127.0.0.1:8081 >"$CLOUDFLARED_LOG" 2>&1 &
-    echo $! >"$RUN_DIR/cloudflared.pid"
-
     local tunnel_url=""
-    for _ in $(seq 1 30); do
-        tunnel_url="$(grep -Eo 'https://[-a-z0-9]+\.trycloudflare\.com' "$CLOUDFLARED_LOG" | head -n 1 || true)"
+    local max_attempts=3
+    local pid
+
+    for attempt in $(seq 1 "$max_attempts"); do
+        printf '\n=== cloudflared attempt %s/%s at %s ===\n' "$attempt" "$max_attempts" "$(date -Is)" >>"$CLOUDFLARED_LOG"
+        nohup cloudflared tunnel --url http://127.0.0.1:8081 >>"$CLOUDFLARED_LOG" 2>&1 &
+        pid="$!"
+        echo "$pid" >"$RUN_DIR/cloudflared.pid"
+
+        for _ in $(seq 1 30); do
+            tunnel_url="$(grep -Eo 'https://[[:alnum:]-]+\.trycloudflare\.com' "$CLOUDFLARED_LOG" | head -n 1 || true)"
+            if [[ -n "$tunnel_url" ]]; then
+                break
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+
         if [[ -n "$tunnel_url" ]]; then
             break
         fi
-        sleep 1
+
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+
+        if [[ "$attempt" -lt "$max_attempts" ]]; then
+            if grep -q 'status_code="500 Internal Server Error"' "$CLOUDFLARED_LOG"; then
+                echo "Cloudflare Quick Tunnel returned 500; retrying ..."
+            else
+                echo "Cloudflare Tunnel did not publish a URL; retrying ..."
+            fi
+            sleep "$((attempt * 2))"
+        fi
     done
 
     if [[ -z "$tunnel_url" ]]; then
         echo "Failed to detect Cloudflare Tunnel URL."
+        if grep -q 'status_code="500 Internal Server Error"' "$CLOUDFLARED_LOG"; then
+            echo "Cloudflare Quick Tunnel API is returning 500 right now; this is outside the app."
+            echo "Try again later, or configure a named Cloudflare tunnel instead of an account-less quick tunnel."
+        fi
         echo "Check log: $CLOUDFLARED_LOG"
+        rm -f "$RUN_DIR/cloudflared.pid"
         exit 1
     fi
 

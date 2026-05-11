@@ -273,7 +273,7 @@
     font-size: var(--text-base);
     background: var(--red-soft);
     border-radius: var(--r-md);
-    border: 1px solid rgba(244, 63, 94, 0.1);
+    border: 1px solid var(--danger-border);
     line-height: 1.5;
 }
 
@@ -340,9 +340,9 @@
 }
 
 .ai-badge--good {
-    background: rgba(34, 197, 94, 0.1);
+    background: var(--success-soft);
     color: var(--green);
-    border: 1px solid rgba(34, 197, 94, 0.12);
+    border: 1px solid var(--success-border);
 }
 
 .ai-badge--ok {
@@ -352,15 +352,15 @@
 }
 
 .ai-badge--warn {
-    background: rgba(245, 158, 11, 0.1);
+    background: var(--warning-soft);
     color: var(--amber);
-    border: 1px solid rgba(245, 158, 11, 0.12);
+    border: 1px solid var(--warning-border);
 }
 
 .ai-badge--bad {
-    background: rgba(244, 63, 94, 0.1);
+    background: var(--danger-soft);
     color: var(--red);
-    border: 1px solid rgba(244, 63, 94, 0.12);
+    border: 1px solid var(--danger-border);
 }
 
 .ai-badge--lg {
@@ -673,8 +673,8 @@
 }
 
 .ai-meta-pill--good {
-    background: rgba(34, 197, 94, 0.08);
-    border-color: rgba(34, 197, 94, 0.12);
+    background: var(--success-soft);
+    border-color: var(--success-border);
     color: var(--green);
     font-weight: 600;
 }

@@ -235,13 +235,13 @@
 .market-badge.active {
     color: var(--green);
     background: var(--green-soft);
-    border-color: rgba(52, 211, 153, 0.2);
+    border-color: var(--success-border);
 }
 
 .market-badge.price_drop {
     color: var(--red);
     background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.25);
+    border-color: var(--danger-border);
     animation: pulse-badge 2s ease-in-out infinite;
 }
 
@@ -255,7 +255,7 @@
 .market-badge.duplicate {
     color: var(--amber-400);
     background: var(--amber-soft);
-    border-color: rgba(251, 191, 36, 0.25);
+    border-color: var(--warning-border);
 }
 
 /* Missing listing banner */
@@ -267,7 +267,7 @@
     font-size: var(--text-sm);
     font-weight: 600;
     border-radius: var(--r-md) var(--r-md) 0 0;
-    border-bottom: 1px dashed rgba(251, 113, 133, 0.35);
+    border-bottom: 1px dashed color-mix(in srgb, var(--danger) 35%, transparent);
     text-align: center;
 }
 
@@ -334,7 +334,7 @@
 
 .wl-btn--danger:hover {
     background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.25);
+    border-color: var(--danger-border);
 }
 
 .wl-btn--detail {
@@ -538,7 +538,7 @@
 .lead-status-badge.reviewing {
     color: var(--violet);
     background: var(--violet-soft);
-    border: 1px solid rgba(167, 139, 250, 0.2);
+    border: 1px solid var(--accent-secondary-border);
 }
 
 .lead-status-badge.in_progress {
@@ -550,25 +550,25 @@
 .lead-status-badge.negotiating {
     color: var(--amber-400);
     background: var(--amber-soft);
-    border: 1px solid rgba(251, 191, 36, 0.2);
+    border: 1px solid var(--warning-border);
 }
 
 .lead-status-badge.bought {
     color: var(--green);
     background: var(--green-soft);
-    border: 1px solid rgba(52, 211, 153, 0.2);
+    border: 1px solid var(--success-border);
 }
 
 .lead-status-badge.reselling {
     color: var(--cyan);
     background: var(--cyan-soft);
-    border: 1px solid rgba(6, 182, 212, 0.2);
+    border: 1px solid color-mix(in srgb, var(--cyan) 20%, transparent);
 }
 
 .lead-status-badge.sold {
     color: var(--green-700);
-    background: rgba(21, 128, 61, 0.12);
-    border: 1px solid rgba(21, 128, 61, 0.2);
+    background: var(--success-soft);
+    border: 1px solid var(--success-border);
 }
 
 .lead-status-badge.skipped {
@@ -834,7 +834,7 @@
 
 .lead-btn--danger:hover {
     background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.25);
+    border-color: var(--danger-border);
 }
 
 /* Stage 1: New lead buttons */
@@ -1148,19 +1148,19 @@
 
 /* ===== Light Theme Lead Card Overrides ===== */
 [data-theme="light"] .lead-card.status-bought {
-    background: rgba(22, 163, 74, 0.04);
+    background: color-mix(in srgb, var(--success) 4%, transparent);
 }
 [data-theme="light"] .lead-card.status-reselling {
-    background: rgba(8, 145, 178, 0.04);
+    background: color-mix(in srgb, var(--cyan) 4%, transparent);
 }
 [data-theme="light"] .lead-card.status-sold {
-    background: rgba(22, 163, 74, 0.06);
+    background: var(--success-soft);
 }
 [data-theme="light"] .lead-card.status-in_progress {
-    background: rgba(37, 99, 235, 0.04);
+    background: color-mix(in srgb, var(--info) 4%, transparent);
 }
 [data-theme="light"] .lead-card.status-negotiating {
-    background: rgba(217, 119, 6, 0.04);
+    background: color-mix(in srgb, var(--warning) 4%, transparent);
 }
 
 /* ===== Enhanced Tracker UI ===== */
@@ -1485,7 +1485,7 @@
 .event-type-badge.drop {
     background: var(--green-soft);
     color: var(--green);
-    border: 1px solid rgba(52, 211, 153, 0.2);
+    border: 1px solid var(--success-border);
 }
 
 .event-time {
@@ -1531,7 +1531,7 @@
     background: var(--green-soft);
     padding: 2px 6px;
     border-radius: var(--r-sm);
-    border: 1px solid rgba(52, 211, 153, 0.2);
+    border: 1px solid var(--success-border);
 }
 
 .event-meta {
@@ -1762,7 +1762,7 @@
     justify-content: center;
     font-size: var(--text-2xs);
     font-weight: 600;
-    color: #fff;
+    color: var(--text-inverse);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -76,6 +76,27 @@
     --cyan: #06b6d4;
     --cyan-soft: rgba(6, 182, 212, 0.08);
     --white: #e8e8e8;
+    --surface: var(--bg-card);
+    --surface-elevated: var(--bg-elevated);
+    --surface-input: var(--bg-input);
+    --surface-hover: var(--bg-hover);
+    --border-default: var(--border);
+    --border-subtle: rgba(255, 255, 255, 0.04);
+    --text-primary: var(--text);
+    --text-inverse: var(--accent-foreground);
+    --success: var(--green);
+    --success-soft: var(--green-soft);
+    --success-border: color-mix(in srgb, var(--success) 20%, transparent);
+    --danger: var(--red);
+    --danger-soft: var(--red-soft);
+    --danger-border: color-mix(in srgb, var(--danger) 20%, transparent);
+    --warning: var(--amber);
+    --warning-soft: var(--amber-soft);
+    --warning-border: color-mix(in srgb, var(--warning) 20%, transparent);
+    --info: var(--accent);
+    --info-soft: var(--accent-soft);
+    --info-border: color-mix(in srgb, var(--info) 18%, transparent);
+    --accent-secondary-border: color-mix(in srgb, var(--accent-secondary) 20%, transparent);
     --font: "Geist", system-ui, -apple-system, sans-serif;
     --accent-foreground: #ffffff;
     --font-mono: "JetBrains Mono", "Courier New", monospace;
@@ -980,9 +1001,9 @@ body {
 }
 
 .view-tab.active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--white);
+    background: var(--info-soft);
+    border-color: var(--info-border);
+    color: var(--accent);
     box-shadow: none;
 }
 
@@ -1305,7 +1326,7 @@ body {
     align-items: center;
     gap: 8px;
     background: var(--red-soft);
-    border: 1px solid rgba(251, 113, 133, 0.25);
+    border: 1px solid var(--danger-border);
     border-radius: var(--r-md);
     padding: 10px 13px;
     color: var(--red);
@@ -1323,7 +1344,7 @@ body {
     margin-left: auto;
     padding: 4px 12px;
     background: var(--red);
-    color: #fff;
+    color: var(--text-inverse);
     border: none;
     border-radius: var(--r-sm);
     font-size: var(--text-sm);
@@ -1478,7 +1499,7 @@ body {
 .primary-link {
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: var(--white);
+    color: var(--text-inverse);
 }
 
 .ghost-btn {
@@ -1503,7 +1524,7 @@ body {
 
 .ghost-btn.danger {
     color: var(--red);
-    border-color: rgba(244, 63, 94, 0.2);
+    border-color: var(--danger-border);
 }
 
 .ghost-btn.danger:hover {
@@ -1535,13 +1556,13 @@ body {
 .tracker-status.success {
     background: var(--green-soft);
     color: var(--green);
-    border-color: rgba(52, 211, 153, 0.2);
+    border-color: var(--success-border);
 }
 
 .tracker-status.error {
     background: var(--red-soft);
     color: var(--red);
-    border-color: rgba(251, 113, 133, 0.25);
+    border-color: var(--danger-border);
 }
 
 .trackers-list {
@@ -1808,7 +1829,7 @@ body {
 .status-badge.active {
     color: var(--green);
     background: var(--green-soft);
-    border-color: rgba(52, 211, 153, 0.2);
+    border-color: var(--success-border);
 }
 
 .status-badge.warning {
@@ -1820,7 +1841,7 @@ body {
 .status-badge.risk {
     color: var(--red);
     background: var(--red-soft);
-    border-color: rgba(244, 63, 94, 0.2);
+    border-color: var(--danger-border);
 }
 
 /* ===== Polished empty states ===== */
@@ -1929,7 +1950,7 @@ body {
     border-radius: var(--radius-full);
     border: none;
     background: var(--accent);
-    color: var(--accent-foreground, #ffffff);
+    color: var(--text-inverse);
     font: 600 13px var(--font);
     cursor: pointer;
     min-height: 36px;
@@ -1963,7 +1984,7 @@ body {
 }
 
 [data-theme="light"] .empty-state-icon {
-    background: rgba(37, 99, 235, 0.08);
+    background: var(--info-soft);
 }
 
 .tracker-event-empty {
@@ -2042,7 +2063,7 @@ body {
     padding: 4px 9px;
     background: var(--accent-soft);
     color: var(--accent);
-    border: 1px solid rgba(59, 130, 246, 0.15);
+    border: 1px solid var(--info-border);
     border-radius: var(--radius-full);
     letter-spacing: 0.02em;
     line-height: 1.4;
@@ -2097,7 +2118,7 @@ body {
 
 .stat-card.is-accent {
     background: var(--accent-soft);
-    border-color: rgba(59, 130, 246, 0.15);
+    border-color: var(--info-border);
 }
 
 .stat-card.wide {
@@ -2366,13 +2387,13 @@ body {
 .seg-pill.new {
     background: var(--green-soft);
     color: var(--green);
-    border: 1px solid rgba(52, 211, 153, 0.2);
+    border: 1px solid var(--success-border);
 }
 
 .seg-pill.used {
     background: var(--amber-soft);
     color: var(--amber-400);
-    border: 1px solid rgba(251, 191, 36, 0.2);
+    border: 1px solid var(--warning-border);
 }
 
 .seg-seller {
@@ -2509,9 +2530,9 @@ body {
 }
 
 .s-tab.active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--white);
+    background: var(--info-soft);
+    border-color: var(--info-border);
+    color: var(--accent);
 }
 
 .s-tab:not(.active):hover {
@@ -2681,19 +2702,19 @@ body {
 .listing-badge.under {
     color: var(--green);
     background: var(--green-soft);
-    border-color: rgba(52, 211, 153, 0.2);
+    border-color: var(--success-border);
 }
 
 .listing-badge.over {
     color: var(--red);
     background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.2);
+    border-color: var(--danger-border);
 }
 
 .listing-badge.below_market {
     color: var(--green);
     background: var(--green-soft);
-    border-color: rgba(52, 211, 153, 0.2);
+    border-color: var(--success-border);
 }
 
 .listing-badge.fair {
@@ -2705,7 +2726,7 @@ body {
 .listing-badge.verdict-zabirat {
     color: var(--green);
     background: var(--green-soft);
-    border-color: rgba(52, 211, 153, 0.2);
+    border-color: var(--success-border);
 }
 
 .listing-badge.verdict-smotret {
@@ -2722,7 +2743,7 @@ body {
 .listing-badge.verdict-mimo {
     color: var(--red);
     background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.2);
+    border-color: var(--danger-border);
 }
 
 .listing-badge.warn {
@@ -2733,8 +2754,8 @@ body {
 
 .listing-badge.fresh-hot {
     color: var(--red-400);
-    background: rgba(248, 113, 113, 0.12);
-    border-color: rgba(248, 113, 113, 0.2);
+    background: var(--danger-soft);
+    border-color: var(--danger-border);
     animation: pulse-badge 2s ease-in-out infinite;
 }
 
@@ -2753,7 +2774,7 @@ body {
 .listing-badge.fresh-warm {
     color: var(--amber-400);
     background: var(--amber-soft);
-    border-color: rgba(251, 191, 36, 0.2);
+    border-color: var(--warning-border);
 }
 
 /* Action buttons — top row: 2 equal, bottom row: Kufar full width */
@@ -2826,7 +2847,6 @@ body {
     transform: scale(0.98);
 }
 
-
 /* ===== modals ===== */
 /* ===== Detail Modal ===== */
 .detail-modal {
@@ -2891,6 +2911,116 @@ body.modal-open {
 
 .detail-modal.is-closing .detail-sheet {
     animation: modal-sheet-out 240ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+.typed-confirm-modal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-4);
+    background: var(--overlay);
+    backdrop-filter: blur(4px);
+}
+
+.typed-confirm-sheet {
+    width: min(100%, 340px);
+    padding: var(--space-5);
+    border: 1px solid var(--border);
+    border-radius: var(--r-xl);
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-prominent);
+    text-align: center;
+}
+
+.typed-confirm-title {
+    margin: 0 0 var(--space-2);
+    color: var(--text);
+    font-size: var(--text-lg);
+    line-height: 1.25;
+}
+
+.typed-confirm-message,
+.typed-confirm-hint {
+    margin: 0 0 var(--space-3);
+    color: var(--text-secondary);
+}
+
+.typed-confirm-message {
+    font-size: var(--text-norm);
+    line-height: 1.5;
+}
+
+.typed-confirm-hint {
+    font-size: var(--text-base);
+    line-height: 1.45;
+}
+
+.typed-confirm-expected {
+    color: var(--text);
+}
+
+.typed-confirm-input {
+    width: 100%;
+    margin: 0 0 var(--space-4);
+    padding: var(--space-2_5) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface-elevated);
+    color: var(--text);
+    font: 500 var(--text-norm) var(--font);
+}
+
+.typed-confirm-input:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+    outline: none;
+}
+
+.typed-confirm-actions {
+    display: flex;
+    gap: var(--space-2_5);
+}
+
+.typed-confirm-btn {
+    flex: 1;
+    min-height: 44px;
+    padding: var(--space-2_5) var(--space-3);
+    border-radius: var(--r-md);
+    font: 600 var(--text-norm) var(--font);
+    cursor: pointer;
+    transition: background var(--tr-base), border-color var(--tr-base), opacity var(--tr-base), transform var(--tr-fast);
+}
+
+.typed-confirm-btn:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.typed-confirm-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.typed-confirm-btn--secondary {
+    border: 1px solid var(--border);
+    background: var(--surface-elevated);
+    color: var(--text);
+}
+
+.typed-confirm-btn--secondary:hover:not(:disabled) {
+    background: var(--surface-hover);
+    border-color: var(--border-hover);
+}
+
+.typed-confirm-btn--danger {
+    border: 1px solid var(--danger);
+    background: var(--danger);
+    color: var(--text-inverse);
+}
+
+.typed-confirm-btn--danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger) 84%, black);
+    border-color: color-mix(in srgb, var(--danger) 84%, black);
 }
 
 @keyframes modal-overlay-in {
@@ -3358,7 +3488,7 @@ body.modal-open {
 .listing-badge.risk-low {
     color: var(--green);
     background: var(--green-soft);
-    border-color: rgba(52, 211, 153, 0.2);
+    border-color: var(--success-border);
 }
 
 .listing-badge.risk-medium {
@@ -3370,7 +3500,7 @@ body.modal-open {
 .listing-badge.risk-high {
     color: var(--red);
     background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.2);
+    border-color: var(--danger-border);
 }
 
 
@@ -4495,13 +4625,13 @@ body.lp-menu-open {
 .market-badge.active {
     color: var(--green);
     background: var(--green-soft);
-    border-color: rgba(52, 211, 153, 0.2);
+    border-color: var(--success-border);
 }
 
 .market-badge.price_drop {
     color: var(--red);
     background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.25);
+    border-color: var(--danger-border);
     animation: pulse-badge 2s ease-in-out infinite;
 }
 
@@ -4515,7 +4645,7 @@ body.lp-menu-open {
 .market-badge.duplicate {
     color: var(--amber-400);
     background: var(--amber-soft);
-    border-color: rgba(251, 191, 36, 0.25);
+    border-color: var(--warning-border);
 }
 
 /* Missing listing banner */
@@ -4527,7 +4657,7 @@ body.lp-menu-open {
     font-size: var(--text-sm);
     font-weight: 600;
     border-radius: var(--r-md) var(--r-md) 0 0;
-    border-bottom: 1px dashed rgba(251, 113, 133, 0.35);
+    border-bottom: 1px dashed color-mix(in srgb, var(--danger) 35%, transparent);
     text-align: center;
 }
 
@@ -4594,7 +4724,7 @@ body.lp-menu-open {
 
 .wl-btn--danger:hover {
     background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.25);
+    border-color: var(--danger-border);
 }
 
 .wl-btn--detail {
@@ -4798,7 +4928,7 @@ body.lp-menu-open {
 .lead-status-badge.reviewing {
     color: var(--violet);
     background: var(--violet-soft);
-    border: 1px solid rgba(167, 139, 250, 0.2);
+    border: 1px solid var(--accent-secondary-border);
 }
 
 .lead-status-badge.in_progress {
@@ -4810,25 +4940,25 @@ body.lp-menu-open {
 .lead-status-badge.negotiating {
     color: var(--amber-400);
     background: var(--amber-soft);
-    border: 1px solid rgba(251, 191, 36, 0.2);
+    border: 1px solid var(--warning-border);
 }
 
 .lead-status-badge.bought {
     color: var(--green);
     background: var(--green-soft);
-    border: 1px solid rgba(52, 211, 153, 0.2);
+    border: 1px solid var(--success-border);
 }
 
 .lead-status-badge.reselling {
     color: var(--cyan);
     background: var(--cyan-soft);
-    border: 1px solid rgba(6, 182, 212, 0.2);
+    border: 1px solid color-mix(in srgb, var(--cyan) 20%, transparent);
 }
 
 .lead-status-badge.sold {
     color: var(--green-700);
-    background: rgba(21, 128, 61, 0.12);
-    border: 1px solid rgba(21, 128, 61, 0.2);
+    background: var(--success-soft);
+    border: 1px solid var(--success-border);
 }
 
 .lead-status-badge.skipped {
@@ -5094,7 +5224,7 @@ body.lp-menu-open {
 
 .lead-btn--danger:hover {
     background: var(--red-soft);
-    border-color: rgba(251, 113, 133, 0.25);
+    border-color: var(--danger-border);
 }
 
 /* Stage 1: New lead buttons */
@@ -5408,19 +5538,19 @@ body.lp-menu-open {
 
 /* ===== Light Theme Lead Card Overrides ===== */
 [data-theme="light"] .lead-card.status-bought {
-    background: rgba(22, 163, 74, 0.04);
+    background: color-mix(in srgb, var(--success) 4%, transparent);
 }
 [data-theme="light"] .lead-card.status-reselling {
-    background: rgba(8, 145, 178, 0.04);
+    background: color-mix(in srgb, var(--cyan) 4%, transparent);
 }
 [data-theme="light"] .lead-card.status-sold {
-    background: rgba(22, 163, 74, 0.06);
+    background: var(--success-soft);
 }
 [data-theme="light"] .lead-card.status-in_progress {
-    background: rgba(37, 99, 235, 0.04);
+    background: color-mix(in srgb, var(--info) 4%, transparent);
 }
 [data-theme="light"] .lead-card.status-negotiating {
-    background: rgba(217, 119, 6, 0.04);
+    background: color-mix(in srgb, var(--warning) 4%, transparent);
 }
 
 /* ===== Enhanced Tracker UI ===== */
@@ -5745,7 +5875,7 @@ body.lp-menu-open {
 .event-type-badge.drop {
     background: var(--green-soft);
     color: var(--green);
-    border: 1px solid rgba(52, 211, 153, 0.2);
+    border: 1px solid var(--success-border);
 }
 
 .event-time {
@@ -5791,7 +5921,7 @@ body.lp-menu-open {
     background: var(--green-soft);
     padding: 2px 6px;
     border-radius: var(--r-sm);
-    border: 1px solid rgba(52, 211, 153, 0.2);
+    border: 1px solid var(--success-border);
 }
 
 .event-meta {
@@ -6022,7 +6152,7 @@ body.lp-menu-open {
     justify-content: center;
     font-size: var(--text-2xs);
     font-weight: 600;
-    color: #fff;
+    color: var(--text-inverse);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7027,7 +7157,7 @@ body.lp-menu-open {
     font-size: var(--text-base);
     background: var(--red-soft);
     border-radius: var(--r-md);
-    border: 1px solid rgba(244, 63, 94, 0.1);
+    border: 1px solid var(--danger-border);
     line-height: 1.5;
 }
 
@@ -7094,9 +7224,9 @@ body.lp-menu-open {
 }
 
 .ai-badge--good {
-    background: rgba(34, 197, 94, 0.1);
+    background: var(--success-soft);
     color: var(--green);
-    border: 1px solid rgba(34, 197, 94, 0.12);
+    border: 1px solid var(--success-border);
 }
 
 .ai-badge--ok {
@@ -7106,15 +7236,15 @@ body.lp-menu-open {
 }
 
 .ai-badge--warn {
-    background: rgba(245, 158, 11, 0.1);
+    background: var(--warning-soft);
     color: var(--amber);
-    border: 1px solid rgba(245, 158, 11, 0.12);
+    border: 1px solid var(--warning-border);
 }
 
 .ai-badge--bad {
-    background: rgba(244, 63, 94, 0.1);
+    background: var(--danger-soft);
     color: var(--red);
-    border: 1px solid rgba(244, 63, 94, 0.12);
+    border: 1px solid var(--danger-border);
 }
 
 .ai-badge--lg {
@@ -7427,8 +7557,8 @@ body.lp-menu-open {
 }
 
 .ai-meta-pill--good {
-    background: rgba(34, 197, 94, 0.08);
-    border-color: rgba(34, 197, 94, 0.12);
+    background: var(--success-soft);
+    border-color: var(--success-border);
     color: var(--green);
     font-weight: 600;
 }
@@ -7781,7 +7911,7 @@ body.lp-menu-open {
     width: 32px;
     height: 32px;
     border-radius: 11px;
-    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.12), var(--shadow-sm);
+    box-shadow: 0 0 0 1px var(--accent-glow), var(--shadow-sm);
 }
 
 .logo-name {
@@ -7819,13 +7949,19 @@ body.lp-menu-open {
 
 .search-btn,
 .primary-btn,
-.primary-link,
-.view-tab.active,
-.s-tab.active {
+.primary-link {
     background: var(--accent);
     border-color: var(--accent);
-    color: var(--white);
+    color: var(--text-inverse);
     box-shadow: var(--shadow-sm);
+}
+
+.view-tab.active,
+.s-tab.active {
+    background: var(--info-soft);
+    border-color: var(--info-border);
+    color: var(--accent);
+    box-shadow: none;
 }
 
 .strict-toggle {
@@ -7861,9 +7997,9 @@ body.lp-menu-open {
 
 [data-theme="light"] .view-tab.active,
 [data-theme="light"] .s-tab.active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--white);
+    background: var(--info-soft);
+    border-color: var(--info-border);
+    color: var(--accent);
 }
 
 .view-tab {
@@ -8136,7 +8272,7 @@ body.lp-menu-open {
     border-radius: var(--radius-full);
     border: 0;
     background: var(--overlay);
-    color: var(--white);
+    color: var(--text-inverse);
     font-size: var(--text-norm);
     line-height: 1;
     cursor: pointer;
@@ -8305,7 +8441,7 @@ body.lp-menu-open {
     font-size: var(--text-base);
     background: var(--red-soft);
     border-radius: var(--r-md);
-    border: 1px solid rgba(244, 63, 94, 0.1);
+    border: 1px solid var(--danger-border);
     line-height: 1.5;
 }
 
@@ -8924,9 +9060,7 @@ body.lp-menu-open {
     border-color: rgba(15, 23, 42, 0.06);
 }
 
-/* Active states still get accent — selection should always be obvious. */
-.view-tab.active,
-.s-tab.active,
+/* Primary actions still get accent — selection uses a quieter tint. */
 .search-btn,
 .primary-btn,
 .primary-link {
@@ -8934,6 +9068,14 @@ body.lp-menu-open {
     border-color: var(--accent);
     color: var(--accent-foreground);
     box-shadow: var(--shadow-sm);
+}
+
+.view-tab.active,
+.s-tab.active {
+    background: var(--info-soft);
+    border-color: var(--info-border);
+    color: var(--accent);
+    box-shadow: none;
 }
 
 /* --- Summary strip accent reduced to a thin spine ---------------- */
@@ -9439,8 +9581,8 @@ body.lp-menu-open {
 }
 
 .s-tab.active .s-tab-count {
-    background: rgba(255, 255, 255, 0.22);
-    color: var(--accent-foreground);
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    color: var(--accent);
 }
 
 /* =====================================================================
@@ -9511,7 +9653,7 @@ body.lp-menu-open {
 }
 
 .items-tab.is-active .items-tab-count {
-    background: rgba(255, 255, 255, 0.22);
+    background: color-mix(in srgb, var(--text-inverse) 22%, transparent);
     color: var(--accent-foreground);
 }
 

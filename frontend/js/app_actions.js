@@ -681,27 +681,25 @@ function createAppActions(context) {
         // skip this check still hit the server-side validator.
         return new Promise((resolve) => {
             const overlay = document.createElement("div");
-            overlay.className = "detail-modal";
-            overlay.style.cssText = "display:flex;align-items:center;justify-content:center;z-index:1000;";
+            overlay.className = "detail-modal typed-confirm-modal";
             const sheet = document.createElement("div");
-            sheet.className = "detail-sheet";
-            sheet.style.cssText = "max-width:340px;width:90%;padding:20px;text-align:center;";
+            sheet.className = "typed-confirm-sheet";
 
             const h3 = document.createElement("h3");
-            h3.style.cssText = "margin:0 0 8px;font-size:17px;";
+            h3.className = "typed-confirm-title";
             h3.textContent = title;
 
             const p = document.createElement("p");
-            p.style.cssText = "margin:0 0 12px;color:var(--text-secondary);font-size:14px;";
+            p.className = "typed-confirm-message";
             p.textContent = message;
 
             const hint = document.createElement("p");
-            hint.style.cssText = "margin:0 0 12px;font-size:13px;color:var(--text-secondary);";
+            hint.className = "typed-confirm-hint";
             // Build via DOM (not innerHTML) — keeps user-controlled
             // ``expectedText`` away from the HTML parser entirely.
             hint.append("Введите ");
             const expectedSpan = document.createElement("strong");
-            expectedSpan.style.cssText = "color:var(--text-color);";
+            expectedSpan.className = "typed-confirm-expected";
             expectedSpan.textContent = expectedText;
             hint.append(expectedSpan, " для подтверждения:");
 
@@ -710,19 +708,19 @@ function createAppActions(context) {
             input.autocomplete = "off";
             input.autocapitalize = "off";
             input.spellcheck = false;
-            input.style.cssText = "width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--surface-color);color:var(--text-color);font-size:14px;margin:0 0 16px;box-sizing:border-box;";
+            input.className = "typed-confirm-input";
 
             const btnRow = document.createElement("div");
-            btnRow.style.cssText = "display:flex;gap:10px;justify-content:center;";
+            btnRow.className = "typed-confirm-actions";
 
             const cancelBtn = document.createElement("button");
             cancelBtn.setAttribute("data-role", "cancel");
-            cancelBtn.style.cssText = "flex:1;padding:10px;border-radius:10px;border:1px solid var(--border-color);background:var(--surface-color);color:var(--text-color);font-size:14px;";
+            cancelBtn.className = "typed-confirm-btn typed-confirm-btn--secondary";
             cancelBtn.textContent = "Отмена";
 
             const confirmBtn = document.createElement("button");
             confirmBtn.setAttribute("data-role", "confirm");
-            confirmBtn.style.cssText = "flex:1;padding:10px;border-radius:10px;border:none;background:var(--danger-color,#e53935);color:#fff;font-size:14px;font-weight:600;opacity:0.5;cursor:not-allowed;";
+            confirmBtn.className = "typed-confirm-btn typed-confirm-btn--danger";
             confirmBtn.textContent = "Удалить";
             confirmBtn.disabled = true;
 
@@ -747,8 +745,6 @@ function createAppActions(context) {
             function refreshConfirm() {
                 const matches = input.value.trim().toLowerCase() === expectedNorm;
                 confirmBtn.disabled = !matches;
-                confirmBtn.style.opacity = matches ? "1" : "0.5";
-                confirmBtn.style.cursor = matches ? "pointer" : "not-allowed";
             }
             input.addEventListener("input", refreshConfirm);
             input.addEventListener("keydown", (e) => {
