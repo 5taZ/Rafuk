@@ -36,7 +36,7 @@ Do **not** commit a red suite.
 | `scheduler/` | APScheduler — periodic Kufar scrape + alerts |
 | `frontend/` | Vanilla JS Mini-App (no bundler, no JSX) |
 | `migrations/` | Alembic migrations |
-| `tests/` | pytest, ~494 tests against aiosqlite locally / Postgres in CI |
+| `tests/` | pytest suite against aiosqlite locally / Postgres in CI |
 | `nginx/` | Reverse-proxy config, CSP/headers |
 | `docker-compose.yml` | api / bot / scheduler / frontend / redis / cloudflared |
 
@@ -113,9 +113,10 @@ list of importers so removing them is a deliberate decision.
 2. **Local Redis on `:6380` has no password.** `REDIS_URL` stays
    plaintext for the host; `DOCKER_REDIS_URL` carries the
    `REDIS_PASSWORD` env var.
-3. **494 tests must stay green.** If a refactor breaks tests, either
-   update the test (with audit-ID comments) or roll back. Never commit
-   a red suite.
+3. **The full pytest suite must stay green.** Verify with
+   `uv run pytest --tb=short -q` before commits that touch runtime
+   code or tests. If a refactor breaks tests, either update the test
+   (with audit-ID comments) or roll back. Never commit a red suite.
 4. **Never commit `.env`, `DEEP_DIVE_REVIEW_COMPREHENSIVE.md`, or
    `notmyfault.md`.** They're gitignored — keep them that way.
 
@@ -163,10 +164,10 @@ user first**.
 
 ## Current open work
 
-The remaining audit items are tracked in
-`DEEP_DIVE_REVIEW_COMPREHENSIVE.md` (gitignored). The execution plan
-lives in `claude.md` section 8 ("Suggested next moves") and
-`CHANGELOG.md` ("Audit progress"). Keep waves themed and atomic.
+Historical audit context may live in gitignored review notes or
+`mybad.md`; treat those as snapshots, not live source of truth. Use
+`git log --oneline` and current test/lint output to establish what is
+still open. Keep waves themed and atomic.
 
 ## License
 
