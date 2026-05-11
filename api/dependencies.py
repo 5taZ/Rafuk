@@ -8,8 +8,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings, get_settings
-from api.database import get_engine
-from api.database import get_session_factory as build_session_factory
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
 from api.models import User
 from api.services.cache import CacheBackend
@@ -64,11 +62,11 @@ def get_session_factory_dependency(request: Request) -> async_sessionmaker[Async
     factory = getattr(request.app.state, "session_factory", None)
     if factory is not None:
         return factory
-    logger.warning(
-        "Falling back to creating a new DB engine/session_factory. "
-        "Ensure lifespan-managed session_factory is available in production."
+    raise RuntimeError(
+        "session_factory is not initialized in app.state. The lifespan "
+        "context must run before serving requests, or the test must override "
+        "`get_session_factory_dependency` via `dependency_overrides`."
     )
-    return build_session_factory(get_engine())
 
 
 async def get_telegram_user(

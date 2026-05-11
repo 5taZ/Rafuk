@@ -24,20 +24,28 @@ def _override_auth():
 
 @pytest.fixture
 async def client(_override_auth):
+    from api.database import get_engine, get_session_factory
+
+    engine = get_engine()
+    app.state.session_factory = get_session_factory(engine)
     transport = ASGITransport(app=app)
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        # FE-H7: CSRF middleware now requires Origin AND the browser-
-        # only X-Requested-With header on state-changing methods.
-        # AsyncClient doesn't go through our TestClient shim, so we
-        # set both explicitly here.
-        headers={
-            "origin": "http://localhost:8081",
-            "x-requested-with": "XMLHttpRequest",
-        },
-    ) as c:
-        yield c
+    try:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            # FE-H7: CSRF middleware now requires Origin AND the browser-
+            # only X-Requested-With header on state-changing methods.
+            # AsyncClient doesn't go through our TestClient shim, so we
+            # set both explicitly here.
+            headers={
+                "origin": "http://localhost:8081",
+                "x-requested-with": "XMLHttpRequest",
+            },
+        ) as c:
+            yield c
+    finally:
+        delattr(app.state, "session_factory")
+        await engine.dispose()
 
 
 # ── Consent status ──────────────────────────────────────────────────────
