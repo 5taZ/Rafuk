@@ -95,15 +95,30 @@ function createAiRender(context, aiCtx) {
         });
     }
 
+    function _formatAiWarning(raw) {
+        const text = String(raw || "").trim();
+        if (!text) return "";
+        if (/AI сейчас на лимите|429|RATE_LIMIT|RESOURCE_EXHAUSTED/i.test(text)) {
+            return "AI сейчас на лимите. Показан рыночный черновик по данным рынка — полный анализ можно повторить чуть позже.";
+        }
+        if (/AI-сервис временно недоступен\. Показан упрощ[её]нный анализ\./.test(text)) {
+            return "AI не ответил. Показан рыночный черновик по данным рынка.";
+        }
+        if (text.includes("AI-сервис сейчас недоступен")) {
+            return "AI не ответил. Показан рыночный черновик по данным рынка.";
+        }
+        return text;
+    }
+
     function _buildAiResultNodes(data) {
         const nodes = [];
+        const aiWarning = _formatAiWarning(data._ai_warning);
 
-        // Show AI warning banner if present (e.g. fallback analysis)
-        if (data._ai_warning) {
+        if (aiWarning) {
             nodes.push(
                 domEl("div", { className: "ai-warning-banner" },
-                    domEl("span", { className: "ai-warning-icon", attrs: { "aria-hidden": "true" }, text: "⚠" }),
-                    domEl("span", { text: data._ai_warning }),
+                    domEl("span", { className: "ai-warning-icon", attrs: { "aria-hidden": "true" }, text: "i" }),
+                    domEl("span", { text: aiWarning }),
                 )
             );
         }

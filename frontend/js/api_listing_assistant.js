@@ -11,6 +11,10 @@
 "use strict";
 
 const { openModalAnimated, closeModalAnimated } = app;
+const prefersReducedMotion = app._prefersReducedMotion || (() => (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+));
 
 
 function createApiListingAssistant(context) {
@@ -586,6 +590,7 @@ function createApiListingAssistant(context) {
 
     function showResultOverlay() {
         if (resultOverlay) resultOverlay.hidden = false;
+        if (resultBox) resultBox.scrollTop = 0;
         const sheet = modal?.querySelector(".detail-sheet");
         if (sheet) sheet.classList.add("la-sheet-expanded");
     }
@@ -599,16 +604,24 @@ function createApiListingAssistant(context) {
 
     // ── Progress animation (AI-style) ──────────────────────────────────
     const LA_LOADING_STEPS = [
-        "Оцениваю похожие лоты…",
+        "Сверяю похожие лоты…",
         "Считаю ценовой коридор…",
-        "Собираю продающий текст…",
+        "Готовлю текст объявления…",
         "Формирую план торга…",
         "Финализирую карточку…",
     ];
+    const LA_LOADING_OVERTIME_STEPS = [
+        "Дорабатываю карточку…",
+        "Проверяю цену и аргументы торга…",
+        "Ответ почти готов…",
+    ];
     const LA_PROGRESS_EXPECTED_MS = 18000;
-    const LA_PROGRESS_SOFT_CAP = 96;
+    const LA_PROGRESS_SOFT_CAP = 94;
+    const LA_PROGRESS_GLIDE_CAP = 98.6;
+    const LA_PROGRESS_GLIDE_MS = 32000;
     let _laProgressFrame = null;
     let _laProgressStartedAt = 0;
+    let _laProgress = 0;
 
     function _cancelLaProgress() {
         if (_laProgressFrame) {
@@ -618,19 +631,26 @@ function createApiListingAssistant(context) {
     }
 
     function _updateLaProgress(pct) {
+        _laProgress = Math.max(0, Math.min(100, pct));
         const barEl = resultBox?.querySelector(".la-progress-bar");
         const pctEl = resultBox?.querySelector(".la-progress-pct");
-        if (barEl) barEl.style.transform = `scaleX(${Math.max(0, Math.min(100, pct)) / 100})`;
-        if (pctEl) pctEl.textContent = Math.round(pct) + "%";
+        if (barEl) barEl.style.transform = `scaleX(${_laProgress / 100})`;
+        if (pctEl) {
+            pctEl.textContent = _laProgress >= 99.5
+                ? "100%"
+                : (_laProgress >= LA_PROGRESS_SOFT_CAP ? "почти готово" : Math.round(_laProgress) + "%");
+        }
     }
 
     function _startLaProgress() {
         _cancelLaProgress();
+        _laProgress = 0;
         _laProgressStartedAt = performance.now();
         let step = 0;
+        let overtimeStep = -1;
         const textEl = () => resultBox?.querySelector(".la-loading-text");
 
-        if (_prefersReducedMotion()) {
+        if (prefersReducedMotion()) {
             const t = textEl();
             if (t) t.textContent = LA_LOADING_STEPS[0];
             _updateLaProgress(12);
@@ -640,17 +660,30 @@ function createApiListingAssistant(context) {
         function tick(now) {
             const elapsed = Math.max(0, now - _laProgressStartedAt);
             const normalized = Math.min(elapsed / LA_PROGRESS_EXPECTED_MS, 1);
-            const target = 3 + normalized * (LA_PROGRESS_SOFT_CAP - 3);
-            _updateLaProgress(target);
+            const overtime = Math.max(0, elapsed - LA_PROGRESS_EXPECTED_MS);
+            const overtimeNormalized = Math.min(overtime / LA_PROGRESS_GLIDE_MS, 1);
+            const target = 3
+                + normalized * (LA_PROGRESS_SOFT_CAP - 3)
+                + overtimeNormalized * (LA_PROGRESS_GLIDE_CAP - LA_PROGRESS_SOFT_CAP);
+            _updateLaProgress(Math.max(_laProgress, target));
 
-            const nextStep = Math.min(
-                LA_LOADING_STEPS.length - 1,
-                Math.floor(normalized * LA_LOADING_STEPS.length),
-            );
-            if (nextStep !== step) {
-                step = nextStep;
-                const t = textEl();
-                if (t) t.textContent = LA_LOADING_STEPS[step];
+            if (overtime > 1200) {
+                const nextOvertimeStep = Math.floor(overtime / 5600) % LA_LOADING_OVERTIME_STEPS.length;
+                if (nextOvertimeStep !== overtimeStep) {
+                    overtimeStep = nextOvertimeStep;
+                    const t = textEl();
+                    if (t) t.textContent = LA_LOADING_OVERTIME_STEPS[overtimeStep];
+                }
+            } else {
+                const nextStep = Math.min(
+                    LA_LOADING_STEPS.length - 1,
+                    Math.floor(normalized * LA_LOADING_STEPS.length),
+                );
+                if (nextStep !== step) {
+                    step = nextStep;
+                    const t = textEl();
+                    if (t) t.textContent = LA_LOADING_STEPS[step];
+                }
             }
 
             _laProgressFrame = requestAnimationFrame(tick);
@@ -671,12 +704,33 @@ function createApiListingAssistant(context) {
         const textEl = resultBox?.querySelector(".la-loading-text");
 
         if (success) {
-            _updateLaProgress(100);
-            if (ring) ring.classList.add("la-loader-ring--done");
-            if (icon) { icon.textContent = "✓"; icon.classList.add("la-loader-icon--done"); }
-            if (barEl) barEl.classList.add("la-progress-bar--done");
-            if (pctEl) pctEl.classList.add("la-progress-pct--done");
-            if (textEl) textEl.textContent = "Готово!";
+            const markDone = () => {
+                if (ring) ring.classList.add("la-loader-ring--done");
+                if (icon) { icon.textContent = "✓"; icon.classList.add("la-loader-icon--done"); }
+                if (barEl) barEl.classList.add("la-progress-bar--done");
+                if (pctEl) pctEl.classList.add("la-progress-pct--done");
+                if (textEl) textEl.textContent = "Готово!";
+            };
+            if (prefersReducedMotion() || _laProgress >= 99) {
+                _updateLaProgress(100);
+                markDone();
+            } else {
+                const startPct = _laProgress;
+                const startTime = performance.now();
+                const duration = Math.min(850, Math.max(420, (100 - startPct) * 9));
+                function animateStep(now) {
+                    const t = Math.min((now - startTime) / duration, 1);
+                    const eased = 1 - Math.pow(1 - t, 3);
+                    _updateLaProgress(startPct + (100 - startPct) * eased);
+                    if (t < 1) {
+                        _laProgressFrame = requestAnimationFrame(animateStep);
+                    } else {
+                        _laProgressFrame = null;
+                        markDone();
+                    }
+                }
+                _laProgressFrame = requestAnimationFrame(animateStep);
+            }
         }
     }
 
@@ -689,16 +743,11 @@ function createApiListingAssistant(context) {
                 el("div", { className: "la-loader-ring" }),
                 el("span", { className: "la-loader-icon", text: "AI" }),
             ),
-            el("div", { className: "ai-scan-chips la-scan-chips" },
-                el("span", { className: "ai-scan-chip", text: "Цена" }),
-                el("span", { className: "ai-scan-chip", text: "Текст" }),
-                el("span", { className: "ai-scan-chip", text: "Торг" }),
-            ),
+            el("p", { className: "la-loading-text", text: "Сверяю похожие лоты…" }),
             el("div", { className: "la-progress" },
                 el("div", { className: "la-progress-bar" }),
             ),
             el("span", { className: "la-progress-pct", text: "3%" }),
-            el("p", { className: "la-loading-text", text: "Оцениваю похожие лоты…" }),
             el("p", { className: "la-loading-sub", text: "Обычно 10–25 секунд" }),
         );
         resultBox.appendChild(wrap);
@@ -916,7 +965,7 @@ function createApiListingAssistant(context) {
             if (_analysisId !== myId) return;
 
             _stopLaProgress(true);
-            const delay = _prefersReducedMotion() ? 150 : 950;
+            const delay = prefersReducedMotion() ? 150 : 950;
             setTimeout(() => {
                 if (_analysisId !== myId) return;
                 renderResult(data || {});

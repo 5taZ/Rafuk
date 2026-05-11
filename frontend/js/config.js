@@ -78,7 +78,7 @@
     PROGRESS: Object.freeze({
       AI_EXPECTED_TIME: 26_000,
       ASSISTANT_EXPECTED_TIME: 18_000,
-      SOFT_CAP_PERCENT: 96,
+      SOFT_CAP_PERCENT: 94,
       START_PERCENT: 3,
     }),
 

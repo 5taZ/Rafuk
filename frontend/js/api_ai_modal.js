@@ -14,6 +14,10 @@
 "use strict";
 
 const { domEl, openModalAnimated, closeModalAnimated } = app;
+const prefersReducedMotion = app._prefersReducedMotion || (() => (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+));
 
 function createAiModal(context, aiCtx) {
     const { elements } = context;
@@ -25,22 +29,29 @@ function createAiModal(context, aiCtx) {
     let _progressStartedAt = 0;
 
     const LOADING_STEPS = [
-        "Сканирую данные объявления...",
-        "Проверяю фото и состояние...",
-        "Сравниваю с рынком Kufar...",
+        "Проверяю данные объявления...",
+        "Смотрю фото и состояние...",
+        "Сверяю похожие лоты...",
         "Оцениваю риски сделки...",
-        "Собираю рекомендацию...",
+        "Готовлю рекомендацию...",
         "Финализирую вывод...",
     ];
+    const LOADING_OVERTIME_STEPS = [
+        "Уточняю финальные детали...",
+        "Проверяю рекомендацию перед показом...",
+        "Ответ почти готов...",
+    ];
     const AI_PROGRESS_EXPECTED_MS = 26000;
-    const AI_PROGRESS_SOFT_CAP = 96;
+    const AI_PROGRESS_SOFT_CAP = 94;
+    const AI_PROGRESS_GLIDE_CAP = 98.6;
+    const AI_PROGRESS_GLIDE_MS = 42000;
     const STAGE_LABELS = {
         queued: "Ставлю анализ в очередь...",
-        loading_market_data: "Сканирую данные объявления...",
+        loading_market_data: "Проверяю данные объявления...",
         search_ready: "Сверяю цену с похожими лотами...",
-        photo_precheck: "Проверяю фото и состояние...",
-        calling_ai: "AI оценивает цену, риски и торг...",
-        building_response: "Собираю рекомендацию...",
+        photo_precheck: "Смотрю фото и состояние...",
+        calling_ai: "Оцениваю цену, риски и торг...",
+        building_response: "Готовлю рекомендацию...",
         done: "Анализ завершён!",
         timeout: "AI анализ занял слишком долго...",
         error: "Не удалось завершить AI анализ...",
@@ -52,7 +63,11 @@ function createAiModal(context, aiCtx) {
         const barEl = elements.aiProgressBar;
         const pctEl = elements.aiProgressPct;
         if (barEl) barEl.style.transform = `scaleX(${_aiProgress / 100})`;
-        if (pctEl) pctEl.textContent = Math.round(_aiProgress) + "%";
+        if (pctEl) {
+            pctEl.textContent = _aiProgress >= 99.5
+                ? "100%"
+                : (_aiProgress >= AI_PROGRESS_SOFT_CAP ? "почти готово" : Math.round(_aiProgress) + "%");
+        }
     }
 
     function _updateProgressDisplayInstant(pct) {
@@ -84,11 +99,12 @@ function createAiModal(context, aiCtx) {
 
     function startLoadingAnimation() {
         let step = 0;
+        let overtimeStep = -1;
         _aiProgress = 0;
         _progressStartedAt = performance.now();
         const textEl = elements.aiLoaderText;
 
-        if (_prefersReducedMotion()) {
+        if (prefersReducedMotion()) {
             if (textEl) textEl.textContent = LOADING_STEPS[0];
             _updateProgressDisplay(12);
             return;
@@ -97,16 +113,28 @@ function createAiModal(context, aiCtx) {
         function tick(now) {
             const elapsed = Math.max(0, now - _progressStartedAt);
             const normalized = Math.min(elapsed / AI_PROGRESS_EXPECTED_MS, 1);
-            const target = 3 + normalized * (AI_PROGRESS_SOFT_CAP - 3);
+            const overtime = Math.max(0, elapsed - AI_PROGRESS_EXPECTED_MS);
+            const overtimeNormalized = Math.min(overtime / AI_PROGRESS_GLIDE_MS, 1);
+            const target = 3
+                + normalized * (AI_PROGRESS_SOFT_CAP - 3)
+                + overtimeNormalized * (AI_PROGRESS_GLIDE_CAP - AI_PROGRESS_SOFT_CAP);
             _updateProgressDisplay(Math.max(_aiProgress, target));
 
-            const nextStep = Math.min(
-                LOADING_STEPS.length - 1,
-                Math.floor(normalized * LOADING_STEPS.length),
-            );
-            if (nextStep !== step) {
-                step = nextStep;
-                if (textEl) textEl.textContent = LOADING_STEPS[step];
+            if (overtime > 1200) {
+                const nextOvertimeStep = Math.floor(overtime / 6500) % LOADING_OVERTIME_STEPS.length;
+                if (nextOvertimeStep !== overtimeStep) {
+                    overtimeStep = nextOvertimeStep;
+                    if (textEl) textEl.textContent = LOADING_OVERTIME_STEPS[overtimeStep];
+                }
+            } else {
+                const nextStep = Math.min(
+                    LOADING_STEPS.length - 1,
+                    Math.floor(normalized * LOADING_STEPS.length),
+                );
+                if (nextStep !== step) {
+                    step = nextStep;
+                    if (textEl) textEl.textContent = LOADING_STEPS[step];
+                }
             }
 
             _progressFrame = requestAnimationFrame(tick);
@@ -124,7 +152,7 @@ function createAiModal(context, aiCtx) {
             // Smooth transition from current progress to 100%
             const startPct = _aiProgress;
             const targetPct = 100;
-            if (_prefersReducedMotion() || startPct >= targetPct - 1) {
+            if (prefersReducedMotion() || startPct >= targetPct - 1) {
                 _updateProgressDisplay(targetPct);
                 const barEl = elements.aiProgressBar;
                 if (barEl) barEl.classList.add("ai-progress-bar--done");
@@ -179,7 +207,7 @@ function createAiModal(context, aiCtx) {
                     );
                 }
             }
-        }, _prefersReducedMotion() ? 150 : 950);
+        }, prefersReducedMotion() ? 150 : 950);
     }
 
     /** Apply error styling to the loader ring/icon — used by the orchestrator

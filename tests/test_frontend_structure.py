@@ -213,29 +213,67 @@ def test_chart_js_has_preconnect_and_sri_preload_hint(soup: BeautifulSoup) -> No
     assert "connect-src 'self';" in nginx_conf
 
 
-def test_ai_loading_states_use_market_radar_visuals(soup: BeautifulSoup, css_text: str) -> None:
+def test_ai_loading_states_use_minimal_status_visuals(soup: BeautifulSoup, css_text: str) -> None:
     loader = soup.find(id="ai-modal-loading")
     assert loader is not None
-    assert [chip.get_text(strip=True) for chip in loader.select(".ai-scan-chip")] == [
-        "Фото",
-        "Рынок",
-        "Риски",
-    ]
+    assert loader.select(".ai-scan-chip") == []
+    assert loader.select_one(".ai-loader-icon").get_text(strip=True) == "AI"
 
     ai_js = (JS_DIR / "api_ai_modal.js").read_text(encoding="utf-8")
+    ai_render_js = (JS_DIR / "api_ai_render.js").read_text(encoding="utf-8")
     la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
-    assert "Сравниваю с рынком Kufar" in ai_js
+    assert "const { domEl, domFragment } = app;" in ai_render_js
+    assert 'text: "i"' in ai_render_js
+    assert "_formatAiWarning" in ai_render_js
+    assert "AI сейчас на лимите" in ai_render_js
+    assert "la-competitor-thumb" in css_text
+    assert "la-competitor-row" in css_text
+    warning_start = css_text.index(".ai-warning-banner")
+    warning_end = css_text.index("/* ── AI: Light theme adjustments ── */")
+    warning_css = css_text[warning_start:warning_end]
+    assert "var(--amber-soft)" not in warning_css
+    assert "prefersReducedMotion()" in ai_js
+    assert "prefersReducedMotion()" in la_js
+    assert "_prefersReducedMotion()" not in ai_js
+    assert "_prefersReducedMotion()" not in la_js
+    assert "Сверяю похожие лоты" in ai_js
     assert "Оцениваю риски сделки" in ai_js
-    assert "Оцениваю похожие лоты" in la_js
-    for label in ('text: "Цена"', 'text: "Текст"', 'text: "Торг"'):
-        assert label in la_js
+    assert "Сверяю похожие лоты" in la_js
+    assert "la-scan-chips" not in la_js
+    assert "ai-scan-chip" not in la_js
 
     radar_block = css_text[css_text.index(".ai-modal-loading"):css_text.index(".ai-time-notice")]
-    assert "@keyframes aiRadarSweep" in css_text
-    assert "conic-gradient(from -90deg" in radar_block
-    assert "border-top-color: var(--text-muted)" not in radar_block
-    assert ".ai-scan-chip" in css_text
+    assert "@keyframes aiRadarSweep" not in css_text
+    assert "conic-gradient(from -90deg" not in radar_block
+    assert "border-top-color: color-mix" in radar_block
+    assert ".ai-scan-chips" in css_text
+    assert ".ai-scan-chip {" not in css_text
     assert "@media (prefers-reduced-motion: reduce)" in css_text
+
+
+def test_ai_loading_motion_avoids_layout_property_animation(css_text: str) -> None:
+    ai_js = (JS_DIR / "api_ai_modal.js").read_text(encoding="utf-8")
+    la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+    assert "barEl.style.transform = `scaleX(${_aiProgress / 100})`" in ai_js
+    assert "barEl.style.transform = `scaleX(${_laProgress / 100})`" in la_js
+    assert "barEl.style.width = _aiProgress" not in ai_js
+    assert "barEl.style.width = _laProgress" not in la_js
+
+    progress_start = css_text.index(".ai-progress-bar,\n.la-progress-bar")
+    progress_end = css_text.index(".ai-progress-bar::after", progress_start)
+    progress_css = css_text[progress_start:progress_end]
+    assert "width: 100%" in progress_css
+    assert "transform: scaleX(0.05)" in progress_css
+    assert "transform-origin: left center" in progress_css
+    assert "transition: transform 420ms" in progress_css
+    assert "transition: width" not in progress_css
+
+    recent_start = css_text.index(".recent-strip {")
+    recent_end = css_text.index(".recent-kicker", recent_start)
+    recent_css = css_text[recent_start:recent_end]
+    assert "transition: opacity 0.15s ease-out, transform 0.2s ease-out" in recent_css
+    assert "max-height 0.2s" not in recent_css
+    assert "transform: translateY(-4px)" in recent_css
 
 
 def test_html_has_stats_and_listings(soup: BeautifulSoup) -> None:
@@ -299,31 +337,6 @@ def test_css_defines_motion_tokens(css_text: str) -> None:
     assert "--t-base:" in css_text
     assert "--t-slow:" in css_text
     assert "--easing-standard:" in css_text
-
-
-def test_ai_loading_motion_avoids_layout_property_animation(css_text: str) -> None:
-    ai_js = (JS_DIR / "api_ai_modal.js").read_text(encoding="utf-8")
-    la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
-    assert "barEl.style.transform = `scaleX(${_aiProgress / 100})`" in ai_js
-    assert "barEl.style.transform = `scaleX(${Math.max(0, Math.min(100, pct)) / 100})`" in la_js
-    assert "barEl.style.width = _aiProgress" not in ai_js
-    assert "barEl.style.width = Math.max(0, Math.min(100, pct))" not in la_js
-
-    progress_start = css_text.index(".ai-progress-bar,\n.la-progress-bar")
-    progress_end = css_text.index(".ai-progress-pct", progress_start)
-    progress_css = css_text[progress_start:progress_end]
-    assert "width: 100%" in progress_css
-    assert "transform: scaleX(0.05)" in progress_css
-    assert "transform-origin: left center" in progress_css
-    assert "transition: transform 160ms" in progress_css
-    assert "transition: width" not in progress_css
-
-    recent_start = css_text.index(".recent-strip {")
-    recent_end = css_text.index(".recent-kicker", recent_start)
-    recent_css = css_text[recent_start:recent_end]
-    assert "transition: opacity 0.15s ease-out, transform 0.2s ease-out" in recent_css
-    assert "max-height 0.2s" not in recent_css
-    assert "transform: translateY(-4px)" in recent_css
 
 
 def test_large_lists_do_not_use_noisy_live_regions(soup: BeautifulSoup) -> None:
@@ -417,7 +430,7 @@ def test_listing_assistant_history_has_privacy_controls(
     la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
     assert 'const HISTORY_SAVE_KEY = "rafuk:listing-assistant:save-history";' in la_js
     assert "const HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000;" in la_js
-    assert "Date.parse(entry?.ts || "")" in la_js
+    assert "Date.parse(entry?.ts || \"\")" in la_js
     assert "if (!isHistorySavingEnabled()) return;" in la_js
     assert "localStorage.removeItem(HISTORY_KEY)" in la_js
     assert 'saveHistoryCheckbox?.addEventListener("change"' in la_js

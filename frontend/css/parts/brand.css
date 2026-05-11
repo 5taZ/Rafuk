@@ -195,17 +195,30 @@
 
 /* AI modal: clean neutral background — no purple tint */
 .ai-sheet {
-    background: var(--bg);
+    background:
+        radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 32%),
+        linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 94%, var(--accent) 6%) 0%, var(--bg) 170px);
+    border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);
+    border-bottom: 0;
+    box-shadow:
+        0 -24px 70px rgba(0, 0, 0, 0.48),
+        0 -1px 0 color-mix(in srgb, var(--white) 8%, transparent),
+        inset 0 1px 0 color-mix(in srgb, var(--white) 7%, transparent);
 }
 
 .ai-header-bar {
-    background: var(--bg);
-    backdrop-filter: blur(14px);
+    background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+    backdrop-filter: blur(16px);
+    border-bottom-color: color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
 }
 
 .ai-header-icon {
-    background: var(--bg-elevated);
-    color: var(--text-muted);
+    background:
+        radial-gradient(circle at 35% 25%, color-mix(in srgb, var(--white) 14%, transparent), transparent 44%),
+        color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
+    color: color-mix(in srgb, var(--accent) 76%, var(--text));
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 11%, transparent);
 }
 
 .ai-modal-verdict,
@@ -286,6 +299,7 @@
     display: flex;
     flex-direction: column;
     gap: 0;
+    min-height: 0;
 }
 
 .la-modal-body > * {
@@ -301,7 +315,12 @@
 .la-tabs {
     display: flex;
     gap: 6px;
-    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
+    background: color-mix(in srgb, var(--bg-card) 90%, transparent);
+    backdrop-filter: blur(14px);
     margin-bottom: 0;
 }
 
@@ -344,6 +363,7 @@
     flex-direction: column;
     gap: 14px;
     padding-bottom: calc(env(safe-area-inset-bottom, 18px) + 20px);
+    min-height: 0;
 }
 
 /* ── Listing Assistant: photo upload ──────────────────────────────────── */
@@ -455,6 +475,19 @@
     gap: 12px;
 }
 
+.la-form--modal {
+    padding: var(--space-4);
+    margin-top: var(--space-4);
+    border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);
+    border-radius: var(--r-xl);
+    background:
+        radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--accent-secondary) 8%, transparent), transparent 34%),
+        linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%), var(--bg-card));
+    box-shadow:
+        inset 0 1px 0 color-mix(in srgb, var(--white) 5%, transparent),
+        0 14px 36px rgba(0, 0, 0, 0.18);
+}
+
 .la-row {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -540,6 +573,72 @@
 .la-submit.is-busy {
     opacity: 0.85;
     cursor: progress;
+}
+
+.la-sheet {
+    height: min(780px, 94vh);
+    max-height: 94vh;
+}
+
+.la-sheet.la-sheet-expanded {
+    height: min(820px, 96vh);
+    max-height: 96vh;
+}
+
+.la-result-overlay {
+    position: absolute;
+    inset: 62px 0 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background:
+        radial-gradient(circle at 84% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34%),
+        linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%), var(--bg));
+    animation: aiFadeIn 0.22s ease;
+}
+
+.la-result-header {
+    flex: 0 0 auto;
+    min-height: 54px;
+    padding: 8px var(--space-5);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
+    background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+    backdrop-filter: blur(14px);
+}
+
+.la-result-title {
+    color: var(--text);
+    font-size: var(--text-md);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.la-result-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 0 var(--space-5) calc(env(safe-area-inset-bottom, 18px) + var(--space-5));
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+
+.la-result-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+
+.la-result-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.la-result-scroll::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
 }
 
 /* ── Listing Assistant: result area (unified with AI analysis style) ── */
@@ -815,6 +914,86 @@
 
 .la-playbook-response {
     color: var(--text);
+}
+
+/* ── Listing Assistant: competitors ──────────────────────────────────── */
+
+.la-competitors {
+    display: grid;
+    gap: 8px;
+}
+
+.la-competitor-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-elevated);
+    color: var(--text);
+    text-decoration: none;
+}
+
+.la-competitor-link {
+    cursor: pointer;
+    transition: background var(--tr-base), border-color var(--tr-base), transform var(--tr-fast);
+}
+
+.la-competitor-link:hover {
+    background: var(--bg-hover);
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+}
+
+.la-competitor-link:active {
+    transform: scale(0.99);
+}
+
+.la-competitor-thumb {
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
+    border-radius: var(--r-sm);
+    object-fit: cover;
+    display: block;
+    background: var(--bg-surface-tint);
+}
+
+.la-competitor-info {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.la-competitor-title {
+    overflow: hidden;
+    color: var(--text);
+    font-size: var(--text-base);
+    font-weight: 700;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.la-competitor-price {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.la-competitor-advantage {
+    color: var(--text-dim);
+    font-size: var(--text-xs);
+    line-height: 1.35;
+}
+
+.la-competitor-cta {
+    flex: 0 0 auto;
+    color: var(--accent);
+    font-size: var(--text-xs);
+    font-weight: 700;
 }
 
 /* ── Listing Assistant: short version toggle ── */
