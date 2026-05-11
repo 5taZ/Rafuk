@@ -275,6 +275,8 @@ async def update_tracker(
             k: v for k, v in payload.model_dump(exclude_unset=True).items()
             if v is not None
         }
+        if "query" in update_data and "config_keyword" not in update_data:
+            update_data["config_keyword"] = default_config_keyword(update_data["query"])
         for field, value in update_data.items():
             setattr(tracker, field, value)
 

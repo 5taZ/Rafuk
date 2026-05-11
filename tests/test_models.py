@@ -104,6 +104,12 @@ def test_history_tables_have_indexes() -> None:
         assert col in lead_item_columns, f"missing watchlist-merged column: {col}"
 
 
+def test_user_consents_version_constraint() -> None:
+    consents = Base.metadata.tables["user_consents"]
+    constraint_names = {constraint.name for constraint in consents.constraints}
+    assert "chk_user_consents_version_current" in constraint_names
+
+
 def test_get_engine_returns_async_engine() -> None:
     from sqlalchemy.ext.asyncio import AsyncEngine
 

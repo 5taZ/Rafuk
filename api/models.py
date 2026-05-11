@@ -557,6 +557,10 @@ class UserConsent(Base):
     user = relationship("User", back_populates="consents")
 
     __table_args__ = (
+        CheckConstraint(
+            "version = '2026.1'",
+            name="chk_user_consents_version_current",
+        ),
         Index("idx_user_consents_user", "user_id"),
         Index("idx_user_consents_type", "consent_type"),
         # DB-M6: UNIQUE partial index. Enforces "at most one active

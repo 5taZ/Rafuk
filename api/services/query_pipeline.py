@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -29,6 +31,11 @@ _API_CONDITION_TASKS = (
     ("new", {"condition": "2"}),
     ("used", {"condition": "1"}),
 )
+
+
+def _cache_digest(prefix: str, payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return f"{prefix}:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
 
 
 # Seller type classification: company_ad==True means shop, else private
@@ -226,17 +233,18 @@ def _dataset_cache_key(
     returns the same payload regardless of how the frontend wants
     it ordered, so multiple sort options share one cache entry.
     """
-    parts = [
-        f"q={query.strip().casefold()}",
-        f"cur={currency}",
-        f"cat={category if category is not None else ''}",
-    ]
+    payload: dict[str, Any] = {
+        "query": query.strip().casefold(),
+        "currency": currency,
+        "category": category,
+        "extra": {},
+    }
     for key in sorted(extra):
         value = extra[key]
         if value in (None, "", [], {}):
             continue
-        parts.append(f"{key}={value}")
-    return "kufar:dataset:" + ":".join(parts)
+        payload["extra"][key] = value
+    return _cache_digest("kufar:dataset", payload)
 
 
 async def load_query_dataset(
@@ -494,8 +502,12 @@ async def fetch_category_totals(
 
     cache_key: str | None = None
     if cache is not None:
-        ids_sig = ",".join(str(cid) for cid in sorted(set(category_ids)))
-        cache_key = f"cat-totals:{query}:{currency}:{int(strict_search)}:{ids_sig}"
+        cache_key = _cache_digest("cat-totals", {
+            "query": query.strip().casefold(),
+            "currency": currency,
+            "strict_search": bool(strict_search),
+            "category_ids": sorted(set(category_ids)),
+        })
         cached = await cache.get_json(cache_key)
         if isinstance(cached, dict):
             # Redis serialises ints as JSON strings; coerce back.
