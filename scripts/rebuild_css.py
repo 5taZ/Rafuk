@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent / "frontend" / "css"
 PARTS_ORDER = ("tokens", "layout", "modals", "pipeline", "states", "ai", "brand")
 
 
-def rebuild() -> None:
+def build_css_text() -> str:
     header = (
         "/* style.css — single-file bundle.\n"
         " *\n"
@@ -51,8 +51,13 @@ def rebuild() -> None:
             chunks.append("\n")
         chunks.append("\n")
 
-    (ROOT / "style.css").write_text("".join(chunks), encoding="utf-8")
-    total = sum(c.count("\n") for c in chunks)
+    return "".join(chunks)
+
+
+def rebuild() -> None:
+    css = build_css_text()
+    (ROOT / "style.css").write_text(css, encoding="utf-8")
+    total = css.count("\n")
     print(f"style.css: {total} lines from {len(PARTS_ORDER)} partials")
 
 

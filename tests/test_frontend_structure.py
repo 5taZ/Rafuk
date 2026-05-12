@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,48 @@ HTML_FILE = FRONTEND / "index.html"
 CSS_FILE = FRONTEND / "css" / "style.css"
 CSS_PARTS_DIR = FRONTEND / "css" / "parts"
 JS_DIR = FRONTEND / "js"
+
+
+def _text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _frontend_bundle_modules() -> list[str]:
+    script = Path("scripts/build_frontend_bundle.sh").read_text(encoding="utf-8")
+    block = script.split("modules=(", 1)[1].split(")", 1)[0]
+    modules: list[str] = []
+    for line in block.splitlines():
+        module = line.strip().strip("\"'")
+        if module and not module.startswith("#"):
+            modules.append(module)
+    return modules
+
+
+def _expected_app_bundle_text() -> str:
+    chunks = [
+        "(function (window) {\n",
+        '"use strict";\n',
+        "window.App = window.App || {};\n",
+        "\n",
+    ]
+    for module in _frontend_bundle_modules():
+        chunks.append("\n;\n")
+        chunks.append((JS_DIR / module).read_text(encoding="utf-8"))
+        chunks.append("\n")
+    chunks.append(
+        "\n"
+        "window.App = Object.assign(window.App || {}, {\n"
+        "  analyticsApp,\n"
+        "  createAppCore,\n"
+        "  domEl,\n"
+        "  domFragment,\n"
+        "  _prefersReducedMotion,\n"
+        "  openModalAnimated,\n"
+        "  closeModalAnimated,\n"
+        "});\n"
+        "})(window);\n"
+    )
+    return "".join(chunks)
 
 
 @pytest.fixture(scope="module")
@@ -102,6 +145,24 @@ def test_app_bundle_uses_single_namespace_wrapper() -> None:
         assert f"  {name}," in bundle
     assert "window.analyticsApp" not in bundle
     assert "window.createAppCore" not in bundle
+
+
+def test_app_bundle_matches_build_script_sources() -> None:
+    actual = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
+    expected = _expected_app_bundle_text()
+    assert _text_sha256(actual) == _text_sha256(expected), (
+        "frontend/js/app_bundle.js is stale; run scripts/build_frontend_bundle.sh"
+    )
+
+
+def test_css_bundle_matches_parts_sources() -> None:
+    from scripts.rebuild_css import build_css_text
+
+    actual = CSS_FILE.read_text(encoding="utf-8")
+    expected = build_css_text()
+    assert _text_sha256(actual) == _text_sha256(expected), (
+        "frontend/css/style.css is stale; run uv run python scripts/rebuild_css.py"
+    )
 
 
 def test_lazy_ai_modules_register_on_app_namespace() -> None:
