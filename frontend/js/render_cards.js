@@ -402,7 +402,6 @@ function createRenderCards(context) {
             });
         }
         return buildEmpty({
-            icon: "leads",
             title: "Нет сделок в работе",
             hint: "Найди лот через поиск и нажми «В покупки», чтобы вести его до продажи и считать прибыль.",
         });

@@ -342,13 +342,13 @@ function createApiWatchlist(context) {
         // after this guard's TTL — is still safe.
         const previousWatchlist = state.watchlist.items;
         state.watchlist.items = state.watchlist.items.filter((w) => w.id !== watchlistId);
+        state.watchlist._loading = false;
         refreshAfterWatchlistChange();
         try {
             await deleteJson(`/api/v1/watchlist/${watchlistId}`);
             // Confirmation toast was missing — users couldn't tell
             // delete actually fired vs the card just animating out.
             showToast("Удалено из избранного", "info");
-            await loadWatchlist();
         } catch (error) {
             // Rollback the optimistic removal so the user can see the
             // item didn't actually delete and retry.

@@ -649,70 +649,6 @@ function createRenderCardBuilders(context) {
         }
     }
 
-    /** Attach swipe-to-reveal for watchlist cards. */
-    function _attachSwipeReveal(card, item, mode) {
-        if (mode !== "watching") return;
-
-        const bg = domEl("div", { className: "swipe-bg" });
-        const deleteBtn = domEl("button", {
-            className: "swipe-btn swipe-btn--delete",
-            type: "button",
-            text: "Удалить",
-        });
-        const promoteBtn = domEl("button", {
-            className: "swipe-btn swipe-btn--promote",
-            type: "button",
-            text: "В покупки",
-        });
-
-        deleteBtn.addEventListener("click", () => actions.deleteWatchlistItem(item.id));
-        promoteBtn.addEventListener("click", () => actions.promoteWatchlistToLead(item));
-
-        bg.appendChild(promoteBtn);
-        bg.appendChild(deleteBtn);
-        card.insertBefore(bg, card.firstChild);
-
-        let startX = 0, currentX = 0, isDragging = false;
-        const threshold = 80;
-        const slop = 10;
-
-        card.addEventListener("touchstart", (e) => {
-            startX = e.touches[0].clientX;
-            currentX = startX;
-            isDragging = true;
-        }, { passive: true });
-
-        card.addEventListener("touchmove", (e) => {
-            if (!isDragging) return;
-            currentX = e.touches[0].clientX;
-            const diff = currentX - startX;
-            if (Math.abs(diff) > slop) {
-                // Horizontal movement past slop cancels any pending long-press
-                card._swipeMoved = true;
-                card.style.transform = `translateX(${Math.max(-threshold, Math.min(threshold, diff))}px)`;
-            }
-        }, { passive: true });
-
-        card.addEventListener("touchend", () => {
-            isDragging = false;
-            const diff = currentX - startX;
-            if (diff < -threshold / 2) {
-                card.style.transform = `translateX(-${threshold}px)`;
-            } else if (diff > threshold / 2) {
-                card.style.transform = `translateX(${threshold}px)`;
-            } else {
-                card.style.transform = "";
-            }
-            card._swipeMoved = false;
-        });
-
-        card.addEventListener("touchcancel", () => {
-            isDragging = false;
-            card.style.transform = "";
-            card._swipeMoved = false;
-        });
-    }
-
     /**
      * Single source of truth for both "Покупки" (lead) and "Избранное"
      * (watching) cards. Pass `mode='lead'` or `mode='watching'`.
@@ -836,7 +772,6 @@ function createRenderCardBuilders(context) {
         );
 
         _wireCardHandlers(card, item, mode, signal);
-        _attachSwipeReveal(card, item, mode);
 
         // FE-H5/UX-H2: keyboard activation for watching cards. Only
         // the outer <article> has role=button in that mode; lead cards

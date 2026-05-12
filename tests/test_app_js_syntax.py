@@ -387,6 +387,11 @@ def test_watchlist_reload_does_not_flash_empty_state() -> None:
     assert delete_body.index("_nextWatchlistRequestId();") < delete_body.index(
         "state.watchlist.items ="
     )
+    delete_success_body = delete_body.split("} catch", 1)[0]
+    assert "await loadWatchlist()" not in delete_success_body
+    assert delete_body.index("state.watchlist._loading = false") < delete_body.index(
+        "refreshAfterWatchlistChange();"
+    )
 
     render_start = render_cards_js.index("function renderLeads")
     render_end = render_cards_js.index("\n    /* ===== Watchlist", render_start)
@@ -395,6 +400,28 @@ def test_watchlist_reload_does_not_flash_empty_state() -> None:
     assert loading_empty_guard in render_body
     assert render_body.index(loading_empty_guard) < render_body.index("if (!entries.length)")
     assert "_buildSkeletonCard()" in render_body
+
+
+def test_watchlist_cards_do_not_attach_horizontal_swipe() -> None:
+    builder_text = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+    assert "_attachSwipeReveal" not in builder_text
+    assert "swipe-btn" not in builder_text
+    assert 'card.addEventListener("touchstart"' not in builder_text
+    assert 'card.addEventListener("touchmove"' not in builder_text
+
+
+def test_deals_empty_state_has_no_icon_box() -> None:
+    render_cards_js = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
+    empty_start = render_cards_js.index("function buildItemsEmpty")
+    purchases_start = render_cards_js.index('title: "Нет сделок в работе"', empty_start)
+    purchases_block_start = render_cards_js.rindex(
+        "return buildEmpty({",
+        empty_start,
+        purchases_start,
+    )
+    purchases_block_end = render_cards_js.index("});", purchases_start)
+    purchases_block = render_cards_js[purchases_block_start:purchases_block_end]
+    assert "icon:" not in purchases_block
 
 
 def test_lead_and_watchlist_mutations_have_inflight_guard() -> None:
