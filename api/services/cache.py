@@ -207,6 +207,12 @@ class RedisCache:
         "end "
         "return n"
     )
+    _RELEASE_LOCK_LUA = (
+        "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+        "  return redis.call('DEL', KEYS[1]) "
+        "end "
+        "return 0"
+    )
 
     async def incr(self, key: str, ttl: int | None = None) -> int:
         """Atomically increment a counter and apply TTL on first set.
@@ -231,6 +237,25 @@ class RedisCache:
             await self._client.delete(key)
         except RedisError:
             logger.warning("Redis delete failed for key=%s", key, exc_info=True)
+
+    async def try_acquire_lock(
+        self,
+        key: str,
+        token: str,
+        *,
+        ttl_seconds: int,
+    ) -> bool | None:
+        try:
+            return bool(await self._client.set(key, token, ex=ttl_seconds, nx=True))
+        except RedisError:
+            logger.warning("Redis lock acquire failed for key=%s", key, exc_info=True)
+            return None
+
+    async def release_lock(self, key: str, token: str) -> None:
+        try:
+            await self._client.eval(self._RELEASE_LOCK_LUA, 1, key, token)
+        except RedisError:
+            logger.warning("Redis lock release failed for key=%s", key, exc_info=True)
 
     async def ping(self) -> bool:
         try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -176,15 +177,17 @@ class QueryDatasetContext:
 # and the whole search completes in roughly one pagination's worth
 # of time.
 #
-# NOTE: this singleflight registry is process-local. With WORKERS=4,
-# Redis still shares the dataset cache after the first write, but two
-# workers can duplicate the same cold upstream fetch before either one
-# commits to Redis. Track cache misses / upstream fetches in /metrics;
-# use Redis distributed singleflight only if those counters show it
-# matters in production.
+# This process-local registry is the fast path. RedisCache adds a
+# second distributed lock layer for WORKERS>1: one worker owns the cold
+# Kufar fetch, sibling workers poll the shared dataset cache, and a
+# bounded timeout falls back to a safe duplicate fetch if the owner
+# stalls or Redis lock coordination is unavailable.
 _inflight_dataset_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
 _MAX_INFLIGHT = 500
 _INFLIGHT_STALE_SECONDS = 300  # prune futures older than 5 minutes
+_DISTRIBUTED_SINGLEFLIGHT_LOCK_TTL_SECONDS = 30
+_DISTRIBUTED_SINGLEFLIGHT_WAIT_SECONDS = 20.0
+_DISTRIBUTED_SINGLEFLIGHT_POLL_SECONDS = 0.1
 
 # Protects every read/write of _inflight_dataset_futures. Without this
 # two concurrent callers can both miss the dict lookup, both create
@@ -250,6 +253,126 @@ def _dataset_cache_key(
             continue
         payload["extra"][key] = value
     return _cache_digest("kufar:dataset", payload)
+
+
+def _dataset_singleflight_lock_key(dataset_cache_key: str) -> str:
+    return f"{dataset_cache_key}:singleflight"
+
+
+async def _fetch_dataset_response(
+    *,
+    query: str,
+    currency: str,
+    effective_kwargs: dict[str, Any],
+    settings: Settings,
+    client: SupportsSearchAllAds,
+    cache: Any | None,
+    cache_key: str,
+) -> dict[str, Any]:
+    fetch_started_at = time.monotonic()
+    try:
+        response = await client.search_all_ads(
+            query=query,
+            currency=currency,
+            **effective_kwargs,
+        )
+        observe_query_dataset_upstream_fetch(
+            status="success",
+            duration_seconds=time.monotonic() - fetch_started_at,
+        )
+        response = _normalize_response_ads(response)
+        if cache is not None:
+            cache_ttl = getattr(settings, "cache_ttl_seconds", 300) or 300
+            await cache.set_json(cache_key, response, ttl=cache_ttl)
+        return response
+    except BaseException:
+        observe_query_dataset_upstream_fetch(
+            status="error",
+            duration_seconds=time.monotonic() - fetch_started_at,
+        )
+        raise
+
+
+async def _fetch_dataset_response_with_distributed_singleflight(
+    *,
+    query: str,
+    currency: str,
+    effective_kwargs: dict[str, Any],
+    settings: Settings,
+    client: SupportsSearchAllAds,
+    cache: Any | None,
+    cache_key: str,
+) -> dict[str, Any]:
+    acquire_lock = getattr(cache, "try_acquire_lock", None)
+    release_lock = getattr(cache, "release_lock", None)
+    if cache is None or not callable(acquire_lock) or not callable(release_lock):
+        return await _fetch_dataset_response(
+            query=query,
+            currency=currency,
+            effective_kwargs=effective_kwargs,
+            settings=settings,
+            client=client,
+            cache=cache,
+            cache_key=cache_key,
+        )
+
+    lock_key = _dataset_singleflight_lock_key(cache_key)
+    token = secrets.token_urlsafe(24)
+    acquired = await acquire_lock(
+        lock_key,
+        token,
+        ttl_seconds=_DISTRIBUTED_SINGLEFLIGHT_LOCK_TTL_SECONDS,
+    )
+    if acquired is True:
+        observe_query_dataset_event("distributed_singleflight_owner")
+        try:
+            return await _fetch_dataset_response(
+                query=query,
+                currency=currency,
+                effective_kwargs=effective_kwargs,
+                settings=settings,
+                client=client,
+                cache=cache,
+                cache_key=cache_key,
+            )
+        finally:
+            await release_lock(lock_key, token)
+    if acquired is None:
+        observe_query_dataset_event("distributed_singleflight_unavailable")
+        return await _fetch_dataset_response(
+            query=query,
+            currency=currency,
+            effective_kwargs=effective_kwargs,
+            settings=settings,
+            client=client,
+            cache=cache,
+            cache_key=cache_key,
+        )
+
+    observe_query_dataset_event("distributed_singleflight_wait")
+    deadline = time.monotonic() + _DISTRIBUTED_SINGLEFLIGHT_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        await asyncio.sleep(
+            min(
+                _DISTRIBUTED_SINGLEFLIGHT_POLL_SECONDS,
+                max(deadline - time.monotonic(), 0),
+            )
+        )
+        cached = await cache.get_json(cache_key)
+        if cached is not None:
+            observe_query_dataset_event("distributed_singleflight_cache_hit")
+            return cached
+
+    observe_query_dataset_event("distributed_singleflight_timeout")
+    return await _fetch_dataset_response(
+        query=query,
+        currency=currency,
+        effective_kwargs=effective_kwargs,
+        settings=settings,
+        client=client,
+        cache=cache,
+        cache_key=cache_key,
+    )
 
 
 async def load_query_dataset(
@@ -334,30 +457,19 @@ async def load_query_dataset(
                 response = await future
             else:
                 observe_query_dataset_event("singleflight_owner")
-                fetch_started_at = time.monotonic()
                 try:
-                    response = await client.search_all_ads(
+                    response = await _fetch_dataset_response_with_distributed_singleflight(
                         query=query,
                         currency=currency,
-                        **effective_kwargs,
+                        effective_kwargs=effective_kwargs,
+                        settings=settings,
+                        client=client,
+                        cache=cache,
+                        cache_key=sf_key,
                     )
-                    observe_query_dataset_upstream_fetch(
-                        status="success",
-                        duration_seconds=time.monotonic() - fetch_started_at,
-                    )
-                    response = _normalize_response_ads(response)
-                    if cache is not None:
-                        # Use the configured cache TTL — same as listings
-                        # response cache so they expire together.
-                        cache_ttl = getattr(settings, "cache_ttl_seconds", 300) or 300
-                        await cache.set_json(sf_key, response, ttl=cache_ttl)
                     if not future.done():
                         future.set_result(response)
                 except BaseException as exc:
-                    observe_query_dataset_upstream_fetch(
-                        status="error",
-                        duration_seconds=time.monotonic() - fetch_started_at,
-                    )
                     if not future.done():
                         future.set_exception(exc)
                     raise

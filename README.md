@@ -111,12 +111,14 @@ cache-miss counters, and summary durations are per worker, not
 cross-worker aggregates. The `kufar_process_info{pid="..."}` series
 identifies which process answered.
 
-Dataset singleflight is also process-local. Redis shares the dataset
-cache after the first write, but two workers can still duplicate the
-same cold Kufar fetch before either result reaches Redis. Watch
-`kufar_query_dataset_events_total{event="cache_miss"}` and
-`kufar_query_dataset_upstream_fetch_duration_seconds_count` to decide
-whether Redis distributed singleflight or a production metrics backend
+Dataset singleflight has two layers: an in-process future for same-worker
+concurrency, and a Redis lock for cold fetches that cross worker
+boundaries. If a sibling worker already owns a cold Kufar fetch, followers
+poll the shared dataset cache and only fall back to a duplicate fetch
+after a bounded timeout. Watch
+`kufar_query_dataset_events_total{event="distributed_singleflight_timeout"}`
+and `kufar_query_dataset_upstream_fetch_duration_seconds_count` to decide
+whether the timeout/lock TTL needs tuning or a production metrics backend
 is worth adding.
 
 ## Documentation
