@@ -274,14 +274,14 @@ class TrackerCreate(BaseModel):
     query: str = Field(min_length=1, max_length=255)
     strict_mode: bool = False
     interval_min: int = Field(default=15, ge=1, le=1440)
-    min_discount_percent: float | None = None
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
-    alert_price_threshold: float | None = None
-    alert_discount_percent: float | None = None
+    min_discount_percent: float | None = Field(default=None, ge=0, le=100)
+    max_price_byn: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
+    seller_type: str | None = Field(default=None, max_length=32)
+    condition: str | None = Field(default=None, max_length=32)
+    region_name: str | None = Field(default=None, max_length=64)
+    config_keyword: str | None = Field(default=None, max_length=128)
+    alert_price_threshold: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
+    alert_discount_percent: float | None = Field(default=None, ge=0, le=100)
 
 
 class TrackerUpdate(BaseModel):
@@ -289,14 +289,14 @@ class TrackerUpdate(BaseModel):
 
     strict_mode: bool | None = None
     interval_min: int | None = Field(default=None, ge=1, le=1440)
-    min_discount_percent: float | None = None
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
-    alert_price_threshold: float | None = None
-    alert_discount_percent: float | None = None
+    min_discount_percent: float | None = Field(default=None, ge=0, le=100)
+    max_price_byn: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
+    seller_type: str | None = Field(default=None, max_length=32)
+    condition: str | None = Field(default=None, max_length=32)
+    region_name: str | None = Field(default=None, max_length=64)
+    config_keyword: str | None = Field(default=None, max_length=128)
+    alert_price_threshold: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
+    alert_discount_percent: float | None = Field(default=None, ge=0, le=100)
 
 
 class TrackerRead(BaseModel):
@@ -373,7 +373,7 @@ class LeadUpdate(BaseModel):
     target_resale_byn: float | None = None
     buy_price_byn: float | None = None
     sold_price_byn: float | None = None
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=512)
 
 
 class LeadRead(BaseModel):
@@ -420,13 +420,13 @@ class WatchlistCreate(BaseModel):
     thumbnail: str | None = None
     price_byn: float | None = None
     market_median_byn: float | None = None
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=512)
 
 
 class WatchlistUpdate(BaseModel):
     version: int | None = Field(default=None, ge=1)
     workflow_status: WatchlistStatusEnum | None = None
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=512)
 
 
 class PriceSnapshotPoint(BaseModel):
@@ -463,7 +463,7 @@ class WatchlistRead(BaseModel):
     # Compact 30-day price trend (newest last) so the watchlist card
     # can render a sparkline without a per-row round-trip. Empty list
     # means "no movement recorded yet" — frontend renders a flat line.
-    price_history: list[PriceSnapshotPoint] = []
+    price_history: list[PriceSnapshotPoint] = Field(default_factory=list)
 
 
 class WatchlistRefreshResponse(BaseModel):
