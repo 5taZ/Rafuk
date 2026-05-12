@@ -248,3 +248,33 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
         assert legacy_promote_response.status_code == 200
         assert legacy_promote_response.json()["status"] == "new"
         assert client.get("/api/v1/watchlist").json() == []
+
+
+def test_create_lead_accepts_long_kufar_link(monkeypatch) -> None:
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    long_link = "https://www.kufar.by/item/long?" + ("utm_campaign=rafuk&" * 40)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "iphone 15 128",
+                "ad_id": 10_101,
+                "title": "iPhone 15 128GB",
+                "link": long_link,
+                "price_byn": 2000,
+                "source": "manual",
+            },
+        )
+
+    assert len(long_link) > 512
+    assert len(long_link) <= 2048
+    assert response.status_code == 201
+    assert response.json()["link"] == long_link

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from api.database import get_engine, get_session_factory
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import Base, Tracker, TrackerEvent
+from api.models import Base, QueryListingState, Tracker, TrackerEvent
 from api.services.history_service import QuerySyncResult, TrendReversal
 from scheduler.collector import (
     _build_tracker_message,
@@ -285,6 +285,49 @@ async def test_persist_tracker_events_creates_trend_reversal_with_query_metadata
 
 
 @pytest.mark.asyncio
+async def test_persist_tracker_events_accepts_long_kufar_link() -> None:
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = make_user(telegram_user_id=33_333, first_name="Longlink")
+        session.add(user)
+        await session.flush()
+        tracker = Tracker(user_id=user.id, query="iphone 13", strict_mode=False)
+        session.add(tracker)
+        await session.flush()
+        now = datetime.now(UTC)
+        long_link = "https://www.kufar.by/item/long?" + ("utm_campaign=rafuk&" * 40)
+        state = QueryListingState(
+            query=tracker.query,
+            ad_id=77_777,
+            title="iPhone 13 long link",
+            link=long_link,
+            last_price_byn=1000,
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+
+        events = await persist_tracker_events(
+            session,
+            tracker,
+            QuerySyncResult(stats_count=1, total_results=1, new_listings=[state]),
+            ads_by_id={},
+            seen=set(),
+        )
+        await session.commit()
+
+        assert len(long_link) > 512
+        assert len(long_link) <= 2048
+        assert len(events) == 1
+        assert events[0].link == long_link
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_recent_trend_event_tracker_ids_within_window() -> None:
     engine = get_engine()
     session_factory = get_session_factory(engine)
@@ -348,4 +391,3 @@ async def test_recent_trend_event_tracker_ids_within_window() -> None:
 
     assert ids == {tracker_recent.id}
     await engine.dispose()
-

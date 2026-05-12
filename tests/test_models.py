@@ -79,8 +79,9 @@ def test_history_tables_have_indexes() -> None:
     tracker_event_indexes = {index.name for index in tracker_events.indexes}
     assert "idx_tracker_events_user" in tracker_event_indexes
     assert "idx_tracker_events_created" in tracker_event_indexes
-    tracker_event_columns = {column.name for column in tracker_events.columns}
+    tracker_event_columns = {column.name: column for column in tracker_events.columns}
     assert "ad_id" in tracker_event_columns
+    assert tracker_event_columns["link"].type.length == 2048
 
     lead_items = Base.metadata.tables["lead_items"]
     lead_item_indexes = {index.name for index in lead_items.indexes}

@@ -357,7 +357,7 @@ class LeadCreate(BaseModel):
     query: str = Field(min_length=1, max_length=255)
     ad_id: int
     title: str = Field(max_length=255)
-    link: str = Field(max_length=512)
+    link: str = Field(max_length=2048)
     price_byn: float | None = None
     thumbnail: str | None = None
     target_resale_byn: float | None = None
