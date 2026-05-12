@@ -224,8 +224,9 @@ def test_overview_search_loading_state_is_wired(soup: BeautifulSoup, css_text: s
     assert loader.get("role") == "status"
     assert loader.has_attr("hidden")
     assert soup.find(id="overview-loading-query") is not None
-    assert ".overview-loading-card" in css_text
-    assert "@keyframes overview-loader-orbit" in css_text
+    assert ".overview-loading-grid" in css_text
+    assert ".overview-skeleton-card" in css_text
+    assert "@keyframes overview-loader-orbit" not in css_text
     dom = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
     render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     assert 'getElementById("overview-loading")' in dom

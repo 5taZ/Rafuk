@@ -375,7 +375,7 @@ function createRenderCore(context) {
                 }
             }
             if (elements.overviewLoadingQuery) {
-                elements.overviewLoadingQuery.textContent = query ? `по запросу «${query}»` : "";
+                elements.overviewLoadingQuery.textContent = query ? `Загружаю обзор по запросу «${query}»` : "Загружаю обзор";
             }
             if (elements.views?.overview) {
                 if (showOverviewLoading) {
