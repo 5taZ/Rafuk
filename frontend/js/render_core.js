@@ -362,8 +362,28 @@ function createRenderCore(context) {
 
     function renderLoading() {
         return safeRender('renderLoading', () => {
+            const query = state.search.query.trim();
+            const showOverviewLoading = Boolean(state.ui.loading && query);
             elements.searchButton.disabled = state.ui.loading || !state.search.query.trim();
             elements.searchInput.disabled = state.ui.loading;
+            if (elements.overviewLoading) {
+                elements.overviewLoading.hidden = !showOverviewLoading;
+                if (showOverviewLoading) {
+                    elements.overviewLoading.setAttribute("aria-busy", "true");
+                } else {
+                    elements.overviewLoading.removeAttribute("aria-busy");
+                }
+            }
+            if (elements.overviewLoadingQuery) {
+                elements.overviewLoadingQuery.textContent = query ? `по запросу «${query}»` : "";
+            }
+            if (elements.views?.overview) {
+                if (showOverviewLoading) {
+                    elements.views.overview.setAttribute("aria-busy", "true");
+                } else {
+                    elements.views.overview.removeAttribute("aria-busy");
+                }
+            }
             if (state.ui.loading) {
                 elements.searchButtonLabel.replaceChildren(domEl("span", { className: "spin" }));
                 elements.listingsSection?.setAttribute('aria-busy', 'true');

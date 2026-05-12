@@ -6301,6 +6301,198 @@ body.lp-menu-open {
     margin: 8px 0;
 }
 
+.overview-loading {
+    margin: var(--space-3) 0 var(--space-4);
+}
+
+.overview-loading-card {
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-4);
+    align-items: center;
+    padding: 18px;
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+    border-radius: var(--r-lg);
+    background: color-mix(in srgb, var(--bg-card) 92%, var(--accent) 8%);
+    box-shadow: var(--shadow-card);
+}
+
+.overview-loading-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -34%;
+    width: 34%;
+    height: 1px;
+    background: color-mix(in srgb, var(--accent) 82%, transparent);
+    opacity: 0.78;
+    animation: overview-loader-scan 1.8s var(--easing-standard) infinite;
+}
+
+.overview-loading-orbit {
+    position: relative;
+    width: 58px;
+    height: 58px;
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--bg-elevated) 82%, var(--accent) 18%);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.overview-loading-ring,
+.overview-loading-sweep {
+    position: absolute;
+    border-radius: 50%;
+}
+
+.overview-loading-ring {
+    inset: 8px;
+    border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+    opacity: 0.62;
+    animation: overview-loader-breathe 1.5s var(--easing-standard) infinite;
+}
+
+.overview-loading-ring.is-inner {
+    inset: 20px;
+    background: var(--accent);
+    border: 0;
+    opacity: 0.9;
+    animation-delay: 0.18s;
+}
+
+.overview-loading-sweep {
+    inset: 8px;
+    animation: overview-loader-orbit 1.35s linear infinite;
+}
+
+.overview-loading-sweep::after {
+    content: "";
+    position: absolute;
+    top: -3px;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 90%, var(--text));
+    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
+    transform: translateX(-50%);
+}
+
+.overview-loading-copy {
+    min-width: 0;
+}
+
+.overview-loading-kicker {
+    margin: 0 0 4px;
+    color: var(--accent);
+    font-size: var(--text-xs);
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.overview-loading-title {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--text-lg);
+    font-weight: 750;
+    letter-spacing: -0.02em;
+}
+
+.overview-loading-text {
+    margin: 6px 0 0;
+    color: var(--text-dim);
+    font-size: var(--text-sm);
+    line-height: 1.45;
+}
+
+.overview-loading-bars {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
+    margin-top: 2px;
+}
+
+.overview-loading-bars span {
+    height: 3px;
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--accent) 34%, var(--bg-elevated));
+    opacity: 0.42;
+    transform: scaleX(0.42);
+    transform-origin: left center;
+    animation: overview-loader-bars 1.4s var(--easing-standard) infinite;
+}
+
+.overview-loading-bars span:nth-child(2) {
+    animation-delay: 0.14s;
+}
+
+.overview-loading-bars span:nth-child(3) {
+    animation-delay: 0.28s;
+}
+
+@keyframes overview-loader-scan {
+    to {
+        transform: translateX(394%);
+    }
+}
+
+@keyframes overview-loader-orbit {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes overview-loader-breathe {
+    0%, 100% {
+        opacity: 0.42;
+        transform: scale(0.92);
+    }
+    50% {
+        opacity: 0.86;
+        transform: scale(1);
+    }
+}
+
+@keyframes overview-loader-bars {
+    0%, 100% {
+        opacity: 0.34;
+        transform: scaleX(0.42);
+    }
+    45% {
+        opacity: 0.86;
+        transform: scaleX(1);
+    }
+}
+
+@media (max-width: 420px) {
+    .overview-loading-card {
+        padding: 16px;
+        grid-template-columns: 46px minmax(0, 1fr);
+        gap: var(--space-3);
+    }
+
+    .overview-loading-orbit {
+        width: 46px;
+        height: 46px;
+    }
+
+    .overview-loading-ring {
+        inset: 7px;
+    }
+
+    .overview-loading-ring.is-inner {
+        inset: 16px;
+    }
+
+    .overview-loading-sweep {
+        inset: 7px;
+    }
+}
+
 /* Recent searches — minimal strip, not a card section */
 .recent-strip {
     display: flex;

@@ -1230,6 +1230,8 @@ function cacheAppElements(elements) {
     elements.dealsControls = document.getElementById("deals-controls");
     elements.statsSection = document.getElementById("stats-section");
     elements.chartSection = document.getElementById("chart-section");
+    elements.overviewLoading = document.getElementById("overview-loading");
+    elements.overviewLoadingQuery = document.getElementById("overview-loading-query");
     elements.priceChartCanvas = document.getElementById("priceChart");
     elements.historyChartCanvas = document.getElementById("historyChart");
     elements.historySection = document.getElementById("history-section");
@@ -2219,8 +2221,28 @@ function createRenderCore(context) {
 
     function renderLoading() {
         return safeRender('renderLoading', () => {
+            const query = state.search.query.trim();
+            const showOverviewLoading = Boolean(state.ui.loading && query);
             elements.searchButton.disabled = state.ui.loading || !state.search.query.trim();
             elements.searchInput.disabled = state.ui.loading;
+            if (elements.overviewLoading) {
+                elements.overviewLoading.hidden = !showOverviewLoading;
+                if (showOverviewLoading) {
+                    elements.overviewLoading.setAttribute("aria-busy", "true");
+                } else {
+                    elements.overviewLoading.removeAttribute("aria-busy");
+                }
+            }
+            if (elements.overviewLoadingQuery) {
+                elements.overviewLoadingQuery.textContent = query ? `по запросу «${query}»` : "";
+            }
+            if (elements.views?.overview) {
+                if (showOverviewLoading) {
+                    elements.views.overview.setAttribute("aria-busy", "true");
+                } else {
+                    elements.views.overview.removeAttribute("aria-busy");
+                }
+            }
             if (state.ui.loading) {
                 elements.searchButtonLabel.replaceChildren(domEl("span", { className: "spin" }));
                 elements.listingsSection?.setAttribute('aria-busy', 'true');
@@ -9708,11 +9730,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260512-bc13162"),
-            context._loadScript("js/api_ai_render.js?v=20260512-bc13162"),
-            context._loadScript("js/api_ai_pdf.js?v=20260512-bc13162"),
-            context._loadScript("js/api_ai.js?v=20260512-bc13162"),
-            context._loadScript("js/api_listing_assistant.js?v=20260512-bc13162"),
+            context._loadScript("js/api_ai_modal.js?v=20260512-11a8598"),
+            context._loadScript("js/api_ai_render.js?v=20260512-11a8598"),
+            context._loadScript("js/api_ai_pdf.js?v=20260512-11a8598"),
+            context._loadScript("js/api_ai.js?v=20260512-11a8598"),
+            context._loadScript("js/api_listing_assistant.js?v=20260512-11a8598"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

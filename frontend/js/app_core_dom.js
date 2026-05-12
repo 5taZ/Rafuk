@@ -35,6 +35,8 @@ function cacheAppElements(elements) {
     elements.dealsControls = document.getElementById("deals-controls");
     elements.statsSection = document.getElementById("stats-section");
     elements.chartSection = document.getElementById("chart-section");
+    elements.overviewLoading = document.getElementById("overview-loading");
+    elements.overviewLoadingQuery = document.getElementById("overview-loading-query");
     elements.priceChartCanvas = document.getElementById("priceChart");
     elements.historyChartCanvas = document.getElementById("historyChart");
     elements.historySection = document.getElementById("history-section");

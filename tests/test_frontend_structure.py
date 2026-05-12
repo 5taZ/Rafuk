@@ -218,6 +218,21 @@ def test_design_context_matches_loaded_font_stack(soup: BeautifulSoup) -> None:
     assert "Rubik (sans-serif)" not in context_text
 
 
+def test_overview_search_loading_state_is_wired(soup: BeautifulSoup, css_text: str) -> None:
+    loader = soup.find(id="overview-loading")
+    assert loader is not None
+    assert loader.get("role") == "status"
+    assert loader.has_attr("hidden")
+    assert soup.find(id="overview-loading-query") is not None
+    assert ".overview-loading-card" in css_text
+    assert "@keyframes overview-loader-orbit" in css_text
+    dom = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
+    render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+    assert 'getElementById("overview-loading")' in dom
+    assert "overviewLoading.hidden = !showOverviewLoading" in render_core
+    assert "overviewLoadingQuery.textContent" in render_core
+
+
 def test_lazy_script_cache_busters_match_main_bundle(soup: BeautifulSoup) -> None:
     scripts = [script.get("src", "") for script in soup.find_all("script")]
     app_bundle_src = next(script for script in scripts if "app_bundle.js" in script)
