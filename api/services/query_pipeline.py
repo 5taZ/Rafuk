@@ -9,7 +9,10 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from api.config import Settings
-from api.metrics import observe_query_dataset_event, observe_query_dataset_upstream_fetch
+from api.metrics import (
+    observe_query_dataset_event_with_backend,
+    observe_query_dataset_upstream_fetch_with_backend,
+)
 from api.services.aggregator import (
     PriceStats,
     apply_search_mode,
@@ -276,7 +279,8 @@ async def _fetch_dataset_response(
             currency=currency,
             **effective_kwargs,
         )
-        observe_query_dataset_upstream_fetch(
+        await observe_query_dataset_upstream_fetch_with_backend(
+            cache,
             status="success",
             duration_seconds=time.monotonic() - fetch_started_at,
         )
@@ -286,7 +290,8 @@ async def _fetch_dataset_response(
             await cache.set_json(cache_key, response, ttl=cache_ttl)
         return response
     except BaseException:
-        observe_query_dataset_upstream_fetch(
+        await observe_query_dataset_upstream_fetch_with_backend(
+            cache,
             status="error",
             duration_seconds=time.monotonic() - fetch_started_at,
         )
@@ -324,7 +329,9 @@ async def _fetch_dataset_response_with_distributed_singleflight(
         ttl_seconds=_DISTRIBUTED_SINGLEFLIGHT_LOCK_TTL_SECONDS,
     )
     if acquired is True:
-        observe_query_dataset_event("distributed_singleflight_owner")
+        await observe_query_dataset_event_with_backend(
+            cache, "distributed_singleflight_owner"
+        )
         try:
             return await _fetch_dataset_response(
                 query=query,
@@ -338,7 +345,9 @@ async def _fetch_dataset_response_with_distributed_singleflight(
         finally:
             await release_lock(lock_key, token)
     if acquired is None:
-        observe_query_dataset_event("distributed_singleflight_unavailable")
+        await observe_query_dataset_event_with_backend(
+            cache, "distributed_singleflight_unavailable"
+        )
         return await _fetch_dataset_response(
             query=query,
             currency=currency,
@@ -349,7 +358,7 @@ async def _fetch_dataset_response_with_distributed_singleflight(
             cache_key=cache_key,
         )
 
-    observe_query_dataset_event("distributed_singleflight_wait")
+    await observe_query_dataset_event_with_backend(cache, "distributed_singleflight_wait")
     deadline = time.monotonic() + _DISTRIBUTED_SINGLEFLIGHT_WAIT_SECONDS
     while time.monotonic() < deadline:
         await asyncio.sleep(
@@ -360,10 +369,12 @@ async def _fetch_dataset_response_with_distributed_singleflight(
         )
         cached = await cache.get_json(cache_key)
         if cached is not None:
-            observe_query_dataset_event("distributed_singleflight_cache_hit")
+            await observe_query_dataset_event_with_backend(
+                cache, "distributed_singleflight_cache_hit"
+            )
             return cached
 
-    observe_query_dataset_event("distributed_singleflight_timeout")
+    await observe_query_dataset_event_with_backend(cache, "distributed_singleflight_timeout")
     return await _fetch_dataset_response(
         query=query,
         currency=currency,
@@ -421,9 +432,11 @@ async def load_query_dataset(
         response: dict[str, Any] | None = None
         if cache is not None:
             response = await cache.get_json(sf_key)
-            observe_query_dataset_event("cache_hit" if response is not None else "cache_miss")
+            await observe_query_dataset_event_with_backend(
+                cache, "cache_hit" if response is not None else "cache_miss"
+            )
         else:
-            observe_query_dataset_event("cache_disabled")
+            await observe_query_dataset_event_with_backend(cache, "cache_disabled")
 
         if response is None:
             # Register-or-attach under the lock. We must decide
@@ -451,12 +464,12 @@ async def load_query_dataset(
                     owns_future = True
 
             if not owns_future:
-                observe_query_dataset_event("singleflight_wait")
+                await observe_query_dataset_event_with_backend(cache, "singleflight_wait")
                 # Wait outside the lock so the owner can finish and
                 # other keys can register meanwhile.
                 response = await future
             else:
-                observe_query_dataset_event("singleflight_owner")
+                await observe_query_dataset_event_with_backend(cache, "singleflight_owner")
                 try:
                     response = await _fetch_dataset_response_with_distributed_singleflight(
                         query=query,

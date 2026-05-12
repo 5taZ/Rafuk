@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+from collections import defaultdict
+
+import pytest
 from fastapi.testclient import TestClient
 
 from api.config import Settings
 from api.main import create_app
 from api.metrics import (
     _reset_metrics_for_tests,
+    observe_http_request_with_backend,
     observe_query_dataset_event,
+    observe_query_dataset_event_with_backend,
     observe_query_dataset_upstream_fetch,
+    observe_query_dataset_upstream_fetch_with_backend,
     render_prometheus_metrics,
+    render_prometheus_metrics_with_backend,
 )
 
 
@@ -26,6 +33,29 @@ def _remote_settings(metrics_bearer_token: str | None = None) -> Settings:
     )
 
 
+class _FakeRedisClient:
+    def __init__(self) -> None:
+        self.hashes: defaultdict[str, dict[str, str]] = defaultdict(dict)
+
+    async def hincrby(self, key: str, field: str, amount: int) -> int:
+        value = int(self.hashes[key].get(field, "0")) + amount
+        self.hashes[key][field] = str(value)
+        return value
+
+    async def hincrbyfloat(self, key: str, field: str, amount: float) -> float:
+        value = float(self.hashes[key].get(field, "0")) + amount
+        self.hashes[key][field] = str(value)
+        return value
+
+    async def hgetall(self, key: str) -> dict[str, str]:
+        return dict(self.hashes[key])
+
+
+class _FakeRedisCache:
+    def __init__(self) -> None:
+        self._client = _FakeRedisClient()
+
+
 def test_metrics_endpoint_exposes_prometheus_text() -> None:
     _reset_metrics_for_tests()
     app = create_app()
@@ -39,6 +69,7 @@ def test_metrics_endpoint_exposes_prometheus_text() -> None:
     assert "# TYPE kufar_http_requests_total counter" in resp.text
     assert "kufar_http_request_duration_seconds_count" in resp.text
     assert "# TYPE kufar_process_info gauge" in resp.text
+    assert "# TYPE kufar_metrics_backend_info gauge" in resp.text
 
 
 def test_metrics_records_requests_by_route_template() -> None:
@@ -90,9 +121,49 @@ def test_metrics_render_process_identity_and_dataset_counters() -> None:
     text = render_prometheus_metrics()
 
     assert 'kufar_process_info{pid="' in text
+    assert 'kufar_metrics_backend_info{backend="memory"} 1' in text
     assert 'kufar_query_dataset_events_total{event="cache_miss"} 1' in text
     assert 'kufar_query_dataset_events_total{event="singleflight_wait"} 1' in text
     assert (
         'kufar_query_dataset_upstream_fetch_duration_seconds_count{status="success"} 1'
         in text
     )
+
+
+@pytest.mark.asyncio
+async def test_metrics_redis_backend_renders_aggregate_counters() -> None:
+    _reset_metrics_for_tests()
+    cache = _FakeRedisCache()
+
+    await observe_http_request_with_backend(
+        cache,
+        method="GET",
+        path="/api/v1/health",
+        status_code=200,
+        duration_seconds=0.25,
+    )
+    await observe_query_dataset_event_with_backend(cache, "cache_miss")
+    await observe_query_dataset_upstream_fetch_with_backend(
+        cache, status="success", duration_seconds=0.125
+    )
+
+    text = await render_prometheus_metrics_with_backend(cache)
+
+    assert 'kufar_metrics_backend_info{backend="redis"} 1' in text
+    assert 'method="GET",path="/api/v1/health",status="200"' in text
+    assert 'kufar_query_dataset_events_total{event="cache_miss"} 1' in text
+    assert (
+        'kufar_query_dataset_upstream_fetch_duration_seconds_count{status="success"} 1'
+        in text
+    )
+
+
+@pytest.mark.asyncio
+async def test_metrics_backend_falls_back_to_memory_without_redis() -> None:
+    _reset_metrics_for_tests()
+    observe_query_dataset_event("cache_miss")
+
+    text = await render_prometheus_metrics_with_backend(None)
+
+    assert 'kufar_metrics_backend_info{backend="memory"} 1' in text
+    assert 'kufar_query_dataset_events_total{event="cache_miss"} 1' in text

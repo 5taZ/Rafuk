@@ -105,11 +105,13 @@ together if you raise the CPU budget.
 
 ### Observability boundaries
 
-`/metrics` exposes in-memory Prometheus text from the API process that
-served the scrape. With the default `WORKERS=4`, HTTP counters, dataset
-cache-miss counters, and summary durations are per worker, not
-cross-worker aggregates. The `kufar_process_info{pid="..."}` series
-identifies which process answered.
+`/metrics` exposes Prometheus text. When the app is using Redis, counters
+and summary totals are written to Redis hashes and the endpoint renders
+cross-worker aggregates; if Redis is unavailable it falls back to the
+current worker's in-memory counters. The
+`kufar_metrics_backend_info{backend="..."}` series tells you which path
+served the scrape, and `kufar_process_info{pid="..."}` identifies the
+process that answered.
 
 Dataset singleflight has two layers: an in-process future for same-worker
 concurrency, and a Redis lock for cold fetches that cross worker
@@ -118,8 +120,7 @@ poll the shared dataset cache and only fall back to a duplicate fetch
 after a bounded timeout. Watch
 `kufar_query_dataset_events_total{event="distributed_singleflight_timeout"}`
 and `kufar_query_dataset_upstream_fetch_duration_seconds_count` to decide
-whether the timeout/lock TTL needs tuning or a production metrics backend
-is worth adding.
+whether the timeout/lock TTL needs tuning.
 
 ## Documentation
 

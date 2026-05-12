@@ -19,8 +19,8 @@ from api.limiter import limiter
 from api.logging_config import configure_logging, request_id_ctxvar
 from api.metrics import (
     is_metrics_request_allowed,
-    observe_http_request,
-    render_prometheus_metrics,
+    observe_http_request_with_backend,
+    render_prometheus_metrics_with_backend,
 )
 from api.routers import (
     ai_analysis,
@@ -171,7 +171,9 @@ def create_app() -> FastAPI:
         if not is_metrics_request_allowed(settings, request.headers.get("authorization")):
             return Response(status_code=403)
         return Response(
-            render_prometheus_metrics(),
+            await render_prometheus_metrics_with_backend(
+                getattr(request.app.state, "cache", None)
+            ),
             media_type="text/plain; version=0.0.4; charset=utf-8",
         )
 
@@ -304,7 +306,8 @@ def create_app() -> FastAPI:
         if request.url.path != "/metrics":
             route = request.scope.get("route")
             route_path = getattr(route, "path", None) or "__unmatched__"
-            observe_http_request(
+            await observe_http_request_with_backend(
+                getattr(request.app.state, "cache", None),
                 method=request.method,
                 path=route_path,
                 status_code=response.status_code,
