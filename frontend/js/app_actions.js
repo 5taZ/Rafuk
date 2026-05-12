@@ -155,17 +155,16 @@ function createAppActions(baseContext) {
 
     async function ensureAiLoaded() {
         if (_aiModule) return;
-        // UX-M8 (Wave 25): api_ai.js was split into 4 files. Load the
-        // 3 sub-modules (modal/render/pdf) BEFORE the orchestrator
+        // UX-M8 (Wave 25): api_ai.js was split by responsibility. Load
+        // the sub-modules (modal/render) BEFORE the orchestrator
         // (api_ai.js) so their App namespace registrations are ready
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260512-ac41652"),
-            context._loadScript("js/api_ai_render.js?v=20260512-ac41652"),
-            context._loadScript("js/api_ai_pdf.js?v=20260512-ac41652"),
-            context._loadScript("js/api_ai.js?v=20260512-ac41652"),
-            context._loadScript("js/api_listing_assistant.js?v=20260512-ac41652"),
+            context._loadScript("js/api_ai_modal.js?v=20260512-78263a0"),
+            context._loadScript("js/api_ai_render.js?v=20260512-78263a0"),
+            context._loadScript("js/api_ai.js?v=20260512-78263a0"),
+            context._loadScript("js/api_listing_assistant.js?v=20260512-78263a0"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

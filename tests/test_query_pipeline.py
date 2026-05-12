@@ -122,6 +122,32 @@ async def test_fetch_category_totals_caps_cold_fanout_calls() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fetch_category_totals_mirrors_listing_count_below_filtered_cap() -> None:
+    class Client:
+        async def search(self, **kwargs) -> dict:
+            del kwargs
+            matching = [
+                {"subject": f"Volkswagen Polo {i}", "price_byn": 100}
+                for i in range(175)
+            ]
+            noisy = [
+                {"subject": f"Volkswagen Golf {i}", "price_byn": 100}
+                for i in range(25)
+            ]
+            return {"ads": [*matching, *noisy], "total": 236}
+
+    result = await fetch_category_totals(
+        query="Volkswagen Polo",
+        currency="BYN",
+        strict_search=True,
+        client=Client(),
+        category_ids=[2010],
+    )
+
+    assert result == {2010: 175}
+
+
+@pytest.mark.asyncio
 async def test_load_query_dataset_records_cache_miss_hit_and_fetch_metrics() -> None:
     _reset_metrics_for_tests()
     cache = MemoryCache()

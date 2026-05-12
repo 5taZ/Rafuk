@@ -12,26 +12,6 @@ from api.services.cache import CacheBackend
 
 logger = logging.getLogger(__name__)
 
-# ── Export token cache ─────────────────────────────────────────────
-
-_exports_key = "ai_export:{}"
-
-
-async def _export_set(cache: CacheBackend, token: str, data: dict[str, Any]) -> None:
-    key = _exports_key.format(token)
-    await cache.set_json(key, data, ttl=3600)
-
-
-async def _export_get(cache: CacheBackend, token: str) -> dict[str, Any] | None:
-    key = _exports_key.format(token)
-    return await cache.get_json(key)
-
-
-async def _export_delete(cache: CacheBackend, token: str) -> None:
-    key = _exports_key.format(token)
-    await cache.delete(key)
-
-
 # ── Background task bookkeeping ────────────────────────────────────
 
 # Strong references to background asyncio tasks — without this the GC may

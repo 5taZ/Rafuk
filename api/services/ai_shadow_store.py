@@ -1,5 +1,5 @@
 """
-BE-C5: in-process shadow store for AI tasks/exports.
+BE-C5: in-process shadow store for AI tasks.
 
 Originally lived inline at the top of ``api/routers/ai_analysis.py``.
 Pulling it into a service module keeps the router focused on
@@ -8,21 +8,18 @@ import surface (``api.services.ai_shadow_store``) instead of
 reaching into a router for state.
 
 The shadow store is the in-memory fallback when Redis is unavailable
-or returns ``None`` for a key the request expects. Two dicts hold:
+or returns ``None`` for a key the request expects:
 
 * ``_tasks``  — AI analysis task records keyed by task_id.
-* ``_exports`` — generated AI export reports keyed by random token.
 
-Access to both dicts is serialised through a single
+Access to the dict is serialised through a single
 ``asyncio.Lock``; without it concurrent pruners and consent-deletion
-paths iterate the dicts while task-status updates and export-creation
-mutate them, which can raise ``"dictionary changed size during
-iteration"`` or silently drop records. One lock is enough — both
-dicts are small, modified infrequently, and often walked together
-(account deletion in particular touches both).
+paths iterate the dict while task-status updates mutate it, which can
+raise ``"dictionary changed size during iteration"`` or silently drop
+records.
 
 The module also exports ``periodic_prune_shadow_stores`` — the
-background task ``api/main.py`` schedules at startup so the dicts
+background task ``api/main.py`` schedules at startup so the dict
 don't grow without bound on long-running processes.
 """
 
@@ -31,10 +28,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from api.config import get_settings
-
 _tasks: dict[str, dict] = {}
-_exports: dict[str, dict] = {}
 
 _MAX_SHADOW_ENTRIES = 50
 
@@ -50,10 +44,6 @@ def _get_shadow_lock() -> asyncio.Lock:
     if _shadow_lock is None:
         _shadow_lock = asyncio.Lock()
     return _shadow_lock
-
-
-def _export_ttl() -> int:
-    return int(getattr(get_settings(), "ai_export_ttl", 900) or 900)
 
 
 def _prune_old_tasks_shadow_unlocked() -> None:
@@ -84,25 +74,6 @@ async def _prune_old_tasks_shadow() -> None:
         _prune_old_tasks_shadow_unlocked()
 
 
-def _prune_old_exports_unlocked() -> None:
-    """Drop expired/over-quota export entries. Caller must hold the lock."""
-    if not _exports:
-        return
-    now = datetime.now(UTC).timestamp()
-    ttl = _export_ttl()
-    expired = [token for token, item in _exports.items() if now - item.get("_created_ts", 0) > ttl]
-    for token in expired:
-        _exports.pop(token, None)
-    while len(_exports) > _MAX_SHADOW_ENTRIES:
-        oldest_key = min(_exports, key=lambda k: _exports[k].get("_created_ts", 0))
-        _exports.pop(oldest_key, None)
-
-
-async def _prune_old_exports() -> None:
-    async with _get_shadow_lock():
-        _prune_old_exports_unlocked()
-
-
 async def periodic_prune_shadow_stores() -> None:
     """Background task: periodically prune in-memory shadow stores.
 
@@ -114,6 +85,5 @@ async def periodic_prune_shadow_stores() -> None:
         while True:
             await asyncio.sleep(300)
             await _prune_old_tasks_shadow()
-            await _prune_old_exports()
     except asyncio.CancelledError:
         pass

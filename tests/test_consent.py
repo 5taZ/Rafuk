@@ -338,7 +338,6 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
         f"ai_task:u{target_uid}:abc": {"x": 1},
         f"ai_rate:{target_uid}:default": {"count": 5},
         f"ai_daily:{target_uid}": {"count": 2},
-        "ai_export:targettoken": {"_telegram_user_id": target_uid, "payload": "x"},
         f"auth:blacklist:{target_uid}": {"reason": "test"},
         "auth:initdata:targetdigest": {
             "user_id": target_uid,
@@ -348,7 +347,6 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
         # Sibling user — these MUST survive.
         f"ai_task:u{other_uid}:keep": {"x": 1},
         f"ai_rate:{other_uid}:default": {"count": 5},
-        "ai_export:othertoken": {"_telegram_user_id": other_uid, "payload": "y"},
         "auth:initdata:otherdigest": {
             "user_id": other_uid,
             "ip": "10.0.0.2",
@@ -392,7 +390,6 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
         f"ai_task:u{target_uid}:abc",
         f"ai_rate:{target_uid}:default",
         f"ai_daily:{target_uid}",
-        "ai_export:targettoken",
         f"auth:blacklist:{target_uid}",
         "auth:initdata:targetdigest",
     ):
@@ -402,7 +399,6 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
     for key in (
         f"ai_task:u{other_uid}:keep",
         f"ai_rate:{other_uid}:default",
-        "ai_export:othertoken",
         "auth:initdata:otherdigest",
     ):
         assert await cache.get_json(key) is not None, f"{key} should survive"

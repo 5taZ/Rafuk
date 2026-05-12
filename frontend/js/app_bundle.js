@@ -1539,6 +1539,70 @@ function createAppCore() {
         cacheAppElements(elements);
     }
 
+    const THEME_CHROME_COLORS = {
+        dark: "#0a0a0b",
+        light: "#ffffff",
+    };
+
+    function normalizeTheme(value) {
+        return value === "light" ? "light" : "dark";
+    }
+
+    function setThemeColorMeta(color) {
+        let meta = document.querySelector('meta[name="theme-color"]');
+        if (!meta) {
+            meta = document.createElement("meta");
+            meta.name = "theme-color";
+            document.head.appendChild(meta);
+        }
+        meta.setAttribute("content", color);
+    }
+
+    function compareTelegramVersions(version, minVersion) {
+        const left = String(version || "").trim().split(".");
+        const right = String(minVersion || "").trim().split(".");
+        const length = Math.max(left.length, right.length);
+        for (let i = 0; i < length; i++) {
+            const a = parseInt(left[i] || "0", 10);
+            const b = parseInt(right[i] || "0", 10);
+            if (a > b) return 1;
+            if (a < b) return -1;
+        }
+        return 0;
+    }
+
+    function telegramVersionAtLeast(tg, minVersion) {
+        try {
+            if (typeof tg?.isVersionAtLeast === "function") {
+                return tg.isVersionAtLeast(minVersion);
+            }
+        } catch (_) {}
+        return compareTelegramVersions(tg?.version, minVersion) >= 0;
+    }
+
+    function callTelegramChromeMethod(tg, method, color) {
+        try {
+            if (typeof tg?.[method] === "function") tg[method](color);
+        } catch (_) {}
+    }
+
+    function syncTelegramChromeTheme(theme) {
+        const next = normalizeTheme(theme || document.documentElement.getAttribute("data-theme"));
+        const bg = THEME_CHROME_COLORS[next];
+        document.body.style.backgroundColor = bg;
+        setThemeColorMeta(bg);
+        const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+        if (!tg) return;
+        // Telegram paints native top/bottom chrome outside our DOM; keep it on our palette.
+        if (telegramVersionAtLeast(tg, "6.1")) {
+            callTelegramChromeMethod(tg, "setBackgroundColor", bg);
+            callTelegramChromeMethod(tg, "setHeaderColor", bg);
+        }
+        if (telegramVersionAtLeast(tg, "7.10")) {
+            callTelegramChromeMethod(tg, "setBottomBarColor", bg);
+        }
+    }
+
     /**
      * Pick a starting theme. We mirror Telegram's coarse dark/light
      * preference (so a user who has Telegram in light mode opens the
@@ -1552,9 +1616,10 @@ function createAppCore() {
     function initTelegramTheme() {
         const saved = localStorage.getItem("theme");
         const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-        if (saved === "light" || saved === "dark") {
-            document.documentElement.setAttribute("data-theme", saved);
-        }
+        const initialTheme = saved === "light" || saved === "dark"
+            ? saved
+            : (tg?.colorScheme === "light" ? "light" : "dark");
+        document.documentElement.setAttribute("data-theme", initialTheme);
         if (tg) {
             try {
                 tg.expand();
@@ -1562,52 +1627,27 @@ function createAppCore() {
             } catch (_) {
                 // ready/expand can throw outside a real Telegram client
             }
-            // Override Telegram's injected background color with our own.
-            // Telegram WebApp JS sets body.style.backgroundColor to the
-            // user's theme bg_color (often blue), which breaks our dark
-            // palette. We force our own bg after Telegram has initialised.
-            const isDark = (saved || (tg.colorScheme !== "light")) === "dark";
-            const ourBg = isDark ? "#0a0a0b" : "#ffffff";
-            // setBackgroundColor requires Telegram WebApp version >= 6.1
-            if (tg.version && parseFloat(tg.version) >= 6.1) {
-                try { tg.setBackgroundColor(ourBg); } catch (_) {}
-            }
-            document.body.style.backgroundColor = ourBg;
-
-            if (!saved) {
-                const scheme = tg.colorScheme;
-                document.documentElement.setAttribute(
-                    "data-theme",
-                    scheme === "light" ? "light" : "dark"
-                );
-            }
+            syncTelegramChromeTheme(initialTheme);
             // React to the user toggling dark/light in the Telegram
             // client without a reload — but only swap our binary mode,
             // never override individual palette variables.
             try {
                 tg.onEvent?.("themeChanged", () => {
-                    if (localStorage.getItem("theme")) return;
+                    if (localStorage.getItem("theme")) {
+                        syncTelegramChromeTheme();
+                        return;
+                    }
                     const s = tg.colorScheme;
-                    document.documentElement.setAttribute(
-                        "data-theme",
-                        s === "light" ? "light" : "dark"
-                    );
-                    // Re-assert our background colour after Telegram
-                    // re-injects its theme params on themeChanged.
-                    const bg = s === "light" ? "#ffffff" : "#0a0a0b";
-                    try {
-                        if (tg.version && parseFloat(tg.version) >= 6.1) {
-                            tg.setBackgroundColor(bg);
-                        }
-                    } catch (_) {}
-                    document.body.style.backgroundColor = bg;
+                    const next = s === "light" ? "light" : "dark";
+                    document.documentElement.setAttribute("data-theme", next);
+                    syncTelegramChromeTheme(next);
                 });
             } catch (_) {
                 // onEvent missing on older WebApp builds — non-fatal
             }
             return;
         }
-        document.documentElement.setAttribute("data-theme", "dark");
+        syncTelegramChromeTheme(initialTheme);
     }
 
     function toggleTheme() {
@@ -1615,16 +1655,7 @@ function createAppCore() {
         const next = current === "light" ? "dark" : "light";
         document.documentElement.setAttribute("data-theme", next);
         localStorage.setItem("theme", next);
-        // Re-assert our background colour so Telegram's injected
-        // bg_color doesn't leak through after a theme toggle.
-        const bg = next === "light" ? "#ffffff" : "#0a0a0b";
-        document.body.style.backgroundColor = bg;
-        try {
-            const tg = window.Telegram && window.Telegram.WebApp;
-            if (tg && tg.version && parseFloat(tg.version) >= 6.1) {
-                tg.setBackgroundColor(bg);
-            }
-        } catch (_) {}
+        syncTelegramChromeTheme(next);
     }
 
     function formatPrice(value, priceType) {
@@ -1827,6 +1858,7 @@ function createAppCore() {
         REGIONS: APP_REGIONS,
         initTelegramTheme,
         toggleTheme,
+        syncTelegramChromeTheme,
         formatPrice,
         formatCondition,
         formatSeller,
@@ -4696,11 +4728,14 @@ function createRenderModals(context) {
 
         domClear(elements.detailLiquidity);
         if (detail.liquidity) {
-            const item = buildDetailField(
-                detail.liquidity.label,
-                `${Math.round(detail.liquidity.score)} • ${(detail.liquidity.reasons || []).map(String).join(" · ")}`
-            );
-            elements.detailLiquidity.appendChild(item);
+            elements.detailLiquidity.appendChild(buildDetailField(
+                "Оценка",
+                `${detail.liquidity.label} · ${Math.round(detail.liquidity.score)}/100`
+            ));
+            const reasons = (detail.liquidity.reasons || []).map(String).filter(Boolean);
+            if (reasons.length) {
+                elements.detailLiquidity.appendChild(buildDetailField("Факторы", reasons.join(" · ")));
+            }
         }
         elements.detailLiquidityBlock.hidden = !detail.liquidity;
 
@@ -9675,17 +9710,16 @@ function createAppActions(baseContext) {
 
     async function ensureAiLoaded() {
         if (_aiModule) return;
-        // UX-M8 (Wave 25): api_ai.js was split into 4 files. Load the
-        // 3 sub-modules (modal/render/pdf) BEFORE the orchestrator
+        // UX-M8 (Wave 25): api_ai.js was split by responsibility. Load
+        // the sub-modules (modal/render) BEFORE the orchestrator
         // (api_ai.js) so their App namespace registrations are ready
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260512-ac41652"),
-            context._loadScript("js/api_ai_render.js?v=20260512-ac41652"),
-            context._loadScript("js/api_ai_pdf.js?v=20260512-ac41652"),
-            context._loadScript("js/api_ai.js?v=20260512-ac41652"),
-            context._loadScript("js/api_listing_assistant.js?v=20260512-ac41652"),
+            context._loadScript("js/api_ai_modal.js?v=20260512-78263a0"),
+            context._loadScript("js/api_ai_render.js?v=20260512-78263a0"),
+            context._loadScript("js/api_ai.js?v=20260512-78263a0"),
+            context._loadScript("js/api_listing_assistant.js?v=20260512-78263a0"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -10621,6 +10655,7 @@ function analyticsApp() {
         renderChart,
         renderBoxPlot: renderChart,
         formatPrice: core.formatPrice,
+        syncTelegramChromeTheme: core.syncTelegramChromeTheme,
     };
 }
 
@@ -10631,6 +10666,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (window.Telegram?.WebApp) {
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
+        app.syncTelegramChromeTheme?.();
     }
 
     function _applyTelegramTheme() {

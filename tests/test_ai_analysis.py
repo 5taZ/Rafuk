@@ -9,7 +9,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
-from api.routers.ai_analysis import _sanitize_export_html
 from api.services.ai_listing_guardrails import (
     normalize_listing_pricing,
     thin_market_warning,
@@ -110,80 +109,14 @@ def test_detect_category_covers_belarus_marketplace_categories() -> None:
     assert detect_category("Остатки плитки и клей плиточный после ремонта") == "construction"
 
 
-def test_export_sanitizer_keeps_report_css_but_strips_active_content() -> None:
-    html = (
-        "<style>@import 'https://evil.test/a.css'; "
-        ".x{background:url(https://evil.test/pixel);color:#111}</style>"
-        "<script>alert(1)</script><div onclick='alert(1)'>Report</div>"
-    )
+def test_ai_export_report_endpoint_is_removed() -> None:
+    from api.main import create_app
 
-    sanitized = _sanitize_export_html(html)
+    app = create_app()
 
-    # nh3 removes <style> and <script> content entirely (clean_content_tags)
-    assert "<script" not in sanitized
-    assert "onclick" not in sanitized
-    # nh3 strips <style> tags completely (they're not in allowed tags)
-    assert "<style" not in sanitized
-    # The safe div content is preserved
-    assert "Report" in sanitized
-
-
-# ── SEC-10 / Wave 29: domain allow-list for <img src> / <a href> ────────
-
-
-def test_export_sanitizer_keeps_kufar_image_and_listing_links() -> None:
-    """Trusted Kufar hosts must survive the attribute filter."""
-    html = (
-        '<img src="https://rms.kufar.by/v1/gallery/ad/abc.jpg" alt="ok">'
-        '<a href="https://www.kufar.by/item/123456">Открыть</a>'
-        '<a href="https://kufar.by/item/789">Bare host</a>'
-        '<a href="https://re.kufar.by/region/minsk">Subdomain</a>'
-    )
-    sanitized = _sanitize_export_html(html)
-    assert "https://rms.kufar.by/v1/gallery/ad/abc.jpg" in sanitized
-    assert "https://www.kufar.by/item/123456" in sanitized
-    assert "https://kufar.by/item/789" in sanitized
-    assert "https://re.kufar.by/region/minsk" in sanitized
-
-
-def test_export_sanitizer_strips_untrusted_image_and_anchor_targets() -> None:
-    """Anything outside the allow-list must lose its src/href attribute.
-
-    Tag itself stays (so layout doesn't collapse), but the URL is gone —
-    a tracking pixel renders as a broken-image placeholder, an attacker
-    link renders as inert text.
-    """
-    html = (
-        '<img src="https://evil.test/tracker.gif" alt="x">'
-        '<a href="https://evil.test/phish">click</a>'
-    )
-    sanitized = _sanitize_export_html(html)
-    # Tag survives — body text and structure intact.
-    assert "<img" in sanitized
-    assert "<a" in sanitized
-    # Untrusted URLs are gone.
-    assert "evil.test" not in sanitized
-    # The src/href attribute for the untrusted host was dropped.
-    assert 'src="https://evil.test' not in sanitized
-    assert 'href="https://evil.test' not in sanitized
-
-
-def test_export_sanitizer_rejects_http_scheme_on_kufar_host() -> None:
-    """Even a kufar.by URL over plain HTTP is denied — the export
-    page sits inside an https:// context and would block the request
-    anyway, but we drop it server-side too for the structured log."""
-    html = '<img src="http://rms.kufar.by/v1/gallery/ad/abc.jpg" alt="x">'
-    sanitized = _sanitize_export_html(html)
-    assert "http://rms.kufar.by" not in sanitized
-
-
-def test_export_sanitizer_drops_javascript_scheme_in_anchor() -> None:
-    """The earlier ``url_schemes={'https'}`` already blocks this, but
-    the per-attribute filter is a defence-in-depth — make sure adding
-    the filter didn't accidentally re-allow a non-https scheme."""
-    html = '<a href="javascript:alert(1)">x</a>'
-    sanitized = _sanitize_export_html(html)
-    assert "javascript:" not in sanitized
+    with TestClient(app) as client:
+        response = client.get("/api/v1/ai/export-report/legacy-token")
+        assert response.status_code == 404
 
 
 class FakeAIService:
@@ -2168,7 +2101,7 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_shadow_store_prune_lock_prevents_dict_change_during_iteration() -> None:
-    """The shadow stores _tasks / _exports used to be plain dicts mutated
+    """The shadow store _tasks used to be a plain dict mutated
     by the periodic pruner AND by clear_user_ai_data simultaneously.
     Iterating one path while the other called .pop() raised
     "RuntimeError: dictionary changed size during iteration" sporadically
@@ -2178,18 +2111,13 @@ async def test_shadow_store_prune_lock_prevents_dict_change_during_iteration() -
 
     from api.routers import ai_analysis as aia
 
-    # Seed both stores with enough entries to exercise the prune loops.
+    # Seed enough entries to exercise the prune loop.
     aia._tasks.clear()
-    aia._exports.clear()
     now = datetime.now(UTC).timestamp()
     for i in range(100):
         aia._tasks[f"t{i}"] = {
             "_telegram_user_id": 42 if i % 2 == 0 else 99,
             "_updated_ts": now,
-        }
-        aia._exports[f"e{i}"] = {
-            "_telegram_user_id": 42 if i % 2 == 0 else 99,
-            "_created_ts": now,
         }
 
     # Kick off concurrent pruners and a deletion path. Without the lock,
@@ -2198,23 +2126,19 @@ async def test_shadow_store_prune_lock_prevents_dict_change_during_iteration() -
     # always completes cleanly.
     await asyncio.gather(
         aia._prune_old_tasks_shadow(),
-        aia._prune_old_exports(),
         aia._prune_old_tasks_shadow(),
-        aia._prune_old_exports(),
         return_exceptions=False,
     )
 
     # The lock means every gather completes without "dictionary changed
     # size during iteration" — the assert above (return_exceptions=False
     # would re-raise it) is the real check. Ancillary: the size-prune
-    # caps at _MAX_SHADOW_ENTRIES, so after concurrent prunes the dicts
-    # are at most that size.
+    # caps at _MAX_SHADOW_ENTRIES, so after concurrent prunes the dict
+    # is at most that size.
     assert len(aia._tasks) <= aia._MAX_SHADOW_ENTRIES
-    assert len(aia._exports) <= aia._MAX_SHADOW_ENTRIES
 
     # Cleanup
     aia._tasks.clear()
-    aia._exports.clear()
 
 
 @pytest.mark.asyncio
@@ -2226,7 +2150,6 @@ async def test_clear_user_ai_data_under_concurrent_pruner() -> None:
     from api.routers import ai_analysis as aia
 
     aia._tasks.clear()
-    aia._exports.clear()
     now = datetime.now(UTC).timestamp()
     for i in range(40):
         aia._tasks[f"t{i}"] = {

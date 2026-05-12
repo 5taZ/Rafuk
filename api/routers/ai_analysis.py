@@ -6,7 +6,7 @@ HTTP handlers, in-memory shadow stores, privacy cleanup, rate
 limiting, consent checks, audit logging, and helper utilities.
 The supporting concerns now live in dedicated services:
 
-* ``api.services.ai_shadow_store``  — _tasks/_exports + pruner
+* ``api.services.ai_shadow_store``  — _tasks + pruner
 * ``api.services.ai_privacy``       — clear_user_ai_data
 * ``api.services.ai_guards``        — _check_ai_*, _coerce_string_list
 * ``api.services.ai_audit``         — _log_ai_audit
@@ -35,7 +35,6 @@ from api.schemas import AIAnalysisRequest
 #
 # Do NOT remove without updating every importer:
 #   tests/test_consent.py            → clear_user_ai_data
-#   tests/test_ai_analysis.py        → _sanitize_export_html
 #   api/routers/consent.py           → clear_user_ai_data (deferred)
 #   api/main.py                      → periodic_prune_shadow_stores
 #   api/routers/ai_listing_assistant → _AI_ANALYSIS_ERRORS, _check_ai_*,
@@ -54,13 +53,6 @@ from api.services.ai_analysis_pipeline import (  # noqa: F401 — re-exports
     _run_analysis,
 )
 from api.services.ai_audit import _log_ai_audit  # noqa: F401 — re-export
-from api.services.ai_export import (  # noqa: F401 — re-export
-    AIExportReportRequest,
-    _sanitize_export_html,
-    create_export_report,
-    export_router,
-    get_export_report,
-)
 from api.services.ai_guards import (  # noqa: F401 — re-exports
     _check_ai_available,
     _check_ai_consent,
@@ -76,9 +68,7 @@ from api.services.ai_privacy import clear_user_ai_data  # noqa: F401 — re-expo
 from api.services.ai_service import get_ai_service  # noqa: F401 — re-export
 from api.services.ai_shadow_store import (  # noqa: F401 — re-exports
     _MAX_SHADOW_ENTRIES,
-    _exports,
     _get_shadow_lock,
-    _prune_old_exports,
     _prune_old_tasks_shadow,
     _tasks,
     periodic_prune_shadow_stores,
@@ -95,9 +85,6 @@ from api.services.query_pipeline import load_query_dataset  # noqa: F401 — re-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
-
-# Mount the export sub-router under /ai (provides /export/* endpoints).
-router.include_router(export_router)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────

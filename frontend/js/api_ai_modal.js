@@ -5,10 +5,9 @@
  * a 1318-line god-file. The split is by responsibility:
  *   • modal (this file) — open/close, loader ring + progress bar, stage labels
  *   • render            — DOM-build helpers + final result/error rendering
- *   • pdf               — printable HTML / PDF export
  * The orchestrator (api_ai.js) wires them together with a tiny shared
  * state object (`aiCtx`) carrying only the cross-module mutable bits
- * (`loading`, `pollSession`, `lastData`). Everything else is module-local.
+ * (`loading`, `pollSession`). Everything else is module-local.
  */
 (function (app) {
 "use strict";
@@ -234,10 +233,6 @@ function createAiModal(context, aiCtx) {
         if (elements.aiModalSubtitle && subtitle) {
             elements.aiModalSubtitle.textContent = subtitle;
         }
-
-        // Hide PDF button until results
-        const pdfBtn = document.getElementById("ai-export-pdf");
-        if (pdfBtn) pdfBtn.hidden = true;
 
         // Show time estimate notice
         const bodyEl = elements.aiModal?.querySelector(".ai-modal-body");

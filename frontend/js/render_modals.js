@@ -67,11 +67,14 @@ function createRenderModals(context) {
 
         domClear(elements.detailLiquidity);
         if (detail.liquidity) {
-            const item = buildDetailField(
-                detail.liquidity.label,
-                `${Math.round(detail.liquidity.score)} • ${(detail.liquidity.reasons || []).map(String).join(" · ")}`
-            );
-            elements.detailLiquidity.appendChild(item);
+            elements.detailLiquidity.appendChild(buildDetailField(
+                "Оценка",
+                `${detail.liquidity.label} · ${Math.round(detail.liquidity.score)}/100`
+            ));
+            const reasons = (detail.liquidity.reasons || []).map(String).filter(Boolean);
+            if (reasons.length) {
+                elements.detailLiquidity.appendChild(buildDetailField("Факторы", reasons.join(" · ")));
+            }
         }
         elements.detailLiquidityBlock.hidden = !detail.liquidity;
 

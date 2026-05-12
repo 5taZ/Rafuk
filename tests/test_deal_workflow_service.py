@@ -39,7 +39,7 @@ class TestComputeLiquidityInsightMarketOnly:
     def test_no_ads_returns_low_score(self) -> None:
         insight = compute_liquidity_insight([], _make_stats())
         assert insight.score >= 0
-        assert insight.label in ("Высокая", "Средняя", "Осторожно")
+        assert insight.label in ("Высокая", "Средняя", "Низкая", "Очень низкая")
 
     def test_many_ads_high_score(self) -> None:
         ads = [_ad(ad_id=i, list_time=_fresh_list_time(1)) for i in range(30)]
@@ -49,12 +49,15 @@ class TestComputeLiquidityInsightMarketOnly:
     def test_fresh_ads_boost_score(self) -> None:
         ads = [_ad(ad_id=i, list_time=_fresh_list_time(1)) for i in range(10)]
         insight = compute_liquidity_insight(ads, _make_stats())
-        assert "свежие лоты есть" in insight.reasons or "много свежих лотов" in insight.reasons
+        assert any("обновляется" in r or "свежие" in r for r in insight.reasons)
 
     def test_thin_market_penalty(self) -> None:
         ads = [_ad(ad_id=i) for i in range(2)]
         insight = compute_liquidity_insight(ads, _make_stats(count=2))
-        assert "рынок тонкий" in insight.reasons or "выборка маленькая" in insight.reasons
+        assert (
+            "мало ценовых ориентиров" in insight.reasons
+            or "мало сопоставимых объявлений" in insight.reasons
+        )
 
     def test_reasons_deduplicated(self) -> None:
         ads = [_ad(ad_id=i, list_time=_fresh_list_time(1)) for i in range(30)]
@@ -84,13 +87,13 @@ class TestComputeLiquidityInsightWithAd:
         ads = [_ad(ad_id=i) for i in range(15)]
         ad = _ad(list_time=_fresh_list_time(1))
         insight = compute_liquidity_insight(ads, _make_stats(), ad=ad)
-        assert "только что выложено" in insight.reasons
+        assert "новое объявление" in insight.reasons
 
     def test_old_ad_penalty(self) -> None:
         ads = [_ad(ad_id=i) for i in range(15)]
         ad = _ad(list_time=_fresh_list_time(200))
         insight = compute_liquidity_insight(ads, _make_stats(), ad=ad)
-        assert "давно на рынке" in insight.reasons
+        assert "залежалось больше недели" in insight.reasons
 
     def test_new_condition_bonus(self) -> None:
         ads = [_ad(ad_id=i) for i in range(15)]
@@ -140,7 +143,21 @@ class TestComputeLiquidityInsightWithAd:
         ads = [_ad(ad_id=i, list_time=_fresh_list_time(200)) for i in range(2)]
         ad = _ad(price_byn=3_000_000, list_time=_fresh_list_time(300), images=[])
         insight = compute_liquidity_insight(ads, _make_stats(count=2), ad=ad)
-        assert insight.label == "Осторожно"
+        assert insight.label == "Очень низкая"
+
+    def test_overpriced_fresh_listing_does_not_look_liquid(self) -> None:
+        ads = [_ad(ad_id=i, price_byn=200_000, list_time=_fresh_list_time(1)) for i in range(30)]
+        ad = _ad(price_byn=300_000, list_time=_fresh_list_time(1), images=[{"path": "p.jpg"}])
+        insight = compute_liquidity_insight(ads, _make_stats(count=30), ad=ad)
+        assert insight.score < 55
+        assert "цена сильно выше рынка" in insight.reasons
+
+    def test_small_sample_caps_even_cheap_listing(self) -> None:
+        ads = [_ad(ad_id=i) for i in range(2)]
+        ad = _ad(price_byn=100_000, list_time=_fresh_list_time(1))
+        insight = compute_liquidity_insight(ads, _make_stats(count=2), ad=ad)
+        assert insight.score <= 52
+        assert "выборка маленькая" in insight.reasons
 
 
 class TestComputeLiquidityInsightEdgeCases:
@@ -168,7 +185,7 @@ class TestComputeLiquidityInsightEdgeCases:
 
     def test_empty_ads_market_only(self) -> None:
         insight = compute_liquidity_insight([], _make_stats())
-        assert insight.label == "Осторожно"
+        assert insight.label == "Очень низкая"
 
 
 class TestComputeFlipEstimates:

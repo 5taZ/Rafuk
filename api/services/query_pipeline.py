@@ -685,12 +685,12 @@ async def fetch_category_totals(
         # Mirror the listings filter so the chip and the cards agree.
         filtered = apply_search_mode(ads, query, strict_search)
         kufar_total = resp.get("total")
-        # When the response hit our 200-ad cap and Kufar reports more,
+        # When the filtered response hit our 200-ad cap and Kufar reports more,
         # trust Kufar's total (matches what kufar.by sidebar shows for
         # large categories like "Запчасти" with thousands of ads).
         # Otherwise the precise post-filter count is the right number.
         if (
-            len(ads) >= 200
+            len(filtered) >= 200
             and isinstance(kufar_total, int)
             and kufar_total > len(filtered)
         ):

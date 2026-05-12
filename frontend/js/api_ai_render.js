@@ -7,9 +7,6 @@
  * tree for it, plus error-state DOM. The orchestrator owns the
  * decision of WHEN to call render functions and what `data` looks
  * like; the modal owns the loader visuals.
- *
- * The only cross-module mutation is `aiCtx.lastData = data` set in
- * `renderAIModalResult` — the PDF module reads it on export.
  */
 (function (app) {
 "use strict";
@@ -508,19 +505,12 @@ function createAiRender(context, aiCtx) {
     }
 
     function renderAIModalResult(data) {
-        // PDF export reads aiCtx.lastData on click. We're the only writer.
-        aiCtx.lastData = data;
-
         if (elements.aiModalLoading) elements.aiModalLoading.hidden = true;
         if (elements.aiModalError) elements.aiModalError.hidden = true;
 
         const container = elements.aiModalResult;
         if (!container) return;
         container.hidden = false;
-
-        // Show PDF export button
-        const pdfBtn = document.getElementById("ai-export-pdf");
-        if (pdfBtn) pdfBtn.hidden = false;
 
         // Hide time notice when results appear
         const notice = elements.aiModal?.querySelector(".ai-time-notice");

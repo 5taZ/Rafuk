@@ -193,6 +193,7 @@ function analyticsApp() {
         renderChart,
         renderBoxPlot: renderChart,
         formatPrice: core.formatPrice,
+        syncTelegramChromeTheme: core.syncTelegramChromeTheme,
     };
 }
 
@@ -203,6 +204,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (window.Telegram?.WebApp) {
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
+        app.syncTelegramChromeTheme?.();
     }
 
     function _applyTelegramTheme() {

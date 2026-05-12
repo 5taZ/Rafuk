@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from api.schemas import FlipEstimate, LiquidityInsight
-from api.services.aggregator import PriceStats, filter_deal_ads, get_param, normalize_price_byn
+from api.services.aggregator import PriceStats, get_param, normalize_price_byn
 
 
 def _age_hours(list_time: str | None) -> float | None:
@@ -19,139 +19,195 @@ def _age_hours(list_time: str | None) -> float | None:
     return (datetime.now(UTC) - parsed.astimezone(UTC)).total_seconds() / 3600
 
 
+def _photo_count(ad: dict[str, Any]) -> int:
+    photos = ad.get("images") or ad.get("photos") or []
+    if isinstance(photos, list):
+        return len(photos)
+    if isinstance(photos, str):
+        return 1
+    return 0
+
+
+def _market_spread(market_stats: PriceStats) -> float | None:
+    median = market_stats.median
+    if median <= 0 or market_stats.q3 < market_stats.q1:
+        return None
+    return (market_stats.q3 - market_stats.q1) / median
+
+
+def _add_reason(reasons: list[tuple[float, int, str]], weight: float, text: str) -> None:
+    reasons.append((abs(weight), len(reasons), text))
+
+
+def _final_reasons(reasons: list[tuple[float, int, str]]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for _, _, text in sorted(reasons, key=lambda item: (-item[0], item[1])):
+        if text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+        if len(result) == 4:
+            break
+    return result
+
+
 def compute_liquidity_insight(
     ads: list[dict[str, Any]],
     market_stats: PriceStats,
     ad: dict[str, Any] | None = None,
 ) -> LiquidityInsight:
     total = len(ads)
-    fresh_count = sum(
+    priced_count = min(max(0, int(market_stats.count or 0)), total)
+    fresh_72h = sum(
         1 for a in ads if (_age := _age_hours(a.get("list_time"))) is not None and _age <= 72
     )
-    deal_count = (
-        len(filter_deal_ads(ads, market_stats.median, 8.0, market_stats=market_stats))
-        if market_stats.median else 0
-    )
-
-    # Market-level base score (0-40)
+    fresh_share = fresh_72h / total if total else 0.0
+    spread = _market_spread(market_stats)
     market_score = 0.0
-    reasons: list[str] = []
+    reasons: list[tuple[float, int, str]] = []
 
-    if total >= 25:
-        market_score += 20
-        reasons.append("много предложений")
-    elif total >= 10:
-        market_score += 10
-        reasons.append("рынок живой")
-    elif total <= 4:
-        market_score -= 8
-        reasons.append("рынок тонкий")
-
-    if fresh_count >= 8:
+    if priced_count >= 40:
         market_score += 12
-        reasons.append("много свежих лотов")
-    elif fresh_count >= 3:
-        market_score += 5
-        reasons.append("свежие лоты есть")
-    else:
-        market_score -= 5
-        reasons.append("мало свежих лотов")
-
-    if deal_count >= 4:
+        _add_reason(reasons, 12, "много ценовых ориентиров")
+    elif priced_count >= 15:
         market_score += 8
-        reasons.append("есть движение по дешёвым лотам")
-    elif deal_count == 0 and total > 0:
-        market_score -= 4
-        reasons.append("мало выгодных входов")
-
-    if market_stats.count <= 3:
-        market_score -= 6
-        reasons.append("выборка маленькая")
-
-    # If no specific ad given, return market-level score only
-    if ad is None:
-        score = round(max(0.0, min(100.0, 35.0 + market_score)), 1)
+        _add_reason(reasons, 8, "рынок достаточно широкий")
+    elif priced_count >= 6:
+        market_score += 3
+    elif priced_count > 0:
+        market_score -= 8
+        _add_reason(reasons, -8, "мало ценовых ориентиров")
     else:
-        # Per-item score: market base + item-specific factors
+        market_score -= 18
+        _add_reason(reasons, -18, "нет ценовых ориентиров")
+
+    if total >= 6 and fresh_share >= 0.35:
+        market_score += 12
+        _add_reason(reasons, 12, "рынок быстро обновляется")
+    elif total >= 6 and fresh_share >= 0.15:
+        market_score += 6
+        _add_reason(reasons, 6, "свежие лоты появляются регулярно")
+    elif total > 0 and fresh_72h == 0:
+        market_score -= 8
+        _add_reason(reasons, -8, "нет свежего движения")
+    elif total < 6:
+        market_score -= 8
+        _add_reason(reasons, -8, "мало сопоставимых объявлений")
+
+    if spread is not None and priced_count >= 6:
+        if spread <= 0.20:
+            market_score += 6
+            _add_reason(reasons, 6, "цены предсказуемые")
+        elif spread <= 0.40:
+            market_score += 2
+        elif spread >= 0.80:
+            market_score -= 10
+            _add_reason(reasons, -10, "разброс цен очень высокий")
+        elif spread >= 0.55:
+            market_score -= 5
+            _add_reason(reasons, -5, "разброс цен высокий")
+
+    if total >= 80 and fresh_share < 0.20:
+        market_score -= 5
+        _add_reason(reasons, -5, "много конкурентов без быстрого обновления")
+
+    if ad is None:
+        score = 50.0 + market_score
+    else:
         item_score = 0.0
-        price_byn = normalize_price_byn(ad.get("price_byn"))
+        price_byn = normalize_price_byn(ad.get("price_byn"), ad)
         median = market_stats.median
+        ratio: float | None = None
+        caps: list[float] = []
 
-        # Price position relative to median (0-25 points)
-        if price_byn and median and median > 0:
+        if price_byn is not None and median and median > 0:
             ratio = price_byn / median
-            if ratio <= 0.80:
-                item_score += 25
-                reasons.append("цена сильно ниже рынка")
-            elif ratio <= 0.90:
+            if ratio <= 0.75:
+                item_score += 26
+                _add_reason(reasons, 26, "цена сильно ниже рынка")
+            elif ratio <= 0.88:
                 item_score += 18
-                reasons.append("цена ниже рынка")
-            elif ratio <= 0.97:
-                item_score += 10
-                reasons.append("цена чуть ниже рынка")
-            elif ratio <= 1.03:
-                item_score += 5
-            elif ratio <= 1.10:
-                item_score -= 5
-                reasons.append("цена выше рынка")
-            else:
+                _add_reason(reasons, 18, "цена ниже рынка")
+            elif ratio <= 0.98:
+                item_score += 9
+                _add_reason(reasons, 9, "цена чуть ниже рынка")
+            elif ratio <= 1.05:
+                item_score += 2
+            elif ratio <= 1.15:
                 item_score -= 12
-                reasons.append("цена сильно выше рынка")
+                caps.append(58.0)
+                _add_reason(reasons, -12, "цена выше рынка")
+            else:
+                item_score -= 26
+                caps.append(42.0)
+                _add_reason(reasons, -26, "цена сильно выше рынка")
+        elif price_byn is None:
+            item_score -= 18
+            caps.append(45.0)
+            _add_reason(reasons, -18, "цена не указана")
+        elif not median:
+            item_score -= 6
+            caps.append(60.0)
+            _add_reason(reasons, -6, "нет медианы рынка")
 
-        # Freshness of this specific ad (0-15 points)
         age = _age_hours(ad.get("list_time"))
         if age is not None and age >= 0:
-            if age <= 6:
-                item_score += 15
-                reasons.append("только что выложено")
-            elif age <= 24:
-                item_score += 10
-                reasons.append("свежее объявление")
+            if age <= 12:
+                item_score += 8
+                _add_reason(reasons, 8, "новое объявление")
             elif age <= 72:
                 item_score += 4
-            elif age <= 168:
-                item_score -= 3
+                _add_reason(reasons, 4, "свежее объявление")
+            elif age >= 336:
+                item_score -= 18
+                caps.append(50.0)
+                _add_reason(reasons, -18, "залежалось больше двух недель")
+            elif age >= 168:
+                item_score -= 10
+                _add_reason(reasons, -10, "залежалось больше недели")
             else:
-                item_score -= 8
-                reasons.append("давно на рынке")
+                item_score -= 3
 
-        # Photo count bonus (0-10 points)
-        photos = ad.get("images") or ad.get("photos") or []
-        if isinstance(photos, (list, str)):
-            photo_count = len(photos) if isinstance(photos, list) else 1
-        else:
-            photo_count = 0
+        photo_count = _photo_count(ad)
         if photo_count >= 5:
-            item_score += 10
-        elif photo_count >= 3:
             item_score += 6
+            _add_reason(reasons, 6, "много фото")
         elif photo_count >= 1:
-            item_score += 3
+            item_score += 2
         else:
-            item_score -= 5
-            reasons.append("нет фото")
+            item_score -= 10
+            caps.append(65.0)
+            _add_reason(reasons, -10, "нет фото")
 
-        # Condition bonus (0-10 points)
         condition = get_param(ad, "condition") or ""
-        # Kufar uses numeric codes: "1" = used, "2" = new
         is_new = condition in ("2", "новый", "new")
-        is_used = condition in ("1", "б/у", "used")
-        if is_new:
-            item_score += 10
-            if "новый" not in " ".join(reasons).lower():
-                reasons.append("новый товар")
-        elif is_used:
-            item_score += 3
+        if is_new and (ratio is None or ratio <= 1.05):
+            item_score += 4
+            _add_reason(reasons, 4, "новый товар")
+        elif is_new:
+            item_score += 1
 
-        score = round(max(0.0, min(100.0, 25.0 + market_score + item_score)), 1)
+        score = 50.0 + market_score + item_score
+        if priced_count < 3 or total < 3:
+            caps.append(52.0)
+            _add_reason(reasons, -10, "выборка маленькая")
+        elif priced_count < 8 or total < 8:
+            caps.append(68.0)
+            _add_reason(reasons, -6, "оценка по небольшой выборке")
+        if caps:
+            score = min(score, min(caps))
 
-    if score >= 72:
+    score = round(max(0.0, min(100.0, score)), 1)
+    if score >= 75:
         label = "Высокая"
-    elif score >= 50:
+    elif score >= 55:
         label = "Средняя"
+    elif score >= 40:
+        label = "Низкая"
     else:
-        label = "Осторожно"
-    return LiquidityInsight(score=score, label=label, reasons=list(dict.fromkeys(reasons))[:4])
+        label = "Очень низкая"
+    return LiquidityInsight(score=score, label=label, reasons=_final_reasons(reasons))
 
 
 def compute_flip_estimates(

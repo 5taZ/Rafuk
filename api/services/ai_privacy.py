@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 from api.config import get_settings
-from api.services.ai_shadow_store import _exports, _get_shadow_lock, _tasks
+from api.services.ai_shadow_store import _get_shadow_lock, _tasks
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +35,9 @@ async def clear_user_ai_data(telegram_user_id: int) -> None:
     * ``ai_task:u{tg}:*`` — AI task results (api/services/ai_task_store)
     * ``ai_rate:{tg}:*`` — per-endpoint hourly limiter buckets
     * ``ai_daily:{tg}`` — shared daily limiter counter
-    * ``ai_export:*``  — random tokens; value carries _telegram_user_id
     * ``auth:blacklist:{tg}`` — session blacklist entry (if any)
     * ``auth:initdata:*`` — IP-tracking entries (filter by user_id in value)
-    * in-memory ``_tasks`` / ``_exports`` shadow stores
+    * in-memory ``_tasks`` shadow store
 
     The shared deterministic AI cache (``ai_analysis:v5:*``) is
     intentionally untouched — it has no user_id, evicting it would
@@ -78,11 +77,8 @@ async def clear_user_ai_data(telegram_user_id: int) -> None:
                         break
 
             # Patterns where the user_id is inside the value, not the
-            # key. Two namespaces today: ai_export (random token) and
-            # auth:initdata (sha256 digest of initData). For both we
-            # have to load each entry, check the user_id, and delete
-            # if it matches.
-            value_keyed_patterns = ("ai_export:*", "auth:initdata:*")
+            # key.
+            value_keyed_patterns = ("auth:initdata:*",)
             for pattern in value_keyed_patterns:
                 cursor = 0
                 while True:
@@ -92,9 +88,7 @@ async def clear_user_ai_data(telegram_user_id: int) -> None:
                         item = await cache.get_json(decoded)
                         if not item:
                             continue
-                        # ai_export uses _telegram_user_id, initdata
-                        # uses user_id; accept either to keep one loop.
-                        owner = item.get("_telegram_user_id") or item.get("user_id")
+                        owner = item.get("user_id")
                         if owner == telegram_user_id:
                             await redis_client.delete(key)
                     if cursor == 0:
@@ -105,9 +99,6 @@ async def clear_user_ai_data(telegram_user_id: int) -> None:
             for task_id in list(_tasks.keys()):
                 if _tasks[task_id].get("_telegram_user_id") == telegram_user_id:
                     _tasks.pop(task_id, None)
-            for export_id in list(_exports.keys()):
-                if _exports[export_id].get("_telegram_user_id") == telegram_user_id:
-                    _exports.pop(export_id, None)
     except Exception:
         logger.warning("Failed to clear AI data for user %d", telegram_user_id, exc_info=True)
     finally:

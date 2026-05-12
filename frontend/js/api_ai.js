@@ -9,9 +9,8 @@
  *
  *   • api_ai_modal.js   — modal lifecycle + progress UI
  *   • api_ai_render.js  — DOM-build helpers + final result rendering
- *   • api_ai_pdf.js     — printable HTML / PDF export
  *
- * All four files are loaded together by app_actions.js#ensureAiLoaded,
+ * Both lazy files are loaded together by app_actions.js#ensureAiLoaded,
  * so the sub-factories are registered on window.App by the time
  * `createApiAi` runs.
  *
@@ -19,7 +18,6 @@
  *   loading      — guards re-entrancy across `loadAIAnalysis` calls.
  *   pollSession  — bumped by `closeAIModal` so an in-flight poll loop
  *                  sees its session is stale and exits silently.
- *   lastData     — last successful AI result, read by the PDF export.
  */
 (function (app) {
 "use strict";
@@ -32,19 +30,16 @@ function createApiAi(context) {
     const aiCtx = {
         loading: false,
         pollSession: 0,
-        lastData: null,
     };
 
     if (
         typeof app.createAiModal !== "function" ||
-        typeof app.createAiRender !== "function" ||
-        typeof app.createAiPdf !== "function"
+        typeof app.createAiRender !== "function"
     ) {
         throw new Error("AI submodules failed to register");
     }
     const modal = app.createAiModal(context, aiCtx);
     const render = app.createAiRender(context, aiCtx);
-    const pdf = app.createAiPdf(context, aiCtx);
 
     async function loadAIAnalysis(adId) {
         const query = (state.detail.data?.query || state.search.query || "").trim();
@@ -219,19 +214,9 @@ function createApiAi(context) {
         }, 700);
     }
 
-    // Bind PDF export button (DOM is ready by the time this factory runs)
-    const pdfBtn = document.getElementById("ai-export-pdf");
-    if (pdfBtn) {
-        pdfBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            pdf.exportToPdf();
-        });
-    }
-
     return {
         loadAIAnalysis,
         closeAIModal: modal.closeAIModal,
-        exportToPdf: pdf.exportToPdf,
     };
 }
 

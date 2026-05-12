@@ -725,6 +725,10 @@ def test_theme_init_does_not_inherit_telegram_palette_colours() -> None:
     # We DO honour the binary dark/light hint…
     assert "colorScheme" in text
     assert '"themeChanged"' in text
+    assert "syncTelegramChromeTheme" in text
+    assert '"setHeaderColor"' in text
+    assert '"setBottomBarColor"' in text
+    assert 'meta[name="theme-color"]' in text
     # …but we DO NOT pull individual palette colours.
     forbidden_keys = (
         "themeParams.bg_color",

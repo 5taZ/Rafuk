@@ -112,14 +112,12 @@ def test_frontend_csp_does_not_allow_inline_styles() -> None:
     index_text = HTML_FILE.read_text(encoding="utf-8")
     offline_text = (FRONTEND / "offline.html").read_text(encoding="utf-8")
     nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
-    ai_export = Path("api/services/ai_export.py").read_text(encoding="utf-8")
-    combined = "\n".join([index_text, offline_text, nginx_conf, ai_export])
+    combined = "\n".join([index_text, offline_text, nginx_conf])
     assert "style-src 'unsafe-inline'" not in combined
     assert "style-src 'self';" in index_text
     assert "style-src 'self';" in nginx_conf
     assert "fonts.googleapis.com" not in index_text
     assert "fonts.gstatic.com" not in index_text
-    assert "style-src 'none'" in ai_export
     assert "<style" not in offline_text
     assert 'href="/offline.css"' in offline_text
 
@@ -171,7 +169,6 @@ def test_lazy_ai_modules_register_on_app_namespace() -> None:
     registrations = {
         "api_ai_modal.js": "createAiModal",
         "api_ai_render.js": "createAiRender",
-        "api_ai_pdf.js": "createAiPdf",
         "api_ai.js": "createApiAi",
         "api_listing_assistant.js": "createApiListingAssistant",
     }
@@ -184,27 +181,6 @@ def test_lazy_ai_modules_register_on_app_namespace() -> None:
     actions = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
     assert "app.createApiAi(context)" in actions
     assert "createApiAi(context)" not in actions.replace("app.createApiAi(context)", "")
-
-
-def test_ai_pdf_export_uses_design_system_styles() -> None:
-    import re as _re
-
-    pdf_js = (JS_DIR / "api_ai_pdf.js").read_text(encoding="utf-8")
-    style = pdf_js.split("<style>", 1)[1].split("</style>", 1)[0]
-    root_start = style.index(":root")
-    root_end = style.index("}\n  *", root_start)
-    non_token_styles = style[:root_start] + style[root_end + 1 :]
-    hex_literals = _re.findall(r"#[0-9a-fA-F]{6}\b", non_token_styles)
-
-    assert 'font-family: "Geist"' in style
-    assert '.mono { font-family: "JetBrains Mono"' in style
-    assert "--pdf-accent: #3b82f6;" in style
-    assert "var(--pdf-accent)" in style
-    assert "Arial" not in style
-    assert "Courier" not in style
-    assert "border-left" not in style
-    assert ".report-head::after" not in style
-    assert not hex_literals
 
 
 def test_design_context_matches_loaded_font_stack(soup: BeautifulSoup) -> None:
@@ -242,11 +218,19 @@ def test_lazy_script_cache_busters_match_main_bundle(soup: BeautifulSoup) -> Non
     for module in (
         "api_ai_modal.js",
         "api_ai_render.js",
-        "api_ai_pdf.js",
         "api_ai.js",
         "api_listing_assistant.js",
     ):
         assert f"js/{module}?v={version}" in actions
+
+
+def test_ai_analysis_export_ui_is_removed() -> None:
+    index_text = HTML_FILE.read_text(encoding="utf-8")
+    actions = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    ai_js = (JS_DIR / "api_ai.js").read_text(encoding="utf-8")
+    assert "ai-export-pdf" not in index_text
+    assert "api_ai_pdf.js" not in actions
+    assert "createAiPdf" not in ai_js
 
 
 def test_frontend_composition_clones_mutable_contexts() -> None:

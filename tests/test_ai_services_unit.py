@@ -7,7 +7,7 @@ called out as having NO dedicated coverage:
 * ``api.services.ai_audit``       — _log_ai_audit
 * ``api.services.ai_privacy``     — clear_user_ai_data
 * ``api.services.ai_task_store``  — _spawn_bg_task / _update_task / _bg_task_watchdog
-* ``api.services.ai_shadow_store`` — _tasks / _exports / _prune_old_*
+* ``api.services.ai_shadow_store`` — _tasks / _prune_old_*
 """
 
 from __future__ import annotations
@@ -166,14 +166,11 @@ async def test_clear_user_ai_data_purges_shadow_stores(monkeypatch) -> None:
 
     monkeypatch.setattr(cache_module.RedisCache, "from_url", _boom)
 
-    # Seed two users into the shadow stores.
+    # Seed two users into the shadow store.
     ai_shadow_store._tasks.clear()
-    ai_shadow_store._exports.clear()
     ai_shadow_store._tasks["task-a-1"] = {"_telegram_user_id": user_a, "x": 1}
     ai_shadow_store._tasks["task-a-2"] = {"_telegram_user_id": user_a, "x": 2}
     ai_shadow_store._tasks["task-b-1"] = {"_telegram_user_id": user_b, "x": 3}
-    ai_shadow_store._exports["exp-a"] = {"_telegram_user_id": user_a}
-    ai_shadow_store._exports["exp-b"] = {"_telegram_user_id": user_b}
 
     await clear_user_ai_data(user_a)
 
@@ -183,12 +180,6 @@ async def test_clear_user_ai_data_purges_shadow_stores(monkeypatch) -> None:
     }
     assert user_a not in remaining_task_users
     assert user_b in remaining_task_users
-
-    remaining_export_users = {
-        v.get("_telegram_user_id") for v in ai_shadow_store._exports.values()
-    }
-    assert user_a not in remaining_export_users
-    assert user_b in remaining_export_users
 
 
 # ──────────────────────────────────────────────────────────────────────

@@ -313,7 +313,7 @@ async def delete_account(
 
     # BE-C6: Redis cleanup is owned end-to-end by clear_user_ai_data
     # in ai_analysis.py — it scans every per-user namespace
-    # (ai_task / ai_rate / ai_daily / ai_export, plus auth:blacklist
+    # (ai_task / ai_rate / ai_daily, plus auth:blacklist
     # and auth:initdata) and clears the in-memory shadow stores.
     # The previous direct ``cache.delete("ai_rate:{tg}")`` here was a
     # no-op (real keys are ``ai_rate:{tg}:{endpoint}``) so it stayed

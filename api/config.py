@@ -179,7 +179,6 @@ class Settings(BaseSettings):
     ai_photo_precheck_enabled: bool = False
     ai_chat_min_interval_seconds: float = 12.0
     ai_task_ttl: int = 3600
-    ai_export_ttl: int = 900
     ai_fallback_cache_ttl: int = 1800
 
     # Result size limits
