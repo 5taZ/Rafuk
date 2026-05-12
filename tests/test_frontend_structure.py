@@ -436,8 +436,14 @@ def test_listing_assistant_history_has_privacy_controls(
     assert clear_button.get("type") == "button"
     assert clear_button.has_attr("disabled")
     assert "Очистить историю" in clear_button.get_text(strip=True)
-    assert "Сохранять запросы в истории 30 дней" in soup.get_text(" ", strip=True)
-    assert "История хранится только в этом браузере" in soup.get_text(" ", strip=True)
+    page_text = soup.get_text(" ", strip=True)
+    assert "Сохранять запросы в истории 30 дней" in page_text
+    assert (
+        "История с запросом и AI-ответом хранится только в этом браузере "
+        "или Telegram WebView до 30 дней"
+    ) in page_text
+    assert "Запросы и AI-ответы хранятся локально до 30 дней" in page_text
+    assert "серверное удаление аккаунта её не удаляет" in page_text
 
     la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
     assert 'const HISTORY_SAVE_KEY = "rafuk:listing-assistant:save-history";' in la_js
