@@ -56,7 +56,7 @@ async def test_cmd_deals_shows_error_on_api_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cmd_profit_formats_monthly_summary() -> None:
+async def test_cmd_profit_formats_finance_summary() -> None:
     from bot.handlers.analytics import cmd_profit
 
     fake_data = {
@@ -64,10 +64,7 @@ async def test_cmd_profit_formats_monthly_summary() -> None:
         "total_revenue_byn": 13500,
         "total_profit_byn": 3500,
         "average_roi_percent": 35,
-        "win_rate_percent": 60,
-        "pursued_leads": 10,
         "sold_leads": 6,
-        "total_leads": 15,
     }
 
     message = SimpleNamespace(
@@ -80,7 +77,7 @@ async def test_cmd_profit_formats_monthly_summary() -> None:
 
     message.answer.assert_awaited_once()
     text = message.answer.await_args.args[0]
-    assert "30 дней" in text
+    assert "Финансы" in text
     assert "3,500" in text
     assert "35%" in text
 

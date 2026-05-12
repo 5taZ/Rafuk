@@ -337,17 +337,10 @@ function createRenderCharts(context) {
     /* ===== Profit Dashboard ===== */
 
     function _renderDashboardCards(dashboard) {
-        // Hero cards: revenue, profit, ROI, win-rate, days-to-close.
-        // Each card is structurally identical (label/value/sub) so the
-        // CSS scaling is consistent and the user can scan top-to-bottom.
         const profit = Number(dashboard.total_profit_byn || 0);
         const revenue = Number(dashboard.total_revenue_byn || 0);
         const roi = Number(dashboard.average_roi_percent || 0);
-        const winRate = Number(dashboard.win_rate_percent || 0);
-        const avgDays = Number(dashboard.average_days_to_close || 0);
         const sold = Number(dashboard.sold_leads || 0);
-        const pursued = Number(dashboard.pursued_leads || 0);
-        const period = Number(dashboard.period_days || 90);
         const expenses = Number(dashboard.total_expenses_byn || 0);
 
         return [
@@ -362,18 +355,6 @@ function createRenderCharts(context) {
                 value: `${roi >= 0 ? "+" : ""}${roi.toFixed(1)}%`,
                 sub: `средний по ${sold} продажам`,
                 className: roi >= 0 ? "is-accent" : "is-warning",
-            },
-            {
-                label: "Win rate",
-                value: `${winRate.toFixed(1)}%`,
-                sub: `${sold} из ${pursued} в работе`,
-                className: winRate >= 50 ? "is-accent" : winRate >= 25 ? "" : "is-warning",
-            },
-            {
-                label: "Цикл сделки",
-                value: avgDays > 0 ? `${avgDays.toFixed(1)} дн` : "—",
-                sub: `медиана ${(dashboard.median_days_to_close || 0).toFixed(1)} дн · ${period} дн период`,
-                className: "",
             },
         ];
     }
@@ -390,13 +371,6 @@ function createRenderCharts(context) {
 
         elements.profitDashboardSection.hidden = false;
 
-        // Reflect the active period chip from state (in case the user
-        // toggled it between renders without clicking).
-        for (const button of elements.analyticsPeriodButtons || []) {
-            const days = Number(button.dataset.analyticsPeriod || 0);
-            button.classList.toggle("is-active", days === Number(state.analytics.periodDays));
-        }
-
         const dashboard = state.analytics.dashboard;
         if (!dashboard) {
             // Loading or no data yet — render placeholder cards so the
@@ -404,8 +378,6 @@ function createRenderCharts(context) {
             const placeholderCards = [
                 { label: "Прибыль", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
                 { label: "ROI", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
-                { label: "Win rate", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
-                { label: "Цикл сделки", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
             ];
             for (const card of placeholderCards) {
                 elements.profitCards.appendChild(

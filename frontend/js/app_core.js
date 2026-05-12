@@ -94,11 +94,8 @@ function createAppCore() {
             currentLeadId: null,
         },
         analytics: {
-            periodDays: 90,
             dashboard: null,
             loading: false,
-            profitData: null,
-            profitChart: null,
         },
         panels: {
             distribution: false,

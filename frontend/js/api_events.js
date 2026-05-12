@@ -308,19 +308,6 @@ function createApiEvents(context) {
             });
         }
 
-        // ── Analytics period chips (30 дн / 90 дн / Год) ────────────
-        for (const button of elements.analyticsPeriodButtons || []) {
-            button.addEventListener("click", () => {
-                const nextDays = Number(button.dataset.analyticsPeriod);
-                if (!nextDays || nextDays === state.analytics.periodDays) {
-                    return;
-                }
-                state.analytics.periodDays = nextDays;
-                renderProfitDashboard();
-                void loadAnalytics();
-            });
-        }
-
         // ── Sort buttons ─────────────────────────────────────────────
         for (const button of elements.sortButtons || []) {
             button.addEventListener("click", () => {

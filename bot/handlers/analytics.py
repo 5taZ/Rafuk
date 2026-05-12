@@ -51,7 +51,7 @@ async def _api_get(path: str, telegram_user_id: int, *, params: dict | None = No
 @router.message(Command("deals"))
 async def cmd_deals(message: Message) -> None:
     """Active deals summary."""
-    data = await _api_get("/api/v1/analytics/leads", message.from_user.id, params={"days": 30})
+    data = await _api_get("/api/v1/analytics/leads", message.from_user.id)
     if data is None:
         await message.answer("⚠️ Не удалось загрузить аналитику. Попробуйте позже.")
         return
@@ -83,8 +83,8 @@ async def cmd_deals(message: Message) -> None:
 
 @router.message(Command("profit"))
 async def cmd_profit(message: Message) -> None:
-    """Profit for the month."""
-    data = await _api_get("/api/v1/analytics/leads", message.from_user.id, params={"days": 30})
+    """Profit and ROI summary."""
+    data = await _api_get("/api/v1/analytics/leads", message.from_user.id)
     if data is None:
         await message.answer("⚠️ Не удалось загрузить аналитику. Попробуйте позже.")
         return
@@ -93,18 +93,15 @@ async def cmd_profit(message: Message) -> None:
     revenue = data.get("total_revenue_byn", 0)
     profit = data.get("total_profit_byn", 0)
     roi = data.get("average_roi_percent", 0)
-    win_rate = data.get("win_rate_percent", 0)
-    pursued = data.get("pursued_leads", 0)
     sold = data.get("sold_leads", 0)
-    total = data.get("total_leads", 0)
 
     profit_sign = "+" if profit >= 0 else ""
 
     text = (
-        f"📊 <b>За 30 дней:</b>\n"
+        f"📊 <b>Финансы:</b>\n"
         f"Вложено: {_fmt_byn(cost)} BYN │ Выручка: {_fmt_byn(revenue)} BYN\n"
-        f"Прибыль: {profit_sign}{_fmt_byn(profit)} BYN (ROI: {roi:.0f}%)\n"
-        f"Win rate: {win_rate:.0f}% | Сделок: {sold}/{pursued} (всего {total})"
+        f"Прибыль: {profit_sign}{_fmt_byn(profit)} BYN │ ROI: {roi:.0f}%\n"
+        f"Продаж: {sold}"
     )
     await message.answer(text, parse_mode="HTML")
 

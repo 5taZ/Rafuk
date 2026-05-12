@@ -487,34 +487,20 @@ class LeadFunnelStage(BaseModel):
     count: int
 
 
-class LeadMonthlyStat(BaseModel):
-    """One month bucket of sold leads — drives the trend chart."""
-
-    month: str  # YYYY-MM
-    sold_count: int
-    revenue_byn: float
-    profit_byn: float
-
-
 class LeadAnalyticsResponse(BaseModel):
     """Aggregated lead-pipeline analytics for the deals dashboard."""
 
-    period_days: int
     total_leads: int
     pursued_leads: int
     sold_leads: int
     skipped_leads: int
     active_leads: int
-    win_rate_percent: float
     total_revenue_byn: float
     total_cost_byn: float
     total_profit_byn: float
     total_expenses_byn: float
     average_roi_percent: float
-    average_days_to_close: float
-    median_days_to_close: float
     funnel: list[LeadFunnelStage]
-    monthly: list[LeadMonthlyStat]
 
 
 # Deal Expenses schemas

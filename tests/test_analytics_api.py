@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
@@ -126,19 +125,16 @@ def test_lead_analytics_returns_full_dashboard_payload() -> None:
     with TestClient(app) as client:
         asyncio.run(_create_tables(app.state.engine))
         asyncio.run(_seed_leads(app.state.session_factory))
-        response = client.get("/api/v1/analytics/leads?days=90")
+        response = client.get("/api/v1/analytics/leads")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["period_days"] == 90
     assert payload["total_leads"] == 5
     # 4 pursued (sold_profit, sold_loss, skipped, active) — watching excluded
     assert payload["pursued_leads"] == 4
     assert payload["sold_leads"] == 2
     assert payload["skipped_leads"] == 1
     assert payload["active_leads"] == 1
-    # win rate = 2 sold / 4 pursued = 50 %
-    assert payload["win_rate_percent"] == 50.0
     # Revenue = 1300 + 1450; cost = (1000 + 50 expense) + 1500 = 2550
     assert payload["total_revenue_byn"] == 2750.0
     assert payload["total_cost_byn"] == 2550.0
@@ -148,9 +144,6 @@ def test_lead_analytics_returns_full_dashboard_payload() -> None:
     # Loss deal: ROI = (1450 - 1500) / 1500 ≈ -3.3 %
     # Average ≈ 10.25 %
     assert 9.0 < payload["average_roi_percent"] < 12.0
-    # Profit-deal sold 8 days after creation, loss-deal 5 days
-    assert payload["average_days_to_close"] > 0
-    assert payload["median_days_to_close"] > 0
 
 
 def test_lead_analytics_funnel_includes_every_status_with_correct_counts() -> None:
@@ -171,41 +164,6 @@ def test_lead_analytics_funnel_includes_every_status_with_correct_counts() -> No
     assert funnel["new"]["count"] == 0
     assert funnel["bought"]["count"] == 0
     assert funnel["researching"]["count"] == 0
-
-
-def test_lead_analytics_monthly_aggregates_revenue_per_bucket() -> None:
-    app = _bootstrap_app()
-    with TestClient(app) as client:
-        asyncio.run(_create_tables(app.state.engine))
-        asyncio.run(_seed_leads(app.state.session_factory))
-        response = client.get("/api/v1/analytics/leads")
-
-    monthly = response.json()["monthly"]
-    # Both sold deals fall in the same calendar month (April 2026).
-    assert len(monthly) == 1
-    bucket = monthly[0]
-    assert bucket["sold_count"] == 2
-    assert bucket["revenue_byn"] == 2750.0
-    assert bucket["profit_byn"] == 200.0
-
-
-def test_lead_analytics_period_filter_excludes_old_sales_from_roi() -> None:
-    """Tightening the window past the loss-deal's sold_at should leave
-    ROI / win-rate dominated by the recent profitable sale only."""
-    app = _bootstrap_app()
-    with TestClient(app) as client:
-        asyncio.run(_create_tables(app.state.engine))
-        asyncio.run(_seed_leads(app.state.session_factory))
-        # Use a wide enough window (365 days) so the test is not sensitive
-        # to the real wall-clock date. The seed data is anchored to
-        # 2026-04-28, so a 365-day window includes everything.
-        response = client.get("/api/v1/analytics/leads?days=365")
-
-    payload = response.json()
-    # Both sold deals (profit at 2d ago, loss at 20d ago) fall in window.
-    assert payload["sold_leads"] == 2
-    # revenue = 1300 (profit) + 1450 (loss) = 2750
-    assert payload["total_revenue_byn"] == 2750.0
 
 
 def test_lead_analytics_returns_zero_dashboard_for_unknown_user() -> None:
@@ -230,14 +188,4 @@ def test_lead_analytics_returns_zero_dashboard_for_unknown_user() -> None:
     payload = response.json()
     assert payload["total_leads"] == 0
     assert payload["sold_leads"] == 0
-    assert payload["win_rate_percent"] == 0.0
     assert payload["funnel"] == []
-    assert payload["monthly"] == []
-
-
-@pytest.mark.parametrize("days", [6, 366])
-def test_lead_analytics_validates_period_bounds(days: int) -> None:
-    app = _bootstrap_app()
-    with TestClient(app) as client:
-        response = client.get(f"/api/v1/analytics/leads?days={days}")
-    assert response.status_code == 422

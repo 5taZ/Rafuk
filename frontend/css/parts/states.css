@@ -64,10 +64,6 @@
         height: auto;
     }
 
-    .profit-chart-box {
-        min-height: 180px;
-        height: auto;
-    }
 }
 
 /* ===== Loading / Error / Skeleton States ===== */

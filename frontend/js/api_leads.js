@@ -102,9 +102,8 @@ function createApiLeads(context) {
         state.analytics.loading = true;
         renderProfitDashboard();
         try {
-            const days = Number(state.analytics.periodDays || 90);
             const response = await getJson(
-                `/api/v1/analytics/leads?days=${encodeURIComponent(days)}`,
+                "/api/v1/analytics/leads",
                 { signal },
             );
             if (requestId !== state._analyticsRequestId) return;

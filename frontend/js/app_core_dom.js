@@ -154,10 +154,6 @@ function cacheAppElements(elements) {
     elements.aiModalResult = document.getElementById("ai-modal-result");
     elements.profitDashboardSection = document.getElementById("profit-dashboard-section");
     elements.profitCards = document.getElementById("profit-cards");
-    elements.profitChartBox = document.getElementById("profit-chart-box");
-    elements.analyticsPeriodButtons = Array.from(
-        document.querySelectorAll("[data-analytics-period]"),
-    );
     elements.historyDealsSection = document.getElementById("history-deals-section");
     elements.historyDealsCount = document.getElementById("history-deals-count");
     elements.historyDealsList = document.getElementById("history-deals-list");

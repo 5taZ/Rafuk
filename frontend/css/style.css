@@ -3571,37 +3571,6 @@ body.modal-open {
     margin-bottom: var(--space-4);
 }
 
-.dashboard-period-toggle {
-    display: inline-flex;
-    gap: var(--space-1);
-    padding: 3px;
-    background: var(--bg-surface-tint);
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border);
-}
-
-.period-chip {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    color: var(--text-muted);
-    padding: var(--space-1) var(--space-3);
-    font-size: var(--text-sm);
-    font-weight: 600;
-    border-radius: var(--radius-full);
-    cursor: pointer;
-    min-height: 44px;
-    min-width: 44px;
-    transition: background var(--t-fast) var(--easing-standard), color var(--t-fast) var(--easing-standard);
-    -webkit-tap-highlight-color: transparent;
-}
-
-.period-chip.is-active {
-    background: var(--bg-card);
-    color: var(--text);
-    box-shadow: var(--shadow-card);
-}
-
 .profit-card {
     background: var(--bg-card);
     border-radius: var(--r-lg);
@@ -3690,10 +3659,6 @@ body.modal-open {
     width: 60%;
     height: 12px;
     margin-top: 8px;
-}
-
-.profit-chart-box {
-    min-height: 200px;
 }
 
 .lead-actions-wrap {
@@ -6263,10 +6228,6 @@ body.lp-menu-open {
         height: auto;
     }
 
-    .profit-chart-box {
-        min-height: 180px;
-        height: auto;
-    }
 }
 
 /* ===== Loading / Error / Skeleton States ===== */

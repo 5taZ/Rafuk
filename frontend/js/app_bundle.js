@@ -1349,10 +1349,6 @@ function cacheAppElements(elements) {
     elements.aiModalResult = document.getElementById("ai-modal-result");
     elements.profitDashboardSection = document.getElementById("profit-dashboard-section");
     elements.profitCards = document.getElementById("profit-cards");
-    elements.profitChartBox = document.getElementById("profit-chart-box");
-    elements.analyticsPeriodButtons = Array.from(
-        document.querySelectorAll("[data-analytics-period]"),
-    );
     elements.historyDealsSection = document.getElementById("history-deals-section");
     elements.historyDealsCount = document.getElementById("history-deals-count");
     elements.historyDealsList = document.getElementById("history-deals-list");
@@ -1508,11 +1504,8 @@ function createAppCore() {
             currentLeadId: null,
         },
         analytics: {
-            periodDays: 90,
             dashboard: null,
             loading: false,
-            profitData: null,
-            profitChart: null,
         },
         panels: {
             distribution: false,
@@ -5327,17 +5320,10 @@ function createRenderCharts(context) {
     /* ===== Profit Dashboard ===== */
 
     function _renderDashboardCards(dashboard) {
-        // Hero cards: revenue, profit, ROI, win-rate, days-to-close.
-        // Each card is structurally identical (label/value/sub) so the
-        // CSS scaling is consistent and the user can scan top-to-bottom.
         const profit = Number(dashboard.total_profit_byn || 0);
         const revenue = Number(dashboard.total_revenue_byn || 0);
         const roi = Number(dashboard.average_roi_percent || 0);
-        const winRate = Number(dashboard.win_rate_percent || 0);
-        const avgDays = Number(dashboard.average_days_to_close || 0);
         const sold = Number(dashboard.sold_leads || 0);
-        const pursued = Number(dashboard.pursued_leads || 0);
-        const period = Number(dashboard.period_days || 90);
         const expenses = Number(dashboard.total_expenses_byn || 0);
 
         return [
@@ -5352,18 +5338,6 @@ function createRenderCharts(context) {
                 value: `${roi >= 0 ? "+" : ""}${roi.toFixed(1)}%`,
                 sub: `средний по ${sold} продажам`,
                 className: roi >= 0 ? "is-accent" : "is-warning",
-            },
-            {
-                label: "Win rate",
-                value: `${winRate.toFixed(1)}%`,
-                sub: `${sold} из ${pursued} в работе`,
-                className: winRate >= 50 ? "is-accent" : winRate >= 25 ? "" : "is-warning",
-            },
-            {
-                label: "Цикл сделки",
-                value: avgDays > 0 ? `${avgDays.toFixed(1)} дн` : "—",
-                sub: `медиана ${(dashboard.median_days_to_close || 0).toFixed(1)} дн · ${period} дн период`,
-                className: "",
             },
         ];
     }
@@ -5380,13 +5354,6 @@ function createRenderCharts(context) {
 
         elements.profitDashboardSection.hidden = false;
 
-        // Reflect the active period chip from state (in case the user
-        // toggled it between renders without clicking).
-        for (const button of elements.analyticsPeriodButtons || []) {
-            const days = Number(button.dataset.analyticsPeriod || 0);
-            button.classList.toggle("is-active", days === Number(state.analytics.periodDays));
-        }
-
         const dashboard = state.analytics.dashboard;
         if (!dashboard) {
             // Loading or no data yet — render placeholder cards so the
@@ -5394,8 +5361,6 @@ function createRenderCharts(context) {
             const placeholderCards = [
                 { label: "Прибыль", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
                 { label: "ROI", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
-                { label: "Win rate", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
-                { label: "Цикл сделки", value: "…", sub: state.analytics.loading ? "загружаю" : "нет данных", className: "" },
             ];
             for (const card of placeholderCards) {
                 elements.profitCards.appendChild(
@@ -7656,9 +7621,8 @@ function createApiLeads(context) {
         state.analytics.loading = true;
         renderProfitDashboard();
         try {
-            const days = Number(state.analytics.periodDays || 90);
             const response = await getJson(
-                `/api/v1/analytics/leads?days=${encodeURIComponent(days)}`,
+                "/api/v1/analytics/leads",
                 { signal },
             );
             if (requestId !== state._analyticsRequestId) return;
@@ -8773,19 +8737,6 @@ function createApiEvents(context) {
             });
         }
 
-        // ── Analytics period chips (30 дн / 90 дн / Год) ────────────
-        for (const button of elements.analyticsPeriodButtons || []) {
-            button.addEventListener("click", () => {
-                const nextDays = Number(button.dataset.analyticsPeriod);
-                if (!nextDays || nextDays === state.analytics.periodDays) {
-                    return;
-                }
-                state.analytics.periodDays = nextDays;
-                renderProfitDashboard();
-                void loadAnalytics();
-            });
-        }
-
         // ── Sort buttons ─────────────────────────────────────────────
         for (const button of elements.sortButtons || []) {
             button.addEventListener("click", () => {
@@ -9730,11 +9681,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260512-5811d36"),
-            context._loadScript("js/api_ai_render.js?v=20260512-5811d36"),
-            context._loadScript("js/api_ai_pdf.js?v=20260512-5811d36"),
-            context._loadScript("js/api_ai.js?v=20260512-5811d36"),
-            context._loadScript("js/api_listing_assistant.js?v=20260512-5811d36"),
+            context._loadScript("js/api_ai_modal.js?v=20260512-ac41652"),
+            context._loadScript("js/api_ai_render.js?v=20260512-ac41652"),
+            context._loadScript("js/api_ai_pdf.js?v=20260512-ac41652"),
+            context._loadScript("js/api_ai.js?v=20260512-ac41652"),
+            context._loadScript("js/api_listing_assistant.js?v=20260512-ac41652"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
