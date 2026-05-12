@@ -37,8 +37,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260511-7005eff">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260511-7005eff">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260512-5feab6c">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260512-5feab6c">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -67,8 +67,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20260511-7005eff">
-    <link rel="stylesheet" href="css/style.css?v=20260511-7005eff">
+    <link rel="preload" as="style" href="css/style.css?v=20260512-5feab6c">
+    <link rel="stylesheet" href="css/style.css?v=20260512-5feab6c">
     <link rel="preload"
           as="script"
           href="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
@@ -90,14 +90,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20260511-7005eff"
+            src="vendor/telegram-web-app.js?v=20260512-5feab6c"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers. -->
-    <script defer src="js/app_bundle.js?v=20260511-7005eff"></script>
+    <script defer src="js/app_bundle.js?v=20260512-5feab6c"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -122,7 +122,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20260511-7005eff" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260512-5feab6c" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">
@@ -1083,7 +1083,7 @@
                 <h3 class="modal-title" id="consent-modal-title">Согласие на AI-обработку</h3>
             </div>
             <div class="modal-body consent-body">
-                <p class="consent-intro">AI-анализ выполняется облачным сервисом <strong>Google Gemini (США)</strong>.</p>
+                <p class="consent-intro">AI-анализ выполняется внешним облачным AI-сервисом: <strong>Together API-совместимая модель Gemini (США)</strong>.</p>
                 <p class="consent-detail">Для анализа отправляются: текст объявления, фотографии, параметры товара и рыночная статистика.</p>
                 <p class="consent-highlight">Ваши персональные данные (имя, контакты, финансовые записи) <strong>НЕ</strong> отправляются в AI-сервис.</p>
                 <label class="consent-check">
@@ -1137,7 +1137,7 @@
                 </section>
                 <section class="privacy-section">
                     <h4>4. Трансграничная передача</h4>
-                    <p>Данные объявлений (текст, фото, параметры) передаются в Google Gemini (США) для AI-анализа. Персональные данные пользователя (имя, контакты, финансы) <strong>НЕ</strong> передаются в AI-сервис.</p>
+                    <p>Данные объявлений (текст, фото, параметры) передаются во внешний AI-сервис: Together API-совместимую модель Gemini (США). Персональные данные пользователя (имя, контакты, финансы) <strong>НЕ</strong> передаются в AI-сервис.</p>
                 </section>
                 <section class="privacy-section">
                     <h4>5. AI-обработка</h4>
@@ -1145,7 +1145,7 @@
                 </section>
                 <section class="privacy-section">
                     <h4>6. Хранение данных</h4>
-                    <p>Данные хранятся на сервере в Республике Беларусь. AI-кэш хранится до 30 минут. Данные пользователя хранятся до удаления аккаунта.</p>
+                    <p>Данные хранятся на сервере в Республике Беларусь. AI-кэш хранится до 1 часа. Данные пользователя хранятся до удаления аккаунта.</p>
                 </section>
                 <section class="privacy-section">
                     <h4>7. Ваши права</h4>
@@ -1157,7 +1157,7 @@
                 </section>
                 <section class="privacy-section">
                     <h4>8. Изменения политики</h4>
-                    <p>При изменении политики мы запросим повторное согласие. Версия: 2026.1</p>
+                    <p>При изменении политики мы запросим повторное согласие. Версия: 2026.2</p>
                 </section>
             </div>
         </div>

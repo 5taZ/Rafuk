@@ -37,7 +37,7 @@ def _is_valid_ip(value: str) -> bool:
         return False
 
 VALID_CONSENT_TYPES = {"ai_analysis", "pd_processing", "cross_border"}
-CURRENT_POLICY_VERSION = "2026.1"
+CURRENT_POLICY_VERSION = "2026.2"
 
 _CLOUDFLARE_IP_RANGES = [
     ipaddress.ip_network("173.245.48.0/20"),

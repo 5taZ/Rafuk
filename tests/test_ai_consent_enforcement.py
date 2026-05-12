@@ -107,7 +107,7 @@ async def test_ai_consent_demands_cross_border_after_ai_grant(
         session.add(UserConsent(
             user_id=user.id,
             consent_type="ai_analysis",
-            version="2026.1",
+            version="2026.2",
             granted_at=datetime.now(UTC),
         ))
         await session.commit()
@@ -136,13 +136,13 @@ async def test_ai_consent_passes_with_both_consents_granted(
             UserConsent(
                 user_id=user.id,
                 consent_type="ai_analysis",
-                version="2026.1",
+                version="2026.2",
                 granted_at=datetime.now(UTC),
             ),
             UserConsent(
                 user_id=user.id,
                 consent_type="cross_border",
-                version="2026.1",
+                version="2026.2",
                 granted_at=datetime.now(UTC),
             ),
         ])
@@ -171,14 +171,14 @@ async def test_ai_consent_rejects_revoked_grants(
             UserConsent(
                 user_id=user.id,
                 consent_type="ai_analysis",
-                version="2026.1",
+                version="2026.2",
                 granted_at=now,
                 revoked_at=now,  # revoked
             ),
             UserConsent(
                 user_id=user.id,
                 consent_type="cross_border",
-                version="2026.1",
+                version="2026.2",
                 granted_at=now,
             ),
         ])

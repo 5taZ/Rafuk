@@ -161,11 +161,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260511-7005eff"),
-            context._loadScript("js/api_ai_render.js?v=20260511-7005eff"),
-            context._loadScript("js/api_ai_pdf.js?v=20260511-7005eff"),
-            context._loadScript("js/api_ai.js?v=20260511-7005eff"),
-            context._loadScript("js/api_listing_assistant.js?v=20260511-7005eff"),
+            context._loadScript("js/api_ai_modal.js?v=20260512-5feab6c"),
+            context._loadScript("js/api_ai_render.js?v=20260512-5feab6c"),
+            context._loadScript("js/api_ai_pdf.js?v=20260512-5feab6c"),
+            context._loadScript("js/api_ai.js?v=20260512-5feab6c"),
+            context._loadScript("js/api_listing_assistant.js?v=20260512-5feab6c"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -588,9 +588,9 @@ function createAppActions(baseContext) {
 
         async function onAccept() {
             try {
-                await core.postJson("/api/v1/account/consent", { consent_type: "ai_analysis", version: "2026.1" });
-                await core.postJson("/api/v1/account/consent", { consent_type: "cross_border", version: "2026.1" });
-                await core.postJson("/api/v1/account/consent", { consent_type: "pd_processing", version: "2026.1" });
+                await core.postJson("/api/v1/account/consent", { consent_type: "ai_analysis", version: "2026.2" });
+                await core.postJson("/api/v1/account/consent", { consent_type: "cross_border", version: "2026.2" });
+                await core.postJson("/api/v1/account/consent", { consent_type: "pd_processing", version: "2026.2" });
             } catch (err) {
                 showToast(err.message || "Не удалось сохранить согласие");
             }

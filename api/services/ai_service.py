@@ -1,4 +1,4 @@
-"""AI service — OpenAI-compatible API (Google Gemini, Together AI, etc.).
+"""AI service — OpenAI-compatible API providers (Together AI, Gemini-compatible, etc.).
 
 Configure via .env:
   AI_API_KEY=<key>

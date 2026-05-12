@@ -111,7 +111,7 @@ def test_history_tables_have_indexes() -> None:
 def test_user_consents_version_constraint() -> None:
     consents = Base.metadata.tables["user_consents"]
     constraint_names = {constraint.name for constraint in consents.constraints}
-    assert "chk_user_consents_version_current" in constraint_names
+    assert "chk_user_consents_version_known" in constraint_names
 
 
 def test_telegram_notification_dlq_table_shape() -> None:

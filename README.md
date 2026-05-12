@@ -5,7 +5,7 @@ classifieds site **[Kufar.by](https://www.kufar.by)** for listings,
 runs analytics and AI-assisted decisioning over them, and surfaces
 "deal-finder" workflows to end users.
 
-> **Status:** active development on the `bad-app` branch. 494 tests
+> **Status:** active development on the `bad-app` branch. 661 tests
 > green. See [`CHANGELOG.md`](./CHANGELOG.md) for the wave-by-wave
 > security/performance hardening history.
 
@@ -18,8 +18,8 @@ runs analytics and AI-assisted decisioning over them, and surfaces
 * **Detects market signals** — price drops, new listings, trend
   reversals, low-supply windows, restock spikes.
 * **AI analysis** of individual listings (condition, fit-for-purpose,
-  resale potential, negotiation talking points) via a Together-API
-  compatible Gemini model.
+  resale potential, negotiation talking points) via a Together API-
+  compatible Gemini model (`gemini-2.5-flash` by default).
 * **Telegram bot** delivers notifications and analytics summaries.
 * **Mini App** (vanilla JS, no bundler) shows charts, listing cards,
   watchlist filters, and the deal pipeline.

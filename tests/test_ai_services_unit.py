@@ -63,7 +63,7 @@ async def test_log_ai_audit_creates_row_for_known_user() -> None:
         endpoint="analyze",
         ad_id="123",
         query="iphone",
-        model="gemini-3-flash",
+        model="gemini-2.5-flash",
         latency_ms=42,
     )
 
@@ -73,7 +73,7 @@ async def test_log_ai_audit_creates_row_for_known_user() -> None:
     entry = rows[0]
     assert entry.endpoint == "analyze"
     assert entry.ad_id == "123"
-    assert entry.model == "gemini-3-flash"
+    assert entry.model == "gemini-2.5-flash"
     assert entry.latency_ms == 42
 
 

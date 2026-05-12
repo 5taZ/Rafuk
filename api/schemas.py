@@ -576,7 +576,7 @@ class ConsentStatusResponse(BaseModel):
 
 class ConsentGrantRequest(BaseModel):
     consent_type: str  # "ai_analysis" | "pd_processing" | "cross_border"
-    version: str = "2026.1"
+    version: str = "2026.2"
 
 
 class ConsentRead(BaseModel):

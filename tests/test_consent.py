@@ -73,25 +73,25 @@ async def test_consent_status_rejects_invalid_type(client):
 async def test_grant_consent(client):
     resp = await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "ai_analysis", "version": "2026.1"},
+        json={"consent_type": "ai_analysis", "version": "2026.2"},
     )
     assert resp.status_code == 201
     data = resp.json()
     assert data["granted"] is True
     assert data["consent_type"] == "ai_analysis"
-    assert data["version"] == "2026.1"
+    assert data["version"] == "2026.2"
 
 
 @pytest.mark.asyncio
 async def test_grant_consent_idempotent(client):
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.1"},
+        json={"consent_type": "pd_processing", "version": "2026.2"},
     )
     # Second grant with same version should return 201 (not error)
     resp = await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.1"},
+        json={"consent_type": "pd_processing", "version": "2026.2"},
     )
     assert resp.status_code == 201
     assert resp.json()["granted"] is True
@@ -101,7 +101,7 @@ async def test_grant_consent_idempotent(client):
 async def test_grant_consent_rejects_invalid_type(client):
     resp = await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "bogus", "version": "2026.1"},
+        json={"consent_type": "bogus", "version": "2026.2"},
     )
     assert resp.status_code == 400
 
@@ -113,13 +113,13 @@ async def test_grant_consent_rejects_invalid_type(client):
 async def test_consent_status_shows_granted_after_grant(client):
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "cross_border", "version": "2026.1"},
+        json={"consent_type": "cross_border", "version": "2026.2"},
     )
     resp = await client.get("/api/v1/account/consent/cross_border")
     assert resp.status_code == 200
     data = resp.json()
     assert data["granted"] is True
-    assert data["version"] == "2026.1"
+    assert data["version"] == "2026.2"
     assert data["granted_at"] is not None
 
 
@@ -130,7 +130,7 @@ async def test_consent_status_shows_granted_after_grant(client):
 async def test_revoke_consent(client):
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "ai_analysis", "version": "2026.1"},
+        json={"consent_type": "ai_analysis", "version": "2026.2"},
     )
     resp = await client.delete("/api/v1/account/consent/ai_analysis")
     assert resp.status_code == 204
@@ -148,7 +148,7 @@ async def test_export_account_data(client):
     # Grant consent — this also creates the user via ensure_user
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "ai_analysis", "version": "2026.1"},
+        json={"consent_type": "ai_analysis", "version": "2026.2"},
     )
     resp = await client.get("/api/v1/account/export")
     assert resp.status_code == 200
@@ -168,7 +168,7 @@ async def test_delete_account(client):
     # Create consent first
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.1"},
+        json={"consent_type": "pd_processing", "version": "2026.2"},
     )
     # BE-M3: confirmation must match the user's Telegram first_name
     # (case-insensitive). _fake_telegram_user returns "ConsentTest".
@@ -209,7 +209,7 @@ async def test_delete_account_accepts_telegram_id_as_confirmation(client):
     blank) can still confirm by typing their numeric Telegram id."""
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.1"},
+        json={"consent_type": "pd_processing", "version": "2026.2"},
     )
     resp = await client.request(
         "DELETE",
