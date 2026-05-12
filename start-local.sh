@@ -7,6 +7,8 @@ API_LOG="$RUN_DIR/api.log"
 BOT_LOG="$RUN_DIR/bot.log"
 SCHEDULER_LOG="$RUN_DIR/scheduler.log"
 CLOUDFLARED_LOG="$RUN_DIR/cloudflared.log"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-myprojetctkufar}"
+export COMPOSE_PROJECT_NAME
 
 WITH_TUNNEL=0
 for arg in "$@"; do
@@ -76,10 +78,20 @@ _kill_pid_file() {
     rm -f "$pid_file"
 }
 
+_kill_project_quick_tunnels() {
+    local pid cmd
+    while read -r pid cmd; do
+        if [[ "$cmd" == "cloudflared tunnel --url http://127.0.0.1:8081"* ]] && _pid_belongs_to_project "$pid"; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done < <(ps -eo pid=,cmd=)
+}
+
 stop_existing() {
     # Stop by recorded PID first — never `pkill -f`, which would happily
     # nuke a stranger's `python -m something` on the same host.
     _kill_pid_file "$RUN_DIR/cloudflared.pid"
+    _kill_project_quick_tunnels
     _kill_pid_file "$RUN_DIR/api.pid"
     _kill_pid_file "$RUN_DIR/bot.pid"
     _kill_pid_file "$RUN_DIR/scheduler.pid"
@@ -124,26 +136,59 @@ wait_for_tcp() {
     return 1
 }
 
-start_infra() {
-    # Bring up Redis (defined in docker-compose.yml) and verify Postgres
-    # is reachable. Postgres lives in a separate container in this repo
-    # (e.g. marketplace_postgres on :5433), so we only probe it instead
-    # of trying to start a non-existent compose service.
-    echo "Starting Redis container on :6380 ..."
-    docker compose up -d redis
+wait_for_compose_service_healthy() {
+    local service="$1" attempts="${2:-30}"
+    local cid status health
 
-    if ! wait_for_tcp 127.0.0.1 6380 30; then
+    for _ in $(seq 1 "$attempts"); do
+        cid="$(docker compose --profile local-db ps -q "$service" 2>/dev/null || true)"
+        if [[ -n "$cid" ]]; then
+            status="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || true)"
+            health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cid" 2>/dev/null || true)"
+            if [[ "$health" == "healthy" || ( -z "$health" && "$status" == "running" ) ]]; then
+                return 0
+            fi
+        fi
+        sleep 1
+    done
+
+    return 1
+}
+
+refuse_foreign_postgres_on_port() {
+    local owner name project service
+    owner="$(docker ps --filter "publish=5433" --format '{{.Names}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.service"}}' | head -n 1 || true)"
+    if [[ -z "$owner" ]]; then
+        return 0
+    fi
+
+    IFS=$'\t' read -r name project service <<<"$owner"
+    if [[ "$project" == "$COMPOSE_PROJECT_NAME" && "$service" == "postgres" ]]; then
+        return 0
+    fi
+
+    echo "PostgreSQL port :5433 is already owned by another container: $name" >&2
+    echo "This project will not connect to a foreign database." >&2
+    echo "Stop the conflicting container first:" >&2
+    echo "  docker stop $name" >&2
+    exit 1
+}
+
+start_infra() {
+    echo "Starting Redis and PostgreSQL containers ..."
+    refuse_foreign_postgres_on_port
+    docker compose --profile local-db up -d redis postgres
+
+    if ! wait_for_compose_service_healthy redis 30 || ! wait_for_tcp 127.0.0.1 6380 5; then
         echo "Warning: Redis on :6380 did not become reachable within 30s." >&2
         echo "Check: docker compose ps redis; docker compose logs redis" >&2
     else
         echo "Redis is ready on :6380."
     fi
 
-    if ! wait_for_tcp 127.0.0.1 5433 5; then
-        echo "Warning: PostgreSQL on :5433 is not reachable." >&2
-        echo "Migrations and the API will fail. Start it manually:" >&2
-        echo "  docker start marketplace_postgres   # if container already exists" >&2
-        echo "  # or follow the docs to provision Postgres on :5433" >&2
+    if ! wait_for_compose_service_healthy postgres 30 || ! wait_for_tcp 127.0.0.1 5433 5; then
+        echo "Warning: project PostgreSQL on :5433 did not become reachable within 30s." >&2
+        echo "Check: docker compose --profile local-db ps postgres; docker compose --profile local-db logs postgres" >&2
     else
         echo "PostgreSQL is ready on :5433."
     fi

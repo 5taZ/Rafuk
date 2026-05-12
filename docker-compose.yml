@@ -1,3 +1,5 @@
+name: myprojetctkufar
+
 services:
   # NOTE: resource limits are deliberately conservative — they're sized
   # for a single-host dev deployment, not for production scale. Limits
@@ -293,13 +295,10 @@ services:
           memory: 32M
           cpus: "0.05"
 
-  # INF-01: optional local PostgreSQL. Production uses an external
-  # managed Postgres (DATABASE_URL points to host.docker.internal or
-  # a cloud DSN). This service is OFF by default — start it with
-  #     docker compose --profile local-db up
-  # to spin up a self-contained dev stack without depending on the
-  # host's Postgres. If you switch to this, also point DOCKER_DATABASE_URL
-  # at `postgresql+asyncpg://kufar:kufar@postgres:5432/kufar`.
+  # INF-01: local PostgreSQL is profile-gated for compose-only deploys,
+  # but start-local.sh always starts it explicitly. Keeping the database
+  # inside this compose project prevents accidental connections to another
+  # project that happens to publish localhost:5433.
   #
   # The volume keeps data across `compose down` cycles; `compose down
   # -v` wipes it. Resource limits are tuned for a dev box, not for
@@ -316,7 +315,7 @@ services:
       # text in listings needs UTF-8 collation that "C.UTF-8" provides.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     networks:
@@ -347,4 +346,4 @@ networks:
 
 volumes:
   redis-data:
-  postgres-data:
+  pgdata:
