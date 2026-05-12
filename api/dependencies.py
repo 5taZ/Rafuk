@@ -11,6 +11,7 @@ from api.config import Settings, get_settings
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
 from api.models import User
 from api.services.cache import CacheBackend
+from api.services.client_ip import get_client_ip
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
 
@@ -126,7 +127,7 @@ async def get_telegram_user(
     # We can't outright reject replay (the Mini App genuinely reuses
     # one initData for many requests), but the log gives ops a signal
     # they can feed back into the blacklist.
-    client_ip = request.client.host if request.client else None
+    client_ip = get_client_ip(request)
     await track_init_data_use(
         cache, x_telegram_init_data, user_id=user.user_id, client_ip=client_ip,
     )
