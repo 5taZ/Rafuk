@@ -103,6 +103,22 @@ See [`docker-compose.yml`](./docker-compose.yml). Resource limits are
 tuned for a single-host dev box; scale up `WORKERS` and pool sizing
 together if you raise the CPU budget.
 
+### Observability boundaries
+
+`/metrics` exposes in-memory Prometheus text from the API process that
+served the scrape. With the default `WORKERS=4`, HTTP counters, dataset
+cache-miss counters, and summary durations are per worker, not
+cross-worker aggregates. The `kufar_process_info{pid="..."}` series
+identifies which process answered.
+
+Dataset singleflight is also process-local. Redis shares the dataset
+cache after the first write, but two workers can still duplicate the
+same cold Kufar fetch before either result reaches Redis. Watch
+`kufar_query_dataset_events_total{event="cache_miss"}` and
+`kufar_query_dataset_upstream_fetch_duration_seconds_count` to decide
+whether Redis distributed singleflight or a production metrics backend
+is worth adding.
+
 ## Documentation
 
 * [`AGENTS.md`](./AGENTS.md) — conventions, build/test commands,

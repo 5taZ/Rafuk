@@ -4,7 +4,12 @@ from fastapi.testclient import TestClient
 
 from api.config import Settings
 from api.main import create_app
-from api.metrics import _reset_metrics_for_tests
+from api.metrics import (
+    _reset_metrics_for_tests,
+    observe_query_dataset_event,
+    observe_query_dataset_upstream_fetch,
+    render_prometheus_metrics,
+)
 
 
 def _remote_settings(metrics_bearer_token: str | None = None) -> Settings:
@@ -33,6 +38,7 @@ def test_metrics_endpoint_exposes_prometheus_text() -> None:
     assert resp.headers["content-type"].startswith("text/plain")
     assert "# TYPE kufar_http_requests_total counter" in resp.text
     assert "kufar_http_request_duration_seconds_count" in resp.text
+    assert "# TYPE kufar_process_info gauge" in resp.text
 
 
 def test_metrics_records_requests_by_route_template() -> None:
@@ -73,3 +79,20 @@ def test_metrics_endpoint_accepts_production_like_bearer_token(monkeypatch) -> N
 
     assert resp.status_code == 200
     assert "# TYPE kufar_http_requests_total counter" in resp.text
+
+
+def test_metrics_render_process_identity_and_dataset_counters() -> None:
+    _reset_metrics_for_tests()
+    observe_query_dataset_event("cache_miss")
+    observe_query_dataset_event("singleflight_wait")
+    observe_query_dataset_upstream_fetch(status="success", duration_seconds=0.125)
+
+    text = render_prometheus_metrics()
+
+    assert 'kufar_process_info{pid="' in text
+    assert 'kufar_query_dataset_events_total{event="cache_miss"} 1' in text
+    assert 'kufar_query_dataset_events_total{event="singleflight_wait"} 1' in text
+    assert (
+        'kufar_query_dataset_upstream_fetch_duration_seconds_count{status="success"} 1'
+        in text
+    )

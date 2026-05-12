@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from api.metrics import _reset_metrics_for_tests, render_prometheus_metrics
+from api.services.cache import MemoryCache
 from api.services.query_pipeline import (
     _CATEGORY_TOTAL_MAX_CALLS,
     _dataset_cache_key,
     _normalize_response_ads,
     fetch_category_totals,
+    load_query_dataset,
 )
 
 
@@ -97,3 +102,47 @@ async def test_fetch_category_totals_caps_cold_fanout_calls() -> None:
     )
 
     assert seen_category_ids == list(range(_CATEGORY_TOTAL_MAX_CALLS))
+
+
+@pytest.mark.asyncio
+async def test_load_query_dataset_records_cache_miss_hit_and_fetch_metrics() -> None:
+    _reset_metrics_for_tests()
+    cache = MemoryCache()
+    fetch_calls = 0
+
+    class Client:
+        async def search_all_ads(self, **kwargs) -> dict:
+            nonlocal fetch_calls
+            fetch_calls += 1
+            return {"ads": [{"subject": kwargs["query"], "price_byn": 100}], "total": 1}
+
+    settings = SimpleNamespace(cache_ttl_seconds=300)
+    client = Client()
+
+    await load_query_dataset(
+        query="iphone",
+        currency="BYN",
+        strict_search=False,
+        settings=settings,
+        client=client,
+        cache=cache,
+    )
+    await load_query_dataset(
+        query="iphone",
+        currency="BYN",
+        strict_search=False,
+        settings=settings,
+        client=client,
+        cache=cache,
+    )
+
+    text = render_prometheus_metrics()
+
+    assert fetch_calls == 1
+    assert 'kufar_query_dataset_events_total{event="cache_miss"} 1' in text
+    assert 'kufar_query_dataset_events_total{event="cache_hit"} 1' in text
+    assert 'kufar_query_dataset_events_total{event="singleflight_owner"} 1' in text
+    assert (
+        'kufar_query_dataset_upstream_fetch_duration_seconds_count{status="success"} 1'
+        in text
+    )

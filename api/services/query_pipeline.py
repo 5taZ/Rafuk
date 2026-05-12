@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from api.config import Settings
+from api.metrics import observe_query_dataset_event, observe_query_dataset_upstream_fetch
 from api.services.aggregator import (
     PriceStats,
     apply_search_mode,
@@ -175,8 +176,12 @@ class QueryDatasetContext:
 # and the whole search completes in roughly one pagination's worth
 # of time.
 #
-# NOTE: singleflight pattern breaks with multiple uvicorn workers (gunicorn).
-# TODO: migrate to Redis-based singleflight if scaling beyond 1 worker.
+# NOTE: this singleflight registry is process-local. With WORKERS=4,
+# Redis still shares the dataset cache after the first write, but two
+# workers can duplicate the same cold upstream fetch before either one
+# commits to Redis. Track cache misses / upstream fetches in /metrics;
+# use Redis distributed singleflight only if those counters show it
+# matters in production.
 _inflight_dataset_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
 _MAX_INFLIGHT = 500
 _INFLIGHT_STALE_SECONDS = 300  # prune futures older than 5 minutes
@@ -293,6 +298,9 @@ async def load_query_dataset(
         response: dict[str, Any] | None = None
         if cache is not None:
             response = await cache.get_json(sf_key)
+            observe_query_dataset_event("cache_hit" if response is not None else "cache_miss")
+        else:
+            observe_query_dataset_event("cache_disabled")
 
         if response is None:
             # Register-or-attach under the lock. We must decide
@@ -320,15 +328,22 @@ async def load_query_dataset(
                     owns_future = True
 
             if not owns_future:
+                observe_query_dataset_event("singleflight_wait")
                 # Wait outside the lock so the owner can finish and
                 # other keys can register meanwhile.
                 response = await future
             else:
+                observe_query_dataset_event("singleflight_owner")
+                fetch_started_at = time.monotonic()
                 try:
                     response = await client.search_all_ads(
                         query=query,
                         currency=currency,
                         **effective_kwargs,
+                    )
+                    observe_query_dataset_upstream_fetch(
+                        status="success",
+                        duration_seconds=time.monotonic() - fetch_started_at,
                     )
                     response = _normalize_response_ads(response)
                     if cache is not None:
@@ -339,6 +354,10 @@ async def load_query_dataset(
                     if not future.done():
                         future.set_result(response)
                 except BaseException as exc:
+                    observe_query_dataset_upstream_fetch(
+                        status="error",
+                        duration_seconds=time.monotonic() - fetch_started_at,
+                    )
                     if not future.done():
                         future.set_exception(exc)
                     raise
