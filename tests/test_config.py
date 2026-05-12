@@ -161,3 +161,57 @@ def test_debug_independent_of_auth_bypass() -> None:
         s = config.Settings(_env_file=None)
         assert s.debug is True
         assert s.auth_bypass is False
+
+
+def test_remote_redis_requires_auth_in_production() -> None:
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "postgresql+asyncpg://user:pass@db.production.example.com:5432/kufar",
+        "REDIS_URL": "redis://redis.example.com:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "ENV": "production",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        with pytest.raises(ValidationError, match="Remote Redis requires AUTH"):
+            config.Settings(_env_file=None)
+
+
+def test_local_redis_without_auth_allowed_in_production() -> None:
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "ENV": "production",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        s = config.Settings(_env_file=None)
+        assert s.redis_url == "redis://localhost:6379/0"
+
+
+def test_remote_ai_base_url_requires_https() -> None:
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "AI_BASE_URL": "http://ai.example.com/v1",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        with pytest.raises(ValidationError, match="AI service URLs must use HTTPS"):
+            config.Settings(_env_file=None)

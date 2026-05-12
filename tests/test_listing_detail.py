@@ -48,6 +48,7 @@ class FakeKufarClient:
                         {"p": "condition", "pl": "Состояние", "v": "Новый", "vl": "Новое"},
                         {"p": "seller_type", "pl": "Продавец", "v": "Частное лицо"},
                         {"p": "phones_memory", "pl": "Память", "vl": "256 Гб"},
+                        {"p": "phone", "pl": "Телефон", "vl": "+375291234567"},
                     ],
                     "account_parameters": [
                         {"p": "name", "pl": "Имя", "v": "Иван"},
@@ -83,6 +84,7 @@ def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
     assert payload["description"] == "Полное описание объявления"
     assert payload["images"][0].endswith("/adim1/test.jpg")
     assert payload["parameters"][0]["label"] == "Подкатегория"
+    assert all(item["label"] != "Телефон" for item in payload["parameters"])
     assert payload["seller_fields"][0]["value"] == "Иван"
     assert payload["fair_price_label"] is not None
     assert payload["region_name"] == "Регион 6"

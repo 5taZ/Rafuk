@@ -10,9 +10,8 @@
         the XSS protection the policy exists for.
       * style-src does NOT include 'unsafe-inline'. The app shell has
         no inline <style> blocks or style="" attributes, so stylesheets
-        can stay on the explicit self/fonts allowlist.
-      * cdn.jsdelivr.net is permitted only to lazy-load Chart.js (with
-        an SRI hash in render_charts.js).
+        can stay on the explicit self allowlist. Fonts and Chart.js are
+        vendored locally to avoid third-party requests before consent.
       * frame-ancestors locks us to web.telegram.org / webk.telegram.org
         (the legitimate Mini App embedders) — same defence as
         X-Frame-Options DENY but expressed as policy. Stops malicious
@@ -24,9 +23,9 @@
     -->
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self';
-                   script-src 'self' https://cdn.jsdelivr.net 'sha256-ieoeWczDHkReVBsRBqaal5AFMlBtNjMzgwKvLqi/tSU=';
-                   style-src 'self' https://fonts.googleapis.com;
-                   font-src 'self' https://fonts.gstatic.com;
+                   script-src 'self' 'sha256-ieoeWczDHkReVBsRBqaal5AFMlBtNjMzgwKvLqi/tSU=';
+                   style-src 'self';
+                   font-src 'self';
                    connect-src 'self';
                    img-src 'self' https://rms.kufar.by https://*.kufar.by data:;
                    object-src 'none';
@@ -37,22 +36,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260512-42582f6">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260512-42582f6">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260512-bc13162">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260512-bc13162">
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
          depending on the user's network RTT. -->
     <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
     <link rel="dns-prefetch" href="https://rms.kufar.by">
-    <link
-        href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
-        rel="stylesheet"
-    >
-    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"></noscript>
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20260512-bc13162">
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260512-bc13162">
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260512-bc13162"></noscript>
     <!-- FE-M1: Preload the bundled stylesheet so the browser starts
          fetching it during HTML parse, in parallel with the font
          CSS request above. The subsequent ``<link rel="stylesheet">``
@@ -67,8 +61,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20260512-42582f6">
-    <link rel="stylesheet" href="css/style.css?v=20260512-42582f6">
+    <link rel="preload" as="style" href="css/style.css?v=20260512-bc13162">
+    <link rel="stylesheet" href="css/style.css?v=20260512-bc13162">
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -85,14 +79,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20260512-42582f6"
+            src="vendor/telegram-web-app.js?v=20260512-bc13162"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
-    <!-- Chart.js (~80 KB gzipped) is lazy-loaded by render_charts.js
+    <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
-         use the watchlist or trackers. -->
-    <script defer src="js/app_bundle.js?v=20260512-42582f6"></script>
+         use the watchlist or trackers without leaking IP to a CDN. -->
+    <script defer src="js/app_bundle.js?v=20260512-bc13162"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -115,7 +109,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20260512-42582f6" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260512-bc13162" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">
@@ -1078,19 +1072,19 @@
     <div class="modal-overlay" id="consent-modal" hidden>
         <div class="modal-content consent-modal-content" role="dialog" aria-modal="true" aria-labelledby="consent-modal-title">
             <div class="modal-header">
-                <h3 class="modal-title" id="consent-modal-title">Согласие на AI-обработку</h3>
+                <h3 class="modal-title" id="consent-modal-title">Согласие на обработку данных и AI</h3>
             </div>
             <div class="modal-body consent-body">
                 <p class="consent-intro">AI-анализ выполняется внешним облачным AI-сервисом: <strong>Together API-совместимая модель Gemini (США)</strong>.</p>
-                <p class="consent-detail">Для анализа отправляются: текст объявления, фотографии, параметры товара и рыночная статистика.</p>
-                <p class="consent-highlight">Ваши персональные данные (имя, контакты, финансовые записи) <strong>НЕ</strong> отправляются в AI-сервис.</p>
+                <p class="consent-detail">Для анализа отправляются: текст объявления, фотографии, параметры товара, похожие объявления, рыночная статистика и введённые вами черновики/заметки помощника продавца.</p>
+                <p class="consent-highlight">Мы маскируем очевидные телефоны, e-mail, Telegram-ники и документные номера в тексте, но фотографии и свободный текст могут содержать персональные данные.</p>
                 <label class="consent-check">
                     <input type="checkbox" id="consent-ai-checkbox">
                     <span>Я понимаю и согласен на обработку данных AI-сервисом</span>
                 </label>
                 <label class="consent-check">
                     <input type="checkbox" id="consent-cross-border-checkbox">
-                    <span>Я ознакомлен, что данные обрабатываются в США</span>
+                    <span>Я ознакомлен с трансграничной передачей и возможными рисками обработки данных за пределами Республики Беларусь</span>
                 </label>
                 <label class="consent-check">
                     <input type="checkbox" id="consent-pd-checkbox">
@@ -1126,6 +1120,8 @@
                             <tr><td>Поисковая активность</td><td>поисковые запросы, фильтры</td><td>Пользователь</td></tr>
                             <tr><td>Финансовые</td><td>цены покупки/продажи, расходы</td><td>Пользователь</td></tr>
                             <tr><td>Поведенческие</td><td>заметки к лидам, запросы трекеров</td><td>Пользователь</td></tr>
+                            <tr><td>Технические</td><td>IP-адрес при согласии, журнал AI-операций, ошибки доставки уведомлений</td><td>Сервер и Telegram</td></tr>
+                            <tr><td>Публичные данные объявлений</td><td>текст, параметры, цены, фото, регион и ссылки объявлений Kufar</td><td>Kufar</td></tr>
                         </tbody>
                     </table>
                 </section>
@@ -1135,22 +1131,24 @@
                 </section>
                 <section class="privacy-section">
                     <h4>4. Трансграничная передача</h4>
-                    <p>Данные объявлений (текст, фото, параметры) передаются во внешний AI-сервис: Together API-совместимую модель Gemini (США). Персональные данные пользователя (имя, контакты, финансы) <strong>НЕ</strong> передаются в AI-сервис.</p>
+                    <p>Данные могут передаваться за пределы Республики Беларусь: в Telegram для авторизации Mini App и доставки уведомлений; в Kufar при получении объявлений и изображений; во внешний AI-сервис для анализа объявлений. Если в стране получателя не обеспечивается надлежащий уровень защиты прав субъектов персональных данных, передача выполняется только при отдельном согласии с информированием о возможных рисках.</p>
                 </section>
                 <section class="privacy-section">
                     <h4>5. AI-обработка</h4>
-                    <p>В AI-сервис отправляются: текст объявления, фотографии, параметры товара, рыночная статистика. Возвращаются: оценка состояния, справедливая цена, рекомендации, риски.</p>
+                    <p>В AI-сервис отправляются: текст объявления, фотографии, параметры товара, рыночная статистика, похожие объявления и введённые пользователем черновики/заметки помощника продавца. Система маскирует очевидные телефоны, e-mail, Telegram-ники и документные номера в тексте, но фотографии и свободный текст могут содержать персональные данные. Возвращаются: оценка состояния, справедливая цена, рекомендации и риски.</p>
                 </section>
                 <section class="privacy-section">
                     <h4>6. Хранение данных</h4>
-                    <p>Данные хранятся на сервере в Республике Беларусь. AI-кэш хранится до 1 часа. Данные пользователя хранятся до удаления аккаунта. История AI-помощника продавцу, если включена, хранится локально в браузере или Telegram WebView до 30 дней и очищается кнопкой в модальном окне; серверное удаление аккаунта её не удаляет.</p>
+                    <p>Данные хранятся на сервере оператора и в локальном хранилище браузера/Telegram WebView. Данные аккаунта хранятся до удаления аккаунта, журнал AI-операций — до 365 дней, события трекеров и устаревшие снимки рынка — до 30–90 дней, техническая очередь ошибок Telegram — до 30 дней. AI-кэш задач и экспортов хранится временно; общий кэш анализа объявления может сохраняться без привязки к пользователю до истечения срока кэша. История AI-помощника продавцу, если включена, хранится локально до 30 дней и очищается кнопкой в модальном окне; серверное удаление аккаунта её не удаляет.</p>
                 </section>
                 <section class="privacy-section">
                     <h4>7. Ваши права</h4>
                     <ul>
-                        <li><strong>Доступ</strong> — вы можете экспортировать все свои данные</li>
-                        <li><strong>Удаление</strong> — вы можете удалить аккаунт и все данные</li>
-                        <li><strong>Отзыв согласия</strong> — вы можете отозвать согласие на AI-обработку</li>
+                        <li><strong>Доступ</strong> — вы можете экспортировать свои данные</li>
+                        <li><strong>Информация о передаче</strong> — вы можете запросить сведения о предоставлении данных третьим лицам</li>
+                        <li><strong>Исправление</strong> — вы можете изменить неточные данные в интерфейсе или обратиться к оператору</li>
+                        <li><strong>Удаление</strong> — вы можете удалить аккаунт и серверные данные</li>
+                        <li><strong>Отзыв согласия</strong> — вы можете отозвать согласие на AI-обработку и трансграничную передачу</li>
                     </ul>
                 </section>
                 <section class="privacy-section">

@@ -624,7 +624,7 @@ class UserConsent(Base):
 
 
 class AIAuditLog(Base):
-    """Audit trail for AI-assisted decisions (Belarus Law No. 91-Z requirement)."""
+    """Audit trail for AI-assisted decisions (Belarus Law No. 99-З requirement)."""
 
     __tablename__ = "ai_audit_log"
 

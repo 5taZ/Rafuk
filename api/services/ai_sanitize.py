@@ -59,7 +59,7 @@ _MULTILINE_COLLAPSE_RE = re.compile(r"\n{3,}")
 # Belarusian passport series). Before we splice any of that into a
 # prompt bound for Together AI / Gemini we mask it — the AI provider
 # has no business holding raw PII, and the regulator (Belarus Law
-# No. 91-Z) doesn't permit transferring identifying data without
+# No. 99-З) doesn't permit transferring identifying data without
 # explicit purpose-bound consent.
 #
 # The patterns are intentionally conservative: a 9+ digit run is the

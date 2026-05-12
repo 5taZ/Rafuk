@@ -1,7 +1,7 @@
 """Add cleanup function for ai_audit_log
 
 DB-H3: ai_audit_log was growing unbounded — like tracker_events did
-(closed in 20260509_0001). The audit table is a Law-91-Z compliance
+(closed in 20260509_0001). The audit table is a Law-99-З compliance
 artifact, not an analytics source, so we only need to keep enough
 history for legal review periods. 365 days is the default retention;
 ops can call ``SELECT clean_ai_audit_log(N)`` from a periodic cron

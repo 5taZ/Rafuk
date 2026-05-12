@@ -37,6 +37,7 @@ from scheduler.collector import (
     cleanup_old_events,
     cleanup_old_snapshots,
     cleanup_stale_missing_watchlist,
+    cleanup_telegram_notification_dlq,
     notify_user,
     persist_tracker_events,
 )
@@ -805,6 +806,36 @@ async def test_cleanup_ai_audit_log(populated_session):
     await session.flush()
 
     deleted = await cleanup_ai_audit_log(session, days=365)
+    assert deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_cleanup_telegram_notification_dlq(populated_session):
+    session, user, _tracker = populated_session
+    old = datetime.now(UTC) - timedelta(days=45)
+    recent = datetime.now(UTC) - timedelta(days=5)
+
+    session.add_all([
+        TelegramNotificationDLQ(
+            user_id=user.id,
+            telegram_user_id=user.telegram_user_id,
+            source="test",
+            message="old",
+            error_kind="retryable",
+            created_at=old,
+        ),
+        TelegramNotificationDLQ(
+            user_id=user.id,
+            telegram_user_id=user.telegram_user_id,
+            source="test",
+            message="recent",
+            error_kind="retryable",
+            created_at=recent,
+        ),
+    ])
+    await session.flush()
+
+    deleted = await cleanup_telegram_notification_dlq(session, days=30)
     assert deleted == 1
 
 

@@ -1296,9 +1296,10 @@ async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None
             # called it, so ai_audit_log kept growing forever. We
             # now run the same DELETE here every night so retention
             # actually happens. 365 days matches the
-            # Law-91-Z review window we picked when adding the
+            # Law-99-З review window we picked when adding the
             # function.
             await cleanup_ai_audit_log(session, days=365)
+            await cleanup_telegram_notification_dlq(session, days=30)
             await session.commit()
             logger.info("Daily cleanup completed successfully")
         except (OperationalError, SQLAlchemyError):
@@ -1387,6 +1388,22 @@ async def cleanup_ai_audit_log(session: AsyncSession, days: int = 365) -> int:
     if deleted_count > 0:
         logger.info(
             "Cleaned up %d AI audit log rows (older than %d days)",
+            deleted_count,
+            days,
+        )
+    return deleted_count
+
+
+async def cleanup_telegram_notification_dlq(session: AsyncSession, days: int = 30) -> int:
+    """Delete old Telegram notification failure payloads."""
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    result = await session.execute(
+        delete(TelegramNotificationDLQ).where(TelegramNotificationDLQ.created_at < cutoff)
+    )
+    deleted_count = result.rowcount
+    if deleted_count > 0:
+        logger.info(
+            "Cleaned up %d Telegram notification DLQ rows (older than %d days)",
             deleted_count,
             days,
         )

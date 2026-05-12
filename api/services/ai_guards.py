@@ -35,6 +35,7 @@ from sqlalchemy import select
 
 from api.config import get_settings
 from api.models import UserConsent
+from api.services.consent_policy import CURRENT_POLICY_VERSION
 from api.services.workflow_store import resolve_user_id
 
 
@@ -133,6 +134,7 @@ async def _check_ai_consent(request: Request, user_id: int) -> None:
                 select(UserConsent.consent_type).where(
                     UserConsent.user_id == uid,
                     UserConsent.consent_type.in_(["ai_analysis", "cross_border"]),
+                    UserConsent.version == CURRENT_POLICY_VERSION,
                     UserConsent.revoked_at.is_(None),
                 )
             )

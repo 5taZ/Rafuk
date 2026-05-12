@@ -133,7 +133,7 @@ whether the timeout/lock TTL needs tuning.
 
 ## Compliance
 
-The consent and erasure flow is built around Belarus law **№91-З**
+The consent and erasure flow is built around Belarus law **№99-З**
 (personal data protection). See `api/routers/consent.py` and the
 `UserConsent` / `ai_audit_log` tables.
 

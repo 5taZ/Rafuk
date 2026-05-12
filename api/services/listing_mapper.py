@@ -45,6 +45,7 @@ PII_PARAMETER_KEYS = frozenset(
         "legal_name",
     }
 )
+SENSITIVE_AD_PARAMETER_KEYS = IGNORED_AD_PARAMETER_KEYS | PII_PARAMETER_KEYS
 
 
 def _stringify_value(value: Any) -> str | None:
@@ -196,7 +197,9 @@ def build_listing_detail(
         phone_hidden=bool(ad.get("phone_hidden", True)),
         description=description,
         images=[url for image in ad.get("images", []) if (url := image_url(image))],
-        parameters=collect_fields(ad.get("ad_parameters", []), ignored=IGNORED_AD_PARAMETER_KEYS),
+        parameters=collect_fields(
+            ad.get("ad_parameters", []), ignored=SENSITIVE_AD_PARAMETER_KEYS,
+        ),
         seller_fields=collect_fields(ad.get("account_parameters", []), ignored=PII_PARAMETER_KEYS),
         seller_rating=extract_seller_rating(ad),
         risk_factors=detect_risks(ad, market_stats={"median": market_stats.median}),

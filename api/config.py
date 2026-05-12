@@ -48,6 +48,20 @@ def _is_local_database_url(db_url: str) -> bool:
         return False
 
 
+def _is_local_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host or host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -182,6 +196,28 @@ class Settings(BaseSettings):
     image_proxy_fetch_timeout: float = 5.0
     image_proxy_max_bytes: int = 5 * 1024 * 1024
     metrics_bearer_token: SecretStr | None = None
+
+    @field_validator("redis_url")
+    @classmethod
+    def validate_production_redis_auth(cls, v: str) -> str:
+        if os.getenv("ENV") != "production" or _is_local_url(v):
+            return v
+        parsed = urlparse(v)
+        if parsed.scheme in {"redis", "rediss"} and parsed.password is None:
+            raise ValueError("Remote Redis requires AUTH password when ENV=production")
+        return v
+
+    @field_validator("ai_base_url")
+    @classmethod
+    def validate_ai_transport_url(cls, v: str) -> str:
+        if not v:
+            return v
+        parsed = urlparse(v)
+        if parsed.scheme == "http" and not _is_local_url(v):
+            raise ValueError("AI service URLs must use HTTPS unless using localhost")
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("AI service URLs must start with http:// or https://")
+        return v.rstrip("/")
 
     @field_validator("api_base_url", "mini_app_url")
     @classmethod

@@ -15,7 +15,7 @@ from api.services.aggregator import (
 )
 from api.services.ai_guardrails import contains_financing_bait
 from api.services.ai_service import detect_category, normalize_condition_label
-from api.services.listing_mapper import first_image_url
+from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS, first_image_url
 from api.services.reseller_tools import analyze_query_text
 
 # ── Static lexicon ───────────────────────────────────────────────────────
@@ -37,6 +37,9 @@ def _load_marketplace_lexicon() -> dict[str, Any]:
 
 _LEXICON = _load_marketplace_lexicon()
 _IGNORED_PARAM_KEYS: frozenset[str] = frozenset(_LEXICON["ignored_param_keys"])
+_SENSITIVE_PARAM_KEYS: frozenset[str] = _IGNORED_PARAM_KEYS | frozenset(
+    SENSITIVE_AD_PARAMETER_KEYS
+)
 _STOP_TOKENS: frozenset[str] = frozenset(_LEXICON["stop_tokens"])
 _FUEL_WORDS: dict[str, tuple[str, ...]] = {
     k: tuple(v) for k, v in _LEXICON["fuel_words"].items()
@@ -148,7 +151,9 @@ def _normalized_ad_text(ad: dict[str, Any]) -> str:
     title = str(ad.get("subject", "") or ad.get("title", ""))
     description = str(ad.get("body", "") or ad.get("description", ""))
     param_values = " ".join(
-        str(param.get("vl") or param.get("v") or "") for param in ad.get("ad_parameters", [])
+        str(param.get("vl") or param.get("v") or "")
+        for param in ad.get("ad_parameters", [])
+        if str(param.get("p", "")) not in _SENSITIVE_PARAM_KEYS
     )
     seller_text = get_param(ad, "seller_type") or ""
     return normalize_search_text(" ".join((title, description, param_values, seller_text)))
@@ -170,7 +175,7 @@ def _ad_parameters_string(ad: dict[str, Any]) -> str:
     items: list[str] = []
     for param in ad.get("ad_parameters", []):
         key = str(param.get("p", ""))
-        if key in _IGNORED_PARAM_KEYS:
+        if key in _SENSITIVE_PARAM_KEYS:
             continue
         label = str(param.get("pl") or key).strip()
         value = str(param.get("vl") or param.get("v") or "").strip()
@@ -195,7 +200,7 @@ def _ad_param_map(ad: dict[str, Any]) -> dict[str, str]:
     result: dict[str, str] = {}
     for param in ad.get("ad_parameters", []):
         key = str(param.get("p", "")).strip()
-        if not key or key in _IGNORED_PARAM_KEYS:
+        if not key or key in _SENSITIVE_PARAM_KEYS:
             continue
         value = str(param.get("vl") or param.get("v") or "").strip()
         if value:

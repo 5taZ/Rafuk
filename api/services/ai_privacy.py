@@ -1,5 +1,5 @@
 """
-BE-C5 + BE-C6: per-user data erasure (Belarus Law No. 91-Z).
+BE-C5 + BE-C6: per-user data erasure (Belarus Law No. 99-З).
 
 Lives in api/services/ so consent.py and the AI router can both
 call into the same helper without one router importing another.
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 async def clear_user_ai_data(telegram_user_id: int) -> None:
-    """Remove all per-user data for a Telegram user (Law-91-Z erasure).
+    """Remove all per-user data for a Telegram user (Law-99-З erasure).
 
     BE-C6: this used to only touch the AI shadow stores plus a few
     Redis namespaces; the matching call from delete_account also

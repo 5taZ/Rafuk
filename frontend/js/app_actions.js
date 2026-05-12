@@ -161,11 +161,11 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260512-42582f6"),
-            context._loadScript("js/api_ai_render.js?v=20260512-42582f6"),
-            context._loadScript("js/api_ai_pdf.js?v=20260512-42582f6"),
-            context._loadScript("js/api_ai.js?v=20260512-42582f6"),
-            context._loadScript("js/api_listing_assistant.js?v=20260512-42582f6"),
+            context._loadScript("js/api_ai_modal.js?v=20260512-bc13162"),
+            context._loadScript("js/api_ai_render.js?v=20260512-bc13162"),
+            context._loadScript("js/api_ai_pdf.js?v=20260512-bc13162"),
+            context._loadScript("js/api_ai.js?v=20260512-bc13162"),
+            context._loadScript("js/api_listing_assistant.js?v=20260512-bc13162"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -528,14 +528,18 @@ function createAppActions(baseContext) {
     // ── Consent & Privacy ──────────────────────────────────────────────────
 
     /**
-     * Check if user has granted AI consent. Returns true if consent exists.
+     * Check if user has granted processing/AI consent. Returns true if consent exists.
      * If not, shows the consent modal and returns a Promise that resolves
      * when the user grants consent (or rejects on cancel).
      */
     async function checkAiConsent() {
         try {
-            const status = await core.getJson("/api/v1/account/consent/ai_analysis");
-            if (status.granted) return true;
+            const statuses = await Promise.all([
+                core.getJson("/api/v1/account/consent/ai_analysis"),
+                core.getJson("/api/v1/account/consent/cross_border"),
+                core.getJson("/api/v1/account/consent/pd_processing"),
+            ]);
+            if (statuses.every((status) => status.granted)) return true;
         } catch (_) {
             // Not logged in or error — proceed anyway (debug mode)
             return true;

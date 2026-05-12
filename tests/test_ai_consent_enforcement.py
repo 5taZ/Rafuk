@@ -24,6 +24,7 @@ from api import config
 from api.database import get_engine, get_session_factory
 from api.models import Base, User, UserConsent
 from api.services import ai_guards
+from api.services.consent_policy import CURRENT_POLICY_VERSION
 
 
 @pytest.fixture
@@ -107,7 +108,7 @@ async def test_ai_consent_demands_cross_border_after_ai_grant(
         session.add(UserConsent(
             user_id=user.id,
             consent_type="ai_analysis",
-            version="2026.2",
+            version=CURRENT_POLICY_VERSION,
             granted_at=datetime.now(UTC),
         ))
         await session.commit()
@@ -136,13 +137,13 @@ async def test_ai_consent_passes_with_both_consents_granted(
             UserConsent(
                 user_id=user.id,
                 consent_type="ai_analysis",
-                version="2026.2",
+                version=CURRENT_POLICY_VERSION,
                 granted_at=datetime.now(UTC),
             ),
             UserConsent(
                 user_id=user.id,
                 consent_type="cross_border",
-                version="2026.2",
+                version=CURRENT_POLICY_VERSION,
                 granted_at=datetime.now(UTC),
             ),
         ])
@@ -171,14 +172,14 @@ async def test_ai_consent_rejects_revoked_grants(
             UserConsent(
                 user_id=user.id,
                 consent_type="ai_analysis",
-                version="2026.2",
+                version=CURRENT_POLICY_VERSION,
                 granted_at=now,
                 revoked_at=now,  # revoked
             ),
             UserConsent(
                 user_id=user.id,
                 consent_type="cross_border",
-                version="2026.2",
+                version=CURRENT_POLICY_VERSION,
                 granted_at=now,
             ),
         ])
@@ -187,6 +188,37 @@ async def test_ai_consent_rejects_revoked_grants(
     request = _make_request(fresh_session_factory)
     with pytest.raises(HTTPException) as excinfo:
         await ai_guards._check_ai_consent(request, user_id=444)
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.detail["consent_type"] == "ai_analysis"
+
+
+@pytest.mark.asyncio
+async def test_ai_consent_rejects_stale_policy_versions(
+    debug_off, fresh_session_factory,
+) -> None:
+    async with fresh_session_factory() as session:
+        user = User(telegram_user_id=555, first_name="Stale")
+        session.add(user)
+        await session.flush()
+        session.add_all([
+            UserConsent(
+                user_id=user.id,
+                consent_type="ai_analysis",
+                version="2026.1",
+                granted_at=datetime.now(UTC),
+            ),
+            UserConsent(
+                user_id=user.id,
+                consent_type="cross_border",
+                version=CURRENT_POLICY_VERSION,
+                granted_at=datetime.now(UTC),
+            ),
+        ])
+        await session.commit()
+
+    request = _make_request(fresh_session_factory)
+    with pytest.raises(HTTPException) as excinfo:
+        await ai_guards._check_ai_consent(request, user_id=555)
     assert excinfo.value.status_code == 403
     assert excinfo.value.detail["consent_type"] == "ai_analysis"
 

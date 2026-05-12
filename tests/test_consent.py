@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -150,14 +152,104 @@ async def test_export_account_data(client):
         "/api/v1/account/consent",
         json={"consent_type": "ai_analysis", "version": "2026.2"},
     )
+    from sqlalchemy import select
+
+    from api.main import app
+    from api.models import (
+        AIAuditLog,
+        Contact,
+        LeadItem,
+        LeadItemPriceSnapshot,
+        LeadReminder,
+        SavedSearch,
+        TelegramNotificationDLQ,
+        User,
+    )
+
+    async with app.state.session_factory() as session:
+        user = (
+            await session.execute(
+                select(User).where(User.telegram_user_id == _fake_telegram_user().user_id)
+            )
+        ).scalar_one()
+        saved_search = SavedSearch(
+            user_id=user.id,
+            name="Phones",
+            query="iphone",
+            target_discount_percent=12.5,
+        )
+        lead = LeadItem(
+            user_id=user.id,
+            ad_id=12345,
+            query="iphone",
+            title="iPhone 13",
+            link="https://www.kufar.by/item/12345",
+            price_byn=900,
+            status="new",
+            source="manual",
+        )
+        session.add_all([saved_search, lead])
+        await session.flush()
+        session.add_all([
+            LeadItemPriceSnapshot(
+                lead_item_id=lead.id,
+                price_byn=900,
+                snapped_at=datetime.now(UTC),
+            ),
+            LeadReminder(
+                user_id=user.id,
+                lead_id=lead.id,
+                remind_at=datetime.now(UTC),
+                message="check seller",
+            ),
+            AIAuditLog(
+                user_id=user.id,
+                endpoint="analyze",
+                ad_id="12345",
+                query="iphone",
+                result_summary="ok",
+                model="test-model",
+            ),
+            TelegramNotificationDLQ(
+                user_id=user.id,
+                telegram_user_id=user.telegram_user_id,
+                source="test",
+                message="failed notification",
+                error_kind="retryable",
+            ),
+            Contact(
+                user_id=user.id,
+                phone="+375291234567",
+                seller_name="Seller",
+                kufar_profile="https://www.kufar.by/user/test",
+            ),
+        ])
+        await session.commit()
+
     resp = await client.get("/api/v1/account/export")
     assert resp.status_code == 200
     data = resp.json()
     assert "profile" in data
     assert "consents" in data
     assert "exported_at" in data
+    for key in (
+        "saved_searches",
+        "price_snapshots",
+        "reminders",
+        "ai_audit_logs",
+        "notification_dlq",
+        "contacts",
+    ):
+        assert key in data
+        assert data[key], f"{key} should be exported"
     # Should have at least one consent
     assert len(data["consents"]) >= 1
+    assert data["saved_searches"][0]["query"] == "iphone"
+    assert data["price_snapshots"][0]["price_byn"] == 900.0
+    assert data["reminders"][0]["message"] == "check seller"
+    assert data["ai_audit_logs"][0]["model"] == "test-model"
+    assert data["notification_dlq"][0]["message"] == "failed notification"
+    assert data["contacts"][0]["phone"] == "+375291234567"
 
 
 # ── Account deletion ───────────────────────────────────────────────────

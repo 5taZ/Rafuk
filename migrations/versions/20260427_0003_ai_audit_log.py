@@ -1,4 +1,4 @@
-"""Add ai_audit_log table for AI decision audit trail (Belarus Law No. 91-Z).
+"""Add ai_audit_log table for AI decision audit trail (Belarus Law No. 99-З).
 
 Revision ID: 20260427_0003
 Revises: 20260427_0002

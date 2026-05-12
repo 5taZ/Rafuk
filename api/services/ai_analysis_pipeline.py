@@ -46,6 +46,7 @@ from api.services.ai_service import (
 )
 from api.services.ai_task_store import _task_ttl, _update_task
 from api.services.kufar_client import KufarAPIError, KufarClient
+from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS
 from api.services.market_signals import anomaly_labels, detect_anomaly_flags
 from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import compute_deal_score
@@ -556,7 +557,9 @@ def _stage_extract(c: _AC) -> None:
     c.parameters = []
     for param in c.target_ad.get("ad_parameters", []):
         param_key = param.get("p", "")
-        if param_key in {"condition", "currency", "price", "users_synonyms"}:
+        if param_key in SENSITIVE_AD_PARAMETER_KEYS or param_key in {
+            "condition", "currency", "price",
+        }:
             continue
         label = param.get("pl") or param_key
         value = param.get("vl") or str(param.get("v", ""))

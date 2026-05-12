@@ -8,7 +8,7 @@
 /* global Chart */
 
 const CHART_JS_URL =
-    "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js";
+    "js/vendor/chart.umd.min.js";
 const CHART_JS_INTEGRITY =
     "sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC";
 

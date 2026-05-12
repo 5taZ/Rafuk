@@ -1,5 +1,5 @@
 """
-BE-C5: Belarus Law No. 91-Z audit-log writer for AI calls.
+BE-C5: Belarus Law No. 99-З audit-log writer for AI calls.
 
 Every AI endpoint records who asked for what model, against which
 ad/query, and how long it took. The function used to live inline at
@@ -35,7 +35,7 @@ async def _log_ai_audit(
     latency_ms: int | None = None,
     cached: bool = False,
 ) -> None:
-    """Write an AI audit log entry (Belarus Law No. 91-Z requirement).
+    """Write an AI audit log entry (Belarus Law No. 99-З requirement).
 
     Best-effort: a failure to write the audit row is logged at WARN
     but never raises into the caller. The actual AI response was

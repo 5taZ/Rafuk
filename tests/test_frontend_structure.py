@@ -115,8 +115,10 @@ def test_frontend_csp_does_not_allow_inline_styles() -> None:
     ai_export = Path("api/services/ai_export.py").read_text(encoding="utf-8")
     combined = "\n".join([index_text, offline_text, nginx_conf, ai_export])
     assert "style-src 'unsafe-inline'" not in combined
-    assert "style-src 'self' https://fonts.googleapis.com" in index_text
-    assert "style-src 'self' https://fonts.googleapis.com" in nginx_conf
+    assert "style-src 'self';" in index_text
+    assert "style-src 'self';" in nginx_conf
+    assert "fonts.googleapis.com" not in index_text
+    assert "fonts.gstatic.com" not in index_text
     assert "style-src 'none'" in ai_export
     assert "<style" not in offline_text
     assert 'href="/offline.css"' in offline_text
@@ -207,9 +209,11 @@ def test_ai_pdf_export_uses_design_system_styles() -> None:
 
 def test_design_context_matches_loaded_font_stack(soup: BeautifulSoup) -> None:
     context_text = Path(".impeccable.md").read_text(encoding="utf-8")
+    font_css = (FRONTEND / "vendor" / "fonts" / "fonts.css").read_text(encoding="utf-8")
     font_links = " ".join(link.get("href", "") for link in soup.find_all("link"))
-    assert "family=Geist" in font_links
-    assert "family=JetBrains+Mono" in font_links
+    assert "vendor/fonts/fonts.css" in font_links
+    assert "font-family: 'Geist'" in font_css
+    assert "font-family: 'JetBrains Mono'" in font_css
     assert "Geist (sans-serif) + JetBrains Mono" in context_text
     assert "Rubik (sans-serif)" not in context_text
 
@@ -251,16 +255,16 @@ def test_chart_js_loads_lazily_only_on_first_chart_paint() -> None:
     text = (Path("frontend/js/render_charts.js")).read_text(encoding="utf-8")
     assert "ensureChartLib" in text
     assert "_chartLibPromise" in text
-    assert "chart.umd" in text  # the URL the loader fetches
+    assert "js/vendor/chart.umd.min.js" in text
     # Both renderers must guard on window.Chart being available.
     assert text.count('typeof window.Chart !== "function"') >= 2
 
 
-def test_chart_js_has_preconnect_without_unconditional_preload(soup: BeautifulSoup) -> None:
-    """Chart.js keeps the cheap connection hint but avoids eager download."""
-    chart_url = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+def test_chart_js_is_vendored_without_unconditional_preload(soup: BeautifulSoup) -> None:
+    """Chart.js stays lazy-loaded from same-origin vendor assets."""
+    chart_url = "js/vendor/chart.umd.min.js"
     preconnect = soup.find("link", attrs={"rel": "preconnect", "href": "https://cdn.jsdelivr.net"})
-    assert preconnect is not None
+    assert preconnect is None
     preload = soup.find("link", attrs={"rel": "preload", "as": "script", "href": chart_url})
     assert preload is None
     render_charts = (JS_DIR / "render_charts.js").read_text(encoding="utf-8")
@@ -270,6 +274,8 @@ def test_chart_js_has_preconnect_without_unconditional_preload(soup: BeautifulSo
     ) in render_charts
     index_text = HTML_FILE.read_text(encoding="utf-8")
     nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    assert "cdn.jsdelivr.net" not in index_text
+    assert "cdn.jsdelivr.net" not in nginx_conf
     assert "connect-src 'self';" in index_text
     assert "connect-src 'self';" in nginx_conf
 

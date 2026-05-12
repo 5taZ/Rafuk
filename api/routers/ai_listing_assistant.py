@@ -455,7 +455,7 @@ async def listing_assistant(
     await _check_ai_consent(request, _user.user_id)
     await _check_rate_limit(request, _user.user_id, endpoint="listing")
 
-    # AI audit trail (Belarus Law No. 91-Z)
+    # AI audit trail (Belarus Law No. 99-З)
     await _log_ai_audit(
         request.app.state.session_factory,
         telegram_user_id=_user.user_id,

@@ -8,19 +8,33 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
-from api.models import DealExpense, LeadItem, Tracker, TrackerEvent, User, UserConsent
+from api.models import (
+    AIAuditLog,
+    Contact,
+    DealExpense,
+    LeadItem,
+    LeadItemPriceSnapshot,
+    LeadReminder,
+    SavedSearch,
+    TelegramNotificationDLQ,
+    Tracker,
+    TrackerEvent,
+    User,
+    UserConsent,
+)
 from api.schemas import (
     AccountDeletionConfirmation,
     ConsentGrantRequest,
     ConsentStatusResponse,
 )
 from api.services.client_ip import get_client_ip
+from api.services.consent_policy import CURRENT_POLICY_VERSION, VALID_CONSENT_TYPES
 from api.services.workflow_store import ensure_user, resolve_user_id
 
 logger = logging.getLogger(__name__)
@@ -28,8 +42,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/account", tags=["account"])
 
 
-VALID_CONSENT_TYPES = {"ai_analysis", "pd_processing", "cross_border"}
-CURRENT_POLICY_VERSION = "2026.2"
+def _money(value) -> float | None:
+    return float(value) if value is not None else None
+
 
 @router.get("/consent/{consent_type}", response_model=ConsentStatusResponse)
 @limiter.limit("10/minute")
@@ -133,7 +148,7 @@ async def grant_consent(
         if existing:
             existing.revoked_at = datetime.now(UTC)
 
-        # Capture client IP for audit trail (Belarus Law No. 91-Z)
+        # Capture client IP for audit trail (Belarus Law No. 99-З)
         client_ip = get_client_ip(request)
 
         consent = UserConsent(
@@ -247,7 +262,7 @@ async def delete_account(
         get_session_factory_dependency
     ),
 ):
-    """Delete all user data (right to erasure under Belarus Law No. 91-Z).
+    """Delete all user data (right to erasure under Belarus Law No. 99-З).
 
     Cascade-deletes from all tables where the user has data.
 
@@ -356,6 +371,34 @@ async def export_account_data(
             "last_seen_at": user.last_seen_at.isoformat() if user.last_seen_at else None,
         }
 
+        saved_searches = (
+            await session.execute(
+                select(SavedSearch)
+                .where(SavedSearch.user_id == uid)
+                .order_by(SavedSearch.created_at.desc())
+                .limit(export_row_cap)
+            )
+        ).scalars().all()
+        saved_searches_data = [
+            {
+                "id": s.id,
+                "name": s.name,
+                "group_name": s.group_name,
+                "query": s.query,
+                "strict_mode": s.strict_mode,
+                "target_discount_percent": _money(s.target_discount_percent),
+                "max_price_byn": _money(s.max_price_byn),
+                "seller_type": s.seller_type,
+                "condition": s.condition,
+                "region_name": s.region_name,
+                "config_keyword": s.config_keyword,
+                "exclude_duplicates": s.exclude_duplicates,
+                "active": s.active,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in saved_searches
+        ]
+
         # Trackers
         trackers = (
             await session.execute(
@@ -420,21 +463,61 @@ async def export_account_data(
                 "ad_id": lead.ad_id,
                 "query": lead.query,
                 "title": lead.title,
-                "price_byn": (
-                    float(lead.price_byn) if lead.price_byn is not None else None
-                ),
-                "buy_price_byn": (
-                    float(lead.buy_price_byn) if lead.buy_price_byn is not None else None
-                ),
-                "sold_price_byn": (
-                    float(lead.sold_price_byn) if lead.sold_price_byn is not None else None
-                ),
+                "price_byn": _money(lead.price_byn),
+                "buy_price_byn": _money(lead.buy_price_byn),
+                "sold_price_byn": _money(lead.sold_price_byn),
+                "target_resale_byn": _money(lead.target_resale_byn),
                 "status": lead.status,
                 "source": lead.source,
                 "notes": lead.notes,
+                "market_status": lead.market_status,
+                "missing_since_at": (
+                    lead.missing_since_at.isoformat() if lead.missing_since_at else None
+                ),
+                "sold_at": lead.sold_at.isoformat() if lead.sold_at else None,
                 "created_at": lead.created_at.isoformat() if lead.created_at else None,
+                "updated_at": lead.updated_at.isoformat() if lead.updated_at else None,
             }
             for lead in leads
+        ]
+
+        price_snapshots = (
+            await session.execute(
+                select(LeadItemPriceSnapshot)
+                .join(LeadItem, LeadItemPriceSnapshot.lead_item_id == LeadItem.id)
+                .where(LeadItem.user_id == uid)
+                .order_by(LeadItemPriceSnapshot.snapped_at.desc())
+                .limit(export_row_cap)
+            )
+        ).scalars().all()
+        price_snapshots_data = [
+            {
+                "id": p.id,
+                "lead_item_id": p.lead_item_id,
+                "price_byn": _money(p.price_byn),
+                "snapped_at": p.snapped_at.isoformat() if p.snapped_at else None,
+            }
+            for p in price_snapshots
+        ]
+
+        reminders = (
+            await session.execute(
+                select(LeadReminder)
+                .where(LeadReminder.user_id == uid)
+                .order_by(LeadReminder.remind_at.desc(), LeadReminder.id.desc())
+                .limit(export_row_cap)
+            )
+        ).scalars().all()
+        reminders_data = [
+            {
+                "id": r.id,
+                "lead_id": r.lead_id,
+                "remind_at": r.remind_at.isoformat() if r.remind_at else None,
+                "message": r.message,
+                "sent": r.sent,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in reminders
         ]
 
         # Expenses
@@ -451,8 +534,9 @@ async def export_account_data(
                 "id": e.id,
                 "lead_id": e.lead_id,
                 "expense_type": e.expense_type,
-                "amount_byn": e.amount_byn,
+                "amount_byn": _money(e.amount_byn),
                 "notes": e.notes,
+                "expense_date": e.expense_date.isoformat() if e.expense_date else None,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
             }
             for e in expenses
@@ -472,10 +556,33 @@ async def export_account_data(
                 "id": c.id,
                 "consent_type": c.consent_type,
                 "version": c.version,
+                "ip_address": c.ip_address,
                 "granted_at": c.granted_at.isoformat() if c.granted_at else None,
                 "revoked_at": c.revoked_at.isoformat() if c.revoked_at else None,
             }
             for c in consents
+        ]
+
+        ai_audit_logs = (
+            await session.execute(
+                select(AIAuditLog)
+                .where(AIAuditLog.user_id == uid)
+                .order_by(AIAuditLog.created_at.desc())
+                .limit(export_row_cap)
+            )
+        ).scalars().all()
+        ai_audit_logs_data = [
+            {
+                "id": a.id,
+                "endpoint": a.endpoint,
+                "ad_id": a.ad_id,
+                "query": a.query,
+                "result_summary": a.result_summary,
+                "model": a.model,
+                "latency_ms": a.latency_ms,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in ai_audit_logs
         ]
 
         # Watchlist items (LeadItem with status='watching')
@@ -493,19 +600,65 @@ async def export_account_data(
                 "ad_id": w.ad_id,
                 "query": w.query,
                 "title": w.title,
-                "price_byn": (
-                    float(w.price_byn) if w.price_byn is not None else None
-                ),
-                "initial_price_byn": (
-                    float(w.initial_price_byn) if w.initial_price_byn is not None else None
-                ),
-                "market_median_byn": (
-                    float(w.market_median_byn) if w.market_median_byn is not None else None
-                ),
+                "price_byn": _money(w.price_byn),
+                "initial_price_byn": _money(w.initial_price_byn),
+                "market_median_byn": _money(w.market_median_byn),
+                "target_resale_byn": _money(w.target_resale_byn),
                 "notes": w.notes,
+                "market_status": w.market_status,
+                "missing_since_at": (
+                    w.missing_since_at.isoformat() if w.missing_since_at else None
+                ),
                 "created_at": w.created_at.isoformat() if w.created_at else None,
+                "updated_at": w.updated_at.isoformat() if w.updated_at else None,
             }
             for w in watchlist
+        ]
+
+        contacts = (
+            await session.execute(
+                select(Contact)
+                .where(Contact.user_id == uid)
+                .order_by(Contact.saved_at.desc())
+                .limit(export_row_cap)
+            )
+        ).scalars().all()
+        contacts_data = [
+            {
+                "id": c.id,
+                "phone": c.phone,
+                "seller_name": c.seller_name,
+                "kufar_profile": c.kufar_profile,
+                "saved_at": c.saved_at.isoformat() if c.saved_at else None,
+            }
+            for c in contacts
+        ]
+
+        notification_dlq = (
+            await session.execute(
+                select(TelegramNotificationDLQ)
+                .where(
+                    or_(
+                        TelegramNotificationDLQ.user_id == uid,
+                        TelegramNotificationDLQ.telegram_user_id == _user.user_id,
+                    )
+                )
+                .order_by(TelegramNotificationDLQ.created_at.desc())
+                .limit(export_row_cap)
+            )
+        ).scalars().all()
+        notification_dlq_data = [
+            {
+                "id": d.id,
+                "telegram_user_id": d.telegram_user_id,
+                "source": d.source,
+                "message": d.message,
+                "error_kind": d.error_kind,
+                "error_message": d.error_message,
+                "retry_after_seconds": d.retry_after_seconds,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in notification_dlq
         ]
 
     # BE-02: surface per-collection truncation so a power user knows
@@ -513,22 +666,34 @@ async def export_account_data(
     # (most-recent first); the API provides full history via the
     # individual endpoints if the user actually needs it.
     truncated = {
+        "saved_searches": len(saved_searches_data) >= export_row_cap,
         "trackers": len(trackers_data) >= export_row_cap,
         "tracker_events": len(events_data) >= 500,
         "leads": len(leads_data) >= export_row_cap,
+        "price_snapshots": len(price_snapshots_data) >= export_row_cap,
+        "reminders": len(reminders_data) >= export_row_cap,
         "expenses": len(expenses_data) >= export_row_cap,
         "consents": len(consents_data) >= export_row_cap,
+        "ai_audit_logs": len(ai_audit_logs_data) >= export_row_cap,
         "watchlist": len(watchlist_data) >= export_row_cap,
+        "contacts": len(contacts_data) >= export_row_cap,
+        "notification_dlq": len(notification_dlq_data) >= export_row_cap,
     }
 
     payload = {
         "profile": profile,
+        "saved_searches": saved_searches_data,
         "trackers": trackers_data,
         "tracker_events": events_data,
         "leads": leads_data,
+        "price_snapshots": price_snapshots_data,
+        "reminders": reminders_data,
         "expenses": expenses_data,
         "watchlist": watchlist_data,
+        "contacts": contacts_data,
+        "notification_dlq": notification_dlq_data,
         "consents": consents_data,
+        "ai_audit_logs": ai_audit_logs_data,
         "exported_at": datetime.now(UTC).isoformat(),
         "truncated": truncated,
         "export_row_cap": export_row_cap,
