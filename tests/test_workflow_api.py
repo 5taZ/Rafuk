@@ -95,12 +95,23 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
             json={"status": "reviewing", "version": 1},
         )
         assert stale_update_response.status_code == 409
+        # OPUS-7: missing version is no longer silently accepted; the
+        # frontend always sends one. Old bundles that don't get a 428
+        # so the user sees a clear "reload and retry" instead of
+        # silently overwriting another tab.
         missing_version_response = client.patch(
             f"/api/v1/leads/{lead['id']}",
             json={"status": "reviewing"},
         )
-        assert missing_version_response.status_code == 200
-        lead = missing_version_response.json()
+        assert missing_version_response.status_code == 428
+
+        # Up-to-date version still mutates as expected.
+        update_lead_status_response = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"status": "reviewing", "version": lead["version"]},
+        )
+        assert update_lead_status_response.status_code == 200
+        lead = update_lead_status_response.json()
         assert lead["status"] == "reviewing"
 
         update_lead_meta_response = client.patch(
@@ -149,12 +160,15 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
         )
         assert sold_lead_response.status_code == 201
         sold_lead = sold_lead_response.json()
+        # OPUS-7: legacy "sell" path now also requires the version
+        # like every other PATCH; freshly-created leads have version=1.
         legacy_sell_response = client.patch(
             f"/api/v1/leads/{sold_lead['id']}",
             json={
                 "status": "sold",
                 "buy_price_byn": 1800,
                 "sold_price_byn": 2200,
+                "version": sold_lead["version"],
             },
         )
         assert legacy_sell_response.status_code == 200
@@ -241,9 +255,11 @@ def test_leads_and_watchlist_workflow(monkeypatch) -> None:
         )
         assert legacy_watchlist_response.status_code == 201
         legacy_watchlist_item = legacy_watchlist_response.json()
+        # OPUS-7: explicit version is required, freshly-created
+        # watchlist items start at version=1.
         legacy_promote_response = client.patch(
             f"/api/v1/leads/{legacy_watchlist_item['id']}",
-            json={"status": "new"},
+            json={"status": "new", "version": legacy_watchlist_item["version"]},
         )
         assert legacy_promote_response.status_code == 200
         assert legacy_promote_response.json()["status"] == "new"
