@@ -25,6 +25,7 @@ from api.schemas import (
 )
 from api.services.ai_service import sanitize_user_text
 from api.services.cache import digest_cache_key
+from api.services.client_ip import get_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ async def negotiate_price(
     await _check_ai_consent(request, _user.user_id)
     await _check_rate_limit(request, _user.user_id, endpoint="negotiate")
 
-    # AI audit trail
+    # AI audit trail (OPUS-17: capture client IP).
     await _log_ai_audit(
         request.app.state.session_factory,
         telegram_user_id=_user.user_id,
@@ -116,6 +117,7 @@ async def negotiate_price(
         ad_id=str(payload.ad_id),
         query=payload.query,
         model=get_settings().ai_model,
+        ip_address=get_client_ip(request),
     )
 
     cache = get_cache(request)
@@ -178,13 +180,14 @@ async def price_advice(
     await _check_ai_consent(request, _user.user_id)
     await _check_rate_limit(request, _user.user_id, endpoint="price_advice")
 
-    # AI audit trail
+    # AI audit trail (OPUS-17: capture client IP).
     await _log_ai_audit(
         request.app.state.session_factory,
         telegram_user_id=_user.user_id,
         endpoint="price_advice",
         query=payload.query,
         model=get_settings().ai_model,
+        ip_address=get_client_ip(request),
     )
 
     cache = get_cache(request)

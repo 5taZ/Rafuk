@@ -654,6 +654,11 @@ class AIAuditLog(Base):
     result_summary: Mapped[str | None] = mapped_column(String(512), nullable=True)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # OPUS-17: capture the trusted client IP at decision time so the
+    # audit row matches what the consent row already records. 45 chars
+    # covers an IPv6 address with optional zone id; same shape as
+    # UserConsent.ip_address.
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

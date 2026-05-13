@@ -66,6 +66,7 @@ async def test_log_ai_audit_creates_row_for_known_user() -> None:
         query="iphone",
         model="gemini-2.5-flash",
         latency_ms=42,
+        ip_address="203.0.113.5",
     )
 
     async with factory() as session:
@@ -76,6 +77,8 @@ async def test_log_ai_audit_creates_row_for_known_user() -> None:
     assert entry.ad_id == "123"
     assert entry.model == "gemini-2.5-flash"
     assert entry.latency_ms == 42
+    # OPUS-17: IP captured at decision time matches what we passed.
+    assert entry.ip_address == "203.0.113.5"
 
 
 @pytest.mark.asyncio

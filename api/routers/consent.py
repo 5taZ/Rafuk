@@ -602,6 +602,9 @@ async def export_account_data(
                 "result_summary": a.result_summary,
                 "model": a.model,
                 "latency_ms": a.latency_ms,
+                # OPUS-17: include the IP captured at AI call time so
+                # the export's audit slice matches the consent slice.
+                "ip_address": a.ip_address,
                 "created_at": a.created_at.isoformat() if a.created_at else None,
             }
             for a in ai_audit_logs

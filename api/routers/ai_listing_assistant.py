@@ -46,6 +46,7 @@ from api.services.ai_service import (
     normalize_condition_label,
     sanitize_user_text,
 )
+from api.services.client_ip import get_client_ip
 from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.query_pipeline import load_query_dataset
 
@@ -474,6 +475,9 @@ async def listing_assistant(
         raise HTTPException(status_code=400, detail="Введите название товара")
 
     photos = _coerce_listing_photos(payload.photos)
+    # OPUS-17: snapshot client IP once per request — both audit
+    # paths (cache hit / miss) write the same IP.
+    client_ip = get_client_ip(request)
 
     # OPUS-6: cache lookup BEFORE rate-limit + AI-audit so a hit
     # costs no quota and is audited as cached=True — same shape as
@@ -498,6 +502,7 @@ async def listing_assistant(
                 query=payload.title,
                 model=get_settings().ai_model,
                 cached=True,
+                ip_address=client_ip,
             )
             return response
 
@@ -510,6 +515,7 @@ async def listing_assistant(
         endpoint="listing_assistant",
         query=payload.title,
         model=get_settings().ai_model,
+        ip_address=client_ip,
     )
 
     try:

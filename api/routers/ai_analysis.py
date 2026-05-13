@@ -79,6 +79,7 @@ from api.services.ai_task_store import (
     _spawn_bg_task,
     _update_task,
 )
+from api.services.client_ip import get_client_ip
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import load_query_dataset  # noqa: F401 — re-export
 
@@ -124,6 +125,9 @@ async def analyze_listing(
     """Start async AI analysis. Returns task_id immediately for polling."""
     _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
+    # OPUS-17: snapshot client IP once per request — both audit
+    # paths (cache hit / miss) write the same IP.
+    client_ip = get_client_ip(request)
 
     cache = get_cache(request)
     cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
@@ -140,6 +144,7 @@ async def analyze_listing(
                 query=payload.query,
                 model=get_settings().ai_model,
                 cached=True,
+                ip_address=client_ip,
             )
             return {"task_id": None, "cached": True, "result": cached}
 
@@ -152,6 +157,7 @@ async def analyze_listing(
         ad_id=str(payload.ad_id),
         query=payload.query,
         model=get_settings().ai_model,
+        ip_address=client_ip,
     )
 
     settings = getattr(request.app.state, "settings", None)

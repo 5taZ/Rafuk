@@ -35,8 +35,14 @@ async def _log_ai_audit(
     model: str = "",
     latency_ms: int | None = None,
     cached: bool = False,
+    ip_address: str | None = None,
 ) -> None:
     """Write an AI audit log entry (Belarus Law No. 99-З requirement).
+
+    OPUS-17: ``ip_address`` captures the trusted client IP at the
+    moment of the AI call so audit rows match the IP that
+    ``grant_consent`` already records. The router resolves IP via
+    the shared ``client_ip`` helper before calling us.
 
     Best-effort: a failure to write the audit row is logged at WARN
     but never raises into the caller. The actual AI response was
@@ -60,6 +66,7 @@ async def _log_ai_audit(
                 ),
                 model=model,
                 latency_ms=latency_ms,
+                ip_address=ip_address,
             )
             session.add(entry)
             await session.commit()
