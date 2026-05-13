@@ -120,6 +120,29 @@ def test_retryable_statuses_excludes_429() -> None:
     assert forbidden_minified not in bundle and forbidden_spaced not in bundle
 
 
+def test_charts_split_uses_lazy_stub_in_bundle() -> None:
+    """OPUS-13 wave 72: render_charts.js ships as
+    ``_lazy_charts_stub.js`` and is loaded on demand the first
+    time a chart paints. Chart.js itself was already lazy; this
+    defers the renderer too.
+    """
+    bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
+    stub = (JS_DIR / "_lazy_charts_stub.js").read_text(encoding="utf-8")
+    real = (JS_DIR / "render_charts.js").read_text(encoding="utf-8")
+
+    assert "_lazyLoadChartsSources" in bundle
+    assert "_realCreateRenderCharts" in bundle
+    assert "window.App._realCreateRenderCharts = createRenderCharts" in real
+
+    cache_buster = re.compile(r'"js/render_charts\.js\?v=[A-Za-z0-9._-]+"')
+    assert len(cache_buster.findall(stub)) == 1
+
+    build = Path("scripts/build_frontend_bundle.sh").read_text(encoding="utf-8")
+    leak = re.search(r"^\s+render_charts\.js\s*$", build, re.MULTILINE)
+    assert leak is None, "render_charts.js leaked back into bundle modules list"
+    assert "_lazy_charts_stub.js" in build
+
+
 def test_deals_split_uses_lazy_stub_in_bundle() -> None:
     """OPUS-13 wave 71: api_leads.js + api_watchlist.js +
     render_modals.js are no longer concatenated into

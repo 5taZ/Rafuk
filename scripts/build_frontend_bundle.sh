@@ -14,12 +14,14 @@ modules=(
   virtual_list.js
   render_cards.js
   render_views.js
-  render_charts.js
   # OPUS-13 wave 70 — tracking-view modules ship as stubs.
   _lazy_trackers_stub.js
   # OPUS-13 wave 71 — deals-view modules api_leads + api_watchlist
   # plus render_modals ship as stubs and load on first use.
   _lazy_deals_stub.js
+  # OPUS-13 wave 72 — render_charts.js ships as a stub. Chart.js
+  # itself was already lazy; this also defers the renderer.
+  _lazy_charts_stub.js
   app_renderers.js
   api_core.js
   api_listings.js

@@ -518,3 +518,10 @@ function createRenderCharts(context) {
         renderHistoryDeals,
     };
 }
+
+// OPUS-13: lazy-load registration; stub in the bundle proxies into
+// window.App._realCreateRenderCharts once this script lands.
+if (typeof window !== "undefined") {
+    window.App = window.App || {};
+    window.App._realCreateRenderCharts = createRenderCharts;
+}

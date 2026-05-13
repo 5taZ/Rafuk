@@ -111,10 +111,14 @@ def test_html_loads_required_scripts(soup: BeautifulSoup) -> None:
     bundle = (FRONTEND / "js" / "app_bundle.js").read_text(encoding="utf-8")
     assert "function analyticsApp" in bundle
     assert "function createVirtualList" in bundle
-    # Chart.js is now lazy-loaded by render_charts.js on first paint —
-    # keep the loader file in the bundle but make sure no <script> tag
-    # blocks the initial document on the chart library directly.
-    assert "ensureChartLib" in bundle
+    # OPUS-13 wave 72: render_charts.js (with ``ensureChartLib``) now
+    # ships outside the bundle and is fetched on demand. The loader
+    # itself must still exist on disk and Chart.js stays out of the
+    # initial <script> tags so the document parse isn't blocked on
+    # the chart library.
+    render_charts = (FRONTEND / "js" / "render_charts.js").read_text(encoding="utf-8")
+    assert "ensureChartLib" in render_charts
+    assert "_lazyLoadChartsSources" in bundle
     assert not any(
         "chart.umd" in script or "chart.min.js" in script for script in scripts
     ), "Chart.js must be lazy-loaded, not preloaded by <script> tag"
