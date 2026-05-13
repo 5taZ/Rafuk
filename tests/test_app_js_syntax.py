@@ -112,6 +112,19 @@ def test_retryable_statuses_excludes_429() -> None:
     assert forbidden not in bundle
 
 
+def test_svg_sanitizer_drops_xmlns_attribute() -> None:
+    """OPUS-21: ``xmlns`` belongs in the auto-namespacing path the
+    browser already runs on innerHTML — keeping it in the explicit
+    whitelist only invites namespace-confusion if a future caller
+    routes user-supplied SVG through showLongPressMenu.
+    """
+    bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
+    helpers = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    forbidden = '"xmlns",'
+    assert forbidden not in helpers, "dom_helpers.js still allowlists xmlns"
+    assert forbidden not in bundle, "app_bundle.js still allowlists xmlns"
+
+
 def test_pull_to_refresh_does_not_translate_app_root() -> None:
     text = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
     setup = text[text.index("function setupPullToRefresh"):text.index("/* ─── Pinch-zoom")]

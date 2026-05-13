@@ -1042,11 +1042,18 @@ function showLongPressMenu(items) {
                             "svg", "path", "circle", "rect", "line", "polyline",
                             "polygon", "ellipse", "g", "defs", "title", "desc",
                         ]);
+                        // OPUS-21: ``xmlns`` is intentionally NOT in the
+                        // whitelist. Browsers fill in the SVG namespace
+                        // automatically when innerHTML parses an
+                        // ``<svg>`` element, so allowing the attribute
+                        // only opens the door to namespace-confusion
+                        // tricks if a future caller routes user-supplied
+                        // SVG through this helper.
                         const allowedAttrs = new Set([
                             "viewbox", "width", "height", "fill", "stroke",
                             "stroke-width", "stroke-linecap", "stroke-linejoin",
                             "d", "cx", "cy", "r", "x", "y", "x1", "y1", "x2", "y2",
-                            "points", "rx", "ry", "xmlns", "fill-rule", "clip-rule",
+                            "points", "rx", "ry", "fill-rule", "clip-rule",
                             "opacity", "transform",
                         ]);
                         let safe = true;

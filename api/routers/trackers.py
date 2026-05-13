@@ -274,8 +274,23 @@ async def update_tracker(
 
         # Update only provided fields
         update_data = payload.model_dump(exclude_unset=True)
+        # OPUS-18: changing the category MUST touch both fields together
+        # so we never leave a tracker with category_id=2010 (Авто) and
+        # category_label="Телефоны" from a prior version. Setting
+        # category_id to None auto-clears the label (existing
+        # behaviour); setting it to a real id requires the client to
+        # send a label too.
         if "category_id" in update_data and update_data["category_id"] is None:
             update_data["category_label"] = None
+        elif (
+            "category_id" in update_data
+            and update_data["category_id"] is not None
+            and "category_label" not in update_data
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="category_label is required when category_id changes",
+            )
         nullable_fields = {
             "category_id",
             "category_label",

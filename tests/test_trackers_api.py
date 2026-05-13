@@ -77,6 +77,26 @@ def test_trackers_crud() -> None:
         assert updated["category_id"] is None
         assert updated["category_label"] is None
 
+        # OPUS-18: changing to a real category_id without sending a
+        # new label is rejected so we never end up with a stale label
+        # alongside a different id.
+        bad_update = client.patch(
+            f"/api/v1/trackers/{created['id']}",
+            json={"category_id": 2010},
+        )
+        assert bad_update.status_code == 422
+        assert "category_label" in bad_update.json()["detail"]
+
+        # Sending both is the supported atomic update.
+        atomic_update = client.patch(
+            f"/api/v1/trackers/{created['id']}",
+            json={"category_id": 2010, "category_label": "Авто"},
+        )
+        assert atomic_update.status_code == 200
+        atomic = atomic_update.json()
+        assert atomic["category_id"] == 2010
+        assert atomic["category_label"] == "Авто"
+
         delete_response = client.delete(f"/api/v1/trackers/{created['id']}")
         assert delete_response.status_code == 204
 

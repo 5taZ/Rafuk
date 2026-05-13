@@ -1048,11 +1048,18 @@ function showLongPressMenu(items) {
                             "svg", "path", "circle", "rect", "line", "polyline",
                             "polygon", "ellipse", "g", "defs", "title", "desc",
                         ]);
+                        // OPUS-21: ``xmlns`` is intentionally NOT in the
+                        // whitelist. Browsers fill in the SVG namespace
+                        // automatically when innerHTML parses an
+                        // ``<svg>`` element, so allowing the attribute
+                        // only opens the door to namespace-confusion
+                        // tricks if a future caller routes user-supplied
+                        // SVG through this helper.
                         const allowedAttrs = new Set([
                             "viewbox", "width", "height", "fill", "stroke",
                             "stroke-width", "stroke-linecap", "stroke-linejoin",
                             "d", "cx", "cy", "r", "x", "y", "x1", "y1", "x2", "y2",
-                            "points", "rx", "ry", "xmlns", "fill-rule", "clip-rule",
+                            "points", "rx", "ry", "fill-rule", "clip-rule",
                             "opacity", "transform",
                         ]);
                         let safe = true;
@@ -9777,10 +9784,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260513-9ac0c07"),
-            context._loadScript("js/api_ai_render.js?v=20260513-9ac0c07"),
-            context._loadScript("js/api_ai.js?v=20260513-9ac0c07"),
-            context._loadScript("js/api_listing_assistant.js?v=20260513-9ac0c07"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-7d36fef"),
+            context._loadScript("js/api_ai_render.js?v=20260513-7d36fef"),
+            context._loadScript("js/api_ai.js?v=20260513-7d36fef"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-7d36fef"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

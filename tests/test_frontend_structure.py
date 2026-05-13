@@ -123,6 +123,22 @@ def test_frontend_csp_does_not_allow_inline_styles() -> None:
     assert 'href="/offline.css"' in offline_text
 
 
+def test_frontend_csp_has_no_dead_inline_script_hash() -> None:
+    """OPUS-14: index.html and nginx CSP both used to allowlist
+    'sha256-ieoeWczDHk...' for an inline script that no longer
+    exists. Keep the script-src lean so a future inline-handler
+    accident actually trips the policy.
+    """
+    index_text = HTML_FILE.read_text(encoding="utf-8")
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    needle = "sha256-ieoeWczDHk"
+    assert needle not in index_text, "stale inline-script hash in HTML CSP"
+    assert needle not in nginx_conf, "stale inline-script hash in nginx CSP"
+    # Inline script policy stays at literal 'self' — no nonces, no hashes.
+    assert "script-src 'self';" in index_text or "script-src 'self'\n" in index_text
+    assert "script-src 'self';" in nginx_conf
+
+
 def test_service_worker_precaches_offline_stylesheet() -> None:
     sw = (FRONTEND / "sw.js").read_text(encoding="utf-8")
     assert '"/offline.css"' in sw
