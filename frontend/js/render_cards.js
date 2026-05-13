@@ -10,12 +10,15 @@ function createRenderCards(context) {
         actions,
         hasTelegramInitData,
         safeRender: safeRender,
-        // OPUS-13 wave 73: ``createVirtualList`` is injected via
-        // context because after the split this file runs as a lazy
-        // <script> that doesn't share scope with the bundle IIFE.
-        // ``createRenderCardBuilders`` ships in the same lazy chunk,
-        // so global-scope resolution still works for it.
+        // OPUS-13 wave 73/74: ``createVirtualList`` + dom_helpers
+        // callables ride through context because after the split
+        // this file runs as a lazy <script> that doesn't share
+        // scope with the bundle IIFE. ``createRenderCardBuilders``
+        // ships in the same lazy chunk, so global-scope resolution
+        // still works for it.
         createVirtualList,
+        domEl,
+        domClear,
     } = context;
     const builders = createRenderCardBuilders(context);
     const {

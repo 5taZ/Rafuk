@@ -67,6 +67,27 @@ function createAppRenderers(baseContext) {
     // virtual-list threshold.
     context.createVirtualList = createVirtualList;
 
+    // OPUS-13 wave 74: every dom_helpers / app_core helper a lazy
+    // render/api chunk might reach for at runtime. The bundle IIFE
+    // hides these from the global scope, so lazy <script>s can't
+    // resolve them by bare name — expose them on context and rely
+    // on each lazy factory to destructure what it uses. Wave 73
+    // covered only ``createVirtualList``; the rest (``domClear``,
+    // ``domEl``, ``domFragment``, ``openModalAnimated``,
+    // ``closeModalAnimated``, ``bindRovingTablist``,
+    // ``_prefersReducedMotion``) surfaced as ``ReferenceError: X is
+    // not defined`` the first time a tab opened in production.
+    context.domEl = domEl;
+    context.domClear = domClear;
+    context.domFragment = domFragment;
+    context.openModalAnimated = openModalAnimated;
+    context.closeModalAnimated = closeModalAnimated;
+    context.bindRovingTablist = bindRovingTablist;
+    context._prefersReducedMotion = _prefersReducedMotion;
+    context.attachLongPress = attachLongPress;
+    context.attachPinchZoom = attachPinchZoom;
+    context.makeSwipeable = makeSwipeable;
+
     const cards = createRenderCards(context);
     const views = createRenderViews(context);
     const modals = createRenderModals(context);

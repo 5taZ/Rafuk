@@ -12,6 +12,12 @@ function createRenderCardBuilders(context) {
         safeUrl: safeUrl,
         optimizedImage,
         escapeHtml,
+        // OPUS-13 wave 74: dom_helpers ride through context because
+        // this file loads as a lazy <script> inside _lazy_cards_stub
+        // and can't see bundle-IIFE-scoped callables.
+        domEl,
+        domFragment,
+        attachLongPress,
     } = context;
 
     /**

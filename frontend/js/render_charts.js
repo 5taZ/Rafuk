@@ -52,6 +52,12 @@ function createRenderCharts(context) {
         safeUrl: safeUrl,
         optimizedImage,
         safeRender: safeRender,
+        // OPUS-13 wave 74: dom_helpers ride through context because
+        // this file loads as a lazy <script> in _lazy_charts_stub
+        // and can't see bundle-IIFE-scoped callables.
+        domEl,
+        domClear,
+        domFragment,
     } = context;
 
     /* ===== Chart lifecycle ===== */

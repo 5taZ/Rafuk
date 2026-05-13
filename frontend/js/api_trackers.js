@@ -21,6 +21,12 @@ function createApiTrackers(context) {
         postJson,
         deleteJson,
         requestJson,
+        // OPUS-13 wave 74: dom_helpers ride through context because
+        // this file loads as a lazy <script> in _lazy_trackers_stub
+        // and can't see bundle-IIFE-scoped callables.
+        domEl,
+        openModalAnimated,
+        closeModalAnimated,
     } = context;
 
     // ── Auto-refresh state ───────────────────────────────────────────────

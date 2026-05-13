@@ -17,6 +17,13 @@ function createRenderModals(context) {
         optimizedImage,
         safeRender: safeRender,
         escapeHtml,
+        // OPUS-13 wave 74: dom_helpers ride through context because
+        // this file loads as a lazy <script> in _lazy_deals_stub and
+        // can't see bundle-IIFE-scoped callables.
+        domClear,
+        openModalAnimated,
+        closeModalAnimated,
+        attachPinchZoom,
     } = context;
 
     function buildDetailField(label, value) {

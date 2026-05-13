@@ -171,6 +171,74 @@ def test_cards_split_uses_lazy_stub_in_bundle() -> None:
     )
 
 
+def test_lazy_modules_destructure_dom_helpers_from_context() -> None:
+    """OPUS-13 wave 74: every dom_helpers / dom_helpers-like callable
+    used inside a lazy <script> must be destructured from context.
+
+    The bundle wraps everything in an IIFE, so module-level functions
+    in dom_helpers.js (``domEl``, ``domClear``, ``domFragment``,
+    ``openModalAnimated``, ``closeModalAnimated``, ``attachLongPress``,
+    ``attachPinchZoom``) are scoped to the IIFE and unreachable from
+    a separately-loaded lazy <script>. Wave 74 funnels them through
+    context.
+
+    Without these destructures the production console floods with
+    ``ReferenceError: domClear is not defined`` the moment a tab
+    opens; this test pins each lazy file's destructure block so the
+    regression doesn't sneak back when someone splits a new chunk.
+    """
+    requirements = {
+        "render_trackers.js": ("domEl", "domClear"),
+        "render_cards.js": ("domEl", "domClear"),
+        "render_card_builders.js": ("domEl", "domFragment", "attachLongPress"),
+        "render_modals.js": (
+            "domClear",
+            "openModalAnimated",
+            "closeModalAnimated",
+            "attachPinchZoom",
+        ),
+        "render_charts.js": ("domEl", "domClear", "domFragment"),
+        "api_trackers.js": ("domEl", "openModalAnimated", "closeModalAnimated"),
+    }
+    for filename, helpers in requirements.items():
+        src = (JS_DIR / filename).read_text(encoding="utf-8")
+        # destructure block sits between ``function create.*(context) {``
+        # and the next ``} = context;``. Pin each helper inside it.
+        match = re.search(
+            r"function\s+create\w+\s*\(context\)\s*\{\s*const\s*\{([^}]+)\}\s*=\s*context;",
+            src,
+        )
+        assert match is not None, f"{filename}: no destructure block found"
+        block = match.group(1)
+        for helper in helpers:
+            assert re.search(rf"\b{helper}\b", block), (
+                f"{filename}: must destructure ``{helper}`` from context "
+                f"(otherwise ReferenceError when lazy-loaded)"
+            )
+
+    # The supplier side: app_renderers.js + app_actions.js must put
+    # those helpers on context BEFORE the lazy factory is invoked.
+    app_renderers = (JS_DIR / "app_renderers.js").read_text(encoding="utf-8")
+    for fn in (
+        "domEl",
+        "domClear",
+        "domFragment",
+        "openModalAnimated",
+        "closeModalAnimated",
+        "attachLongPress",
+        "attachPinchZoom",
+    ):
+        assert f"context.{fn} = {fn};" in app_renderers, (
+            f"app_renderers.js must expose ``{fn}`` on context"
+        )
+
+    app_actions = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    for fn in ("domEl", "openModalAnimated", "closeModalAnimated"):
+        assert f"context.{fn} = {fn};" in app_actions, (
+            f"app_actions.js must expose ``{fn}`` on context for lazy api_*"
+        )
+
+
 def test_charts_split_uses_lazy_stub_in_bundle() -> None:
     """OPUS-13 wave 72: render_charts.js ships as
     ``_lazy_charts_stub.js`` and is loaded on demand the first

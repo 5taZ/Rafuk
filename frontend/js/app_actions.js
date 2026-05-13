@@ -10,6 +10,20 @@
 
 function createAppActions(baseContext) {
     const context = { ...baseContext };
+    // OPUS-13 wave 74: api_trackers / api_leads / api_watchlist ship as
+    // lazy <script>s after waves 70-71 and no longer share the bundle
+    // IIFE scope. dom_helpers / dom_helpers-like callables that the
+    // bundle keeps as free functions (``domEl``, ``openModalAnimated``,
+    // ``closeModalAnimated``) must ride through context so lazy api
+    // factories can destructure them instead of triggering a
+    // ReferenceError when a modal opens.
+    context.domEl = domEl;
+    context.domClear = domClear;
+    context.domFragment = domFragment;
+    context.openModalAnimated = openModalAnimated;
+    context.closeModalAnimated = closeModalAnimated;
+    context.bindRovingTablist = bindRovingTablist;
+    context._prefersReducedMotion = _prefersReducedMotion;
     const {
         state,
         elements,
@@ -164,10 +178,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260513-bafb549"),
-            context._loadScript("js/api_ai_render.js?v=20260513-bafb549"),
-            context._loadScript("js/api_ai.js?v=20260513-bafb549"),
-            context._loadScript("js/api_listing_assistant.js?v=20260513-bafb549"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-7efae7c"),
+            context._loadScript("js/api_ai_render.js?v=20260513-7efae7c"),
+            context._loadScript("js/api_ai.js?v=20260513-7efae7c"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-7efae7c"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

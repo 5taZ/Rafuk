@@ -20,13 +20,16 @@ function createRenderTrackers(context) {
         safeUrl: safeUrl,
         optimizedImage,
         safeRender: safeRender,
-        // OPUS-13 wave 73: ``createVirtualList`` is injected through
-        // context by app_renderers.js so this lazy-loaded module
-        // doesn't have to reach outside its scope for it. Before the
-        // fix it relied on a bundle-IIFE-local symbol that the lazy
-        // <script> couldn't see — ReferenceError on first tracker
-        // list render past the virtual-list threshold.
+        // OPUS-13 wave 73/74: dom_helpers / virtual_list callables
+        // ride through context because this file loads as a lazy
+        // <script> and no longer shares the bundle IIFE scope. Bare
+        // references produced ``ReferenceError: domClear is not
+        // defined`` / ``createVirtualList is not defined`` the first
+        // time the trackers list painted past the virtual-list
+        // threshold.
         createVirtualList,
+        domEl,
+        domClear,
     } = context;
 
     // FE-05 / Wave 29: emoji-prefixed labels need a tiny shim so screen
