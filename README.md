@@ -131,6 +131,8 @@ whether the timeout/lock TTL needs tuning.
   agent).
 * [`docs/BACKUP_RUNBOOK.md`](./docs/BACKUP_RUNBOOK.md) — PostgreSQL
   backup, freshness-check, and restore-drill procedure.
+* [`docs/MONITORING_RUNBOOK.md`](./docs/MONITORING_RUNBOOK.md) —
+  health-check, metrics, and alerting checklist.
 * [`CHANGELOG.md`](./CHANGELOG.md) — wave-by-wave fix log with audit
   IDs.
 * [`docs/`](./docs/) — additional design notes and runbooks.
