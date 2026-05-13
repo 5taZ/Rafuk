@@ -361,13 +361,16 @@ class TrackerEventRead(BaseModel):
 
 class LeadCreate(BaseModel):
     query: str = Field(min_length=1, max_length=255)
-    ad_id: int
+    # OPUS-4: ad_id is a Kufar listing identifier — always positive.
+    # ``ge=1`` rejects 0 / negatives at the schema layer instead of
+    # letting them reach the DB and surface as a 500 / Integrity.
+    ad_id: int = Field(ge=1)
     title: str = Field(max_length=255)
     link: str = Field(max_length=2048)
-    price_byn: float | None = None
-    thumbnail: str | None = None
-    target_resale_byn: float | None = None
-    market_median_byn: float | None = None
+    price_byn: float | None = Field(default=None, ge=0)
+    thumbnail: str | None = Field(default=None, max_length=512)
+    target_resale_byn: float | None = Field(default=None, ge=0)
+    market_median_byn: float | None = Field(default=None, ge=0)
     notes: str | None = Field(default=None, max_length=512)
     status: LeadStatusEnum = LeadStatusEnum.new
     source: str = Field(default="manual", max_length=32)
@@ -376,9 +379,9 @@ class LeadCreate(BaseModel):
 class LeadUpdate(BaseModel):
     version: int | None = Field(default=None, ge=1)
     status: LeadStatusEnum | None = None
-    target_resale_byn: float | None = None
-    buy_price_byn: float | None = None
-    sold_price_byn: float | None = None
+    target_resale_byn: float | None = Field(default=None, ge=0)
+    buy_price_byn: float | None = Field(default=None, ge=0)
+    sold_price_byn: float | None = Field(default=None, ge=0)
     notes: str | None = Field(default=None, max_length=512)
 
 
@@ -419,13 +422,17 @@ class LeadRead(BaseModel):
 
 
 class WatchlistCreate(BaseModel):
-    query: str
-    ad_id: int
-    title: str
-    link: str
-    thumbnail: str | None = None
-    price_byn: float | None = None
-    market_median_byn: float | None = None
+    # OPUS-4: bring watchlist input under the same validation contract
+    # as LeadCreate. Without these caps a malicious payload (or a
+    # broken client) reaches the DB and trips a 500/Integrity instead
+    # of the intended 422.
+    query: str = Field(min_length=1, max_length=255)
+    ad_id: int = Field(ge=1)
+    title: str = Field(max_length=255)
+    link: str = Field(max_length=2048)
+    thumbnail: str | None = Field(default=None, max_length=512)
+    price_byn: float | None = Field(default=None, ge=0)
+    market_median_byn: float | None = Field(default=None, ge=0)
     notes: str | None = Field(default=None, max_length=512)
 
 
@@ -599,7 +606,8 @@ class AccountDeletionConfirmation(BaseModel):
 
 
 class AIAnalysisRequest(BaseModel):
-    ad_id: int
+    # OPUS-4: positive Kufar ad_id only.
+    ad_id: int = Field(ge=1)
     query: str = Field(min_length=1, max_length=200)
     category: int | None = None
 
@@ -675,7 +683,8 @@ class AIPhotoAuthenticity(BaseModel):
 class AINegotiateRequest(BaseModel):
     """Buyer negotiation request — generate counter-offer text."""
 
-    ad_id: int
+    # OPUS-4: positive Kufar ad_id only.
+    ad_id: int = Field(ge=1)
     asking_price_byn: float = Field(gt=0)
     my_offer_byn: float = Field(gt=0)
     query: str = Field(min_length=1, max_length=200)

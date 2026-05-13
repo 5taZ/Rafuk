@@ -6,6 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from api.schemas import (
+    AIAnalysisRequest,
+    AINegotiateRequest,
+    LeadCreate,
     LeadUpdate,
     TrackerCreate,
     TrackerUpdate,
@@ -72,6 +75,88 @@ def test_lead_and_watchlist_notes_are_bounded() -> None:
         )
     with pytest.raises(ValidationError):
         WatchlistUpdate(notes=oversized)
+
+
+# OPUS-4: ad_id and money fields must be rejected at the schema layer
+# instead of bubbling up as 500/Integrity from the DB.
+
+_VALID_LEAD_BASE = {
+    "query": "iphone",
+    "ad_id": 1,
+    "title": "iPhone",
+    "link": "https://www.kufar.by/item/1",
+}
+_VALID_WATCHLIST_BASE = {
+    "query": "iphone",
+    "ad_id": 1,
+    "title": "iPhone",
+    "link": "https://www.kufar.by/item/1",
+}
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ad_id", 0),
+        ("ad_id", -1),
+        ("price_byn", -1),
+        ("target_resale_byn", -0.01),
+        ("market_median_byn", -5),
+        ("title", "x" * 256),
+        ("thumbnail", "x" * 513),
+    ],
+)
+def test_lead_create_rejects_out_of_contract_inputs(field: str, value: object) -> None:
+    payload = {**_VALID_LEAD_BASE, field: value}
+    with pytest.raises(ValidationError):
+        LeadCreate(**payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("buy_price_byn", -1),
+        ("sold_price_byn", -0.5),
+        ("target_resale_byn", -0.01),
+    ],
+)
+def test_lead_update_rejects_negative_money(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        LeadUpdate(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ad_id", 0),
+        ("ad_id", -1),
+        ("query", ""),
+        ("query", "x" * 256),
+        ("title", "x" * 256),
+        ("link", "x" * 2049),
+        ("price_byn", -1),
+        ("market_median_byn", -1),
+        ("thumbnail", "x" * 513),
+    ],
+)
+def test_watchlist_create_rejects_out_of_contract_inputs(field: str, value: object) -> None:
+    payload = {**_VALID_WATCHLIST_BASE, field: value}
+    with pytest.raises(ValidationError):
+        WatchlistCreate(**payload)
+
+
+def test_ai_requests_reject_non_positive_ad_id() -> None:
+    with pytest.raises(ValidationError):
+        AIAnalysisRequest(ad_id=0, query="x")
+    with pytest.raises(ValidationError):
+        AIAnalysisRequest(ad_id=-1, query="x")
+    with pytest.raises(ValidationError):
+        AINegotiateRequest(
+            ad_id=0,
+            asking_price_byn=100,
+            my_offer_byn=80,
+            query="x",
+        )
 
 
 def test_watchlist_read_price_history_uses_distinct_lists() -> None:
