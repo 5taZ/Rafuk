@@ -18,20 +18,35 @@ fi
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
 
-# Parse postgresql[+driver]://user:pass@host[:port]/dbname[?params]
-# NOTE: percent-encoded chars in user/password are NOT decoded; if your
-# password contains '@', ':', or '/', escape it before setting DATABASE_URL,
-# or rotate it to a safe value.
-if [[ ! "$DATABASE_URL" =~ ^postgresql(\+[^:]+)?://([^:]+):([^@]+)@([^:/]+):?([0-9]*)/(.+)$ ]]; then
-    echo "Cannot parse DATABASE_URL" >&2
-    exit 1
-fi
+eval "$(
+    python3 - <<'PY'
+import os
+import shlex
+import sys
+from urllib.parse import unquote, urlsplit
 
-PGUSER_VAL="${BASH_REMATCH[2]}"
-PGPASSWORD_VAL="${BASH_REMATCH[3]}"
-PGHOST_VAL="${BASH_REMATCH[4]}"
-PGPORT_VAL="${BASH_REMATCH[5]:-5432}"
-PGDATABASE_VAL="${BASH_REMATCH[6]%%\?*}"  # strip optional ?query params
+url = os.environ["DATABASE_URL"]
+try:
+    parsed = urlsplit(url)
+    if parsed.scheme != "postgresql" and not parsed.scheme.startswith("postgresql+"):
+        raise ValueError("scheme must be postgresql or postgresql+driver")
+    if not parsed.username or parsed.password is None or not parsed.hostname or parsed.path in ("", "/"):
+        raise ValueError("user, password, host, and database are required")
+    values = {
+        "PGUSER_VAL": unquote(parsed.username),
+        "PGPASSWORD_VAL": unquote(parsed.password),
+        "PGHOST_VAL": parsed.hostname,
+        "PGPORT_VAL": str(parsed.port or 5432),
+        "PGDATABASE_VAL": unquote(parsed.path.lstrip("/")),
+    }
+except Exception as exc:
+    print(f"Cannot parse DATABASE_URL: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+for key, value in values.items():
+    print(f"{key}={shlex.quote(value)}")
+PY
+)"
 
 mkdir -p "$BACKUP_DIR"
 FILENAME="$BACKUP_DIR/kufar_$(date +%Y%m%d_%H%M%S).dump"
