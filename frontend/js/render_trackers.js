@@ -468,7 +468,7 @@ function createRenderTrackers(context) {
                 hint = "Переключитесь на «Все», чтобы увидеть остальные сигналы.";
             }
             if (typeof buildEmpty === "function") {
-                container.appendChild(buildEmpty({ icon: "events", title, hint }));
+                container.appendChild(buildEmpty({ title, hint }));
             } else {
                 const note = document.createElement("p");
                 note.className = "tracker-event-empty";

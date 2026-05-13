@@ -2177,57 +2177,24 @@ function createRenderCore(context) {
 
     /* ===== Empty state ===== */
 
-    // Tiny SVG icon set for the rich empty states. Picked stroke-only
-    // shapes that follow the same Lucide-ish line-weight as the tab
-    // icons so the language stays consistent across the app.
-    const _EMPTY_STATE_ICONS = {
-        watchlist:
-            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
-        leads:
-            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/><polyline points="9 11 12 8 15 11"/><line x1="12" y1="2" x2="12" y2="14"/></svg>',
-        trackers:
-            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h8"/><path d="M4 12h6"/><path d="M4 17h8"/><path d="M16 8l4 4-4 4"/><path d="M13 12h7"/></svg>',
-        events:
-            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h3l2-5 4 10 3-7 2 2h2"/><path d="M4 19h16"/></svg>',
-        search:
-            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
-        deals:
-            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
-        listings:
-            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
-    };
-
     /**
-     * Build a richer empty state — icon, title, hint, optional CTA —
+     * Build a richer empty state — title, hint, optional CTA —
      * for surfaces where a single dashed paragraph (.tracker-empty)
      * felt under-served. Returns a freshly-built DOM node ready to
      * appendChild into the section's container.
      *
      * @param {object} opts
-     * @param {string} opts.icon         Key into _EMPTY_STATE_ICONS, or
-     *                                   raw HTML to embed.
      * @param {string} opts.title        First line, bold.
      * @param {string} [opts.hint]       Second line, muted.
      * @param {string} [opts.actionLabel] CTA button label.
      * @param {Function} [opts.onAction] CTA click handler.
      */
     function buildEmptyState(opts) {
-        const { icon, title, hint, actionLabel, onAction } = opts || {};
-        const iconHtml = _EMPTY_STATE_ICONS[icon] || "";
+        const { title, hint, actionLabel, onAction } = opts || {};
         const wrap = domEl("div", {
             className: "empty-state",
             attrs: { role: "status" },
         });
-        if (iconHtml) {
-            const iconBox = document.createElement("div");
-            iconBox.className = "empty-state-icon";
-            const parsed = new DOMParser().parseFromString(iconHtml, "image/svg+xml");
-            const svg = parsed.querySelector("svg");
-            if (svg && !parsed.querySelector("parsererror")) {
-                iconBox.appendChild(svg);
-            }
-            wrap.appendChild(iconBox);
-        }
         if (title) {
             wrap.appendChild(
                 domEl("p", { className: "empty-state-title", text: title }),
@@ -3792,7 +3759,6 @@ function createRenderCards(context) {
                 if (typeof buildEmpty === "function") {
                     container.appendChild(
                         buildEmpty({
-                            icon: "listings",
                             title: "Ничего не найдено",
                             hint: emptyText || "Попробуйте изменить запрос или снять фильтры.",
                         })
@@ -4023,7 +3989,6 @@ function createRenderCards(context) {
         }
         if (filter === "watching") {
             return buildEmpty({
-                icon: "watchlist",
                 title: "Здесь будут отслеживаемые лоты",
                 hint: "Сохрани объявление через «В избранное», и сюда придут уведомления о смене цены и снятии с продажи.",
             });
@@ -4230,7 +4195,6 @@ function createRenderCards(context) {
                 if (state.watchlist.items.length) {
                     container.appendChild(
                         buildEmpty({
-                            icon: "watchlist",
                             title: "По этому фильтру ничего нет",
                             hint: "Попробуйте переключиться на «Все», чтобы увидеть весь список.",
                         })
@@ -4238,7 +4202,6 @@ function createRenderCards(context) {
                 } else {
                     container.appendChild(
                         buildEmpty({
-                            icon: "watchlist",
                             title: "Здесь будут ваши избранные лоты",
                             hint: "Нажмите «В избранное» в карточке объявления, чтобы следить за ценой и снятием с продажи.",
                             actionLabel: "Найти объявления",
@@ -6042,7 +6005,7 @@ function createRenderTrackers(context) {
                 hint = "Переключитесь на «Все», чтобы увидеть остальные сигналы.";
             }
             if (typeof buildEmpty === "function") {
-                container.appendChild(buildEmpty({ icon: "events", title, hint }));
+                container.appendChild(buildEmpty({ title, hint }));
             } else {
                 const note = document.createElement("p");
                 note.className = "tracker-event-empty";
@@ -9735,10 +9698,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260513-0e2c580"),
-            context._loadScript("js/api_ai_render.js?v=20260513-0e2c580"),
-            context._loadScript("js/api_ai.js?v=20260513-0e2c580"),
-            context._loadScript("js/api_listing_assistant.js?v=20260513-0e2c580"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-37f4568"),
+            context._loadScript("js/api_ai_render.js?v=20260513-37f4568"),
+            context._loadScript("js/api_ai.js?v=20260513-37f4568"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-37f4568"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

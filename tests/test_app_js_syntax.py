@@ -510,6 +510,20 @@ def test_tracker_empty_state_has_no_icon_box() -> None:
     assert "icon:" not in empty_block
 
 
+def test_empty_states_do_not_render_decorative_icon_boxes() -> None:
+    render_core_js = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+    render_cards_js = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
+    render_trackers_js = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
+    layout_css = (CSS_DIR / "parts" / "layout.css").read_text(encoding="utf-8")
+
+    assert "_EMPTY_STATE_ICONS" not in render_core_js
+    assert "empty-state-icon" not in render_core_js
+    assert "empty-state-icon" not in layout_css
+    assert 'icon: "listings"' not in render_cards_js
+    assert 'icon: "watchlist"' not in render_cards_js
+    assert 'icon: "events"' not in render_trackers_js
+
+
 def test_lead_and_watchlist_mutations_have_inflight_guard() -> None:
     """A double-click on "В покупки" / "В избранное" used to fire two
     POST /api/v1/leads or /api/v1/watchlist round-trips because state

@@ -165,7 +165,6 @@ function createRenderCards(context) {
                 if (typeof buildEmpty === "function") {
                     container.appendChild(
                         buildEmpty({
-                            icon: "listings",
                             title: "Ничего не найдено",
                             hint: emptyText || "Попробуйте изменить запрос или снять фильтры.",
                         })
@@ -396,7 +395,6 @@ function createRenderCards(context) {
         }
         if (filter === "watching") {
             return buildEmpty({
-                icon: "watchlist",
                 title: "Здесь будут отслеживаемые лоты",
                 hint: "Сохрани объявление через «В избранное», и сюда придут уведомления о смене цены и снятии с продажи.",
             });
@@ -603,7 +601,6 @@ function createRenderCards(context) {
                 if (state.watchlist.items.length) {
                     container.appendChild(
                         buildEmpty({
-                            icon: "watchlist",
                             title: "По этому фильтру ничего нет",
                             hint: "Попробуйте переключиться на «Все», чтобы увидеть весь список.",
                         })
@@ -611,7 +608,6 @@ function createRenderCards(context) {
                 } else {
                     container.appendChild(
                         buildEmpty({
-                            icon: "watchlist",
                             title: "Здесь будут ваши избранные лоты",
                             hint: "Нажмите «В избранное» в карточке объявления, чтобы следить за ценой и снятием с продажи.",
                             actionLabel: "Найти объявления",
