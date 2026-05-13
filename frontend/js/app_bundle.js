@@ -9772,10 +9772,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260513-0c5bb72"),
-            context._loadScript("js/api_ai_render.js?v=20260513-0c5bb72"),
-            context._loadScript("js/api_ai.js?v=20260513-0c5bb72"),
-            context._loadScript("js/api_listing_assistant.js?v=20260513-0c5bb72"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-abe0659"),
+            context._loadScript("js/api_ai_render.js?v=20260513-abe0659"),
+            context._loadScript("js/api_ai.js?v=20260513-abe0659"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-abe0659"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -10216,6 +10216,14 @@ function createAppActions(baseContext) {
         function onCancel() {
             cleanup();
             modal.hidden = true;
+            // FE-08: Cancel used to be a silent close — the user
+            // would tap "Отмена" and nothing visible happened, then
+            // every AI button quietly no-op'd because the rejection
+            // bubbles back as a swallowed `consent_denied`. Emit a
+            // toast so the dismissal is acknowledged and the user
+            // knows AI features stay locked until they reopen the
+            // gate (any AI action will re-show this modal).
+            showToast("AI-функции отключены — требуется согласие на обработку данных", "info", 3200);
             reject(new Error("consent_denied"));
         }
 

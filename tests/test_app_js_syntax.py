@@ -577,6 +577,34 @@ def test_lead_and_watchlist_mutations_resolve_versions_before_patch() -> None:
     assert "Данные устарели" in core_js
 
 
+def test_consent_modal_cancel_emits_toast() -> None:
+    """FE-08: tapping "Отмена" on the AI consent modal used to be a
+    silent close — the rejection bubbled back as a swallowed
+    `consent_denied` and the user got zero feedback that AI features
+    were now blocked. The Cancel handler must call ``showToast`` with
+    a message about consent so the dismissal is acknowledged before
+    the promise rejects."""
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+
+    # Locate the function the Cancel button is wired to.
+    on_cancel_match = re.search(
+        r"function onCancel\(\)\s*\{(?P<body>[^}]+)\}",
+        actions_js,
+        re.DOTALL,
+    )
+    assert on_cancel_match, "onCancel() not found in app_actions.js"
+    body = on_cancel_match.group("body")
+    # Must hide the modal AND inform the user before rejecting.
+    assert "modal.hidden = true" in body
+    assert "showToast(" in body, (
+        "onCancel must show a toast when the user dismisses the consent gate"
+    )
+    assert "AI" in body or "согласие" in body.lower(), (
+        "the toast text should mention AI/consent so the user knows why"
+    )
+    assert 'reject(new Error("consent_denied"))' in body
+
+
 def test_collection_actions_only_show_final_toasts() -> None:
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
     watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
