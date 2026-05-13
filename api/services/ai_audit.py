@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from api.metrics import observe_ai_audit_failure
 from api.models import AIAuditLog
 from api.services.workflow_store import resolve_user_id
 
@@ -63,4 +64,5 @@ async def _log_ai_audit(
             session.add(entry)
             await session.commit()
     except Exception:
+        observe_ai_audit_failure(endpoint=endpoint)
         logger.warning("Failed to write AI audit log", exc_info=True)

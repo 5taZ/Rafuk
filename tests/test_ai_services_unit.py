@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import select
 
 from api.database import get_engine, get_session_factory
+from api.metrics import _reset_metrics_for_tests, render_prometheus_metrics
 from api.models import AIAuditLog, Base, User
 from api.services import ai_shadow_store
 from api.services.ai_audit import _log_ai_audit
@@ -123,6 +124,7 @@ async def test_log_ai_audit_swallows_session_errors(caplog) -> None:
     by the time we get here)."""
     import logging as _logging
 
+    _reset_metrics_for_tests()
     caplog.set_level(_logging.WARNING)
 
     def broken_factory():
@@ -139,6 +141,7 @@ async def test_log_ai_audit_swallows_session_errors(caplog) -> None:
         "Failed to write AI audit log" in record.message
         for record in caplog.records
     )
+    assert 'kufar_ai_audit_failures_total{endpoint="analyze"} 1' in render_prometheus_metrics()
 
 
 # ──────────────────────────────────────────────────────────────────────

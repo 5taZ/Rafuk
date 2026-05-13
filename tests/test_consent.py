@@ -273,6 +273,61 @@ async def test_delete_account(client):
 
 
 @pytest.mark.asyncio
+async def test_delete_account_removes_orphan_notification_dlq_rows(client):
+    await client.post(
+        "/api/v1/account/consent",
+        json={"consent_type": "pd_processing", "version": "2026.2"},
+    )
+    from sqlalchemy import select
+
+    from api.main import app
+    from api.models import TelegramNotificationDLQ, User
+
+    other_telegram_id = 555666
+    async with app.state.session_factory() as session:
+        user = (
+            await session.execute(
+                select(User).where(User.telegram_user_id == _fake_telegram_user().user_id)
+            )
+        ).scalar_one()
+        session.add_all([
+            TelegramNotificationDLQ(
+                user_id=None,
+                telegram_user_id=user.telegram_user_id,
+                source="orphan",
+                message="orphaned failed notification",
+                error_kind="retryable",
+            ),
+            TelegramNotificationDLQ(
+                user_id=user.id,
+                telegram_user_id=user.telegram_user_id,
+                source="linked",
+                message="linked failed notification",
+                error_kind="retryable",
+            ),
+            TelegramNotificationDLQ(
+                user_id=None,
+                telegram_user_id=other_telegram_id,
+                source="other",
+                message="other user's failed notification",
+                error_kind="retryable",
+            ),
+        ])
+        await session.commit()
+
+    resp = await client.request(
+        "DELETE",
+        "/api/v1/account",
+        json={"confirmation": "consenttest"},
+    )
+    assert resp.status_code == 204
+
+    async with app.state.session_factory() as session:
+        rows = (await session.execute(select(TelegramNotificationDLQ))).scalars().all()
+    assert [row.telegram_user_id for row in rows] == [other_telegram_id]
+
+
+@pytest.mark.asyncio
 async def test_delete_account_requires_confirmation(client):
     """BE-M3: DELETE /account without a confirmation body returns 422
     (Pydantic missing-field) — a stray click on the confirm button or

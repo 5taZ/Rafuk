@@ -20,6 +20,7 @@ _duration_count: Counter[tuple[str, str]] = Counter()
 _query_dataset_events: Counter[str] = Counter()
 _query_dataset_fetch_duration_sum: defaultdict[str, float] = defaultdict(float)
 _query_dataset_fetch_duration_count: Counter[str] = Counter()
+_ai_audit_failures: Counter[str] = Counter()
 _PROCESS_PID = os.getpid()
 _PROCESS_START_TIME_SECONDS = time.time()
 
@@ -164,6 +165,16 @@ async def observe_query_dataset_upstream_fetch_with_backend(
     )
 
 
+def observe_ai_audit_failure(*, endpoint: str) -> None:
+    with _lock:
+        _ai_audit_failures[endpoint or "unknown"] += 1
+
+
+def _local_ai_audit_failures() -> list[tuple[str, int]]:
+    with _lock:
+        return sorted(_ai_audit_failures.items())
+
+
 def _local_snapshot() -> dict[str, list[tuple[Any, Any]]]:
     with _lock:
         return {
@@ -173,6 +184,7 @@ def _local_snapshot() -> dict[str, list[tuple[Any, Any]]]:
             "dataset_events": sorted(_query_dataset_events.items()),
             "dataset_fetch_sum": sorted(_query_dataset_fetch_duration_sum.items()),
             "dataset_fetch_count": sorted(_query_dataset_fetch_duration_count.items()),
+            "ai_audit_failures": sorted(_ai_audit_failures.items()),
         }
 
 
@@ -240,6 +252,12 @@ def _render_prometheus_snapshot(
             f'status="{_label(status)}"'
             f"}} {value}"
         )
+    lines.extend([
+        "# HELP kufar_ai_audit_failures_total Failed best-effort AI audit-log writes.",
+        "# TYPE kufar_ai_audit_failures_total counter",
+    ])
+    for endpoint, value in snapshot["ai_audit_failures"]:
+        lines.append(f'kufar_ai_audit_failures_total{{endpoint="{_label(endpoint)}"}} {value}')
     return "\n".join(lines) + "\n"
 
 
@@ -259,6 +277,7 @@ async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]]
         "dataset_fetch_count": await _redis_hgetall(
             cache, "metrics:v1:query_dataset_fetch_duration_count"
         ),
+        "ai_audit_failures": {},
     }
     if any(value is None for value in hashes.values()):
         return None
@@ -270,6 +289,7 @@ async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]]
         "dataset_events": [],
         "dataset_fetch_sum": [],
         "dataset_fetch_count": [],
+        "ai_audit_failures": _local_ai_audit_failures(),
     }
     for field, value in hashes["requests"].items():
         parsed = _parse_field(field, 3)
@@ -325,3 +345,4 @@ def _reset_metrics_for_tests() -> None:
         _query_dataset_events.clear()
         _query_dataset_fetch_duration_sum.clear()
         _query_dataset_fetch_duration_count.clear()
+        _ai_audit_failures.clear()

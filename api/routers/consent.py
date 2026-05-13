@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -301,14 +301,18 @@ async def delete_account(
         # Find the internal user id
         stmt = select(User).where(User.telegram_user_id == _user.user_id)
         user = (await session.execute(stmt)).scalar_one_or_none()
-        if not user:
-            return  # Already gone
+        if user:
+            # Save id before deletion — object becomes detached after commit
+            user_internal_id = user.id
 
-        # Save id before deletion — object becomes detached after commit
-        user_internal_id = user.id
+        dlq_conditions = [TelegramNotificationDLQ.telegram_user_id == _user.user_id]
+        if user_internal_id is not None:
+            dlq_conditions.append(TelegramNotificationDLQ.user_id == user_internal_id)
+        await session.execute(delete(TelegramNotificationDLQ).where(or_(*dlq_conditions)))
 
-        # Cascade deletes happen via ORM relationships + DB ON DELETE CASCADE
-        await session.delete(user)
+        if user:
+            # Cascade deletes happen via ORM relationships + DB ON DELETE CASCADE
+            await session.delete(user)
         await session.commit()
 
     # BE-C6: Redis cleanup is owned end-to-end by clear_user_ai_data
@@ -330,7 +334,7 @@ async def delete_account(
             exc_info=True,
         )
 
-    logger.info("User %d (telegram_id=%d) deleted their account", user_internal_id, _user.user_id)
+    logger.info("User %s (telegram_id=%d) deleted their account", user_internal_id, _user.user_id)
 
 
 @router.get("/export")
