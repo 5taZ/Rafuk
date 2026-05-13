@@ -26,6 +26,7 @@ modules=(
   _lazy_cards_stub.js
   app_renderers.js
   api_core.js
+  api_image_proxy.js
   api_listings.js
   api_events.js
   app_actions.js

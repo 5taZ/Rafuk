@@ -185,7 +185,7 @@ Verification:
 
 ### Wave 7 — MAINT-SPLIT: targeted monolith reduction
 
-Status: pending
+Status: completed
 
 Problem:
 
@@ -201,6 +201,13 @@ Deliverables:
 - If no safe scoped split remains after waves 2-6, mark this as deferred with the
   exact candidate files and rationale in this file rather than performing a risky
   cosmetic split.
+
+Resolution:
+
+- Extracted the authenticated image-proxy blob URL cache/cleanup seam from
+  `frontend/js/app_actions.js` into `frontend/js/api_image_proxy.js`; broader
+  scheduler/AI/CSS splits are deferred because they were not directly touched by
+  the preceding remediation waves and would be cosmetic/risky here.
 
 Verification:
 

@@ -432,16 +432,20 @@ for (const [label, actual, expected] of cases) assertEq(actual, expected, label)
 def test_frontend_image_proxy_policy_is_explicit() -> None:
     core_js = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    image_proxy_js = (JS_DIR / "api_image_proxy.js").read_text(encoding="utf-8")
     modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
     events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
     cards_js = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+    bundle_script = Path("scripts/build_frontend_bundle.sh").read_text(encoding="utf-8")
 
     assert "Plain <img> tags cannot send Telegram initData" in core_js
-    assert "async function fetchProxyImageObjectUrl" in actions_js
-    assert "...core.telegramHeaders()" in actions_js
-    assert 'Accept: "image/avif,image/webp,image/*,*/*"' in actions_js
-    assert "URL.createObjectURL" in actions_js
-    assert "function clearProxyImageObjectUrls" in actions_js
+    assert "api_image_proxy.js" in bundle_script
+    assert "createImageProxyLoader(core)" in actions_js
+    assert "async function fetchProxyImageObjectUrl" in image_proxy_js
+    assert "...core.telegramHeaders()" in image_proxy_js
+    assert 'Accept: "image/avif,image/webp,image/*,*/*"' in image_proxy_js
+    assert "URL.createObjectURL" in image_proxy_js
+    assert "function clearProxyImageObjectUrls" in image_proxy_js
 
     assert "setDetailMainImage(currentImage, 800" in modals_js
     assert "actions.fetchProxyImageObjectUrl(proxyUrl)" in modals_js
@@ -459,6 +463,7 @@ def test_frontend_image_proxy_policy_is_explicit() -> None:
 
 
 def test_image_proxy_fetch_uses_telegram_headers_and_object_url_cache() -> None:
+    image_proxy_js = (JS_DIR / "api_image_proxy.js").read_text(encoding="utf-8")
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
     harness = (
         r"""
@@ -499,6 +504,7 @@ globalThis.fetch = async (url, options) => {
     return { ok: true, blob: async () => ({}) };
 };
 """
+        + image_proxy_js
         + actions_js
         + r"""
 (async () => {
@@ -1044,6 +1050,12 @@ const createApiTrackers = stubModule;
 const createApiLeads = stubModule;
 const createApiWatchlist = stubModule;
 function createApiEvents() { return { bindEvents: noop }; }
+function createImageProxyLoader() {
+    return {
+        fetchProxyImageObjectUrl: noop,
+        clearProxyImageObjectUrls: noop,
+    };
+}
 const domEl = noop;
 const domClear = noop;
 const domFragment = noop;
