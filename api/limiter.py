@@ -12,7 +12,8 @@ from urllib.parse import urlparse
 
 from fastapi import Request
 from slowapi import Limiter
-from slowapi.util import get_remote_address
+
+from api.services.client_ip import get_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ def _rate_limit_key(request: Request) -> str:
     if init_data is not None:
         return f"tg:{init_data.user_id}"
 
-    return get_remote_address(request)
+    return get_client_ip(request) or "unknown"
 
 
 def _redis_reachable(url: str) -> bool:

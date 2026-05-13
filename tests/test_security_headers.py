@@ -24,3 +24,11 @@ def test_frontend_csp_matches_vendored_telegram_sdk_policy() -> None:
     assert "cdn.jsdelivr.net" not in nginx_conf
     assert "script-src 'self' https://telegram.org" not in index_text
     assert all("https://telegram.org" not in line for line in nginx_csp_lines)
+
+
+def test_nginx_rate_limit_key_trusts_cf_header_only_from_proxy_peer() -> None:
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    assert "geo $trusted_rate_limit_proxy" in nginx_conf
+    assert 'map "$trusted_rate_limit_proxy:$http_cf_connecting_ip" $rate_limit_key' in nginx_conf
+    assert "~^1:(.+)$ $1;" in nginx_conf
+    assert "default $binary_remote_addr;" in nginx_conf

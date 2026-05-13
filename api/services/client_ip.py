@@ -22,6 +22,13 @@ _CLOUDFLARE_IP_RANGES = [
     ipaddress.ip_network("131.0.72.0/22"),
 ]
 
+_TRUSTED_PROXY_IP_RANGES = [
+    *_CLOUDFLARE_IP_RANGES,
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("172.16.0.0/12"),
+]
+
 
 def _is_valid_ip(value: str) -> bool:
     try:
@@ -39,24 +46,32 @@ def _is_cloudflare_ip(ip_str: str) -> bool:
         return False
 
 
+def _is_trusted_proxy_peer(ip_str: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip_str)
+        return any(addr in net for net in _TRUSTED_PROXY_IP_RANGES)
+    except ValueError:
+        return False
+
+
 def get_client_ip(request: Request) -> str | None:
-    """Extract client IP respecting Cloudflare headers.
+    """Extract client IP respecting trusted proxy headers.
 
     Priority:
-    1. CF-Connecting-IP (set by Cloudflare edge).
-    2. X-Forwarded-For last entry — ONLY when the direct peer is a
-       Cloudflare IP. Earlier entries may be client-spoofed.
+    1. CF-Connecting-IP, only when the direct peer is trusted.
+    2. X-Forwarded-For last entry, only when the direct peer is trusted.
     3. request.client.host as fallback.
     """
     client = getattr(request, "client", None)
     client_ip = client.host if client else None
+    trusted_peer = bool(client_ip and _is_trusted_proxy_peer(client_ip))
 
     cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip and _is_valid_ip(cf_ip):
+    if trusted_peer and cf_ip and _is_valid_ip(cf_ip):
         return cf_ip
 
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded and client_ip and _is_cloudflare_ip(client_ip):
+    if forwarded and trusted_peer:
         parts = [p.strip() for p in forwarded.split(",") if p.strip()]
         if parts:
             candidate = parts[-1]

@@ -14,12 +14,17 @@ def _request(headers: dict[str, str] | None = None, client_host: str | None = "1
     return SimpleNamespace(headers=Headers(headers or {}), client=client)
 
 
-def test_client_ip_prefers_valid_cloudflare_connecting_ip() -> None:
+def test_client_ip_prefers_valid_cloudflare_connecting_ip_from_trusted_peer() -> None:
     request = _request(
         {"CF-Connecting-IP": "203.0.113.10", "X-Forwarded-For": "198.51.100.7"},
-        client_host="10.0.0.1",
+        client_host="173.245.48.1",
     )
     assert get_client_ip(request) == "203.0.113.10"
+
+
+def test_client_ip_ignores_cloudflare_connecting_ip_from_untrusted_peer() -> None:
+    request = _request({"CF-Connecting-IP": "203.0.113.10"}, client_host="8.8.8.8")
+    assert get_client_ip(request) == "8.8.8.8"
 
 
 def test_client_ip_uses_x_forwarded_for_from_cloudflare_peer() -> None:
