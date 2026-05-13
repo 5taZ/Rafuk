@@ -5,9 +5,9 @@ classifieds site **[Kufar.by](https://www.kufar.by)** for listings,
 runs analytics and AI-assisted decisioning over them, and surfaces
 "deal-finder" workflows to end users.
 
-> **Status:** active development on the `bad-app` branch. 791 tests
-> green. See [`CHANGELOG.md`](./CHANGELOG.md) for the wave-by-wave
-> security/performance hardening history.
+> **Status:** active development on the `bad-app` branch. 792 tests
+> pass locally, with one skipped. See [`CHANGELOG.md`](./CHANGELOG.md)
+> for the wave-by-wave security/performance hardening history.
 
 ## What it does
 
