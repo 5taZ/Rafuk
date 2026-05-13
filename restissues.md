@@ -33,7 +33,7 @@ next.
 
 | ID | Item | Status | Classification | Next action |
 |----|------|--------|----------------|-------------|
-| REST-OPS-01 | Off-host PostgreSQL backups | Open; script parser hardened in wave87 | Manual-gated | Pick backup target such as S3/R2/Backblaze/remote host; then wire `scripts/backup.sh` to it and document restore drills. |
+| REST-OPS-01 | Off-host PostgreSQL backups | Open; script parser hardened in wave87 and runbook added in wave88 | Manual-gated | Pick backup target such as S3/R2/Backblaze/remote host; then wire `scripts/backup.sh` to it and complete a restore drill. |
 | REST-OPS-02 | Monitoring / uptime alerting | Open | Manual-gated | Pick monitoring provider or self-hosted stack; then add checks for frontend, API readiness, bot, scheduler, and backup freshness. |
 | REST-OPS-03 | Docker image registry publishing | Completed in wave86 | Auto-fixable | CI now pushes SHA and `latest` tags to GHCR after green lint/test/security on `main`. |
 | REST-OPS-04 | Deployment workflow | Open | Manual-gated | Needs deployment target and credentials before adding `deploy.yml`. |

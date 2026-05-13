@@ -5,7 +5,7 @@ classifieds site **[Kufar.by](https://www.kufar.by)** for listings,
 runs analytics and AI-assisted decisioning over them, and surfaces
 "deal-finder" workflows to end users.
 
-> **Status:** active development on the `bad-app` branch. 725 tests
+> **Status:** active development on the `bad-app` branch. 791 tests
 > green. See [`CHANGELOG.md`](./CHANGELOG.md) for the wave-by-wave
 > security/performance hardening history.
 
@@ -80,7 +80,7 @@ Docker volume, so restarts keep your saved searches, trackers, and deals.
 ## Tests
 
 ```bash
-# all 725 tests (uses aiosqlite, ~50s)
+# all tests (uses aiosqlite locally)
 uv run pytest --tb=short
 
 # single file
@@ -129,6 +129,8 @@ whether the timeout/lock TTL needs tuning.
 * [`AGENTS.md`](./AGENTS.md) — conventions, build/test commands,
   project map. Read this if you're working on the codebase (human or
   agent).
+* [`docs/BACKUP_RUNBOOK.md`](./docs/BACKUP_RUNBOOK.md) — PostgreSQL
+  backup, freshness-check, and restore-drill procedure.
 * [`CHANGELOG.md`](./CHANGELOG.md) — wave-by-wave fix log with audit
   IDs.
 * [`docs/`](./docs/) — additional design notes and runbooks.
