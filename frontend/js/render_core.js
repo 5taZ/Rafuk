@@ -102,10 +102,10 @@ function createRenderCore(context) {
     // original JPEG and rely on its native cache. The original is
     // ~25-40 % bigger but parses immediately on Telegram WebView.
     //
-    // ``options.useProxy = true`` opts back into transcoding for
-    // surfaces that legitimately benefit (the listing-detail
-    // gallery, where we serve big photos and the bandwidth
-    // savings outweigh the encode time). Default is pass-through.
+    // ``options.useProxy = true`` returns the authenticated router
+    // URL for header-bearing fetch() callers (listing-detail large
+    // photos). Plain <img> tags cannot send Telegram initData, so
+    // card/list thumbnails stay direct CDN by default.
     function optimizedImage(url, options) {
         const validated = safeImageUrl(url);
         if (!validated) return "";

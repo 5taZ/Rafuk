@@ -831,6 +831,17 @@ function createApiEvents(context) {
                     ? context.safeImageUrl(raw)
                     : "";
                 if (!validated) continue;
+                const proxyUrl = (typeof context.optimizedImage === "function")
+                    ? context.optimizedImage(validated, { width: 800, useProxy: true })
+                    : validated;
+                if (
+                    proxyUrl &&
+                    proxyUrl !== validated &&
+                    typeof context.fetchProxyImageObjectUrl === "function"
+                ) {
+                    void context.fetchProxyImageObjectUrl(proxyUrl).catch(() => {});
+                    continue;
+                }
                 const url = (typeof context.optimizedImage === "function")
                     ? context.optimizedImage(validated, { width: 800 })
                     : validated;

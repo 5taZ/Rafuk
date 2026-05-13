@@ -429,6 +429,116 @@ for (const [label, actual, expected] of cases) assertEq(actual, expected, label)
     assert result.returncode == 0, result.stderr
 
 
+def test_frontend_image_proxy_policy_is_explicit() -> None:
+    core_js = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
+    events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    cards_js = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+
+    assert "Plain <img> tags cannot send Telegram initData" in core_js
+    assert "async function fetchProxyImageObjectUrl" in actions_js
+    assert "...core.telegramHeaders()" in actions_js
+    assert 'Accept: "image/avif,image/webp,image/*,*/*"' in actions_js
+    assert "URL.createObjectURL" in actions_js
+    assert "function clearProxyImageObjectUrls" in actions_js
+
+    assert "setDetailMainImage(currentImage, 800" in modals_js
+    assert "actions.fetchProxyImageObjectUrl(proxyUrl)" in modals_js
+    assert "img.src = optimizeWith(image, 120, false)" in modals_js
+    assert "actions.clearProxyImageObjectUrls()" in modals_js
+
+    assert "context.fetchProxyImageObjectUrl(proxyUrl)" in events_js
+    assert "context.optimizedImage(validated, { width: 800, useProxy: true })" in events_js
+
+    build_media = cards_js[
+        cards_js.index("function buildMediaNode"):
+        cards_js.index("\n    /** Watchlist", cards_js.index("function buildMediaNode"))
+    ]
+    assert "useProxy" not in build_media
+
+
+def test_image_proxy_fetch_uses_telegram_headers_and_object_url_cache() -> None:
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    harness = (
+        r"""
+function noop() {}
+function stubModule() { return new Proxy({}, { get: () => noop }); }
+function createApiCore() {
+    return {
+        telegramHeaders: () => ({ "X-Telegram-Init-Data": "signed-init-data" }),
+        requestJson: noop,
+        getJson: noop,
+        postJson: noop,
+        deleteJson: noop,
+        buildCommonQuery: noop,
+    };
+}
+const createApiListings = stubModule;
+const createApiTrackers = stubModule;
+const createApiLeads = stubModule;
+const createApiWatchlist = stubModule;
+function createApiEvents() { return { bindEvents: noop }; }
+const domEl = noop;
+const domClear = noop;
+const domFragment = noop;
+const openModalAnimated = noop;
+const closeModalAnimated = noop;
+const bindRovingTablist = noop;
+const _prefersReducedMotion = () => true;
+globalThis.window = { location: { hostname: "app.example", protocol: "https:" }, App: {} };
+globalThis.localStorage = { length: 0, key: () => null, removeItem: noop };
+const revoked = [];
+globalThis.URL = {
+    createObjectURL: () => "blob:proxy-1",
+    revokeObjectURL: (url) => revoked.push(url),
+};
+const fetchCalls = [];
+globalThis.fetch = async (url, options) => {
+    fetchCalls.push({ url, options });
+    return { ok: true, blob: async () => ({}) };
+};
+"""
+        + actions_js
+        + r"""
+(async () => {
+    const actions = createAppActions({
+        state: { search: { recentSearches: [] }, misc: {} },
+        elements: { views: {} },
+        markDirty: noop,
+        renderAll: noop,
+        showToast: noop,
+    });
+    const url = "/api/v1/img/ad/photo.jpg?w=800";
+    const first = await actions.fetchProxyImageObjectUrl(url);
+    const second = await actions.fetchProxyImageObjectUrl(url);
+    if (first !== "blob:proxy-1" || second !== first) throw new Error("bad object URL cache");
+    if (fetchCalls.length !== 1) throw new Error("proxy image should be fetched once");
+    const headers = fetchCalls[0].options.headers;
+    if (headers["X-Telegram-Init-Data"] !== "signed-init-data") {
+        throw new Error("missing Telegram initData header");
+    }
+    if (!headers.Accept.includes("image/avif") || !headers.Accept.includes("image/webp")) {
+        throw new Error("missing modern image Accept header");
+    }
+    actions.clearProxyImageObjectUrls();
+    if (revoked[0] !== "blob:proxy-1") throw new Error("object URL was not revoked");
+    try {
+        await actions.fetchProxyImageObjectUrl("https://evil.example/a.jpg");
+        throw new Error("external proxy URL accepted");
+    } catch (err) {
+        if (!String(err.message).includes("Invalid image proxy URL")) throw err;
+    }
+})().catch((err) => {
+    console.error(err);
+    process.exit(1);
+});
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_inert_walk_handles_nested_modals() -> None:
     """Wave 25.3 regression test: _applyInertToSiblings must walk DOWN
     from <body> to the modal, inerting siblings at each level. The

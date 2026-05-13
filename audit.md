@@ -141,7 +141,7 @@ Verification:
 
 ### Wave 5 — IMG-PROXY-POLICY: align image proxy behavior
 
-Status: pending
+Status: completed
 
 Problem:
 

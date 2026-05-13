@@ -169,6 +169,7 @@ function createAppActions(baseContext) {
     const watchlist = createApiWatchlist(context);
     let _aiModule = null;
     let _listingAssistantModule = null;
+    const _proxyImageObjectUrls = new Map();
 
     async function ensureAiLoaded() {
         if (_aiModule) return;
@@ -178,10 +179,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260513-2b27708"),
-            context._loadScript("js/api_ai_render.js?v=20260513-2b27708"),
-            context._loadScript("js/api_ai.js?v=20260513-2b27708"),
-            context._loadScript("js/api_listing_assistant.js?v=20260513-2b27708"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-648276e"),
+            context._loadScript("js/api_ai_render.js?v=20260513-648276e"),
+            context._loadScript("js/api_ai.js?v=20260513-648276e"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-648276e"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -202,9 +203,54 @@ function createAppActions(baseContext) {
         if (_aiModule) _aiModule.closeAIModal();
     }
 
+    function _isImageProxyUrl(url) {
+        return typeof url === "string" &&
+            url.startsWith("/api/v1/img/") &&
+            !url.startsWith("//");
+    }
+
+    async function fetchProxyImageObjectUrl(url) {
+        if (!_isImageProxyUrl(url)) throw new Error("Invalid image proxy URL");
+        const cached = _proxyImageObjectUrls.get(url);
+        if (cached?.objectUrl) return cached.objectUrl;
+        if (cached?.promise) return cached.promise;
+        const entry = { objectUrl: "", promise: null };
+        entry.promise = fetch(url, {
+            headers: {
+                ...core.telegramHeaders(),
+                Accept: "image/avif,image/webp,image/*,*/*",
+            },
+        }).then(async (response) => {
+            if (!response.ok) throw new Error("Image proxy request failed");
+            const objectUrl = URL.createObjectURL(await response.blob());
+            if (_proxyImageObjectUrls.get(url) !== entry) {
+                URL.revokeObjectURL(objectUrl);
+                throw new Error("Image proxy request superseded");
+            }
+            entry.objectUrl = objectUrl;
+            entry.promise = null;
+            return objectUrl;
+        }).catch((err) => {
+            if (_proxyImageObjectUrls.get(url) === entry) _proxyImageObjectUrls.delete(url);
+            throw err;
+        });
+        _proxyImageObjectUrls.set(url, entry);
+        return entry.promise;
+    }
+
+    function clearProxyImageObjectUrls() {
+        for (const entry of _proxyImageObjectUrls.values()) {
+            if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
+        }
+        _proxyImageObjectUrls.clear();
+    }
+
     // ── Cross-module hooks (actions that modules call into each other) ───
     // These are injected into context so every module can reach them.
     Object.assign(context, {
+        fetchProxyImageObjectUrl,
+        clearProxyImageObjectUrls,
+
         // From listings
         search: listings.search,
         loadListings: listings.loadListings,
@@ -556,6 +602,7 @@ function createAppActions(baseContext) {
     function clearLocalAccountData() {
         if (state.search) state.search.recentSearches = [];
         if (state.misc) state.misc.listingAssistantResult = null;
+        clearProxyImageObjectUrls();
         try {
             const keys = ["recentSearches"];
             for (let i = 0; i < localStorage.length; i++) {
@@ -951,5 +998,7 @@ function createAppActions(baseContext) {
         openPrivacyModal,
         deleteAccount,
         exportAccountData,
+        fetchProxyImageObjectUrl,
+        clearProxyImageObjectUrls,
     };
 }

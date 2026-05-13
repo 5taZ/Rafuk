@@ -34,6 +34,6 @@ def test_nginx_has_cors_header() -> None:
 def test_nginx_has_frontend_security_headers() -> None:
     nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
     assert "Content-Security-Policy" in nginx_conf
-    assert "img-src 'self' https://rms.kufar.by https://*.kufar.by data:" in nginx_conf
+    assert "img-src 'self' https://rms.kufar.by https://*.kufar.by data: blob:" in nginx_conf
     assert "object-src 'none'" in nginx_conf
     assert "Permissions-Policy" in nginx_conf

@@ -27,6 +27,8 @@ function createRenderModals(context) {
         attachPinchZoom,
     } = context;
 
+    let _detailImageLoadId = 0;
+
     function buildDetailField(label, value) {
         const item = document.createElement("div");
         item.className = "detail-field";
@@ -123,23 +125,49 @@ function createRenderModals(context) {
             elements.detailMedia.setAttribute("aria-label", `Фото объявления ${current} из ${total}`);
         }
 
-        const optimizeWith = (url, width) => {
+        const optimizeWith = (url, width, useProxy = false) => {
             const validated = safeImageUrl(url);
             if (!validated) return "";
             return typeof optimizedImage === "function"
-                ? optimizedImage(validated, { width })
+                ? optimizedImage(validated, { width, useProxy })
                 : validated;
         };
 
-        if (currentImage) {
-            const safeImage = optimizeWith(currentImage, 800);
-            if (safeImage) {
-                elements.detailMainImage.src = safeImage;
-                elements.detailMainImage.alt = detail.title || "Фото объявления";
+        function setDetailMainImage(url, width, alt) {
+            const requestId = ++_detailImageLoadId;
+            const directUrl = optimizeWith(url, width, false);
+            const proxyUrl = optimizeWith(url, width, true);
+            elements.detailMainImage.alt = alt;
+            if (
+                proxyUrl &&
+                proxyUrl !== directUrl &&
+                typeof actions.fetchProxyImageObjectUrl === "function"
+            ) {
+                elements.detailMainImage.removeAttribute("src");
+                void actions.fetchProxyImageObjectUrl(proxyUrl).then((objectUrl) => {
+                    if (requestId !== _detailImageLoadId || !state.detail.data) return;
+                    elements.detailMainImage.src = objectUrl;
+                }).catch(() => {
+                    if (requestId !== _detailImageLoadId || !state.detail.data) return;
+                    if (directUrl) {
+                        elements.detailMainImage.src = directUrl;
+                    } else {
+                        elements.detailMainImage.removeAttribute("src");
+                    }
+                });
+                return;
+            }
+            if (directUrl) {
+                elements.detailMainImage.src = directUrl;
             } else {
                 elements.detailMainImage.removeAttribute("src");
             }
+        }
+
+        if (currentImage) {
+            setDetailMainImage(currentImage, 800, detail.title || "Фото объявления");
         } else {
+            _detailImageLoadId++;
             elements.detailMainImage.removeAttribute("src");
         }
 
@@ -149,7 +177,7 @@ function createRenderModals(context) {
             button.type = "button";
             button.className = `detail-thumb${state.detail.imageIndex === index ? " active" : ""}`;
             const img = document.createElement("img");
-            img.src = optimizeWith(image, 120);
+            img.src = optimizeWith(image, 120, false);
             img.alt = "";
             button.appendChild(img);
             button.addEventListener("click", () => {
@@ -209,6 +237,7 @@ function createRenderModals(context) {
     }
 
     function closeDetailModal() {
+        _detailImageLoadId++;
         // FE-C4: drop the in-flight detail/AI fetch (if any) before
         // we tear the modal down. Otherwise a slow /listing-detail
         // call can resolve into already-cleared state.detail and
@@ -226,6 +255,10 @@ function createRenderModals(context) {
         if (elements.detailMainImage?._pinchController) {
             elements.detailMainImage._pinchController.reset(false);
         }
+        if (typeof actions.clearProxyImageObjectUrls === "function") {
+            actions.clearProxyImageObjectUrls();
+        }
+        elements.detailMainImage?.removeAttribute("src");
         state.detail.data = null;
         state.detail.imageIndex = 0;
         state.detail.fromWatchlist = false;
