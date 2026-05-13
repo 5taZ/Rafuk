@@ -25,7 +25,7 @@ function createRenderCore(context) {
     }
 
     const _APP_URL_BASE = "https://rafuk.local";
-    const _KUFAR_LINK_HOSTS = new Set(["kufar.by", "www.kufar.by", "re.kufar.by"]);
+    const _KUFAR_LINK_HOSTS = new Set(["kufar.by", "www.kufar.by", "re.kufar.by", "auto.kufar.by"]);
     const _KUFAR_GALLERY_PREFIX = "https://rms.kufar.by/v1/gallery/";
     const _KUFAR_GALLERY_PATH_PREFIX = "/v1/gallery/";
 
@@ -77,11 +77,37 @@ function createRenderCore(context) {
         }
         if (!_KUFAR_LINK_HOSTS.has(parsed.hostname)) return "";
         if (_hasEncodedTraversal(parsed.pathname)) return "";
-        if (parsed.hostname !== "re.kufar.by" && !parsed.pathname.startsWith("/item/")) {
+        if (parsed.hostname === "auto.kufar.by" && !parsed.pathname.startsWith("/vi/")) {
+            return "";
+        }
+        if (!["re.kufar.by", "auto.kufar.by"].includes(parsed.hostname) && !parsed.pathname.startsWith("/item/")) {
             return "";
         }
         if (parsed.pathname === "/") return "";
         return parsed.href;
+    }
+
+    function openExternalLink(url) {
+        const parsed = _parseSafeUrl(url);
+        if (!parsed || !["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+            return false;
+        }
+        const href = parsed.href;
+        const tg = window.Telegram?.WebApp;
+        if (tg?.openLink) {
+            try {
+                tg.openLink(href, { try_browser: true });
+                return true;
+            } catch (err) {
+                console.warn("Telegram openLink failed, falling back to window.open", err);
+            }
+        }
+        if (typeof window.open === "function") {
+            window.open(href, "_blank", "noopener,noreferrer");
+            return true;
+        }
+        window.location.href = href;
+        return true;
     }
 
     function safeImageUrl(url) {
@@ -615,6 +641,7 @@ function createRenderCore(context) {
         escapeHtml,
         safeUrl,
         safeKufarUrl,
+        openExternalLink,
         safeImageUrl,
         optimizedImage,
         showToast,

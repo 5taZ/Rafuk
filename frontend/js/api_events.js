@@ -36,6 +36,7 @@ function createApiEvents(context) {
         closeEditTracker,
         closeExpensesModal,
         showToast,
+        openExternalLink,
         buildCommonQuery,
         getJson,
         postJson,
@@ -1030,16 +1031,12 @@ function createApiEvents(context) {
     function bindVisibilityEvents() {
         // ── External link interception (Telegram Mini App mobile) ────
         document.addEventListener("click", (event) => {
-            const link = event.target.closest("a[target='_blank']");
-            if (link && link.href && !link.href.startsWith("#") && !link.href.startsWith("javascript:")) {
+            const link = event.target?.closest?.("a[target='_blank']");
+            const rawHref = (link?.getAttribute("href") || "").trim();
+            if (link && rawHref && !rawHref.startsWith("#") && !rawHref.startsWith("javascript:")) {
                 event.preventDefault();
                 event.stopPropagation();
-
-                if (window.Telegram?.WebApp?.openLink) {
-                    window.Telegram.WebApp.openLink(link.href);
-                } else {
-                    window.open(link.href, "_blank", "noopener,noreferrer");
-                }
+                openExternalLink(rawHref);
             }
         });
 

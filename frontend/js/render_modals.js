@@ -61,7 +61,14 @@ function createRenderModals(context) {
 
         elements.detailTitle.textContent = detail.title || "Объявление";
         elements.detailPrice.textContent = formatPrice(detail.price, detail.price_type);
-        elements.detailLink.href = safeKufarUrl(detail.link) || "#";
+        const detailLink = safeKufarUrl(detail.link);
+        if (detailLink) {
+            elements.detailLink.href = detailLink;
+            elements.detailLink.removeAttribute("aria-disabled");
+        } else {
+            elements.detailLink.removeAttribute("href");
+            elements.detailLink.setAttribute("aria-disabled", "true");
+        }
 
         const aiState = state.detail.ai || {};
         if (elements.detailAiBlock && elements.detailAiContent) {

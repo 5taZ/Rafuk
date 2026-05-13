@@ -380,7 +380,15 @@ def test_node_syntax_check() -> None:
 def test_frontend_url_helpers_are_host_aware() -> None:
     render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     harness = (
-        'global.window = { location: { origin: "https://rafuk.local" } };\n'
+        r"""
+const tgCalls = [];
+const windowOpenCalls = [];
+global.window = {
+    location: { origin: "https://rafuk.local", href: "" },
+    Telegram: { WebApp: { openLink: (url, options) => tgCalls.push({ url, options }) } },
+    open: (url, target, features) => windowOpenCalls.push({ url, target, features }),
+};
+"""
         + render_core
         + r"""
 const core = createRenderCore({ state: {}, elements: {} });
@@ -407,10 +415,14 @@ const cases = [
     ["valid kufar www", core.safeKufarUrl("https://www.kufar.by/item/1?utm=rafuk"), "https://www.kufar.by/item/1?utm=rafuk"],
     ["valid kufar apex", core.safeKufarUrl("https://kufar.by/item/2"), "https://kufar.by/item/2"],
     ["valid kufar redirect host", core.safeKufarUrl("https://re.kufar.by/abc123"), "https://re.kufar.by/abc123"],
+    ["valid kufar auto", core.safeKufarUrl("https://auto.kufar.by/vi/10?size=xl"), "https://auto.kufar.by/vi/10?size=xl"],
+    ["invalid auto non-vehicle path", core.safeKufarUrl("https://auto.kufar.by/item/10"), ""],
     ["non-kufar listing", core.safeKufarUrl("https://evil.example/item/1"), ""],
     ["protocol-relative kufar", core.safeKufarUrl("//www.kufar.by/item/1"), ""],
     ["encoded traversal kufar",
         core.safeKufarUrl("https://www.kufar.by/item/%2e%2e/admin"), ""],
+    ["encoded traversal auto",
+        core.safeKufarUrl("https://auto.kufar.by/vi/%2e%2e/admin"), ""],
     ["valid kufar image", core.safeImageUrl(galleryImage), galleryImage],
     ["non-gallery kufar image", core.safeImageUrl("https://rms.kufar.by/other/a.jpg"), ""],
     ["encoded traversal image",
@@ -423,6 +435,20 @@ const cases = [
         "/api/v1/img/a/b.jpg?w=200"],
 ];
 for (const [label, actual, expected] of cases) assertEq(actual, expected, label);
+
+assertEq(core.openExternalLink("https://www.kufar.by/item/1"), true, "Telegram openLink result");
+assertEq(tgCalls[0].url, "https://www.kufar.by/item/1", "Telegram openLink URL");
+assertEq(tgCalls[0].options.try_browser, true, "Telegram opens in browser");
+global.window.Telegram = null;
+assertEq(
+    core.openExternalLink("https://auto.kufar.by/vi/10"),
+    true,
+    "window.open fallback result"
+);
+assertEq(windowOpenCalls[0].target, "_blank", "window.open target");
+assertEq(windowOpenCalls[0].features, "noopener,noreferrer", "window.open features");
+assertEq(core.openExternalLink("javascript:alert(1)"), false, "reject script URL");
+assertEq(windowOpenCalls.length, 1, "invalid URL not opened");
 """
     )
     result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
@@ -460,6 +486,31 @@ def test_frontend_image_proxy_policy_is_explicit() -> None:
         cards_js.index("\n    /** Watchlist", cards_js.index("function buildMediaNode"))
     ]
     assert "useProxy" not in build_media
+
+
+def test_external_kufar_links_open_outside_telegram_webview() -> None:
+    core_js = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+    events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    cards_js = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+    modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
+
+    assert '"auto.kufar.by"' in core_js
+    assert 'parsed.pathname.startsWith("/vi/")' in core_js
+    assert "function openExternalLink" in core_js
+    assert "tg.openLink(href, { try_browser: true })" in core_js
+    assert "window.open(href, \"_blank\", \"noopener,noreferrer\")" in core_js
+
+    assert 'event.target?.closest?.("a[target=\'_blank\']")' in events_js
+    assert 'link?.getAttribute("href")' in events_js
+    assert "openExternalLink(rawHref)" in events_js
+    assert "window.Telegram.WebApp.openLink(link.href)" not in events_js
+
+    assert "openExternalLink," in cards_js
+    assert "openExternalLink(link)" in cards_js
+    assert "window.Telegram.WebApp.openLink(link)" not in cards_js
+
+    assert 'elements.detailLink.removeAttribute("href")' in modals_js
+    assert 'elements.detailLink.setAttribute("aria-disabled", "true")' in modals_js
 
 
 def test_image_proxy_fetch_uses_telegram_headers_and_object_url_cache() -> None:

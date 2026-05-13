@@ -10,7 +10,8 @@ def test_ci_push_trigger_includes_active_bad_app_branch() -> None:
 
 def test_readme_test_count_is_current() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
-    assert "795 tests" in readme
+    assert "796 tests" in readme
+    assert "795 tests" not in readme
     assert "792 tests" not in readme
     assert "791 tests" not in readme
     assert "725 tests" not in readme

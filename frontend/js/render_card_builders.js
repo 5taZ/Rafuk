@@ -10,6 +10,7 @@ function createRenderCardBuilders(context) {
         deltaClass,
         hasTelegramInitData,
         safeKufarUrl,
+        openExternalLink,
         safeImageUrl,
         optimizedImage,
         escapeHtml,
@@ -203,11 +204,7 @@ function createRenderCardBuilders(context) {
                     onSelect: () => {
                         const link = safeKufarUrl(item.link);
                         if (!link) return;
-                        if (window.Telegram?.WebApp?.openLink) {
-                            window.Telegram.WebApp.openLink(link);
-                        } else {
-                            window.open(link, "_blank", "noopener,noreferrer");
-                        }
+                        openExternalLink(link);
                     },
                 },
             ]);

@@ -32,6 +32,7 @@ function createAppRenderers(baseContext) {
     context.escapeHtml = core.escapeHtml;
     context.safeUrl = core.safeUrl;
     context.safeKufarUrl = core.safeKufarUrl;
+    context.openExternalLink = core.openExternalLink;
     context.safeImageUrl = core.safeImageUrl;
     context.optimizedImage = core.optimizedImage;
     context.safeRender = safeRender;
@@ -143,6 +144,7 @@ function createAppRenderers(baseContext) {
         escapeHtml,
         safeUrl,
         safeKufarUrl,
+        openExternalLink,
         safeImageUrl,
         showToast,
         dismissToast,
@@ -281,6 +283,7 @@ function createAppRenderers(baseContext) {
         escapeHtml,
         safeUrl,
         safeKufarUrl,
+        openExternalLink,
         safeImageUrl,
         renderError,
         renderLoading,
