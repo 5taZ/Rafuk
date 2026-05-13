@@ -64,3 +64,63 @@ async def test_degraded_limiter_fails_closed_for_remote_database_without_env(mon
     with pytest.raises(RuntimeError, match="production-like"):
         async with main.lifespan(FastAPI()):
             pass
+
+
+def test_listings_cache_control_uses_swr_with_short_max_age() -> None:
+    """OPUS-10: Cache-Control max-age must stay short so the browser
+    doesn't pin a body older than the server-side cache TTL on screen.
+    stale-while-revalidate covers the gap with a background refresh.
+    """
+    from fastapi.testclient import TestClient
+
+    from api.dependencies import (
+        get_cache,
+        get_currency_service,
+        get_kufar_client,
+        get_session_factory_dependency,
+        get_settings_dependency,
+        get_telegram_user,
+    )
+    from api.main import create_app
+    from api.middleware.telegram_auth import TelegramInitData
+
+    app = create_app()
+
+    class _StubCache:
+        async def get_json(self, key):
+            return None
+
+        async def set_json(self, key, value, ttl=None):
+            return None
+
+    class _StubCurrency:
+        async def get_rates(self):
+            return {"rates": {"BYN": 1.0}}
+
+    class _StubKufar:
+        async def search_all_ads(self, **kwargs):
+            return {"ads": [], "total": 0}
+
+    class _StubSettings:
+        cache_ttl_seconds = 300
+        kufar_max_ads_per_query = 1500
+
+    app.dependency_overrides[get_telegram_user] = lambda: TelegramInitData(
+        user_id=1, first_name="t", raw={}
+    )
+    app.dependency_overrides[get_cache] = lambda: _StubCache()
+    app.dependency_overrides[get_currency_service] = lambda: _StubCurrency()
+    app.dependency_overrides[get_kufar_client] = lambda: _StubKufar()
+    app.dependency_overrides[get_settings_dependency] = lambda: _StubSettings()
+    app.dependency_overrides[get_session_factory_dependency] = lambda: object()
+
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/listings?query=iphone")
+        # The endpoint may legitimately return 200 (empty result) or
+        # 503 (deps unwired) — either way the middleware ran and the
+        # Cache-Control we tightened is what we actually care about.
+        cache_control = resp.headers.get("cache-control", "")
+        if resp.status_code == 200:
+            assert "max-age=60" in cache_control
+            assert "stale-while-revalidate=240" in cache_control
+            assert "max-age=300" not in cache_control

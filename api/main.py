@@ -296,7 +296,15 @@ def create_app() -> FastAPI:
         elif request.method in ("POST", "PATCH", "DELETE"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         elif request.url.path.startswith(("/api/v1/price-stats", "/api/v1/listings")):
-            response.headers["Cache-Control"] = "max-age=300"
+            # OPUS-10: server-side cache TTL is 300s; if we also tell
+            # the browser to keep the body for 300s a user could see
+            # a response up to ~10 minutes old. Keep ``max-age`` short
+            # and let ``stale-while-revalidate`` cover the gap so the
+            # browser triggers a background refresh instead of pinning
+            # stale data to the screen.
+            response.headers["Cache-Control"] = (
+                "public, max-age=60, stale-while-revalidate=240"
+            )
         return response
 
     @app.middleware("http")

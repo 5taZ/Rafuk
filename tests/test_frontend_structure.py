@@ -123,6 +123,25 @@ def test_frontend_csp_does_not_allow_inline_styles() -> None:
     assert 'href="/offline.css"' in offline_text
 
 
+def test_nginx_disables_gzip_for_pii_endpoints() -> None:
+    """OPUS-11: gzip is fine for anonymous analytics but the PII
+    surfaces (account export/consent, leads, watchlist) must not
+    travel through compression — removes the BREACH side-channel
+    even if a future change makes attacker-controllable plaintext
+    appear in those bodies.
+    """
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    for prefix in ("/api/v1/account/", "/api/v1/leads", "/api/v1/watchlist"):
+        # Each PII path needs its own location block with `gzip off`.
+        marker = f"location ^~ {prefix}"
+        assert marker in nginx_conf, f"missing dedicated nginx location for {prefix}"
+        # The first `gzip off;` after the marker is the one that counts.
+        block_start = nginx_conf.index(marker)
+        block_end = nginx_conf.index("\n    }\n", block_start)
+        block = nginx_conf[block_start:block_end]
+        assert "gzip off;" in block, f"{prefix} location must turn gzip off"
+
+
 def test_frontend_csp_has_no_dead_inline_script_hash() -> None:
     """OPUS-14: index.html and nginx CSP both used to allowlist
     'sha256-ieoeWczDHk...' for an inline script that no longer
