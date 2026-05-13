@@ -352,3 +352,10 @@ function createRenderModals(context) {
         closeExpensesModal,
     };
 }
+
+// OPUS-13: lazy-load registration; stub in the bundle proxies into
+// window.App._realCreateRenderModals once this script lands.
+if (typeof window !== "undefined") {
+    window.App = window.App || {};
+    window.App._realCreateRenderModals = createRenderModals;
+}

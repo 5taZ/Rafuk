@@ -120,6 +120,43 @@ def test_retryable_statuses_excludes_429() -> None:
     assert forbidden_minified not in bundle and forbidden_spaced not in bundle
 
 
+def test_deals_split_uses_lazy_stub_in_bundle() -> None:
+    """OPUS-13 wave 71: api_leads.js + api_watchlist.js +
+    render_modals.js are no longer concatenated into
+    app_bundle.js; the bundle ships ``_lazy_deals_stub.js``
+    instead. Same delegation pattern as the trackers split — see
+    test_trackers_split_uses_lazy_stub_in_bundle for the rationale.
+    """
+    bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
+    stub = (JS_DIR / "_lazy_deals_stub.js").read_text(encoding="utf-8")
+    leads = (JS_DIR / "api_leads.js").read_text(encoding="utf-8")
+    watchlist = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+    modals = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
+
+    assert "_lazyLoadDealsSources" in bundle
+    for global_key in (
+        "_realCreateApiLeads",
+        "_realCreateApiWatchlist",
+        "_realCreateRenderModals",
+    ):
+        assert global_key in bundle
+
+    assert "window.App._realCreateApiLeads = createApiLeads" in leads
+    assert "window.App._realCreateApiWatchlist = createApiWatchlist" in watchlist
+    assert "window.App._realCreateRenderModals = createRenderModals" in modals
+
+    cache_buster = re.compile(
+        r'"js/(?:api_leads|api_watchlist|render_modals)\.js\?v=[A-Za-z0-9._-]+"'
+    )
+    assert len(cache_buster.findall(stub)) == 3
+
+    build = Path("scripts/build_frontend_bundle.sh").read_text(encoding="utf-8")
+    for bare in ("api_leads", "api_watchlist", "render_modals"):
+        leak = re.search(rf"^\s+{bare}\.js\s*$", build, re.MULTILINE)
+        assert leak is None, f"{bare}.js leaked back into bundle modules list"
+    assert "_lazy_deals_stub.js" in build
+
+
 def test_trackers_split_uses_lazy_stub_in_bundle() -> None:
     """OPUS-13 wave 70: render_trackers.js + api_trackers.js are no
     longer concatenated into app_bundle.js; the bundle ships

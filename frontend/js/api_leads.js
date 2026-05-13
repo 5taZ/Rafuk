@@ -477,3 +477,10 @@ function createApiLeads(context) {
         openLeadDetail,
     };
 }
+
+// OPUS-13: lazy-load registration; stub in the bundle proxies into
+// window.App._realCreateApiLeads once this script lands.
+if (typeof window !== "undefined") {
+    window.App = window.App || {};
+    window.App._realCreateApiLeads = createApiLeads;
+}

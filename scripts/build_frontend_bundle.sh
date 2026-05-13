@@ -14,18 +14,15 @@ modules=(
   virtual_list.js
   render_cards.js
   render_views.js
-  render_modals.js
   render_charts.js
-  # OPUS-13: render_trackers.js + api_trackers.js are split out and
-  # loaded on-demand when the user opens the "Автопоиск" tab. The
-  # stub below ships in their place — see _lazy_trackers_stub.js
-  # for the delegation contract.
+  # OPUS-13 wave 70 — tracking-view modules ship as stubs.
   _lazy_trackers_stub.js
+  # OPUS-13 wave 71 — deals-view modules api_leads + api_watchlist
+  # plus render_modals ship as stubs and load on first use.
+  _lazy_deals_stub.js
   app_renderers.js
   api_core.js
   api_listings.js
-  api_leads.js
-  api_watchlist.js
   api_events.js
   app_actions.js
   app.js
