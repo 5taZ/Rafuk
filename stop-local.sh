@@ -11,6 +11,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR="$ROOT_DIR/.run"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-myprojetctkufar}"
+export COMPOSE_PROJECT_NAME
 
 cd "$ROOT_DIR"
 
@@ -44,7 +46,10 @@ for service in api bot scheduler cloudflared; do
     _kill_pid_file "$RUN_DIR/$service.pid"
 done
 
-# Frontend runs as a docker container — stop it through compose.
-docker compose stop frontend >/dev/null 2>&1 || true
+# Compose services use named volumes (myprojetctkufar_pgdata,
+# myprojetctkufar_redis-data). Stop containers only; do not remove
+# volumes, so local DB/cache data survives normal shutdown/restart cycles.
+docker compose --profile local-db stop frontend redis postgres >/dev/null 2>&1 || true
 
 echo "Project stopped."
+echo "Local database data is preserved in Docker volume: ${COMPOSE_PROJECT_NAME}_pgdata"

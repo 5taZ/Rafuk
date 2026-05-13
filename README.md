@@ -5,7 +5,7 @@ classifieds site **[Kufar.by](https://www.kufar.by)** for listings,
 runs analytics and AI-assisted decisioning over them, and surfaces
 "deal-finder" workflows to end users.
 
-> **Status:** active development on the `bad-app` branch. 716 tests
+> **Status:** active development on the `bad-app` branch. 717 tests
 > green. See [`CHANGELOG.md`](./CHANGELOG.md) for the wave-by-wave
 > security/performance hardening history.
 
@@ -73,12 +73,14 @@ The Mini App frontend can be served with the dev proxy:
 node proxy-server.mjs           # serves frontend/ on :8081, proxies /api/* to :8010
 ```
 
-`./status-local.sh` shows what's running, `./stop-local.sh` tears it down.
+`./status-local.sh` shows what's running. `./stop-local.sh` stops the
+local stack but preserves PostgreSQL data in the `myprojetctkufar_pgdata`
+Docker volume, so restarts keep your saved searches, trackers, and deals.
 
 ## Tests
 
 ```bash
-# all 716 tests (uses aiosqlite, ~50s)
+# all 717 tests (uses aiosqlite, ~50s)
 uv run pytest --tb=short
 
 # single file
