@@ -5,7 +5,7 @@ classifieds site **[Kufar.by](https://www.kufar.by)** for listings,
 runs analytics and AI-assisted decisioning over them, and surfaces
 "deal-finder" workflows to end users.
 
-> **Status:** active development on the `bad-app` branch. 661 tests
+> **Status:** active development on the `bad-app` branch. 714 tests
 > green. See [`CHANGELOG.md`](./CHANGELOG.md) for the wave-by-wave
 > security/performance hardening history.
 
@@ -78,7 +78,7 @@ node proxy-server.mjs           # serves frontend/ on :8081, proxies /api/* to :
 ## Tests
 
 ```bash
-# all 494 tests (uses aiosqlite, ~40s)
+# all 714 tests (uses aiosqlite, ~50s)
 uv run pytest --tb=short
 
 # single file

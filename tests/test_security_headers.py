@@ -26,6 +26,12 @@ def test_frontend_csp_matches_vendored_telegram_sdk_policy() -> None:
     assert all("https://telegram.org" not in line for line in nginx_csp_lines)
 
 
+def test_nginx_uses_csp_frame_ancestors_instead_of_x_frame_options() -> None:
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    assert "X-Frame-Options" not in nginx_conf
+    assert "frame-ancestors https://web.telegram.org https://webk.telegram.org" in nginx_conf
+
+
 def test_nginx_rate_limit_key_trusts_cf_header_only_from_proxy_peer() -> None:
     nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
     assert "geo $trusted_rate_limit_proxy" in nginx_conf
