@@ -156,6 +156,16 @@ def upgrade() -> None:
             ALTER SEQUENCE IF EXISTS ai_audit_log_id_seq OWNED BY NONE;
             CREATE SEQUENCE IF NOT EXISTS ai_audit_log_id_seq AS bigint;
             ALTER TABLE ai_audit_log RENAME TO ai_audit_log_unpartitioned;
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'ai_audit_log_unpartitioned'::regclass
+                  AND conname = 'ai_audit_log_pkey'
+            ) THEN
+                ALTER TABLE ai_audit_log_unpartitioned
+                    RENAME CONSTRAINT ai_audit_log_pkey
+                    TO ai_audit_log_unpartitioned_pkey;
+            END IF;
             DROP INDEX IF EXISTS idx_ai_audit_user;
             DROP INDEX IF EXISTS idx_ai_audit_created;
             DROP INDEX IF EXISTS idx_ai_audit_log_created_at;
@@ -278,6 +288,16 @@ def downgrade() -> None:
             LOCK TABLE ai_audit_log IN ACCESS EXCLUSIVE MODE;
             ALTER SEQUENCE IF EXISTS ai_audit_log_id_seq OWNED BY NONE;
             ALTER TABLE ai_audit_log RENAME TO ai_audit_log_partitioned;
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'ai_audit_log_partitioned'::regclass
+                  AND conname = 'ai_audit_log_pkey'
+            ) THEN
+                ALTER TABLE ai_audit_log_partitioned
+                    RENAME CONSTRAINT ai_audit_log_pkey
+                    TO ai_audit_log_partitioned_pkey;
+            END IF;
             DROP INDEX IF EXISTS idx_ai_audit_user;
             DROP INDEX IF EXISTS idx_ai_audit_created;
 

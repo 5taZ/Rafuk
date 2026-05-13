@@ -12,6 +12,7 @@ def test_ai_audit_partitioning_migration_swaps_and_validates_copy() -> None:
     assert 'down_revision: str | Sequence[str] | None = "20260513_0015"' in sql
     assert "PARTITION BY RANGE (created_at)" in sql
     assert "PRIMARY KEY (id, created_at)" in sql
+    assert "RENAME CONSTRAINT ai_audit_log_pkey" in sql
     assert "CREATE TABLE ai_audit_log_default PARTITION OF ai_audit_log DEFAULT" in sql
     assert "copied_count <> legacy_count" in sql
     assert "DROP TABLE ai_audit_log_unpartitioned" in sql
