@@ -142,6 +142,61 @@ async def test_revoke_consent(client):
     assert status.json()["granted"] is False
 
 
+@pytest.mark.asyncio
+async def test_revoke_consent_clears_per_user_cache(client, monkeypatch):
+    """OPUS-1: revoke consent must wipe AI/initdata caches for the
+    user, otherwise data processed under the now-revoked consent
+    keeps living in Redis until TTL — which contradicts the
+    "right to revoke" promise.
+    """
+    import fnmatch
+
+    from api.services.cache import MemoryCache, RedisCache
+
+    fake_cache = MemoryCache()
+    target_uid = 999888  # _fake_telegram_user user_id
+
+    seeds = {
+        f"ai_task:u{target_uid}:abc": {"x": 1},
+        f"ai_listing:u{target_uid}:abc": {"title_suggestion": "private"},
+        f"ai_rate:{target_uid}:default": {"count": 5},
+        f"ai_daily:{target_uid}": {"count": 2},
+        f"auth:blacklist:{target_uid}": {"reason": "test"},
+    }
+    for k, v in seeds.items():
+        await fake_cache.set_json(k, v)
+
+    class _FakeRedis:
+        def __init__(self, storage):
+            self._storage = storage
+
+        async def scan(self, cursor, match="*", count=100):
+            return 0, [k for k in self._storage if fnmatch.fnmatch(k, match)]
+
+        async def delete(self, *keys):
+            for k in keys:
+                self._storage.pop(k, None)
+            return len(keys)
+
+    fake_cache._client = _FakeRedis(fake_cache._storage)
+    monkeypatch.setattr(RedisCache, "from_url", staticmethod(lambda *a, **kw: fake_cache))
+
+    async def _ping_true(self_):
+        return True
+
+    monkeypatch.setattr(RedisCache, "ping", _ping_true)
+
+    await client.post(
+        "/api/v1/account/consent",
+        json={"consent_type": "ai_analysis", "version": "2026.2"},
+    )
+    resp = await client.delete("/api/v1/account/consent/ai_analysis")
+    assert resp.status_code == 204
+
+    for key in seeds:
+        assert await fake_cache.get_json(key) is None, f"{key} should be cleared on revoke"
+
+
 # ── Account export ──────────────────────────────────────────────────────
 
 

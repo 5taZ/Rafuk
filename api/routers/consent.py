@@ -250,6 +250,24 @@ async def revoke_consent(
 
     if revoked_count:
         logger.info("User %d revoked consent %s", _user.user_id, consent_type)
+        # OPUS-1: revoke means the previously processed AI artefacts
+        # (task results, listing-assistant cache, rate-limit buckets,
+        # initdata replay tracker) must also be evicted — otherwise
+        # the user has revoked permission to process while data we
+        # already processed is still cached. Same best-effort
+        # contract as delete_account: log + continue on failure so
+        # the user's revoke acknowledgement isn't blocked by a
+        # transient Redis blip.
+        try:
+            from api.routers.ai_analysis import clear_user_ai_data  # noqa: PLC0415 — avoid cycle
+
+            await clear_user_ai_data(_user.user_id)
+        except Exception:
+            logger.warning(
+                "Failed to clear per-user cache for user %d after consent revoke",
+                _user.user_id,
+                exc_info=True,
+            )
 
 
 @router.delete("", status_code=204)
