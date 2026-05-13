@@ -20,6 +20,13 @@ function createRenderTrackers(context) {
         safeUrl: safeUrl,
         optimizedImage,
         safeRender: safeRender,
+        // OPUS-13 wave 73: ``createVirtualList`` is injected through
+        // context by app_renderers.js so this lazy-loaded module
+        // doesn't have to reach outside its scope for it. Before the
+        // fix it relied on a bundle-IIFE-local symbol that the lazy
+        // <script> couldn't see — ReferenceError on first tracker
+        // list render past the virtual-list threshold.
+        createVirtualList,
     } = context;
 
     // FE-05 / Wave 29: emoji-prefixed labels need a tiny shim so screen

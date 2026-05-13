@@ -10,6 +10,12 @@ function createRenderCards(context) {
         actions,
         hasTelegramInitData,
         safeRender: safeRender,
+        // OPUS-13 wave 73: ``createVirtualList`` is injected via
+        // context because after the split this file runs as a lazy
+        // <script> that doesn't share scope with the bundle IIFE.
+        // ``createRenderCardBuilders`` ships in the same lazy chunk,
+        // so global-scope resolution still works for it.
+        createVirtualList,
     } = context;
     const builders = createRenderCardBuilders(context);
     const {
@@ -659,4 +665,13 @@ function createRenderCards(context) {
         renderLeads,
         renderWatchlist,
     };
+}
+
+// OPUS-13 wave 73: lazy-load registration; stub in the bundle
+// proxies into window.App._realCreateRenderCards once this script
+// (and its dependencies render_card_builders + virtual_list) have
+// loaded together.
+if (typeof window !== "undefined") {
+    window.App = window.App || {};
+    window.App._realCreateRenderCards = createRenderCards;
 }

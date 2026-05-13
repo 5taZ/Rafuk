@@ -5,6 +5,20 @@ function analyticsApp() {
     const actions = createAppActions({ ...core, ...renderers });
     Object.assign(actionRegistry, actions);
 
+    // OPUS-13 wave 73: eagerly preload the cards lazy chunk right
+    // after composition. Cards drive overview / ads / deals /
+    // tracking, so deferring them until the user's first action
+    // would cause a stub-returns-undefined flash on every screen.
+    // Firing ``_ensureLoaded`` here lets the network request race
+    // with the bundle's init path — warm caches resolve in one
+    // tick, cold cache sees a single ``scheduleRender`` re-paint
+    // a few frames later.
+    if (renderers._cardsEnsureLoaded) {
+        renderers._cardsEnsureLoaded().catch((err) => {
+            console.error("cards preload failed:", err);
+        });
+    }
+
     // FE-H8: module-scoped handle for the pull-to-refresh uninstall
     // function returned by setupPullToRefresh(). Declared up-front so
     // init() can both re-arm it (idempotency) and pagehide can tear

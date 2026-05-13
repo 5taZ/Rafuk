@@ -806,3 +806,13 @@ function createRenderCardBuilders(context) {
         buildWatchlistNode,
     };
 }
+
+// OPUS-13 wave 73: lazy-load registration. render_cards.js calls
+// ``createRenderCardBuilders`` at global scope, so we expose the
+// factory on window.App for the stub's bookkeeping and also leave
+// the top-level declaration visible for the sibling render_cards
+// script that loads right after this one.
+if (typeof window !== "undefined") {
+    window.App = window.App || {};
+    window.App._realCreateRenderCardBuilders = createRenderCardBuilders;
+}

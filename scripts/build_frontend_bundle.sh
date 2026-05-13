@@ -10,9 +10,7 @@ modules=(
   app_core_dom.js
   app_core.js
   render_core.js
-  render_card_builders.js
   virtual_list.js
-  render_cards.js
   render_views.js
   # OPUS-13 wave 70 — tracking-view modules ship as stubs.
   _lazy_trackers_stub.js
@@ -22,6 +20,10 @@ modules=(
   # OPUS-13 wave 72 — render_charts.js ships as a stub. Chart.js
   # itself was already lazy; this also defers the renderer.
   _lazy_charts_stub.js
+  # OPUS-13 wave 73 — render_card_builders + render_cards ship as
+  # stubs; virtual_list stays in the bundle because trackers + cards
+  # both use createVirtualList through context.
+  _lazy_cards_stub.js
   app_renderers.js
   api_core.js
   api_listings.js

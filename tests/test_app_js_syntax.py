@@ -120,6 +120,57 @@ def test_retryable_statuses_excludes_429() -> None:
     assert forbidden_minified not in bundle and forbidden_spaced not in bundle
 
 
+def test_cards_split_uses_lazy_stub_in_bundle() -> None:
+    """OPUS-13 wave 73: render_card_builders.js + render_cards.js
+    ship as ``_lazy_cards_stub.js`` and load in tandem (builders
+    first, renderer second) on first use. virtual_list.js stays
+    in the bundle because trackers + cards both need
+    ``createVirtualList`` reachable through context.
+    """
+    bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
+    stub = (JS_DIR / "_lazy_cards_stub.js").read_text(encoding="utf-8")
+    cards = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
+    builders = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+
+    assert "_lazyLoadCardsSources" in bundle
+    assert "_realCreateRenderCards" in bundle
+    assert "_realCreateRenderCardBuilders" in bundle
+
+    assert "window.App._realCreateRenderCards = createRenderCards" in cards
+    assert "window.App._realCreateRenderCardBuilders = createRenderCardBuilders" in builders
+
+    cache_buster = re.compile(
+        r'"js/(?:render_card_builders|render_cards)\.js\?v=[A-Za-z0-9._-]+"'
+    )
+    assert len(cache_buster.findall(stub)) == 2
+
+    build = Path("scripts/build_frontend_bundle.sh").read_text(encoding="utf-8")
+    for bare in ("render_card_builders", "render_cards"):
+        leak = re.search(rf"^\s+{bare}\.js\s*$", build, re.MULTILINE)
+        assert leak is None, f"{bare}.js leaked back into bundle modules list"
+    # virtual_list.js MUST remain in the bundle — both trackers (lazy)
+    # and cards (lazy) reach it through context.createVirtualList.
+    assert re.search(r"^\s+virtual_list\.js\s*$", build, re.MULTILINE) is not None
+
+    # Eager preload from app.js avoids a stub-returns-undefined flash
+    # on overview / ads / deals / tracking cold paint.
+    app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
+    assert "_cardsEnsureLoaded" in app_js
+
+    # Renderer bundle exposes the preload hook.
+    app_renderers = (JS_DIR / "app_renderers.js").read_text(encoding="utf-8")
+    assert "_cardsEnsureLoaded: cards && cards._ensureLoaded" in app_renderers
+
+    # render_trackers / render_cards read createVirtualList from context.
+    trackers = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
+    assert "createVirtualList," in trackers, (
+        "render_trackers must destructure createVirtualList from context"
+    )
+    assert "createVirtualList," in cards, (
+        "render_cards must destructure createVirtualList from context"
+    )
+
+
 def test_charts_split_uses_lazy_stub_in_bundle() -> None:
     """OPUS-13 wave 72: render_charts.js ships as
     ``_lazy_charts_stub.js`` and is loaded on demand the first

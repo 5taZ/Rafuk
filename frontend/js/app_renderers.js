@@ -57,6 +57,16 @@ function createAppRenderers(baseContext) {
     }
     context.scheduleRender = scheduleRender;
 
+    // OPUS-13 wave 73: expose createVirtualList through context so
+    // lazy-loaded render modules (render_trackers via wave 70,
+    // render_cards via wave 73) can reach it. The function lives in
+    // virtual_list.js inside the bundle's IIFE, which hides it from
+    // the global scope; without this line a lazy-loaded module calls
+    // ``createVirtualList(...)`` and gets a ReferenceError at runtime
+    // the first time the trackers or watchlist view scrolls past the
+    // virtual-list threshold.
+    context.createVirtualList = createVirtualList;
+
     const cards = createRenderCards(context);
     const views = createRenderViews(context);
     const modals = createRenderModals(context);
@@ -287,5 +297,8 @@ function createAppRenderers(baseContext) {
         renderHistoryChart,
         renderAll,
         scheduleRender,
+        // OPUS-13 wave 73: expose the cards stub's preload hook so
+        // app.js can warm the cards chunk right after composition.
+        _cardsEnsureLoaded: cards && cards._ensureLoaded,
     };
 }
