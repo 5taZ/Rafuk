@@ -153,6 +153,30 @@ async def test_log_ai_audit_swallows_session_errors(caplog) -> None:
 
 
 @pytest.mark.asyncio
+async def test_clear_user_ai_data_uses_passed_cache(monkeypatch) -> None:
+    """OPUS-20: when the caller passes ``cache``, clear_user_ai_data
+    must NOT open a new RedisCache. The already-warm pool from
+    ``app.state.cache`` is enough.
+    """
+    from api.services import ai_privacy
+    from api.services.cache import MemoryCache, RedisCache
+
+    open_calls = 0
+
+    def _from_url(*args, **kwargs):
+        nonlocal open_calls
+        open_calls += 1
+        return RedisCache(redis_url="redis://stub:6379/0")
+
+    monkeypatch.setattr(RedisCache, "from_url", staticmethod(_from_url))
+
+    passed_cache = MemoryCache()
+    await ai_privacy.clear_user_ai_data(123, cache=passed_cache)
+
+    assert open_calls == 0, "Passed cache must short-circuit the Redis pool init"
+
+
+@pytest.mark.asyncio
 async def test_clear_user_ai_data_purges_shadow_stores(monkeypatch) -> None:
     """The shadow-store cleanup branch is the one path that DOESN'T
     depend on Redis — exercise it in isolation to make sure the

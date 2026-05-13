@@ -261,7 +261,13 @@ async def revoke_consent(
         try:
             from api.routers.ai_analysis import clear_user_ai_data  # noqa: PLC0415 — avoid cycle
 
-            await clear_user_ai_data(_user.user_id)
+            # OPUS-20: hand the warm app cache through so the cleanup
+            # doesn't open + close a fresh Redis pool just for this
+            # single user.
+            await clear_user_ai_data(
+                _user.user_id,
+                cache=getattr(request.app.state, "cache", None),
+            )
         except Exception:
             logger.warning(
                 "Failed to clear per-user cache for user %d after consent revoke",
@@ -344,7 +350,12 @@ async def delete_account(
     try:
         from api.routers.ai_analysis import clear_user_ai_data  # deferred to avoid circular import
 
-        await clear_user_ai_data(_user.user_id)
+        # OPUS-20: reuse the app cache to avoid spinning up a brand-
+        # new Redis pool for a single user-deletion call.
+        await clear_user_ai_data(
+            _user.user_id,
+            cache=getattr(request.app.state, "cache", None),
+        )
     except Exception:
         logger.warning(
             "Failed to clear per-user cache for user %d during account deletion",
