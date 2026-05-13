@@ -164,9 +164,16 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_max_overflow: int = 10
 
-    # AI Analysis (Together API — OpenAI-compatible)
+    # AI Analysis (OpenAI-compatible chat completions).
+    # OPUS-5: defaults point at Google's Gemini OpenAI-compat endpoint
+    # because the default ``ai_model`` is ``gemini-2.5-flash`` —
+    # Together AI does not serve that model, so the previous
+    # together.xyz default would 404 the moment a fresh deployment
+    # tried to call it. Switch the default base URL to match the
+    # default model. Together remains a one-line override in
+    # ``.env`` (set both AI_BASE_URL and AI_MODEL together).
     ai_api_key: SecretStr | None = None
-    ai_base_url: str = "https://api.together.xyz/v1"
+    ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     ai_model: str = "gemini-2.5-flash"
     ai_max_images: int = 3
     ai_cache_hours: int = 1

@@ -215,3 +215,28 @@ def test_remote_ai_base_url_requires_https() -> None:
         importlib.reload(config)
         with pytest.raises(ValidationError, match="AI service URLs must use HTTPS"):
             config.Settings(_env_file=None)
+
+
+def test_ai_defaults_match_their_provider() -> None:
+    """OPUS-5: the default ai_model (gemini-2.5-flash) is served by
+    Google's OpenAI-compat endpoint, not Together AI. The default
+    ai_base_url must point at the same provider that serves the
+    default model — otherwise a fresh deploy 404s on first call.
+    """
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        s = config.Settings(_env_file=None)
+        assert s.ai_model == "gemini-2.5-flash"
+        assert s.ai_base_url == (
+            "https://generativelanguage.googleapis.com/v1beta/openai"
+        )

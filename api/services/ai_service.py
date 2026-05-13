@@ -282,7 +282,13 @@ class AIService:
     def __init__(self) -> None:
         settings = get_settings()
         self._api_key = settings.ai_api_key
-        self._base_url = (settings.ai_base_url or "https://api.together.xyz/v1").rstrip("/")
+        # OPUS-5: ``or`` fallback aligns with the Settings default —
+        # Google Gemini OpenAI-compat — so an empty AI_BASE_URL
+        # doesn't silently route to a provider that can't serve the
+        # default model.
+        self._base_url = (
+            settings.ai_base_url or "https://generativelanguage.googleapis.com/v1beta/openai"
+        ).rstrip("/")
         self._model = settings.ai_model or "gemini-2.5-flash"
         self._max_images = settings.ai_max_images
         self._proxy_url = settings.ai_proxy_url
