@@ -23,6 +23,7 @@ from api.models import (
 from api.services.aggregator import build_query_key
 from api.services.history_service import QuerySyncResult, TrendReversal
 from scheduler.collector import (
+    _DLQ_MAX_RETRIES,
     _build_new_listing_message,
     _build_price_drop_message,
     _build_threshold_message,
@@ -43,6 +44,7 @@ from scheduler.collector import (
     cleanup_telegram_notification_dlq,
     notify_user,
     persist_tracker_events,
+    retry_telegram_notification_dlq,
 )
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -840,6 +842,200 @@ async def test_cleanup_telegram_notification_dlq(populated_session):
 
     deleted = await cleanup_telegram_notification_dlq(session, days=30)
     assert deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_cleanup_telegram_notification_dlq_drops_retry_exhausted(populated_session):
+    """OPUS-2: cleanup also wipes rows that exhausted ``_DLQ_MAX_RETRIES``
+    so the pump query stays cheap."""
+    session, user, _tracker = populated_session
+
+    session.add_all([
+        TelegramNotificationDLQ(
+            user_id=user.id,
+            telegram_user_id=user.telegram_user_id,
+            source="test",
+            message="exhausted",
+            error_kind="retryable",
+            retry_count=_DLQ_MAX_RETRIES,
+            created_at=datetime.now(UTC) - timedelta(hours=1),
+        ),
+        TelegramNotificationDLQ(
+            user_id=user.id,
+            telegram_user_id=user.telegram_user_id,
+            source="test",
+            message="still trying",
+            error_kind="retryable",
+            retry_count=2,
+            created_at=datetime.now(UTC) - timedelta(hours=1),
+        ),
+    ])
+    await session.flush()
+
+    deleted = await cleanup_telegram_notification_dlq(session, days=30)
+    assert deleted == 1
+
+
+# ---------------------------------------------------------------------------
+# Test retry_telegram_notification_dlq (OPUS-2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_dlq_sent_deletes_row(monkeypatch, mock_bot, populated_session):
+    """OPUS-2: a successful resend wipes the DLQ row."""
+    session, user, _tracker = populated_session
+
+    session.add(TelegramNotificationDLQ(
+        user_id=user.id,
+        telegram_user_id=user.telegram_user_id,
+        source="tracker",
+        message="hello",
+        error_kind="retryable",
+    ))
+    await session.commit()
+
+    async def _stub_classify(bot, tg_id, message, **kwargs):
+        return "sent"
+
+    monkeypatch.setattr(collector, "_send_message_classified", _stub_classify)
+
+    sent = await retry_telegram_notification_dlq(
+        mock_bot,
+        get_session_factory(get_engine()),
+    )
+    assert sent == 1
+
+    rows = (await session.execute(
+        TelegramNotificationDLQ.__table__.select()
+    )).all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_retry_dlq_retry_bumps_count_and_next_retry(
+    monkeypatch, mock_bot, populated_session,
+):
+    """OPUS-2: retry outcome bumps retry_count and schedules
+    next_retry_at via exponential backoff."""
+    session, user, _tracker = populated_session
+
+    session.add(TelegramNotificationDLQ(
+        user_id=user.id,
+        telegram_user_id=user.telegram_user_id,
+        source="tracker",
+        message="hello",
+        error_kind="retryable",
+        retry_count=1,
+    ))
+    await session.commit()
+
+    async def _stub_classify(bot, tg_id, message, **kwargs):
+        return "retry"
+
+    monkeypatch.setattr(collector, "_send_message_classified", _stub_classify)
+
+    sent = await retry_telegram_notification_dlq(
+        mock_bot,
+        get_session_factory(get_engine()),
+    )
+    assert sent == 0
+
+    row = (await session.execute(
+        TelegramNotificationDLQ.__table__.select()
+    )).one()
+    assert row.retry_count == 2
+    assert row.next_retry_at is not None
+    # SQLite drops timezone on roundtrip; normalise both sides so the
+    # backoff arithmetic check stays correct on PG and SQLite alike.
+    next_retry = row.next_retry_at
+    if next_retry.tzinfo is None:
+        next_retry = next_retry.replace(tzinfo=UTC)
+    # Next retry must be in the future, < 1 day out — confirms the
+    # backoff arithmetic ran without overflow.
+    assert next_retry > datetime.now(UTC)
+    assert next_retry < datetime.now(UTC) + timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_retry_dlq_blocked_drops_user_rows_and_trackers(
+    monkeypatch, mock_bot, populated_session,
+):
+    """OPUS-2: blocked outcome wipes every DLQ row for that user and
+    deactivates their trackers."""
+    session, user, tracker = populated_session
+
+    session.add_all([
+        TelegramNotificationDLQ(
+            user_id=user.id,
+            telegram_user_id=user.telegram_user_id,
+            source="tracker",
+            message="first",
+            error_kind="retryable",
+        ),
+        TelegramNotificationDLQ(
+            user_id=user.id,
+            telegram_user_id=user.telegram_user_id,
+            source="tracker",
+            message="second",
+            error_kind="retryable",
+        ),
+    ])
+    await session.commit()
+
+    async def _stub_classify(bot, tg_id, message, **kwargs):
+        return "blocked"
+
+    monkeypatch.setattr(collector, "_send_message_classified", _stub_classify)
+
+    sent = await retry_telegram_notification_dlq(
+        mock_bot,
+        get_session_factory(get_engine()),
+    )
+    assert sent == 0
+
+    rows = (await session.execute(
+        TelegramNotificationDLQ.__table__.select()
+    )).all()
+    assert rows == []
+
+    await session.refresh(tracker)
+    assert tracker.active is False
+
+
+@pytest.mark.asyncio
+async def test_retry_dlq_skips_due_in_future(monkeypatch, mock_bot, populated_session):
+    """OPUS-2: rows with next_retry_at in the future are NOT pumped."""
+    session, user, _tracker = populated_session
+
+    future = datetime.now(UTC) + timedelta(hours=1)
+    session.add(TelegramNotificationDLQ(
+        user_id=user.id,
+        telegram_user_id=user.telegram_user_id,
+        source="tracker",
+        message="future",
+        error_kind="retryable",
+        retry_count=2,
+        next_retry_at=future,
+    ))
+    await session.commit()
+
+    sent = await retry_telegram_notification_dlq(
+        mock_bot,
+        get_session_factory(get_engine()),
+    )
+    assert sent == 0
+
+    row = (await session.execute(
+        TelegramNotificationDLQ.__table__.select()
+    )).one()
+    assert row.retry_count == 2  # untouched
+    # SQLite drops timezone on roundtrip; normalise both sides.
+    seen = row.next_retry_at
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=UTC)
+    # next_retry_at preserved (within 1s for timezone-roundtrip safety).
+    assert abs((seen - future).total_seconds()) < 1
 
 
 @pytest.mark.asyncio

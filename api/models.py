@@ -555,6 +555,16 @@ class TelegramNotificationDLQ(Base):
     error_kind: Mapped[str] = mapped_column(String(64), nullable=False)
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
     retry_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # OPUS-2: retry pump uses these. Without retry_count rows pile
+    # up forever and never get re-attempted; ``next_retry_at`` is
+    # how the pump cheaply finds work without re-evaluating
+    # backoff arithmetic on every tick.
+    retry_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -564,6 +574,7 @@ class TelegramNotificationDLQ(Base):
     __table_args__ = (
         Index("idx_telegram_notification_dlq_created", "created_at"),
         Index("idx_telegram_notification_dlq_user", "user_id"),
+        Index("idx_telegram_notification_dlq_pump", "next_retry_at", "retry_count"),
     )
 
 

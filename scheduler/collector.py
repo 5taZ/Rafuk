@@ -1287,6 +1287,18 @@ def create_scheduler(
         id="reminder-check",
         replace_existing=True,
     )
+    # OPUS-2: pump the Telegram DLQ every minute so transient
+    # failures (Telegram API blip, single user retry-after) get
+    # a real second chance instead of waiting for the daily
+    # cleanup to wipe them.
+    scheduler.add_job(
+        retry_telegram_notification_dlq,
+        trigger="interval",
+        minutes=_DLQ_RETRY_TICK_MINUTES,
+        kwargs={"bot": bot, "session_factory": session_factory},
+        id="dlq-retry",
+        replace_existing=True,
+    )
     return scheduler
 
 
@@ -1403,19 +1415,199 @@ async def cleanup_ai_audit_log(session: AsyncSession, days: int = 365) -> int:
 
 
 async def cleanup_telegram_notification_dlq(session: AsyncSession, days: int = 30) -> int:
-    """Delete old Telegram notification failure payloads."""
+    """Delete old Telegram notification failure payloads.
+
+    OPUS-2: also drops rows that already exhausted ``_DLQ_MAX_RETRIES``
+    so a permanently-failing recipient doesn't keep them eligible
+    for the pump query forever.
+    """
     cutoff = datetime.now(UTC) - timedelta(days=days)
     result = await session.execute(
-        delete(TelegramNotificationDLQ).where(TelegramNotificationDLQ.created_at < cutoff)
+        delete(TelegramNotificationDLQ).where(
+            (TelegramNotificationDLQ.created_at < cutoff)
+            | (TelegramNotificationDLQ.retry_count >= _DLQ_MAX_RETRIES)
+        )
     )
     deleted_count = result.rowcount
     if deleted_count > 0:
         logger.info(
-            "Cleaned up %d Telegram notification DLQ rows (older than %d days)",
+            "Cleaned up %d Telegram notification DLQ rows "
+            "(older than %d days or retry-exhausted)",
             deleted_count,
             days,
         )
     return deleted_count
+
+
+# OPUS-2: how aggressive the retry pump is. 5 attempts × exponential
+# backoff (2, 4, 8, 16, 32 minutes after the failures) covers a ~1h
+# Telegram outage without spamming the API on every minute. Tunable
+# via constants only — no env knob until ops actually need it.
+_DLQ_RETRY_TICK_MINUTES = 1
+_DLQ_PUMP_BATCH_LIMIT = 50
+_DLQ_MAX_RETRIES = 5
+_DLQ_BACKOFF_BASE_MINUTES = 2
+
+
+def _dlq_next_retry_after(retry_count: int) -> datetime:
+    """Exponential backoff anchored on the *next* attempt count."""
+    minutes = _DLQ_BACKOFF_BASE_MINUTES * (2 ** max(0, retry_count - 1))
+    return datetime.now(UTC) + timedelta(minutes=minutes)
+
+
+async def retry_telegram_notification_dlq(
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """OPUS-2: pump pending DLQ rows back through Telegram.
+
+    The DLQ used to be a write-only graveyard: rows landed there
+    when ``_send_message_classified`` reported ``retry``, then sat
+    until the daily cleanup wiped them 30 days later. Telegram
+    blips of even ~10 minutes lost the affected notifications.
+
+    This pump reads up to ``_DLQ_PUMP_BATCH_LIMIT`` rows whose
+    ``next_retry_at`` is due (or NULL — fresh failures), groups by
+    ``telegram_user_id`` so one user's burst doesn't preempt
+    everyone else, sends each batch serially through the same
+    classifier, and applies the outcome:
+
+    * ``sent``    → DELETE row.
+    * ``blocked`` → DELETE every DLQ row for that user_id +
+                    deactivate their trackers in bulk.
+    * ``retry``   → ``retry_count += 1``,
+                    ``next_retry_at = now + 2^(n-1) * 2 min``.
+
+    Returns the number of rows that successfully sent.
+    """
+    async with session_factory() as session:
+        now = datetime.now(UTC)
+        result = await session.execute(
+            select(TelegramNotificationDLQ)
+            .where(
+                TelegramNotificationDLQ.retry_count < _DLQ_MAX_RETRIES,
+                (TelegramNotificationDLQ.next_retry_at.is_(None))
+                | (TelegramNotificationDLQ.next_retry_at <= now),
+            )
+            .order_by(TelegramNotificationDLQ.created_at.asc())
+            .limit(_DLQ_PUMP_BATCH_LIMIT)
+        )
+        rows = list(result.scalars())
+        if not rows:
+            return 0
+        # Snapshot the bytes we need before we leave the session — the
+        # async send loop runs without a session open so we don't block
+        # connections on outbound I/O.
+        snapshots: list[tuple[int, int, int | None, str, int]] = [
+            (row.id, row.telegram_user_id, row.user_id, row.message, row.retry_count)
+            for row in rows
+        ]
+
+    by_user: dict[int, list[tuple[int, int | None, str, int]]] = defaultdict(list)
+    for row_id, tg_id, user_id, message, retry_count in snapshots:
+        by_user[tg_id].append((row_id, user_id, message, retry_count))
+
+    sem = asyncio.Semaphore(_TRACKER_USER_CONCURRENCY)
+
+    async def _drain(
+        tg_user_id: int,
+        items: list[tuple[int, int | None, str, int]],
+    ) -> tuple[int, list[int], list[tuple[int, int]], int | None]:
+        """Send every queued message for one user, serially.
+
+        Returns a tuple of:
+        * count of successful sends,
+        * row ids to delete (sent OR blocked),
+        * (row_id, new_retry_count) tuples to bump for retry,
+        * blocked user_id (if encountered) for bulk deactivation.
+        """
+        sent_count = 0
+        delete_ids: list[int] = []
+        bump_ids: list[tuple[int, int]] = []
+        blocked_internal_id: int | None = None
+        async with sem:
+            for row_id, user_id, message, retry_count in items:
+                outcome = await _send_message_classified(
+                    bot, tg_user_id, message,
+                )
+                if outcome == "sent":
+                    sent_count += 1
+                    delete_ids.append(row_id)
+                elif outcome == "blocked":
+                    # User no longer reachable — pointless to keep
+                    # any of their queued rows. Mark THIS one and
+                    # let the caller wipe siblings via tg_user_id.
+                    blocked_internal_id = user_id
+                    delete_ids.append(row_id)
+                    return sent_count, delete_ids, bump_ids, blocked_internal_id
+                else:
+                    bump_ids.append((row_id, retry_count + 1))
+        return sent_count, delete_ids, bump_ids, blocked_internal_id
+
+    results = await asyncio.gather(
+        *[_drain(tg_id, items) for tg_id, items in by_user.items()]
+    )
+
+    total_sent = sum(r[0] for r in results)
+    delete_ids: list[int] = []
+    bump_ids: list[tuple[int, int]] = []
+    blocked_user_ids: set[int] = set()
+    blocked_internal_ids: set[int] = set()
+    for tg_id, (_sent_count, drained_delete, drained_bump, blocked_uid) in zip(
+        by_user.keys(), results, strict=True,
+    ):
+        delete_ids.extend(drained_delete)
+        bump_ids.extend(drained_bump)
+        if blocked_uid is not None:
+            blocked_user_ids.add(tg_id)
+            blocked_internal_ids.add(blocked_uid)
+
+    if not (delete_ids or bump_ids or blocked_user_ids):
+        return total_sent
+
+    async with session_factory() as session:
+        # Wipe every DLQ row for blocked users; covers rows we
+        # didn't pull this tick too.
+        if blocked_user_ids:
+            await session.execute(
+                delete(TelegramNotificationDLQ).where(
+                    TelegramNotificationDLQ.telegram_user_id.in_(blocked_user_ids),
+                )
+            )
+            await session.execute(
+                update(Tracker)
+                .where(
+                    Tracker.user_id.in_(blocked_internal_ids),
+                    Tracker.active.is_(True),
+                )
+                .values(active=False)
+            )
+            logger.info(
+                "DLQ pump: dropped trackers for %d blocked user(s)",
+                len(blocked_internal_ids),
+            )
+        if delete_ids:
+            await session.execute(
+                delete(TelegramNotificationDLQ).where(
+                    TelegramNotificationDLQ.id.in_(delete_ids)
+                )
+            )
+        for row_id, new_retry_count in bump_ids:
+            await session.execute(
+                update(TelegramNotificationDLQ)
+                .where(TelegramNotificationDLQ.id == row_id)
+                .values(
+                    retry_count=new_retry_count,
+                    next_retry_at=_dlq_next_retry_after(new_retry_count),
+                )
+            )
+        await session.commit()
+    if total_sent or bump_ids:
+        logger.info(
+            "DLQ pump: sent=%d retried=%d blocked_users=%d",
+            total_sent, len(bump_ids), len(blocked_user_ids),
+        )
+    return total_sent
 
 
 async def check_db_health(engine) -> bool:
