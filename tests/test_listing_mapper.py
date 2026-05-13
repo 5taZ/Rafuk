@@ -6,7 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from api.services.aggregator import PriceStats
+from api.services.aggregator import (
+    PriceStats,
+    compute_category_price_stats,
+    compute_price_stats,
+    extract_prices,
+)
 from api.services.currency_service import CurrencyService
 from api.services.listing_mapper import (
     _parameter_value,
@@ -318,6 +323,80 @@ class TestBuildListingItem:
             cluster_cache={42: cluster},
         )
         assert item.ad_id == 42
+
+    def test_mixed_parts_reference_suppresses_noisy_motor_delta(self) -> None:
+        part_param = {"p": "category", "v": "2040", "vl": "Запчасти"}
+        ads = [
+            _ad(
+                subject="Volkswagen Polo 1.9 SDI мотор",
+                price_byn=196000,
+                category="2040",
+                ad_parameters=[part_param],
+            ),
+            _ad(
+                ad_id=43,
+                subject="Volkswagen Polo поворотники",
+                price_byn=1956,
+                category="2040",
+                ad_parameters=[part_param],
+            ),
+            _ad(
+                ad_id=44,
+                subject="Зеркало наружнее левое Volkswagen Polo",
+                price_byn=4191,
+                category="2040",
+                ad_parameters=[part_param],
+            ),
+            _ad(
+                ad_id=45,
+                subject="Крышка багажника Volkswagen Polo",
+                price_byn=16800,
+                category="2040",
+                ad_parameters=[part_param],
+            ),
+        ]
+        item = build_listing_item(
+            ads[0],
+            query="Volkswagen Polo",
+            currency="BYN",
+            rates=RATES,
+            currency_service=_currency_service(),
+            median_byn=100.0,
+            market_stats=compute_price_stats(extract_prices(ads)),
+            category_price_stats=compute_category_price_stats(ads),
+            cluster_cache={42: None},
+        )
+
+        assert item.price_vs_median is None
+        assert item.fair_price_label is None
+        assert item.deal_verdict is None
+        assert item.anomaly_labels == []
+
+    def test_similar_cluster_keeps_motor_delta_when_comparable_ads_exist(self) -> None:
+        part_param = {"p": "category", "v": "2040", "vl": "Запчасти"}
+        ad = _ad(
+            subject="Volkswagen Polo 1.9 SDI мотор",
+            price_byn=196000,
+            category="2040",
+            ad_parameters=[part_param],
+        )
+        item = build_listing_item(
+            ad,
+            query="Volkswagen Polo",
+            currency="BYN",
+            rates=RATES,
+            currency_service=_currency_service(),
+            median_byn=100.0,
+            market_stats=_make_stats(median=100, q1=40, q3=160),
+            category_price_stats={2040: _make_stats(median=100, q1=40, q3=160)},
+            cluster_cache={42: _make_stats(median=1960, q1=1800, q3=2100, count=3)},
+        )
+
+        assert item.price_vs_median == 0.0
+        assert item.price_reference_scope == "similar"
+        assert item.price_reference_label == "Похожие объявления"
+        assert item.fair_price_label == "По рынку"
+        assert item.deal_verdict == "Средняя цена"
 
     def test_cluster_cache_miss(self) -> None:
         item = build_listing_item(

@@ -189,7 +189,7 @@ async def get_listings(
         category_price_stats=category_price_stats,
     )
     capped_ads = sorted_ads[:_MAX_LISTINGS_PAGE]
-    cluster_cache = precompute_cluster_stats(capped_ads)
+    cluster_cache = precompute_cluster_stats(capped_ads, query=query)
     # Build ListingItem only for the slice the client is going to
     # actually render — saves several ms per skipped ad on big
     # result sets, since build_listing_item normalises params,

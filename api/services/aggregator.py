@@ -281,6 +281,64 @@ def apply_search_mode(
 # price comparison. Below this threshold the delta% is hidden (0.0)
 # to avoid misleading comparisons against a tiny sample.
 MIN_CLUSTER_SIZE = 3
+MAX_CLUSTER_PRICE_SPREAD = 1.5
+_PRODUCT_TYPE_ALIASES = {
+    "мотор": "engine",
+    "мотора": "engine",
+    "двигатель": "engine",
+    "двигателя": "engine",
+    "двиг": "engine",
+    "зеркало": "mirror",
+    "зеркала": "mirror",
+    "поворотник": "turn_signal",
+    "поворотники": "turn_signal",
+    "поворотника": "turn_signal",
+    "указатель": "turn_signal",
+    "бампер": "bumper",
+    "бампера": "bumper",
+    "дверь": "door",
+    "двери": "door",
+    "крыло": "fender",
+    "крыла": "fender",
+    "фара": "headlight",
+    "фары": "headlight",
+    "фонарь": "tail_light",
+    "фонари": "tail_light",
+    "капот": "hood",
+    "капота": "hood",
+    "кпп": "gearbox",
+    "коробка": "gearbox",
+    "коробку": "gearbox",
+    "акпп": "gearbox",
+    "мкпп": "gearbox",
+    "диск": "wheel",
+    "диски": "wheel",
+    "колесо": "wheel",
+    "колеса": "wheel",
+    "шина": "tire",
+    "шины": "tire",
+    "резина": "tire",
+    "сиденье": "seat",
+    "сидения": "seat",
+    "чехол": "case",
+    "чехлы": "case",
+    "чехла": "case",
+    "зарядка": "charger",
+    "зарядное": "charger",
+    "зарядник": "charger",
+    "аккумулятор": "battery",
+    "аккумулятора": "battery",
+    "батарея": "battery",
+    "дисплей": "display",
+    "экран": "display",
+    "матрица": "display",
+    "камера": "camera",
+    "объектив": "lens",
+    "клавиатура": "keyboard",
+    "мышь": "mouse",
+    "наушники": "headphones",
+    "монитор": "monitor",
+}
 
 
 def find_similar_listings(
@@ -323,8 +381,29 @@ def cluster_price_stats(
     return compute_price_stats(prices)
 
 
+def _cluster_spread(stats: PriceStats) -> float:
+    if stats.median <= 0 or stats.q3 < stats.q1:
+        return float("inf")
+    return (stats.q3 - stats.q1) / stats.median
+
+
+def _product_cluster_key(tokens: list[str], query_tokens: set[str]) -> tuple[str, ...]:
+    token_set = set(tokens)
+    aliases = {
+        alias
+        for token in tokens
+        if token not in query_tokens and (alias := _PRODUCT_TYPE_ALIASES.get(token))
+    }
+    if ({"крышка", "крышку"} & token_set) and ({"багажника", "багажник"} & token_set):
+        aliases.add("trunk_lid")
+    if not aliases:
+        return ()
+    return tuple(sorted(aliases))
+
+
 def precompute_cluster_stats(
     all_ads: list[dict[str, Any]],
+    query: str | None = None,
 ) -> dict[int, PriceStats | None]:
     """Pre-compute cluster stats for every ad in *all_ads*.
 
@@ -355,6 +434,9 @@ def precompute_cluster_stats(
     ad_id_list: list[int] = [0] * n
     token_sets: list[set[str] | None] = [None] * n
     variant_sets: list[set[str] | None] = [None] * n
+    query_tokens = set(tokenize_search_text(query or ""))
+    product_keys: list[tuple[str, ...]] = [()] * n
+    product_groups: dict[tuple[str, ...], list[int]] = {}
     for i, ad in enumerate(all_ads):
         ad_id_list[i] = int(ad.get("ad_id", 0))
         tokens = tokenize_search_text(str(ad.get("subject", "")))
@@ -362,6 +444,10 @@ def precompute_cluster_stats(
             continue
         token_sets[i] = set(tokens)
         variant_sets[i] = {t for t in tokens if t in STRICT_VARIANT_TOKENS}
+        product_key = _product_cluster_key(tokens, query_tokens)
+        product_keys[i] = product_key
+        if product_key:
+            product_groups.setdefault(product_key, []).append(i)
 
     # Step 2: per ad, find the cluster of similar ads using only set ops.
     # Collect prices in one pass (avoid re-walking the cluster).
@@ -391,10 +477,30 @@ def precompute_cluster_stats(
             if price is not None:
                 cluster_prices.append(price)
 
-        if cluster_size < MIN_CLUSTER_SIZE or not cluster_prices:
-            result[ad_id_list[i]] = None
-        else:
+        if cluster_size >= MIN_CLUSTER_SIZE and cluster_prices:
             result[ad_id_list[i]] = compute_price_stats(cluster_prices)
+        else:
+            product_key = product_keys[i]
+            product_indexes = product_groups.get(product_key, [])
+            product_prices: list[float] = []
+            for idx in product_indexes:
+                price = normalize_price_byn(all_ads[idx].get("price_byn"), all_ads[idx])
+                if price is not None:
+                    product_prices.append(price)
+            product_stats = (
+                compute_price_stats(product_prices)
+                if len(product_indexes) >= MIN_CLUSTER_SIZE and product_prices
+                else None
+            )
+            product_stats_is_usable = (
+                product_stats is not None
+                and _cluster_spread(product_stats) <= MAX_CLUSTER_PRICE_SPREAD
+            )
+            result[ad_id_list[i]] = (
+                product_stats
+                if product_stats_is_usable
+                else None
+            )
 
     return result
 

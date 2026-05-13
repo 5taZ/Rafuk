@@ -14,7 +14,7 @@ from api.dependencies import (
 )
 from api.limiter import limiter
 from api.schemas import ListingDetailResponse
-from api.services.aggregator import compute_category_price_stats
+from api.services.aggregator import compute_category_price_stats, precompute_cluster_stats
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
@@ -72,6 +72,7 @@ async def get_listing_detail(
 
     median_byn = visible_dataset.price_stats.median
     category_price_stats = compute_category_price_stats(reference_dataset.ads)
+    cluster_cache = precompute_cluster_stats(visible_dataset.ads, query=query)
     liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats, ad=ad)
     rates_payload = await currency_service.get_rates()
     payload = build_listing_detail(
@@ -84,6 +85,7 @@ async def get_listing_detail(
         market_stats=reference_dataset.price_stats,
         category_price_stats=category_price_stats,
         liquidity=liquidity,
+        cluster_stats=cluster_cache.get(ad_id),
     )
     # Risk detection — runs after the listing detail is built so we can
     # reuse the market stats already fetched for the query.

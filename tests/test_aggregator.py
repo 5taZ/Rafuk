@@ -19,6 +19,7 @@ from api.services.aggregator import (
     is_strict_match,
     normalize_price_byn,
     normalize_search_text,
+    precompute_cluster_stats,
     sort_listings,
 )
 
@@ -244,6 +245,23 @@ def test_iphone_14_scenario_uses_phone_category_not_global() -> None:
     assert -10.0 < delta < 10.0, (
         f"iPhone deviation should be small vs phone median, got {delta:+.1f}%"
     )
+
+
+def test_product_cluster_groups_vehicle_engines_in_mixed_parts_query() -> None:
+    ads = [
+        {"ad_id": 1, "subject": "Volkswagen Polo 1.9 SDI мотор", "price_byn": 196000},
+        {"ad_id": 2, "subject": "Двигатель VW Polo 1.4 бензин", "price_byn": 180000},
+        {"ad_id": 3, "subject": "Мотор Фольксваген Поло 1.6", "price_byn": 210000},
+        {"ad_id": 4, "subject": "Volkswagen Polo поворотники", "price_byn": 1956},
+        {"ad_id": 5, "subject": "Зеркало наружнее левое Volkswagen Polo", "price_byn": 4191},
+    ]
+
+    clusters = precompute_cluster_stats(ads, query="Volkswagen Polo")
+
+    assert clusters[1] is not None
+    assert clusters[1].count == 3
+    assert clusters[1].median == pytest.approx(1960.0)
+    assert clusters[4] is None
 
 
 def test_extract_search_refinements_returns_top_recurring_tokens() -> None:
