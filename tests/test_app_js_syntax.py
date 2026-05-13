@@ -286,6 +286,77 @@ console.log("OK");
     assert "OK" in result.stdout, f"unexpected output: {result.stdout!r}"
 
 
+def test_focus_trap_recomputes_focusable_elements() -> None:
+    helpers_src = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    trap_match = re.search(
+        r"function trapFocus\(container\)\s*\{.*?\n\}\n\nfunction domAppend",
+        helpers_src,
+        re.DOTALL,
+    )
+    assert trap_match, "trapFocus helper not found"
+
+    trap_src = trap_match.group(0).removesuffix("\n\nfunction domAppend")
+    harness = f"""
+globalThis.document = {{ activeElement: null }};
+{trap_src}
+
+function focusable(name) {{
+    return {{
+        name,
+        focus() {{ document.activeElement = this; }},
+    }};
+}}
+
+const first = focusable("first");
+const second = focusable("second");
+const third = focusable("third");
+let focusables = [first, second];
+let keydownHandler = null;
+const container = {{
+    querySelectorAll() {{ return focusables; }},
+    addEventListener(type, handler) {{
+        if (type === "keydown") keydownHandler = handler;
+    }},
+    removeEventListener() {{}},
+}};
+
+trapFocus(container);
+if (document.activeElement !== first) throw new Error("trapFocus must focus first item");
+focusables = [first, second, third];
+document.activeElement = third;
+let prevented = false;
+keydownHandler({{
+    key: "Tab",
+    shiftKey: false,
+    preventDefault() {{ prevented = true; }},
+}});
+if (!prevented) throw new Error("Tab on dynamically-added last item must be trapped");
+if (document.activeElement !== first) throw new Error("Tab should wrap to recomputed first item");
+"""
+    subprocess.run(["node", "-e", harness], check=True, text=True)
+
+
+def test_secondary_tablists_share_roving_keyboard_helper() -> None:
+    helpers = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    events = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    listing_assistant = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+    bundle_script = Path("scripts/build_frontend_bundle.sh").read_text(encoding="utf-8")
+
+    assert "function bindRovingTablist" in helpers
+    for key in ("ArrowRight", "ArrowLeft", "Home", "End"):
+        assert key in helpers
+    assert "bindRovingTablist(tablist)" in events
+    assert "bindRovingTablist(elements.itemsFilterRow)" in events
+    assert "app.bindRovingTablist" in listing_assistant
+    assert "bindRovingTablist," in bundle_script
+
+
+def test_scroll_section_into_view_respects_reduced_motion() -> None:
+    actions = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    assert "behavior: _prefersReducedMotion() ? \"auto\" : \"smooth\"" in actions
+    assert 'section?.scrollIntoView({ behavior: "smooth"' not in actions
+
+
 def test_no_modal_close_bypasses_close_modal_animated() -> None:
     """Wave 25.5 regression test: every modal close path must go through
     ``closeModalAnimated`` (or a wrapper that ultimately does) — never

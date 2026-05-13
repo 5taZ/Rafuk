@@ -90,7 +90,10 @@ function createAppActions(baseContext) {
      * @param {HTMLElement|null} section - The DOM element to scroll to
      */
     function scrollSectionIntoView(section) {
-        section?.scrollIntoView({ behavior: "smooth", block: "start" });
+        section?.scrollIntoView({
+            behavior: _prefersReducedMotion() ? "auto" : "smooth",
+            block: "start",
+        });
     }
 
     /**
@@ -161,10 +164,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260512-78263a0"),
-            context._loadScript("js/api_ai_render.js?v=20260512-78263a0"),
-            context._loadScript("js/api_ai.js?v=20260512-78263a0"),
-            context._loadScript("js/api_listing_assistant.js?v=20260512-78263a0"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-e267d3c"),
+            context._loadScript("js/api_ai_render.js?v=20260513-e267d3c"),
+            context._loadScript("js/api_ai.js?v=20260513-e267d3c"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-e267d3c"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

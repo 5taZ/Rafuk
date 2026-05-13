@@ -46,6 +46,7 @@ def _expected_app_bundle_text() -> str:
         "  createAppCore,\n"
         "  domEl,\n"
         "  domFragment,\n"
+        "  bindRovingTablist,\n"
         "  _prefersReducedMotion,\n"
         "  openModalAnimated,\n"
         "  closeModalAnimated,\n"
@@ -139,6 +140,7 @@ def test_app_bundle_uses_single_namespace_wrapper() -> None:
         "domEl",
         "domFragment",
         "_prefersReducedMotion",
+        "bindRovingTablist",
         "openModalAnimated",
         "closeModalAnimated",
     ):
@@ -430,6 +432,31 @@ def test_large_lists_do_not_use_noisy_live_regions(soup: BeautifulSoup) -> None:
         assert element.get("aria-live") is None
 
 
+def test_secondary_tablists_have_roving_aria_relationships(soup: BeautifulSoup) -> None:
+    for selector in (".items-tabs", ".la-tabs"):
+        tablist = soup.select_one(selector)
+        assert tablist is not None
+        assert tablist.get("role") == "tablist"
+        tabs = tablist.select('[role="tab"]')
+        assert tabs
+        active_tabs = [tab for tab in tabs if tab.get("aria-selected") == "true"]
+        assert len(active_tabs) == 1
+        for tab in tabs:
+            tab_id = tab.get("id")
+            controls = tab.get("aria-controls")
+            assert tab_id, f"{selector} tab is missing id"
+            assert controls, f"{selector} tab {tab_id} is missing aria-controls"
+            panel = soup.find(id=controls)
+            assert panel is not None, f"{selector} tab {tab_id} controls missing panel"
+            assert panel.get("role") == "tabpanel"
+            expected_tabindex = "0" if tab.get("aria-selected") == "true" else "-1"
+            assert tab.get("tabindex") == expected_tabindex
+
+    assert soup.find(id="lead-inbox-list").get("aria-labelledby") == "items-tab-purchases"
+    assert soup.find(id="la-pane-form").get("aria-labelledby") == "la-tab-form"
+    assert soup.find(id="la-pane-history").get("aria-labelledby") == "la-tab-history"
+
+
 def test_filter_controls_have_accessible_state_and_labels(soup: BeautifulSoup) -> None:
     region = soup.find(id="filter-region")
     assert region is not None
@@ -475,6 +502,8 @@ def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
             start = end + 1
 
     for selector in (
+        ".theme-toggle",
+        ".header-privacy-btn",
         ".summary-refinement-chip",
         ".empty-state-action",
         ".list-pagination-button",

@@ -427,7 +427,8 @@ function createRenderCards(context) {
         // Update tab counts and visibility of the "Очистить" buttons.
         const activeLeads = (state.leads.items || []).filter(isActiveLead);
         const counts = {
-            watching: (state.watchlist.items || []).length,            purchases: activeLeads.length,
+            watching: (state.watchlist.items || []).length,
+            purchases: activeLeads.length,
         };
 
         if (elements.itemsCountBadges) {
@@ -444,7 +445,9 @@ function createRenderCards(context) {
             button.classList.toggle("is-active", isActive);
             button.classList.toggle("active", isActive);
             button.setAttribute("aria-selected", String(isActive));
+            button.tabIndex = isActive ? 0 : -1;
         }
+        container.setAttribute("aria-labelledby", `items-tab-${filter}`);
 
         if (elements.clearAllLeadsButton) {
             elements.clearAllLeadsButton.hidden = filter === "watching";

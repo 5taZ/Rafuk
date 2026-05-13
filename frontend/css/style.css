@@ -502,8 +502,10 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--bg-subtle);
@@ -4386,10 +4388,10 @@ body.lp-menu-open {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
-    min-width: 0;
-    min-height: 0;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--bg-subtle);

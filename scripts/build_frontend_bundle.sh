@@ -52,6 +52,7 @@ window.App = Object.assign(window.App || {}, {
   createAppCore,
   domEl,
   domFragment,
+  bindRovingTablist,
   _prefersReducedMotion,
   openModalAnimated,
   closeModalAnimated,

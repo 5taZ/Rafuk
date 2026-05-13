@@ -225,23 +225,7 @@ function createApiEvents(context) {
         });
         // ── View tabs ────────────────────────────────────────────────
         const tablist = document.querySelector('[role="tablist"].view-nav');
-        if (tablist) {
-            tablist.addEventListener("keydown", (event) => {
-                const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
-                if (!tabs.length) return;
-                const idx = tabs.indexOf(document.activeElement);
-                if (idx === -1) return;
-                let next = -1;
-                if (event.key === "ArrowRight") next = (idx + 1) % tabs.length;
-                else if (event.key === "ArrowLeft") next = (idx - 1 + tabs.length) % tabs.length;
-                else if (event.key === "Home") next = 0;
-                else if (event.key === "End") next = tabs.length - 1;
-                if (next === -1) return;
-                event.preventDefault();
-                tabs[next].focus();
-                tabs[next].click();
-            });
-        }
+        if (tablist) bindRovingTablist(tablist);
         for (const button of elements.viewTabs || []) {
             button.addEventListener("click", () => {
                 const view = button.dataset.view;
@@ -273,6 +257,7 @@ function createApiEvents(context) {
         }
 
         // ── Items filter tabs (Избранное / Покупки within deals view) ──
+        if (elements.itemsFilterRow) bindRovingTablist(elements.itemsFilterRow);
         for (const button of elements.itemsFilterButtons || []) {
             button.addEventListener("click", () => {
                 const filter = button.dataset.itemsFilter;

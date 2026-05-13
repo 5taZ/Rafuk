@@ -36,13 +36,16 @@ function trapFocus(container) {
         'a[href]',
         '[tabindex]:not([tabindex="-1"])',
     ].join(", ");
-    const focusable = container.querySelectorAll(sel);
+    const getFocusable = () => Array.from(container.querySelectorAll(sel));
+    const focusable = getFocusable();
     if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
 
     function handleKeydown(e) {
         if (e.key !== "Tab") return;
+        const currentFocusable = getFocusable();
+        if (currentFocusable.length === 0) return;
+        const first = currentFocusable[0];
+        const last = currentFocusable[currentFocusable.length - 1];
         if (e.shiftKey) {
             if (document.activeElement === first) {
                 e.preventDefault();
@@ -57,8 +60,35 @@ function trapFocus(container) {
     }
 
     container.addEventListener("keydown", handleKeydown);
-    first.focus();
+    focusable[0].focus();
     return () => container.removeEventListener("keydown", handleKeydown);
+}
+
+function bindRovingTablist(tablist) {
+    if (!tablist || tablist._rovingTablistBound) return () => {};
+    const handler = (event) => {
+        const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'))
+            .filter((tab) => !tab.disabled && !tab.hidden);
+        if (!tabs.length) return;
+        const current = event.target.closest?.('[role="tab"]') || document.activeElement;
+        const idx = tabs.indexOf(current);
+        if (idx === -1) return;
+        let next = -1;
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") next = (idx + 1) % tabs.length;
+        else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (idx - 1 + tabs.length) % tabs.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = tabs.length - 1;
+        if (next === -1) return;
+        event.preventDefault();
+        tabs[next].focus();
+        tabs[next].click();
+    };
+    tablist._rovingTablistBound = true;
+    tablist.addEventListener("keydown", handler);
+    return () => {
+        tablist.removeEventListener("keydown", handler);
+        tablist._rovingTablistBound = false;
+    };
 }
 
 function domAppend(target) {

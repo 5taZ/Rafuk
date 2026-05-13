@@ -11,6 +11,7 @@
 "use strict";
 
 const { openModalAnimated, closeModalAnimated } = app;
+const bindRovingTablist = app.bindRovingTablist || (() => () => {});
 const prefersReducedMotion = app._prefersReducedMotion || (() => (
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -218,6 +219,7 @@ function createApiListingAssistant(context) {
             const isActive = btn.dataset.laTab === name;
             btn.classList.toggle("is-active", isActive);
             btn.setAttribute("aria-selected", String(isActive));
+            btn.tabIndex = isActive ? 0 : -1;
         }
         if (formPane) formPane.hidden = name !== "form";
         if (historyPane) historyPane.hidden = name !== "history";
@@ -1046,6 +1048,7 @@ function createApiListingAssistant(context) {
     notesInput?.addEventListener("input", _notesHandler);
     photoInput?.addEventListener("change", _photoHandler);
     if (tabsRow) tabsRow.addEventListener("click", _tabsHandler);
+    const _tabsKeyboardCleanup = bindRovingTablist(tabsRow);
     openBtn?.addEventListener("click", _openHandler);
     closeBtn?.addEventListener("click", _closeHandler);
     overlay?.addEventListener("click", _overlayHandler);
@@ -1074,6 +1077,7 @@ function createApiListingAssistant(context) {
             notesInput?.removeEventListener("input", _notesHandler);
             photoInput?.removeEventListener("change", _photoHandler);
             if (tabsRow) tabsRow.removeEventListener("click", _tabsHandler);
+            _tabsKeyboardCleanup();
             openBtn?.removeEventListener("click", _openHandler);
             closeBtn?.removeEventListener("click", _closeHandler);
             overlay?.removeEventListener("click", _overlayHandler);
