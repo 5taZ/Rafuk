@@ -5,7 +5,7 @@ classifieds site **[Kufar.by](https://www.kufar.by)** for listings,
 runs analytics and AI-assisted decisioning over them, and surfaces
 "deal-finder" workflows to end users.
 
-> **Status:** active development on the `bad-app` branch. 717 tests
+> **Status:** active development on the `bad-app` branch. 725 tests
 > green. See [`CHANGELOG.md`](./CHANGELOG.md) for the wave-by-wave
 > security/performance hardening history.
 
@@ -80,7 +80,7 @@ Docker volume, so restarts keep your saved searches, trackers, and deals.
 ## Tests
 
 ```bash
-# all 717 tests (uses aiosqlite, ~50s)
+# all 725 tests (uses aiosqlite, ~50s)
 uv run pytest --tb=short
 
 # single file

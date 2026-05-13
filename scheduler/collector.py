@@ -659,9 +659,10 @@ async def _check_trackers_inner(
             )
             return
 
-        trackers_by_query: dict[tuple[str, bool], list[Tracker]] = defaultdict(list)
+        trackers_by_query: dict[tuple[str, bool, int | None], list[Tracker]] = defaultdict(list)
         for tracker in trackers:
-            trackers_by_query[(tracker.query, tracker.strict_mode)].append(tracker)
+            key = (tracker.query, tracker.strict_mode, tracker.category_id)
+            trackers_by_query[key].append(tracker)
 
         # Bulk-load recently-seen events for all due trackers in a single
         # query — avoids N+1 SELECTs inside persist_tracker_events.
@@ -692,15 +693,20 @@ async def _check_trackers_inner(
             # writes. See ``_dispatch_tracker_notifications``.
             pending_notifications: list[_TrackerNotifyJob] = []
 
-            for (query, strict_mode), query_trackers in trackers_by_query.items():
+            for (query, strict_mode, category_id), query_trackers in trackers_by_query.items():
                 # Use a savepoint per query group so that a rollback only
                 # discards THIS group's changes — previous groups' flushed
                 # data stays intact in the outer transaction.
                 async with session.begin_nested():
                     try:
-                        payload = await client.search(query=query, currency="BYN", size=50)
+                        payload = await client.search(
+                            query=query,
+                            currency="BYN",
+                            size=50,
+                            category=category_id,
+                        )
                         ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
-                        search_key = build_query_key(query, strict_mode)
+                        search_key = build_query_key(query, strict_mode, category_id)
                         await upsert_query_snapshot(
                             session,
                             query=search_key,
@@ -742,9 +748,10 @@ async def _check_trackers_inner(
 
                         safe_query = query.replace("\n", " ")[:80]
                         logger.info(
-                            "Query %r [strict=%s]: %d ads, %d new, %d price drops",
+                            "Query %r [strict=%s category=%s]: %d ads, %d new, %d price drops",
                             safe_query,
                             strict_mode,
+                            category_id,
                             len(ads),
                             len(sync_result.new_listings),
                             len(sync_result.price_drops),
@@ -766,7 +773,7 @@ async def _check_trackers_inner(
                                 # sync_query_listing_states already recorded them as new
                                 # for the query, but this tracker should skip them.
                                 seen_by_tracker[tracker.id] = {
-                                    (state.ad_id, state.event_type)
+                                    (state.ad_id, "new_listing")
                                     for state in sync_result.new_listings
                                 }
                                 continue
@@ -949,9 +956,10 @@ async def _check_trackers_inner(
                         # Rolling back the savepoint only discards this
                         # group's changes — previous groups are safe.
                         logger.exception(
-                            "Error processing query %r [strict=%s], skipping",
+                            "Error processing query %r [strict=%s category=%s], skipping",
                             query,
                             strict_mode,
+                            category_id,
                         )
 
             # Commit whatever succeeded — errors are logged but don't block

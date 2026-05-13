@@ -26,6 +26,8 @@ from api.schemas import (
         ("condition", "x" * 33),
         ("region_name", "x" * 65),
         ("config_keyword", "x" * 129),
+        ("category_id", 0),
+        ("category_label", "x" * 129),
         ("alert_price_threshold", -1),
         ("alert_discount_percent", 100.01),
     ],
@@ -42,6 +44,8 @@ def test_tracker_create_rejects_out_of_contract_filters(field: str, value: objec
         ("max_price_byn", -1),
         ("seller_type", "x" * 33),
         ("region_name", "x" * 65),
+        ("category_id", 0),
+        ("category_label", "x" * 129),
         ("alert_discount_percent", 100.01),
     ],
 )

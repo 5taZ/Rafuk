@@ -467,6 +467,10 @@ def test_filter_controls_have_accessible_state_and_labels(soup: BeautifulSoup) -
     edit_label = soup.find("label", attrs={"for": "edit-tracker-query"})
     assert edit_label is not None
     assert edit_label.get_text(strip=True) == "Запрос"
+    edit_category = soup.find(id="edit-category-select")
+    assert edit_category is not None
+    default_category_option = edit_category.find("option", attrs={"value": ""})
+    assert default_category_option.get_text(strip=True) == "Любая категория"
 
     for selector in (
         "[data-condition]",

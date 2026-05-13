@@ -127,6 +127,56 @@ def test_price_history_caps_days_at_ninety() -> None:
     assert response.json()["days"] == 90
 
 
+def test_price_history_endpoint_uses_category_key() -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+
+    async def seed_category_history(session_factory) -> None:
+        async with session_factory() as session:
+            now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+            session.add_all(
+                [
+                    QuerySnapshot(
+                        query=build_query_key("iphone 16 category", True),
+                        snapshot_at=now,
+                        total_results=100,
+                        analyzed_count=80,
+                        mean_byn=1000,
+                        median_byn=1000,
+                        min_byn=900,
+                        max_byn=1100,
+                    ),
+                    QuerySnapshot(
+                        query=build_query_key("iphone 16 category", True, 17010),
+                        snapshot_at=now,
+                        total_results=10,
+                        analyzed_count=8,
+                        mean_byn=2000,
+                        median_byn=2000,
+                        min_byn=1900,
+                        max_byn=2100,
+                    ),
+                ]
+            )
+            await session.commit()
+
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        asyncio.run(seed_category_history(app.state.session_factory))
+        response = client.get(
+            "/api/v1/price-history",
+            params={"query": "iphone 16 category", "days": 7, "category": 17010},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["points"]) == 1
+    assert payload["points"][0]["median"] == 2000
+
+
 def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app

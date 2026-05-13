@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import scheduler.collector as collector
 from api.database import get_engine, get_session_factory
 from api.models import (
     Base,
@@ -19,6 +20,7 @@ from api.models import (
     Tracker,
     TrackerEvent,
 )
+from api.services.aggregator import build_query_key
 from api.services.history_service import QuerySyncResult, TrendReversal
 from scheduler.collector import (
     _build_new_listing_message,
@@ -32,6 +34,7 @@ from scheduler.collector import (
     _recent_trend_event_tracker_ids,
     _TrackerNotifyJob,
     check_reminders,
+    check_trackers,
     cleanup_ai_audit_log,
     cleanup_inactive_listing_states,
     cleanup_old_events,
@@ -984,6 +987,80 @@ async def test_recent_events_by_tracker_groups_by_id(populated_session):
     result = await _recent_events_by_tracker(session, [tracker.id])
     assert tracker.id in result
     assert (1, "new_listing") in result[tracker.id]
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_groups_same_query_by_category(monkeypatch, mock_bot: AsyncMock):
+    from sqlalchemy import select
+
+    from api.models import QuerySnapshot
+
+    calls: list[dict] = []
+
+    class CategoryAwareClient:
+        def __init__(self, settings):
+            del settings
+
+        async def search(self, **kwargs):
+            calls.append(kwargs)
+            category = kwargs.get("category")
+            ad_id = 7000 + (category or 0)
+            return {
+                "ads": [
+                    {
+                        "ad_id": ad_id,
+                        "subject": "iPhone 15",
+                        "price_byn": 2000,
+                        "ad_link": f"https://www.kufar.by/item/{ad_id}",
+                    }
+                ],
+                "total": 1,
+            }
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(collector, "KufarClient", CategoryAwareClient)
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=404, first_name="Category")
+        session.add(user)
+        await session.flush()
+        session.add_all(
+            [
+                Tracker(user_id=user.id, query="iphone 15", strict_mode=False),
+                Tracker(
+                    user_id=user.id,
+                    query="iphone 15",
+                    strict_mode=False,
+                    category_id=17010,
+                    category_label="Мобильные телефоны",
+                ),
+            ]
+        )
+        await session.commit()
+
+    settings = MagicMock()
+    settings.mini_app_url = "https://example.com/app"
+    await check_trackers(mock_bot, sf, settings)
+
+    assert len(calls) == 2
+    assert {call.get("category") for call in calls} == {None, 17010}
+
+    async with sf() as session:
+        rows = await session.execute(select(QuerySnapshot.query))
+        keys = {row.query for row in rows}
+        assert build_query_key("iphone 15", False) in keys
+        assert build_query_key("iphone 15", False, 17010) in keys
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
 
 
 # ---------------------------------------------------------------------------

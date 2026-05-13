@@ -274,6 +274,8 @@ class TrackerCreate(BaseModel):
     query: str = Field(min_length=1, max_length=255)
     strict_mode: bool = False
     interval_min: int = Field(default=15, ge=1, le=1440)
+    category_id: int | None = Field(default=None, ge=1)
+    category_label: str | None = Field(default=None, max_length=128)
     min_discount_percent: float | None = Field(default=None, ge=0, le=100)
     max_price_byn: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
     seller_type: str | None = Field(default=None, max_length=32)
@@ -289,6 +291,8 @@ class TrackerUpdate(BaseModel):
 
     strict_mode: bool | None = None
     interval_min: int | None = Field(default=None, ge=1, le=1440)
+    category_id: int | None = Field(default=None, ge=1)
+    category_label: str | None = Field(default=None, max_length=128)
     min_discount_percent: float | None = Field(default=None, ge=0, le=100)
     max_price_byn: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
     seller_type: str | None = Field(default=None, max_length=32)
@@ -307,6 +311,8 @@ class TrackerRead(BaseModel):
     query: str
     strict_mode: bool = False
     interval_min: int
+    category_id: int | None = None
+    category_label: str | None = None
     min_discount_percent: float | None = None
     max_price_byn: float | None = None
     seller_type: str | None = None

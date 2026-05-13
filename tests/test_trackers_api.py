@@ -43,6 +43,8 @@ def test_trackers_crud() -> None:
                 "min_discount_percent": 12,
                 "max_price_byn": 2200,
                 "seller_type": "Частное лицо",
+                "category_id": 17010,
+                "category_label": "Мобильные телефоны",
             },
         )
         assert create_response.status_code == 201
@@ -53,6 +55,8 @@ def test_trackers_crud() -> None:
         assert created["min_discount_percent"] == 12
         assert created["max_price_byn"] == 2200
         assert created["seller_type"] == "Частное лицо"
+        assert created["category_id"] == 17010
+        assert created["category_label"] == "Мобильные телефоны"
         assert created["config_keyword"] is not None
 
         list_response = client.get("/api/v1/trackers")
@@ -62,6 +66,16 @@ def test_trackers_crud() -> None:
         assert trackers[0]["id"] == created["id"]
         assert trackers[0]["strict_mode"] is True
         assert trackers[0]["min_discount_percent"] == 12
+        assert trackers[0]["category_id"] == 17010
+
+        update_response = client.patch(
+            f"/api/v1/trackers/{created['id']}",
+            json={"category_id": None},
+        )
+        assert update_response.status_code == 200
+        updated = update_response.json()
+        assert updated["category_id"] is None
+        assert updated["category_label"] is None
 
         delete_response = client.delete(f"/api/v1/trackers/{created['id']}")
         assert delete_response.status_code == 204

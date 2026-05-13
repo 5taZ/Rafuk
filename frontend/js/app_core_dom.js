@@ -179,6 +179,7 @@ function cacheAppElements(elements) {
     elements.editSellerSelect = document.getElementById("edit-seller-select");
     elements.editConditionSelect = document.getElementById("edit-condition-select");
     elements.editRegionSelect = document.getElementById("edit-region-select");
+    elements.editCategorySelect = document.getElementById("edit-category-select");
     elements.editConfigInput = document.getElementById("edit-config-input");
     elements.closeEditModal = document.getElementById("close-edit-modal");
     elements.saveTrackerBtn = document.getElementById("save-tracker-btn");

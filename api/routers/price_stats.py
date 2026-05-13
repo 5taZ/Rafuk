@@ -263,7 +263,7 @@ async def get_price_stats(
     background_tasks.add_task(
         _persist_snapshot_safe,
         session_factory,
-        query_key=build_query_key(query, strict_search),
+        query_key=build_query_key(query, strict_search, category),
         ads=dataset.ads,
         total_results=payload.total_results,
         bucket_at=snapshot_bucket(datetime.now(UTC)),

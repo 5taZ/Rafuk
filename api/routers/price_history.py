@@ -32,6 +32,7 @@ async def get_price_history(
     currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
     days: int = 7,
     strict_search: bool = True,
+    category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
@@ -39,7 +40,7 @@ async def get_price_history(
     _user=Depends(get_telegram_user),
 ) -> PriceHistoryResponse:
     bounded_days = max(1, min(days, 90))
-    search_key = build_query_key(query, strict_search)
+    search_key = build_query_key(query, strict_search, category)
     cache_key = f"price-history:{search_key}:{currency}:{bounded_days}"
     cached = await cache.get_json(cache_key)
     if cached:

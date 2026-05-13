@@ -1404,6 +1404,7 @@ function cacheAppElements(elements) {
     elements.editSellerSelect = document.getElementById("edit-seller-select");
     elements.editConditionSelect = document.getElementById("edit-condition-select");
     elements.editRegionSelect = document.getElementById("edit-region-select");
+    elements.editCategorySelect = document.getElementById("edit-category-select");
     elements.editConfigInput = document.getElementById("edit-config-input");
     elements.closeEditModal = document.getElementById("close-edit-modal");
     elements.saveTrackerBtn = document.getElementById("save-tracker-btn");
@@ -5789,6 +5790,7 @@ function createRenderTrackers(context) {
                 { className: "tracker-filters" },
                 domEl("span", { className: "tracker-filter-tag", text: `каждые ${tracker.interval_min} мин` }),
             );
+            if (tracker.category_id) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: tracker.category_label || `категория ${tracker.category_id}` }));
             if (tracker.strict_mode) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: "строгий" }));
             if (tracker.min_discount_percent) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `от -${Math.round(tracker.min_discount_percent)}%` }));
             if (tracker.max_price_byn) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `до ${Math.round(tracker.max_price_byn)} BYN` }));
@@ -5853,6 +5855,7 @@ function createRenderTrackers(context) {
                 domEl(
                     "div",
                     { className: "tracker-card-actions" },
+                    buildIconButton("ghost-btn small tracker-action-btn", "open", "Открыть", iconSearch()),
                     buildIconButton("ghost-btn small tracker-action-btn", actionRole, actionLabel, actionIconNode),
                     buildIconButton("ghost-btn small tracker-action-btn", "edit", "Изменить", iconEdit()),
                     buildIconButton("ghost-btn small tracker-action-btn danger", "delete", "Удалить", iconDelete()),
@@ -5880,6 +5883,14 @@ function createRenderTrackers(context) {
                 elements.searchInput.value = tracker.query;
                 state.search.query = tracker.query;
                 state.search.strictSearch = Boolean(tracker.strict_mode);
+                state.filters.category = tracker.category_id ?? null;
+                state.filters.pendingCategory = tracker.category_id ?? null;
+                if (tracker.category_id && tracker.category_label && !state.filters.categories.some((cat) => Number(cat.id) === Number(tracker.category_id))) {
+                    state.filters.categories = [
+                        { id: tracker.category_id, label: tracker.category_label, count: 0 },
+                        ...state.filters.categories,
+                    ];
+                }
                 state.trackers.minDiscountPercent = Math.round(tracker.min_discount_percent || 10);
                 state.trackers.maxPriceByn = tracker.max_price_byn ?? null;
                 state.trackers.sellerType = tracker.seller_type || "";
@@ -5887,9 +5898,10 @@ function createRenderTrackers(context) {
                 state.trackers.regionName = tracker.region_name || "";
                 state.trackers.configKeyword = tracker.config_keyword || "";
                 if (context._hooks?.renderStrictSearch) context._hooks.renderStrictSearch();
+                if (context._hooks?.renderFilterDropdown) context._hooks.renderFilterDropdown();
                 if (context._hooks?.renderTrackerInputs) context._hooks.renderTrackerInputs();
                 if (context._hooks?.renderLoading) context._hooks.renderLoading();
-                void actions.search();
+                void actions.search("overview", { keepFilters: true });
             });
             elements.trackersList.appendChild(card);
         }
@@ -6374,6 +6386,7 @@ function createAppRenderers(baseContext) {
 
     // Add renderRecentSearches to hooks now that it's declared
     context._hooks.renderRecentSearches = renderRecentSearches;
+    context._hooks.renderFilterDropdown = renderFilterDropdown;
 
     // ── renderAll ────────────────────────────────────────────────────────
 
@@ -7278,6 +7291,58 @@ function createApiTrackers(context) {
     let trackerRefreshTimer = null;
     const TRACKER_REFRESH_MS = 30_000;
 
+    function categoryLabelFor(categoryId, fallback = null) {
+        if (categoryId == null) return null;
+        const category = state.filters.categories.find((cat) => Number(cat.id) === Number(categoryId));
+        return category?.label || fallback || null;
+    }
+
+    function currentCategoryPayload() {
+        const categoryId = state.filters.category == null ? null : Number(state.filters.category);
+        return {
+            category_id: Number.isFinite(categoryId) ? categoryId : null,
+            category_label: Number.isFinite(categoryId) ? categoryLabelFor(categoryId) : null,
+        };
+    }
+
+    function populateEditCategorySelect(tracker) {
+        if (!elements.editCategorySelect) return;
+        const options = [domEl("option", { value: "", text: "Любая категория" })];
+        const seen = new Set();
+        if (tracker.category_id != null) {
+            seen.add(Number(tracker.category_id));
+            options.push(domEl("option", {
+                value: tracker.category_id,
+                text: tracker.category_label || `Категория ${tracker.category_id}`,
+            }));
+        }
+        for (const category of state.filters.categories || []) {
+            const categoryId = Number(category.id);
+            if (!Number.isFinite(categoryId) || seen.has(categoryId)) continue;
+            seen.add(categoryId);
+            options.push(domEl("option", { value: categoryId, text: category.label }));
+        }
+        elements.editCategorySelect.replaceChildren(...options);
+        elements.editCategorySelect.value = tracker.category_id == null ? "" : String(tracker.category_id);
+    }
+
+    function editCategoryPayload() {
+        const value = elements.editCategorySelect?.value || "";
+        if (!value) {
+            return { category_id: null, category_label: null };
+        }
+        const categoryId = Number(value);
+        if (!Number.isFinite(categoryId)) {
+            return { category_id: null, category_label: null };
+        }
+        const option = elements.editCategorySelect?.selectedOptions?.[0];
+        const label = option?.textContent?.trim() || categoryLabelFor(categoryId);
+        return {
+            category_id: categoryId,
+            category_label: label || null,
+        };
+    }
+
     function startTrackerRefresh() {
         stopTrackerRefresh();
         trackerRefreshTimer = setInterval(() => {
@@ -7372,8 +7437,11 @@ function createApiTrackers(context) {
         }
 
         const normalizedQuery = query.toLocaleLowerCase("ru-RU");
+        const categoryPayload = currentCategoryPayload();
         const duplicate = state.trackers.items.find(
             (t) => t.query.trim().toLocaleLowerCase("ru-RU") === normalizedQuery
+                && Boolean(t.strict_mode) === Boolean(state.search.strictSearch)
+                && (t.category_id ?? null) === categoryPayload.category_id
         );
         if (duplicate) {
             showToast("Такой трекер уже существует");
@@ -7387,6 +7455,8 @@ function createApiTrackers(context) {
                 query,
                 strict_mode: state.search.strictSearch,
                 interval_min: 15,
+                category_id: categoryPayload.category_id,
+                category_label: categoryPayload.category_label,
                 min_discount_percent: state.trackers.minDiscountPercent,
                 max_price_byn: state.trackers.maxPriceByn,
                 seller_type: state.trackers.sellerType || null,
@@ -7474,6 +7544,7 @@ function createApiTrackers(context) {
         if (elements.editConditionSelect) elements.editConditionSelect.value = tracker.condition || "";
         if (elements.editRegionSelect) elements.editRegionSelect.value = tracker.region_name || "";
         if (elements.editConfigInput) elements.editConfigInput.value = tracker.config_keyword || "";
+        populateEditCategorySelect(tracker);
 
         if (elements.editTrackerModal) {
             if (state.misc.modalCleanup) {
@@ -7506,11 +7577,14 @@ function createApiTrackers(context) {
         }
 
         try {
+            const categoryPayload = editCategoryPayload();
             await requestJson(`/api/v1/trackers/${state.trackers.editingId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     strict_mode: elements.editStrictModeToggle?.checked,
+                    category_id: categoryPayload.category_id,
+                    category_label: categoryPayload.category_label,
                     min_discount_percent: Number(elements.editMinDiscountInput?.value) || null,
                     max_price_byn: elements.editMaxPriceInput?.value ? Number(elements.editMaxPriceInput.value) : null,
                     seller_type: elements.editSellerSelect?.value || null,
@@ -9698,10 +9772,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260513-37f4568"),
-            context._loadScript("js/api_ai_render.js?v=20260513-37f4568"),
-            context._loadScript("js/api_ai.js?v=20260513-37f4568"),
-            context._loadScript("js/api_listing_assistant.js?v=20260513-37f4568"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-0c5bb72"),
+            context._loadScript("js/api_ai_render.js?v=20260513-0c5bb72"),
+            context._loadScript("js/api_ai.js?v=20260513-0c5bb72"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-0c5bb72"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

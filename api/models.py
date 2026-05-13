@@ -115,6 +115,8 @@ class QueryTrackingMixin:
 class TrackerFiltersMixin:
     """Mixin for tracker filtering configuration."""
 
+    category_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    category_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
     min_discount_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     max_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -189,6 +191,7 @@ class Tracker(
         ),
         Index("idx_trackers_last_checked", "last_checked_at"),
         Index("idx_trackers_active_paused", "active", "paused"),
+        Index("idx_trackers_query_category", "query", "strict_mode", "category_id"),
     )
 
     def __init__(self, **kwargs: object) -> None:

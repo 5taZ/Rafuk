@@ -234,9 +234,12 @@ def tokenize_search_text(value: str) -> list[str]:
     return normalized.split() if normalized else []
 
 
-def build_query_key(query: str, strict_search: bool) -> str:
+def build_query_key(query: str, strict_search: bool, category_id: int | None = None) -> str:
     mode = "strict" if strict_search else "broad"
-    return f"{mode}::{normalize_search_text(query)}"
+    normalized = normalize_search_text(query)
+    if category_id is None:
+        return f"{mode}::{normalized}"
+    return f"{mode}::cat:{category_id}::{normalized}"
 
 
 def is_strict_match(title: str, query: str) -> bool:

@@ -609,6 +609,24 @@ def test_collection_actions_only_show_final_toasts() -> None:
         assert 'showToast("Загружаю..."' not in text
 
 
+def test_trackers_preserve_category_scope_in_frontend() -> None:
+    api_trackers = (JS_DIR / "api_trackers.js").read_text(encoding="utf-8")
+    render_trackers = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
+    app_core_dom = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
+    app_renderers = (JS_DIR / "app_renderers.js").read_text(encoding="utf-8")
+
+    assert "function currentCategoryPayload()" in api_trackers
+    assert "category_id: categoryPayload.category_id" in api_trackers
+    assert "category_label: categoryPayload.category_label" in api_trackers
+    assert "populateEditCategorySelect(tracker)" in api_trackers
+    assert "function editCategoryPayload()" in api_trackers
+    assert 'document.getElementById("edit-category-select")' in app_core_dom
+    assert "tracker.category_label || `категория ${tracker.category_id}`" in render_trackers
+    assert "state.filters.category = tracker.category_id ?? null" in render_trackers
+    assert 'actions.search("overview", { keepFilters: true })' in render_trackers
+    assert "context._hooks.renderFilterDropdown = renderFilterDropdown" in app_renderers
+
+
 def test_toasts_are_minimal_and_fast() -> None:
     render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     css = _read_all_css()

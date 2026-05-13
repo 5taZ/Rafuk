@@ -192,6 +192,8 @@ async def create_tracker(
             query=query,
             strict_mode=payload.strict_mode,
             interval_min=payload.interval_min,
+            category_id=payload.category_id,
+            category_label=payload.category_label if payload.category_id is not None else None,
             min_discount_percent=payload.min_discount_percent,
             max_price_byn=payload.max_price_byn,
             seller_type=payload.seller_type,
@@ -270,12 +272,25 @@ async def update_tracker(
         if tracker is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
 
-        # Update only provided (non-None) fields
-        update_data = {
-            k: v for k, v in payload.model_dump(exclude_unset=True).items()
-            if v is not None
+        # Update only provided fields
+        update_data = payload.model_dump(exclude_unset=True)
+        if "category_id" in update_data and update_data["category_id"] is None:
+            update_data["category_label"] = None
+        nullable_fields = {
+            "category_id",
+            "category_label",
+            "min_discount_percent",
+            "max_price_byn",
+            "seller_type",
+            "condition",
+            "region_name",
+            "config_keyword",
+            "alert_price_threshold",
+            "alert_discount_percent",
         }
         for field, value in update_data.items():
+            if value is None and field not in nullable_fields:
+                continue
             setattr(tracker, field, value)
 
         await session.commit()

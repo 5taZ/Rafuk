@@ -24,6 +24,8 @@ def test_tracker_columns_and_types() -> None:
     assert "query" in columns and columns["query"].type.length == 255
     assert "strict_mode" in columns and columns["strict_mode"].default.arg is False
     assert "interval_min" in columns and columns["interval_min"].default.arg == 15
+    assert "category_id" in columns and columns["category_id"].nullable
+    assert "category_label" in columns and columns["category_label"].type.length == 128
     assert "min_discount_percent" in columns
     assert "max_price_byn" in columns
     assert "seller_type" in columns
@@ -43,6 +45,7 @@ def test_tracker_indexes() -> None:
     index_names = {index.name for index in table.indexes}
     assert "idx_trackers_user" in index_names
     assert "idx_trackers_active_paused" in index_names
+    assert "idx_trackers_query_category" in index_names
 
 
 def test_tracker_model_defaults() -> None:

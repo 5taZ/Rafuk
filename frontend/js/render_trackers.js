@@ -252,6 +252,7 @@ function createRenderTrackers(context) {
                 { className: "tracker-filters" },
                 domEl("span", { className: "tracker-filter-tag", text: `каждые ${tracker.interval_min} мин` }),
             );
+            if (tracker.category_id) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: tracker.category_label || `категория ${tracker.category_id}` }));
             if (tracker.strict_mode) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: "строгий" }));
             if (tracker.min_discount_percent) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `от -${Math.round(tracker.min_discount_percent)}%` }));
             if (tracker.max_price_byn) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `до ${Math.round(tracker.max_price_byn)} BYN` }));
@@ -316,6 +317,7 @@ function createRenderTrackers(context) {
                 domEl(
                     "div",
                     { className: "tracker-card-actions" },
+                    buildIconButton("ghost-btn small tracker-action-btn", "open", "Открыть", iconSearch()),
                     buildIconButton("ghost-btn small tracker-action-btn", actionRole, actionLabel, actionIconNode),
                     buildIconButton("ghost-btn small tracker-action-btn", "edit", "Изменить", iconEdit()),
                     buildIconButton("ghost-btn small tracker-action-btn danger", "delete", "Удалить", iconDelete()),
@@ -343,6 +345,14 @@ function createRenderTrackers(context) {
                 elements.searchInput.value = tracker.query;
                 state.search.query = tracker.query;
                 state.search.strictSearch = Boolean(tracker.strict_mode);
+                state.filters.category = tracker.category_id ?? null;
+                state.filters.pendingCategory = tracker.category_id ?? null;
+                if (tracker.category_id && tracker.category_label && !state.filters.categories.some((cat) => Number(cat.id) === Number(tracker.category_id))) {
+                    state.filters.categories = [
+                        { id: tracker.category_id, label: tracker.category_label, count: 0 },
+                        ...state.filters.categories,
+                    ];
+                }
                 state.trackers.minDiscountPercent = Math.round(tracker.min_discount_percent || 10);
                 state.trackers.maxPriceByn = tracker.max_price_byn ?? null;
                 state.trackers.sellerType = tracker.seller_type || "";
@@ -350,9 +360,10 @@ function createRenderTrackers(context) {
                 state.trackers.regionName = tracker.region_name || "";
                 state.trackers.configKeyword = tracker.config_keyword || "";
                 if (context._hooks?.renderStrictSearch) context._hooks.renderStrictSearch();
+                if (context._hooks?.renderFilterDropdown) context._hooks.renderFilterDropdown();
                 if (context._hooks?.renderTrackerInputs) context._hooks.renderTrackerInputs();
                 if (context._hooks?.renderLoading) context._hooks.renderLoading();
-                void actions.search();
+                void actions.search("overview", { keepFilters: true });
             });
             elements.trackersList.appendChild(card);
         }

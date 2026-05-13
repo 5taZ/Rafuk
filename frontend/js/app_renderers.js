@@ -154,6 +154,7 @@ function createAppRenderers(baseContext) {
 
     // Add renderRecentSearches to hooks now that it's declared
     context._hooks.renderRecentSearches = renderRecentSearches;
+    context._hooks.renderFilterDropdown = renderFilterDropdown;
 
     // ── renderAll ────────────────────────────────────────────────────────
 
