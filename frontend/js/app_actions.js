@@ -178,10 +178,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260513-91d0137"),
-            context._loadScript("js/api_ai_render.js?v=20260513-91d0137"),
-            context._loadScript("js/api_ai.js?v=20260513-91d0137"),
-            context._loadScript("js/api_listing_assistant.js?v=20260513-91d0137"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-2b27708"),
+            context._loadScript("js/api_ai_render.js?v=20260513-2b27708"),
+            context._loadScript("js/api_ai.js?v=20260513-2b27708"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-2b27708"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -543,6 +543,29 @@ function createAppActions(baseContext) {
 
     // ── Consent & Privacy ──────────────────────────────────────────────────
 
+    function isLocalDebugContext() {
+        const loc = window.location || {};
+        const host = String(loc.hostname || "");
+        return loc.protocol === "file:" ||
+            host === "localhost" ||
+            host === "127.0.0.1" ||
+            host === "::1" ||
+            host.endsWith(".localhost");
+    }
+
+    function clearLocalAccountData() {
+        if (state.search) state.search.recentSearches = [];
+        if (state.misc) state.misc.listingAssistantResult = null;
+        try {
+            const keys = ["recentSearches"];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith("rafuk:")) keys.push(key);
+            }
+            for (const key of new Set(keys)) localStorage.removeItem(key);
+        } catch (_) {}
+    }
+
     /**
      * Check if user has granted processing/AI consent. Returns true if consent exists.
      * If not, shows the consent modal and returns a Promise that resolves
@@ -557,8 +580,9 @@ function createAppActions(baseContext) {
             ]);
             if (statuses.every((status) => status.granted)) return true;
         } catch (_) {
-            // Not logged in or error — proceed anyway (debug mode)
-            return true;
+            if (isLocalDebugContext()) return true;
+            showToast("Не удалось проверить согласие на AI. Проверьте соединение и попробуйте ещё раз.", "error", 3600);
+            throw new Error("consent_check_failed");
         }
         // Show consent modal
         return new Promise((resolve, reject) => {
@@ -613,6 +637,7 @@ function createAppActions(baseContext) {
                 await core.postJson("/api/v1/account/consent", { consent_type: "pd_processing", version: "2026.2" });
             } catch (err) {
                 showToast(err.message || "Не удалось сохранить согласие");
+                return;
             }
             cleanup();
             modal.hidden = true;
@@ -736,6 +761,7 @@ function createAppActions(baseContext) {
         if (typed === null) return;
         try {
             await core.deleteJson("/api/v1/account", { confirmation: typed });
+            clearLocalAccountData();
             showToast("Аккаунт удалён. Данные стёрты.");
             setTimeout(() => window.location.reload(), 1500);
         } catch (err) {

@@ -119,7 +119,7 @@ Verification:
 
 ### Wave 4 — FE-CONSENT-PRIVACY: consent status and local data cleanup
 
-Status: pending
+Status: completed
 
 Problem:
 

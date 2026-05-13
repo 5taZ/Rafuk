@@ -912,6 +912,119 @@ def test_consent_modal_cancel_emits_toast() -> None:
     assert 'reject(new Error("consent_denied"))' in body
 
 
+def test_ai_consent_status_errors_fail_closed_outside_local_debug() -> None:
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    harness = (
+        r"""
+let getJsonImpl = async () => { throw new Error("offline"); };
+function noop() {}
+function stubModule() { return new Proxy({}, { get: () => noop }); }
+function createApiCore() {
+    return {
+        telegramHeaders: () => ({}),
+        requestJson: noop,
+        getJson: (...args) => getJsonImpl(...args),
+        postJson: noop,
+        deleteJson: noop,
+        buildCommonQuery: noop,
+    };
+}
+const createApiListings = stubModule;
+const createApiTrackers = stubModule;
+const createApiLeads = stubModule;
+const createApiWatchlist = stubModule;
+function createApiEvents() { return { bindEvents: noop }; }
+const domEl = noop;
+const domClear = noop;
+const domFragment = noop;
+const openModalAnimated = noop;
+const closeModalAnimated = noop;
+const bindRovingTablist = noop;
+const _prefersReducedMotion = () => true;
+globalThis.localStorage = { length: 0, key: () => null, removeItem: noop };
+"""
+        + actions_js
+        + r"""
+async function run(hostname, protocol) {
+    const toasts = [];
+    globalThis.window = {
+        location: { hostname, protocol },
+        App: {},
+    };
+    const actions = createAppActions({
+        state: { search: { recentSearches: [] }, misc: {} },
+        elements: { views: {} },
+        markDirty: noop,
+        renderAll: noop,
+        showToast: (...args) => toasts.push(args),
+    });
+    try {
+        await actions.checkAiConsent();
+        return { ok: true, toasts };
+    } catch (err) {
+        return { ok: false, message: err.message, toasts };
+    }
+}
+
+(async () => {
+    const prod = await run("app.example", "https:");
+    if (prod.ok) throw new Error("production consent status errors must fail closed");
+    if (prod.message !== "consent_check_failed") throw new Error("wrong prod error");
+    if (prod.toasts.length !== 1) throw new Error("missing production toast");
+    if (!String(prod.toasts[0][0]).includes("согласие")) {
+        throw new Error("toast must mention consent");
+    }
+
+    const local = await run("localhost", "http:");
+    if (!local.ok) throw new Error("localhost debug flow should keep working");
+    if (local.toasts.length) throw new Error("localhost debug flow should not show error toast");
+})().catch((err) => {
+    console.error(err);
+    process.exit(1);
+});
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_consent_save_failure_does_not_unlock_ai() -> None:
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    on_accept_match = re.search(
+        r"async function onAccept\(\)\s*\{(?P<body>.*?)\n        \}",
+        actions_js,
+        re.DOTALL,
+    )
+    assert on_accept_match, "onAccept() not found in app_actions.js"
+    body = on_accept_match.group("body")
+    catch_start = body.index("} catch (err) {")
+    cleanup_start = body.index("cleanup();")
+    assert "showToast(err.message || \"Не удалось сохранить согласие\")" in body
+    assert "return;" in body[catch_start:cleanup_start], (
+        "failed consent persistence must not resolve the AI gate"
+    )
+
+
+def test_delete_account_clears_local_account_data_before_reload() -> None:
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    clear_start = actions_js.index("function clearLocalAccountData()")
+    clear_body = actions_js[clear_start:actions_js.index("\n    /**", clear_start)]
+    assert '"recentSearches"' in clear_body
+    assert 'key.startsWith("rafuk:")' in clear_body
+    assert "localStorage.removeItem(key)" in clear_body
+    assert "state.search.recentSearches = []" in clear_body
+    assert "state.misc.listingAssistantResult = null" in clear_body
+
+    delete_start = actions_js.index("async function deleteAccount()")
+    delete_body = actions_js[
+        delete_start:actions_js.index("\n    function _showTypedConfirmDialog", delete_start)
+    ]
+    server_delete = delete_body.index('await core.deleteJson("/api/v1/account"')
+    local_cleanup = delete_body.index("clearLocalAccountData();")
+    reload = delete_body.index("window.location.reload()")
+    assert server_delete < local_cleanup < reload
+
+
 def test_collection_actions_only_show_final_toasts() -> None:
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
     watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
