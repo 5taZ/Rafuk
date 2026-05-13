@@ -59,8 +59,18 @@ def get_client_ip(request: Request) -> str | None:
 
     Priority:
     1. CF-Connecting-IP, only when the direct peer is trusted.
-    2. X-Forwarded-For last entry, only when the direct peer is trusted.
+    2. X-Forwarded-For first entry, only when the direct peer is trusted.
     3. request.client.host as fallback.
+
+    OPUS-16: prefer the FIRST X-Forwarded-For entry. The standard
+    appends as the request flows ``client → proxy1 → proxy2``: XFF
+    is ``client, proxy1`` after proxy2 saw it. The first entry is
+    the original client; the last entry is the most recent
+    intermediate proxy. With our CF-only topology the chain has
+    exactly one element so first==last, but adding a second proxy
+    in the future (regional CDN, k8s ingress) would silently start
+    bucketing every user under the proxy's IP unless we lock the
+    first-entry behaviour in now.
     """
     client = getattr(request, "client", None)
     client_ip = client.host if client else None
@@ -74,7 +84,7 @@ def get_client_ip(request: Request) -> str | None:
     if forwarded and trusted_peer:
         parts = [p.strip() for p in forwarded.split(",") if p.strip()]
         if parts:
-            candidate = parts[-1]
+            candidate = parts[0]
             if _is_valid_ip(candidate):
                 return candidate
 

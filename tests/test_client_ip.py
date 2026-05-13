@@ -28,8 +28,21 @@ def test_client_ip_ignores_cloudflare_connecting_ip_from_untrusted_peer() -> Non
 
 
 def test_client_ip_uses_x_forwarded_for_from_cloudflare_peer() -> None:
+    """OPUS-16: pick the FIRST entry — that's the original client.
+    The list ``198.51.100.7, 203.0.113.10`` means 198.51.100.7
+    started the chain; everything after is intermediate proxy hops.
+    """
     request = _request(
         {"X-Forwarded-For": "198.51.100.7, 203.0.113.10"},
+        client_host="173.245.48.1",
+    )
+    assert get_client_ip(request) == "198.51.100.7"
+
+
+def test_client_ip_uses_x_forwarded_for_single_entry() -> None:
+    """Common single-hop topology (CF only): first==last anyway."""
+    request = _request(
+        {"X-Forwarded-For": "203.0.113.10"},
         client_host="173.245.48.1",
     )
     assert get_client_ip(request) == "203.0.113.10"
@@ -96,4 +109,5 @@ async def test_telegram_auth_replay_telemetry_uses_client_ip_helper(monkeypatch)
 
     assert user.user_id == 77
     assert captured["user_id"] == 77
-    assert captured["client_ip"] == "203.0.113.10"
+    # OPUS-16: first XFF entry is the original client.
+    assert captured["client_ip"] == "198.51.100.7"

@@ -97,6 +97,20 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # OPUS-19: real Redis in CI exercises the Redis-only paths
+      # (Lua rate-limit, SCAN-based per-user cache cleanup) that
+      # MemoryCache fallback silently skips locally. Without the
+      # service the test job ran every Redis-shaped test against an
+      # unreachable port and quietly fell back to MemoryCache.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - uses: actions/checkout@v4

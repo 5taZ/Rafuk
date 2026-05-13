@@ -136,6 +136,20 @@ list of importers so removing them is a deliberate decision.
 | INF-H5 | IaC (Terraform/Pulumi) | Needs deployment target + cloud-provider decision |
 | SEC-H3 | Secret management (Vault/K8s secrets) | Needs secret-store decision (see SEC-H2) |
 
+### Recurring ops chores
+
+* **Cloudflare IP allowlist** (`api/services/client_ip.py`,
+  `nginx/default.conf`). The list is hard-coded so direct-peer
+  trust stays predictable, but CF adds ranges every few months.
+  Refresh the union of IPv4 + IPv6 lists at least once a year:
+
+  ```bash
+  curl -s https://www.cloudflare.com/ips-v4
+  curl -s https://www.cloudflare.com/ips-v6
+  ```
+
+  Update both sites in the same commit (audit ID `OPUS-15`).
+
 If you cross one of these "ops decision" lines (introducing a new
 external service, secret rotation, destructive migration), **ping the
 user first**.
