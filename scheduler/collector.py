@@ -694,19 +694,30 @@ async def _check_trackers_inner(
             pending_notifications: list[_TrackerNotifyJob] = []
 
             for (query, strict_mode, category_id), query_trackers in trackers_by_query.items():
+                try:
+                    payload = await client.search(
+                        query=query,
+                        currency="BYN",
+                        size=50,
+                        category=category_id,
+                    )
+                    ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
+                except _TRACKER_QUERY_ERRORS:
+                    total_errors += 1
+                    logger.exception(
+                        "Error fetching query %r [strict=%s category=%s], skipping",
+                        query,
+                        strict_mode,
+                        category_id,
+                    )
+                    continue
+
+                search_key = build_query_key(query, strict_mode, category_id)
                 # Use a savepoint per query group so that a rollback only
                 # discards THIS group's changes — previous groups' flushed
                 # data stays intact in the outer transaction.
                 async with session.begin_nested():
                     try:
-                        payload = await client.search(
-                            query=query,
-                            currency="BYN",
-                            size=50,
-                            category=category_id,
-                        )
-                        ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
-                        search_key = build_query_key(query, strict_mode, category_id)
                         await upsert_query_snapshot(
                             session,
                             query=search_key,

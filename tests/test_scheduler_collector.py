@@ -1259,6 +1259,80 @@ async def test_check_trackers_groups_same_query_by_category(monkeypatch, mock_bo
     await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_check_trackers_fetches_kufar_before_savepoint(monkeypatch, mock_bot: AsyncMock):
+    import contextvars
+
+    inside_savepoint = contextvars.ContextVar("inside_savepoint", default=False)
+    search_inside_savepoint: list[bool] = []
+    original_begin_nested = AsyncSession.begin_nested
+
+    class TrackedSavepoint:
+        def __init__(self, cm):
+            self.cm = cm
+            self.token = None
+
+        async def __aenter__(self):
+            self.token = inside_savepoint.set(True)
+            return await self.cm.__aenter__()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            try:
+                return await self.cm.__aexit__(exc_type, exc, tb)
+            finally:
+                inside_savepoint.reset(self.token)
+
+    def begin_nested_with_flag(self):
+        return TrackedSavepoint(original_begin_nested(self))
+
+    class SavepointAwareClient:
+        def __init__(self, settings):
+            del settings
+
+        async def search(self, **kwargs):
+            del kwargs
+            search_inside_savepoint.append(inside_savepoint.get())
+            return {
+                "ads": [
+                    {
+                        "ad_id": 901,
+                        "subject": "iPhone 15",
+                        "price_byn": 2000,
+                        "ad_link": "https://www.kufar.by/item/901",
+                    }
+                ],
+                "total": 1,
+            }
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(AsyncSession, "begin_nested", begin_nested_with_flag)
+    monkeypatch.setattr(collector, "KufarClient", SavepointAwareClient)
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=405, first_name="Tx")
+        session.add(user)
+        await session.flush()
+        session.add(Tracker(user_id=user.id, query="iphone 15", strict_mode=False))
+        await session.commit()
+
+    settings = MagicMock()
+    settings.mini_app_url = "https://example.com/app"
+    await check_trackers(mock_bot, sf, settings)
+
+    assert search_inside_savepoint == [False]
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
 # ---------------------------------------------------------------------------
 # Test persist_tracker_events with enriched ad data
 # ---------------------------------------------------------------------------

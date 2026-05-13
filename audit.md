@@ -165,7 +165,7 @@ Verification:
 
 ### Wave 6 — SCHED-TX-SPLIT: remove external I/O from DB savepoint
 
-Status: pending
+Status: completed
 
 Problem:
 
