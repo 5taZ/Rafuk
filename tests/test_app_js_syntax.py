@@ -120,6 +120,44 @@ def test_retryable_statuses_excludes_429() -> None:
     assert forbidden_minified not in bundle and forbidden_spaced not in bundle
 
 
+def test_trackers_split_uses_lazy_stub_in_bundle() -> None:
+    """OPUS-13 wave 70: render_trackers.js + api_trackers.js are no
+    longer concatenated into app_bundle.js; the bundle ships
+    ``_lazy_trackers_stub.js`` which delegates through
+    ``window.App._realCreate{Api,Render}Trackers`` once the user
+    opens the Автопоиск tab. Pin every contract in this test so
+    the next refactor that breaks the wiring fails loudly.
+    """
+    bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
+    stub = (JS_DIR / "_lazy_trackers_stub.js").read_text(encoding="utf-8")
+    real_render = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
+    real_api = (JS_DIR / "api_trackers.js").read_text(encoding="utf-8")
+
+    # 1. Stub ships in the bundle.
+    assert "_lazyLoadTrackerSources" in bundle
+    assert "_realCreateRenderTrackers" in bundle
+    assert "_realCreateApiTrackers" in bundle
+
+    # 2. Real modules register themselves on window.App so the stub
+    #    can resolve them after _loadScript completes.
+    assert "window.App._realCreateRenderTrackers = createRenderTrackers" in real_render
+    assert "window.App._realCreateApiTrackers = createApiTrackers" in real_api
+
+    # 3. Stub holds hard-coded ?v= tags so bump_static_version.sh
+    #    keeps both URLs in sync with the rest of the cache-busters.
+    cache_buster = re.compile(r'"js/(?:render_trackers|api_trackers)\.js\?v=[A-Za-z0-9._-]+"')
+    assert len(cache_buster.findall(stub)) == 2
+
+    # 4. Build script no longer concatenates the heavy files.
+    build = Path("scripts/build_frontend_bundle.sh").read_text(encoding="utf-8")
+    # The names appear in a comment but NOT as bare list entries.
+    bare_render = re.search(r"^\s+render_trackers\.js\s*$", build, re.MULTILINE)
+    bare_api = re.search(r"^\s+api_trackers\.js\s*$", build, re.MULTILINE)
+    assert bare_render is None, "render_trackers.js leaked back into bundle modules list"
+    assert bare_api is None, "api_trackers.js leaked back into bundle modules list"
+    assert "_lazy_trackers_stub.js" in build
+
+
 def test_svg_sanitizer_drops_xmlns_attribute() -> None:
     """OPUS-21: ``xmlns`` belongs in the auto-namespacing path the
     browser already runs on innerHTML — keeping it in the explicit

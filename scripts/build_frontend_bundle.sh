@@ -16,11 +16,14 @@ modules=(
   render_views.js
   render_modals.js
   render_charts.js
-  render_trackers.js
+  # OPUS-13: render_trackers.js + api_trackers.js are split out and
+  # loaded on-demand when the user opens the "Автопоиск" tab. The
+  # stub below ships in their place — see _lazy_trackers_stub.js
+  # for the delegation contract.
+  _lazy_trackers_stub.js
   app_renderers.js
   api_core.js
   api_listings.js
-  api_trackers.js
   api_leads.js
   api_watchlist.js
   api_events.js

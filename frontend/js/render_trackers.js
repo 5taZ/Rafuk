@@ -689,3 +689,11 @@ function createRenderTrackers(context) {
         renderTrackerEventFilters,
     };
 }
+
+// OPUS-13: lazy-load registration. The bundle ships a stub for
+// createRenderTrackers that delegates through
+// window.App._realCreateRenderTrackers once this script lands.
+if (typeof window !== "undefined") {
+    window.App = window.App || {};
+    window.App._realCreateRenderTrackers = createRenderTrackers;
+}

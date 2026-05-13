@@ -38,6 +38,25 @@ function createAppRenderers(baseContext) {
     // ".tracker-empty" paragraph for a richer iconified block.
     context.buildEmptyState = core.buildEmptyState;
 
+    // OPUS-13: lazy-load stubs (currently createRenderTrackers) need
+    // a re-render hook to flush UI once the real factory has loaded
+    // and produced data. ``scheduleRender`` is normally returned at
+    // the bottom of this factory, but the stubs see ``context``
+    // BEFORE that return — define it on context up-front so the
+    // forward-reference (``renderAll`` defined later) resolves at
+    // call time, not at definition time.
+    let _renderScheduled = false;
+    function scheduleRender() {
+        if (!_renderScheduled) {
+            _renderScheduled = true;
+            requestAnimationFrame(() => {
+                _renderScheduled = false;
+                renderAll();
+            });
+        }
+    }
+    context.scheduleRender = scheduleRender;
+
     const cards = createRenderCards(context);
     const views = createRenderViews(context);
     const modals = createRenderModals(context);
@@ -215,18 +234,9 @@ function createAppRenderers(baseContext) {
         state.ui.dirtyViews.clear();
     }
 
-    // Batch multiple renderAll calls into a single requestAnimationFrame.
-    // This prevents render cascades when parallel API calls each trigger renderAll.
-    let _renderScheduled = false;
-    function scheduleRender() {
-        if (!_renderScheduled) {
-            _renderScheduled = true;
-            requestAnimationFrame(() => {
-                _renderScheduled = false;
-                renderAll();
-            });
-        }
-    }
+    // ``scheduleRender`` is defined above so lazy-load stubs receive
+    // it through ``context`` before their factories run. We re-export
+    // the same closure here so the public API shape stays unchanged.
 
     // ── Public API (every name the original file exported) ───────────────
 
