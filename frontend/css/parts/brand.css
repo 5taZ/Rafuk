@@ -421,6 +421,7 @@
     border: 1px solid var(--border);
     background: var(--bg-elevated);
     color: var(--text-muted);
+    font: inherit;
     cursor: pointer;
     display: flex;
     flex-direction: column;

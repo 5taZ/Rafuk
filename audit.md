@@ -96,7 +96,7 @@ Verification:
 
 ### Wave 3 — FE-A11Y-FORMS: keyboard upload and valid labels
 
-Status: pending
+Status: completed in wave78
 
 Problem:
 

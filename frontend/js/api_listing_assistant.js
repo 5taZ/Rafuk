@@ -1010,6 +1010,7 @@ function createApiListingAssistant(context) {
         void handlePhotoFiles(e.target.files);
         e.target.value = "";
     };
+    const _photoOpenHandler = () => photoInput?.click();
     const _tabsHandler = (e) => {
         const target = e.target.closest("[data-la-tab]");
         if (target) switchTab(target.dataset.laTab);
@@ -1048,6 +1049,7 @@ function createApiListingAssistant(context) {
     form.addEventListener("submit", handleSubmit);
     notesInput?.addEventListener("input", _notesHandler);
     photoInput?.addEventListener("change", _photoHandler);
+    photoAdd?.addEventListener("click", _photoOpenHandler);
     if (tabsRow) tabsRow.addEventListener("click", _tabsHandler);
     const _tabsKeyboardCleanup = bindRovingTablist(tabsRow);
     openBtn?.addEventListener("click", _openHandler);
@@ -1077,6 +1079,7 @@ function createApiListingAssistant(context) {
             document.removeEventListener("keydown", _keydownHandler);
             notesInput?.removeEventListener("input", _notesHandler);
             photoInput?.removeEventListener("change", _photoHandler);
+            photoAdd?.removeEventListener("click", _photoOpenHandler);
             if (tabsRow) tabsRow.removeEventListener("click", _tabsHandler);
             _tabsKeyboardCleanup();
             openBtn?.removeEventListener("click", _openHandler);

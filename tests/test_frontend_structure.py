@@ -371,6 +371,36 @@ def test_skip_link_targets_populated_main_landmark(soup: BeautifulSoup) -> None:
     assert main.get_text(" ", strip=True)
 
 
+def test_listing_assistant_photo_upload_uses_keyboard_button(soup: BeautifulSoup) -> None:
+    trigger = soup.find(id="la-photo-add")
+    assert trigger is not None
+    assert trigger.name == "button"
+    assert trigger.get("type") == "button"
+    assert trigger.get("aria-controls") == "la-photo-input"
+    assert trigger.find("input") is None
+
+    photo_input = soup.find(id="la-photo-input")
+    assert photo_input is not None
+    assert photo_input.get("type") == "file"
+    assert photo_input.has_attr("hidden")
+    assert photo_input.get("aria-label")
+
+    la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+    assert "const _photoOpenHandler = () => photoInput?.click();" in la_js
+    assert 'photoAdd?.addEventListener("click", _photoOpenHandler);' in la_js
+    assert 'photoAdd?.removeEventListener("click", _photoOpenHandler);' in la_js
+
+
+def test_edit_tracker_strict_toggle_has_no_nested_labels(soup: BeautifulSoup) -> None:
+    modal = soup.find(id="edit-tracker-modal")
+    assert modal is not None
+    assert all(label.find("label") is None for label in modal.find_all("label"))
+
+    strict_labels = modal.find_all("label", attrs={"for": "edit-strict-mode-toggle"})
+    assert any("Строгий режим" in label.get_text(" ", strip=True) for label in strict_labels)
+    assert any("strict-toggle" in (label.get("class") or []) for label in strict_labels)
+
+
 def test_ai_loading_states_use_minimal_status_visuals(soup: BeautifulSoup, css_text: str) -> None:
     loader = soup.find(id="ai-modal-loading")
     assert loader is not None
