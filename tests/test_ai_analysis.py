@@ -1652,6 +1652,91 @@ def test_listing_assistant_caches_identical_inputs(monkeypatch) -> None:
     assert fake_ai.calls == 1
 
 
+def test_listing_assistant_cache_hit_skips_rate_limit(monkeypatch) -> None:
+    """OPUS-6: cache hit must NOT charge the user's hourly quota and
+    must be audited as cached=True. Earlier order (rate-limit →
+    audit → cache) drained the budget on every cache serve and
+    hid cache effectiveness from ops.
+    """
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+    from api.routers import ai_listing_assistant as la_mod
+    from api.services import ai_analysis_pipeline
+    from api.services.cache import MemoryCache
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            ads=[],
+            price_stats=SimpleNamespace(median=0.0, count=0, q1=0.0, q3=0.0, min=0.0, max=0.0),
+        )
+
+    class FakeAI:
+        available = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate_listing(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            return {
+                "title_suggestion": "Title",
+                "description": "Body",
+                "pricing": {
+                    "fast": {"label": "Fast", "price_byn": 100, "weeks_to_sell": "1"},
+                    "market": {"label": "Market", "price_byn": 110, "weeks_to_sell": "2"},
+                    "patient": {"label": "Patient", "price_byn": 120, "weeks_to_sell": "3"},
+                    "floor_byn": 90,
+                },
+            }
+
+    fake_ai = FakeAI()
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
+
+    rate_calls: list[str] = []
+    audit_calls: list[dict] = []
+
+    async def fake_rate_limit(request, user_id, *, endpoint="default"):
+        rate_calls.append(endpoint)
+
+    async def fake_audit(*args, **kwargs):
+        audit_calls.append(kwargs)
+
+    monkeypatch.setattr(la_mod, "_check_rate_limit", fake_rate_limit)
+    monkeypatch.setattr(la_mod, "_log_ai_audit", fake_audit)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    payload = {
+        "title": "Cache hit rate limit guard 99887766",
+        "draft_price_byn": 100,
+        "condition": "Хорошее",
+    }
+
+    with TestClient(app) as client:
+        client.app.state.cache = MemoryCache()
+
+        first = client.post("/api/v1/ai/listing-assistant", json=payload)
+        assert first.status_code == 200, first.text
+
+        second = client.post("/api/v1/ai/listing-assistant", json=payload)
+        assert second.status_code == 200
+        assert second.json() == first.json()
+
+    # Rate-limit only on cache miss (first call).
+    assert rate_calls == ["listing"], rate_calls
+    # Audit must run for both requests, and the second one carries cached=True.
+    assert len(audit_calls) == 2
+    assert audit_calls[0].get("cached") is False or audit_calls[0].get("cached") is None
+    assert audit_calls[1].get("cached") is True
+    assert fake_ai.calls == 1
+
+
 def test_listing_assistant_strips_prompt_injection_from_notes(monkeypatch) -> None:
     """Sanitize layer keeps prompt-injection text out of the AI prompt."""
     from api.dependencies import get_telegram_user

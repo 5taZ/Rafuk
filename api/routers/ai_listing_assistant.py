@@ -455,16 +455,6 @@ async def listing_assistant(
 
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
-    await _check_rate_limit(request, _user.user_id, endpoint="listing")
-
-    # AI audit trail (Belarus Law No. 99-З)
-    await _log_ai_audit(
-        request.app.state.session_factory,
-        telegram_user_id=_user.user_id,
-        endpoint="listing_assistant",
-        query=payload.title,
-        model=get_settings().ai_model,
-    )
 
     settings = getattr(request.app.state, "settings", None)
     if settings is None:
@@ -476,15 +466,42 @@ async def listing_assistant(
 
     photos = _coerce_listing_photos(payload.photos)
 
+    # OPUS-6: cache lookup BEFORE rate-limit + AI-audit so a hit
+    # costs no quota and is audited as cached=True — same shape as
+    # /analyze. Earlier order (rate-limit → audit → cache) charged
+    # a quota point on every cache hit and logged the audit row
+    # without the cached marker, hiding cache effectiveness from
+    # ops and slowly draining the user's hourly budget for free.
     cache = get_cache(request)
     cache_key = _listing_assistant_cache_key(payload, photos, user_id=_user.user_id)
     cached = await cache.get_json(cache_key)
     if isinstance(cached, dict):
         try:
-            return AIListingAssistantResponse.model_validate(cached)
+            response = AIListingAssistantResponse.model_validate(cached)
         except ValidationError:
             logger.info("Listing assistant cache hit was stale, recomputing")
             await cache.delete(cache_key)
+        else:
+            await _log_ai_audit(
+                request.app.state.session_factory,
+                telegram_user_id=_user.user_id,
+                endpoint="listing_assistant",
+                query=payload.title,
+                model=get_settings().ai_model,
+                cached=True,
+            )
+            return response
+
+    await _check_rate_limit(request, _user.user_id, endpoint="listing")
+
+    # AI audit trail (Belarus Law No. 99-З) — cache miss path.
+    await _log_ai_audit(
+        request.app.state.session_factory,
+        telegram_user_id=_user.user_id,
+        endpoint="listing_assistant",
+        query=payload.title,
+        model=get_settings().ai_model,
+    )
 
     try:
         dataset = await load_query_dataset(
