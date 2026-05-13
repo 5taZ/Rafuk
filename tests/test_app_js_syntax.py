@@ -101,15 +101,23 @@ def test_retryable_statuses_excludes_429() -> None:
     silently drains another quota point even though the original
     request was already refused. Each retry only makes the user's
     backoff window longer.
+
+    OPUS-13: bundle is minified — rjsmin collapses ``[502, 503,
+    504]`` to ``[502,503,504]``. Match against both the spaced
+    source form and the unspaced minified form.
     """
     bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
     api_core = (JS_DIR / "api_core.js").read_text(encoding="utf-8")
-    needle = "const RETRYABLE_STATUSES = new Set([502, 503, 504]);"
-    assert needle in api_core, "api_core.js must keep 429 out of RETRYABLE_STATUSES"
-    assert needle in bundle, "app_bundle.js must mirror api_core.js"
-    forbidden = "const RETRYABLE_STATUSES = new Set([429"
-    assert forbidden not in api_core
-    assert forbidden not in bundle
+    spaced = "const RETRYABLE_STATUSES = new Set([502, 503, 504]);"
+    minified = "const RETRYABLE_STATUSES=new Set([502,503,504])"
+    assert spaced in api_core, "api_core.js must keep 429 out of RETRYABLE_STATUSES"
+    assert minified in bundle or spaced in bundle, (
+        "app_bundle.js must mirror api_core.js (minified or pre-build)"
+    )
+    forbidden_spaced = "const RETRYABLE_STATUSES = new Set([429"
+    forbidden_minified = "const RETRYABLE_STATUSES=new Set([429"
+    assert forbidden_spaced not in api_core
+    assert forbidden_minified not in bundle and forbidden_spaced not in bundle
 
 
 def test_svg_sanitizer_drops_xmlns_attribute() -> None:

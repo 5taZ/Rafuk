@@ -28,24 +28,27 @@ modules=(
   app.js
 )
 
+RAW="$(mktemp)"
+trap 'rm -f "$RAW"' EXIT
+
 {
   printf '(function (window) {\n'
   printf '"use strict";\n'
   printf 'window.App = window.App || {};\n'
   printf '\n'
-} > "$OUT"
+} > "$RAW"
 for module in "${modules[@]}"; do
   path="$JS_DIR/$module"
   if [[ ! -f "$path" ]]; then
     echo "missing frontend module: $path" >&2
     exit 1
   fi
-  printf '\n;\n' >> "$OUT"
-  cat "$path" >> "$OUT"
-  printf '\n' >> "$OUT"
+  printf '\n;\n' >> "$RAW"
+  cat "$path" >> "$RAW"
+  printf '\n' >> "$RAW"
 done
 
-cat >> "$OUT" <<'EOF'
+cat >> "$RAW" <<'EOF'
 
 window.App = Object.assign(window.App || {}, {
   analyticsApp,
@@ -60,5 +63,14 @@ window.App = Object.assign(window.App || {}, {
 })(window);
 EOF
 
+# OPUS-13: minify the concatenated source. rjsmin only strips
+# whitespace + comments (no identifier renaming) so the script
+# stays byte-byte equivalent to the source modules' semantics —
+# ``node --check`` runs against the minified output to catch any
+# regression where rjsmin would otherwise eat a meaningful token.
+RAW_SIZE=$(wc -c < "$RAW")
+uv run python scripts/minify_js.py < "$RAW" > "$OUT"
 node --check "$OUT" >/dev/null
-printf 'built %s from %d modules\n' "$OUT" "${#modules[@]}"
+MINI_SIZE=$(wc -c < "$OUT")
+printf 'built %s from %d modules: %d → %d bytes (%d%% of source)\n' \
+  "$OUT" "${#modules[@]}" "$RAW_SIZE" "$MINI_SIZE" "$((100 * MINI_SIZE / RAW_SIZE))"

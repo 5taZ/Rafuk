@@ -29,6 +29,16 @@ def _frontend_bundle_modules() -> list[str]:
 
 
 def _expected_app_bundle_text() -> str:
+    """Reconstruct the bundle the build script SHOULD have produced.
+
+    OPUS-13: the script now pipes the concatenated source through
+    ``scripts/minify_js.minify_js_text`` before writing to disk. We
+    apply the same minifier here so the bundle-staleness assertion
+    keeps catching forgotten rebuilds without false-positive-ing on
+    every build-script side-effect.
+    """
+    from scripts.minify_js import minify_js_text
+
     chunks = [
         "(function (window) {\n",
         '"use strict";\n',
@@ -53,7 +63,7 @@ def _expected_app_bundle_text() -> str:
         "});\n"
         "})(window);\n"
     )
-    return "".join(chunks)
+    return minify_js_text("".join(chunks))
 
 
 @pytest.fixture(scope="module")
@@ -64,20 +74,21 @@ def soup() -> BeautifulSoup:
 
 @pytest.fixture(scope="module")
 def css_text() -> str:
-    """Concatenated CSS — style.css is now a thin @import loader.
+    """Concatenated source CSS for selector / declaration assertions.
 
-    Tests assert against rules that may live in any partial under
-    parts/, so we inline them here. Order follows the @import order
-    in style.css to keep the cascade representation accurate.
+    OPUS-13: ``style.css`` is now minified (whitespace + comments
+    stripped). Asserting against the minified output would force
+    every test to chase rcssmin's collapsing rules, so we read the
+    source partials in cascade order instead — they're the same
+    content the bundler concatenates BEFORE minification, so
+    selector/declaration tests stay readable.
     """
-    assert CSS_FILE.exists()
-    chunks = [CSS_FILE.read_text(encoding="utf-8")]
-    if CSS_PARTS_DIR.is_dir():
-        # Match the @import order in style.css.
-        for name in ("tokens", "layout", "modals", "pipeline", "states", "ai", "brand"):
-            partial = CSS_PARTS_DIR / f"{name}.css"
-            if partial.exists():
-                chunks.append(partial.read_text(encoding="utf-8"))
+    chunks: list[str] = []
+    assert CSS_PARTS_DIR.is_dir(), "frontend/css/parts must exist"
+    for name in ("tokens", "layout", "modals", "pipeline", "states", "ai", "brand"):
+        partial = CSS_PARTS_DIR / f"{name}.css"
+        if partial.exists():
+            chunks.append(partial.read_text(encoding="utf-8"))
     return "\n".join(chunks)
 
 
@@ -166,9 +177,19 @@ def test_service_worker_precaches_offline_stylesheet() -> None:
 
 
 def test_app_bundle_uses_single_namespace_wrapper() -> None:
+    """OPUS-13: bundle is minified, so we can't pin exact whitespace
+    around the wrapper any more. Pin the structural invariants
+    instead — the IIFE, the namespace assignment, every export name —
+    in a way that survives rjsmin's whitespace stripping."""
     bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
-    assert bundle.startswith('(function (window) {\n"use strict";\nwindow.App = window.App || {};')
-    assert "window.App = Object.assign(window.App || {}, {" in bundle
+    # IIFE wrapper still encloses the bundle.
+    assert bundle.startswith("(function(window){")
+    assert bundle.rstrip().endswith("})(window);")
+    # ``"use strict"`` and the App namespace seed live in the prologue.
+    assert '"use strict";' in bundle[:200]
+    assert "window.App=window.App||{}" in bundle[:200]
+    # Final Object.assign export shape.
+    assert "window.App=Object.assign(window.App||{}," in bundle
     for name in (
         "analyticsApp",
         "createAppCore",
@@ -179,9 +200,10 @@ def test_app_bundle_uses_single_namespace_wrapper() -> None:
         "openModalAnimated",
         "closeModalAnimated",
     ):
-        assert f"  {name}," in bundle
-    assert "window.analyticsApp" not in bundle
-    assert "window.createAppCore" not in bundle
+        assert name in bundle, f"export {name} missing from bundle"
+    # No accidental window.X = X aliases left over.
+    assert "window.analyticsApp=" not in bundle
+    assert "window.createAppCore=" not in bundle
 
 
 def test_app_bundle_matches_build_script_sources() -> None:

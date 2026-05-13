@@ -30,6 +30,13 @@ dev = [
     "aiosqlite>=0.20.0",
     "ruff>=0.8.0",
     "beautifulsoup4>=4.12.0",
+    # OPUS-13: build-pipeline minifiers (pure Python, no Node).
+    # rjsmin/rcssmin strip whitespace + comments only — no
+    # identifier renaming, so behaviour is byte-identical to the
+    # source modules and ``node --check`` continues to validate
+    # the minified bundle.
+    "rjsmin>=1.2.0",
+    "rcssmin>=1.1.2",
 ]
 
 [tool.ruff]
