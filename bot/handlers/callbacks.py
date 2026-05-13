@@ -20,6 +20,39 @@ logger = logging.getLogger(__name__)
 router = Router(name="callbacks")
 
 
+_warned_about_legacy_initdata_path = False
+
+
+def _build_internal_headers(telegram_user_id: int) -> dict[str, str]:
+    """Pick service-token auth when configured, otherwise legacy initData.
+
+    OPUS-12: ``INTERNAL_SERVICE_TOKEN`` lets the bot identify the
+    user via headers instead of forging a signed initData blob with
+    the bot token. Forging worked, but it meant a leak of the bot
+    token gave an attacker the same impersonation power; the new
+    path uses a separate secret meant for service-to-service.
+    Falls back to the legacy path when the token isn't configured
+    so existing deployments keep working — surfaces a one-shot
+    deprecation warning instead of failing silently.
+    """
+    global _warned_about_legacy_initdata_path
+    settings = get_settings()
+    if settings.internal_service_token is not None:
+        return {
+            "X-Internal-Service-Token": settings.internal_service_token.get_secret_value(),
+            "X-Acting-Telegram-User-Id": str(telegram_user_id),
+        }
+    if not _warned_about_legacy_initdata_path:
+        logger.warning(
+            "INTERNAL_SERVICE_TOKEN not configured — bot is forging initData "
+            "with BOT_TOKEN. Set the env var to switch to the dedicated "
+            "service-token path."
+        )
+        _warned_about_legacy_initdata_path = True
+    bot_token = settings.bot_token.get_secret_value()
+    return {"X-Telegram-Init-Data": build_init_data_header(telegram_user_id, bot_token)}
+
+
 async def _api_post(
     path: str,
     telegram_user_id: int,
@@ -28,9 +61,7 @@ async def _api_post(
 ) -> dict | None:
     """Make an authenticated POST request to the internal API."""
     settings = get_settings()
-    bot_token = settings.bot_token.get_secret_value()
-    init_data = build_init_data_header(telegram_user_id, bot_token)
-    headers = {"X-Telegram-Init-Data": init_data}
+    headers = _build_internal_headers(telegram_user_id)
     base_url = settings.api_base_url
 
     # Reuse the process-wide locked client (see bot/api_client.py) —

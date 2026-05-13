@@ -52,6 +52,9 @@ services:
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
       METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
+      # OPUS-12: shared with the bot via env so /api/v1/leads etc.
+      # can accept service-token auth on the bot's behalf.
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
       AI_API_KEY: ${AI_API_KEY:-}
       # OPUS-5: align default base URL with default model.
       # gemini-2.5-flash is served by Google, not Together — the
@@ -115,6 +118,9 @@ services:
       REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
+      # OPUS-12: shared with api via env so the bot can authenticate
+      # callbacks against the API without forging initData.
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
     depends_on:
       api:
         condition: service_healthy

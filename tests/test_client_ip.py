@@ -62,6 +62,10 @@ async def test_telegram_auth_replay_telemetry_uses_client_ip_helper(monkeypatch)
         auth_bypass = False
         bot_token = _Secret()
         telegram_init_data_max_age = 3600
+        # OPUS-12: internal-service path is checked first; setting
+        # the token to None forces the test through the legacy
+        # initData branch we actually want to exercise here.
+        internal_service_token = None
 
     captured: dict[str, str | None] = {}
 

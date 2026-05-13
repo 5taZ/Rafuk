@@ -73,6 +73,12 @@ def get_session_factory_dependency(request: Request) -> async_sessionmaker[Async
 async def get_telegram_user(
     request: Request,
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    x_internal_service_token: str | None = Header(
+        default=None, alias="X-Internal-Service-Token",
+    ),
+    x_acting_telegram_user_id: str | None = Header(
+        default=None, alias="X-Acting-Telegram-User-Id",
+    ),
 ) -> TelegramInitData:
     settings = get_settings()
     # Defensive: refuse any path that could enable auth bypass in
@@ -81,6 +87,63 @@ async def get_telegram_user(
     # never silently authenticates strangers as user_id=0.
     if settings.auth_bypass and os.environ.get("ENV") == "production":
         raise RuntimeError("auth_bypass is not allowed in production")
+
+    # OPUS-12: internal-service path. If both the service-token
+    # header and an X-Acting-Telegram-User-Id are present AND a
+    # ``internal_service_token`` is configured, accept the request
+    # as the named user. ``compare_digest`` keeps the comparison
+    # constant-time. Service token is preferred over initData so
+    # callers can't smuggle in a bad initData when they have a
+    # valid token (the initData would be ignored either way).
+    configured_token = settings.internal_service_token
+    if configured_token is not None and x_internal_service_token:
+        import secrets as _secrets  # noqa: PLC0415 — local helper
+
+        if not _secrets.compare_digest(
+            x_internal_service_token, configured_token.get_secret_value()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid internal service token",
+            )
+        if not x_acting_telegram_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="X-Acting-Telegram-User-Id required for service-token requests",
+            )
+        try:
+            acting_id = int(x_acting_telegram_user_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="X-Acting-Telegram-User-Id must be an integer",
+            ) from exc
+        if acting_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="X-Acting-Telegram-User-Id must be a positive integer",
+            )
+        user = TelegramInitData(user_id=acting_id, first_name="", raw={})
+        request.state.telegram_user = user
+        # Service-token path bypasses the initdata replay tracker
+        # because the bot doesn't carry a Telegram-signed blob —
+        # but blacklist still applies so a known-bad user can't be
+        # acted-on by the bot either.
+        cache = getattr(request.app.state, "cache", None)
+        from api.services.session_security import (  # noqa: PLC0415 — avoid cycle
+            is_user_blacklisted,
+        )
+
+        if await is_user_blacklisted(cache, user.user_id):
+            logger.warning(
+                "Blocked blacklisted user_id=%s on service-token path", user.user_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is suspended",
+            )
+        return user
+
     if not x_telegram_init_data:
         if settings.auth_bypass:
             logger.warning(

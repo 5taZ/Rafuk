@@ -195,6 +195,13 @@ class Settings(BaseSettings):
     max_saved_searches_for_board: int = 8
     max_recent_tracker_events: int = 6
 
+    # OPUS-12: internal service-to-service authentication. Lets the
+    # bot call the API for arbitrary telegram_user_ids without
+    # forging initData with the bot token. When unset, the bot
+    # falls back to the legacy initData-forge path with a
+    # deprecation warning so existing deployments keep working.
+    internal_service_token: SecretStr | None = None
+
     # Image proxy (WebP/AVIF transcode of Kufar JPEGs).
     image_proxy_enabled: bool = True
     image_proxy_max_width: int = 1024
