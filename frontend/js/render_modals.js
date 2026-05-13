@@ -13,7 +13,8 @@ function createRenderModals(context) {
         formatDelta,
         formatDate,
         trapFocus,
-        safeUrl: safeUrl,
+        safeKufarUrl,
+        safeImageUrl,
         optimizedImage,
         safeRender: safeRender,
         escapeHtml,
@@ -58,7 +59,7 @@ function createRenderModals(context) {
 
         elements.detailTitle.textContent = detail.title || "Объявление";
         elements.detailPrice.textContent = formatPrice(detail.price, detail.price_type);
-        elements.detailLink.href = safeUrl(detail.link) || "#";
+        elements.detailLink.href = safeKufarUrl(detail.link) || "#";
 
         const aiState = state.detail.ai || {};
         if (elements.detailAiBlock && elements.detailAiContent) {
@@ -123,7 +124,7 @@ function createRenderModals(context) {
         }
 
         const optimizeWith = (url, width) => {
-            const validated = safeUrl(url);
+            const validated = safeImageUrl(url);
             if (!validated) return "";
             return typeof optimizedImage === "function"
                 ? optimizedImage(validated, { width })

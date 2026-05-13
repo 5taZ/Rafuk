@@ -31,6 +31,8 @@ function createAppRenderers(baseContext) {
     // Share escapeHtml and safeRender across sub-modules via context
     context.escapeHtml = core.escapeHtml;
     context.safeUrl = core.safeUrl;
+    context.safeKufarUrl = core.safeKufarUrl;
+    context.safeImageUrl = core.safeImageUrl;
     context.optimizedImage = core.optimizedImage;
     context.safeRender = safeRender;
     // Empty state factory is invoked by every collection renderer
@@ -140,6 +142,8 @@ function createAppRenderers(baseContext) {
     const {
         escapeHtml,
         safeUrl,
+        safeKufarUrl,
+        safeImageUrl,
         showToast,
         dismissToast,
         renderError,
@@ -276,6 +280,8 @@ function createAppRenderers(baseContext) {
         dismissToast,
         escapeHtml,
         safeUrl,
+        safeKufarUrl,
+        safeImageUrl,
         renderError,
         renderLoading,
         renderStrictSearch,

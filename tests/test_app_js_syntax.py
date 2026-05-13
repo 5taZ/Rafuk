@@ -377,6 +377,58 @@ def test_node_syntax_check() -> None:
         assert result.returncode == 0, f"{script}: {result.stderr}"
 
 
+def test_frontend_url_helpers_are_host_aware() -> None:
+    render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+    harness = (
+        'global.window = { location: { origin: "https://rafuk.local" } };\n'
+        + render_core
+        + r"""
+const core = createRenderCore({ state: {}, elements: {} });
+
+function assertEq(actual, expected, label) {
+    if (actual !== expected) {
+        throw new Error(
+            `${label}: expected ${JSON.stringify(expected)}, ` +
+            `got ${JSON.stringify(actual)}`
+        );
+    }
+}
+
+const sameOriginPath = "/api/v1/account?tab=privacy#top";
+const galleryImage = "https://rms.kufar.by/v1/gallery/a/b.jpg";
+const cases = [
+    ["same-origin path", core.safeUrl(sameOriginPath), sameOriginPath],
+    ["same-origin absolute", core.safeUrl("https://rafuk.local/app"), "https://rafuk.local/app"],
+    ["protocol-relative external", core.safeUrl("//evil.example/pixel"), ""],
+    ["javascript scheme", core.safeUrl("javascript:alert(1)"), ""],
+    ["same-origin blob", core.safeUrl("blob:https://rafuk.local/payload"), ""],
+    ["external https", core.safeUrl("https://evil.example/"), ""],
+    ["external http", core.safeUrl("http://www.kufar.by/item/1"), ""],
+    ["valid kufar www", core.safeKufarUrl("https://www.kufar.by/item/1?utm=rafuk"), "https://www.kufar.by/item/1?utm=rafuk"],
+    ["valid kufar apex", core.safeKufarUrl("https://kufar.by/item/2"), "https://kufar.by/item/2"],
+    ["valid kufar redirect host", core.safeKufarUrl("https://re.kufar.by/abc123"), "https://re.kufar.by/abc123"],
+    ["non-kufar listing", core.safeKufarUrl("https://evil.example/item/1"), ""],
+    ["protocol-relative kufar", core.safeKufarUrl("//www.kufar.by/item/1"), ""],
+    ["encoded traversal kufar",
+        core.safeKufarUrl("https://www.kufar.by/item/%2e%2e/admin"), ""],
+    ["valid kufar image", core.safeImageUrl(galleryImage), galleryImage],
+    ["non-gallery kufar image", core.safeImageUrl("https://rms.kufar.by/other/a.jpg"), ""],
+    ["encoded traversal image",
+        core.safeImageUrl("https://rms.kufar.by/v1/gallery/%2e%2e/a.jpg"), ""],
+    ["non-kufar image", core.safeImageUrl("https://evil.example/a.jpg"), ""],
+    ["data image", core.safeImageUrl("data:image/png;base64,AA=="), ""],
+    ["invalid optimized image", core.optimizedImage("https://evil.example/a.jpg"), ""],
+    ["proxied gallery image",
+        core.optimizedImage(galleryImage, { useProxy: true, width: 200.4 }),
+        "/api/v1/img/a/b.jpg?w=200"],
+];
+for (const [label, actual, expected] of cases) assertEq(actual, expected, label);
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_inert_walk_handles_nested_modals() -> None:
     """Wave 25.3 regression test: _applyInertToSiblings must walk DOWN
     from <body> to the modal, inerting siblings at each level. The

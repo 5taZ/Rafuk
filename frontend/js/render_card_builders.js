@@ -9,7 +9,8 @@ function createRenderCardBuilders(context) {
         formatDelta,
         deltaClass,
         hasTelegramInitData,
-        safeUrl: safeUrl,
+        safeKufarUrl,
+        safeImageUrl,
         optimizedImage,
         escapeHtml,
         // OPUS-13 wave 74: dom_helpers ride through context because
@@ -39,7 +40,7 @@ function createRenderCardBuilders(context) {
         altText,
         options,
     ) {
-        const validated = safeUrl(url);
+        const validated = safeImageUrl(url);
         if (validated) {
             const opts = options || {};
             const displayPx = Number(opts.displayPx) > 0 ? Number(opts.displayPx) : 80;
@@ -175,7 +176,7 @@ function createRenderCardBuilders(context) {
                     domEl("a", {
                         className: "listing-btn listing-btn--kufar",
                         text: "Kufar",
-                        attrs: { href: safeUrl(item.link), target: "_blank", rel: "noreferrer noopener" },
+                        attrs: { href: safeKufarUrl(item.link) || null, target: "_blank", rel: "noreferrer noopener" },
                     }),
                 ),
             )
@@ -200,7 +201,7 @@ function createRenderCardBuilders(context) {
                     label: "Открыть на Kufar",
                     icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
                     onSelect: () => {
-                        const link = safeUrl(item.link);
+                        const link = safeKufarUrl(item.link);
                         if (!link) return;
                         if (window.Telegram?.WebApp?.openLink) {
                             window.Telegram.WebApp.openLink(link);
@@ -532,7 +533,7 @@ function createRenderCardBuilders(context) {
                         className: "lead-btn lead-btn--kufar",
                         text: "Kufar ↗",
                         attrs: {
-                            href: safeUrl(lead.link),
+                            href: safeKufarUrl(lead.link) || null,
                             target: "_blank",
                             rel: "noreferrer noopener",
                             "aria-label": `Открыть «${leadTitle}» на Kufar`,
@@ -610,7 +611,7 @@ function createRenderCardBuilders(context) {
                     className: "wl-btn",
                     text: "Kufar ↗",
                     attrs: {
-                        href: safeUrl(item.link),
+                        href: safeKufarUrl(item.link) || null,
                         target: "_blank",
                         rel: "noreferrer noopener",
                         "aria-label": `Открыть «${itemTitle}» на Kufar`,

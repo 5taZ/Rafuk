@@ -49,7 +49,7 @@ function createRenderCharts(context) {
         trapFocus,
         hasTelegramInitData,
         escapeHtml: escapeHtml,
-        safeUrl: safeUrl,
+        safeImageUrl,
         optimizedImage,
         safeRender: safeRender,
         // OPUS-13 wave 74: dom_helpers ride through context because
@@ -456,7 +456,7 @@ function createRenderCharts(context) {
             const dateStr = lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("ru-RU") : "";
 
             const thumbSrc = (() => {
-                const validated = safeUrl(lead.thumbnail);
+                const validated = safeImageUrl(lead.thumbnail);
                 if (!validated) return "";
                 return typeof optimizedImage === "function"
                     ? optimizedImage(validated, { width: 160 })

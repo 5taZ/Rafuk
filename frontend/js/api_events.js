@@ -827,9 +827,9 @@ function createApiEvents(context) {
                 if (i < 0 || i >= images.length) continue;
                 const raw = images[i];
                 if (typeof raw !== "string" || !raw) continue;
-                const validated = (typeof context.safeUrl === "function")
-                    ? context.safeUrl(raw)
-                    : raw;
+                const validated = (typeof context.safeImageUrl === "function")
+                    ? context.safeImageUrl(raw)
+                    : "";
                 if (!validated) continue;
                 const url = (typeof context.optimizedImage === "function")
                     ? context.optimizedImage(validated, { width: 800 })

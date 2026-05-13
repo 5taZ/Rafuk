@@ -14,7 +14,7 @@
 const { domEl, domFragment } = app;
 
 function createAiRender(context, aiCtx) {
-    const { elements, safeUrl, formatPrice } = context;
+    const { elements, safeKufarUrl, safeImageUrl, formatPrice } = context;
 
     // Section IDs for scroll navigation
     const SECTION_IDS = {
@@ -349,6 +349,8 @@ function createAiRender(context, aiCtx) {
 
         if (data.best_alternative) {
             const bestAlternative = data.best_alternative;
+            const bestHref = safeKufarUrl(bestAlternative.link);
+            const bestImageSrc = safeImageUrl(bestAlternative.image_url);
             const bestPills = [];
             if (bestAlternative.price_byn) {
                 bestPills.push(_buildAiMetaPill(formatPrice(bestAlternative.price_byn), "ai-meta-pill--good"));
@@ -370,12 +372,12 @@ function createAiRender(context, aiCtx) {
                             "a",
                             {
                                 className: "ai-best-link",
-                                attrs: { href: safeUrl(bestAlternative.link), target: "_blank", rel: "noreferrer noopener" },
+                                attrs: { href: bestHref || null, target: "_blank", rel: "noreferrer noopener" },
                             },
-                            bestAlternative.image_url
+                            bestImageSrc
                                 ? domEl("img", {
                                     className: "ai-best-thumb",
-                                    attrs: { src: safeUrl(bestAlternative.image_url), alt: bestAlternative.title || "Лучшая альтернатива", loading: "lazy" },
+                                    attrs: { src: bestImageSrc, alt: bestAlternative.title || "Лучшая альтернатива", loading: "lazy" },
                                 })
                                 : null,
                             domEl(
@@ -404,31 +406,35 @@ function createAiRender(context, aiCtx) {
                         domEl(
                             "div",
                             { className: "ai-similar" },
-                            others.map((item) => domEl(
-                                "a",
-                                {
-                                    className: "ai-similar-item",
-                                    attrs: { href: safeUrl(item.link), target: "_blank", rel: "noreferrer noopener" },
-                                },
-                                item.image_url
-                                    ? domEl("img", {
-                                        className: "ai-similar-thumb",
-                                        attrs: { src: safeUrl(item.image_url), alt: item.title || "Похожий товар", loading: "lazy" },
-                                    })
-                                    : null,
-                                domEl(
-                                    "div",
-                                    { className: "ai-similar-info" },
-                                    domEl("span", { className: "ai-similar-title", text: item.title }),
+                            others.map((item) => {
+                                const href = safeKufarUrl(item.link);
+                                const imgSrc = safeImageUrl(item.image_url);
+                                return domEl(
+                                    "a",
+                                    {
+                                        className: "ai-similar-item",
+                                        attrs: { href: href || null, target: "_blank", rel: "noreferrer noopener" },
+                                    },
+                                    imgSrc
+                                        ? domEl("img", {
+                                            className: "ai-similar-thumb",
+                                            attrs: { src: imgSrc, alt: item.title || "Похожий товар", loading: "lazy" },
+                                        })
+                                        : null,
                                     domEl(
-                                        "span",
-                                        {
-                                            className: "ai-similar-price mono",
-                                            text: `${Math.round(item.price_byn)} BYN${item.condition ? ` · ${item.condition}` : ""}`,
-                                        },
+                                        "div",
+                                        { className: "ai-similar-info" },
+                                        domEl("span", { className: "ai-similar-title", text: item.title }),
+                                        domEl(
+                                            "span",
+                                            {
+                                                className: "ai-similar-price mono",
+                                                text: `${Math.round(item.price_byn)} BYN${item.condition ? ` · ${item.condition}` : ""}`,
+                                            },
+                                        ),
                                     ),
-                                ),
-                            ))
+                                );
+                            })
                         ),
                         "",
                         SECTION_IDS.similar,

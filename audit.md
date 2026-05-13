@@ -54,7 +54,7 @@ accessibility, privacy cleanup, and maintainability:
 
 ### Wave 1 — AUDIT-DOC: persist audit and implementation plan
 
-Status: pending
+Status: completed in wave76
 
 Deliverables:
 
@@ -67,7 +67,7 @@ Verification:
 
 ### Wave 2 — FE-URL-HARDEN: strict URL validators
 
-Status: pending
+Status: completed in wave77
 
 Problem:
 

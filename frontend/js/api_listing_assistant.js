@@ -23,7 +23,8 @@ function createApiListingAssistant(context) {
         state,
         showToast,
         postJson,
-        safeUrl,
+        safeKufarUrl,
+        safeImageUrl,
     } = context;
 
     // ── DOM refs ────────────────────────────────────────────────────────
@@ -524,9 +525,9 @@ function createApiListingAssistant(context) {
         if (!Array.isArray(compList) || !compList.length) return null;
         const list = el("div", { className: "la-competitors" });
         for (const comp of compList) {
-            const href = safeUrl ? safeUrl(comp.link) : "";
-            if (!safeUrl && comp.link) {
-                console.warn("[listing-assistant] safeUrl not in context, link dropped");
+            const href = safeKufarUrl ? safeKufarUrl(comp.link) : "";
+            if (!safeKufarUrl && comp.link) {
+                console.warn("[listing-assistant] safeKufarUrl not in context, link dropped");
             }
             const wrapper = href
                 ? el("a", {
@@ -536,7 +537,7 @@ function createApiListingAssistant(context) {
                 : el("div", { className: "la-competitor-row" });
 
             if (comp.image_url) {
-                const imgSrc = safeUrl ? safeUrl(comp.image_url) : "";
+                const imgSrc = safeImageUrl ? safeImageUrl(comp.image_url) : "";
                 if (imgSrc) {
                     const imgEl = el("img", {
                         className: "la-competitor-thumb",

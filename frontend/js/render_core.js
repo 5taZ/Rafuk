@@ -24,17 +24,75 @@ function createRenderCore(context) {
         });
     }
 
-    /**
-     * Validate URL is safe for href/src attributes.
-     * Blocks javascript:, data:, and other dangerous schemes.
-     */
-    function safeUrl(url) {
-        if (!url || typeof url !== "string") return "";
-        const trimmed = url.trim().toLowerCase();
-        if (trimmed.startsWith("https://") || trimmed.startsWith("http://") || trimmed.startsWith("/")) {
-            return url.trim();
+    const _APP_URL_BASE = "https://rafuk.local";
+    const _KUFAR_LINK_HOSTS = new Set(["kufar.by", "www.kufar.by", "re.kufar.by"]);
+    const _KUFAR_GALLERY_PREFIX = "https://rms.kufar.by/v1/gallery/";
+    const _KUFAR_GALLERY_PATH_PREFIX = "/v1/gallery/";
+
+    function _sameOriginBase() {
+        return (typeof window !== "undefined" && window.location?.origin)
+            ? window.location.origin
+            : _APP_URL_BASE;
+    }
+
+    function _parseSafeUrl(url, base) {
+        if (!url || typeof url !== "string") return null;
+        const trimmed = url.trim();
+        if (!trimmed || trimmed.startsWith("//") || /[\u0000-\u001F\u007F]/.test(trimmed)) {
+            return null;
         }
-        return "";
+        try {
+            return new URL(trimmed, base || _sameOriginBase());
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function _hasEncodedTraversal(pathname) {
+        try {
+            return decodeURIComponent(pathname).includes("..");
+        } catch (_) {
+            return true;
+        }
+    }
+
+    // FE-URL-HARDEN: dynamic links/images can include backend or AI-provided
+    // values, so validate by parsed origin/host instead of string prefixes.
+    function safeUrl(url) {
+        const trimmed = typeof url === "string" ? url.trim() : "";
+        const isAbsolute = /^[a-z][a-z0-9+.-]*:/i.test(trimmed);
+        const isRootRelative = trimmed.startsWith("/") && !trimmed.startsWith("//");
+        if (!isAbsolute && !isRootRelative) return "";
+        const base = _sameOriginBase();
+        const parsed = _parseSafeUrl(trimmed, base);
+        if (parsed && parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+        if (!parsed || parsed.origin !== base || parsed.username || parsed.password) return "";
+        return isAbsolute ? parsed.href : `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+
+    function safeKufarUrl(url) {
+        const parsed = _parseSafeUrl(url);
+        if (!parsed || parsed.protocol !== "https:" || parsed.username || parsed.password) {
+            return "";
+        }
+        if (!_KUFAR_LINK_HOSTS.has(parsed.hostname)) return "";
+        if (_hasEncodedTraversal(parsed.pathname)) return "";
+        if (parsed.hostname !== "re.kufar.by" && !parsed.pathname.startsWith("/item/")) {
+            return "";
+        }
+        if (parsed.pathname === "/") return "";
+        return parsed.href;
+    }
+
+    function safeImageUrl(url) {
+        const parsed = _parseSafeUrl(url);
+        if (!parsed || parsed.protocol !== "https:" || parsed.username || parsed.password) {
+            return "";
+        }
+        if (parsed.hostname !== "rms.kufar.by") return "";
+        if (!parsed.pathname.startsWith(_KUFAR_GALLERY_PATH_PREFIX)) return "";
+        if (_hasEncodedTraversal(parsed.pathname)) return "";
+        return parsed.href;
     }
 
     // Image-proxy router. We had a proxy that transcoded Kufar's
@@ -48,20 +106,20 @@ function createRenderCore(context) {
     // surfaces that legitimately benefit (the listing-detail
     // gallery, where we serve big photos and the bandwidth
     // savings outweigh the encode time). Default is pass-through.
-    const _KUFAR_GALLERY_PREFIX = "https://rms.kufar.by/v1/gallery/";
     function optimizedImage(url, options) {
-        if (!url || typeof url !== "string") return "";
+        const validated = safeImageUrl(url);
+        if (!validated) return "";
         const opts = options || {};
         if (!opts.useProxy) {
             // Pass-through — direct rms.kufar.by URL. Browser cache
             // (and the SW image-asset cache on the same path) does
             // the heavy lifting on repeat hits.
-            return url;
+            return validated;
         }
-        if (!url.startsWith(_KUFAR_GALLERY_PREFIX)) return url;
-        const path = url.slice(_KUFAR_GALLERY_PREFIX.length);
-        if (!path || path.includes("..") || path.includes("?")) {
-            return url;
+        if (!validated.startsWith(_KUFAR_GALLERY_PREFIX)) return validated;
+        const path = validated.slice(_KUFAR_GALLERY_PREFIX.length);
+        if (!path || path.includes("..") || path.includes("?") || path.includes("#")) {
+            return validated;
         }
         const width = Number.isFinite(opts.width) ? Math.round(opts.width) : null;
         const params = [];
@@ -556,6 +614,8 @@ function createRenderCore(context) {
     return {
         escapeHtml,
         safeUrl,
+        safeKufarUrl,
+        safeImageUrl,
         optimizedImage,
         showToast,
         dismissToast,

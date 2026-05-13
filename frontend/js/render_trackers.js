@@ -17,7 +17,8 @@ function createRenderTrackers(context) {
         trapFocus,
         hasTelegramInitData,
         escapeHtml: escapeHtml,
-        safeUrl: safeUrl,
+        safeKufarUrl,
+        safeImageUrl,
         optimizedImage,
         safeRender: safeRender,
         // OPUS-13 wave 73/74: dom_helpers / virtual_list callables
@@ -503,7 +504,7 @@ function createRenderTrackers(context) {
         function buildEventNode(event) {
             const isPriceDrop = event.event_type === "price_drop";
             const thumbSrc = (() => {
-                const validated = safeUrl(event.thumbnail);
+                const validated = safeImageUrl(event.thumbnail);
                 if (!validated) return "";
                 return typeof optimizedImage === "function"
                     ? optimizedImage(validated, { width: 200 })
@@ -602,7 +603,7 @@ function createRenderTrackers(context) {
                     domEl("a", {
                         className: "listing-btn listing-btn--kufar",
                         text: "Kufar →",
-                        attrs: { href: safeUrl(event.link), target: "_blank", rel: "noreferrer noopener" },
+                        attrs: { href: safeKufarUrl(event.link) || null, target: "_blank", rel: "noreferrer noopener" },
                     }),
                 ),
             );
