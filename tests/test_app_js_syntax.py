@@ -95,6 +95,23 @@ def test_frontend_requests_and_ai_polling_have_jittered_retries() -> None:
     assert "Math.random()" in api_ai
 
 
+def test_retryable_statuses_excludes_429() -> None:
+    """OPUS-3: 429 must NOT be in the retryable set. The AI rate
+    limiter increments before checking the cap, so a retried 429
+    silently drains another quota point even though the original
+    request was already refused. Each retry only makes the user's
+    backoff window longer.
+    """
+    bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
+    api_core = (JS_DIR / "api_core.js").read_text(encoding="utf-8")
+    needle = "const RETRYABLE_STATUSES = new Set([502, 503, 504]);"
+    assert needle in api_core, "api_core.js must keep 429 out of RETRYABLE_STATUSES"
+    assert needle in bundle, "app_bundle.js must mirror api_core.js"
+    forbidden = "const RETRYABLE_STATUSES = new Set([429"
+    assert forbidden not in api_core
+    assert forbidden not in bundle
+
+
 def test_pull_to_refresh_does_not_translate_app_root() -> None:
     text = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
     setup = text[text.index("function setupPullToRefresh"):text.index("/* ─── Pinch-zoom")]

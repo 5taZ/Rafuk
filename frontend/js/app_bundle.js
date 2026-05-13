@@ -6536,7 +6536,12 @@ function createApiCore(context) {
         search,
     } = context;
 
-    const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+    // OPUS-3: 429 is intentionally NOT retryable. The backend's AI
+    // rate-limiter increments BEFORE checking the cap, so retrying
+    // a 429 quietly drains another quota point on every attempt
+    // even though the response was already a refusal. 502/503/504
+    // are still retryable — those mean the request didn't run.
+    const RETRYABLE_STATUSES = new Set([502, 503, 504]);
     const RETRY_BASE_DELAY_MS = 300;
     const RETRY_MAX_ATTEMPTS = 3;
 
@@ -9772,10 +9777,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260513-abe0659"),
-            context._loadScript("js/api_ai_render.js?v=20260513-abe0659"),
-            context._loadScript("js/api_ai.js?v=20260513-abe0659"),
-            context._loadScript("js/api_listing_assistant.js?v=20260513-abe0659"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-9ac0c07"),
+            context._loadScript("js/api_ai_render.js?v=20260513-9ac0c07"),
+            context._loadScript("js/api_ai.js?v=20260513-9ac0c07"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-9ac0c07"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

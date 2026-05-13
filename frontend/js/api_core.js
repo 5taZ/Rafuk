@@ -20,7 +20,12 @@ function createApiCore(context) {
         search,
     } = context;
 
-    const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+    // OPUS-3: 429 is intentionally NOT retryable. The backend's AI
+    // rate-limiter increments BEFORE checking the cap, so retrying
+    // a 429 quietly drains another quota point on every attempt
+    // even though the response was already a refusal. 502/503/504
+    // are still retryable — those mean the request didn't run.
+    const RETRYABLE_STATUSES = new Set([502, 503, 504]);
     const RETRY_BASE_DELAY_MS = 300;
     const RETRY_MAX_ATTEMPTS = 3;
 
