@@ -35,7 +35,7 @@ next.
 |----|------|--------|----------------|-------------|
 | REST-OPS-01 | Off-host PostgreSQL backups | Open | Manual-gated | Pick backup target such as S3/R2/Backblaze/remote host; then wire `scripts/backup.sh` to it and document restore drills. |
 | REST-OPS-02 | Monitoring / uptime alerting | Open | Manual-gated | Pick monitoring provider or self-hosted stack; then add checks for frontend, API readiness, bot, scheduler, and backup freshness. |
-| REST-OPS-03 | Docker image registry publishing | Open | Auto-fixable if GHCR is acceptable; otherwise manual-gated | Add a CI release path that pushes a tagged image after green lint/test/security. |
+| REST-OPS-03 | Docker image registry publishing | Completed in wave86 | Auto-fixable | CI now pushes SHA and `latest` tags to GHCR after green lint/test/security on `main`. |
 | REST-OPS-04 | Deployment workflow | Open | Manual-gated | Needs deployment target and credentials before adding `deploy.yml`. |
 | REST-SEC-01 | Docker/secret-store hardening | Open | Manual-gated | Choose Docker Secrets, Vault, Doppler, SOPS, or another store; then migrate runtime secrets out of plain Compose `environment:` where practical. |
 
@@ -61,5 +61,5 @@ next.
 
 1. `REST-DOC-00`: create this backlog file.
 2. `REST-DOC-01`: make stale UI/UX recommendations explicitly historical — completed in wave84.
-3. `REST-OPS-03`: if GHCR is acceptable, add a safe registry publish path in CI.
+3. `REST-OPS-03`: if GHCR is acceptable, add a safe registry publish path in CI — completed in wave86.
 4. Manual-gated items proceed only after the owner chooses providers/targets.
