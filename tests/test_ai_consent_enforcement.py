@@ -9,7 +9,8 @@ This file runs the consent check with DEBUG=false to confirm:
 * users without consent get a 403 with consent_type="ai_analysis";
 * cross_border is the second gate — granting only ai_analysis still
   gets you blocked with consent_type="cross_border";
-* granting BOTH passes.
+* pd_processing is the third gate — AI/cross-border alone is not enough;
+* granting all required consents passes.
 """
 
 from __future__ import annotations
@@ -121,16 +122,16 @@ async def test_ai_consent_demands_cross_border_after_ai_grant(
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Full consent → passes.
+# AI + cross-border only → blocked with pd_processing.
 # ──────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_ai_consent_passes_with_both_consents_granted(
+async def test_ai_consent_demands_pd_processing_after_ai_and_cross_border(
     debug_off, fresh_session_factory,
 ) -> None:
     async with fresh_session_factory() as session:
-        user = User(telegram_user_id=333, first_name="FullConsent")
+        user = User(telegram_user_id=333, first_name="NeedsPD")
         session.add(user)
         await session.flush()
         session.add_all([
@@ -150,8 +151,50 @@ async def test_ai_consent_passes_with_both_consents_granted(
         await session.commit()
 
     request = _make_request(fresh_session_factory)
+    with pytest.raises(HTTPException) as excinfo:
+        await ai_guards._check_ai_consent(request, user_id=333)
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.detail["consent_type"] == "pd_processing"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Full consent → passes.
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ai_consent_passes_with_all_consents_granted(
+    debug_off, fresh_session_factory,
+) -> None:
+    async with fresh_session_factory() as session:
+        user = User(telegram_user_id=334, first_name="FullConsent")
+        session.add(user)
+        await session.flush()
+        session.add_all([
+            UserConsent(
+                user_id=user.id,
+                consent_type="ai_analysis",
+                version=CURRENT_POLICY_VERSION,
+                granted_at=datetime.now(UTC),
+            ),
+            UserConsent(
+                user_id=user.id,
+                consent_type="cross_border",
+                version=CURRENT_POLICY_VERSION,
+                granted_at=datetime.now(UTC),
+            ),
+            UserConsent(
+                user_id=user.id,
+                consent_type="pd_processing",
+                version=CURRENT_POLICY_VERSION,
+                granted_at=datetime.now(UTC),
+            ),
+        ])
+        await session.commit()
+
+    request = _make_request(fresh_session_factory)
     # Should not raise.
-    await ai_guards._check_ai_consent(request, user_id=333)
+    await ai_guards._check_ai_consent(request, user_id=334)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -179,6 +222,12 @@ async def test_ai_consent_rejects_revoked_grants(
             UserConsent(
                 user_id=user.id,
                 consent_type="cross_border",
+                version=CURRENT_POLICY_VERSION,
+                granted_at=now,
+            ),
+            UserConsent(
+                user_id=user.id,
+                consent_type="pd_processing",
                 version=CURRENT_POLICY_VERSION,
                 granted_at=now,
             ),
@@ -210,6 +259,12 @@ async def test_ai_consent_rejects_stale_policy_versions(
             UserConsent(
                 user_id=user.id,
                 consent_type="cross_border",
+                version=CURRENT_POLICY_VERSION,
+                granted_at=datetime.now(UTC),
+            ),
+            UserConsent(
+                user_id=user.id,
+                consent_type="pd_processing",
                 version=CURRENT_POLICY_VERSION,
                 granted_at=datetime.now(UTC),
             ),

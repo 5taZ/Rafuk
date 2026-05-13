@@ -1922,13 +1922,25 @@ def test_cache_key_version_busts_old_cache() -> None:
     from api.schemas import AIListingAssistantRequest
 
     payload = AIListingAssistantRequest(title="Test cache version")
-    current_key = _listing_assistant_cache_key(payload, [])
-    assert "ai_listing:" in current_key
+    current_key = _listing_assistant_cache_key(payload, [], user_id=123456)
+    assert current_key.startswith("ai_listing:u123456:")
     canonical_title = " ".join((payload.title or "").lower().split())
     parts = [("v", "1"), ("title", canonical_title)]
     serialised = "|".join(f"{k}={v}" for k, v in parts)
     old_key = f"ai_listing:{hashlib.sha256(serialised.encode()).hexdigest()}"
     assert current_key != old_key
+
+
+def test_listing_assistant_cache_key_is_user_scoped() -> None:
+    from api.routers.ai_listing_assistant import _listing_assistant_cache_key
+    from api.schemas import AIListingAssistantRequest
+
+    payload = AIListingAssistantRequest(title="Phone", extra_notes="serial SN123")
+    key_one = _listing_assistant_cache_key(payload, [], user_id=111)
+    key_two = _listing_assistant_cache_key(payload, [], user_id=222)
+    assert key_one.startswith("ai_listing:u111:")
+    assert key_two.startswith("ai_listing:u222:")
+    assert key_one != key_two
 
 
 def test_cache_key_differentiates_zero_price_from_none() -> None:
@@ -1937,8 +1949,8 @@ def test_cache_key_differentiates_zero_price_from_none() -> None:
 
     payload_zero = AIListingAssistantRequest(title="Phone", draft_price_byn=0)
     payload_none = AIListingAssistantRequest(title="Phone", draft_price_byn=None)
-    key_zero = _listing_assistant_cache_key(payload_zero, [])
-    key_none = _listing_assistant_cache_key(payload_none, [])
+    key_zero = _listing_assistant_cache_key(payload_zero, [], user_id=123456)
+    key_none = _listing_assistant_cache_key(payload_none, [], user_id=123456)
     assert key_zero != key_none
 
 

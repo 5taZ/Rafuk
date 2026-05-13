@@ -213,13 +213,15 @@ def _coerce_listing_photos(raw: list[str] | None) -> list[str]:
 def _listing_assistant_cache_key(
     payload: AIListingAssistantRequest,
     photos: list[str],
+    *,
+    user_id: int,
 ) -> str:
-    """Stable cache key derived from the canonical user input."""
+    """Stable per-user cache key derived from the canonical user input."""
     canonical_title = " ".join((payload.title or "").lower().split())
     canonical_notes = " ".join((payload.extra_notes or "").lower().split())
     photo_hashes = [hashlib.sha256(p.encode("utf-8")).hexdigest()[:16] for p in photos]
     parts = [
-        ("v", "2"),
+        ("v", "3"),
         ("title", canonical_title),
         ("category", str(payload.category or "")),
         ("condition", (payload.condition or "").strip().lower()),
@@ -234,7 +236,7 @@ def _listing_assistant_cache_key(
     ]
     serialised = "|".join(f"{k}={v}" for k, v in parts)
     digest = hashlib.sha256(serialised.encode("utf-8")).hexdigest()
-    return f"ai_listing:{digest}"
+    return f"ai_listing:u{int(user_id)}:{digest}"
 
 
 def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -475,7 +477,7 @@ async def listing_assistant(
     photos = _coerce_listing_photos(payload.photos)
 
     cache = get_cache(request)
-    cache_key = _listing_assistant_cache_key(payload, photos)
+    cache_key = _listing_assistant_cache_key(payload, photos, user_id=_user.user_id)
     cached = await cache.get_json(cache_key)
     if isinstance(cached, dict):
         try:

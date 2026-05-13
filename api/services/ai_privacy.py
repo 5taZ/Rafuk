@@ -33,15 +33,16 @@ async def clear_user_ai_data(telegram_user_id: int) -> None:
     that was previously left behind:
 
     * ``ai_task:u{tg}:*`` — AI task results (api/services/ai_task_store)
+    * ``ai_listing:u{tg}:*`` — Listing Assistant response cache
     * ``ai_rate:{tg}:*`` — per-endpoint hourly limiter buckets
     * ``ai_daily:{tg}`` — shared daily limiter counter
     * ``auth:blacklist:{tg}`` — session blacklist entry (if any)
     * ``auth:initdata:*`` — IP-tracking entries (filter by user_id in value)
     * in-memory ``_tasks`` shadow store
 
-    The shared deterministic AI cache (``ai_analysis:v5:*``) is
-    intentionally untouched — it has no user_id, evicting it would
-    just hand cold caches to everyone else.
+    The shared deterministic listing-analysis cache
+    (``ai_analysis:v5:*``) is intentionally untouched — it has no
+    user_id, evicting it would just hand cold caches to everyone else.
     """
     from api.services.cache import MemoryCache, RedisCache
 
@@ -60,6 +61,7 @@ async def clear_user_ai_data(telegram_user_id: int) -> None:
             # rather than KEYS so we don't block Redis on big DBs.
             user_scoped_patterns = [
                 f"ai_task:u{telegram_user_id}:*",
+                f"ai_listing:u{telegram_user_id}:*",
                 f"ai_rate:{telegram_user_id}:*",
                 f"ai_daily:{telegram_user_id}",
                 # Session blacklist key is a fixed shape, but reuse

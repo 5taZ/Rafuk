@@ -10,10 +10,10 @@ Three thin checks every AI handler runs before doing real work:
   backed by ``cache.incr``. Centralised so every endpoint
   (analyze, listing-assistant, ai-tools) gets the same behaviour
   without re-implementing the math.
-* ``_check_ai_consent`` — verify the user granted ``ai_analysis``
-  and ``cross_border`` consent. Skipped in DEBUG mode for local
-  dev (we don't want to force a consent grant just to test the
-  pipeline).
+* ``_check_ai_consent`` — verify the user granted ``ai_analysis``,
+  ``cross_border`` and ``pd_processing`` consent. Skipped in DEBUG
+  mode for local dev (we don't want to force a consent grant just to
+  test the pipeline).
 * ``_coerce_string_list`` — input sanitiser used by the listing
   assistant + ai_tools to normalise free-form lists from prompts.
   Lives here because every guard-using router also imports it.
@@ -37,6 +37,8 @@ from api.config import get_settings
 from api.models import UserConsent
 from api.services.consent_policy import CURRENT_POLICY_VERSION
 from api.services.workflow_store import resolve_user_id
+
+_REQUIRED_AI_CONSENTS = ("ai_analysis", "cross_border", "pd_processing")
 
 
 def _check_ai_available():
@@ -101,7 +103,7 @@ async def _check_rate_limit(
 
 
 async def _check_ai_consent(request: Request, user_id: int) -> None:
-    """Verify the user has granted AI analysis and cross-border consent.
+    """Verify the user has granted every consent needed for AI processing.
 
     Skipped in DEBUG so local dev doesn't have to grant consent for
     every test request — the consent UI is exercised by the consent
@@ -133,14 +135,14 @@ async def _check_ai_consent(request: Request, user_id: int) -> None:
             await session.execute(
                 select(UserConsent.consent_type).where(
                     UserConsent.user_id == uid,
-                    UserConsent.consent_type.in_(["ai_analysis", "cross_border"]),
+                    UserConsent.consent_type.in_(_REQUIRED_AI_CONSENTS),
                     UserConsent.version == CURRENT_POLICY_VERSION,
                     UserConsent.revoked_at.is_(None),
                 )
             )
         ).scalars().all()
 
-        for consent_type in ("ai_analysis", "cross_border"):
+        for consent_type in _REQUIRED_AI_CONSENTS:
             if consent_type not in consents:
                 raise HTTPException(
                     status_code=403,

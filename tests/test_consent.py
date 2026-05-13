@@ -336,6 +336,7 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
     # clear_user_ai_data promises to wipe.
     seeds = {
         f"ai_task:u{target_uid}:abc": {"x": 1},
+        f"ai_listing:u{target_uid}:abc": {"title_suggestion": "private"},
         f"ai_rate:{target_uid}:default": {"count": 5},
         f"ai_daily:{target_uid}": {"count": 2},
         f"auth:blacklist:{target_uid}": {"reason": "test"},
@@ -346,6 +347,7 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
         },
         # Sibling user — these MUST survive.
         f"ai_task:u{other_uid}:keep": {"x": 1},
+        f"ai_listing:u{other_uid}:keep": {"title_suggestion": "keep"},
         f"ai_rate:{other_uid}:default": {"count": 5},
         "auth:initdata:otherdigest": {
             "user_id": other_uid,
@@ -388,6 +390,7 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
     # Target user's entries should all be gone.
     for key in (
         f"ai_task:u{target_uid}:abc",
+        f"ai_listing:u{target_uid}:abc",
         f"ai_rate:{target_uid}:default",
         f"ai_daily:{target_uid}",
         f"auth:blacklist:{target_uid}",
@@ -398,6 +401,7 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
     # Sibling user's entries must still be there.
     for key in (
         f"ai_task:u{other_uid}:keep",
+        f"ai_listing:u{other_uid}:keep",
         f"ai_rate:{other_uid}:default",
         "auth:initdata:otherdigest",
     ):
