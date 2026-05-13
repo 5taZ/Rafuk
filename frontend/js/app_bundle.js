@@ -5750,7 +5750,6 @@ function createRenderTrackers(context) {
             if (typeof buildEmpty === "function") {
                 elements.trackersList.appendChild(
                     buildEmpty({
-                        icon: "trackers",
                         title: "Открывайте Mini App в Telegram",
                         hint: "Автопоиск работает с Telegram-аккаунтом — только так трекер сможет прислать уведомление о новых лотах.",
                     })
@@ -5786,7 +5785,6 @@ function createRenderTrackers(context) {
             if (typeof buildEmpty === "function") {
                 elements.trackersList.appendChild(
                     buildEmpty({
-                        icon: "trackers",
                         title: "Создайте первый автопоиск",
                         hint: "Сохраните любой запрос как трекер — и Telegram пришлёт уведомление, когда появятся новые объявления или цена пойдёт вниз.",
                         actionLabel: "Создать автопоиск",
@@ -9737,10 +9735,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260513-e267d3c"),
-            context._loadScript("js/api_ai_render.js?v=20260513-e267d3c"),
-            context._loadScript("js/api_ai.js?v=20260513-e267d3c"),
-            context._loadScript("js/api_listing_assistant.js?v=20260513-e267d3c"),
+            context._loadScript("js/api_ai_modal.js?v=20260513-0e2c580"),
+            context._loadScript("js/api_ai_render.js?v=20260513-0e2c580"),
+            context._loadScript("js/api_ai.js?v=20260513-0e2c580"),
+            context._loadScript("js/api_listing_assistant.js?v=20260513-0e2c580"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

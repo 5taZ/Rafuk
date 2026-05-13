@@ -176,7 +176,6 @@ function createRenderTrackers(context) {
             if (typeof buildEmpty === "function") {
                 elements.trackersList.appendChild(
                     buildEmpty({
-                        icon: "trackers",
                         title: "Открывайте Mini App в Telegram",
                         hint: "Автопоиск работает с Telegram-аккаунтом — только так трекер сможет прислать уведомление о новых лотах.",
                     })
@@ -212,7 +211,6 @@ function createRenderTrackers(context) {
             if (typeof buildEmpty === "function") {
                 elements.trackersList.appendChild(
                     buildEmpty({
-                        icon: "trackers",
                         title: "Создайте первый автопоиск",
                         hint: "Сохраните любой запрос как трекер — и Telegram пришлёт уведомление, когда появятся новые объявления или цена пойдёт вниз.",
                         actionLabel: "Создать автопоиск",

@@ -495,6 +495,21 @@ def test_deals_empty_state_has_no_icon_box() -> None:
     assert "icon:" not in purchases_block
 
 
+def test_tracker_empty_state_has_no_icon_box() -> None:
+    trackers_js = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
+    assert 'icon: "trackers"' not in trackers_js
+    empty_start = trackers_js.index("if (!state.trackers.items.length)")
+    title_start = trackers_js.index('title: "Создайте первый автопоиск"', empty_start)
+    block_start = trackers_js.rindex(
+        "buildEmpty({",
+        empty_start,
+        title_start,
+    )
+    block_end = trackers_js.index("});", title_start)
+    empty_block = trackers_js[block_start:block_end]
+    assert "icon:" not in empty_block
+
+
 def test_lead_and_watchlist_mutations_have_inflight_guard() -> None:
     """A double-click on "В покупки" / "В избранное" used to fire two
     POST /api/v1/leads or /api/v1/watchlist round-trips because state
