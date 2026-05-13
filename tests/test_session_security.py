@@ -14,12 +14,17 @@ class _StubCache:
 
     def __init__(self) -> None:
         self._store: dict[str, Any] = {}
+        self._counters: dict[str, int] = {}
 
     async def get_json(self, key: str) -> Any:
         return self._store.get(key)
 
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
         self._store[key] = value
+
+    async def incr(self, key: str, ttl: int | None = None) -> int:
+        self._counters[key] = self._counters.get(key, 0) + 1
+        return self._counters[key]
 
 
 class _ExplodingCache:
@@ -95,3 +100,36 @@ async def test_track_init_data_handles_none_inputs() -> None:
     await track_init_data_use(cache, "", user_id=1, client_ip="1.1.1.1")
     # No state was recorded for the empty initdata.
     assert not cache._store
+
+
+@pytest.mark.asyncio
+async def test_track_init_data_autoblacklists_after_threshold(caplog) -> None:
+    """OPUS-8: 5 IP-mismatches in the rolling window must auto-blacklist
+    the user without waiting for an ops human to read the logs.
+    """
+    cache = _StubCache()
+    # First call seeds the (initdata → first_ip) mapping.
+    await track_init_data_use(cache, "blob", user_id=11, client_ip="1.1.1.1")
+    caplog.set_level(logging.WARNING)
+    # Five subsequent calls from a different IP — each one increments
+    # the warning counter; the fifth crosses the threshold.
+    for ip in ("9.9.9.1", "9.9.9.2", "9.9.9.3", "9.9.9.4", "9.9.9.5"):
+        await track_init_data_use(cache, "blob", user_id=11, client_ip=ip)
+
+    # Blacklist row written.
+    assert cache._store.get("auth:blacklist:11") is not None
+    assert await is_user_blacklisted(cache, 11) is True
+    # Auto-block log line emitted.
+    assert any("initdata_replay_autoblock" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_track_init_data_under_threshold_does_not_blacklist() -> None:
+    """OPUS-8: a couple of mismatches (e.g. wifi ↔ cellular handoff)
+    must NOT trigger the auto-blacklist."""
+    cache = _StubCache()
+    await track_init_data_use(cache, "blob", user_id=22, client_ip="1.1.1.1")
+    for ip in ("9.9.9.1", "9.9.9.2"):
+        await track_init_data_use(cache, "blob", user_id=22, client_ip=ip)
+    assert cache._store.get("auth:blacklist:22") is None
+    assert await is_user_blacklisted(cache, 22) is False

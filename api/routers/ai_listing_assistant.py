@@ -193,16 +193,25 @@ _LISTING_PHOTO_RE = _re.compile(
 
 
 def _coerce_listing_photos(raw: list[str] | None) -> list[str]:
-    """Validate seller-uploaded photos: keep only well-formed data URLs."""
+    """Validate seller-uploaded photos: keep only well-formed data URLs.
+
+    OPUS-9: length check runs BEFORE the regex. Pydantic already
+    caps each entry at AI_LISTING_PHOTO_MAX_CHARS at the schema
+    layer, but that's a maximum; a request that just barely fits
+    the schema (~1.5 MB × 4) still hits this regex 4 times — and a
+    base64 regex on a 1.5 MB string is meaningfully slower than
+    the cheap len() comparison. Filter oversized entries first so
+    we never feed the regex more than the configured budget.
+    """
     if not raw:
         return []
     cleaned: list[str] = []
     for entry in raw:
         if not isinstance(entry, str):
             continue
-        if not _LISTING_PHOTO_RE.match(entry):
-            continue
         if len(entry) > _LISTING_PHOTO_MAX_BYTES:
+            continue
+        if not _LISTING_PHOTO_RE.match(entry):
             continue
         cleaned.append(entry)
         if len(cleaned) >= AI_LISTING_PHOTO_MAX_COUNT:

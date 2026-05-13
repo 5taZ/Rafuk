@@ -32,6 +32,17 @@ _INITDATA_KEY = "auth:initdata:{digest}"
 # because stale init_data can't reach this code anyway.
 _INITDATA_TTL_SECONDS = 7200
 
+# OPUS-8: replay auto-blacklist. Per-user counter that increments on
+# each IP-mismatch warning; once it crosses _REPLAY_AUTOBLOCK_THRESHOLD
+# inside the rolling _REPLAY_WARN_TTL_SECONDS window we mark the user
+# blacklisted for _REPLAY_BLOCK_TTL_SECONDS so a stolen-initData
+# replay loses access automatically rather than waiting for ops to
+# spot the WARNING line in logs.
+_REPLAY_WARN_KEY = "auth:replay_warn:{user_id}"
+_REPLAY_WARN_TTL_SECONDS = 3600
+_REPLAY_AUTOBLOCK_THRESHOLD = 5
+_REPLAY_BLOCK_TTL_SECONDS = 24 * 3600
+
 
 async def is_user_blacklisted(cache: Any, user_id: int) -> bool:
     """Return True if the given Telegram user_id is currently blocked.
@@ -98,7 +109,51 @@ async def track_init_data_use(
                 "first_seen=%s",
                 user_id, digest[:12], first_ip, ip, existing.get("first_seen_ts"),
             )
+            # OPUS-8: increment a rolling per-user counter and
+            # auto-blacklist once it crosses the threshold. ``incr`` is
+            # atomic on Redis and best-effort on MemoryCache; either
+            # way a transient cache failure here can't escalate the
+            # outcome past "warning logged" — the counter just resets
+            # on the next failed attempt.
+            await _record_replay_warning(cache, user_id)
     except Exception:  # noqa: BLE001 — observability path, never raise
         logger.debug(
             "session_security.track_init_data_use failed", exc_info=True,
+        )
+
+
+async def _record_replay_warning(cache: Any, user_id: int) -> None:
+    """Bump the rolling replay counter; auto-blacklist on threshold.
+
+    OPUS-8: ops used to learn about replay attempts only by reading
+    the WARNING log line in ``track_init_data_use``. That made the
+    signal useless without a human in the loop. The threshold +
+    auto-blacklist closes the loop without waiting on ops while
+    keeping a generous margin for legitimate IP changes
+    (cellular ↔ wifi, CG-NAT churn) — five mismatches inside one
+    hour is well past organic noise.
+    """
+    if cache is None:
+        return
+    incr = getattr(cache, "incr", None)
+    if incr is None:
+        return
+    warn_key = _REPLAY_WARN_KEY.format(user_id=int(user_id))
+    try:
+        count = await incr(warn_key, ttl=_REPLAY_WARN_TTL_SECONDS)
+    except Exception:  # noqa: BLE001 — best-effort counter
+        return
+    if count and count >= _REPLAY_AUTOBLOCK_THRESHOLD:
+        try:
+            await cache.set_json(
+                _BLACKLIST_KEY.format(user_id=int(user_id)),
+                {"reason": "replay_autoblock", "since_ts": int(time())},
+                ttl=_REPLAY_BLOCK_TTL_SECONDS,
+            )
+        except Exception:  # noqa: BLE001 — best-effort blacklist
+            return
+        logger.error(
+            "session_security.initdata_replay_autoblock "
+            "user_id=%s warnings=%d window_seconds=%d block_seconds=%d",
+            user_id, count, _REPLAY_WARN_TTL_SECONDS, _REPLAY_BLOCK_TTL_SECONDS,
         )
