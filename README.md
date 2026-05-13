@@ -5,7 +5,7 @@ classifieds site **[Kufar.by](https://www.kufar.by)** for listings,
 runs analytics and AI-assisted decisioning over them, and surfaces
 "deal-finder" workflows to end users.
 
-> **Status:** active development on the `bad-app` branch. 792 tests
+> **Status:** active development on the `bad-app` branch. 795 tests
 > pass locally, with one skipped. See [`CHANGELOG.md`](./CHANGELOG.md)
 > for the wave-by-wave security/performance hardening history.
 

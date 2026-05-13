@@ -815,6 +815,37 @@ async def test_cleanup_ai_audit_log(populated_session):
 
 
 @pytest.mark.asyncio
+async def test_cleanup_ai_audit_log_ensures_partitions_on_postgres():
+    class _Dialect:
+        name = "postgresql"
+
+    class _Bind:
+        dialect = _Dialect()
+
+    class _Result:
+        rowcount = 0
+
+    class _Session:
+        def __init__(self):
+            self.statements = []
+
+        def get_bind(self):
+            return _Bind()
+
+        async def execute(self, statement):
+            self.statements.append(str(statement))
+            return _Result()
+
+    session = _Session()
+
+    deleted = await cleanup_ai_audit_log(session, days=365)  # type: ignore[arg-type]
+
+    assert deleted == 0
+    assert "ensure_ai_audit_log_monthly_partitions" in session.statements[0]
+    assert "DELETE FROM ai_audit_log" in session.statements[1]
+
+
+@pytest.mark.asyncio
 async def test_cleanup_telegram_notification_dlq(populated_session):
     session, user, _tracker = populated_session
     old = datetime.now(UTC) - timedelta(days=45)

@@ -1411,6 +1411,9 @@ async def cleanup_ai_audit_log(session: AsyncSession, days: int = 365) -> int:
     transaction integration) without depending on pg_cron or an out-
     of-band scheduler. Runs nightly from ``run_cleanup``.
     """
+    bind = session.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        await session.execute(text("SELECT ensure_ai_audit_log_monthly_partitions(1, 13)"))
     cutoff = datetime.now(UTC) - timedelta(days=days)
     result = await session.execute(
         delete(AIAuditLog).where(AIAuditLog.created_at < cutoff)

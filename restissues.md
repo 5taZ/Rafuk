@@ -43,7 +43,7 @@ next.
 
 | ID | Item | Status | Classification | Next action |
 |----|------|--------|----------------|-------------|
-| REST-DB-01 | `ai_audit_log` range partitioning | Open | Manual-gated | Only worth doing when table growth proves cleanup is insufficient; requires Postgres migration/backfill planning. |
+| REST-DB-01 | `ai_audit_log` range partitioning | Completed in wave91 | Manual-gated | Added a Postgres migration that swaps `ai_audit_log` to monthly `created_at` range partitions with copied-row validation and future partition maintenance. |
 | REST-MAINT-01 | `scheduler/collector.py` split | Open | Opportunistic | Extract a focused helper only while changing scheduler behavior; avoid cosmetic splits. |
 | REST-MAINT-02 | AI service / marketplace splits | Open | Opportunistic | Continue module extraction only around active AI changes; preserve backward-compatible imports. |
 | REST-FE-01 | Frontend TypeScript/JSDoc/build-system | Open | Manual-gated | Large frontend architecture decision; not required for current vanilla-JS flow. |
