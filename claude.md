@@ -1,10 +1,11 @@
 # Project handoff for the next AI
 
 > Drop this file when you start helping with the Kufar Analytics
-> project. It captures the state of the codebase as of Wave 25.6
-> (FE-M5 closed — the `!important` cleanup is finished). Waves 0–25.6
-> are reflected here; what's still genuinely worth doing is listed
-> below. The companion audit document is
+> project. It originally captured the state of the codebase as of
+> Wave 25.6 (FE-M5 closed — the `!important` cleanup is finished).
+> Later audit-remediation waves are not fully narrated here; use
+> `AGENTS.md` as the canonical working guide and `restissues.md` as
+> the current remaining-issues tracker. The companion audit document is
 > `DEEP_DIVE_REVIEW_COMPREHENSIVE.md` (gitignored) — it lists 186
 > issues at four severities (29 CRITICAL / 54 HIGH / 73 MEDIUM /
 > 30 LOW). Numbers in this file refer to those audit IDs.
@@ -12,6 +13,10 @@
 > The full per-wave change log lives in `CHANGELOG.md` — that's the
 > authoritative reference for "what changed when". This file is the
 > shorter mental-model handoff.
+>
+> Status update, 2026-05-14: post-audit Waves 76-84 are committed,
+> the latest Alembic head is `20260513_0015`, and the latest full
+> verification reported `791 passed, 1 skipped, 1 warning`.
 
 ---
 
@@ -31,14 +36,14 @@ analytics + AI-assisted decisioning over them, and surfaces
   notifications via the two-phase dispatch pattern (Wave 23/24).
 * **`frontend/`** — vanilla JS + plain CSS Mini App (no bundler,
   no JSX). Assets are served by nginx, see `nginx/default.conf`.
-* **`migrations/`** — Alembic; head revision is `20260510_0006`.
+* **`migrations/`** — Alembic; head revision is `20260513_0015`.
 
 **Deployment shape:** five Docker services (migrate one-shot
 + api + bot + scheduler + frontend) plus Redis 7 and Cloudflare
 Tunnel. See `docker-compose.yml`.
 
-**Test suite:** 509 tests, all green (one skipped — the
-Postgres-gated round-trip smoke). Runner is `pytest`. Local
+**Test suite:** latest full local run reported 791 tests passing,
+one skipped, and one warning. Runner is `pytest`. Local
 dev uses SQLite via `aiosqlite`; CI/PG via env override. Static
 Alembic-chain checks (single head, walkable, unique IDs) plus
 the Postgres-gated round-trip (skipped without

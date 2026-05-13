@@ -54,7 +54,7 @@ next.
 | ID | Item | Status | Classification | Next action |
 |----|------|--------|----------------|-------------|
 | REST-DOC-01 | Refresh stale UI/UX report status | Completed in wave84 | Auto-fixable | Marked the report as historical so already-fixed items are not mistaken for current issues. |
-| REST-DOC-02 | Refresh stale handoff counts in `claude.md` | Open | Auto-fixable | Update only if that snapshot is still used; `AGENTS.md` remains canonical. |
+| REST-DOC-02 | Refresh stale handoff counts in `claude.md` | Completed in wave85 | Auto-fixable | Added a status update pointing to `AGENTS.md`/`restissues.md` and refreshed test/Alembic counts. |
 | REST-HOUSE-01 | Decide fate of deleted local notes | Open | Manual-gated | Owner decides whether `gpt.md`, `mybad.md`, and `problems.md` should be restored or permanently removed. |
 
 ## Wave order
