@@ -53,13 +53,13 @@ next.
 
 | ID | Item | Status | Classification | Next action |
 |----|------|--------|----------------|-------------|
-| REST-DOC-01 | Refresh stale UI/UX report status | Open | Auto-fixable | Mark already-fixed items as historical so the report is not mistaken for a current issue list. |
+| REST-DOC-01 | Refresh stale UI/UX report status | Completed in wave84 | Auto-fixable | Marked the report as historical so already-fixed items are not mistaken for current issues. |
 | REST-DOC-02 | Refresh stale handoff counts in `claude.md` | Open | Auto-fixable | Update only if that snapshot is still used; `AGENTS.md` remains canonical. |
 | REST-HOUSE-01 | Decide fate of deleted local notes | Open | Manual-gated | Owner decides whether `gpt.md`, `mybad.md`, and `problems.md` should be restored or permanently removed. |
 
 ## Wave order
 
 1. `REST-DOC-00`: create this backlog file.
-2. `REST-DOC-01`: make stale UI/UX recommendations explicitly historical.
+2. `REST-DOC-01`: make stale UI/UX recommendations explicitly historical — completed in wave84.
 3. `REST-OPS-03`: if GHCR is acceptable, add a safe registry publish path in CI.
 4. Manual-gated items proceed only after the owner chooses providers/targets.

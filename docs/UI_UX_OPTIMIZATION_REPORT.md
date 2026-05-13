@@ -4,6 +4,13 @@
 **Project:** Kufar Analytics Telegram Mini App  
 **Analysis Tools:** UI/UX Pro Max, Frontend Design, Impeccable Methodology  
 
+> **Status update — 2026-05-14:** this report is historical, not the live
+> post-audit backlog. Several recommendations below were implemented after the
+> report was written, including SVG navigation icons, mobile `touch-action`
+> rules, disabled/loading button states, skeleton loading states, and cache/tag
+> improvements. Use `restissues.md` for the current remaining-issues tracker and
+> verify any item in the code before treating it as still open.
+
 ---
 
 ## Executive Summary
