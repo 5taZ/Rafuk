@@ -21,9 +21,20 @@
         widget) and rewrites it to https:// before the request goes
         out, instead of letting the browser fail open.
     -->
+    <!-- OPUS-14 wave 75: the sha256 allowlisted below covers a tiny
+         inline script that the Telegram WebView injects into every
+         Mini-App page on first load (theme/viewport/keyboard hooks
+         that the native client controls, not us). Wave 62 dropped
+         it on the assumption the hash was dead — it isn't, the
+         injection lives outside our source tree so a `grep` of the
+         repo doesn't find it. Without the hash the browser logs
+         "CSP blocked an inline script" twice on every cold start
+         and Telegram's keyboard / theme integration silently
+         degrades. The hash pins exactly that one Telegram shim;
+         every other inline script still trips the policy. -->
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self';
-                   script-src 'self';
+                   script-src 'self' 'sha256-ieoeWczDHkReVBsRBqaal5AFMlBtNjMzgwKvLqi/tSU=';
                    style-src 'self';
                    font-src 'self';
                    connect-src 'self';

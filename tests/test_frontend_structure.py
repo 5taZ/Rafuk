@@ -157,20 +157,36 @@ def test_nginx_disables_gzip_for_pii_endpoints() -> None:
         assert "gzip off;" in block, f"{prefix} location must turn gzip off"
 
 
-def test_frontend_csp_has_no_dead_inline_script_hash() -> None:
-    """OPUS-14: index.html and nginx CSP both used to allowlist
-    'sha256-ieoeWczDHk...' for an inline script that no longer
-    exists. Keep the script-src lean so a future inline-handler
-    accident actually trips the policy.
+def test_frontend_csp_pins_telegram_webview_inline_shim() -> None:
+    """OPUS-14 wave 75: CSP must whitelist the sha256 hash of the
+    inline script Telegram WebView injects on every Mini-App cold
+    start (theme / viewport / keyboard hooks that live outside our
+    source tree). Without it the browser console logs two CSP
+    violations on every open and Telegram's native UI hooks
+    silently degrade.
+
+    Wave 62 dropped the hash on the assumption it was dead — the
+    inline script DOES exist, it just lives in the Telegram client
+    rather than in this repo, so `grep` couldn't find it. Wave 75
+    restored the hash with a clearer comment. This test pins both
+    sides of the policy so the hash doesn't accidentally get
+    dropped again.
     """
     index_text = HTML_FILE.read_text(encoding="utf-8")
     nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
-    needle = "sha256-ieoeWczDHk"
-    assert needle not in index_text, "stale inline-script hash in HTML CSP"
-    assert needle not in nginx_conf, "stale inline-script hash in nginx CSP"
-    # Inline script policy stays at literal 'self' — no nonces, no hashes.
-    assert "script-src 'self';" in index_text or "script-src 'self'\n" in index_text
-    assert "script-src 'self';" in nginx_conf
+    telegram_hash = "'sha256-ieoeWczDHkReVBsRBqaal5AFMlBtNjMzgwKvLqi/tSU='"
+    assert telegram_hash in index_text, (
+        "index.html CSP must keep Telegram WebView inline-shim hash"
+    )
+    # nginx CSP appears twice: server-level + /api/v1/* location.
+    assert nginx_conf.count(telegram_hash) >= 2, (
+        "nginx CSP must keep the Telegram hash in BOTH the server-level "
+        "policy and the /api/v1/* location override (add_header doesn't "
+        "inherit, so the override must repeat it)"
+    )
+    # The directive must still start with 'self' — no unsafe-inline.
+    assert "script-src 'self' 'sha256-" in index_text
+    assert "script-src 'self' 'sha256-" in nginx_conf
 
 
 def test_service_worker_precaches_offline_stylesheet() -> None:
