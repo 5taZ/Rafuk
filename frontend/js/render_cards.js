@@ -68,13 +68,22 @@ function createRenderCards(context) {
     }
 
     function matchesFilters(item) {
-        // Price range filter
-        const itemPrice = item.price != null ? Number(item.price) : null;
+        // SEARCH-8: the filter dropdown labels its inputs "Цена, BYN"
+        // and stores `state.filters.minPrice` / `maxPrice` as raw BYN.
+        // `item.price` is in `state.misc.currency` (which can become
+        // USD/EUR/RUB once a currency selector is wired), so comparing
+        // them silently filters wrong amounts when the user is not on
+        // BYN. Always compare against `item.price_byn`, which the
+        // backend ships in BYN regardless of display currency, so this
+        // defensive client-side pass stays a no-op against the
+        // server-filtered slice no matter what `state.misc.currency`
+        // is set to.
+        const itemPriceByn = item.price_byn != null ? Number(item.price_byn) : null;
         const hasPriceRange = state.filters.minPrice != null || state.filters.maxPrice != null;
-        // Exclude "Договорная" (price null) when a price range is set
-        if (hasPriceRange && itemPrice == null) return false;
-        if (state.filters.minPrice != null && itemPrice != null && itemPrice < state.filters.minPrice) return false;
-        if (state.filters.maxPrice != null && itemPrice != null && itemPrice > state.filters.maxPrice) return false;
+        // Exclude "Договорная" (price_byn null) when a price range is set
+        if (hasPriceRange && itemPriceByn == null) return false;
+        if (state.filters.minPrice != null && itemPriceByn != null && itemPriceByn < state.filters.minPrice) return false;
+        if (state.filters.maxPrice != null && itemPriceByn != null && itemPriceByn > state.filters.maxPrice) return false;
 
         // Condition filter - handle various formats from API
         if (state.filters.condition) {

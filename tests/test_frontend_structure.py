@@ -564,6 +564,28 @@ def test_secondary_tablists_have_roving_aria_relationships(soup: BeautifulSoup) 
     assert soup.find(id="la-pane-history").get("aria-labelledby") == "la-tab-history"
 
 
+def test_client_side_price_filter_uses_byn_against_filter_byn() -> None:
+    """SEARCH-8: the filter dropdown labels its inputs "Цена, BYN", so
+    `state.filters.minPrice` / `maxPrice` are always in BYN. The
+    defensive client-side pass in `render_cards.js::matchesFilters`
+    must compare them to `item.price_byn` (also BYN) — never
+    `item.price`, which is in `state.misc.currency` and silently
+    diverges when a future currency selector lands.
+    """
+    text = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
+    assert "item.price_byn" in text, (
+        "matchesFilters must read price_byn so the comparison stays in BYN"
+    )
+    assert "itemPrice < state.filters.minPrice" not in text, (
+        "old display-currency comparison must be removed"
+    )
+    assert "itemPrice > state.filters.maxPrice" not in text, (
+        "old display-currency comparison must be removed"
+    )
+    # Stay defensive against the "Договорная" (price=null) case.
+    assert "if (hasPriceRange && itemPriceByn == null) return false;" in text
+
+
 def test_filter_controls_have_accessible_state_and_labels(soup: BeautifulSoup) -> None:
     region = soup.find(id="filter-region")
     assert region is not None
