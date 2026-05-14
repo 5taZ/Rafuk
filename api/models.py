@@ -218,6 +218,7 @@ class QuerySnapshot(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("query", "snapshot_at", name="uq_query_snapshot_bucket"),
         Index("idx_query_snapshots_query", "query"),
+        Index("idx_query_snapshots_snapshot_at", "snapshot_at"),
     )
 
 

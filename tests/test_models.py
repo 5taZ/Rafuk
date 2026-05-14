@@ -63,7 +63,10 @@ def test_tracker_model_defaults() -> None:
 def test_history_tables_have_indexes() -> None:
     snapshots = Base.metadata.tables["query_snapshots"]
     snapshot_constraints = {constraint.name for constraint in snapshots.constraints}
+    snapshot_indexes = {index.name for index in snapshots.indexes}
     assert "uq_query_snapshot_bucket" in snapshot_constraints
+    assert "idx_query_snapshots_query" in snapshot_indexes
+    assert "idx_query_snapshots_snapshot_at" in snapshot_indexes
 
     states = Base.metadata.tables["query_listing_states"]
     state_constraints = {constraint.name for constraint in states.constraints}
