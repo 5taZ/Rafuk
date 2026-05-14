@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Annotated
 
@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 AI_LISTING_PHOTO_MAX_CHARS = 1_500_000
 AI_LISTING_PHOTO_MAX_COUNT = 4
+REMINDER_MAX_HORIZON_DAYS = 366
 
 
 class LeadStatusEnum(StrEnum):
@@ -556,8 +557,11 @@ class ReminderCreate(BaseModel):
     def validate_remind_at(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("remind_at must include a timezone")
-        if value <= datetime.now(UTC):
+        now = datetime.now(UTC)
+        if value <= now:
             raise ValueError("remind_at must be in the future")
+        if value > now + timedelta(days=REMINDER_MAX_HORIZON_DAYS):
+            raise ValueError(f"remind_at must be within {REMINDER_MAX_HORIZON_DAYS} days")
         return value
 
 
