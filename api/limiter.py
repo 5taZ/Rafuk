@@ -10,7 +10,9 @@ import logging
 from functools import lru_cache
 from urllib.parse import urlparse
 
+import redis
 from fastapi import Request
+from redis.exceptions import RedisError
 from slowapi import Limiter
 
 from api.services.client_ip import get_client_ip
@@ -30,28 +32,37 @@ def _rate_limit_key(request: Request) -> str:
 
 
 def _redis_reachable(url: str) -> bool:
-    """Quick TCP probe to decide whether to use Redis or fall back to memory.
+    """Quick command probe to decide whether to use Redis or fall back to memory.
 
     slowapi's Limiter doesn't ping at construction — it only fails on the
     first INCR. If Redis is down, every request would 500 with
     ``ConnectionError: 111 Connection refused``. So we probe up-front.
 
     Uses a very short timeout (0.1s) to minimize blocking at import time.
-    Cached via lru_cache so the TCP probe runs once on first call, not at
-    every module import.
+    Cached via lru_cache so the command probe runs once on first call, not
+    at every module import.
     """
-    import socket
-
     try:
         parsed = urlparse(url)
     except (ValueError, TypeError):
         return False
-    host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 6379
+    if parsed.scheme not in {"redis", "rediss", "unix"}:
+        return False
     try:
-        with socket.create_connection((host, port), timeout=0.1):
-            return True
-    except OSError:
+        # P1-SEC-INF-01: TCP-open is not enough; ping through redis-py so
+        # wrong passwords, ACL failures, DB selection errors, and TLS
+        # transport issues are caught before SlowAPI accepts the storage URI.
+        client = redis.Redis.from_url(
+            url,
+            socket_connect_timeout=0.1,
+            socket_timeout=0.2,
+            retry_on_timeout=False,
+        )
+        try:
+            return bool(client.ping())
+        finally:
+            client.close()
+    except (OSError, RedisError):
         return False
 
 

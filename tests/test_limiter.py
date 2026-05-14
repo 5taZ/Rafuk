@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import redis
+from redis.exceptions import AuthenticationError
 from starlette.requests import Request
 
-from api.limiter import _rate_limit_key
+from api.limiter import _rate_limit_key, _redis_reachable
 from api.middleware.telegram_auth import TelegramInitData
 
 
@@ -53,3 +55,44 @@ def test_rate_limit_key_uses_cf_header_from_trusted_proxy() -> None:
         client_host="173.245.48.1",
     )
     assert _rate_limit_key(request) == "198.51.100.77"
+
+
+def test_redis_reachable_requires_successful_ping(monkeypatch) -> None:
+    calls = []
+
+    class FakeRedis:
+        def ping(self) -> bool:
+            calls.append("ping")
+            return True
+
+        def close(self) -> None:
+            calls.append("close")
+
+    def fake_from_url(url: str, **kwargs):
+        calls.append((url, kwargs))
+        return FakeRedis()
+
+    _redis_reachable.cache_clear()
+    monkeypatch.setattr(redis.Redis, "from_url", staticmethod(fake_from_url))
+
+    assert _redis_reachable("redis://:secret@redis:6379/0") is True
+    assert calls[0][0] == "redis://:secret@redis:6379/0"
+    assert calls[1:] == ["ping", "close"]
+
+
+def test_redis_reachable_rejects_auth_failure_after_tcp_success(monkeypatch) -> None:
+    calls = []
+
+    class FakeRedis:
+        def ping(self) -> bool:
+            calls.append("ping")
+            raise AuthenticationError("invalid username-password pair")
+
+        def close(self) -> None:
+            calls.append("close")
+
+    _redis_reachable.cache_clear()
+    monkeypatch.setattr(redis.Redis, "from_url", staticmethod(lambda *_a, **_k: FakeRedis()))
+
+    assert _redis_reachable("redis://:wrong@redis:6379/0") is False
+    assert calls == ["ping", "close"]
