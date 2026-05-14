@@ -600,6 +600,15 @@ class ConsentGrantRequest(BaseModel):
     version: str = "2026.2"
 
 
+class AIConsentInfoResponse(BaseModel):
+    provider_name: str
+    provider_region: str
+    provider_host: str
+    model: str
+    policy_version: str
+    display_label: str
+
+
 class ConsentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

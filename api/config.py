@@ -175,6 +175,8 @@ class Settings(BaseSettings):
     ai_api_key: SecretStr | None = None
     ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     ai_model: str = "gemini-2.5-flash"
+    ai_provider_name: str | None = None
+    ai_provider_region: str | None = None
     ai_max_images: int = 3
     ai_cache_hours: int = 1
     ai_hourly_limit: int = 10

@@ -183,10 +183,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260514-b83eae0"),
-            context._loadScript("js/api_ai_render.js?v=20260514-b83eae0"),
-            context._loadScript("js/api_ai.js?v=20260514-b83eae0"),
-            context._loadScript("js/api_listing_assistant.js?v=20260514-b83eae0"),
+            context._loadScript("js/api_ai_modal.js?v=20260514-19de7b5"),
+            context._loadScript("js/api_ai_render.js?v=20260514-19de7b5"),
+            context._loadScript("js/api_ai.js?v=20260514-19de7b5"),
+            context._loadScript("js/api_listing_assistant.js?v=20260514-19de7b5"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -597,13 +597,22 @@ function createAppActions(baseContext) {
             showToast("Не удалось проверить согласие на AI. Проверьте соединение и попробуйте ещё раз.", "error", 3600);
             throw new Error("consent_check_failed");
         }
+        let aiConsentInfo = null;
+        try {
+            aiConsentInfo = await core.getJson("/api/v1/account/ai-consent-info");
+        } catch (_) {
+            if (!isLocalDebugContext()) {
+                showToast("Не удалось загрузить сведения об AI-провайдере. Попробуйте ещё раз.", "error", 3600);
+                throw new Error("consent_info_failed");
+            }
+        }
         // Show consent modal
         return new Promise((resolve, reject) => {
-            _showConsentModal(resolve, reject);
+            _showConsentModal(resolve, reject, aiConsentInfo);
         });
     }
 
-    function _showConsentModal(resolve, reject) {
+    function _showConsentModal(resolve, reject, aiConsentInfo = null) {
         const modal = document.getElementById("consent-modal");
         const aiCb = document.getElementById("consent-ai-checkbox");
         const crossCb = document.getElementById("consent-cross-border-checkbox");
@@ -611,8 +620,13 @@ function createAppActions(baseContext) {
         const acceptBtn = document.getElementById("consent-accept-btn");
         const cancelBtn = document.getElementById("consent-cancel-btn");
         const privacyLink = document.getElementById("consent-privacy-link");
+        const providerLabel = document.getElementById("consent-ai-provider-label");
 
         if (!modal) { resolve(true); return; }
+        if (providerLabel) {
+            providerLabel.textContent = aiConsentInfo?.display_label || "провайдер AI настроен на сервере";
+        }
+        const consentVersion = aiConsentInfo?.policy_version || "2026.2";
 
         // Reset checkboxes
         aiCb.checked = false;
@@ -645,9 +659,9 @@ function createAppActions(baseContext) {
 
         async function onAccept() {
             try {
-                await core.postJson("/api/v1/account/consent", { consent_type: "ai_analysis", version: "2026.2" });
-                await core.postJson("/api/v1/account/consent", { consent_type: "cross_border", version: "2026.2" });
-                await core.postJson("/api/v1/account/consent", { consent_type: "pd_processing", version: "2026.2" });
+                await core.postJson("/api/v1/account/consent", { consent_type: "ai_analysis", version: consentVersion });
+                await core.postJson("/api/v1/account/consent", { consent_type: "cross_border", version: consentVersion });
+                await core.postJson("/api/v1/account/consent", { consent_type: "pd_processing", version: consentVersion });
             } catch (err) {
                 showToast(err.message || "Не удалось сохранить согласие");
                 return;

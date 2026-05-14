@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -12,6 +13,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from api.config import get_settings
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.models import (
@@ -30,6 +32,7 @@ from api.models import (
 )
 from api.schemas import (
     AccountDeletionConfirmation,
+    AIConsentInfoResponse,
     ConsentGrantRequest,
     ConsentStatusResponse,
 )
@@ -43,8 +46,56 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/account", tags=["account"])
 
 
+def _ai_provider_host(base_url: str) -> str:
+    try:
+        return urlparse(base_url).hostname or "unknown"
+    except ValueError:
+        return "unknown"
+
+
+def _default_ai_provider_name(host: str) -> str:
+    if host == "generativelanguage.googleapis.com":
+        return "Google Gemini API"
+    if host.endswith("together.xyz"):
+        return "Together AI"
+    return host or "external AI provider"
+
+
+def _default_ai_provider_region(host: str) -> str:
+    if host == "generativelanguage.googleapis.com" or host.endswith("together.xyz"):
+        return "США"
+    return ""
+
+
 def _money(value) -> float | None:
     return float(value) if value is not None else None
+
+
+@router.get("/ai-consent-info", response_model=AIConsentInfoResponse)
+@limiter.limit("20/minute")
+async def get_ai_consent_info(
+    request: Request,
+    _user=Depends(get_telegram_user),
+):
+    settings = get_settings()
+    host = _ai_provider_host(settings.ai_base_url)
+    provider = (
+        (settings.ai_provider_name or _default_ai_provider_name(host)).strip()
+        or _default_ai_provider_name(host)
+    )
+    region = (settings.ai_provider_region or _default_ai_provider_region(host)).strip()
+    model = settings.ai_model.strip() or "configured model"
+    display_label = f"{provider}, модель {model}"
+    if region:
+        display_label = f"{display_label} ({region})"
+    return AIConsentInfoResponse(
+        provider_name=provider,
+        provider_region=region,
+        provider_host=host,
+        model=model,
+        policy_version=CURRENT_POLICY_VERSION,
+        display_label=display_label,
+    )
 
 
 @router.get("/consent/{consent_type}", response_model=ConsentStatusResponse)

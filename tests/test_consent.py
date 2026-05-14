@@ -64,6 +64,44 @@ async def test_consent_status_defaults_to_not_granted(client):
 
 
 @pytest.mark.asyncio
+async def test_ai_consent_info_matches_default_provider(client):
+    resp = await client.get("/api/v1/account/ai-consent-info")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider_name"] == "Google Gemini API"
+    assert data["provider_region"] == "США"
+    assert data["provider_host"] == "generativelanguage.googleapis.com"
+    assert data["model"] == "gemini-2.5-flash"
+    assert data["policy_version"] == "2026.2"
+    assert data["display_label"] == "Google Gemini API, модель gemini-2.5-flash (США)"
+
+
+@pytest.mark.asyncio
+async def test_ai_consent_info_uses_provider_overrides(client, monkeypatch):
+    from api.config import get_settings
+    from api.routers import consent as consent_router
+
+    monkeypatch.setenv("AI_BASE_URL", "https://llm.example.com/v1")
+    monkeypatch.setenv("AI_MODEL", "custom-model")
+    monkeypatch.setenv("AI_PROVIDER_NAME", "Custom EU LLM")
+    monkeypatch.setenv("AI_PROVIDER_REGION", "ЕС")
+    get_settings.cache_clear()
+    consent_router.get_settings.cache_clear()
+    try:
+        resp = await client.get("/api/v1/account/ai-consent-info")
+    finally:
+        get_settings.cache_clear()
+        consent_router.get_settings.cache_clear()
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider_name"] == "Custom EU LLM"
+    assert data["provider_region"] == "ЕС"
+    assert data["provider_host"] == "llm.example.com"
+    assert data["model"] == "custom-model"
+    assert data["display_label"] == "Custom EU LLM, модель custom-model (ЕС)"
+
+
+@pytest.mark.asyncio
 async def test_consent_status_rejects_invalid_type(client):
     resp = await client.get("/api/v1/account/consent/invalid_type")
     assert resp.status_code == 400

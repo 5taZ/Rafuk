@@ -312,6 +312,15 @@ def test_ai_analysis_export_ui_is_removed() -> None:
     assert "createAiPdf" not in ai_js
 
 
+def test_ai_consent_provider_copy_is_config_driven() -> None:
+    index_text = HTML_FILE.read_text(encoding="utf-8")
+    actions = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    assert "Together API-совместимая модель Gemini" not in index_text
+    assert 'id="consent-ai-provider-label"' in index_text
+    assert "/api/v1/account/ai-consent-info" in actions
+    assert "display_label" in actions
+
+
 def test_frontend_composition_clones_mutable_contexts() -> None:
     app = (JS_DIR / "app.js").read_text(encoding="utf-8")
     renderers = (JS_DIR / "app_renderers.js").read_text(encoding="utf-8")
