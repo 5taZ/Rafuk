@@ -46,7 +46,7 @@
     border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);
     border-bottom: 0;
     box-shadow:
-        0 -24px 70px rgba(0, 0, 0, 0.48),
+        var(--shadow-sheet-strong),
         0 -1px 0 color-mix(in srgb, var(--white) 8%, transparent),
         inset 0 1px 0 color-mix(in srgb, var(--white) 7%, transparent);
 }
@@ -175,7 +175,7 @@
     background: color-mix(in srgb, var(--bg-card) 98%, var(--accent) 2%);
     box-shadow:
         inset 0 1px 0 color-mix(in srgb, var(--white) 4%, transparent),
-        0 12px 32px rgba(0, 0, 0, 0.18);
+        var(--shadow-loading-panel);
 }
 
 .ai-modal-loading::before,

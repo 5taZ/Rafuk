@@ -538,7 +538,7 @@ body.modal-open {
     font-size: var(--text-sm);
     font-weight: 650;
     box-shadow:
-        0 14px 34px rgba(0, 0, 0, 0.34),
+        var(--shadow-toast),
         inset 0 1px 0 color-mix(in srgb, var(--white) 6%, transparent);
     display: flex;
     align-items: center;
@@ -912,12 +912,12 @@ body.modal-open {
 
 /* ===== Light Theme Detail & Toast Overrides ===== */
 [data-theme="light"] .detail-sheet {
-    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-detail-sheet);
 }
 
 [data-theme="light"] .toast {
     backdrop-filter: none;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-toast-subtle);
 }
 
 [data-theme="light"] .profit-card::after {
@@ -925,7 +925,7 @@ body.modal-open {
 }
 
 [data-theme="light"] .expense-row {
-    background: rgba(0, 0, 0, 0.02);
+    background: var(--surface-empty-subtle);
 }
 
 /* ===== Responsive: 360px ===== */

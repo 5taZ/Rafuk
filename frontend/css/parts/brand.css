@@ -85,7 +85,7 @@
 }
 
 .strict-toggle-pill {
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.18);
+    box-shadow: var(--shadow-control-inset);
 }
 
 .quick-chip,
@@ -151,7 +151,7 @@
 .listing {
     padding: 13px;
     gap: 12px;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025), var(--shadow-card);
+    box-shadow: var(--shadow-surface-hairline), var(--shadow-card);
 }
 
 .listing:hover {
@@ -199,7 +199,7 @@
     border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);
     border-bottom: 0;
     box-shadow:
-        0 -24px 70px rgba(0, 0, 0, 0.48),
+        var(--shadow-sheet-strong),
         0 -1px 0 color-mix(in srgb, var(--white) 8%, transparent),
         inset 0 1px 0 color-mix(in srgb, var(--white) 7%, transparent);
 }
@@ -480,7 +480,7 @@
     background: color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%);
     box-shadow:
         inset 0 1px 0 color-mix(in srgb, var(--white) 5%, transparent),
-        0 14px 36px rgba(0, 0, 0, 0.18);
+        var(--shadow-panel-soft);
 }
 
 .la-row {
@@ -1150,8 +1150,8 @@
 
 [data-theme="light"] .section--card {
     background: var(--bg-card);
-    border-color: rgba(15, 23, 42, 0.06);
-    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03), 0 1px 2px rgba(15, 23, 42, 0.04);
+    border-color: var(--border-surface-subtle);
+    box-shadow: var(--shadow-section-card);
 }
 
 /* .section--bare is now a no-op (section is bare by default) but kept
@@ -1211,7 +1211,7 @@
 
 [data-theme="light"] .hero-stat {
     background: var(--bg-card);
-    border-color: rgba(15, 23, 42, 0.06);
+    border-color: var(--border-surface-subtle);
 }
 
 .hero-stat-val {
@@ -1246,7 +1246,7 @@
 [data-theme="light"] .lead-card,
 [data-theme="light"] .watchlist-card {
     background: var(--bg-card);
-    border-color: rgba(15, 23, 42, 0.06);
+    border-color: var(--border-surface-subtle);
 }
 
 /* Primary actions still get accent — selection uses a quieter tint. */
@@ -1280,13 +1280,13 @@
 .listing,
 .lead-card,
 .watchlist-card {
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    box-shadow: var(--shadow-surface-subtle);
 }
 
 [data-theme="light"] .listing,
 [data-theme="light"] .lead-card,
 [data-theme="light"] .watchlist-card {
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    box-shadow: var(--shadow-surface-subtle);
 }
 
 .listing:hover,
@@ -1298,7 +1298,7 @@
 [data-theme="light"] .listing:hover,
 [data-theme="light"] .lead-card:hover,
 [data-theme="light"] .watchlist-card:hover {
-    background: rgba(15, 23, 42, 0.02);
+    background: var(--surface-card-hover-subtle);
 }
 
 /* --- AI помощник продавцу — quiet outline, не «остров» ----------- */
@@ -1313,7 +1313,7 @@
 
 [data-theme="light"] .la-card {
     background: var(--bg-card);
-    border-color: rgba(15, 23, 42, 0.06);
+    border-color: var(--border-surface-subtle);
 }
 
 /* Left accent bar removed — was rendering as a thin off-edge line that
@@ -1445,7 +1445,7 @@
 
 [data-theme="light"] .profit-card {
     background: var(--bg-card);
-    border-color: rgba(15, 23, 42, 0.06);
+    border-color: var(--border-surface-subtle);
 }
 
 .profit-card.is-accent {
@@ -1469,7 +1469,7 @@
 
 [data-theme="light"] .helper-panel {
     background: var(--bg-card);
-    border-color: rgba(15, 23, 42, 0.06);
+    border-color: var(--border-surface-subtle);
 }
 
 .helper-panel::before {
@@ -1528,7 +1528,7 @@
 
 [data-theme="light"] .search-wrap {
     background: var(--bg-input);
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    box-shadow: var(--shadow-input-subtle);
 }
 
 /* --- Nested pills/items: drop the border so they don't read as -----
@@ -1542,7 +1542,7 @@
 
 [data-theme="light"] .summary-pill,
 [data-theme="light"] .range-item {
-    background: #f8fafc;
+    background: var(--surface-pill-muted);
 }
 
 /* --- Sections that contain a single big stat strip stay flat ----- */
@@ -1587,7 +1587,7 @@
 
 [data-theme="light"] .tracker-action-btn {
     background: var(--bg-card);
-    border-color: rgba(15, 23, 42, 0.08);
+    border-color: var(--border-control-subtle);
 }
 
 .tracker-action-btn:hover:not(:disabled) {
@@ -1596,8 +1596,8 @@
 }
 
 [data-theme="light"] .tracker-action-btn:hover:not(:disabled) {
-    background: rgba(15, 23, 42, 0.03);
-    border-color: rgba(15, 23, 42, 0.16);
+    background: var(--surface-control-hover-subtle);
+    border-color: var(--border-control-strong);
 }
 
 .tracker-action-btn.danger {
@@ -1668,7 +1668,7 @@
 [data-theme="light"] .edit-tracker-form .form-text-input,
 [data-theme="light"] .edit-tracker-form .deal-range-input-wrap {
     background: var(--bg-input);
-    border-color: rgba(15, 23, 42, 0.1);
+    border-color: var(--border-hover);
 }
 
 .edit-tracker-form .deal-range-input-wrap {
@@ -1805,8 +1805,8 @@
 }
 
 [data-theme="light"] .items-tabs {
-    background: rgba(15, 23, 42, 0.04);
-    border-color: rgba(15, 23, 42, 0.06);
+    background: var(--bg-surface-tint-strong);
+    border-color: var(--border-surface-subtle);
 }
 
 .items-tab {

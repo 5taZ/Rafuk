@@ -1130,7 +1130,7 @@
 }
 
 [data-theme="light"] .empty-state {
-    background: rgba(0, 0, 0, 0.02);
+    background: var(--surface-empty-subtle);
     border: 1px solid var(--border);
 }
 

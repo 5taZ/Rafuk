@@ -488,13 +488,13 @@ def test_css_has_required_building_blocks(css_text: str) -> None:
 
 
 def test_css_uses_color_tokens_outside_theme_blocks(css_text: str) -> None:
-    """No hard-coded hex colour outside the :root / [data-theme] blocks.
+    """No hard-coded colour literals outside the :root / [data-theme] blocks.
 
     The codebase used to scatter `var(--red, #e11d48)` fallbacks and
-    raw `#16a34a` greens in dozens of rules; that broke theme switching
-    because the literals didn't shift with the dark/light palette.
-    Lock that down: the palette lives in the theme blocks, every other
-    rule must reach for a CSS variable."""
+    raw `#16a34a` greens / `rgba(...)` shadows in dozens of rules; that
+    broke theme switching because the literals didn't shift with the
+    dark/light palette. Lock that down: the palette lives in the theme
+    blocks, every other rule must reach for a CSS variable."""
     import re as _re
 
     lines = css_text.split("\n")
@@ -503,7 +503,8 @@ def test_css_uses_color_tokens_outside_theme_blocks(css_text: str) -> None:
     offenders: list[tuple[int, str]] = []
 
     for i, line in enumerate(lines, 1):
-        if ":root" in line or "[data-theme=" in line:
+        stripped = line.strip()
+        if _re.fullmatch(r'(:root|\[data-theme="(?:light|dark)"\])\s*\{', stripped):
             in_theme_block = True
         if in_theme_block and "{" in line:
             depth += line.count("{")
@@ -521,8 +522,13 @@ def test_css_uses_color_tokens_outside_theme_blocks(css_text: str) -> None:
                 continue
             offenders.append((i, line.strip()[:100]))
             break
+        for match in _re.findall(r"\b(?:rgb|hsl)a?\([^)]*\)", line):
+            if "var(" in line:
+                continue
+            offenders.append((i, f"{match} in {line.strip()[:100]}"))
+            break
 
-    assert not offenders, "Hex literals outside theme blocks: " + "; ".join(
+    assert not offenders, "Colour literals outside theme blocks: " + "; ".join(
         f"L{i}: {snippet}" for i, snippet in offenders
     )
 
