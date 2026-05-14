@@ -654,6 +654,45 @@
     color: var(--red);
 }
 
+/* SEARCH-7: small refresh affordance next to total badges. The
+   button is icon-only, smaller than other ghost buttons, and stays
+   muted by default so it doesn't draw attention to noise. While
+   `aria-busy="true"` (set during a force-refresh round-trip) the
+   icon spins and pointer events drop so a frantic user can't queue
+   up a fan-out. */
+.totals-refresh-btn {
+    padding: 6px;
+    min-width: 28px;
+    min-height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-color: var(--border-soft, var(--border));
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.totals-refresh-btn[aria-busy="true"] {
+    pointer-events: none;
+    opacity: 0.6;
+}
+
+.totals-refresh-btn[aria-busy="true"] svg {
+    animation: totals-refresh-spin 0.8s linear infinite;
+}
+
+@keyframes totals-refresh-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .totals-refresh-btn[aria-busy="true"] svg {
+        animation: none;
+    }
+}
+
 .small {
     padding: 7px 12px;
     font-size: var(--text-xs);

@@ -205,12 +205,25 @@ function createRenderViews(context) {
 
     /* ===== Stats ===== */
 
+    function _setRefreshButtonBusy(button, busy, query) {
+        // SEARCH-7: a refresh button only makes sense once a query has
+        // been submitted; before then the section is hidden anyway,
+        // but we keep the button in lock-step with the section. While
+        // the force-refresh round-trip is in flight we mark
+        // `aria-busy="true"` so the icon spins and pointer events drop.
+        if (!button) return;
+        const hasQuery = Boolean(query?.trim?.());
+        button.disabled = !hasQuery;
+        button.setAttribute("aria-busy", String(Boolean(busy)));
+    }
+
     function renderStats() {
         return safeRender('renderStats', () => {
             if (!state.misc.stats) {
             elements.statsSection.hidden = true;
             elements.chartSection.hidden = true;
             if (context._hooks?.destroyChart) context._hooks.destroyChart();
+            _setRefreshButtonBusy(elements.overviewRefreshBtn, false, state.search.query);
             return;
         }
 
@@ -235,6 +248,11 @@ function createRenderViews(context) {
         elements.marketTotalBadge.textContent = `${totalResults} (${analyzedCount} с ценой)`;
         elements.statsSection.hidden = false;
         elements.chartSection.hidden = state.misc.stats.count <= 0;
+        _setRefreshButtonBusy(
+            elements.overviewRefreshBtn,
+            Boolean(state.ui.loading),
+            state.search.query,
+        );
         if (elements.chartSection.hidden || !state.panels.distribution) {
             if (context._hooks?.destroyChart) context._hooks.destroyChart();
         }

@@ -564,6 +564,54 @@ def test_secondary_tablists_have_roving_aria_relationships(soup: BeautifulSoup) 
     assert soup.find(id="la-pane-history").get("aria-labelledby") == "la-tab-history"
 
 
+def test_totals_refresh_buttons_force_refresh_search(soup: BeautifulSoup, css_text: str) -> None:
+    """SEARCH-7: the analytics cache (`cache_ttl_seconds=300`) means a
+    freshly opened result panel can lag kufar.by by a few ads on a
+    fast-churning query like `iPhone 14 Pro`. Surface a tiny refresh
+    button next to each totals badge so the user can opt into a fresh
+    count without re-typing the query.
+    """
+    overview = soup.find(id="overview-refresh-btn")
+    listings = soup.find(id="listings-refresh-btn")
+    assert overview is not None, "overview totals must have a refresh button"
+    assert listings is not None, "listings totals must have a refresh button"
+    for button in (overview, listings):
+        assert button.name == "button"
+        assert button.get("type") == "button"
+        # aria-label keeps the icon-only button accessible
+        assert button.get("aria-label") == "Обновить количество объявлений"
+        # share class with other ghost buttons + the dedicated refresh
+        # variant so the spinner CSS can hook in
+        classes = button.get("class") or []
+        assert "ghost-btn" in classes
+        assert "totals-refresh-btn" in classes
+        assert button.find("svg") is not None
+
+    # Refresh buttons sit inside the relevant section heads.
+    stats_head = soup.find(id="stats-section").find(class_="sec-head")
+    assert stats_head.find(id="overview-refresh-btn") is not None
+    listings_head = soup.find(id="listings-section").find(class_="listings-head")
+    assert listings_head.find(id="listings-refresh-btn") is not None
+
+    dom = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
+    assert 'elements.overviewRefreshBtn = document.getElementById("overview-refresh-btn");' in dom
+    assert 'elements.listingsRefreshBtn = document.getElementById("listings-refresh-btn");' in dom
+
+    events = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    assert 'elements.overviewRefreshBtn?.addEventListener("click"' in events
+    assert 'elements.listingsRefreshBtn?.addEventListener("click"' in events
+    assert "{ forceRefresh: true }" in events
+    # No-op when nothing has been searched yet so the button can't fire
+    # an empty `query=` request.
+    assert "if (!state.search.query?.trim()) return;" in events
+
+    # CSS hooks for the spinning aria-busy state survive minification
+    # via the `parts/` source files that the css_text fixture stitches.
+    assert ".totals-refresh-btn" in css_text
+    assert ".totals-refresh-btn[aria-busy=\"true\"]" in css_text
+    assert "@keyframes totals-refresh-spin" in css_text
+
+
 def test_client_side_price_filter_uses_byn_against_filter_byn() -> None:
     """SEARCH-8: the filter dropdown labels its inputs "Цена, BYN", so
     `state.filters.minPrice` / `maxPrice` are always in BYN. The

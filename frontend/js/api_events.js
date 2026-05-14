@@ -138,6 +138,24 @@ function createApiEvents(context) {
             state.ui.error = null;
             void search(state.ui.activeView || "overview", { forceRefresh: true });
         });
+
+        // SEARCH-7: opt-in fresh-count buttons. The 300 s analytics
+        // cache (`cache_ttl_seconds`) on price-stats + listings means
+        // a freshly opened result panel can lag kufar.by by a handful
+        // of ads — that's the cache doing its job, but the user has
+        // no way to ask for a recheck without re-typing the query. A
+        // tiny refresh button next to each totals badge calls the
+        // already-wired `forceRefresh: true` path in `search()`, which
+        // bypasses the cache for both `/price-stats` and `/listings`
+        // (and the dataset cache underneath) without disturbing the
+        // current scroll position or filter state.
+        function _forceRefreshTotals() {
+            if (!state.search.query?.trim()) return;
+            void search(state.ui.activeView || "overview", { forceRefresh: true });
+            _haptic("light");
+        }
+        elements.overviewRefreshBtn?.addEventListener("click", _forceRefreshTotals);
+        elements.listingsRefreshBtn?.addEventListener("click", _forceRefreshTotals);
     }
 
     function bindRecentSearchEvents() {

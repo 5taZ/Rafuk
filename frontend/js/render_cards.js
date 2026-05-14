@@ -301,11 +301,30 @@ function createRenderCards(context) {
         return Number(value || 0).toLocaleString("ru-RU");
     }
 
+    function _setListingsRefreshBusy(busy) {
+        // SEARCH-7: keep the refresh button beside the listings total
+        // badge in lock-step with the section state. `disabled` when
+        // there's no active query (the parent section is also hidden);
+        // `aria-busy="true"` while a force-refresh round-trip is in
+        // flight (icon spins, pointer events drop).
+        const button = elements.listingsRefreshBtn;
+        if (!button) return;
+        const hasQuery = Boolean(state.search.query?.trim?.());
+        button.disabled = !hasQuery;
+        button.setAttribute("aria-busy", String(Boolean(busy)));
+    }
+
     function renderListings() {
         return safeRender('renderListings', () => {
-            if (state.ui.loading) return;
+            if (state.ui.loading) {
+                _setListingsRefreshBusy(true);
+                return;
+            }
             // Keep skeletons while listings request is in flight
-            if (state.listings._pending) return;
+            if (state.listings._pending) {
+                _setListingsRefreshBusy(true);
+                return;
+            }
 
             // Show skeleton cards while listings are loading (e.g. sort change)
             if (state.listings.loading && !state.listings.items.length) {
@@ -319,6 +338,7 @@ function createRenderCards(context) {
                 if (elements.listingsTotalBadge) {
                     elements.listingsTotalBadge.textContent = "";
                 }
+                _setListingsRefreshBusy(true);
                 return;
             }
 
@@ -362,6 +382,7 @@ function createRenderCards(context) {
             // Keep section visible if data exists but was filtered out —
             // the empty message inside the container tells the user why.
             elements.listingsSection.hidden = !hasContent && !hasData;
+            _setListingsRefreshBusy(false);
         });
     }
 

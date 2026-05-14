@@ -18,9 +18,9 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20260514-21cdfc3";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20260514-21cdfc3";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20260514-21cdfc3";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20260514-db67f8d";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20260514-db67f8d";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20260514-db67f8d";
 
 function _lazyLoadDealsSources(context) {
     window.App = window.App || {};
