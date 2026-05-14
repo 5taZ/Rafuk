@@ -488,6 +488,140 @@ def test_frontend_image_proxy_policy_is_explicit() -> None:
     assert "useProxy" not in build_media
 
 
+def test_detail_proxy_image_keeps_direct_src_while_object_url_loads() -> None:
+    modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
+    harness = (
+        modals_js
+        + r"""
+const assert = require("assert");
+
+function makeElement() {
+    return {
+        hidden: false,
+        textContent: "",
+        className: "",
+        children: [],
+        style: {},
+        classList: { contains: () => false, add() {}, remove() {} },
+        append(...items) { this.children.push(...items); },
+        appendChild(item) { this.children.push(item); return item; },
+        prepend(item) { this.children.unshift(item); return item; },
+        addEventListener() {},
+        removeEventListener() {},
+        setAttribute(name, value) { this[name] = String(value); },
+        removeAttribute(name) { delete this[name]; },
+        getAttribute(name) { return this[name] || null; },
+        querySelector() { return null; },
+    };
+}
+
+global.document = { createElement: () => makeElement() };
+
+const img = makeElement();
+img._src = "https://cdn.example/old.jpg";
+Object.defineProperty(img, "src", {
+    get() { return this._src || ""; },
+    set(value) { this._src = value; },
+});
+img.removeAttribute = function(name) {
+    if (name === "src") {
+        this.srcRemoved = true;
+        this._src = "";
+        return;
+    }
+    delete this[name];
+};
+img.getAttribute = function(name) {
+    if (name === "src") return this._src || null;
+    return this[name] || null;
+};
+
+const elements = {
+    detailTitle: makeElement(),
+    detailPrice: makeElement(),
+    detailLink: makeElement(),
+    detailAiBlock: makeElement(),
+    detailAiContent: makeElement(),
+    detailDescription: makeElement(),
+    detailProfitBlock: makeElement(),
+    detailLiquidity: makeElement(),
+    detailLiquidityBlock: makeElement(),
+    detailMeta: makeElement(),
+    detailMainImage: img,
+    detailNoImage: makeElement(),
+    detailMedia: makeElement(),
+    detailThumbs: makeElement(),
+    detailParams: makeElement(),
+    detailParamsBlock: makeElement(),
+    detailSeller: makeElement(),
+    detailSellerBlock: makeElement(),
+    detailAddWatchlistButton: makeElement(),
+    detailModal: makeElement(),
+};
+elements.detailModal.hidden = true;
+elements.detailModal.querySelector = () => ({ scrollTop: 10 });
+
+const state = {
+    detail: {
+        data: {
+            title: "Игровая консоль",
+            price: 100,
+            images: ["https://img.example/photo.jpg"],
+            parameters: [],
+            seller_fields: [],
+        },
+        imageIndex: 0,
+        fromWatchlist: false,
+        ai: {},
+    },
+    misc: {},
+};
+let proxyCalled = "";
+let proxyResolve;
+const renderer = createRenderModals({
+    state,
+    elements,
+    actions: {
+        fetchProxyImageObjectUrl(url) {
+            proxyCalled = url;
+            return new Promise((resolve) => { proxyResolve = resolve; });
+        },
+    },
+    formatPrice: () => "100 BYN",
+    formatCondition: (value) => value,
+    formatSeller: (value) => value,
+    formatDelta: (value) => value,
+    formatDate: (value) => value,
+    trapFocus: () => {},
+    safeKufarUrl: () => "",
+    safeImageUrl: (url) => url,
+    optimizedImage: (url, options = {}) => options.useProxy ? `${url}?proxy` : `${url}?direct`,
+    safeRender: (_label, fn) => fn(),
+    escapeHtml: (value) => String(value),
+    domClear: (el) => { el.children = []; },
+    openModalAnimated: (el) => { el.hidden = false; },
+    closeModalAnimated: (el) => { el.hidden = true; },
+    attachPinchZoom: () => ({ reset() {} }),
+});
+
+(async () => {
+    renderer.renderDetailModal();
+    assert.strictEqual(proxyCalled, "https://img.example/photo.jpg?proxy");
+    assert.strictEqual(img.src, "https://img.example/photo.jpg?direct");
+    assert.strictEqual(img.srcRemoved, undefined);
+    proxyResolve("blob:proxied-photo");
+    await Promise.resolve();
+    assert.strictEqual(img.src, "blob:proxied-photo");
+})().catch((error) => {
+    console.error(error);
+    process.exit(1);
+});
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_external_kufar_links_open_outside_telegram_webview() -> None:
     core_js = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")

@@ -150,7 +150,9 @@ function createRenderModals(context) {
                 proxyUrl !== directUrl &&
                 typeof actions.fetchProxyImageObjectUrl === "function"
             ) {
-                elements.detailMainImage.removeAttribute("src");
+                if (directUrl) {
+                    elements.detailMainImage.src = directUrl;
+                }
                 void actions.fetchProxyImageObjectUrl(proxyUrl).then((objectUrl) => {
                     if (requestId !== _detailImageLoadId || !state.detail.data) return;
                     elements.detailMainImage.src = objectUrl;
@@ -158,7 +160,7 @@ function createRenderModals(context) {
                     if (requestId !== _detailImageLoadId || !state.detail.data) return;
                     if (directUrl) {
                         elements.detailMainImage.src = directUrl;
-                    } else {
+                    } else if (!elements.detailMainImage.getAttribute("src")) {
                         elements.detailMainImage.removeAttribute("src");
                     }
                 });
