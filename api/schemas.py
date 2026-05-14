@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 AI_LISTING_PHOTO_MAX_CHARS = 1_500_000
 AI_LISTING_PHOTO_MAX_COUNT = 4
@@ -551,12 +551,23 @@ class ReminderCreate(BaseModel):
     remind_at: datetime
     message: str | None = Field(default=None, max_length=255)
 
+    @field_validator("remind_at")
+    @classmethod
+    def validate_remind_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("remind_at must include a timezone")
+        if value <= datetime.now(UTC):
+            raise ValueError("remind_at must be in the future")
+        return value
 
-class ReminderRead(ReminderCreate):
+
+class ReminderRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     lead_id: int
+    remind_at: datetime
+    message: str | None = None
     sent: bool
     created_at: datetime
 

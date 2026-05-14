@@ -51,6 +51,30 @@ def test_create_reminder_returns_201() -> None:
         assert body["sent"] is False
 
 
+def test_create_reminder_rejects_past_remind_at() -> None:
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        remind_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+        resp = client.post(
+            f"/api/v1/leads/{lead['id']}/reminders",
+            json={"remind_at": remind_at, "message": "Too late"},
+        )
+        assert resp.status_code == 422
+
+
+def test_create_reminder_rejects_naive_remind_at() -> None:
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        remind_at = (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        resp = client.post(
+            f"/api/v1/leads/{lead['id']}/reminders",
+            json={"remind_at": remind_at},
+        )
+        assert resp.status_code == 422
+
+
 def test_get_reminders_returns_list() -> None:
     app = _make_app(USER_A)
     with TestClient(app) as client:
