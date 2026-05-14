@@ -999,6 +999,8 @@ function attachPinchZoom(img, options) {
 
 let _longPressOverlay = null;
 let _longPressEscHandler = null;
+let _longPressFocusCleanup = null;
+let _longPressPreviousFocus = null;
 
 function _ensureLongPressOverlay() {
     if (_longPressOverlay) return _longPressOverlay;
@@ -1020,6 +1022,8 @@ function _ensureLongPressOverlay() {
 
 function showLongPressMenu(items) {
     if (!Array.isArray(items) || !items.length) return;
+    hideLongPressMenu();
+    _longPressPreviousFocus = document.activeElement;
     const overlay = _ensureLongPressOverlay();
     const sheet = overlay.querySelector(".lp-menu-sheet");
     sheet.replaceChildren();
@@ -1094,6 +1098,8 @@ function showLongPressMenu(items) {
     }
     overlay.removeAttribute("hidden");
     document.body.classList.add("lp-menu-open");
+    _applyInertToSiblings(overlay);
+    _longPressFocusCleanup = trapFocus(sheet) || null;
     // Esc closes too — reuse the existing modal-close idiom.
     _longPressEscHandler = (event) => {
         if (event.key === "Escape") hideLongPressMenu();
@@ -1103,12 +1109,26 @@ function showLongPressMenu(items) {
 
 function hideLongPressMenu() {
     if (!_longPressOverlay) return;
+    const wasOpen = !_longPressOverlay.hasAttribute("hidden");
     _longPressOverlay.setAttribute("hidden", "");
     document.body.classList.remove("lp-menu-open");
     if (_longPressEscHandler) {
         document.removeEventListener("keydown", _longPressEscHandler);
         _longPressEscHandler = null;
     }
+    if (typeof _longPressFocusCleanup === "function") {
+        _longPressFocusCleanup();
+        _longPressFocusCleanup = null;
+    }
+    _restoreInertSiblings(_longPressOverlay);
+    if (wasOpen && _longPressPreviousFocus?.isConnected) {
+        try {
+            _longPressPreviousFocus.focus({ preventScroll: true });
+        } catch (_) {
+            try { _longPressPreviousFocus.focus(); } catch (_) {}
+        }
+    }
+    _longPressPreviousFocus = null;
 }
 
 function attachLongPress(target, getItems, options) {

@@ -1712,6 +1712,14 @@ def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:
     assert "moveTolerancePx" in helpers
     assert "suppressClick" in helpers
     assert "HapticFeedback" in helpers
+    show_start = helpers.index("function showLongPressMenu")
+    show_body = helpers[show_start:helpers.index("\nfunction attachLongPress", show_start)]
+    assert "hideLongPressMenu();" in show_body
+    assert "_longPressPreviousFocus = document.activeElement" in show_body
+    assert "_applyInertToSiblings(overlay)" in show_body
+    assert "trapFocus(sheet)" in show_body
+    assert "_restoreInertSiblings(_longPressOverlay)" in show_body
+    assert "_longPressPreviousFocus.focus" in show_body
 
     builder = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
     assert "attachLongPress(listing" in builder
