@@ -268,6 +268,8 @@ def test_search_refresh_and_cap_disclosure_contracts() -> None:
     assert "state.listings.servedCap" in render_cards_js
     assert "Показана быстрая выборка" in render_cards_js
     assert "categories_limited" in render_views_js
+    assert "const displayTotal = totalResults || totalCount;" in render_views_js
+    assert "Math.max(totalResults, totalCount)" not in render_views_js
     assert "resultCap: 0" in core_js
 
 

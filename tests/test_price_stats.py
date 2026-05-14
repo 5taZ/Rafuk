@@ -95,3 +95,69 @@ def test_price_stats_exposes_category_total_cap_metadata(monkeypatch) -> None:
     assert payload["categories_limited"] is True
     assert payload["category_total_limit"] == CATEGORY_TOTAL_MAX_CALLS
     assert payload["category_total_candidates"] == CATEGORY_TOTAL_MAX_CALLS + 2
+
+
+def test_price_stats_fetches_real_total_for_dominant_category(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import price_stats
+
+    class DominantCategoryClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            ads = [
+                {
+                    "subject": f"iPhone 14 Pro {i}",
+                    "price_byn": 2000 + i,
+                    "category": "17010",
+                    "ad_parameters": [
+                        {"p": "category", "v": "17010", "vl": "Мобильные телефоны"}
+                    ],
+                }
+                for i in range(4)
+            ]
+            ads.append({
+                "subject": "Чехол iPhone 14 Pro",
+                "price_byn": 40,
+                "category": "17030",
+                "ad_parameters": [
+                    {"p": "category", "v": "17030", "vl": "Аксессуары для телефонов"}
+                ],
+            })
+            return {"ads": ads, "total": 3174}
+
+        async def search(self, **kwargs) -> dict:
+            category = int(kwargs["category"])
+            totals = {17010: 2242, 17030: 320}
+            return {
+                "ads": [
+                    {
+                        "subject": "iPhone 14 Pro",
+                        "price_byn": 2000,
+                        "category": str(category),
+                    }
+                ],
+                "total": totals[category],
+            }
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(price_stats, "KufarClient", DominantCategoryClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: DominantCategoryClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        asyncio.get_event_loop().run_until_complete(init_test_tables(app))
+        response = client.get("/api/v1/price-stats", params={"query": "Iphone 14 Pro"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    categories = {cat["label"]: cat["count"] for cat in payload["categories"]}
+    assert payload["total_results"] == 3174
+    assert categories["Мобильные телефоны"] == 2242
+    assert categories["Аксессуары для телефонов"] == 320

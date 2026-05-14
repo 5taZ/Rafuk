@@ -56,6 +56,7 @@ def _price_stats_cache_key(
             "currency": currency,
             "strict_search": strict_search,
             "category": category,
+            "category_total_semantics": 2,
         },
     )
 
@@ -149,81 +150,27 @@ async def get_price_stats(
     category_total_candidates = 0
     categories_limited = False
 
-    # Replace per-category counts with the *post-filter* count Kufar
-    # would actually surface for `cat=<id>` (mirrors kufar.by sidebar)
-    # AND add sibling subcategories that didn't appear in the first
-    # 200 ads but are still meaningful for the query (e.g. "Легковые
-    # авто" for a query whose top 200 ads are mostly "Запчасти").
+    # Replace sample-only category counts with the official per-category
+    # totals Kufar returns for `cat=<id>` so the chips mirror kufar.by.
     if category is None:
         seed_ids = [int(c["id"]) for c in category_distribution if c.get("id") is not None]
-        # Sibling expansion + per-category fan-out is the dominant
-        # cost on cold queries (~2s for 7 categories @ 0.3s rate
-        # limit). Two fast paths:
-        #
-        #  1. Only one category present → fan-out is pointless; the
-        #     chip count is just dataset.total_results.
-        #  2. One category is overwhelmingly dominant (≥80% of the
-        #     200-ad sample, e.g. "iphone 13" → 92% Мобильные
-        #     телефоны) → skip sibling expansion. Fetch real totals
-        #     ONLY for the minor cats already in the dataset, and
-        #     credit the dominant cat with dataset.total_results
-        #     (a known-good number, no extra Kufar call). This drops
-        #     the fan-out from 7 → 2-3 calls on the typical query.
-        only_one_category = (
-            len(category_distribution) == 1
-            and len(seed_ids) == 1
+        category_total_candidates = len(seed_ids)
+        categories_limited = category_total_candidates > CATEGORY_TOTAL_MAX_CALLS
+        totals_by_id = await fetch_category_totals(
+            query=query,
+            currency=currency,
+            strict_search=strict_search,
+            client=kufar_client,
+            category_ids=seed_ids,
+            cache=cache,
         )
-        total_dataset_ads = sum(c["count"] for c in category_distribution) or 1
-        dominant_share = (
-            category_distribution[0]["count"] / total_dataset_ads
-            if category_distribution
-            else 0.0
-        )
-        dominant_id = seed_ids[0] if seed_ids else None
-        if only_one_category and dominant_id is not None:
-            cat_ids: list[int] = []
-            totals_by_id: dict[int, int] = {
-                dominant_id: dataset.total_results or category_distribution[0]["count"]
+        if len(seed_ids) == 1 and not totals_by_id:
+            totals_by_id = {
+                seed_ids[0]: dataset.total_results or category_distribution[0]["count"]
             }
-        elif dominant_share >= 0.80 and dominant_id is not None:
-            # In-dataset minor cats only — no sibling expansion.
-            minor_ids = [cid for cid in seed_ids if cid != dominant_id]
-            category_total_candidates = len(minor_ids)
-            categories_limited = category_total_candidates > CATEGORY_TOTAL_MAX_CALLS
-            cat_ids = minor_ids
-            minor_totals = await fetch_category_totals(
-                query=query,
-                currency=currency,
-                strict_search=strict_search,
-                client=kufar_client,
-                category_ids=minor_ids,
-                cache=cache,
-            )
-            totals_by_id = {dominant_id: dataset.total_results, **minor_totals}
-        else:
-            # Diverse query (no dominant cat): just fan out to the
-            # cats that already appeared organically in the dataset.
-            # Sibling expansion is skipped here — siblings only
-            # mattered when the dataset was monopolised by a single
-            # over-narrow cat (e.g. all-parts result for "Audi Q7"),
-            # which is now caught by the >=80% dominant fast path.
-            # In-dataset-only fan-out trims ноутбук from 18 → 10
-            # cats and drops cold-cache wall-clock by ~1 s.
-            cat_ids = seed_ids
-            category_total_candidates = len(cat_ids)
-            categories_limited = category_total_candidates > CATEGORY_TOTAL_MAX_CALLS
-            totals_by_id = await fetch_category_totals(
-                query=query,
-                currency=currency,
-                strict_search=strict_search,
-                client=kufar_client,
-                category_ids=cat_ids,
-                cache=cache,
-            )
         # Build a lookup of existing chips by id so we can update or
-        # extend in place. ``totals_by_id`` already covers both the
-        # in-dataset chips (fast-path) and the expanded siblings
-        # (full fan-out).
+        # extend in place. ``totals_by_id`` covers the in-dataset chips
+        # that Kufar accepted before the fan-out cap.
         by_id: dict[int, dict] = {int(c["id"]): c for c in category_distribution}
         for cat_id, real_total in totals_by_id.items():
             if real_total is None or real_total <= 0:

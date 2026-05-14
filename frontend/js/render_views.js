@@ -62,8 +62,7 @@ function createRenderViews(context) {
                 // because not all ads have category data
                 const totalResults = Number(state.misc.stats?.total_results || 0);
                 const totalCount = state.filters.categories.reduce((sum, cat) => sum + cat.count, 0);
-                // Show the larger of: total results from Kufar, or sum of categories
-                const displayTotal = Math.max(totalResults, totalCount);
+                const displayTotal = totalResults || totalCount;
                 
                 // Use pendingCategory for display, fall back to applied category
                 const displayCategory = state.filters.pendingCategory !== undefined ? state.filters.pendingCategory : state.filters.category;

@@ -85,6 +85,7 @@ def _listings_cache_key(
             "region_name": region_name,
             "limit": limit,
             "offset": offset,
+            "total_semantics": 2,
         },
     )
 
@@ -384,29 +385,15 @@ async def get_listings(
     #  - Cheap sort: show the post-discount count, not Kufar's raw
     #    broad total, otherwise the "Выгодные" tab repeats the "Новые"
     #    badge even though it renders a much smaller filtered set.
-    #  - Broad query (category=None): use Kufar's raw `total` so the
-    #    pill matches kufar.by's header ("Polo → 33 776"), not the
-    #    pagination cap.
-    #  - Category-scoped query: prefer the precise post-filter count
-    #    so refined queries are honest (e.g. cat=2010 + "Audi Q7 4L
-    #    2015": Kufar fuzzy total=11, but only 3 ads pass our filter
-    #    → pill shows 3, matching the cards). When we hit the
-    #    pagination cap (≥200 ads), fall back to Kufar's `total` so
-    #    big categories like "Polo + Легковые авто" still display
-    #    the real number instead of a capped "200".
+    #  - Default/category query: use Kufar's raw `total` so the pill
+    #    matches kufar.by's header/sidebar, not the strict/local sample
+    #    or pagination cap.
     if sort == "cheap":
         filtered_total = len(deal_ads)
     elif listing_filters_active:
         filtered_total = len(sorted_ads)
-    elif category is None:
-        filtered_total = visible_dataset.total_results
     else:
-        filtered_count = len(visible_dataset.ads)
-        kufar_total = visible_dataset.total_results
-        if filtered_count >= 200 and kufar_total > filtered_count:
-            filtered_total = kufar_total
-        else:
-            filtered_total = filtered_count
+        filtered_total = visible_dataset.total_results
     # `has_more` mirrors the obvious "is there a next page?" question
     # the frontend asks before triggering its IntersectionObserver.
     # We compare against the page-cap so we don't promise pages that

@@ -642,15 +642,12 @@ async def fetch_category_totals(
     category_ids: list[int],
     cache: Any | None = None,
 ) -> dict[int, int]:
-    """Fetch the per-category total that the listings page will show.
+    """Fetch the per-category total that Kufar shows in its sidebar.
 
     For each id we issue a `cat=<id>&size=200` query to Kufar (in
-    parallel) and count how many ads survive ``apply_search_mode`` —
-    this is the *same* filter the /listings endpoint applies, so the
-    chip count and the listings count line up exactly. Trusting the
-    raw Kufar `total` would diverge for refined queries (e.g. "Audi
-    Q7 4L 2015" + cat=2010: Kufar's total=11, but only 3 ads pass
-    apply_search_mode).
+    parallel) and trust the raw ``total`` when it is available. The
+    frontend separately discloses when our strict/local sample is smaller
+    than the official Kufar count.
 
     When ``cache`` is provided, the {cat_id -> total} map is cached
     under a key that includes the query + the sorted ids the caller
@@ -682,6 +679,7 @@ async def fetch_category_totals(
             "currency": currency,
             "strict_search": bool(strict_search),
             "category_ids": sorted(selected_category_ids),
+            "semantics": 2,
         })
         cached = await cache.get_json(cache_key)
         if isinstance(cached, dict):
@@ -705,19 +703,10 @@ async def fetch_category_totals(
         if not isinstance(resp, dict):
             return cat_id, None
         ads = resp.get("ads") or []
-        # Mirror the listings filter so the chip and the cards agree.
-        filtered = apply_search_mode(ads, query, strict_search)
         kufar_total = resp.get("total")
-        # When the filtered response hit our 200-ad cap and Kufar reports more,
-        # trust Kufar's total (matches what kufar.by sidebar shows for
-        # large categories like "Запчасти" with thousands of ads).
-        # Otherwise the precise post-filter count is the right number.
-        if (
-            len(filtered) >= 200
-            and isinstance(kufar_total, int)
-            and kufar_total > len(filtered)
-        ):
+        if isinstance(kufar_total, int) and kufar_total > 0:
             return cat_id, kufar_total
+        filtered = apply_search_mode(ads, query, strict_search)
         return cat_id, len(filtered)
 
     started_at = time.monotonic()

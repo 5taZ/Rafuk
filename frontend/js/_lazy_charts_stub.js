@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20260514-313506c";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20260514-03e3298";
 
 function _lazyLoadChartsSources(context) {
     window.App = window.App || {};

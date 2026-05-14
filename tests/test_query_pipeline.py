@@ -123,7 +123,7 @@ async def test_fetch_category_totals_caps_cold_fanout_calls() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_category_totals_mirrors_listing_count_below_filtered_cap() -> None:
+async def test_fetch_category_totals_uses_kufar_sidebar_total_even_below_filtered_cap() -> None:
     class Client:
         async def search(self, **kwargs) -> dict:
             del kwargs
@@ -145,7 +145,7 @@ async def test_fetch_category_totals_mirrors_listing_count_below_filtered_cap() 
         category_ids=[2010],
     )
 
-    assert result == {2010: 175}
+    assert result == {2010: 236}
 
 
 @pytest.mark.asyncio

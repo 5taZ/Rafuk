@@ -205,6 +205,69 @@ def test_listings_endpoint_supports_strict_search(monkeypatch) -> None:
     assert payload["total"] >= 1
 
 
+def test_listings_category_total_uses_kufar_total_when_strict_sample_is_small(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    class CategoryTotalClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            assert kwargs.get("category") == 17010
+            return {
+                "total": 2242,
+                "ads": [
+                    {
+                        "ad_id": 1,
+                        "subject": "iPhone 14 Pro 128GB",
+                        "price_byn": 2000,
+                        "ad_link": "https://www.kufar.by/item/1",
+                        "list_time": "2026-04-01T10:00:00",
+                        "region_id": 6,
+                        "category": "17010",
+                        "ad_parameters": [
+                            {"p": "category", "v": "17010", "vl": "Мобильные телефоны"}
+                        ],
+                    },
+                    {
+                        "ad_id": 2,
+                        "subject": "iPhone 14 Pro Max 256GB",
+                        "price_byn": 2600,
+                        "ad_link": "https://www.kufar.by/item/2",
+                        "list_time": "2026-04-01T11:00:00",
+                        "region_id": 6,
+                        "category": "17010",
+                        "ad_parameters": [
+                            {"p": "category", "v": "17010", "vl": "Мобильные телефоны"}
+                        ],
+                    },
+                ],
+            }
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", CategoryTotalClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: CategoryTotalClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/listings",
+            params={"query": "Iphone 14 Pro", "currency": "BYN", "category": 17010},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2242
+    assert payload["dataset_count"] == 1
+    assert payload["served_cap"] == 1
+    assert payload["is_limited"] is True
+
+
 def test_listings_endpoint_normalizes_alias_queries(monkeypatch) -> None:
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
