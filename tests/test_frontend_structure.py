@@ -612,6 +612,51 @@ def test_totals_refresh_buttons_force_refresh_search(soup: BeautifulSoup, css_te
     assert "@keyframes totals-refresh-spin" in css_text
 
 
+def test_listings_section_stays_visible_on_zero_result_queries() -> None:
+    """SEARCH-10: a zero-result search used to set
+    `elements.listingsSection.hidden = !hasContent && !hasData`,
+    which collapsed the entire #listings-section — taking the
+    filter button, the totals badge, the SEARCH-7 refresh button
+    and the SEARCH-9 "Снять фильтры" CTA out of the DOM with it.
+    The fix keeps the section visible whenever a query is active
+    so the recovery affordances remain reachable.
+    """
+    cards_js = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
+    core_js = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+
+    # Section visibility now factors in `hasQuery` so 0-result
+    # queries don't collapse the whole panel.
+    assert "const hasQuery = Boolean(trimmedQuery);" in cards_js
+    assert (
+        "elements.listingsSection.hidden = !hasContent && !hasData && !hasQuery;"
+        in cards_js
+    )
+    # Old shape (without hasQuery) is gone so a future revert can't
+    # silently reintroduce the regression.
+    assert (
+        "elements.listingsSection.hidden = !hasContent && !hasData;"
+        not in cards_js
+    )
+
+    # Empty-state copy now names the failing query.
+    assert "По запросу «${trimmedQuery}» ничего не найдено." in cards_js
+    # And distinguishes filtered vs. broad zero-result.
+    assert "Возможно, фильтры слишком узкие — попробуйте снять часть." in cards_js
+    assert "Попробуйте изменить запрос или сделать его короче." in cards_js
+    # Badge stays in unit-consistent shape ("0 объявлений") instead
+    # of shrinking to a bare "0".
+    assert 'badge.textContent = "0 объявлений";' in cards_js
+
+    # Overview summary signal explicitly says "ничего не найдено"
+    # for the 0-result case instead of the misleading "small sample"
+    # branch.
+    assert "if (totalResults === 0 && analyzedCount === 0) {" in core_js
+    assert (
+        "По запросу ничего не найдено. Откройте «Объявления» "
+        "и попробуйте снять фильтры или изменить запрос."
+    ) in core_js
+
+
 def test_empty_state_offers_clear_filters_when_filters_narrow_to_zero() -> None:
     """SEARCH-9: a filter-narrowed empty state without an inline escape
     forces the user to find the dropdown, open it, and clear each

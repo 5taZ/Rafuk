@@ -579,7 +579,14 @@ function createRenderCore(context) {
             const spreadRatio = marketMedian > 0 ? (marketMax - marketMin) / marketMedian : 0;
             const meanDeltaRatio = marketMedian > 0 ? Math.abs(marketMean - marketMedian) / marketMedian : 0;
             let signal = "Рынок читается ровно, медиана подходит как главный ориентир.";
-            if (analyzedCount < 5) {
+            // SEARCH-10: an empty result set used to fall through to
+            // the "Выборка маленькая" branch (analyzedCount < 5),
+            // implying analytics still apply. Make the zero case
+            // explicit so the user reads "ничего не найдено" instead
+            // of guessing why every stat shows "—".
+            if (totalResults === 0 && analyzedCount === 0) {
+                signal = "По запросу ничего не найдено. Откройте «Объявления» и попробуйте снять фильтры или изменить запрос.";
+            } else if (analyzedCount < 5) {
                 signal = "Выборка маленькая, смотрите объявления и сравнивайте вручную.";
             } else if (spreadRatio > 0.8 || meanDeltaRatio > 0.12) {
                 signal = "Рынок неоднородный: сначала смотрите медиану, затем историю и сегменты.";

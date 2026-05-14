@@ -190,6 +190,45 @@ currency selector.
 * Keep `hasPriceRange && itemPrice == null → false` rule so
   "Договорная" (price=null) ads still drop when a price range is set.
 
+### SEARCH-10 — Empty result hides the entire listings UI — fixed in Wave 118
+
+**Severity: high — bricks the recovery path the user reported.**
+
+When a search produced zero results, `renderListings` set
+`elements.listingsSection.hidden = !hasContent && !hasData` —
+both halves were false (no items, total=0), so the whole
+`#listings-section` collapsed: filter button gone, total badge
+gone, SEARCH-7 refresh button gone, **SEARCH-9 "Снять фильтры"
+CTA we built in Wave 117 was rendered into a hidden parent and
+the user never saw it.** All they got was a "white tail" below
+the summary strip and zeros in the stats grid.
+
+The overview side compounded the confusion: the summary's signal
+text fell through to "Выборка маленькая, смотрите объявления и
+сравнивайте вручную" because `analyzedCount < 5` matched a 0-row
+sample, implying analytics still applied to something.
+
+**Fix shipped (Wave 118)**:
+
+* `renderListings` keeps `#listings-section` visible whenever a
+  query is active, regardless of `hasContent`/`hasData`. The
+  empty-state node carries the filter button by virtue of being
+  inside the section header (header isn't conditionally rendered),
+  so the user can always reach the filter dropdown.
+* `renderListingsCollection` now composes the empty-state hint
+  from a query-aware primary line ("По запросу «iPhone fjksldj»
+  ничего не найдено") plus a filter-aware second sentence
+  ("Возможно, фильтры слишком узкие — попробуйте снять часть"
+  vs. "Попробуйте изменить запрос или сделать его короче"). The
+  SEARCH-9 "Снять фильтры" CTA is preserved; we just stopped
+  hiding the parent it lives in.
+* The total badge falls back to "0 объявлений" instead of a bare
+  "0" pill so the unit stays consistent with the populated case.
+* `renderSummary` adds an explicit `totalResults === 0 &&
+  analyzedCount === 0` branch with copy that points to the
+  «Объявления» tab, so overview readers don't get misled by the
+  "small sample" hint into thinking the analytics still apply.
+
 ### SEARCH-9 — Filter-narrowed empty state has no escape hatch — fixed in Wave 117
 
 **Severity: low — diagnostic / UX improvement.**
@@ -222,6 +261,7 @@ intent matters more than always showing some result.
 | 115  | SEARCH-8 | fix(wave115): keep client-side price filter pinned to BYN |
 | 116  | SEARCH-7 | fix(wave116): surface force-refresh on totals to escape 5-min cache lag |
 | 117  | SEARCH-9 | fix(wave117): offer "Снять фильтры" CTA from filter-narrowed empty state |
+| 118  | SEARCH-10 | fix(wave118): keep listings section + filter UI visible on zero-result queries |
 
 Each wave: green `uv run pytest --tb=short -q`, atomic commit with
 the audit IDs in the body, no formatter run (per AGENTS.md).

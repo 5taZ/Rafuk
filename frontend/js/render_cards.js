@@ -204,12 +204,20 @@ function createRenderCards(context) {
                 // without retyping the query.
                 const filtersActive = _hasActiveListingFilters();
                 const clearAction = actions?.clearListingFilters;
+                // SEARCH-10: if the caller supplied a query-aware
+                // primary line, use it as-is; otherwise fall back to
+                // the legacy generic copy. Either way we tack on a
+                // filter-specific second sentence so the user knows
+                // *what* to do, not just that nothing matched.
+                const primary = emptyText
+                    || "По этому запросу пока нечего показать.";
+                const secondary = filtersActive
+                    ? "Возможно, фильтры слишком узкие — попробуйте снять часть."
+                    : "Попробуйте изменить запрос или сделать его короче.";
                 if (typeof buildEmpty === "function") {
                     const opts = {
                         title: "Ничего не найдено",
-                        hint: emptyText || (filtersActive
-                            ? "Фильтры слишком узкие для этого запроса."
-                            : "Попробуйте изменить запрос."),
+                        hint: `${primary} ${secondary}`,
                     };
                     if (filtersActive && typeof clearAction === "function") {
                         opts.actionLabel = "Снять фильтры";
@@ -219,11 +227,15 @@ function createRenderCards(context) {
                 } else {
                     const note = document.createElement("p");
                     note.className = "tracker-empty";
-                    note.textContent = emptyText;
+                    note.textContent = primary;
                     container.appendChild(note);
                 }
                 if (badge) {
-                    badge.textContent = "0";
+                    // SEARCH-10: keep the suffix consistent with the
+                    // populated branch ("N объявлений") so the badge
+                    // doesn't shrink to a bare "0" pill that reads
+                    // like a unit-less metric.
+                    badge.textContent = "0 объявлений";
                 }
                 return false;
             }
@@ -372,11 +384,23 @@ function createRenderCards(context) {
             }
 
             const hasData = state.listings.items.length > 0 || state.listings.total > 0;
+            const trimmedQuery = (state.search.query || "").trim();
+            const hasQuery = Boolean(trimmedQuery);
+            // SEARCH-10: empty-state copy that names the actual query.
+            // The previous flat "По этому запросу пока нечего показать"
+            // did not tell the user *which* query failed and gave no
+            // hint that filters might be the culprit. Now we hand
+            // renderListingsCollection a query-aware fallback string;
+            // the function itself swaps in the filter-aware variant +
+            // "Снять фильтры" CTA when filters are active.
+            const fallbackEmpty = hasQuery
+                ? `По запросу «${trimmedQuery}» ничего не найдено.`
+                : "По этому запросу пока нечего показать.";
             const hasContent = renderListingsCollection(
                 state.listings.items,
                 elements.listingsList,
                 elements.listingsTotalBadge,
-                "По этому запросу пока нечего показать.",
+                fallbackEmpty,
                 state.listings.total || null
             );
             if (elements.listingsFallbackBadge) {
@@ -408,9 +432,16 @@ function createRenderCards(context) {
                     },
                 });
             }
-            // Keep section visible if data exists but was filtered out —
-            // the empty message inside the container tells the user why.
-            elements.listingsSection.hidden = !hasContent && !hasData;
+            // SEARCH-10: keep the section visible whenever a query is
+            // active, even when total=0. The previous logic
+            // (`!hasContent && !hasData`) hid the entire #listings-section,
+            // which also took the filter button, the totals badge,
+            // the SEARCH-7 refresh button, and the SEARCH-9
+            // "Снять фильтры" CTA out of the DOM — leaving the user
+            // staring at a blank page with no way to widen the
+            // search. We only fall back to hiding when there's no
+            // active query at all (initial load, search cleared).
+            elements.listingsSection.hidden = !hasContent && !hasData && !hasQuery;
             _setListingsRefreshBusy(false);
         });
     }
