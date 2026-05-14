@@ -5,9 +5,10 @@ classifieds site **[Kufar.by](https://www.kufar.by)** for listings,
 runs analytics and AI-assisted decisioning over them, and surfaces
 "deal-finder" workflows to end users.
 
-> **Status:** active development on the `bad-app` branch. 799 tests
-> pass locally, with one skipped. See [`CHANGELOG.md`](./CHANGELOG.md)
-> for the wave-by-wave security/performance hardening history.
+> **Status:** active development on the `bad-app` branch. Keep
+> `uv run pytest --tb=short -q` and `uv run ruff check .` green before
+> commits. See [`konechno.md`](./konechno.md) for the current atomic
+> audit-fix wave plan.
 
 ## What it does
 
@@ -133,8 +134,7 @@ whether the timeout/lock TTL needs tuning.
   backup, freshness-check, and restore-drill procedure.
 * [`docs/MONITORING_RUNBOOK.md`](./docs/MONITORING_RUNBOOK.md) —
   health-check, metrics, and alerting checklist.
-* [`CHANGELOG.md`](./CHANGELOG.md) — wave-by-wave fix log with audit
-  IDs.
+* [`konechno.md`](./konechno.md) — current atomic audit-fix wave plan.
 * [`docs/`](./docs/) — additional design notes and runbooks.
 
 ## Compliance

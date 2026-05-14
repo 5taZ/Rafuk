@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # INF-H8: roll the cache-busting query string on every JS/CSS asset
-# referenced from frontend/index.html or lazy-loaded by frontend JS in
-# one shot. Use after touching any file under frontend/js or frontend/css.
+# referenced from frontend/index.html or lazy-loaded by frontend JS, and
+# bump the service-worker cache bucket, in one shot. Use after touching
+# any file under frontend/js or frontend/css.
 #
 # nginx serves /js/*.js and /css/*.css with `expires 365d` +
 # `Cache-Control: public, immutable` so repeat visits are free; the
@@ -25,6 +26,7 @@ cd "$(dirname "$0")/.."
 
 ASSET_FILES=(frontend/index.html frontend/js/*.js)
 INDEX="${ASSET_FILES[0]}"
+SW_FILE="frontend/sw.js"
 if [[ ! -f "$INDEX" ]]; then
     echo "error: $INDEX not found (run from repo root)" >&2
     exit 1
@@ -57,6 +59,10 @@ for tag in $EXISTING_TAGS; do
     fi
     sed -i "s|${tag}|?v=${NEW_TAG}|g" "${ASSET_FILES[@]}"
 done
+
+if [[ -f "$SW_FILE" ]]; then
+    sed -i -E "s|const CACHE_VERSION = \"[^\"]+\";|const CACHE_VERSION = \"rafuk-cache-${NEW_TAG}\";|" "$SW_FILE"
+fi
 
 REWROTE=$(grep -rho "?v=${NEW_TAG}" "${ASSET_FILES[@]}" | wc -l | tr -d " ")
 echo "rewrote $REWROTE asset reference(s) → ?v=${NEW_TAG}"
