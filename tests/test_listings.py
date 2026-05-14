@@ -824,7 +824,8 @@ def test_listings_filter_total_uses_supported_kufar_params_in_loose_mode(monkeyp
     payload = response.json()
     assert payload["total"] == 1234
     assert payload["returned"] == 3
-    assert calls[0]["price_range"] == "r:500,1000"
+    # SEARCH-6: 500/1000 BYN must reach Kufar in kopecks.
+    assert calls[0]["price_range"] == "r:50000,100000"
     assert calls[0]["condition"] == "1"
     assert calls[0]["seller_type"] == "private"
     assert calls[0]["region"] == 7
@@ -897,7 +898,8 @@ def test_listings_strict_filters_do_not_fallback_to_loose_similar_ads(monkeypatc
     assert payload["fallback_used"] is False
     assert len(calls) == 1
     assert calls[0]["category"] == 17010
-    assert calls[0]["price_range"] == "r:0,1000"
+    # SEARCH-6: max_price=1000 BYN ⇒ Kufar `prc=r:0,100000` (kopecks).
+    assert calls[0]["price_range"] == "r:0,100000"
 
 
 def test_listings_exposes_served_cap_metadata(monkeypatch) -> None:

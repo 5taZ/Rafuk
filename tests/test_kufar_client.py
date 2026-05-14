@@ -92,19 +92,23 @@ async def test_search_sends_supported_native_filter_params(
     ok_response: MagicMock,
     mock_settings: MagicMock,
 ) -> None:
+    # SEARCH-6: `price_range` is the already-formatted kopeck string
+    # produced by `kufar_filters.kufar_price_range`. The client just
+    # forwards it onto `prc=` — the BYN→kopecks conversion happens
+    # one layer up so callers can't accidentally undo it here.
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=ok_response) as mock:
         await KufarClient(mock_settings).search(
             query="iphone",
             area=24,
             condition="used",
             seller_type="private",
-            price_range="r:500,1000",
+            price_range="r:50000,100000",
         )
     params = mock.call_args.kwargs.get("params", {})
     assert params["ar"] == 24
     assert params["cnd"] == "1"
     assert params["cmp"] == "0"
-    assert params["prc"] == "r:500,1000"
+    assert params["prc"] == "r:50000,100000"
 
 
 @pytest.mark.asyncio

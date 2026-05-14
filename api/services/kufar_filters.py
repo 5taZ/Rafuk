@@ -3,7 +3,16 @@ from __future__ import annotations
 import math
 from typing import Any
 
-KUFAR_OPEN_PRICE_MAX_BYN = 999_999_999
+# SEARCH-6: Kufar's `prc=` parameter is expressed in *kopecks* — the same
+# minor-currency unit the API uses for `price_byn` on returned ads. So
+# "1500 BYN" on the wire is `prc=r:0,150000` (1500 × 100), not
+# `prc=r:0,1500`. Sending BYN directly used to make the user-facing
+# "цена до 2500" filter ask Kufar for "≤25 BYN" → the listings panel
+# returned 0 results on focused queries (e.g. `iPhone 14 Pro` in
+# `Мобильные телефоны`). The constant below is the open-ended ceiling
+# in kopecks (≈10M BYN), well above any realistic listing.
+KUFAR_PRICE_KOPECKS_PER_BYN = 100
+KUFAR_OPEN_PRICE_MAX_KOPECKS = 999_999_999
 
 KUFAR_CONDITION_VALUES = {
     "used": "1",
@@ -194,14 +203,29 @@ KUFAR_UNIQUE_AREA_IDS = {
 
 
 def kufar_price_range(min_price: float | None, max_price: float | None) -> str | None:
+    # SEARCH-6: convert user-supplied BYN to kopecks before placing them
+    # in `prc=`. `min_price` and `max_price` arrive as BYN (FastAPI
+    # `Query(le=9_999_999_999.99)`); Kufar's `prc=r:lo,hi` expects
+    # kopecks. We floor the lower bound and ceil the upper bound so the
+    # "round number" the user typed always stays inclusive.
     if min_price is None and max_price is None:
         return None
-    lower = max(0, math.floor(min_price)) if min_price is not None else 0
-    upper = (
-        max(0, math.ceil(max_price))
-        if max_price is not None
-        else KUFAR_OPEN_PRICE_MAX_BYN
+    lower = (
+        max(0, math.floor(min_price * KUFAR_PRICE_KOPECKS_PER_BYN))
+        if min_price is not None
+        else 0
     )
+    upper = (
+        max(0, math.ceil(max_price * KUFAR_PRICE_KOPECKS_PER_BYN))
+        if max_price is not None
+        else KUFAR_OPEN_PRICE_MAX_KOPECKS
+    )
+    # Stay below the legacy 999_999_999 sentinel so requests don't get
+    # truncated by Kufar's int parser if the user types an extreme upper
+    # bound (the FastAPI validator allows up to 9_999_999_999.99 BYN
+    # which would overflow the kopeck range otherwise).
+    upper = min(upper, KUFAR_OPEN_PRICE_MAX_KOPECKS)
+    lower = min(lower, KUFAR_OPEN_PRICE_MAX_KOPECKS)
     if upper < lower:
         lower, upper = upper, lower
     return f"r:{lower},{upper}"
