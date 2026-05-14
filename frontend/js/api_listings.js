@@ -40,6 +40,14 @@ function createApiListings(context) {
     let _detailAbortController = null;
     let _historyAbortController = null;
 
+    function _normalizedFilterPrice(value) {
+        if (value == null || value === "") {
+            return null;
+        }
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? Math.max(0, numeric) : null;
+    }
+
     // FE-C4: explicit abort hooks so callers in the modal/view
     // lifecycle (closeDetailModal, view-tab change, etc.) can drop
     // in-flight requests instead of letting them resolve into stale
@@ -67,6 +75,23 @@ function createApiListings(context) {
         const query = new URLSearchParams(buildCommonQuery(params));
         if (state.filters.category != null) {
             query.set("reference_context", "base_query");
+        }
+        const minPrice = _normalizedFilterPrice(state.filters.minPrice);
+        const maxPrice = _normalizedFilterPrice(state.filters.maxPrice);
+        if (minPrice != null) {
+            query.set("min_price", String(minPrice));
+        }
+        if (maxPrice != null) {
+            query.set("max_price", String(maxPrice));
+        }
+        if (state.filters.condition) {
+            query.set("condition", state.filters.condition);
+        }
+        if (state.filters.sellerType) {
+            query.set("seller_type", state.filters.sellerType);
+        }
+        if (state.filters.regionName) {
+            query.set("region_name", state.filters.regionName);
         }
         return query.toString();
     }
@@ -147,6 +172,12 @@ function createApiListings(context) {
         }
         state.search.searchAbortController = new AbortController();
         const signal = state.search.searchAbortController.signal;
+        const listingRequestId = (state.listings._requestId =
+            ((state.listings._requestId || 0) + 1) % 1_000_000);
+        const listingFilterKey = _listingsFilterKey();
+        const listingSort = state.search.sort;
+        const listingDiscountFrom = state.filters.discountFromPercent;
+        const listingDiscountTo = state.filters.discountToPercent;
 
         const dependencies = [
             {
@@ -177,13 +208,31 @@ function createApiListings(context) {
                     { signal },
                 ),
                 apply(payload) {
+                    if (
+                        listingRequestId !== state.listings._requestId ||
+                        listingFilterKey !== _listingsFilterKey() ||
+                        listingSort !== state.search.sort ||
+                        (
+                            listingSort === "cheap" &&
+                            (
+                                listingDiscountFrom !== state.filters.discountFromPercent ||
+                                listingDiscountTo !== state.filters.discountToPercent
+                            )
+                        )
+                    ) {
+                        return false;
+                    }
                     state.listings.items = payload.listings || [];
                     state.listings.total = payload.total || 0;
                     state.listings.hasMore = Boolean(payload.has_more);
                     state.listings.fallbackUsed = Boolean(payload.fallback_used);
                     state.listings._loadedAt = Date.now();
                     state.listings._loadedSort = state.search.sort;
+                    state.listings._loadedFilterKey = _listingsFilterKey();
+                    state._listingsLoadedDiscountFrom = state.filters.discountFromPercent;
+                    state._listingsLoadedDiscountTo = state.filters.discountToPercent;
                     state.listings._pending = false;
+                    return true;
                 },
             },
         ];
@@ -200,7 +249,7 @@ function createApiListings(context) {
             dependency.request
                 .then((payload) => {
                     if (!isActiveRequest(requestId)) return;
-                    dependency.apply(payload);
+                    if (dependency.apply(payload) === false) return;
                     markDirty('stats', 'history', 'segments', 'geography', 'listings');
                     scheduleRender();
                 })
@@ -244,6 +293,17 @@ function createApiListings(context) {
         );
     }
 
+    function _listingsFilterKey() {
+        return JSON.stringify({
+            category: state.filters.category,
+            minPrice: _normalizedFilterPrice(state.filters.minPrice),
+            maxPrice: _normalizedFilterPrice(state.filters.maxPrice),
+            condition: state.filters.condition || "",
+            sellerType: state.filters.sellerType || "",
+            regionName: state.filters.regionName || "",
+        });
+    }
+
     async function loadListings(force) {
         if (!state.search.query) {
             state.listings.items = [];
@@ -257,6 +317,7 @@ function createApiListings(context) {
         const cacheStillValid =
             state.listings.items.length &&
             state.listings._loadedSort === state.search.sort &&
+            state.listings._loadedFilterKey === _listingsFilterKey() &&
             (state.search.sort !== "cheap" || _sameDiscountRangeAsLast()) &&
             Date.now() - state.listings._loadedAt < CACHE_TTL;
         if (!force && cacheStillValid) {
@@ -287,6 +348,7 @@ function createApiListings(context) {
             state.listings.fallbackUsed = Boolean(payload.fallback_used);
             state.listings._loadedAt = Date.now();
             state.listings._loadedSort = state.search.sort;
+            state.listings._loadedFilterKey = _listingsFilterKey();
             state._listingsLoadedDiscountFrom = state.filters.discountFromPercent;
             state._listingsLoadedDiscountTo = state.filters.discountToPercent;
             state.ui.error = null;

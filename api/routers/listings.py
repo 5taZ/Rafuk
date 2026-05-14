@@ -18,6 +18,8 @@ from api.schemas import ListingsResponse
 from api.services.aggregator import (
     compute_category_price_stats,
     filter_deal_ads,
+    get_param,
+    normalize_price_byn,
     precompute_cluster_stats,
     sort_listings,
 )
@@ -26,6 +28,7 @@ from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_item, compute_listing_sort_key
+from api.services.market_signals import area_label, region_label
 from api.services.query_pipeline import load_query_dataset_context_with_fallback
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
@@ -55,6 +58,11 @@ def _listings_cache_key(
     strict_search: bool,
     category: int | None,
     reference_context: str,
+    min_price: float | None,
+    max_price: float | None,
+    condition: str | None,
+    seller_type: str | None,
+    region_name: str | None,
     limit: int,
     offset: int,
 ) -> str:
@@ -70,10 +78,85 @@ def _listings_cache_key(
             "strict_search": strict_search,
             "category": category,
             "reference_context": reference_context,
+            "min_price": min_price,
+            "max_price": max_price,
+            "condition": condition,
+            "seller_type": seller_type,
+            "region_name": region_name,
             "limit": limit,
             "offset": offset,
         },
     )
+
+
+def _normalized_filter_text(value: str | None) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _matches_condition(ad: dict[str, Any], condition: str | None) -> bool:
+    if condition is None:
+        return True
+    normalized = _normalized_filter_text(get_param(ad, "condition"))
+    allowed = {
+        "new": {"new", "новый", "2"},
+        "used": {"used", "б/у", "бу", "1"},
+    }.get(condition)
+    return normalized in allowed if allowed else True
+
+
+def _matches_seller_type(ad: dict[str, Any], seller_type: str | None) -> bool:
+    if seller_type is None:
+        return True
+    raw = _normalized_filter_text(get_param(ad, "seller_type"))
+    is_shop = bool(ad.get("company_ad")) or raw in {"магазин", "shop"}
+    return is_shop if seller_type == "shop" else not is_shop
+
+
+def _matches_price(ad: dict[str, Any], min_price: float | None, max_price: float | None) -> bool:
+    if min_price is None and max_price is None:
+        return True
+    price = normalize_price_byn(ad.get("price_byn"), ad)
+    if price is None:
+        return False
+    if min_price is not None and price < min_price:
+        return False
+    return not (max_price is not None and price > max_price)
+
+
+def _matches_region(ad: dict[str, Any], region_name: str | None) -> bool:
+    normalized = _normalized_filter_text(region_name)
+    if not normalized:
+        return True
+    return normalized in {
+        _normalized_filter_text(region_label(ad)),
+        _normalized_filter_text(area_label(ad)),
+    }
+
+
+def _filter_visible_ads(
+    ads: list[dict[str, Any]],
+    *,
+    min_price: float | None,
+    max_price: float | None,
+    condition: str | None,
+    seller_type: str | None,
+    region_name: str | None,
+) -> list[dict[str, Any]]:
+    if (
+        min_price is None
+        and max_price is None
+        and condition is None
+        and seller_type is None
+        and not _normalized_filter_text(region_name)
+    ):
+        return ads
+    return [
+        ad for ad in ads
+        if _matches_price(ad, min_price, max_price)
+        and _matches_condition(ad, condition)
+        and _matches_seller_type(ad, seller_type)
+        and _matches_region(ad, region_name)
+    ]
 
 
 @router.get("/listings", response_model=ListingsResponse)
@@ -91,6 +174,11 @@ async def get_listings(
     discount_to_percent: float | None = None,
     category: int | None = None,
     reference_context: Literal["current", "base_query"] = "current",
+    min_price: float | None = Query(default=None, ge=0, le=9_999_999_999.99),
+    max_price: float | None = Query(default=None, ge=0, le=9_999_999_999.99),
+    condition: Literal["new", "used"] | None = None,
+    seller_type: Literal["private", "shop"] | None = None,
+    region_name: str | None = Query(default=None, max_length=128),
     limit: int = Query(default=_DEFAULT_LISTINGS_PAGE, ge=1, le=_MAX_LISTINGS_PAGE),
     offset: int = Query(default=0, ge=0, le=_MAX_LISTINGS_PAGE * 10),
     settings: Settings = Depends(get_settings_dependency),
@@ -106,6 +194,9 @@ async def get_listings(
     effective_to = abs(discount_to_percent) if discount_to_percent is not None else None
     if effective_to is not None and effective_to < effective_from:
         effective_from, effective_to = effective_to, effective_from
+    if min_price is not None and max_price is not None and max_price < min_price:
+        min_price, max_price = max_price, min_price
+    normalized_region_name = _normalized_filter_text(region_name) or None
 
     fallback_used = False
     cache_key = _listings_cache_key(
@@ -118,6 +209,11 @@ async def get_listings(
         strict_search=strict_search,
         category=category,
         reference_context=reference_context,
+        min_price=min_price,
+        max_price=max_price,
+        condition=condition,
+        seller_type=seller_type,
+        region_name=normalized_region_name,
         limit=limit,
         offset=offset,
     )
@@ -139,6 +235,21 @@ async def get_listings(
     fallback_used = fb.fallback_used
     visible_dataset = context.visible
     reference_dataset = context.reference
+    filtered_visible_ads = _filter_visible_ads(
+        visible_dataset.ads,
+        min_price=min_price,
+        max_price=max_price,
+        condition=condition,
+        seller_type=seller_type,
+        region_name=normalized_region_name,
+    )
+    listing_filters_active = (
+        min_price is not None
+        or max_price is not None
+        or condition is not None
+        or seller_type is not None
+        or normalized_region_name is not None
+    )
     median_byn = visible_dataset.price_stats.median
     # Build the category reference table.
     # Default is the unfiltered broad query — that's the same data the
@@ -170,7 +281,7 @@ async def get_listings(
 
     deal_ads = (
         filter_deal_ads(
-            visible_dataset.ads,
+            filtered_visible_ads,
             reference_dataset.price_stats.median,
             effective_from,
             effective_to,
@@ -178,7 +289,7 @@ async def get_listings(
             category_price_stats=category_price_stats,
         )
         if sort == "cheap"
-        else visible_dataset.ads
+        else filtered_visible_ads
     )
     effective_sort = "newest" if sort == "deal_score" else sort
     sorted_ads = sort_listings(
@@ -283,6 +394,8 @@ async def get_listings(
     #    the real number instead of a capped "200".
     if sort == "cheap":
         filtered_total = len(deal_ads)
+    elif listing_filters_active:
+        filtered_total = len(sorted_ads)
     elif category is None:
         filtered_total = visible_dataset.total_results
     else:

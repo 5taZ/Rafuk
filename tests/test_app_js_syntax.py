@@ -76,6 +76,184 @@ def test_has_required_methods_and_endpoints() -> None:
     assert "Telegram.WebApp" in all_js
 
 
+def test_listing_filter_query_omits_non_finite_prices() -> None:
+    api_listings = (JS_DIR / "api_listings.js").read_text(encoding="utf-8")
+    harness = (
+        api_listings
+        + r"""
+const assert = require("assert");
+const state = {
+    search: {
+        query: "iphone",
+        strictSearch: true,
+        sort: "newest",
+        searchRequestId: 1,
+    },
+    filters: {
+        category: null,
+        minPrice: "1000",
+        maxPrice: NaN,
+        condition: "used",
+        sellerType: "private",
+        regionName: "Минск",
+        discountFromPercent: 10,
+        discountToPercent: 30,
+    },
+    listings: {
+        items: [],
+        _loadedAt: 0,
+        _loadedSort: null,
+        total: 0,
+        hasMore: false,
+        loading: false,
+        loadingMore: false,
+        _requestId: 0,
+        _pending: false,
+        fallbackUsed: false,
+    },
+    misc: { currency: "BYN" },
+    detail: { _requestId: 0 },
+    charts: { _historyRequestId: 0 },
+    ui: {},
+};
+let requestedUrl = "";
+const api = createApiListings({
+    state,
+    elements: {},
+    hasTelegramInitData: () => false,
+    renderAll() {},
+    scheduleRender() {},
+    markDirty() {},
+    renderLoading() {},
+    renderError() {},
+    renderHistory() {},
+    setPanelOpen() {},
+    renderDetailModal() {},
+    closeDetailModal() {},
+    showToast() {},
+    buildCommonQuery(params = {}) {
+        const query = new URLSearchParams({
+            query: state.search.query,
+            currency: state.misc.currency,
+            strict_search: String(state.search.strictSearch),
+        });
+        for (const [key, value] of Object.entries(params)) {
+            if (value != null && value !== "") query.set(key, String(value));
+        }
+        return query.toString();
+    },
+    getJson(url) {
+        requestedUrl = url;
+        return Promise.resolve({ listings: [], total: 0, has_more: false });
+    },
+    deleteJson() {},
+});
+api.loadListings(true).then(() => {
+    const params = new URLSearchParams(requestedUrl.split("?")[1]);
+    assert.strictEqual(params.get("min_price"), "1000");
+    assert.strictEqual(params.has("max_price"), false);
+    assert.strictEqual(params.get("condition"), "used");
+    assert.strictEqual(params.get("seller_type"), "private");
+    assert.strictEqual(params.get("region_name"), "Минск");
+}).catch((error) => {
+    console.error(error);
+    process.exit(1);
+});
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_listing_dependency_does_not_overwrite_changed_filters() -> None:
+    api_listings = (JS_DIR / "api_listings.js").read_text(encoding="utf-8")
+    harness = (
+        api_listings
+        + r"""
+const assert = require("assert");
+const state = {
+    search: {
+        query: "iphone",
+        strictSearch: true,
+        sort: "newest",
+        searchRequestId: 7,
+        searchAbortController: null,
+    },
+    filters: {
+        category: null,
+        minPrice: null,
+        maxPrice: null,
+        condition: "",
+        sellerType: "",
+        regionName: "",
+        discountFromPercent: 10,
+        discountToPercent: 30,
+    },
+    listings: {
+        items: [],
+        _loadedAt: 0,
+        _loadedSort: null,
+        total: 0,
+        hasMore: false,
+        loading: false,
+        loadingMore: false,
+        _requestId: 0,
+        _pending: true,
+        fallbackUsed: false,
+    },
+    misc: { currency: "BYN", segments: null, geography: [] },
+    detail: { _requestId: 0 },
+    charts: { _historyRequestId: 0, historyData: [] },
+    ui: {},
+};
+let resolveListings;
+const listingsPromise = new Promise((resolve) => { resolveListings = resolve; });
+const api = createApiListings({
+    state,
+    elements: {},
+    hasTelegramInitData: () => false,
+    renderAll() {},
+    scheduleRender() {},
+    markDirty() {},
+    renderLoading() {},
+    renderError() {},
+    renderHistory() {},
+    setPanelOpen() {},
+    renderDetailModal() {},
+    closeDetailModal() {},
+    showToast() {},
+    buildCommonQuery(params = {}) {
+        const query = new URLSearchParams({
+            query: state.search.query,
+            currency: state.misc.currency,
+            strict_search: String(state.search.strictSearch),
+        });
+        for (const [key, value] of Object.entries(params)) {
+            if (value != null && value !== "") query.set(key, String(value));
+        }
+        return query.toString();
+    },
+    getJson(url) {
+        if (url.startsWith("/api/v1/listings?")) {
+            return listingsPromise;
+        }
+        return Promise.resolve({ points: [], regions: [] });
+    },
+    deleteJson() {},
+});
+api.loadSearchDependencies(7);
+state.filters.minPrice = 1000;
+resolveListings({ listings: [{ ad_id: 1 }], total: 1, has_more: false });
+setImmediate(() => {
+    assert.deepStrictEqual(state.listings.items, []);
+    assert.strictEqual(state.listings.total, 0);
+});
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_telegram_back_button_stack_is_registered() -> None:
     text = APP_JS.read_text(encoding="utf-8")
     assert "setupTelegramBackButton" in text

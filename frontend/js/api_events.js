@@ -91,6 +91,15 @@ function createApiEvents(context) {
     const _preloadCache = [];
     let _filterCloseTimeout = null;
 
+    function _parseFilterPrice(value) {
+        const trimmed = value == null ? "" : String(value).trim();
+        if (trimmed === "") {
+            return null;
+        }
+        const numeric = Number(trimmed);
+        return Number.isFinite(numeric) ? Math.max(0, numeric) : null;
+    }
+
     function bindSearchEvents() {
         // ── Search input ─────────────────────────────────────────────
         elements.searchInput?.addEventListener("input", () => {
@@ -419,8 +428,7 @@ function createApiEvents(context) {
 
         // ── Filter dropdown: price range inputs ──────────────────────
         elements.filterMinPrice?.addEventListener("input", () => {
-            const value = elements.filterMinPrice.value.trim();
-            state.filters.pendingMinPrice = value === "" ? null : Math.max(0, Number(value));
+            state.filters.pendingMinPrice = _parseFilterPrice(elements.filterMinPrice.value);
         });
 
         elements.filterMinPrice?.addEventListener("click", (event) => {
@@ -428,8 +436,7 @@ function createApiEvents(context) {
         });
 
         elements.filterMaxPrice?.addEventListener("input", () => {
-            const value = elements.filterMaxPrice.value.trim();
-            state.filters.pendingMaxPrice = value === "" ? null : Math.max(0, Number(value));
+            state.filters.pendingMaxPrice = _parseFilterPrice(elements.filterMaxPrice.value);
         });
 
         elements.filterMaxPrice?.addEventListener("click", (event) => {
@@ -449,6 +456,12 @@ function createApiEvents(context) {
         elements.filterApplyBtn?.addEventListener("click", () => {
             // Check if category changed to trigger search
             const categoryChanged = state.filters.pendingCategory !== state.filters.category;
+            const filtersChanged = categoryChanged
+                || state.filters.pendingCondition !== state.filters.condition
+                || state.filters.pendingSellerType !== state.filters.sellerType
+                || state.filters.pendingMinPrice !== state.filters.minPrice
+                || state.filters.pendingMaxPrice !== state.filters.maxPrice
+                || state.filters.pendingRegionName !== state.filters.regionName;
             
             // Apply pending filter values
             state.filters.category = state.filters.pendingCategory;
@@ -465,6 +478,8 @@ function createApiEvents(context) {
             // the user's selection).
             if (categoryChanged && state.search.query.trim()) {
                 void search(state.ui.activeView, { keepFilters: true });
+            } else if (filtersChanged && state.search.query.trim()) {
+                void loadListings(true);
             }
 
             _haptic("medium");

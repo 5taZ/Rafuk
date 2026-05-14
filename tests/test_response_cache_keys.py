@@ -27,6 +27,11 @@ def test_listings_cache_key_digests_user_query() -> None:
         strict_search=True,
         category=2010,
         reference_context="base_query",
+        min_price=100.0,
+        max_price=500.0,
+        condition="used",
+        seller_type="private",
+        region_name="минск",
         limit=50,
         offset=100,
     )

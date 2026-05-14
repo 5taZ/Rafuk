@@ -620,6 +620,86 @@ def test_listings_pagination_returns_first_page_only(monkeypatch) -> None:
     assert page1_ids.isdisjoint(page2_ids)
 
 
+def test_listings_applies_filters_before_pagination(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    noisy_ads = [
+        {
+            "ad_id": 4000 + i,
+            "subject": f"iPhone 15 noisy {i}",
+            "price_byn": 100,
+            "ad_link": f"https://www.kufar.by/item/{4000 + i}",
+            "list_time": f"2026-04-01T{i % 24:02d}:00:00",
+            "region_id": 5,
+            "region_name": "Гомель",
+            "company_ad": True,
+            "ad_parameters": [
+                {"p": "condition", "v": "Новый"},
+                {"p": "seller_type", "v": "Магазин"},
+            ],
+        }
+        for i in range(70)
+    ]
+    matching_ads = [
+        {
+            "ad_id": 5000 + i,
+            "subject": f"iPhone 15 target {i}",
+            "price_byn": 1000 + i,
+            "ad_link": f"https://www.kufar.by/item/{5000 + i}",
+            "list_time": f"2026-04-02T{i % 24:02d}:00:00",
+            "region_id": 6,
+            "region_name": "Минск",
+            "company_ad": False,
+            "ad_parameters": [
+                {"p": "condition", "v": "Б/у"},
+                {"p": "seller_type", "v": "Частное лицо"},
+            ],
+        }
+        for i in range(10)
+    ]
+
+    class _FilteredClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            return {"total": 80, "ads": [*noisy_ads, *matching_ads]}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", _FilteredClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: _FilteredClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/listings",
+            params={
+                "query": "iphone",
+                "limit": 5,
+                "offset": 0,
+                "min_price": 900,
+                "max_price": 2000,
+                "condition": "used",
+                "seller_type": "private",
+                "region_name": "Минск",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 10
+    assert payload["returned"] == 5
+    assert payload["has_more"] is True
+    assert [item["ad_id"] for item in payload["listings"]] == [5009, 5008, 5007, 5006, 5005]
+
+
 def test_listings_computed_sort_builds_only_requested_page(monkeypatch) -> None:
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
