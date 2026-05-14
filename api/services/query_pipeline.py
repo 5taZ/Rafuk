@@ -539,8 +539,13 @@ async def load_query_dataset_with_fallback(
     **kwargs: Any,
 ) -> DatasetWithFallback:
     """Try strict search first, fall back to loose if 0 results."""
+    allow_low_result_fallback = kwargs.pop("allow_low_result_fallback", True)
     dataset = await load_query_dataset(**kwargs)
-    if kwargs.get("strict_search") and len(dataset.ads) < LOW_RESULT_FALLBACK_THRESHOLD:
+    if (
+        allow_low_result_fallback
+        and kwargs.get("strict_search")
+        and len(dataset.ads) < LOW_RESULT_FALLBACK_THRESHOLD
+    ):
         loose_kwargs = {**kwargs, "strict_search": False}
         loose_dataset = await load_query_dataset(**loose_kwargs)
         if _should_use_low_result_fallback(len(dataset.ads), len(loose_dataset.ads)):
@@ -552,8 +557,13 @@ async def load_query_dataset_context_with_fallback(
     **kwargs: Any,
 ) -> DatasetContextWithFallback:
     """Try strict search first, fall back to loose if 0 results."""
+    allow_low_result_fallback = kwargs.pop("allow_low_result_fallback", True)
     ctx = await load_query_dataset_context(**kwargs)
-    if kwargs.get("strict_search") and len(ctx.visible.ads) < LOW_RESULT_FALLBACK_THRESHOLD:
+    if (
+        allow_low_result_fallback
+        and kwargs.get("strict_search")
+        and len(ctx.visible.ads) < LOW_RESULT_FALLBACK_THRESHOLD
+    ):
         loose_kwargs = {**kwargs, "strict_search": False}
         loose_ctx = await load_query_dataset_context(**loose_kwargs)
         if _should_use_low_result_fallback(len(ctx.visible.ads), len(loose_ctx.visible.ads)):

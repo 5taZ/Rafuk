@@ -86,7 +86,7 @@ def _listings_cache_key(
             "region_name": region_name,
             "limit": limit,
             "offset": offset,
-            "total_semantics": 3,
+            "total_semantics": 4,
         },
     )
 
@@ -214,7 +214,10 @@ async def get_listings(
         seller_type=seller_type,
         region_name=normalized_region_name,
     )
-    use_upstream_filter_total = listing_filters_active and not unsupported_upstream_filters
+    allow_low_result_fallback = not listing_filters_active and category is None
+    use_upstream_filter_total = (
+        listing_filters_active and not strict_search and not unsupported_upstream_filters
+    )
 
     fallback_used = False
     cache_key = _listings_cache_key(
@@ -248,6 +251,7 @@ async def get_listings(
         reference_context=reference_context,
         category=category,
         search_kwargs=upstream_filter_kwargs or None,
+        allow_low_result_fallback=allow_low_result_fallback,
         cache=cache,
         force_refresh=force_refresh,
     )

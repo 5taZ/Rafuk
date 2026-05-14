@@ -763,7 +763,7 @@ def test_listings_applies_filters_before_pagination(monkeypatch) -> None:
     assert [item["ad_id"] for item in payload["listings"]] == [5009, 5008, 5007, 5006, 5005]
 
 
-def test_listings_filter_total_uses_supported_kufar_params(monkeypatch) -> None:
+def test_listings_filter_total_uses_supported_kufar_params_in_loose_mode(monkeypatch) -> None:
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listings
@@ -816,6 +816,7 @@ def test_listings_filter_total_uses_supported_kufar_params(monkeypatch) -> None:
                 "condition": "used",
                 "seller_type": "private",
                 "region_name": "Минск",
+                "strict_search": False,
             },
         )
 
@@ -827,6 +828,76 @@ def test_listings_filter_total_uses_supported_kufar_params(monkeypatch) -> None:
     assert calls[0]["condition"] == "1"
     assert calls[0]["seller_type"] == "private"
     assert calls[0]["region"] == 7
+
+
+def test_listings_strict_filters_do_not_fallback_to_loose_similar_ads(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    calls: list[dict] = []
+    loose_phone_ads = [
+        {
+            "ad_id": 7100 + i,
+            "subject": subject,
+            "price_byn": price,
+            "ad_link": f"https://www.kufar.by/item/{7100 + i}",
+            "list_time": f"2026-04-02T{i:02d}:00:00",
+            "category": "17010",
+            "region_id": 7,
+            "company_ad": False,
+            "ad_parameters": [
+                {"p": "condition", "v": "Б/у"},
+                {"p": "category", "v": "17010", "vl": "Мобильные телефоны"},
+            ],
+        }
+        for i, (subject, price) in enumerate(
+            [
+                ("смартфон Xiaomi 14 12/512 white глобальная версия", 100),
+                ("iphone 15 только обмен", 100),
+                ("Samsung S3 и другие б/у модели от 100 шт.", 300),
+                ("iPhone 13 Pro Gold цену предлагайте", 100),
+            ]
+        )
+    ]
+
+    class _LoosePhoneClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            calls.append(kwargs)
+            return {"total": 4, "ads": loose_phone_ads}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", _LoosePhoneClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: _LoosePhoneClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/listings",
+            params={
+                "query": "Iphone 14 Pro",
+                "category": 17010,
+                "max_price": 1000,
+                "limit": 50,
+                "offset": 0,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 0
+    assert payload["returned"] == 0
+    assert payload["fallback_used"] is False
+    assert len(calls) == 1
+    assert calls[0]["category"] == 17010
+    assert calls[0]["price_range"] == "r:0,1000"
 
 
 def test_listings_exposes_served_cap_metadata(monkeypatch) -> None:
