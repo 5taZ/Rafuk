@@ -29,6 +29,7 @@ from api.services.currency_service import CurrencyService
 from api.services.history_service import snapshot_bucket, upsert_query_snapshot
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import (
+    CATEGORY_TOTAL_MAX_CALLS,
     KUFAR_CATEGORY_LABELS,
     convert_price_stats,
     fetch_category_totals,
@@ -91,6 +92,7 @@ async def get_price_stats(
     currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
     strict_search: bool = True,
     category: int | None = None,
+    force_refresh: bool = False,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
@@ -104,7 +106,7 @@ async def get_price_stats(
         strict_search=strict_search,
         category=category,
     )
-    cached = await cache.get_json(cache_key)
+    cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
         return PriceStatsResponse(**cached)
 
@@ -120,6 +122,7 @@ async def get_price_stats(
             client=kufar_client,
             category=category,
             cache=cache,
+            force_refresh=force_refresh,
         )
         return fb.dataset
 
@@ -143,6 +146,8 @@ async def get_price_stats(
     converted.pop("count", None)
     insights = analyze_query_text(query)
     category_distribution = extract_category_distribution(dataset.ads)
+    category_total_candidates = 0
+    categories_limited = False
 
     # Replace per-category counts with the *post-filter* count Kufar
     # would actually surface for `cat=<id>` (mirrors kufar.by sidebar)
@@ -183,6 +188,8 @@ async def get_price_stats(
         elif dominant_share >= 0.80 and dominant_id is not None:
             # In-dataset minor cats only — no sibling expansion.
             minor_ids = [cid for cid in seed_ids if cid != dominant_id]
+            category_total_candidates = len(minor_ids)
+            categories_limited = category_total_candidates > CATEGORY_TOTAL_MAX_CALLS
             cat_ids = minor_ids
             minor_totals = await fetch_category_totals(
                 query=query,
@@ -203,6 +210,8 @@ async def get_price_stats(
             # In-dataset-only fan-out trims ноутбук from 18 → 10
             # cats and drops cold-cache wall-clock by ~1 s.
             cat_ids = seed_ids
+            category_total_candidates = len(cat_ids)
+            categories_limited = category_total_candidates > CATEGORY_TOTAL_MAX_CALLS
             totals_by_id = await fetch_category_totals(
                 query=query,
                 currency=currency,
@@ -251,6 +260,9 @@ async def get_price_stats(
         fair_price_from=converted.get("q1"),
         fair_price_to=converted.get("q3"),
         categories=category_distribution,
+        categories_limited=categories_limited,
+        category_total_limit=CATEGORY_TOTAL_MAX_CALLS,
+        category_total_candidates=category_total_candidates,
         suggested_refinements=suggested_refinements,
         **converted,
     )

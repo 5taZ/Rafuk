@@ -25,7 +25,11 @@ from api.services.currency_service import CurrencyService
 logger = logging.getLogger(__name__)
 
 PRICE_STATS_FIELDS = ("mean", "median", "q1", "q3", "min", "max")
-_CATEGORY_TOTAL_MAX_CALLS = 8
+CATEGORY_TOTAL_MAX_CALLS = 8
+_CATEGORY_TOTAL_MAX_CALLS = CATEGORY_TOTAL_MAX_CALLS
+LOW_RESULT_FALLBACK_THRESHOLD = 3
+LOW_RESULT_FALLBACK_MIN_LOOSE_RESULTS = 8
+LOW_RESULT_FALLBACK_MULTIPLIER = 4
 
 # Condition-based API tasks — seller_type filtering is done client-side
 # because Kufar API no longer accepts the "otype" parameter.
@@ -397,6 +401,7 @@ async def load_query_dataset(
     category: int | None = None,
     client: SupportsSearchAllAds | None = None,
     cache: Any | None = None,
+    force_refresh: bool = False,
 ) -> QueryDataset:
     """Build a QueryDataset for one query.
 
@@ -430,11 +435,13 @@ async def load_query_dataset(
         )
 
         response: dict[str, Any] | None = None
-        if cache is not None:
+        if cache is not None and not force_refresh:
             response = await cache.get_json(sf_key)
             await observe_query_dataset_event_with_backend(
                 cache, "cache_hit" if response is not None else "cache_miss"
             )
+        elif force_refresh:
+            await observe_query_dataset_event_with_backend(cache, "force_refresh")
         else:
             await observe_query_dataset_event_with_backend(cache, "cache_disabled")
 
@@ -518,15 +525,26 @@ class DatasetContextWithFallback:
     fallback_used: bool = False
 
 
+def _should_use_low_result_fallback(strict_count: int, loose_count: int) -> bool:
+    if strict_count == 0:
+        return True
+    return (
+        strict_count < LOW_RESULT_FALLBACK_THRESHOLD
+        and loose_count >= LOW_RESULT_FALLBACK_MIN_LOOSE_RESULTS
+        and loose_count >= strict_count * LOW_RESULT_FALLBACK_MULTIPLIER
+    )
+
+
 async def load_query_dataset_with_fallback(
     **kwargs: Any,
 ) -> DatasetWithFallback:
     """Try strict search first, fall back to loose if 0 results."""
     dataset = await load_query_dataset(**kwargs)
-    if kwargs.get("strict_search") and not dataset.ads:
+    if kwargs.get("strict_search") and len(dataset.ads) < LOW_RESULT_FALLBACK_THRESHOLD:
         loose_kwargs = {**kwargs, "strict_search": False}
-        dataset = await load_query_dataset(**loose_kwargs)
-        return DatasetWithFallback(dataset=dataset, fallback_used=True)
+        loose_dataset = await load_query_dataset(**loose_kwargs)
+        if _should_use_low_result_fallback(len(dataset.ads), len(loose_dataset.ads)):
+            return DatasetWithFallback(dataset=loose_dataset, fallback_used=True)
     return DatasetWithFallback(dataset=dataset, fallback_used=False)
 
 
@@ -535,10 +553,11 @@ async def load_query_dataset_context_with_fallback(
 ) -> DatasetContextWithFallback:
     """Try strict search first, fall back to loose if 0 results."""
     ctx = await load_query_dataset_context(**kwargs)
-    if kwargs.get("strict_search") and not ctx.visible.ads:
+    if kwargs.get("strict_search") and len(ctx.visible.ads) < LOW_RESULT_FALLBACK_THRESHOLD:
         loose_kwargs = {**kwargs, "strict_search": False}
-        ctx = await load_query_dataset_context(**loose_kwargs)
-        return DatasetContextWithFallback(context=ctx, fallback_used=True)
+        loose_ctx = await load_query_dataset_context(**loose_kwargs)
+        if _should_use_low_result_fallback(len(ctx.visible.ads), len(loose_ctx.visible.ads)):
+            return DatasetContextWithFallback(context=loose_ctx, fallback_used=True)
     return DatasetContextWithFallback(context=ctx, fallback_used=False)
 
 
@@ -553,6 +572,7 @@ async def load_query_dataset_context(
     reference_context: str = "current",
     category: int | None = None,
     cache: Any | None = None,
+    force_refresh: bool = False,
 ) -> QueryDatasetContext:
     """Build the visible/reference dataset pair for a query.
 
@@ -579,6 +599,7 @@ async def load_query_dataset_context(
                 client=client,
                 category=category,
                 cache=cache,
+                force_refresh=force_refresh,
             )
         finally:
             if owns_client and client is not None:
@@ -593,6 +614,7 @@ async def load_query_dataset_context(
             settings=settings,
             client=client,
             cache=cache,
+            force_refresh=force_refresh,
         )
         visible_dataset = await load_query_dataset(
             query=query,
@@ -602,6 +624,7 @@ async def load_query_dataset_context(
             category=category,
             client=client,
             cache=cache,
+            force_refresh=force_refresh,
         )
     finally:
         if owns_client and client is not None:
@@ -644,7 +667,7 @@ async def fetch_category_totals(
     if not callable(search_method):
         return {}
     unique_category_ids = list(dict.fromkeys(category_ids))
-    selected_category_ids = unique_category_ids[:_CATEGORY_TOTAL_MAX_CALLS]
+    selected_category_ids = unique_category_ids[:CATEGORY_TOTAL_MAX_CALLS]
     if len(unique_category_ids) > len(selected_category_ids):
         logger.info(
             "Kufar category-total fan-out capped at %s/%s categories",

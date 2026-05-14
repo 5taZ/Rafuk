@@ -44,3 +44,54 @@ def test_price_stats_endpoint_returns_payload(monkeypatch) -> None:
     assert payload["total_results"] >= 3
     assert payload["analyzed_count"] >= 3
     assert payload["currency"] == "USD"
+
+
+def test_price_stats_exposes_category_total_cap_metadata(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import price_stats
+    from api.services.query_pipeline import CATEGORY_TOTAL_MAX_CALLS
+
+    class ManyCategoriesClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            ads = [
+                {
+                    "subject": f"iphone category {i}",
+                    "price_byn": 1000 + i,
+                    "category": str(10_000 + i),
+                    "ad_parameters": [
+                        {"p": "category", "v": str(10_000 + i), "vl": f"Категория {i}"}
+                    ],
+                }
+                for i in range(CATEGORY_TOTAL_MAX_CALLS + 2)
+            ]
+            return {"ads": ads, "total": len(ads)}
+
+        async def search(self, **kwargs) -> dict:
+            category = int(kwargs["category"])
+            return {
+                "ads": [{"subject": "iphone", "price_byn": 1000, "category": str(category)}],
+                "total": 1,
+            }
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(price_stats, "KufarClient", ManyCategoriesClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: ManyCategoriesClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        asyncio.get_event_loop().run_until_complete(init_test_tables(app))
+        response = client.get("/api/v1/price-stats", params={"query": "iphone"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["categories_limited"] is True
+    assert payload["category_total_limit"] == CATEGORY_TOTAL_MAX_CALLS
+    assert payload["category_total_candidates"] == CATEGORY_TOTAL_MAX_CALLS + 2

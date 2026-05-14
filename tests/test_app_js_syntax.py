@@ -254,6 +254,23 @@ setImmediate(() => {
     assert result.returncode == 0, result.stderr
 
 
+def test_search_refresh_and_cap_disclosure_contracts() -> None:
+    app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
+    events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    listings_js = (JS_DIR / "api_listings.js").read_text(encoding="utf-8")
+    render_cards_js = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
+    render_views_js = (JS_DIR / "render_views.js").read_text(encoding="utf-8")
+    core_js = (JS_DIR / "app_core.js").read_text(encoding="utf-8")
+
+    assert "{ forceRefresh: true }" in app_js
+    assert "forceRefresh: true" in events_js
+    assert "force_refresh: forceRefresh ? \"1\" : \"\"" in listings_js
+    assert "state.listings.servedCap" in render_cards_js
+    assert "Показана быстрая выборка" in render_cards_js
+    assert "categories_limited" in render_views_js
+    assert "resultCap: 0" in core_js
+
+
 def test_telegram_back_button_stack_is_registered() -> None:
     text = APP_JS.read_text(encoding="utf-8")
     assert "setupTelegramBackButton" in text

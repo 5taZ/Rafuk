@@ -288,6 +288,10 @@ function createRenderCards(context) {
         }
     }
 
+    function _formatCount(value) {
+        return Number(value || 0).toLocaleString("ru-RU");
+    }
+
     function renderListings() {
         return safeRender('renderListings', () => {
             if (state.ui.loading) return;
@@ -321,11 +325,24 @@ function createRenderCards(context) {
                 elements.listingsFallbackBadge.hidden = !state.listings.fallbackUsed;
             }
             if (hasContent && elements.listingsList) {
+                const reachableTotal = state.listings.isLimited && state.listings.servedCap
+                    ? Math.min(state.listings.total || state.listings.servedCap, state.listings.servedCap)
+                    : state.listings.total;
+                const limitedText = state.listings.isLimited
+                    ? `Показана быстрая выборка: до ${_formatCount(state.listings.servedCap)} из ${_formatCount(state.listings.total)}. Уточните запрос или потяните вниз, чтобы обновить.`
+                    : "Все объявления загружены.";
+                if (state.listings.isLimited && state.listings.hasMore) {
+                    elements.listingsList.appendChild(domEl("p", {
+                        className: "list-pagination-note",
+                        text: limitedText,
+                    }));
+                }
                 _appendPaginationSentinel(elements.listingsList, {
                     renderedCount: state.listings.items.length,
-                    totalCount: state.listings.total,
+                    totalCount: reachableTotal,
                     hasMore: state.listings.hasMore,
                     isLoadingMore: state.listings.loadingMore,
+                    allLoadedText: limitedText,
                     onLoadMore: () => {
                         if (typeof actions.loadMoreListings === "function") {
                             void actions.loadMoreListings();

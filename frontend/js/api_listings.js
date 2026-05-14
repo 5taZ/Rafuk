@@ -106,6 +106,10 @@ function createApiListings(context) {
         state.listings._loadedAt = 0;
         state.listings.total = 0;
         state.listings.fallbackUsed = false;
+        state.listings.resultCap = 0;
+        state.listings.datasetCount = 0;
+        state.listings.servedCap = 0;
+        state.listings.isLimited = false;
         state.detail.data = null;
         state.detail.imageIndex = 0;
         state.listings._pending = true;
@@ -165,7 +169,15 @@ function createApiListings(context) {
     }
 
     // ── Load parallel search dependencies ────────────────────────────────
-    function loadSearchDependencies(requestId) {
+    function _applyListingsMeta(payload) {
+        state.listings.resultCap = Number(payload.result_cap || 0);
+        state.listings.datasetCount = Number(payload.dataset_count || 0);
+        state.listings.servedCap = Number(payload.served_cap || 0);
+        state.listings.isLimited = Boolean(payload.is_limited);
+    }
+
+    function loadSearchDependencies(requestId, options = {}) {
+        const forceRefresh = Boolean(options.forceRefresh);
         // Abort previous in-flight search dependencies
         if (state.search.searchAbortController) {
             state.search.searchAbortController.abort();
@@ -187,13 +199,13 @@ function createApiListings(context) {
                 },
             },
             {
-                request: getJson(`/api/v1/segments?${buildCommonQuery()}`, { signal }),
+                request: getJson(`/api/v1/segments?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`, { signal }),
                 apply(payload) {
                     state.misc.segments = payload;
                 },
             },
             {
-                request: getJson(`/api/v1/geography?${buildCommonQuery()}`, { signal }),
+                request: getJson(`/api/v1/geography?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`, { signal }),
                 apply(payload) {
                     state.misc.geography = payload.regions || [];
                 },
@@ -204,6 +216,7 @@ function createApiListings(context) {
                         sort: state.search.sort,
                         limit: PAGE_SIZE,
                         offset: 0,
+                        force_refresh: forceRefresh ? "1" : "",
                     })}`,
                     { signal },
                 ),
@@ -226,6 +239,7 @@ function createApiListings(context) {
                     state.listings.total = payload.total || 0;
                     state.listings.hasMore = Boolean(payload.has_more);
                     state.listings.fallbackUsed = Boolean(payload.fallback_used);
+                    _applyListingsMeta(payload);
                     state.listings._loadedAt = Date.now();
                     state.listings._loadedSort = state.search.sort;
                     state.listings._loadedFilterKey = _listingsFilterKey();
@@ -308,6 +322,7 @@ function createApiListings(context) {
         if (!state.search.query) {
             state.listings.items = [];
             state.listings.hasMore = false;
+            _applyListingsMeta({});
             markDirty('listings');
             renderAll();
             return;
@@ -346,6 +361,7 @@ function createApiListings(context) {
             state.listings.total = payload.total || 0;
             state.listings.hasMore = Boolean(payload.has_more);
             state.listings.fallbackUsed = Boolean(payload.fallback_used);
+            _applyListingsMeta(payload);
             state.listings._loadedAt = Date.now();
             state.listings._loadedSort = state.search.sort;
             state.listings._loadedFilterKey = _listingsFilterKey();
@@ -395,6 +411,7 @@ function createApiListings(context) {
             state.listings.items = state.listings.items.concat(fresh);
             state.listings.total = payload.total || state.listings.total;
             state.listings.hasMore = Boolean(payload.has_more);
+            _applyListingsMeta(payload);
         } catch (_) {
             // On error, surface the chip-style "load more" button by
             // keeping has_more true. The user can tap to retry.
@@ -480,7 +497,7 @@ function createApiListings(context) {
      *        query starts clean — no leftover category from the last
      *        search bleeding through.
      */
-    async function search(target = "overview", { keepFilters = false } = {}) {
+    async function search(target = "overview", { keepFilters = false, forceRefresh = false } = {}) {
         const query = elements.searchInput.value.trim();
         state.search.query = query;
         state.ui.error = null;
@@ -522,7 +539,7 @@ function createApiListings(context) {
 
         try {
             const stats = await getJson(
-                `/api/v1/price-stats?${buildCommonQuery()}`,
+                `/api/v1/price-stats?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`,
                 { signal: searchSignal },
             );
             if (!isActiveRequest(requestId)) {
@@ -549,7 +566,7 @@ function createApiListings(context) {
             }
             markDirty('loading', 'stats', 'summary', 'helper', 'categories');
             renderAll();
-            loadSearchDependencies(requestId);
+            loadSearchDependencies(requestId, { forceRefresh });
 
             // Save to recent searches
             if (context.addRecentSearch) {

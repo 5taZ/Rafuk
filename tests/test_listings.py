@@ -700,6 +700,55 @@ def test_listings_applies_filters_before_pagination(monkeypatch) -> None:
     assert [item["ad_id"] for item in payload["listings"]] == [5009, 5008, 5007, 5006, 5005]
 
 
+def test_listings_exposes_served_cap_metadata(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    ads = [
+        {
+            "ad_id": 6000 + i,
+            "subject": f"iPhone capped {i}",
+            "price_byn": 1000 + i,
+            "ad_link": f"https://www.kufar.by/item/{6000 + i}",
+            "list_time": f"2026-04-01T{i % 24:02d}:00:00",
+            "region_id": 6,
+        }
+        for i in range(250)
+    ]
+
+    class _CappedClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            return {"total": 999, "ads": ads}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", _CappedClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: _CappedClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/listings",
+            params={"query": "iphone", "limit": 50, "offset": 0},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 999
+    assert payload["dataset_count"] == 250
+    assert payload["served_cap"] == 200
+    assert payload["is_limited"] is True
+    assert payload["result_cap"] >= payload["dataset_count"]
+
+
 def test_listings_computed_sort_builds_only_requested_page(monkeypatch) -> None:
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app

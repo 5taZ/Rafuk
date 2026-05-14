@@ -45,6 +45,10 @@ function createAppCore() {
             _requestId: 0,
             _pending: false,
             fallbackUsed: false,
+            resultCap: 0,
+            datasetCount: 0,
+            servedCap: 0,
+            isLimited: false,
         },
         trackers: {
             items: [],

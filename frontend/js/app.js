@@ -51,7 +51,10 @@ function analyticsApp() {
             // branch, but the cheap view is gone — sort=cheap inside
             // the ads view re-uses the same loadListings refresh.
             return query
-                ? () => actions.search && actions.search(view === "ads" ? "ads" : "overview")
+                ? () => actions.search && actions.search(
+                    view === "ads" ? "ads" : "overview",
+                    { forceRefresh: true },
+                )
                 : null;
         }
         return null;

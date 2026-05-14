@@ -136,7 +136,7 @@ function createApiEvents(context) {
         // ── Error bar retry ────────────────────────────────────────────
         elements.errorRetry?.addEventListener("click", () => {
             state.ui.error = null;
-            void search(state.ui.activeView || "overview");
+            void search(state.ui.activeView || "overview", { forceRefresh: true });
         });
     }
 

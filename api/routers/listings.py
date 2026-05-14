@@ -179,6 +179,7 @@ async def get_listings(
     condition: Literal["new", "used"] | None = None,
     seller_type: Literal["private", "shop"] | None = None,
     region_name: str | None = Query(default=None, max_length=128),
+    force_refresh: bool = False,
     limit: int = Query(default=_DEFAULT_LISTINGS_PAGE, ge=1, le=_MAX_LISTINGS_PAGE),
     offset: int = Query(default=0, ge=0, le=_MAX_LISTINGS_PAGE * 10),
     settings: Settings = Depends(get_settings_dependency),
@@ -217,7 +218,7 @@ async def get_listings(
         limit=limit,
         offset=offset,
     )
-    cached = await cache.get_json(cache_key)
+    cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
         return ListingsResponse(**cached)
 
@@ -230,6 +231,7 @@ async def get_listings(
         reference_context=reference_context,
         category=category,
         cache=cache,
+        force_refresh=force_refresh,
     )
     context = fb.context
     fallback_used = fb.fallback_used
@@ -411,6 +413,7 @@ async def get_listings(
     # the server will refuse to serve anyway.
     served_so_far = offset + len(listings)
     has_more = served_so_far < min(filtered_total, page_capped_total)
+    served_cap = min(filtered_total, page_capped_total)
 
     payload = ListingsResponse(
         query=query,
@@ -429,6 +432,10 @@ async def get_listings(
         discount_from_percent=effective_from if sort == "cheap" else None,
         discount_to_percent=effective_to if sort == "cheap" else None,
         fallback_used=fallback_used,
+        result_cap=settings.kufar_max_ads_per_query,
+        dataset_count=len(visible_dataset.ads),
+        served_cap=served_cap,
+        is_limited=filtered_total > served_cap,
         listings=listings,
     )
     await cache.set_json(

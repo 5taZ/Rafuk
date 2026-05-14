@@ -14,6 +14,7 @@ from api.services.query_pipeline import (
     _normalize_response_ads,
     fetch_category_totals,
     load_query_dataset,
+    load_query_dataset_with_fallback,
 )
 
 
@@ -189,6 +190,99 @@ async def test_load_query_dataset_records_cache_miss_hit_and_fetch_metrics() -> 
         'kufar_query_dataset_upstream_fetch_duration_seconds_count{status="success"} 1'
         in text
     )
+
+
+@pytest.mark.asyncio
+async def test_load_query_dataset_force_refresh_bypasses_dataset_cache() -> None:
+    cache = MemoryCache()
+    fetch_calls = 0
+
+    class Client:
+        async def search_all_ads(self, **kwargs) -> dict:
+            nonlocal fetch_calls
+            fetch_calls += 1
+            return {
+                "ads": [{"subject": kwargs["query"], "price_byn": 100 + fetch_calls}],
+                "total": 1,
+            }
+
+    settings = SimpleNamespace(cache_ttl_seconds=300)
+    client = Client()
+    first = await load_query_dataset(
+        query="iphone",
+        currency="BYN",
+        strict_search=False,
+        settings=settings,
+        client=client,
+        cache=cache,
+    )
+    second = await load_query_dataset(
+        query="iphone",
+        currency="BYN",
+        strict_search=False,
+        settings=settings,
+        client=client,
+        cache=cache,
+        force_refresh=True,
+    )
+
+    assert fetch_calls == 2
+    assert first.ads[0]["price_byn"] != second.ads[0]["price_byn"]
+
+
+@pytest.mark.asyncio
+async def test_low_result_strict_search_falls_back_to_richer_loose_dataset() -> None:
+    class Client:
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            strict_matches = [
+                {"subject": "iPhone 15 Pro", "price_byn": 1000},
+                {"subject": "iPhone 15 Pro 256", "price_byn": 1100},
+            ]
+            loose_only = [
+                {"subject": f"iPhone 15 case {i}", "price_byn": 100 + i}
+                for i in range(10)
+            ]
+            return {"ads": [*strict_matches, *loose_only], "total": 12}
+
+    fb = await load_query_dataset_with_fallback(
+        query="iphone 15 pro",
+        currency="BYN",
+        strict_search=True,
+        settings=SimpleNamespace(cache_ttl_seconds=300),
+        client=Client(),
+        cache=MemoryCache(),
+    )
+
+    assert fb.fallback_used is True
+    assert len(fb.dataset.ads) == 12
+
+
+@pytest.mark.asyncio
+async def test_low_result_strict_search_keeps_precise_dataset_when_loose_is_not_richer() -> None:
+    class Client:
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            return {
+                "ads": [
+                    {"subject": "iPhone 15 Pro", "price_byn": 1000},
+                    {"subject": "iPhone 15 Pro 256", "price_byn": 1100},
+                    {"subject": "iPhone 15 case", "price_byn": 100},
+                ],
+                "total": 3,
+            }
+
+    fb = await load_query_dataset_with_fallback(
+        query="iphone 15 pro",
+        currency="BYN",
+        strict_search=True,
+        settings=SimpleNamespace(cache_ttl_seconds=300),
+        client=Client(),
+        cache=MemoryCache(),
+    )
+
+    assert fb.fallback_used is False
+    assert len(fb.dataset.ads) == 2
 
 
 @pytest.mark.asyncio

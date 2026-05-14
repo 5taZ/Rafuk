@@ -38,6 +38,7 @@ async def get_segments(
     currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
     strict_search: bool = True,
     category: int | None = None,
+    force_refresh: bool = False,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
@@ -45,7 +46,7 @@ async def get_segments(
     _user=Depends(get_telegram_user),
 ) -> SegmentsResponse:
     cache_key = f"segments:{query}:{currency}:{strict_search}:{category}"
-    cached = await cache.get_json(cache_key)
+    cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
         return SegmentsResponse(**cached)
 
@@ -68,6 +69,7 @@ async def get_segments(
         client=kufar_client,
         category=category,
         cache=cache,
+        force_refresh=force_refresh,
     )
     dataset = fb.dataset
     raw_segments = compute_segments(dataset.ads)

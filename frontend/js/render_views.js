@@ -86,6 +86,12 @@ function createRenderViews(context) {
                     button.textContent = `${cat.label} (${cat.count})`;
                     elements.filterCategories.appendChild(button);
                 }
+                if (state.misc.stats?.categories_limited) {
+                    const note = document.createElement("span");
+                    note.className = "filter-empty";
+                    note.textContent = `Точные счётчики ограничены топ-${state.misc.stats.category_total_limit || state.filters.categories.length} категорий. Уточните запрос, чтобы сузить список.`;
+                    elements.filterCategories.appendChild(note);
+                }
             }
 
             // Update price range inputs with PENDING values

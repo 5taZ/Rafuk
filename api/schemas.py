@@ -90,6 +90,9 @@ class PriceStatsResponse(BaseModel):
     fair_price_from: float | None = None
     fair_price_to: float | None = None
     categories: list[CategoryBucket] = Field(default_factory=list)
+    categories_limited: bool = False
+    category_total_limit: int = 0
+    category_total_candidates: int = 0
     # 3-5 short refinements pulled from the result-set titles —
     # tokens / phrases that appear most often in the listings'
     # `subject` but aren't already part of the user's query. The
@@ -214,6 +217,10 @@ class ListingsResponse(BaseModel):
     discount_from_percent: float | None = None
     discount_to_percent: float | None = None
     fallback_used: bool = False
+    result_cap: int = 0
+    dataset_count: int = 0
+    served_cap: int = 0
+    is_limited: bool = False
     listings: list[ListingItem]
 
 

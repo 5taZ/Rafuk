@@ -2,7 +2,7 @@
 
 ## Current verdict
 
-The search stack is functional and reasonably optimized: backend endpoints share a cached Kufar dataset, concurrent cold requests collapse through singleflight, frontend requests use debounce/abort/stale guards, and the relevant search tests are green. The remaining issues are not "search is broken" problems; they are accuracy/UX edge cases caused by performance-oriented shortcuts.
+The search stack is functional and reasonably optimized: backend endpoints share a cached Kufar dataset, concurrent cold requests collapse through singleflight, frontend requests use debounce/abort/stale guards, and the relevant search tests are green. The audit issues below have implementation coverage; remaining future work should be driven by production measurements rather than known correctness gaps.
 
 Last audit command:
 
@@ -13,11 +13,11 @@ uv run pytest tests/test_listings.py tests/test_price_stats.py tests/test_query_
   tests/test_frontend_structure.py tests/test_app_js_syntax.py -q
 ```
 
-Result: `132 passed`.
+Latest expanded audit result after Waves 108-109: `141 passed`.
 
 ## Problems to fix
 
-### SEARCH-1 — Non-category filters are client-side only
+### SEARCH-1 — Non-category filters are client-side only — fixed in Wave108
 
 Price, condition, seller type, and region filters are applied in `frontend/js/render_cards.js` to already-loaded cards. That is fast, but it can be wrong: the first page can filter down to zero while matching ads exist on later pages. Category is already server-side; the other filters should use the same backend pagination path.
 
@@ -29,7 +29,7 @@ Fix direction:
 - Make the frontend send applied filters in listing requests.
 - Keep the frontend filter pass as a defensive no-op/fallback for already-rendered legacy payloads.
 
-### SEARCH-2 — Result cap is not explicit enough
+### SEARCH-2 — Result cap is not explicit enough — fixed in Wave109
 
 The backend intentionally fetches at most `kufar_max_ads_per_query` raw ads and serves at most `_MAX_LISTINGS_PAGE` cards. This is a good Mini App performance trade-off, but broad queries can show a large Kufar total while the app will only paginate through the capped subset.
 
@@ -39,7 +39,7 @@ Fix direction:
 - Render an honest note/badge in the listings UI when the app is showing a capped sample.
 - Keep the existing fast default; do not silently attempt unbounded pagination.
 
-### SEARCH-3 — Strict fallback only triggers at zero results
+### SEARCH-3 — Strict fallback only triggers at zero results — fixed in Wave109
 
 Strict search currently falls back to loose mode only when strict filtering returns no ads. That is safe, but sometimes still poor UX: a strict result set with one or two weak matches can hide many useful nearby ads.
 
@@ -49,7 +49,7 @@ Fix direction:
 - Keep the threshold conservative to avoid drowning precise rare queries in broad noise.
 - Surface the existing `fallback_used` UI badge so users know they are seeing similar results.
 
-### SEARCH-4 — Category totals are capped and approximate on diverse broad queries
+### SEARCH-4 — Category totals are capped and approximate on diverse broad queries — fixed in Wave109
 
 Category chip totals use a cold fan-out capped at 8 categories. This protects latency, but for very broad/diverse queries the chip list can be incomplete.
 
@@ -59,7 +59,7 @@ Fix direction:
 - Make cap behavior visible in code/tests and, if needed later, expose a "more categories" path only after measuring production latency.
 - Do not expand this until SEARCH-1 and SEARCH-2 are fixed; server-side filters and cap disclosure matter more.
 
-### SEARCH-5 — Cache freshness is optimized for analytics, not first-to-buy freshness
+### SEARCH-5 — Cache freshness is optimized for analytics, not first-to-buy freshness — fixed in Wave109
 
 Server cache TTL is 300s and browser cache allows short stale-while-revalidate. This is acceptable for market analytics but can feel stale for users trying to catch new listings first.
 
@@ -81,15 +81,12 @@ Fix direction:
    - Frontend sends applied filters.
    - Add regression tests for filtered pagination and cache keys.
 
-3. **Wave 109 — explicit result-cap metadata**
+3. **Wave 109 — remaining search audit fixes**
    - Fix SEARCH-2.
    - Response includes cap/sample metadata.
    - UI shows an honest capped-sample note.
-   - Add backend/frontend structure tests.
-
-4. **Wave 110 — conservative low-result strict fallback**
    - Improve SEARCH-3 without changing the default strict behavior too aggressively.
    - Add query-pipeline tests for zero-result and low-result fallback.
-
-5. **Deferred after measurement**
-   - SEARCH-4 and SEARCH-5 remain documented but should be changed only with production latency/freshness evidence.
+   - Expose category-total cap metadata for SEARCH-4.
+   - Add explicit force-refresh bypass for pull-to-refresh/retry for SEARCH-5.
+   - Add backend/frontend structure tests.
