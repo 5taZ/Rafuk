@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from api import limiter as limiter_mod
 from api.dependencies import get_session_factory_dependency
-from api.limiter import rate_limiter_degraded
 
 router = APIRouter()
 _DB_TIMEOUT_SECONDS = 2.0
@@ -42,7 +42,7 @@ async def health_check(
         checks["status"] = "degraded"
 
     # Rate limiter status
-    if rate_limiter_degraded:
+    if limiter_mod.rate_limiter_degraded:
         checks["rate_limiter"] = "degraded"
         checks["status"] = "degraded"
     else:

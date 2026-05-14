@@ -30,6 +30,20 @@ def test_health_check_returns_ok(client) -> None:
     assert data["rate_limiter"] in ("ok", "degraded")
 
 
+def test_health_check_reads_live_rate_limiter_degradation(monkeypatch) -> None:
+    from api import limiter as limiter_mod
+
+    monkeypatch.setattr(limiter_mod, "rate_limiter_degraded", True)
+    app = create_app()
+    with TestClient(app) as c:
+        resp = c.get("/api/v1/health")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "degraded"
+    assert data["rate_limiter"] == "degraded"
+
+
 def test_readiness_check_returns_200(client) -> None:
     # TEST-M2: previously asserted ``status_code in (200, 503)`` to
     # paper over CI not having Redis. The lifespan in api/main.py
