@@ -190,51 +190,38 @@ currency selector.
 * Keep `hasPriceRange && itemPrice == null → false` rule so
   "Договорная" (price=null) ads still drop when a price range is set.
 
-### SEARCH-9 — Filter dropdown commit doesn't surface backend errors
+### SEARCH-9 — Filter-narrowed empty state has no escape hatch — fixed in Wave 117
 
-**Severity: low — diagnostic improvement.**
+**Severity: low — diagnostic / UX improvement.**
 
 When the filter Apply button kicks off `loadListings(true)` and the
 backend returns an empty slice (which after SEARCH-6's fix is rare
-but not impossible — e.g. extremely tight ranges), the user sees the
-generic "Ничего не найдено / Попробуйте изменить запрос или снять
-фильтры" empty state. There's no signal whether the empty came from
-a backend filter, a dataset cap, or a strict-mode mismatch.
+but not impossible — e.g. extremely tight ranges), the user used to
+see only the generic "Ничего не найдено / Попробуйте изменить
+запрос или снять фильтры" empty state. They had to find the filter
+dropdown, open it, and clear each field by hand to escape.
 
-This is a cosmetic improvement, not a correctness fix; documenting
-here so the wave plan picks it up after the higher-priority fixes
-land.
+Wave 117 wires `actions.clearListingFilters` so the listings empty
+state shows a "Снять фильтры" CTA whenever any of category /
+condition / seller / price range / region is applied. Click drops
+every applied filter (current + pending) and re-runs the broad
+search via `search(activeView, { keepFilters: true })`. The CTA
+disappears as soon as filters are off, so the unfiltered "0
+results" case still reads as "wrong query" rather than "wrong
+filters".
 
-**Fix direction (later)**:
+We deliberately do **not** auto-clear filters — preserving user
+intent matters more than always showing some result.
 
-* When `state.listings.total === 0` and any of the listing filters
-  (price/condition/seller/region/category) is active, show an inline
-  "Снять фильтры" link in the empty state.
-* Don't auto-clear filters — preserving user intent matters more
-  than always showing some result.
+## Atomic wave plan (delivered)
 
-## Atomic wave plan
-
-1. **Wave 113 — SEARCH-6 — kopecks fix.**
-   Convert min/max to kopecks inside `kufar_price_range`; rename the
-   open-max constant to reflect the unit; update the three test files
-   that asserted the BYN-as-kopecks shape. Add a regression test that
-   verifies `r:0,2500` is no longer produced for `max_price=2500`.
-
-2. **Wave 114 — SEARCH-8 — client-side filter currency safety.**
-   Switch the defensive client-side price filter to use
-   `item.price_byn`, drop the obsolete BYN-vs-display-currency
-   comparison. Add a frontend syntax/structure regression test if
-   feasible.
-
-3. **Wave 115 — SEARCH-7 — surface force-refresh on the totals chip.**
-   Add a small refresh affordance + binding that calls
-   `search(state.ui.activeView, { forceRefresh: true })`. No backend
-   change. Add a frontend structure test that the new control exists.
-
-4. **Wave 116 — SEARCH-9 — empty-state diagnostics.**
-   Inline "Снять фильтры" CTA when filters are active and backend
-   returned 0. Pure UX, no schema change.
+| Wave | Audit ID | Done |
+|------|----------|------|
+| 113  | (audit doc) | docs(wave113): record search filter problems audit |
+| 114  | SEARCH-6 | fix(wave114): convert price filter to kopecks before Kufar call |
+| 115  | SEARCH-8 | fix(wave115): keep client-side price filter pinned to BYN |
+| 116  | SEARCH-7 | fix(wave116): surface force-refresh on totals to escape 5-min cache lag |
+| 117  | SEARCH-9 | fix(wave117): offer "Снять фильтры" CTA from filter-narrowed empty state |
 
 Each wave: green `uv run pytest --tb=short -q`, atomic commit with
 the audit IDs in the body, no formatter run (per AGENTS.md).

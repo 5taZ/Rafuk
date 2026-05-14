@@ -133,6 +133,35 @@ function createApiListings(context) {
         state.filters.pendingRegionName = "";
     }
 
+    function _hasActiveListingFilters() {
+        return (
+            state.filters.category != null
+            || Boolean(state.filters.condition)
+            || Boolean(state.filters.sellerType)
+            || state.filters.minPrice != null
+            || state.filters.maxPrice != null
+            || Boolean(state.filters.regionName)
+        );
+    }
+
+    // SEARCH-9: drop every applied filter and re-run the search so
+    // the listings panel exits the empty state. Used by the
+    // "Снять фильтры" CTA inside `renderListingsCollection`'s empty
+    // branch — it's the same code path filterApply runs minus the
+    // dropdown gymnastics, but always re-fetching the broad slice.
+    //
+    // We pass `keepFilters: true` because we already cleared the
+    // filters above; passing false would make `search()` call
+    // `resetCategoryFilter()` again, which is harmless but redundant.
+    async function clearListingFilters() {
+        if (!state.search.query?.trim()) return;
+        if (!_hasActiveListingFilters()) return;
+        resetCategoryFilter();
+        markDirty('categories', 'listings', 'stats', 'helper', 'summary');
+        renderAll();
+        await search(state.ui.activeView || "ads", { keepFilters: true });
+    }
+
     // ── Load price history (standalone) ──────────────────────────────────
     async function loadHistory() {
         if (!state.search.query) {
@@ -602,6 +631,10 @@ function createApiListings(context) {
         loadSearchDependencies,
         clearSearchData,
         resetCategoryFilter,
+        // SEARCH-9: empty-state CTA dispatches this through
+        // `actions.clearListingFilters` to escape a filter-narrowed
+        // zero-result panel without retyping the query.
+        clearListingFilters,
         loadHistory,
         // FE-C4: abort hooks exposed for callers (closeDetailModal,
         // view changes) to drop pending requests on unmount.

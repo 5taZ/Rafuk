@@ -183,10 +183,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260514-db67f8d"),
-            context._loadScript("js/api_ai_render.js?v=20260514-db67f8d"),
-            context._loadScript("js/api_ai.js?v=20260514-db67f8d"),
-            context._loadScript("js/api_listing_assistant.js?v=20260514-db67f8d"),
+            context._loadScript("js/api_ai_modal.js?v=20260514-3668d36"),
+            context._loadScript("js/api_ai_render.js?v=20260514-3668d36"),
+            context._loadScript("js/api_ai.js?v=20260514-3668d36"),
+            context._loadScript("js/api_listing_assistant.js?v=20260514-3668d36"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -220,6 +220,10 @@ function createAppActions(baseContext) {
         openListingDetail: listings.openListingDetail,
         loadSearchDependencies: listings.loadSearchDependencies,
         clearSearchData: listings.clearSearchData,
+        // SEARCH-9: render_cards.js reads this off `context.actions`
+        // when the listings panel renders its empty state with active
+        // filters — clicking "Снять фильтры" dispatches it.
+        clearListingFilters: listings.clearListingFilters,
         loadHistory: listings.loadHistory,
 
         // From trackers
@@ -908,6 +912,8 @@ function createAppActions(baseContext) {
         search: listings.search,
         loadListings: listings.loadListings,
         loadMoreListings: listings.loadMoreListings,
+        // SEARCH-9: empty-state CTA target.
+        clearListingFilters: listings.clearListingFilters,
         loadHistory: listings.loadHistory,
         loadTrackers: trackers.loadTrackers,
         loadLeads: leads.loadLeads,

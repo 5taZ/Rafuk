@@ -612,6 +612,46 @@ def test_totals_refresh_buttons_force_refresh_search(soup: BeautifulSoup, css_te
     assert "@keyframes totals-refresh-spin" in css_text
 
 
+def test_empty_state_offers_clear_filters_when_filters_narrow_to_zero() -> None:
+    """SEARCH-9: a filter-narrowed empty state without an inline escape
+    forces the user to find the dropdown, open it, and clear each
+    field by hand. Wire `actions.clearListingFilters` so the empty
+    state shows a "Снять фильтры" CTA whenever the listings panel
+    renders 0 cards while any filter is applied.
+    """
+    listings_js = (JS_DIR / "api_listings.js").read_text(encoding="utf-8")
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    cards_js = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
+
+    # The action exists, calls `resetCategoryFilter` and re-runs the
+    # search using the existing pipeline.
+    assert "async function clearListingFilters()" in listings_js
+    assert "if (!state.search.query?.trim()) return;" in listings_js
+    assert "if (!_hasActiveListingFilters()) return;" in listings_js
+    assert "resetCategoryFilter();" in listings_js
+    assert (
+        'await search(state.ui.activeView || "ads", { keepFilters: true });'
+        in listings_js
+    )
+    # Exported from the module's public surface.
+    assert "clearListingFilters," in listings_js
+
+    # Plumbed through both the cross-module context AND the public
+    # action surface that app.js mirrors into actionRegistry.
+    assert "clearListingFilters: listings.clearListingFilters," in actions_js
+    # Make sure the line shows up at least twice (context + return).
+    assert actions_js.count("clearListingFilters: listings.clearListingFilters,") >= 2
+
+    # render_cards.js detects active filters and dispatches the action
+    # via the shared `actions` registry.
+    assert "function _hasActiveListingFilters()" in cards_js
+    assert "actionLabel = \"Снять фильтры\"" in cards_js
+    assert "onAction = () => { void clearAction(); };" in cards_js
+    # Stay defensive against the action not being wired yet (e.g. on
+    # a partially-loaded page) so the CTA simply doesn't render.
+    assert "const clearAction = actions?.clearListingFilters;" in cards_js
+
+
 def test_client_side_price_filter_uses_byn_against_filter_byn() -> None:
     """SEARCH-8: the filter dropdown labels its inputs "Цена, BYN", so
     `state.filters.minPrice` / `maxPrice` are always in BYN. The

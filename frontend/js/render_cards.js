@@ -171,6 +171,21 @@ function createRenderCards(context) {
      * @param {number|null} totalOverride - Override for total count display
      * @returns {boolean} True if content was rendered, false if empty
      */
+    function _hasActiveListingFilters() {
+        // SEARCH-9: mirrors `_hasActiveListingFilters` in api_listings.js
+        // — kept in sync because this file is lazy-loaded separately
+        // (no shared module scope). Both are tiny; duplication is
+        // cheaper than threading the helper through `context`.
+        return (
+            state.filters.category != null
+            || Boolean(state.filters.condition)
+            || Boolean(state.filters.sellerType)
+            || state.filters.minPrice != null
+            || state.filters.maxPrice != null
+            || Boolean(state.filters.regionName)
+        );
+    }
+
     function renderListingsCollection(items, container, badge, emptyText, totalOverride = null) {
         return safeRender('renderListingsCollection', () => {
             if (!container) return false;
@@ -180,13 +195,27 @@ function createRenderCards(context) {
             const filtered = applyFilters(items);
             if (!filtered.length) {
                 const buildEmpty = context.buildEmptyState;
+                // SEARCH-9: when filters are active, give the user a
+                // one-click escape hatch ("Снять фильтры") instead of
+                // a static empty-state message. The CTA dispatches
+                // `actions.clearListingFilters`, which wipes every
+                // applied filter (category + condition + seller +
+                // price range + region) and re-runs the broad search
+                // without retyping the query.
+                const filtersActive = _hasActiveListingFilters();
+                const clearAction = actions?.clearListingFilters;
                 if (typeof buildEmpty === "function") {
-                    container.appendChild(
-                        buildEmpty({
-                            title: "Ничего не найдено",
-                            hint: emptyText || "Попробуйте изменить запрос или снять фильтры.",
-                        })
-                    );
+                    const opts = {
+                        title: "Ничего не найдено",
+                        hint: emptyText || (filtersActive
+                            ? "Фильтры слишком узкие для этого запроса."
+                            : "Попробуйте изменить запрос."),
+                    };
+                    if (filtersActive && typeof clearAction === "function") {
+                        opts.actionLabel = "Снять фильтры";
+                        opts.onAction = () => { void clearAction(); };
+                    }
+                    container.appendChild(buildEmpty(opts));
                 } else {
                     const note = document.createElement("p");
                     note.className = "tracker-empty";
