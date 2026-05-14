@@ -1509,6 +1509,29 @@ def test_consent_save_failure_does_not_unlock_ai() -> None:
     )
 
 
+def test_app_init_does_not_show_ai_consent_on_startup() -> None:
+    app_js = APP_JS.read_text(encoding="utf-8")
+    init_start = app_js.index("function init()")
+    init_body = app_js[init_start:app_js.index("\n    // Detach listeners", init_start)]
+    assert "actions.checkAiConsent" not in init_body
+
+
+def test_all_ai_intent_paths_check_ai_consent_lazily() -> None:
+    ai_js = (JS_DIR / "api_ai.js").read_text(encoding="utf-8")
+    listing_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+
+    ai_start = ai_js.index("async function loadAIAnalysis")
+    ai_body = ai_js[ai_start:ai_js.index("\n    /** Hybrid error UI", ai_start)]
+    assert "context.checkAiConsent" in ai_body
+
+    submit_start = listing_js.index("async function handleSubmit")
+    submit_body = listing_js[submit_start:listing_js.index("\n    // ── Wire DOM", submit_start)]
+    assert "checkAiConsent" in submit_body
+    assert submit_body.index("await checkAiConsent();") < submit_body.index(
+        'postJson("/api/v1/ai/listing-assistant"'
+    )
+
+
 def test_delete_account_clears_local_account_data_before_reload() -> None:
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
     clear_start = actions_js.index("function clearLocalAccountData()")

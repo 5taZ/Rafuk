@@ -25,6 +25,7 @@ function createApiListingAssistant(context) {
         postJson,
         safeKufarUrl,
         safeImageUrl,
+        checkAiConsent,
     } = context;
 
     // ── DOM refs ────────────────────────────────────────────────────────
@@ -956,6 +957,14 @@ function createApiListingAssistant(context) {
             extra_notes: (notesInput.value || "").trim() || null,
             photos: photos.map((p) => p.data),
         };
+
+        if (typeof checkAiConsent === "function") {
+            try {
+                await checkAiConsent();
+            } catch (_) {
+                return;
+            }
+        }
 
         setBusy(true);
         _resultSource = "form";

@@ -140,15 +140,6 @@ function analyticsApp() {
         void actions.loadWatchlist();
         void actions.applyLaunchParams();
 
-        // Check PD processing consent on first launch — non-blocking,
-        // just shows the consent modal if user hasn't consented yet.
-        if (typeof actions.checkAiConsent === "function") {
-            // checkAiConsent checks /account/consent/ai_analysis which
-            // implies PD processing consent was also granted (both are
-            // required together). If missing, the consent modal appears.
-            void actions.checkAiConsent().catch((err) => { console.warn("AI consent check failed", err); });
-        }
-
         // Pull-to-refresh — page-scoped, picks the right loader by view.
         // Skipped under prefers-reduced-motion (the helper short-circuits).
         //
