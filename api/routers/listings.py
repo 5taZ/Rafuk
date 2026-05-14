@@ -27,6 +27,7 @@ from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
+from api.services.kufar_filters import build_kufar_search_filters
 from api.services.listing_mapper import build_listing_item, compute_listing_sort_key
 from api.services.market_signals import area_label, region_label
 from api.services.query_pipeline import load_query_dataset_context_with_fallback
@@ -85,7 +86,7 @@ def _listings_cache_key(
             "region_name": region_name,
             "limit": limit,
             "offset": offset,
-            "total_semantics": 2,
+            "total_semantics": 3,
         },
     )
 
@@ -199,6 +200,21 @@ async def get_listings(
     if min_price is not None and max_price is not None and max_price < min_price:
         min_price, max_price = max_price, min_price
     normalized_region_name = _normalized_filter_text(region_name) or None
+    listing_filters_active = (
+        min_price is not None
+        or max_price is not None
+        or condition is not None
+        or seller_type is not None
+        or normalized_region_name is not None
+    )
+    upstream_filter_kwargs, unsupported_upstream_filters = build_kufar_search_filters(
+        min_price=min_price,
+        max_price=max_price,
+        condition=condition,
+        seller_type=seller_type,
+        region_name=normalized_region_name,
+    )
+    use_upstream_filter_total = listing_filters_active and not unsupported_upstream_filters
 
     fallback_used = False
     cache_key = _listings_cache_key(
@@ -231,6 +247,7 @@ async def get_listings(
         client=kufar_client,
         reference_context=reference_context,
         category=category,
+        search_kwargs=upstream_filter_kwargs or None,
         cache=cache,
         force_refresh=force_refresh,
     )
@@ -245,13 +262,6 @@ async def get_listings(
         condition=condition,
         seller_type=seller_type,
         region_name=normalized_region_name,
-    )
-    listing_filters_active = (
-        min_price is not None
-        or max_price is not None
-        or condition is not None
-        or seller_type is not None
-        or normalized_region_name is not None
     )
     median_byn = visible_dataset.price_stats.median
     # Build the category reference table.
@@ -391,7 +401,9 @@ async def get_listings(
     if sort == "cheap":
         filtered_total = len(deal_ads)
     elif listing_filters_active:
-        filtered_total = len(sorted_ads)
+        filtered_total = (
+            visible_dataset.total_results if use_upstream_filter_total else len(sorted_ads)
+        )
     else:
         filtered_total = visible_dataset.total_results
     # `has_more` mirrors the obvious "is there a next page?" question

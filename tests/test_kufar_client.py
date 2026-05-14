@@ -88,6 +88,26 @@ async def test_search_sends_correct_params(
 
 
 @pytest.mark.asyncio
+async def test_search_sends_supported_native_filter_params(
+    ok_response: MagicMock,
+    mock_settings: MagicMock,
+) -> None:
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=ok_response) as mock:
+        await KufarClient(mock_settings).search(
+            query="iphone",
+            area=24,
+            condition="used",
+            seller_type="private",
+            price_range="r:500,1000",
+        )
+    params = mock.call_args.kwargs.get("params", {})
+    assert params["ar"] == 24
+    assert params["cnd"] == "1"
+    assert params["cmp"] == "0"
+    assert params["prc"] == "r:500,1000"
+
+
+@pytest.mark.asyncio
 async def test_search_raises_kufar_api_error_after_retries(mock_settings: MagicMock) -> None:
     bad_response = MagicMock(spec=httpx.Response)
     bad_response.raise_for_status.side_effect = httpx.HTTPStatusError(

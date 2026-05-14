@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from api.config import Settings
+from api.services.kufar_filters import KUFAR_CONDITION_VALUES, KUFAR_SELLER_VALUES
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +114,10 @@ class KufarClient:
         sort: str = "lst.d",
         cursor: str | None = None,
         region: int | None = None,
+        area: int | None = None,
         condition: str | None = None,
         seller_type: str | None = None,
+        price_range: str | None = None,
         category: int | None = None,
         bypass_delay: bool = False,
     ) -> dict[str, Any]:
@@ -151,12 +154,18 @@ class KufarClient:
             params["cursor"] = cursor
         if region is not None:
             params["rgn"] = region
+        if area is not None:
+            params["ar"] = area
         if condition:
-            params["cnd"] = condition
+            params["cnd"] = KUFAR_CONDITION_VALUES.get(condition, condition)
+        if seller_type:
+            seller_value = KUFAR_SELLER_VALUES.get(seller_type, seller_type)
+            if seller_value in {"0", "1"}:
+                params["cmp"] = seller_value
+        if price_range:
+            params["prc"] = price_range
         if category is not None:
             params["cat"] = category
-        # NOTE: Kufar API no longer accepts the "otype" parameter (422 since 2026).
-        # Seller type filtering is done client-side after fetching results.
 
         headers = {
             "User-Agent": USER_AGENT,
@@ -236,8 +245,10 @@ class KufarClient:
         currency: str = "USD",
         sort: str = "lst.d",
         region: int | None = None,
+        area: int | None = None,
         condition: str | None = None,
         seller_type: str | None = None,
+        price_range: str | None = None,
         category: int | None = None,
     ) -> dict[str, Any]:
         response = await self.search(
@@ -246,7 +257,10 @@ class KufarClient:
             currency=currency,
             sort=sort,
             region=region,
+            area=area,
             condition=condition,
+            seller_type=seller_type,
+            price_range=price_range,
             category=category,
         )
         ads = list(response.get("ads", []))
@@ -264,7 +278,10 @@ class KufarClient:
                 sort=sort,
                 cursor=cursor,
                 region=region,
+                area=area,
                 condition=condition,
+                seller_type=seller_type,
+                price_range=price_range,
                 category=category,
             )
             ads.extend(page.get("ads", []))

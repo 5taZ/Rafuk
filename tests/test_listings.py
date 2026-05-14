@@ -713,7 +713,7 @@ def test_listings_applies_filters_before_pagination(monkeypatch) -> None:
             "ad_link": f"https://www.kufar.by/item/{5000 + i}",
             "list_time": f"2026-04-02T{i % 24:02d}:00:00",
             "region_id": 6,
-            "region_name": "Минск",
+            "region_name": "Октябрьский",
             "company_ad": False,
             "ad_parameters": [
                 {"p": "condition", "v": "Б/у"},
@@ -751,7 +751,7 @@ def test_listings_applies_filters_before_pagination(monkeypatch) -> None:
                 "max_price": 2000,
                 "condition": "used",
                 "seller_type": "private",
-                "region_name": "Минск",
+                "region_name": "Октябрьский",
             },
         )
 
@@ -761,6 +761,72 @@ def test_listings_applies_filters_before_pagination(monkeypatch) -> None:
     assert payload["returned"] == 5
     assert payload["has_more"] is True
     assert [item["ad_id"] for item in payload["listings"]] == [5009, 5008, 5007, 5006, 5005]
+
+
+def test_listings_filter_total_uses_supported_kufar_params(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    calls: list[dict] = []
+    matching_ads = [
+        {
+            "ad_id": 7000 + i,
+            "subject": f"iPhone filtered {i}",
+            "price_byn": (900 + i) * 100,
+            "ad_link": f"https://www.kufar.by/item/{7000 + i}",
+            "list_time": f"2026-04-02T{i:02d}:00:00",
+            "region_id": 7,
+            "region_name": "Минск",
+            "company_ad": False,
+            "ad_parameters": [
+                {"p": "condition", "v": "Б/у"},
+                {"p": "seller_type", "v": "Частное лицо"},
+            ],
+        }
+        for i in range(3)
+    ]
+
+    class _NativeFilteredClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            calls.append(kwargs)
+            return {"total": 1234, "ads": matching_ads}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", _NativeFilteredClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: _NativeFilteredClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/listings",
+            params={
+                "query": "iphone",
+                "limit": 50,
+                "offset": 0,
+                "min_price": 500,
+                "max_price": 1000,
+                "condition": "used",
+                "seller_type": "private",
+                "region_name": "Минск",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1234
+    assert payload["returned"] == 3
+    assert calls[0]["price_range"] == "r:500,1000"
+    assert calls[0]["condition"] == "1"
+    assert calls[0]["seller_type"] == "private"
+    assert calls[0]["region"] == 7
 
 
 def test_listings_exposes_served_cap_metadata(monkeypatch) -> None:

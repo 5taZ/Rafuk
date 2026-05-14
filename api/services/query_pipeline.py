@@ -571,6 +571,7 @@ async def load_query_dataset_context(
     client: SupportsSearchAllAds | None = None,
     reference_context: str = "current",
     category: int | None = None,
+    search_kwargs: dict[str, Any] | None = None,
     cache: Any | None = None,
     force_refresh: bool = False,
 ) -> QueryDatasetContext:
@@ -597,6 +598,7 @@ async def load_query_dataset_context(
                 strict_search=strict_search,
                 settings=settings,
                 client=client,
+                search_kwargs=search_kwargs,
                 category=category,
                 cache=cache,
                 force_refresh=force_refresh,
@@ -613,6 +615,7 @@ async def load_query_dataset_context(
             strict_search=strict_search,
             settings=settings,
             client=client,
+            search_kwargs=search_kwargs,
             cache=cache,
             force_refresh=force_refresh,
         )
@@ -621,6 +624,7 @@ async def load_query_dataset_context(
             currency=currency,
             strict_search=strict_search,
             settings=settings,
+            search_kwargs=search_kwargs,
             category=category,
             client=client,
             cache=cache,
