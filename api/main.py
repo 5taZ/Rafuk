@@ -389,7 +389,21 @@ def create_app() -> FastAPI:
     # idempotent (INSERT … ON CONFLICT DO NOTHING) so it's safe to run
     # without awaiting.
     _provision_tasks: set[asyncio.Task[None]] = set()
+    _provisioned_users: dict[int, float] = {}
     _provision_user_timeout_seconds = 5.0
+    _provision_user_ttl_seconds = 300.0
+
+    def _should_auto_provision(user_id: int) -> bool:
+        now = time.monotonic()
+        expires_at = _provisioned_users.get(user_id)
+        if expires_at is not None and expires_at > now:
+            return False
+        _provisioned_users[user_id] = now + _provision_user_ttl_seconds
+        if len(_provisioned_users) > 4096:
+            expired = [uid for uid, expiry in _provisioned_users.items() if expiry <= now]
+            for uid in expired:
+                _provisioned_users.pop(uid, None)
+        return True
 
     async def _provision_user_async(
         sf: Any, user_id: int, first_name: str,
@@ -400,6 +414,7 @@ def create_app() -> FastAPI:
                 timeout=_provision_user_timeout_seconds,
             )
         except Exception:  # noqa: BLE001 — background task, must never raise
+            _provisioned_users.pop(user_id, None)
             logger.warning(
                 "Auto-provision failed for telegram_user_id=%s",
                 user_id, exc_info=True,
@@ -411,7 +426,7 @@ def create_app() -> FastAPI:
         init_data = getattr(request.state, "telegram_user", None)
         if init_data is not None and init_data.user_id != 0:
             sf = getattr(request.app.state, "session_factory", None)
-            if sf is not None:
+            if sf is not None and _should_auto_provision(init_data.user_id):
                 # Strong-ref the task so the GC doesn't drop it before
                 # it runs; self-clean via done callback.
                 task = asyncio.create_task(

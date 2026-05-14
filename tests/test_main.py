@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 
 def test_create_app_has_expected_routes() -> None:
@@ -124,3 +124,41 @@ def test_listings_cache_control_uses_swr_with_short_max_age() -> None:
             assert "max-age=60" in cache_control
             assert "stale-while-revalidate=240" in cache_control
             assert "max-age=300" not in cache_control
+
+
+@pytest.mark.asyncio
+async def test_auto_provision_user_runs_once_per_ttl(monkeypatch) -> None:
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+
+    from api import main
+    from api.middleware.telegram_auth import TelegramInitData
+
+    app = main.create_app()
+    session_factory = object()
+    app.state.session_factory = session_factory
+    calls: list[tuple[object, int, str]] = []
+
+    async def fake_ensure_user_exists(sf, user_id: int, first_name: str) -> None:
+        calls.append((sf, user_id, first_name))
+
+    monkeypatch.setattr(main, "ensure_user_exists", fake_ensure_user_exists)
+
+    @app.get("/_provision-test")
+    async def _provision_test(request: Request):
+        request.state.telegram_user = TelegramInitData(user_id=777, first_name="TTL", raw={})
+        return {"ok": True}
+    app.router.routes.insert(0, app.router.routes.pop())
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for _ in range(5):
+            resp = await client.get("/_provision-test")
+            assert resp.status_code == 200
+        for _ in range(20):
+            if calls:
+                break
+            await asyncio.sleep(0.01)
+
+    assert calls == [(session_factory, 777, "TTL")]
