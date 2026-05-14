@@ -95,15 +95,15 @@ function createApiListingAssistant(context) {
     }
 
     function isHistorySavingEnabled() {
-        return !saveHistoryCheckbox || saveHistoryCheckbox.checked;
+        return !!saveHistoryCheckbox && saveHistoryCheckbox.checked;
     }
 
     function initHistoryPreference() {
         if (!saveHistoryCheckbox) return;
         try {
-            saveHistoryCheckbox.checked = localStorage.getItem(HISTORY_SAVE_KEY) !== "0";
+            saveHistoryCheckbox.checked = localStorage.getItem(HISTORY_SAVE_KEY) === "1";
         } catch (_) {
-            saveHistoryCheckbox.checked = true;
+            saveHistoryCheckbox.checked = false;
         }
     }
 

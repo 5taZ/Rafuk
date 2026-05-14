@@ -799,7 +799,7 @@ def test_listing_assistant_history_has_privacy_controls(
     save_checkbox = soup.find(id="la-save-history-checkbox")
     assert save_checkbox is not None
     assert save_checkbox.get("type") == "checkbox"
-    assert save_checkbox.has_attr("checked")
+    assert not save_checkbox.has_attr("checked")
 
     clear_button = soup.find(id="la-history-clear")
     assert clear_button is not None
@@ -809,15 +809,17 @@ def test_listing_assistant_history_has_privacy_controls(
     page_text = soup.get_text(" ", strip=True)
     assert "Сохранять запросы в истории 30 дней" in page_text
     assert (
-        "История с запросом и AI-ответом хранится только в этом браузере "
-        "или Telegram WebView до 30 дней"
+        "История с запросом и AI-ответом по умолчанию выключена"
     ) in page_text
-    assert "Запросы и AI-ответы хранятся локально до 30 дней" in page_text
+    assert "если включено сохранение истории" in page_text
+    assert "История AI-помощника продавцу по умолчанию выключена" in page_text
     assert "серверное удаление аккаунта её не удаляет" in page_text
 
     la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
     assert 'const HISTORY_SAVE_KEY = "rafuk:listing-assistant:save-history";' in la_js
     assert "const HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000;" in la_js
+    assert 'localStorage.getItem(HISTORY_SAVE_KEY) === "1"' in la_js
+    assert 'localStorage.getItem(HISTORY_SAVE_KEY) !== "0"' not in la_js
     assert "Date.parse(entry?.ts || \"\")" in la_js
     assert "if (!isHistorySavingEnabled()) return;" in la_js
     assert "localStorage.removeItem(HISTORY_KEY)" in la_js
