@@ -51,6 +51,7 @@ function cacheAppElements(elements) {
     elements.listingsSection = document.getElementById("listings-section");
     elements.marketTotalBadge = document.getElementById("market-total-badge");
     elements.listingsTotalBadge = document.getElementById("listings-total-badge");
+    elements.listingsSampleBadge = document.getElementById("listings-sample-badge");
     elements.listingsFallbackBadge = document.getElementById("listings-fallback-badge");
     // SEARCH-7: per-section refresh affordances next to the totals badges
     // so the user can opt into a fresh count when the 5-min cache lags
