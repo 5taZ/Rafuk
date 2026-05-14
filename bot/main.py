@@ -12,6 +12,7 @@ from api.config import get_settings
 from api.healthcheck import start_health_server, stop_health_server
 from api.logging_config import configure_logging
 from bot.api_client import close_http_client
+from bot.commands import BOT_COMMANDS
 from bot.database import close_bot_engine, get_bot_engine, init_bot_engine
 from bot.handlers.analytics import router as analytics_router
 from bot.handlers.callbacks import router as callbacks_router
@@ -58,11 +59,8 @@ async def main() -> None:
     bot = Bot(settings.bot_token.get_secret_value())
     await bot.set_my_commands(
         [
-            BotCommand(command="app", description="Открыть мини-апп"),
-            BotCommand(command="start", description="Приветствие"),
-            BotCommand(command="deals", description="Активные сделки"),
-            BotCommand(command="profit", description="Прибыль за месяц"),
-            BotCommand(command="stats", description="Статистика по запросу"),
+            BotCommand(command=command, description=description)
+            for command, description in BOT_COMMANDS
         ]
     )
     # INF-H6: run a tiny HTTP health server on a side port so Docker

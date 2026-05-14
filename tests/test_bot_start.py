@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from bot.commands import BOT_COMMANDS
 from bot.handlers.start import cmd_app, cmd_help, cmd_start
 
 
@@ -13,6 +14,10 @@ async def test_cmd_help_answers() -> None:
     message = SimpleNamespace(answer=AsyncMock())
     await cmd_help(message)  # type: ignore[arg-type]
     message.answer.assert_awaited()
+    text = message.answer.await_args.args[0]
+    for command, description in BOT_COMMANDS:
+        assert f"/{command}" in text
+        assert description in text
 
 
 @pytest.mark.asyncio

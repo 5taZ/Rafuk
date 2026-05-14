@@ -5,6 +5,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from api.config import get_settings
+from bot.commands import BOT_HELP_TEXT
 from bot.keyboards import mini_app_keyboard
 
 router = Router(name="start")
@@ -50,7 +51,7 @@ async def cmd_start(message: Message) -> None:
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer("/app — открыть мини-апп\n/start — приветственное сообщение")
+    await message.answer(BOT_HELP_TEXT)
 
 
 @router.message(Command("app"))
