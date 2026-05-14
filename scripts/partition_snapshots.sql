@@ -28,6 +28,7 @@ CREATE TABLE query_snapshots (
 -- Step 3: Create indexes on the partitioned table
 CREATE INDEX idx_query_snapshots_query ON query_snapshots(query);
 CREATE INDEX idx_query_snapshots_query_time ON query_snapshots(query, snapshot_at ASC);
+CREATE INDEX idx_query_snapshots_snapshot_at ON query_snapshots(snapshot_at);
 
 -- Step 4: Create partitions for the next 12 months
 -- Adjust dates as needed

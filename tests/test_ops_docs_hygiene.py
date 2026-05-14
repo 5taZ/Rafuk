@@ -36,6 +36,12 @@ def test_backup_runbook_expected_head_matches_alembic_head() -> None:
     assert f"Expected Alembic head: `{heads[0]}`." in runbook
 
 
+def test_partition_snapshots_script_keeps_cleanup_index() -> None:
+    partition_script = Path("scripts/partition_snapshots.sql").read_text(encoding="utf-8")
+    assert "idx_query_snapshots_snapshot_at" in partition_script
+    assert "ON query_snapshots(snapshot_at)" in partition_script
+
+
 def test_nginx_ai_budget_comment_matches_fastapi_guards() -> None:
     nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
     assert "_check_rate_limit" in nginx_conf
