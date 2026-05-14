@@ -19,7 +19,7 @@ const prefersReducedMotion = app._prefersReducedMotion || (() => (
 ));
 
 function createAiModal(context, aiCtx) {
-    const { elements } = context;
+    const { elements, logClientError = () => {} } = context;
 
     // Modal-local mutable state. Only the modal touches these, so they
     // stay encapsulated rather than leaking into aiCtx.
@@ -198,7 +198,7 @@ function createAiModal(context, aiCtx) {
             try {
                 callback();
             } catch (e) {
-                console.error("AI render error:", e);
+                logClientError("AI render error:", e);
                 if (elements.aiModalResult) {
                     elements.aiModalResult.hidden = false;
                     elements.aiModalResult.replaceChildren(

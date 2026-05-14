@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20260514-9075538";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20260514-7d69340";
 
 function _lazyLoadChartsSources(context) {
     window.App = window.App || {};
@@ -27,6 +27,7 @@ function _lazyLoadChartsSources(context) {
 }
 
 function createRenderCharts(context) {
+    const logClientError = context.logClientError || (() => {});
     let _real = null;
     let _initPromise = null;
 
@@ -55,7 +56,7 @@ function createRenderCharts(context) {
                 }
             })
             .catch((err) => {
-                console.error("charts lazy-load failed:", err);
+                logClientError("charts lazy-load failed:", err);
             });
         return undefined;
     }

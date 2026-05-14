@@ -27,6 +27,26 @@ function _prefersReducedMotion() {
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+function _clientLogEnabled() {
+    try {
+        return window.__RAFUK_DEBUG__ === true
+            || window.localStorage?.getItem("rafuk:debug") === "1";
+    } catch (_) {
+        return false;
+    }
+}
+
+function logClientError(message, err, level = "error", detail = null) {
+    if (!_clientLogEnabled()) return;
+    const logger = level === "warn" ? console.warn : console.error;
+    if (typeof logger !== "function") return;
+    if (detail != null) {
+        logger.call(console, message, detail, err);
+    } else {
+        logger.call(console, message, err);
+    }
+}
+
 function trapFocus(container) {
     const sel = [
         'button:not([disabled])',
@@ -1091,7 +1111,7 @@ function showLongPressMenu(items) {
             try {
                 if (typeof item.onSelect === "function") item.onSelect();
             } catch (err) {
-                console.error("long-press menu action failed", err);
+                logClientError("long-press menu action failed", err);
             }
         });
         sheet.appendChild(btn);

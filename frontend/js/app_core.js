@@ -470,6 +470,7 @@ function createAppCore() {
         isDirty,
         clearDirty,
         populateRegionSelect,
+        logClientError,
         _loadScript,
     };
 }

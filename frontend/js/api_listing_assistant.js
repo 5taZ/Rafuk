@@ -26,6 +26,7 @@ function createApiListingAssistant(context) {
         safeKufarUrl,
         safeImageUrl,
         checkAiConsent,
+        logClientError = () => {},
     } = context;
 
     // ── DOM refs ────────────────────────────────────────────────────────
@@ -528,7 +529,7 @@ function createApiListingAssistant(context) {
         for (const comp of compList) {
             const href = safeKufarUrl ? safeKufarUrl(comp.link) : "";
             if (!safeKufarUrl && comp.link) {
-                console.warn("[listing-assistant] safeKufarUrl not in context, link dropped");
+                logClientError("[listing-assistant] safeKufarUrl not in context, link dropped", null, "warn");
             }
             const wrapper = href
                 ? el("a", {

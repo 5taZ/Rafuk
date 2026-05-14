@@ -21,6 +21,7 @@ function createAppRenderers(baseContext) {
         formatDate,
         trapFocus,
         hasTelegramInitData,
+        logClientError = () => {},
         isDirty: isDirtyFn,
         clearDirty: clearDirtyFn,
     } = context;
@@ -131,7 +132,7 @@ function createAppRenderers(baseContext) {
         try {
             return fn();
         } catch (err) {
-            console.error('safeRender error:', name, err);
+            logClientError('safeRender error:', err, 'error', name);
             if (typeof core.showToast === 'function') {
                 core.showToast("Ошибка отображения", 'error');
             }
@@ -262,7 +263,7 @@ function createAppRenderers(baseContext) {
                 for (const fn of Object.values(_renderMap)) fn();
             }
         } catch (err) {
-            console.error('renderAll error:', err);
+            logClientError('renderAll error:', err);
             if (typeof core.showToast === 'function') {
                 core.showToast('Ошибка отображения', 'error');
             }

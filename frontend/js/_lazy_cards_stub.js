@@ -20,8 +20,8 @@
  */
 /* global window */
 
-const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20260514-9075538";
-const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20260514-9075538";
+const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20260514-7d69340";
+const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20260514-7d69340";
 
 function _lazyLoadCardsSources(context) {
     window.App = window.App || {};
@@ -45,6 +45,7 @@ function _lazyLoadCardsSources(context) {
 }
 
 function createRenderCards(context) {
+    const logClientError = context.logClientError || (() => {});
     let _real = null;
     let _initPromise = null;
 
@@ -73,7 +74,7 @@ function createRenderCards(context) {
                 }
             })
             .catch((err) => {
-                console.error("cards lazy-load failed:", err);
+                logClientError("cards lazy-load failed:", err);
             });
         return undefined;
     }

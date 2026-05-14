@@ -15,7 +15,7 @@ function analyticsApp() {
     // a few frames later.
     if (renderers._cardsEnsureLoaded) {
         renderers._cardsEnsureLoaded().catch((err) => {
-            console.error("cards preload failed:", err);
+            core.logClientError("cards preload failed:", err);
         });
     }
 
@@ -254,7 +254,7 @@ document.addEventListener("DOMContentLoaded", () => {
             navigator.serviceWorker
                 .register("/sw.js", { scope: "/" })
                 .catch((err) => {
-                    console.warn("Service worker registration failed", err);
+                    core.logClientError("Service worker registration failed", err, "warn");
                 });
         });
     }

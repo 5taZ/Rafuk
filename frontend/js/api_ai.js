@@ -23,7 +23,7 @@
 "use strict";
 
 function createApiAi(context) {
-    const { state, elements, postJson, getJson } = context;
+    const { state, elements, postJson, getJson, logClientError = () => {} } = context;
 
     // Cross-module shared state. Sub-modules read/write these directly;
     // see each module's header for which fields it touches.
@@ -173,7 +173,7 @@ function createApiAi(context) {
             });
         } catch (err) {
             if (isCancelled()) return;
-            console.error("[AI] Request failed:", err);
+            logClientError("[AI] Request failed:", err);
             const message = err.message || "Не удалось выполнить анализ. Проверьте интернет-соединение.";
             state.detail.ai = {
                 adId,

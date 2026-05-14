@@ -4,7 +4,7 @@
  */
 
 function createRenderCore(context) {
-    const { state, elements } = context;
+    const { state, elements, logClientError = () => {} } = context;
 
     /**
      * Escape HTML special characters to prevent XSS attacks.
@@ -99,7 +99,7 @@ function createRenderCore(context) {
                 tg.openLink(href, { try_browser: true });
                 return true;
             } catch (err) {
-                console.warn("Telegram openLink failed, falling back to window.open", err);
+                logClientError("Telegram openLink failed, falling back to window.open", err, "warn");
             }
         }
         if (typeof window.open === "function") {
@@ -158,7 +158,7 @@ function createRenderCore(context) {
         try {
             return fn();
         } catch (err) {
-            console.error(`[render] ${name} failed:`, err);
+            logClientError(`[render] ${name} failed:`, err);
             return null;
         }
     }

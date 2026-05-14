@@ -12,6 +12,7 @@ function _haptic(type = "light") {
 }
 
 function createApiEvents(context) {
+    const logClientError = context.logClientError || (() => {});
     const {
         state,
         elements,
@@ -582,7 +583,7 @@ function createApiEvents(context) {
                     button.classList.remove('is-loading');
                     button.textContent = originalText;
                 }
-            })().catch((err) => { console.error("tracker create failed", err); });
+            })().catch((err) => { logClientError("tracker create failed", err); });
         });
 
         // ── Clear events button (double-confirm) ─────────────────────
@@ -736,7 +737,7 @@ function createApiEvents(context) {
                     button.classList.remove('is-loading');
                     button.textContent = originalText;
                 }
-            })().catch((err) => { console.error("save tracker failed", err); });
+            })().catch((err) => { logClientError("save tracker failed", err); });
         });
 
         elements.editTrackerModal?.addEventListener("click", (event) => {
@@ -1053,7 +1054,7 @@ function createApiEvents(context) {
                     button.classList.remove('is-loading');
                     button.textContent = originalText;
                 }
-            })().catch((err) => { console.error("save expense failed", err); });
+            })().catch((err) => { logClientError("save expense failed", err); });
         });
 
         elements.cancelExpenseButton?.addEventListener("click", () => {

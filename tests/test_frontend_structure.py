@@ -56,6 +56,7 @@ def _expected_app_bundle_text() -> str:
         "  createAppCore,\n"
         "  domEl,\n"
         "  domFragment,\n"
+        "  logClientError,\n"
         "  bindRovingTablist,\n"
         "  _prefersReducedMotion,\n"
         "  openModalAnimated,\n"
@@ -232,6 +233,30 @@ def test_app_bundle_matches_build_script_sources() -> None:
     assert _text_sha256(actual) == _text_sha256(expected), (
         "frontend/js/app_bundle.js is stale; run scripts/build_frontend_bundle.sh"
     )
+
+
+def test_frontend_console_logging_is_debug_gated() -> None:
+    offenders: list[str] = []
+    for path in JS_DIR.glob("*.js"):
+        if path.name == "app_bundle.js":
+            continue
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith(("//", "*")):
+                continue
+            has_console = "console.error" in line or "console.warn" in line
+            if has_console and path.name != "dom_helpers.js":
+                offenders.append(f"{path.name}:{line_no}")
+
+    assert not offenders, (
+        "Use logClientError() instead of direct console logging: " + ", ".join(offenders)
+    )
+    helpers = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    build_script = Path("scripts/build_frontend_bundle.sh").read_text(encoding="utf-8")
+    assert "function logClientError(" in helpers
+    assert "window.__RAFUK_DEBUG__ === true" in helpers
+    assert 'window.localStorage?.getItem("rafuk:debug") === "1"' in helpers
+    assert "logClientError," in build_script
 
 
 def test_css_bundle_matches_parts_sources() -> None:

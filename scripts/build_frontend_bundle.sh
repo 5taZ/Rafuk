@@ -60,6 +60,7 @@ window.App = Object.assign(window.App || {}, {
   createAppCore,
   domEl,
   domFragment,
+  logClientError,
   bindRovingTablist,
   _prefersReducedMotion,
   openModalAnimated,
