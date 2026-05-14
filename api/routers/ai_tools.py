@@ -107,6 +107,29 @@ async def negotiate_price(
     """Generate negotiation text for a buyer — counter-offer and tips."""
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
+    client_ip = get_client_ip(request)
+
+    cache = get_cache(request)
+    cache_key = f"ai_negotiate:{payload.ad_id}:{payload.my_offer_byn}:{payload.asking_price_byn}"
+    cached = await cache.get_json(cache_key)
+    if isinstance(cached, dict):
+        try:
+            response = AINegotiateResponse.model_validate(cached)
+        except ValidationError:
+            pass
+        else:
+            await _log_ai_audit(
+                request.app.state.session_factory,
+                telegram_user_id=_user.user_id,
+                endpoint="negotiate",
+                ad_id=str(payload.ad_id),
+                query=payload.query,
+                model=get_settings().ai_model,
+                cached=True,
+                ip_address=client_ip,
+            )
+            return response
+
     await _check_rate_limit(request, _user.user_id, endpoint="negotiate")
 
     # AI audit trail (OPUS-17: capture client IP).
@@ -117,17 +140,8 @@ async def negotiate_price(
         ad_id=str(payload.ad_id),
         query=payload.query,
         model=get_settings().ai_model,
-        ip_address=get_client_ip(request),
+        ip_address=client_ip,
     )
-
-    cache = get_cache(request)
-    cache_key = f"ai_negotiate:{payload.ad_id}:{payload.my_offer_byn}:{payload.asking_price_byn}"
-    cached = await cache.get_json(cache_key)
-    if isinstance(cached, dict):
-        try:
-            return AINegotiateResponse.model_validate(cached)
-        except ValidationError:
-            pass
 
     # Build context
     safe_query = sanitize_user_text(payload.query) or ""
@@ -178,6 +192,28 @@ async def price_advice(
     """Price timing advice — should I buy now or wait? NOT an investment recommendation."""
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
+    client_ip = get_client_ip(request)
+
+    cache = get_cache(request)
+    cache_key = _ai_price_advice_cache_key(payload)
+    cached = await cache.get_json(cache_key)
+    if isinstance(cached, dict):
+        try:
+            response = AIPriceAdviceResponse.model_validate(cached)
+        except ValidationError:
+            pass
+        else:
+            await _log_ai_audit(
+                request.app.state.session_factory,
+                telegram_user_id=_user.user_id,
+                endpoint="price_advice",
+                query=payload.query,
+                model=get_settings().ai_model,
+                cached=True,
+                ip_address=client_ip,
+            )
+            return response
+
     await _check_rate_limit(request, _user.user_id, endpoint="price_advice")
 
     # AI audit trail (OPUS-17: capture client IP).
@@ -187,17 +223,8 @@ async def price_advice(
         endpoint="price_advice",
         query=payload.query,
         model=get_settings().ai_model,
-        ip_address=get_client_ip(request),
+        ip_address=client_ip,
     )
-
-    cache = get_cache(request)
-    cache_key = _ai_price_advice_cache_key(payload)
-    cached = await cache.get_json(cache_key)
-    if isinstance(cached, dict):
-        try:
-            return AIPriceAdviceResponse.model_validate(cached)
-        except ValidationError:
-            pass
 
     # Fetch market data for context
     kufar_client = get_kufar_client(request)

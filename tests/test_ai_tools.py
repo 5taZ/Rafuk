@@ -70,6 +70,50 @@ def test_negotiate_endpoint_returns_response(monkeypatch) -> None:
         assert "disclaimer" in body
 
 
+def test_negotiate_cache_hit_does_not_consume_quota(monkeypatch) -> None:
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis, ai_tools
+
+    fake_ai = FakeAIChatService()
+    rate_calls: list[str] = []
+    audit_calls: list[dict] = []
+
+    async def _fake_rate_limit(request, user_id, *, endpoint="default"):
+        del request, user_id
+        rate_calls.append(endpoint)
+
+    async def _fake_audit(*args, **kwargs):
+        del args
+        audit_calls.append(kwargs)
+
+    monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
+    monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(ai_tools, "_log_ai_audit", _fake_audit)
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    payload = {
+        "ad_id": 970001,
+        "asking_price_byn": 1000,
+        "my_offer_byn": 800,
+        "query": "iphone 14 wave97",
+        "condition": "Б/у",
+    }
+
+    with TestClient(app) as client:
+        first = client.post("/api/v1/ai/negotiate", json=payload)
+        second = client.post("/api/v1/ai/negotiate", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert rate_calls == ["negotiate"]
+    assert len(fake_ai.calls) == 1
+    assert [call.get("cached") for call in audit_calls] == [None, True]
+
+
 def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
     import api.services.query_pipeline as _qp_mod
     from api.dependencies import get_kufar_client, get_telegram_user
@@ -123,3 +167,54 @@ def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
         assert fake_ai.calls
         assert "текущий рыночный срез" in fake_ai.calls[0]["system"].lower()
         assert "исторические данные" not in fake_ai.calls[0]["system"].lower()
+
+
+def test_price_advice_cache_hit_does_not_consume_quota(monkeypatch) -> None:
+    import api.services.query_pipeline as _qp_mod
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis, ai_tools
+
+    fake_ai = FakeAIChatService()
+    rate_calls: list[str] = []
+    audit_calls: list[dict] = []
+
+    async def _fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            price_stats=SimpleNamespace(
+                median=1000.0, count=10, q1=900.0, q3=1100.0, min=800.0, max=1200.0,
+            ),
+        )
+
+    async def _fake_rate_limit(request, user_id, *, endpoint="default"):
+        del request, user_id
+        rate_calls.append(endpoint)
+
+    async def _fake_audit(*args, **kwargs):
+        del args
+        audit_calls.append(kwargs)
+
+    monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
+    monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(ai_tools, "_log_ai_audit", _fake_audit)
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(_qp_mod, "load_query_dataset", _fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    payload = {
+        "query": "iphone 14 wave97",
+        "current_price_byn": 950,
+    }
+
+    with TestClient(app) as client:
+        first = client.post("/api/v1/ai/price-advice", json=payload)
+        second = client.post("/api/v1/ai/price-advice", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert rate_calls == ["price_advice"]
+    assert len(fake_ai.calls) == 1
+    assert [call.get("cached") for call in audit_calls] == [None, True]
