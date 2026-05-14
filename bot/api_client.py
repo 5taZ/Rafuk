@@ -34,6 +34,7 @@ from bot.auth import build_init_data_header
 logger = logging.getLogger(__name__)
 
 _client: httpx.AsyncClient | None = None
+_warned_about_legacy_initdata_path = False
 # Lazy-init so the lock binds to whichever event loop the bot actually
 # runs in (avoids RuntimeError("got Future ... attached to a different
 # loop") in tests that spin up multiple loops).
@@ -84,6 +85,43 @@ async def close_http_client() -> None:
         _client = None
 
 
+def build_api_headers(telegram_user_id: int, *, mutating: bool = False) -> dict[str, str]:
+    """Build authenticated bot→API headers.
+
+    OPUS-12/Wave 96: prefer the dedicated internal service token for
+    every bot→API call. The legacy fallback still forges initData with
+    BOT_TOKEN for deployments that have not set INTERNAL_SERVICE_TOKEN
+    yet, but it is now centralised here instead of duplicated across
+    handlers.
+    """
+    global _warned_about_legacy_initdata_path
+    settings = get_settings()
+    if settings.internal_service_token is not None:
+        headers = {
+            "X-Internal-Service-Token": settings.internal_service_token.get_secret_value(),
+            "X-Acting-Telegram-User-Id": str(telegram_user_id),
+        }
+    else:
+        if not _warned_about_legacy_initdata_path:
+            logger.warning(
+                "INTERNAL_SERVICE_TOKEN not configured — bot is forging initData "
+                "with BOT_TOKEN. Set the env var to switch to the dedicated "
+                "service-token path."
+            )
+            _warned_about_legacy_initdata_path = True
+        bot_token = settings.bot_token.get_secret_value()
+        headers = {"X-Telegram-Init-Data": build_init_data_header(telegram_user_id, bot_token)}
+
+    if mutating:
+        headers.update(
+            {
+                "Origin": settings.api_base_url,
+                "X-Requested-With": "XMLHttpRequest",
+            }
+        )
+    return headers
+
+
 async def _api_get(
     path: str,
     telegram_user_id: int,
@@ -92,9 +130,7 @@ async def _api_get(
 ) -> dict[str, Any] | None:
     """Make an authenticated GET request to the internal API."""
     settings = get_settings()
-    bot_token = settings.bot_token.get_secret_value()
-    init_data = build_init_data_header(telegram_user_id, bot_token)
-    headers = {"X-Telegram-Init-Data": init_data}
+    headers = build_api_headers(telegram_user_id)
     client = await get_http_client(settings.api_base_url)
     try:
         resp = await client.get(path, params=params, headers=headers)
@@ -113,9 +149,7 @@ async def _api_post(
 ) -> dict[str, Any] | None:
     """Make an authenticated POST request to the internal API."""
     settings = get_settings()
-    bot_token = settings.bot_token.get_secret_value()
-    init_data = build_init_data_header(telegram_user_id, bot_token)
-    headers = {"X-Telegram-Init-Data": init_data}
+    headers = build_api_headers(telegram_user_id, mutating=True)
     client = await get_http_client(settings.api_base_url)
     try:
         resp = await client.post(path, json=json_body, headers=headers)

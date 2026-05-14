@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 from html import escape as html_escape
 
-import httpx
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from api.config import get_settings
-from bot.api_client import get_http_client
-from bot.auth import build_init_data_header
-
-logger = logging.getLogger(__name__)
+from bot.api_client import _api_get
 
 router = Router(name="analytics")
 
@@ -24,28 +18,6 @@ def _fmt_byn(value: float | None) -> str:
     if value is None:
         return "—"
     return f"{value:,.0f}"
-
-
-async def _api_get(path: str, telegram_user_id: int, *, params: dict | None = None) -> dict | None:
-    """Make an authenticated GET request to the internal API."""
-    settings = get_settings()
-    bot_token = settings.bot_token.get_secret_value()
-    init_data = build_init_data_header(telegram_user_id, bot_token)
-    headers = {"X-Telegram-Init-Data": init_data}
-    base_url = settings.api_base_url
-
-    # Reuse the process-wide locked client so we don't create a second
-    # connection pool here — the previous handler-local _shared_client
-    # was a duplicate of the one in bot/api_client.py and never closed
-    # (BE-H11/H12).
-    client = await get_http_client(base_url)
-    try:
-        resp = await client.get(path, params=params, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
-    except httpx.HTTPError:
-        logger.exception("API call failed: GET %s", path)
-        return None
 
 
 @router.message(Command("deals"))
