@@ -42,6 +42,12 @@ def test_partition_snapshots_script_keeps_cleanup_index() -> None:
     assert "ON query_snapshots(snapshot_at)" in partition_script
 
 
+def test_partition_snapshots_script_uses_numeric_money_columns() -> None:
+    partition_script = Path("scripts/partition_snapshots.sql").read_text(encoding="utf-8")
+    assert partition_script.count("NUMERIC(12, 2) NOT NULL DEFAULT 0.0") == 4
+    assert "FLOAT NOT NULL DEFAULT 0.0" not in partition_script
+
+
 def test_nginx_ai_budget_comment_matches_fastapi_guards() -> None:
     nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
     assert "_check_rate_limit" in nginx_conf

@@ -18,10 +18,10 @@ CREATE TABLE query_snapshots (
     snapshot_at TIMESTAMPTZ NOT NULL,
     total_results INTEGER NOT NULL DEFAULT 0,
     analyzed_count INTEGER NOT NULL DEFAULT 0,
-    mean_byn FLOAT NOT NULL DEFAULT 0.0,
-    median_byn FLOAT NOT NULL DEFAULT 0.0,
-    min_byn FLOAT NOT NULL DEFAULT 0.0,
-    max_byn FLOAT NOT NULL DEFAULT 0.0,
+    mean_byn NUMERIC(12, 2) NOT NULL DEFAULT 0.0,
+    median_byn NUMERIC(12, 2) NOT NULL DEFAULT 0.0,
+    min_byn NUMERIC(12, 2) NOT NULL DEFAULT 0.0,
+    max_byn NUMERIC(12, 2) NOT NULL DEFAULT 0.0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 ) PARTITION BY RANGE (snapshot_at);
 
