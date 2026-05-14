@@ -809,7 +809,8 @@
     /* Lead-row inline button — same tap-target floor as the other
        small icon buttons so single-emoji actions stay reachable on
        small phones. */
-    min-height: 36px;
+    min-width: 44px;
+    min-height: 44px;
     display: inline-flex;
     align-items: center;
     justify-content: center;

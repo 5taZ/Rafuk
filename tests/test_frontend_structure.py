@@ -783,6 +783,8 @@ def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
         ".empty-state-action",
         ".list-pagination-button",
         ".filter-chip",
+        ".totals-refresh-btn",
+        ".lead-btn--emoji",
         ".la-history-delete",
     ):
         height_blocks = declarations(selector, "min-height")
