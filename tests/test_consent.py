@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 
 import pytest
@@ -261,8 +262,8 @@ async def test_export_account_data(client):
                 user_id=user.id,
                 endpoint="analyze",
                 ad_id="12345",
-                query="iphone",
-                result_summary="ok",
+                query="iphone +375291234567 user@example.com",
+                result_summary="ok @seller",
                 model="test-model",
             ),
             TelegramNotificationDLQ(
@@ -302,6 +303,17 @@ async def test_export_account_data(client):
     assert data["saved_searches"][0]["query"] == "iphone"
     assert data["price_snapshots"][0]["price_byn"] == 900.0
     assert data["reminders"][0]["message"] == "check seller"
+    assert data["ai_audit_logs"][0]["query"] == "iphone [phone] [email]"
+    assert data["ai_audit_logs"][0]["query_hash"] == hashlib.sha256(
+        b"iphone +375291234567 user@example.com"
+    ).hexdigest()
+    assert data["ai_audit_logs"][0]["result_summary"] == "ok [handle]"
+    assert data["ai_audit_logs"][0]["result_summary_hash"] == hashlib.sha256(
+        b"ok @seller"
+    ).hexdigest()
+    assert "+375291234567" not in data["ai_audit_logs"][0]["query"]
+    assert "user@example.com" not in data["ai_audit_logs"][0]["query"]
+    assert "@seller" not in data["ai_audit_logs"][0]["result_summary"]
     assert data["ai_audit_logs"][0]["model"] == "test-model"
     assert data["notification_dlq"][0]["message"] == "failed notification"
     assert data["contacts"][0]["phone"] == "+375291234567"

@@ -13,6 +13,7 @@ called out as having NO dedicated coverage:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 import pytest
 from sqlalchemy import select
@@ -77,6 +78,8 @@ async def test_log_ai_audit_creates_row_for_known_user() -> None:
     assert entry.ad_id == "123"
     assert entry.model == "gemini-2.5-flash"
     assert entry.latency_ms == 42
+    assert entry.query == "iphone"
+    assert entry.query_hash == hashlib.sha256(b"iphone").hexdigest()
     # OPUS-17: IP captured at decision time matches what we passed.
     assert entry.ip_address == "203.0.113.5"
 
@@ -102,6 +105,35 @@ async def test_log_ai_audit_truncates_long_query() -> None:
     # Field is clamped to 256 chars to keep the row size predictable.
     assert row.query is not None
     assert len(row.query) <= 256
+
+
+@pytest.mark.asyncio
+async def test_log_ai_audit_scrubs_free_text_and_keeps_hashes() -> None:
+    factory = await _fresh_session_factory()
+    async with factory() as session:
+        session.add(User(telegram_user_id=333333, first_name="C"))
+        await session.commit()
+
+    raw_query = "iPhone +375291234567 user@example.com @seller"
+    raw_summary = "Seller answer: +375291234567"
+    await _log_ai_audit(
+        factory,
+        telegram_user_id=333333,
+        endpoint="listing_assistant",
+        query=raw_query,
+        result_summary=raw_summary,
+        model="m",
+    )
+
+    async with factory() as session:
+        row = (await session.execute(select(AIAuditLog))).scalar_one()
+    assert row.query == "iPhone [phone] [email] [handle]"
+    assert row.query_hash == hashlib.sha256(raw_query.encode("utf-8")).hexdigest()
+    assert row.result_summary == "Seller answer: [phone]"
+    assert row.result_summary_hash == hashlib.sha256(raw_summary.encode("utf-8")).hexdigest()
+    for raw_fragment in ("+375291234567", "user@example.com", "@seller"):
+        assert raw_fragment not in (row.query or "")
+        assert raw_fragment not in (row.result_summary or "")
 
 
 @pytest.mark.asyncio

@@ -14,14 +14,34 @@ scheduler (``scheduler/collector.py``); this module only writes.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
 from api.metrics import observe_ai_audit_failure
 from api.models import AIAuditLog
+from api.services.ai_sanitize import sanitize_user_text
 from api.services.workflow_store import resolve_user_id
 
 logger = logging.getLogger(__name__)
+
+
+def audit_text_sha256(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    if not text:
+        return None
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def sanitize_audit_text(
+    value: str | None,
+    *,
+    max_length: int,
+    context: str,
+) -> str | None:
+    return sanitize_user_text(value, max_length=max_length, context=f"ai_audit.{context}")
 
 
 async def _log_ai_audit(
@@ -54,16 +74,25 @@ async def _log_ai_audit(
             uid = await resolve_user_id(session, telegram_user_id)
             if uid is None:
                 return
+            query_preview = sanitize_audit_text(query, max_length=256, context="query")
+            if result_summary or cached:
+                result_preview = sanitize_audit_text(
+                    result_summary or "cached",
+                    max_length=512,
+                    context="result_summary",
+                )
+            else:
+                result_preview = None
             entry = AIAuditLog(
                 user_id=uid,
                 endpoint=endpoint,
                 ad_id=ad_id,
-                query=(query or "")[:256] if query else None,
-                result_summary=(
-                    (result_summary or "cached")[:512]
-                    if (result_summary or cached)
-                    else None
-                ),
+                # P1-PRIV-01: keep a sanitized preview plus a raw-text
+                # digest for traceability; never persist raw user text.
+                query=query_preview,
+                query_hash=audit_text_sha256(query),
+                result_summary=result_preview,
+                result_summary_hash=audit_text_sha256(result_summary),
                 model=model,
                 latency_ms=latency_ms,
                 ip_address=ip_address,

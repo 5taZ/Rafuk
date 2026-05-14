@@ -652,7 +652,9 @@ class AIAuditLog(Base):
     endpoint: Mapped[str] = mapped_column(String(64), nullable=False)
     ad_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     query: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    query_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     result_summary: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    result_summary_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # OPUS-17: capture the trusted client IP at decision time so the

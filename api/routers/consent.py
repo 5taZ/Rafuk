@@ -33,6 +33,7 @@ from api.schemas import (
     ConsentGrantRequest,
     ConsentStatusResponse,
 )
+from api.services.ai_audit import audit_text_sha256, sanitize_audit_text
 from api.services.client_ip import get_client_ip
 from api.services.consent_policy import CURRENT_POLICY_VERSION, VALID_CONSENT_TYPES
 from api.services.workflow_store import ensure_user, resolve_user_id
@@ -609,8 +610,16 @@ async def export_account_data(
                 "id": a.id,
                 "endpoint": a.endpoint,
                 "ad_id": a.ad_id,
-                "query": a.query,
-                "result_summary": a.result_summary,
+                "query": sanitize_audit_text(a.query, max_length=256, context="export.query"),
+                "query_hash": a.query_hash or audit_text_sha256(a.query),
+                "result_summary": sanitize_audit_text(
+                    a.result_summary,
+                    max_length=512,
+                    context="export.result_summary",
+                ),
+                "result_summary_hash": (
+                    a.result_summary_hash or audit_text_sha256(a.result_summary)
+                ),
                 "model": a.model,
                 "latency_ms": a.latency_ms,
                 # OPUS-17: include the IP captured at AI call time so
