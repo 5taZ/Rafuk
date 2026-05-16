@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time as _time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -49,6 +51,32 @@ from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS
 from api.services.market_signals import anomaly_labels, detect_anomaly_flags
 from api.services.query_pipeline import load_query_dataset
+
+
+# AI-HIGH (issues §3.1): the previous cache key hard-coded a "v5" tag,
+# so any change to ``ai_prompts.py`` (or the AIAnalysisResponse schema)
+# could leave stale results in cache for the full TTL window. We now
+# derive the cache version from a SHA256 of the prompt + schema source
+# files at import — every meaningful prompt edit lands a fresh version
+# tag automatically. The hash is truncated to 10 chars so the cache
+# key stays readable in Redis CLI.
+def _compute_ai_cache_version() -> str:
+    sources = (
+        Path(__file__).parent / "ai_prompts.py",
+        Path(__file__).parent.parent / "schemas.py",
+    )
+    h = hashlib.sha256()
+    for src in sources:
+        try:
+            h.update(src.read_bytes())
+        except OSError:
+            # Source missing in some unusual deploy — fall back to a
+            # static tag so we don't crash on import.
+            h.update(b"missing")
+    return f"v6-{h.hexdigest()[:10]}"
+
+
+_AI_CACHE_VERSION = _compute_ai_cache_version()
 from api.services.reseller_tools import compute_deal_score
 
 logger = logging.getLogger(__name__)
@@ -247,7 +275,10 @@ async def _deliver_fallback_result(
             title=title,
             parameters=parameters,
         )
-        cache_key = f"ai_analysis:v5:{payload.ad_id}:{payload.query}:cat={payload.category}"
+        cache_key = (
+            f"ai_analysis:{_AI_CACHE_VERSION}:{payload.ad_id}:"
+            f"{payload.query}:cat={payload.category}"
+        )
         fallback_serialized = response.model_dump(by_alias=True)
         if warning:
             fallback_serialized["_ai_warning"] = warning
@@ -928,7 +959,10 @@ async def _stage_response(c: _AC) -> None:
     )
 
     # Cache result (use cache passed from endpoint)
-    cache_key = f"ai_analysis:v5:{c.payload.ad_id}:{c.payload.query}:cat={c.payload.category}"
+    cache_key = (
+        f"ai_analysis:{_AI_CACHE_VERSION}:{c.payload.ad_id}:"
+        f"{c.payload.query}:cat={c.payload.category}"
+    )
     serialized = response.model_dump(by_alias=True)
     await c.cache.set_json(cache_key, serialized, ttl=_task_ttl())
 

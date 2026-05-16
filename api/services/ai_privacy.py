@@ -54,8 +54,12 @@ async def clear_user_ai_data(
     callers (and the privacy module's own tests) keep working.
 
     The shared deterministic listing-analysis cache
-    (``ai_analysis:v5:*``) is intentionally untouched — it has no
-    user_id, evicting it would just hand cold caches to everyone else.
+    (``ai_analysis:v6-<hash>:*`` — the version tag is derived from
+    ``ai_prompts.py`` + ``schemas.py`` SHA256 so it auto-rotates on
+    prompt edits) is intentionally untouched: it has no user_id,
+    evicting it would just hand cold caches to everyone else. See
+    Wave 2E for the consent-aware invalidation that does walk the
+    namespace by query hash.
     """
     from api.services.cache import MemoryCache, RedisCache
 

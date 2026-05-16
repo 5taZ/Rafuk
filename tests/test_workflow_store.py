@@ -177,3 +177,35 @@ async def test_load_last_snapshot_prices_empty_input_returns_empty_dict() -> Non
         result = await load_last_snapshot_prices(session, [])
     assert result == {}
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_works_on_sqlite_dialect() -> None:
+    """SEC-HIGH / BE-HIGH (issues §1.1, §2.3): ensure_user must use the
+    SQLite ``insert`` factory when bound to an aiosqlite engine. The
+    previous unconditional ``pg_insert(...).on_conflict_do_nothing()``
+    rendered Postgres-only SQL that aiosqlite rejects with
+    ``OperationalError: near "ON": syntax error``.
+    """
+    from api.services.workflow_store import ensure_user
+
+    engine = get_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        # First call inserts.
+        uid_1 = await ensure_user(
+            session, telegram_user_id=12345, first_name="Alice"
+        )
+        await session.commit()
+        assert uid_1 > 0
+        # Second call hits the conflict path and returns the same id.
+        uid_2 = await ensure_user(
+            session, telegram_user_id=12345, first_name="Alice"
+        )
+        await session.commit()
+        assert uid_2 == uid_1
+
+    await engine.dispose()

@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,13 +27,22 @@ async def ensure_user(
 
     The previous implementation did SELECT-then-INSERT, which races with
     concurrent first-time requests for the same telegram_user_id and
-    raises IntegrityError on the loser. We now use Postgres
-    INSERT ... ON CONFLICT DO NOTHING RETURNING id, which is atomic at
-    the database level — only one inserter wins, the others see no
-    returned row and read the existing id via a follow-up SELECT.
+    raises IntegrityError on the loser. We now use the dialect's atomic
+    ``INSERT ... ON CONFLICT DO NOTHING RETURNING id`` — Postgres and
+    SQLite both support the construct via different SQLAlchemy
+    ``insert`` factories, so we pick the right one based on the bound
+    engine. SEC-HIGH / BE-HIGH (issues §1.1, §2.3): the previous
+    unconditional ``pg_insert`` rendered Postgres-only SQL that
+    aiosqlite (test stand and any SQLite fallback deploy) rejects with
+    ``OperationalError: near "ON": syntax error``. ``api/dependencies``
+    already does the same dialect detect; this brings ``workflow_store``
+    in line.
     """
+    bind = session.get_bind()
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", "") or ""
+    insert_factory = sqlite_insert if dialect_name == "sqlite" else pg_insert
     stmt = (
-        pg_insert(User)
+        insert_factory(User)
         .values(
             telegram_user_id=telegram_user_id,
             first_name=first_name,
