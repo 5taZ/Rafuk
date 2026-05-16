@@ -18,7 +18,7 @@ async def _resolve_listing_context(
 ) -> dict | None:
     """Look up the most recent TrackerEvent for this (user, ad_id) pair.
 
-    BE-15: the inline `📌 В покупки` / `👁 Отслеживать` buttons embed only
+    BE-15: the inline `📌 В покупки` / `⭐ В Избранное` buttons embed only
     the ad_id in callback_data (Telegram caps it at 64 bytes, no room
     for query/title/link). Without enrichment, the bot would POST
     `query=""` and `link=""` to the API — both rejected by

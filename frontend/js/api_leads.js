@@ -478,6 +478,19 @@ function createApiLeads(context) {
                 error: "",
                 source: "",
             };
+            // Mirror the server-side backfill in local state so the
+            // lead card preview updates without a full reload — the
+            // server already updated the DB row in listing-detail.
+            const newThumb = (fullDetail.images && fullDetail.images[0]) || null;
+            if (newThumb && !lead.thumbnail && state.leads?.items) {
+                const matchingLead = state.leads.items.find(
+                    (l) => l.ad_id === lead.ad_id && !l.thumbnail
+                );
+                if (matchingLead) {
+                    matchingLead.thumbnail = newThumb;
+                    renderLeads();
+                }
+            }
             renderDetailModal();
         } catch (error) {
             if (error.name === "AbortError") return;

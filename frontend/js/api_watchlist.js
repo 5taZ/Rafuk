@@ -360,6 +360,19 @@ function createApiWatchlist(context) {
                 error: "",
                 source: "",
             };
+            // Mirror the server-side backfill in local state so the
+            // watchlist card preview updates without a full reload —
+            // the server already updated the DB row in listing-detail.
+            const newThumb = (fullDetail.images && fullDetail.images[0]) || null;
+            if (newThumb && !item.thumbnail && state.watchlist?.items) {
+                const matchingItem = state.watchlist.items.find(
+                    (w) => w.ad_id === item.ad_id && !w.thumbnail
+                );
+                if (matchingItem) {
+                    matchingItem.thumbnail = newThumb;
+                    refreshAfterWatchlistChange();
+                }
+            }
             renderDetailModal();
         } catch (error) {
             if (error.name === "AbortError") return;
