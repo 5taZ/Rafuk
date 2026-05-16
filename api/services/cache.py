@@ -104,6 +104,15 @@ class MemoryCache:
                 new_expires = time.monotonic() + ttl if ttl else 0.0
             self._storage[key] = (str(count), new_expires)
             self._storage.move_to_end(key)
+            # PR-06: enforce MAX_ENTRIES on the incr path too. The
+            # previous shape only ran the eviction loop inside ``set``;
+            # when the API runs on the MemoryCache fallback (Redis
+            # unreachable), per-user rate-limit counters and replay
+            # warnings (auth:replay_warn:{uid}, ai_rate:{uid}:...)
+            # flow exclusively through this code path, so without the
+            # eviction loop they could grow without bound.
+            while len(self._storage) > self.MAX_ENTRIES:
+                self._storage.popitem(last=False)
         return count
 
     async def delete(self, key: str) -> None:
