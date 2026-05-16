@@ -5,6 +5,7 @@ import os
 
 from fastapi import Header, HTTPException, Request, status
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings, get_settings
@@ -207,17 +208,31 @@ async def ensure_user_exists(
     """Upsert a User row for the given telegram_user_id.
 
     Called after Telegram auth to prevent FK violations on first request.
-    Atomic: uses Postgres INSERT ... ON CONFLICT DO NOTHING so concurrent
-    auto-provision calls for the same user can't race into duplicate
-    inserts (the previous SELECT-then-INSERT pattern raised IntegrityError
-    on the loser, which had to be caught and rolled back, dirtying the
+    Atomic ``INSERT ... ON CONFLICT DO NOTHING`` so concurrent auto-
+    provision calls for the same user can't race into duplicate inserts
+    (the previous SELECT-then-INSERT pattern raised IntegrityError on
+    the loser, which had to be caught and rolled back, dirtying the
     session). Best-effort: a DB outage will surface downstream.
+
+    PR-17: dialect-aware. Postgres and SQLite both support
+    ``INSERT ... ON CONFLICT DO NOTHING`` but through different
+    SQLAlchemy ``insert`` constructors — auto-provision used to call
+    ``pg_insert(...)`` unconditionally, which renders Postgres-only
+    SQL that aiosqlite (the test suite default) rejects with
+    ``OperationalError: near "ON": syntax error``. In practice every
+    test path that needs auto-provision goes through ``auth_bypass=True``
+    (which short-circuits at line ~217), so this never broke a wave
+    so far — but the foot-gun was waiting for a future test that
+    drops the bypass.
     """
     if telegram_user_id == 0:
         return  # Debug mode — no real user to persist
     async with session_factory() as session:
+        bind = session.get_bind()
+        dialect_name = getattr(getattr(bind, "dialect", None), "name", "") or ""
+        insert_factory = sqlite_insert if dialect_name == "sqlite" else pg_insert
         stmt = (
-            pg_insert(User)
+            insert_factory(User)
             .values(
                 telegram_user_id=telegram_user_id,
                 first_name=first_name[:128],

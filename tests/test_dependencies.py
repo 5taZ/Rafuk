@@ -131,3 +131,52 @@ async def test_service_token_falls_back_to_initdata_when_unset(monkeypatch) -> N
         )
     assert exc.value.status_code == 401
     assert "initData" in exc.value.detail
+
+
+# ── PR-17: ensure_user_exists works on both Postgres and SQLite ─────────
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_exists_works_on_sqlite_dialect() -> None:
+    """PR-17: ``ensure_user_exists`` must use the dialect-appropriate
+    ``insert(...)`` constructor. The previous shape called
+    ``pg_insert`` unconditionally; on aiosqlite this would render
+    Postgres-only SQL and aiosqlite would raise OperationalError on
+    the ``ON CONFLICT`` clause once a non-debug code path actually
+    reached it. Test exercises the function against an in-memory
+    aiosqlite engine to lock the contract.
+    """
+    from sqlalchemy import select
+
+    from api.database import get_engine, get_session_factory
+    from api.dependencies import ensure_user_exists
+    from api.models import Base, User
+
+    engine = get_engine("sqlite+aiosqlite:///:memory:")
+    factory = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # First call inserts a fresh row.
+    await ensure_user_exists(factory, telegram_user_id=42, first_name="Alice")
+    async with factory() as session:
+        rows = (await session.execute(select(User))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].telegram_user_id == 42
+
+    # Second call for the same user MUST be idempotent — ON CONFLICT
+    # DO NOTHING means no error, no duplicate row.
+    await ensure_user_exists(factory, telegram_user_id=42, first_name="Different name")
+    async with factory() as session:
+        rows = (await session.execute(select(User))).scalars().all()
+    assert len(rows) == 1, "ON CONFLICT DO NOTHING must not create a duplicate row"
+    # Original first_name preserved (DO NOTHING semantics, not REPLACE).
+    assert rows[0].first_name == "Alice"
+
+    # Debug user (id=0) is short-circuited entirely.
+    await ensure_user_exists(factory, telegram_user_id=0)
+    async with factory() as session:
+        rows = (await session.execute(select(User))).scalars().all()
+    assert len(rows) == 1
+
+    await engine.dispose()
