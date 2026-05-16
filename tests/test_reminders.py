@@ -101,6 +101,61 @@ def test_get_reminders_returns_list() -> None:
         assert len(resp.json()) >= 1
 
 
+def test_get_reminders_paginates() -> None:
+    """PR-09: GET /reminders is paginated. Default ``limit=100`` caps
+    the response so a power user with thousands of reminders on one
+    lead can't 10-MB-flood every list call. ``offset`` walks the
+    rest of the list deterministically (sorted by remind_at asc,
+    id asc).
+    """
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        base = datetime.now(UTC) + timedelta(hours=1)
+        for i in range(7):
+            client.post(
+                f"/api/v1/leads/{lead['id']}/reminders",
+                json={
+                    "remind_at": (base + timedelta(minutes=i)).isoformat(),
+                    "message": f"reminder-{i}",
+                },
+            )
+        # First page caps at the requested limit.
+        first = client.get(
+            f"/api/v1/leads/{lead['id']}/reminders?limit=3&offset=0"
+        )
+        assert first.status_code == 200
+        first_body = first.json()
+        assert len(first_body) == 3
+        # Second page picks up where the first stopped — no overlap.
+        second = client.get(
+            f"/api/v1/leads/{lead['id']}/reminders?limit=3&offset=3"
+        )
+        assert second.status_code == 200
+        second_body = second.json()
+        assert len(second_body) == 3
+        first_ids = {r["id"] for r in first_body}
+        second_ids = {r["id"] for r in second_body}
+        assert first_ids.isdisjoint(second_ids)
+
+
+def test_get_reminders_rejects_invalid_pagination() -> None:
+    """PR-09: bounds enforced by FastAPI's Query validation."""
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        # limit > 500 → 422
+        too_big = client.get(
+            f"/api/v1/leads/{lead['id']}/reminders?limit=501"
+        )
+        assert too_big.status_code == 422
+        # negative offset → 422
+        negative = client.get(
+            f"/api/v1/leads/{lead['id']}/reminders?offset=-1"
+        )
+        assert negative.status_code == 422
+
+
 def test_delete_reminder_returns_204() -> None:
     app = _make_app(USER_A)
     with TestClient(app) as client:

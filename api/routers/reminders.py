@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -72,12 +72,18 @@ async def create_reminder(
 async def get_reminders(
     request: Request,
     lead_id: int,
+    # PR-09: cap and paginate. Previously this returned the full
+    # reminder list unbounded; a power user with thousands of
+    # reminders on a single lead would burn a multi-MB response per
+    # call. Defaults mirror the expenses endpoint (BE-M2 pattern).
+    limit: int = Query(default=100, ge=1, le=500, description="Max reminders to return"),
+    offset: int = Query(default=0, ge=0, description="Number of reminders to skip"),
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(
         get_session_factory_dependency,
     ),
 ) -> list[ReminderRead]:
-    """List all reminders for a lead."""
+    """List reminders for a lead (paginated, soonest first)."""
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user.user_id)
         if user_id is None:
@@ -97,6 +103,8 @@ async def get_reminders(
             select(LeadReminder)
             .where(LeadReminder.lead_id == lead_id, LeadReminder.user_id == user_id)
             .order_by(LeadReminder.remind_at.asc(), LeadReminder.id.asc())
+            .limit(limit)
+            .offset(offset)
         )
         return [ReminderRead.model_validate(r) for r in result.scalars()]
 
