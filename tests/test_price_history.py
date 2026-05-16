@@ -118,13 +118,24 @@ def test_price_history_caps_days_at_ninety() -> None:
 
     with TestClient(app) as client:
         asyncio.run(seed_history(app.state.session_factory, query="iphone 16 caps"))
-        response = client.get(
+        # BE-MEDIUM (issues §2.2): days now has explicit Query(le=90)
+        # bounds, so 365 is rejected with 422 instead of being silently
+        # clipped. The clamp behaviour was preserved for in-range values
+        # but exposing the contract via the OpenAPI schema is the point
+        # of the fix.
+        rejected = client.get(
             "/api/v1/price-history",
             params={"query": "iphone 16 caps", "currency": "BYN", "days": 365},
         )
+        assert rejected.status_code == 422
 
-    assert response.status_code == 200
-    assert response.json()["days"] == 90
+        accepted = client.get(
+            "/api/v1/price-history",
+            params={"query": "iphone 16 caps", "currency": "BYN", "days": 90},
+        )
+
+    assert accepted.status_code == 200
+    assert accepted.json()["days"] == 90
 
 
 def test_price_history_endpoint_uses_category_key() -> None:

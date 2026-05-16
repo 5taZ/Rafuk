@@ -15,7 +15,7 @@ from api.dependencies import (
 from api.limiter import limiter
 from api.schemas import ListingDetailResponse
 from api.services.aggregator import compute_category_price_stats, precompute_cluster_stats
-from api.services.cache import CacheBackend
+from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
@@ -43,8 +43,16 @@ async def get_listing_detail(
     kufar_client: KufarClient = Depends(get_kufar_client),
     _user=Depends(get_telegram_user),
 ) -> ListingDetailResponse:
-    cache_key = (
-        f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}:{category}:{reference_context}"
+    cache_key = digest_cache_key(
+        "listing-detail",
+        {
+            "q": query,
+            "ad": ad_id,
+            "cur": currency,
+            "strict": strict_search,
+            "cat": category,
+            "ref": reference_context,
+        },
     )
     cached = await cache.get_json(cache_key)
     if cached:
@@ -74,7 +82,11 @@ async def get_listing_detail(
     category_price_stats = compute_category_price_stats(reference_dataset.ads)
     cluster_cache = precompute_cluster_stats(visible_dataset.ads, query=query)
     liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats, ad=ad)
-    rates_payload = await currency_service.get_rates()
+    # BE-MEDIUM (issues §2.2): NBRB outage shouldn't 500 the detail.
+    try:
+        rates_payload = await currency_service.get_rates()
+    except Exception:  # noqa: BLE001
+        rates_payload = {"rates": {"BYN": 1.0}}
     payload = build_listing_detail(
         ad=ad,
         query=query,

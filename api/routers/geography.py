@@ -16,7 +16,7 @@ from api.dependencies import (
 from api.limiter import limiter
 from api.schemas import GeographyRegionPoint, GeographyResponse
 from api.services.aggregator import compute_price_stats, extract_prices
-from api.services.cache import CacheBackend
+from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
 from api.services.market_signals import region_label
@@ -41,7 +41,15 @@ async def get_geography(
     kufar_client: KufarClient = Depends(get_kufar_client),
     _user=Depends(get_telegram_user),
 ) -> GeographyResponse:
-    cache_key = f"geography:{query}:{currency}:{strict_search}:{category}"
+    cache_key = digest_cache_key(
+        "geography",
+        {
+            "q": query,
+            "cur": currency,
+            "strict": strict_search,
+            "cat": category,
+        },
+    )
     cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
         return GeographyResponse(**cached)
@@ -64,7 +72,12 @@ async def get_geography(
             continue
         grouped[region_id].append(ad)
 
-    rates_payload = await currency_service.get_rates()
+    # BE-MEDIUM (issues §2.2): NBRB upstream can fail; fall back to
+    # BYN-only rates rather than 500 the entire endpoint.
+    try:
+        rates_payload = await currency_service.get_rates()
+    except Exception:  # noqa: BLE001 — fallback to identity rates
+        rates_payload = {"rates": {"BYN": 1.0}}
     rates = rates_payload["rates"]
     total_analyzed = max(1, dataset.price_stats.count)
     regions: list[GeographyRegionPoint] = []

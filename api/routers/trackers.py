@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -23,7 +23,12 @@ router = APIRouter(tags=["trackers"])
 @limiter.limit("30/minute")
 async def get_tracker_events(
     request: Request,
-    limit: int = 20,
+    # BE-MEDIUM (issues §2.2): explicit Query bounds. Previously
+    # a bare ``int = 20`` accepted negative values and returned
+    # 200 OK with an unbounded query slice; the min/max(...) clamp
+    # below preserved correctness but the OpenAPI schema didn't
+    # reflect the contract.
+    limit: int = Query(default=20, ge=1, le=50),
     tracker_id: int | None = None,
     event_type: str | None = None,
     telegram_user: TelegramInitData = Depends(get_telegram_user),

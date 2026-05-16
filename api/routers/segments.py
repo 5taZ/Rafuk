@@ -15,7 +15,7 @@ from api.dependencies import (
 from api.limiter import limiter
 from api.schemas import SegmentsResponse
 from api.services.aggregator import PriceStats, compute_segments
-from api.services.cache import CacheBackend
+from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import convert_price_stats, load_query_dataset_with_fallback
@@ -45,7 +45,15 @@ async def get_segments(
     kufar_client: KufarClient = Depends(get_kufar_client),
     _user=Depends(get_telegram_user),
 ) -> SegmentsResponse:
-    cache_key = f"segments:{query}:{currency}:{strict_search}:{category}"
+    cache_key = digest_cache_key(
+        "segments",
+        {
+            "q": query,
+            "cur": currency,
+            "strict": strict_search,
+            "cat": category,
+        },
+    )
     cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
         return SegmentsResponse(**cached)
@@ -74,7 +82,12 @@ async def get_segments(
     dataset = fb.dataset
     raw_segments = compute_segments(dataset.ads)
 
-    rates_payload = await currency_service.get_rates()
+    # BE-MEDIUM (issues §2.2): NBRB outage → fallback to BYN-only
+    # rather than 500'ing the segment endpoint.
+    try:
+        rates_payload = await currency_service.get_rates()
+    except Exception:  # noqa: BLE001
+        rates_payload = {"rates": {"BYN": 1.0}}
     rates = rates_payload["rates"]
 
     def _segment_payload(name: str) -> dict:

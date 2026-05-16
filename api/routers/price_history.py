@@ -16,7 +16,7 @@ from api.dependencies import (
 from api.limiter import limiter
 from api.schemas import PriceHistoryPoint, PriceHistoryResponse
 from api.services.aggregator import build_query_key
-from api.services.cache import CacheBackend
+from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.history_service import load_query_snapshots
 from api.validators import MAX_QUERY_LENGTH
@@ -30,7 +30,7 @@ async def get_price_history(
     request: Request,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
-    days: int = 7,
+    days: int = Query(default=7, ge=1, le=90),
     strict_search: bool = True,
     category: int | None = None,
     settings: Settings = Depends(get_settings_dependency),
@@ -41,7 +41,14 @@ async def get_price_history(
 ) -> PriceHistoryResponse:
     bounded_days = max(1, min(days, 90))
     search_key = build_query_key(query, strict_search, category)
-    cache_key = f"price-history:{search_key}:{currency}:{bounded_days}"
+    cache_key = digest_cache_key(
+        "price-history",
+        {
+            "search": search_key,
+            "cur": currency,
+            "days": bounded_days,
+        },
+    )
     cached = await cache.get_json(cache_key)
     if cached:
         return PriceHistoryResponse(**cached)
@@ -49,7 +56,11 @@ async def get_price_history(
     async with session_factory() as session:
         snapshots = await load_query_snapshots(session, query=search_key, days=bounded_days)
 
-    rates_payload = await currency_service.get_rates()
+    # BE-MEDIUM (issues §2.2): NBRB outage shouldn't 500 the chart.
+    try:
+        rates_payload = await currency_service.get_rates()
+    except Exception:  # noqa: BLE001
+        rates_payload = {"rates": {"BYN": 1.0}}
     rates = rates_payload["rates"]
     points = [
         PriceHistoryPoint(
