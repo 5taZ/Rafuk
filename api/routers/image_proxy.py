@@ -315,17 +315,46 @@ async def get_optimized_image(
     await user_sem.acquire()
     try:
         upstream_url = f"{_KUFAR_BASE}{path}"
+        max_bytes = settings.image_proxy_max_bytes
+        # PR-01: stream the upstream body so an oversized response is
+        # rejected BEFORE we buffer it into the worker. The previous
+        # ``client.get`` loaded the whole body to memory and then
+        # checked ``len(...) > max_bytes`` — fine for kind upstreams,
+        # but an authenticated abuser could pin known-large gallery
+        # paths and force the worker to spool hundreds of MB before
+        # the 413. Same shape as the streaming guard already used by
+        # ``api.services.ai_images.fetch_image_bytes``.
         try:
             client = await _get_http_client(settings)
-            upstream = await client.get(upstream_url)
+            async with client.stream("GET", upstream_url) as upstream:
+                if upstream.status_code != 200:
+                    raise HTTPException(
+                        status_code=upstream.status_code,
+                        detail="Upstream not OK",
+                    )
+                content_length = upstream.headers.get("content-length")
+                if content_length:
+                    try:
+                        if int(content_length) > max_bytes:
+                            raise HTTPException(
+                                status_code=413, detail="Upstream image too large"
+                            )
+                    except ValueError:
+                        # Malformed Content-Length — fall through to streaming guard.
+                        pass
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise HTTPException(
+                            status_code=413, detail="Upstream image too large"
+                        )
+                    chunks.append(chunk)
+                upstream_body = b"".join(chunks)
         except httpx.HTTPError as exc:
             logger.warning("Image fetch failed for %s: %s", path, exc)
             raise HTTPException(status_code=502, detail="Upstream image fetch failed") from exc
-
-        if upstream.status_code != 200:
-            raise HTTPException(status_code=upstream.status_code, detail="Upstream not OK")
-        if len(upstream.content) > settings.image_proxy_max_bytes:
-            raise HTTPException(status_code=413, detail="Upstream image too large")
 
         # Pillow is sync and CPU-bound — handing it off to a worker
         # thread + bounding concurrency keeps the event loop responsive
@@ -337,7 +366,7 @@ async def get_optimized_image(
             try:
                 body = await asyncio.to_thread(
                     _transcode,
-                    upstream.content,
+                    upstream_body,
                     fmt=chosen_fmt,
                     max_width=target_width,
                     quality=settings.image_proxy_quality,

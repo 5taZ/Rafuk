@@ -21,12 +21,29 @@ def jpeg_bytes() -> bytes:
 
 @pytest.fixture
 def fake_upstream(jpeg_bytes: bytes) -> Iterator[None]:
-    """Patch httpx.AsyncClient so the proxy never makes real network calls."""
+    """Patch httpx.AsyncClient so the proxy never makes real network calls.
 
-    class _FakeResponse:
+    PR-01: the proxy now uses ``client.stream("GET", url)`` so an
+    oversized upstream is rejected before being buffered. The fake
+    response below reproduces enough of the streaming protocol
+    (``aiter_bytes`` + async-context-manager) that the handler treats
+    it as a real httpx Response.
+    """
+
+    class _FakeStreamResponse:
         def __init__(self, content: bytes, status_code: int = 200) -> None:
             self.content = content
             self.status_code = status_code
+            self.headers = {"content-length": str(len(content))}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def aiter_bytes(self, chunk_size: int = 65536):
+            yield self.content
 
     class _FakeClient:
         def __init__(self, *_: object, **__: object) -> None:
@@ -38,8 +55,8 @@ def fake_upstream(jpeg_bytes: bytes) -> Iterator[None]:
         async def __aexit__(self, *_: object) -> None:
             return None
 
-        async def get(self, _url: str) -> _FakeResponse:
-            return _FakeResponse(jpeg_bytes, status_code=200)
+        def stream(self, _method: str, _url: str):
+            return _FakeStreamResponse(jpeg_bytes, status_code=200)
 
     with patch("api.routers.image_proxy.httpx.AsyncClient", _FakeClient):
         yield
@@ -158,6 +175,97 @@ def test_image_proxy_does_not_upscale(
         assert img.size == (200, 200)
 
 
+def test_image_proxy_rejects_oversized_via_content_length_header(
+    client: TestClient,
+    jpeg_bytes: bytes,
+) -> None:
+    """PR-01: a Content-Length header above the max-bytes ceiling
+    must short-circuit BEFORE we buffer the body, so a malicious
+    upstream can't push 100s of MB into the worker just by claiming
+    a small payload up front. The stream protocol is structured so
+    the handler may abort either at the header check or via the
+    streaming-byte counter; either path must yield 413.
+    """
+    over_limit = b"x" * 16
+    fake_size = 9_999_999_999  # well past image_proxy_max_bytes (5 MB default)
+
+    class _OversizedStream:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.headers = {"content-length": str(fake_size)}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def aiter_bytes(self, chunk_size: int = 65536):
+            # Should never reach this point — content-length already
+            # over the limit. Guard anyway so a regression is loud.
+            yield over_limit
+
+    class _OversizedClient:
+        def __init__(self, *_: object, **__: object) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def stream(self, _method: str, _url: str):
+            return _OversizedStream()
+
+    with patch("api.routers.image_proxy.httpx.AsyncClient", _OversizedClient):
+        response = client.get("/api/v1/img/ad/abc123.jpg")
+    assert response.status_code == 413
+
+
+def test_image_proxy_streams_with_running_byte_cap(
+    client: TestClient,
+) -> None:
+    """PR-01: when the upstream omits Content-Length, the running
+    byte counter inside ``aiter_bytes`` must enforce the same
+    ``image_proxy_max_bytes`` ceiling so a chunk-by-chunk attack
+    can't slip past the header check.
+    """
+
+    class _ChunkedStream:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.headers: dict[str, str] = {}  # no content-length
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def aiter_bytes(self, chunk_size: int = 65536):
+            # 6 MB total body — over the 5 MB default cap.
+            for _ in range(6):
+                yield b"x" * (1024 * 1024)
+
+    class _ChunkedClient:
+        def __init__(self, *_: object, **__: object) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def stream(self, _method: str, _url: str):
+            return _ChunkedStream()
+
+    with patch("api.routers.image_proxy.httpx.AsyncClient", _ChunkedClient):
+        response = client.get("/api/v1/img/ad/abc123.jpg")
+    assert response.status_code == 413
+
+
 def test_image_proxy_handles_upstream_failure(
     client: TestClient,
 ) -> None:
@@ -171,7 +279,7 @@ def test_image_proxy_handles_upstream_failure(
         async def __aexit__(self, *_: object) -> None:
             return None
 
-        async def get(self, _url: str):
+        def stream(self, _method: str, _url: str):
             raise httpx.ConnectTimeout("upstream timeout")
 
     with patch("api.routers.image_proxy.httpx.AsyncClient", _FailingClient):
@@ -190,6 +298,20 @@ def test_image_proxy_lru_cache_skips_upstream_on_repeat(
     """
     upstream_calls = 0
 
+    class _StreamResp:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.headers = {"content-length": str(len(jpeg_bytes))}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def aiter_bytes(self, chunk_size: int = 65536):
+            yield jpeg_bytes
+
     class _CountingClient:
         def __init__(self, *_: object, **__: object) -> None:
             pass
@@ -207,15 +329,10 @@ def test_image_proxy_lru_cache_skips_upstream_on_repeat(
         async def aclose(self) -> None:
             return None
 
-        async def get(self, _url: str):
+        def stream(self, _method: str, _url: str):
             nonlocal upstream_calls
             upstream_calls += 1
-
-            class _Resp:
-                content = jpeg_bytes
-                status_code = 200
-
-            return _Resp()
+            return _StreamResp()
 
     with patch("api.routers.image_proxy.httpx.AsyncClient", _CountingClient):
         # First hit — cache miss, upstream is fetched.
