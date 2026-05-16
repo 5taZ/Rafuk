@@ -11,9 +11,11 @@ Three thin checks every AI handler runs before doing real work:
   (analyze, listing-assistant, ai-tools) gets the same behaviour
   without re-implementing the math.
 * ``_check_ai_consent`` — verify the user granted ``ai_analysis``,
-  ``cross_border`` and ``pd_processing`` consent. Skipped in DEBUG
-  mode for local dev (we don't want to force a consent grant just to
-  test the pipeline).
+  ``cross_border`` and ``pd_processing`` consent. The skip path is
+  tied to ``auth_bypass`` (NOT plain ``debug``); ``auth_bypass``
+  rejects production / remote DB at config-validation time, so an
+  accidentally-enabled ``DEBUG=true`` in production no longer turns
+  the consent gate off. Tests use the same flag via conftest.
 * ``_coerce_string_list`` — input sanitiser used by the listing
   assistant + ai_tools to normalise free-form lists from prompts.
   Lives here because every guard-using router also imports it.
@@ -105,13 +107,20 @@ async def _check_rate_limit(
 async def _check_ai_consent(request: Request, user_id: int) -> None:
     """Verify the user has granted every consent needed for AI processing.
 
-    Skipped in DEBUG so local dev doesn't have to grant consent for
-    every test request — the consent UI is exercised by the consent
-    test suite instead. In production every AI endpoint gates on
-    this; failure raises HTTP 403 with a structured ``consent_type``
-    payload the frontend uses to pop the right modal.
+    AI-CRITICAL fix (issues §3.2): the previous gate skipped on
+    ``settings.debug``. Because ``debug`` only triggers a soft warning
+    in some misconfigurations and a stale env file can ship to prod,
+    a single careless ``DEBUG=true`` would silently disable Belarus
+    Law No. 99-З consent enforcement for every AI endpoint.
+
+    The skip path is now tied to ``settings.auth_bypass`` instead.
+    That flag has stricter validators in ``api/config.py`` —
+    ``ENV=production`` and a non-local ``DATABASE_URL`` both raise at
+    startup — so the bypass cannot reach a real deployment even with
+    a hand-edited env file. Local dev / tests opt in by setting
+    ``AUTH_BYPASS=true`` (already used to skip Telegram initData).
     """
-    if get_settings().debug:
+    if get_settings().auth_bypass:
         return
 
     session_factory = request.app.state.session_factory

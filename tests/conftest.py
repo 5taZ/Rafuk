@@ -28,8 +28,13 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("API_BASE_URL", "https://kufar-analytics.example.com")
     monkeypatch.setenv("MINI_APP_URL", "https://kufar-analytics.example.com/app")
     # Tests must never hit real telegram auth (they use dependency_overrides).
-    # Debug mode also skips AI consent checks — appropriate for test env.
+    # Debug mode is on for verbose logging / extra dev origins.
     monkeypatch.setenv("DEBUG", "true")
+    # AUTH_BYPASS=true lets tests skip Telegram initData *and* AI-consent
+    # checks (see api/services/ai_guards._check_ai_consent). The flag is
+    # rejected by the Settings validator in production / against a remote
+    # DATABASE_URL, so this is dev/test-only by construction.
+    monkeypatch.setenv("AUTH_BYPASS", "true")
 
     try:
         from api.config import get_settings

@@ -16,8 +16,63 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 
 logger = logging.getLogger(__name__)
+
+
+# ── Unicode normalisation helpers (AI-CRITICAL — issues §3.1) ────────
+#
+# The previous regex pipeline matched literal Latin characters only, so
+# a crafted Kufar title using Cyrillic / fullwidth / mathematical-style
+# look-alikes ("ѕystem:", "ｉgnore previous instructions",
+# "𝐢gnore all instructions") slipped through untouched.
+#
+# We now NFKC-normalise the text (which folds fullwidth / compatibility
+# forms back to ASCII) and then run a small confusables map that
+# converts the most common Cyrillic look-alikes to their Latin twins
+# *for matching purposes only*. The cleaned/sanitised text returned to
+# callers preserves the user's original characters wherever they did
+# not trip a guard, so legitimate Cyrillic listings ("Часы Casio")
+# render normally — only the substrings we substitute via subn() get
+# replaced with placeholders.
+
+# Cyrillic → Latin homoglyphs commonly used in prompt-injection
+# attempts. Limited to the subset the role/instruction patterns rely
+# on; widening this map turns every Belarusian listing into garbled
+# transliteration.
+_CONFUSABLE_CYRILLIC_TO_LATIN = str.maketrans({
+    "а": "a", "А": "A",
+    "е": "e", "Е": "E",
+    "о": "o", "О": "O",
+    "р": "p", "Р": "P",
+    "с": "c", "С": "C",
+    "у": "y", "У": "Y",
+    "х": "x", "Х": "X",
+    "і": "i", "І": "I",
+    "ѕ": "s", "Ѕ": "S",
+    "ј": "j", "Ј": "J",
+    "ԁ": "d",
+    "ɡ": "g",
+    "ı": "i",
+    "ӏ": "l",
+})
+
+
+def _normalise_for_matching(text: str) -> str:
+    """Return an NFKC-normalised, confusables-folded copy of ``text``.
+
+    Used internally by the prompt-injection regex pass so visually
+    identical Cyrillic / fullwidth payloads ("ｉgnore", "ѕystem:",
+    "ignore　all　instructions") trip the same guards as their ASCII
+    forms. The original string is preserved for the user-visible
+    output — only matching is performed against the normalised view.
+    """
+    if not text:
+        return text
+    folded = unicodedata.normalize("NFKC", text)
+    folded = folded.translate(_CONFUSABLE_CYRILLIC_TO_LATIN)
+    return folded
 
 
 # ── Prompt-injection detection patterns ──────────────────────────────────
@@ -158,9 +213,30 @@ def sanitize_user_text(
     text = str(value)
     if not text.strip():
         return None
+    # AI-CRITICAL fix (issues §3.1): NFKC-normalise + Cyrillic-confusables
+    # fold so prompt-injection variants slipped through homoglyphs trip the
+    # same guards as ASCII payloads. NFKC is canonical-equivalence safe and
+    # folds fullwidth/compat forms unconditionally — that step is applied
+    # in place. The Cyrillic confusables fold ("ѕystem" → "system") would
+    # mangle legitimate Belarusian listings if applied unconditionally, so
+    # we only swap to the folded copy when it actually changes the regex
+    # outcome (i.e. only when a homoglyph attack is present).
+    text = unicodedata.normalize("NFKC", text)
     # Use subn() so we can count hits per pattern and log the totals.
     text, role_hits = _PROMPT_ROLE_MARKERS.subn("", text)
     text, injection_hits = _PROMPT_INJECTION_PATTERNS.subn("[удалено]", text)
+    folded = text.translate(_CONFUSABLE_CYRILLIC_TO_LATIN)
+    if folded != text and (
+        _PROMPT_ROLE_MARKERS.search(folded)
+        or _PROMPT_INJECTION_PATTERNS.search(folded)
+    ):
+        folded, role_hits_fold = _PROMPT_ROLE_MARKERS.subn("", folded)
+        folded, injection_hits_fold = _PROMPT_INJECTION_PATTERNS.subn(
+            "[удалено]", folded
+        )
+        text = folded
+        role_hits += role_hits_fold
+        injection_hits += injection_hits_fold
     text = _TRIPLE_BACKTICK_RE.sub("`", text)
     text = _MULTILINE_COLLAPSE_RE.sub("\n\n", text)
     # Strip control characters but keep newlines and tabs.

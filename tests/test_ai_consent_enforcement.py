@@ -49,13 +49,21 @@ def _make_request(session_factory):
 
 @pytest.fixture
 def debug_off(monkeypatch):
-    """Flip DEBUG=false for the duration of the test and rebuild the
-    settings cache so the new value takes effect."""
+    """Flip DEBUG=false AND AUTH_BYPASS=false for the duration of the
+    test and rebuild the settings cache so the new values take effect.
+
+    The consent gate now keys on ``auth_bypass`` (AI-CRITICAL fix), so
+    tests for the production enforcement path must clear *both* flags.
+    The conftest sets DEBUG=true and AUTH_BYPASS=true at module load,
+    and the settings cache is rebuilt at fixture exit.
+    """
     monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("AUTH_BYPASS", "false")
     config.get_settings.cache_clear()
     yield
     # Restore for the rest of the test session.
     monkeypatch.setenv("DEBUG", "true")
+    monkeypatch.setenv("AUTH_BYPASS", "true")
     config.get_settings.cache_clear()
 
 
