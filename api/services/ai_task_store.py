@@ -153,10 +153,35 @@ def _task_lock(task_id: str) -> asyncio.Lock:
     lock = _task_locks.get(task_id)
     if lock is None:
         if len(_task_locks) >= _MAX_TASK_LOCKS:
-            # Drop the oldest entries — Python dicts preserve insertion
-            # order, so popping from the front evicts the stalest keys.
-            for stale_key in list(_task_locks.keys())[: _MAX_TASK_LOCKS // 2]:
+            # PR-12: skip locks that are currently held by another
+            # ``_update_task`` invocation. The previous shape evicted
+            # the oldest half by insertion order alone — if a long-
+            # running task happened to be in that half, a parallel
+            # update for the SAME task_id would build a fresh lock
+            # and the per-task serialisation that AI-05 set up was
+            # broken for the duration of that race.
+            target = _MAX_TASK_LOCKS // 2
+            evicted = 0
+            for stale_key in list(_task_locks.keys()):
+                candidate = _task_locks.get(stale_key)
+                if candidate is None:
+                    continue
+                if candidate.locked():
+                    continue
                 _task_locks.pop(stale_key, None)
+                evicted += 1
+                if evicted >= target:
+                    break
+            # Emergency release valve: if every lock is held (rare —
+            # would mean 1024 tasks updating concurrently on one
+            # worker), drop the oldest anyway so the dict can't grow
+            # past the cap forever. The next update on those tasks
+            # picks up a fresh lock; the worst case is the same race
+            # the FIFO sweep used to have, but only when there's no
+            # better option.
+            if evicted == 0:
+                for stale_key in list(_task_locks.keys())[:target]:
+                    _task_locks.pop(stale_key, None)
         lock = asyncio.Lock()
         _task_locks[task_id] = lock
     return lock

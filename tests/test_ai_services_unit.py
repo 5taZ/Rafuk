@@ -358,3 +358,36 @@ async def test_prune_old_tasks_evicts_stale_entries() -> None:
     await ai_shadow_store._prune_old_tasks_shadow()
     assert "old" not in ai_shadow_store._tasks
     assert "fresh" in ai_shadow_store._tasks
+
+
+@pytest.mark.asyncio
+async def test_task_lock_eviction_keeps_held_locks() -> None:
+    """PR-12: when ``_task_locks`` reaches ``_MAX_TASK_LOCKS``, the
+    eviction sweep must NOT drop locks that are currently held by an
+    in-flight ``_update_task``. The previous FIFO eviction could
+    drop a held lock, after which a parallel update for the SAME
+    task_id built a fresh lock and broke per-task serialisation.
+    """
+    from api.services import ai_task_store
+
+    ai_task_store._task_locks.clear()
+    held_key = "task-held"
+    pinned = ai_task_store._task_lock(held_key)
+    await pinned.acquire()
+    try:
+        # Fill to the cap with idle locks (one of the slots is the
+        # pinned one we just created above; back-fill the rest).
+        for i in range(ai_task_store._MAX_TASK_LOCKS - 1):
+            ai_task_store._task_lock(f"task-idle-{i}")
+        assert len(ai_task_store._task_locks) == ai_task_store._MAX_TASK_LOCKS
+        # Trip the eviction path with a brand-new task_id.
+        ai_task_store._task_lock("task-new")
+        # The held lock must still be in the registry, otherwise a
+        # parallel _update_task would build a fresh lock and lose
+        # the per-task serialisation guarantee.
+        assert held_key in ai_task_store._task_locks
+        # The new entry must have landed.
+        assert "task-new" in ai_task_store._task_locks
+    finally:
+        pinned.release()
+        ai_task_store._task_locks.clear()
