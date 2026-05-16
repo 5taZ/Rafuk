@@ -318,7 +318,14 @@ services:
     profiles: ["local-db"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-kufar}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kufar}
+      # PR-14: no fallback password. The previous ``${POSTGRES_PASSWORD:-kufar}``
+      # silently span up a Postgres instance accepting ``kufar/kufar`` whenever
+      # the operator forgot to populate ``.env`` — a foot-gun on copy-paste
+      # deploys. Without a default, ``docker compose up`` fails fast with
+      # "POSTGRES_PASSWORD is not set" instead. Generate a strong value:
+      #     openssl rand -hex 32
+      # then put it in ``.env`` as ``POSTGRES_PASSWORD=...`` (see .env.example).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: ${POSTGRES_DB:-kufar}
       # Keep PG locale aligned with the application — Russian/Belarusian
       # text in listings needs UTF-8 collation that "C.UTF-8" provides.
