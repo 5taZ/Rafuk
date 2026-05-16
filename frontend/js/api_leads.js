@@ -432,6 +432,34 @@ function createApiLeads(context) {
         const requestId = (state.detail._requestId =
             (state.detail._requestId + 1) % 1_000_000);
 
+        // Show modal immediately with data we already have from the
+        // lead item — avoids waiting for the full Kufar dataset.
+        const instantDetail = {
+            ad_id: lead.ad_id,
+            title: lead.title || "Объявление",
+            price: lead.price_byn ?? null,
+            price_type: null,
+            currency: state.misc.currency || "BYN",
+            link: lead.link || "",
+            query: queryToUse,
+            images: lead.thumbnail ? [lead.thumbnail] : [],
+            description: null,
+            parameters: [],
+            seller_fields: [],
+        };
+        state.detail.data = instantDetail;
+        state.detail.imageIndex = 0;
+        state.detail.fromWatchlist = false;
+        state.detail.ai = {
+            adId: lead.ad_id,
+            loading: false,
+            result: null,
+            error: "",
+            source: "",
+        };
+        renderDetailModal();
+
+        // Enrich with full Kufar data in background
         state.ui.error = null;
         renderError();
         try {
@@ -443,7 +471,6 @@ function createApiLeads(context) {
             if (requestId !== state.detail._requestId) return;
             state.detail.data = fullDetail;
             state.detail.imageIndex = 0;
-            state.detail.fromWatchlist = false;
             state.detail.ai = {
                 adId: fullDetail.ad_id || lead.ad_id,
                 loading: false,
@@ -453,12 +480,10 @@ function createApiLeads(context) {
             };
             renderDetailModal();
         } catch (error) {
-            if (error.name === "AbortError") {
-                return;
-            }
+            if (error.name === "AbortError") return;
             if (requestId !== state.detail._requestId) return;
-            state.ui.error = error.message || "Не удалось загрузить детали";
-            renderError();
+            // Keep the instant detail visible — don't show error if we
+            // already have basic data displayed.
         }
     }
 

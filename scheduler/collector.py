@@ -55,6 +55,7 @@ from api.services.history_service import (
     upsert_query_snapshot,
 )
 from api.services.kufar_client import KufarAPIError, KufarClient
+from api.services.listing_mapper import first_image_url
 from api.services.market_signals import region_label
 from api.services.reseller_tools import compute_deal_score, matches_tracker_filters
 from bot.keyboards import enhanced_alert_keyboard, lead_reminder_keyboard, tracker_alert_keyboard
@@ -316,7 +317,7 @@ async def persist_tracker_events(
             continue
         # Get enriched data from ad if available
         ad = ads_by_id.get(state.ad_id) if ads_by_id else None
-        thumbnail = ad.get("thumbnail") if ad else None
+        thumbnail = first_image_url(ad) if ad else None
         seller_type = ad.get("seller_type") if ad else None
         region_name = region_label(ad) if ad else None
 
@@ -343,7 +344,7 @@ async def persist_tracker_events(
             continue
         # Get enriched data from ad if available
         ad = ads_by_id.get(state.ad_id) if ads_by_id else None
-        thumbnail = ad.get("thumbnail") if ad else None
+        thumbnail = first_image_url(ad) if ad else None
         seller_type = ad.get("seller_type") if ad else None
         region_name = region_label(ad) if ad else None
 
@@ -502,7 +503,7 @@ def _detect_threshold_alerts(
                 continue
             title = str(ad.get("subject", ""))[:255]
             link = str(ad.get("ad_link", ""))
-            thumbnail = ad.get("thumbnail")
+            thumbnail = first_image_url(ad)
             seller_type = ad.get("seller_type")
             region_name_val = region_label(ad) if ad else None
 
@@ -542,7 +543,7 @@ def _detect_threshold_alerts(
                     continue
                 title = str(ad.get("subject", ""))[:255]
                 link = str(ad.get("ad_link", ""))
-                thumbnail = ad.get("thumbnail")
+                thumbnail = first_image_url(ad)
                 seller_type = ad.get("seller_type")
                 region_name_val = region_label(ad) if ad else None
 

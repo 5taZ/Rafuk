@@ -87,12 +87,12 @@ def enhanced_alert_keyboard(
 
     Three action buttons:
       - 📌 В покупки  — callback ``add_lead:<ad_id>`` to create a lead
-      - 👁 Отслеживать — callback ``add_watch:<ad_id>`` to add to watchlist
+      - ⭐ В Избранное — callback ``add_watch:<ad_id>`` to add to watchlist
       - 🔗 Открыть    — URL button linking to the Kufar listing
     """
     row1: list[InlineKeyboardButton] = [
         InlineKeyboardButton(text="📌 В покупки", callback_data=f"add_lead:{ad_id}"),
-        InlineKeyboardButton(text="👁 Отслеживать", callback_data=f"add_watch:{ad_id}"),
+        InlineKeyboardButton(text="⭐ В Избранное", callback_data=f"add_watch:{ad_id}"),
     ]
     row2: list[InlineKeyboardButton] = []
     if listing_url and listing_url.startswith(("http://", "https://")):

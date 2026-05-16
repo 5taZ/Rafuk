@@ -313,6 +313,35 @@ function createApiWatchlist(context) {
         const requestId = (state.detail._requestId =
             (state.detail._requestId + 1) % 1_000_000);
 
+        // Show modal immediately with data we already have from the
+        // watchlist item — avoids the user staring at a blank screen
+        // while the full Kufar dataset loads (can take 2-5s).
+        const instantDetail = {
+            ad_id: item.ad_id,
+            title: item.title || "Объявление",
+            price: item.current_price_byn ?? item.initial_price_byn ?? null,
+            price_type: null,
+            currency: state.misc.currency || "BYN",
+            link: item.link || "",
+            query: queryToUse,
+            images: item.thumbnail ? [item.thumbnail] : [],
+            description: null,
+            parameters: [],
+            seller_fields: [],
+        };
+        state.detail.data = instantDetail;
+        state.detail.imageIndex = 0;
+        state.detail.fromWatchlist = true;
+        state.detail.ai = {
+            adId: item.ad_id,
+            loading: false,
+            result: null,
+            error: "",
+            source: "",
+        };
+        renderDetailModal();
+
+        // Enrich with full Kufar data in background
         state.ui.error = null;
         renderError();
         try {
@@ -324,7 +353,6 @@ function createApiWatchlist(context) {
             if (requestId !== state.detail._requestId) return;
             state.detail.data = fullDetail;
             state.detail.imageIndex = 0;
-            state.detail.fromWatchlist = true;
             state.detail.ai = {
                 adId: fullDetail.ad_id || item.ad_id,
                 loading: false,
@@ -334,12 +362,10 @@ function createApiWatchlist(context) {
             };
             renderDetailModal();
         } catch (error) {
-            if (error.name === "AbortError") {
-                return;
-            }
+            if (error.name === "AbortError") return;
             if (requestId !== state.detail._requestId) return;
-            state.ui.error = error.message || "Не удалось загрузить детали";
-            renderError();
+            // Keep the instant detail visible — don't show error if we
+            // already have basic data displayed.
         }
     }
 
