@@ -28,6 +28,35 @@ async def test_get_json_handles_corrupt_data() -> None:
 
 
 @pytest.mark.asyncio
+async def test_memory_cache_incr_traces_corrupt_counter(caplog) -> None:
+    """PR-20: a non-integer entry at a counter key is a logic bug
+    somewhere upstream (Redis restart with stale JSON, an
+    accidental ``set_json`` over a counter key). The fallback
+    behaviour is to reset to 1, but ops needs a breadcrumb to
+    track the offending caller. ``logger.debug`` keeps the warn
+    channel clean — Redis restarts surface the same shape
+    immediately afterwards.
+    """
+    import logging
+
+    cache = MemoryCache()
+    # Seed a corrupt value at the counter key (mimics a stale JSON
+    # blob left behind by a previous ``set_json`` on the same key).
+    await cache.set("ai_rate:42:negotiate", "not-a-number")
+
+    caplog.set_level(logging.DEBUG, logger="api.services.cache")
+    new_count = await cache.incr("ai_rate:42:negotiate", ttl=60)
+
+    # Counter recovers to 1 — same as if the key had been missing.
+    assert new_count == 1
+    # Breadcrumb is in the log.
+    assert any(
+        "non-integer value" in rec.message and "ai_rate:42:negotiate" in rec.message
+        for rec in caplog.records
+    ), "Expected debug breadcrumb on corrupt-counter incr"
+
+
+@pytest.mark.asyncio
 async def test_memory_cache_incr_enforces_max_entries() -> None:
     """PR-06: ``incr()`` must respect ``MAX_ENTRIES`` so the in-memory
     fallback path can't grow unbounded. Real workload that exercises

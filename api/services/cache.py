@@ -97,6 +97,21 @@ class MemoryCache:
                     try:
                         count = int(value) + 1
                     except (TypeError, ValueError):
+                        # PR-20: a non-integer value at a counter key
+                        # is a logic bug somewhere upstream (Redis
+                        # eviction surfaced a stale serialised JSON
+                        # blob, a test reused an incr key for
+                        # ``set_json``, etc.). We still want to
+                        # recover gracefully — counters reset to 1 —
+                        # but ops needs a breadcrumb to find the
+                        # offending caller. ``debug`` (not warning)
+                        # because the same shape is also expected
+                        # immediately after a Redis restart and we
+                        # don't want to flood the warn channel.
+                        logger.debug(
+                            "MemoryCache.incr: non-integer value at key=%s; resetting to 1",
+                            key,
+                        )
                         count = 1
                     new_expires = expires_at
             else:
