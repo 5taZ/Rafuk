@@ -199,15 +199,21 @@ Status legend: `pending` → `in_progress` → `done`.
 
 ### PR-13 — Reminder accepts `remind_at` in the past
 - **Severity:** P3 (logic)
-- **Wave:** 144
-- **File:** `api/routers/reminders.py:18-64`, `api/schemas.py`
+- **Wave:** 144 (no-op — already implemented)
+- **File:** `api/schemas.py` — `ReminderCreate.validate_remind_at`
 - **Problem:** No validation that `remind_at` is in the future. A
   past timestamp is silently accepted; the next scheduler tick
   treats it as already-due and fires the notification immediately,
   which is rarely what the user meant.
 - **Fix:** validate at the Pydantic schema level — reject `remind_at`
   more than 60 seconds in the past with a clear 422 error.
-- **Status:** done
+- **Status:** done before this audit cycle. The
+  ``ReminderCreate.validate_remind_at`` field validator already
+  enforces all three conditions: timezone-aware, strictly future,
+  and within ``REMINDER_MAX_HORIZON_DAYS``. Regression tests
+  ``test_create_reminder_rejects_past_remind_at`` and siblings
+  in ``tests/test_reminders.py`` keep the contract honest.
+  Wave 144 is the documentation update only — no code changed.
 
 ### PR-14 — Postgres password defaults to `kufar`
 - **Severity:** P3 (config)
