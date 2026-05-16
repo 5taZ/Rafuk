@@ -124,3 +124,41 @@ async def test_cmd_stats_returns_price_stats() -> None:
     text = message.answer.await_args.args[0]
     assert "iphone 15" in text
     assert "2,000" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_stats_truncates_long_query() -> None:
+    """PR-16: a /stats query longer than the display cap must be
+    truncated with a ``…`` marker so the Telegram send never trips
+    the 4096-char message ceiling.
+    """
+    from bot.handlers.analytics import _STATS_QUERY_DISPLAY_LIMIT, cmd_stats
+
+    fake_data = {
+        "median": 2000,
+        "total_results": 42,
+        "count": 30,
+        "q1": 1800,
+        "q3": 2300,
+    }
+    long_query = "x" * 5000  # well past the cap and Telegram's own ceiling
+    message = SimpleNamespace(
+        answer=AsyncMock(),
+        from_user=SimpleNamespace(id=123),
+        text=f"/stats {long_query}",
+    )
+
+    with patch("bot.handlers.analytics._api_get", return_value=fake_data):
+        await cmd_stats(message)
+
+    message.answer.assert_awaited_once()
+    text = message.answer.await_args.args[0]
+    # Trail of the original 5 000-char query must be gone — the
+    # echo is bounded to ~120 chars + boilerplate ≪ 4096.
+    assert len(text) < 1000
+    assert "…" in text
+    # The full unmodified payload must NOT have made it through.
+    assert long_query not in text
+    # And the cap is exactly the documented value (defence against
+    # accidental drift).
+    assert _STATS_QUERY_DISPLAY_LIMIT == 120

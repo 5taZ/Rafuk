@@ -12,6 +12,22 @@ from bot.api_client import _api_get
 
 router = Router(name="analytics")
 
+# PR-16: cap user-supplied query text echoed back into the /stats
+# reply. Telegram message bodies have a 4096-char ceiling and
+# the boilerplate (median + range + counts + label fragments) eats
+# ~150 chars, so 120 chars of free text is plenty for a normal
+# /stats invocation. Anything past the cap is truncated with a
+# horizontal-ellipsis marker so the user can tell their query was
+# clipped without the message-send failing.
+_STATS_QUERY_DISPLAY_LIMIT = 120
+
+
+def _truncate_for_telegram(value: str, max_chars: int = _STATS_QUERY_DISPLAY_LIMIT) -> str:
+    if len(value) <= max_chars:
+        return value
+    # ``…`` is one char, so ``max_chars - 1`` of the prefix survives.
+    return value[: max_chars - 1] + "…"
+
 
 def _fmt_byn(value: float | None) -> str:
     """Format a BYN amount with thousands separator."""
@@ -108,8 +124,14 @@ async def cmd_stats(message: Message) -> None:
     q1 = data.get("q1", 0)
     q3 = data.get("q3", 0)
 
+    # PR-16: cap the echoed query text. The unbounded version
+    # would exceed Telegram's 4096-char message ceiling on a long
+    # /stats payload and the send would fail with a noisy stack
+    # trace (BadRequest: MESSAGE_TOO_LONG). The truncation marker
+    # lets the user see their query was clipped.
+    display_query = _truncate_for_telegram(search_query)
     text = (
-        f"📱 <b>{html_escape(search_query)}</b>: "
+        f"📱 <b>{html_escape(display_query)}</b>: "
         f"Медиана {_fmt_byn(median)} BYN │ На рынке {total} │ "
         f"Дешевле {_fmt_byn(q1)} BYN\n"
         f"Диапазон: {_fmt_byn(q1)} – {_fmt_byn(q3)} BYN | Выборка: {count}"
