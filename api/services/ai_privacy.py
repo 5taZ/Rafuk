@@ -66,8 +66,22 @@ async def clear_user_ai_data(
         try:
             cache = RedisCache.from_url(settings.redis_url)
             if not await cache.ping():
+                # PR-10: log the in-memory fallback so operators can
+                # see the privacy / account-deletion path lost its
+                # cross-worker view of per-user keys. Without the log
+                # the Redis blip showed up as "consent revoke didn't
+                # actually evict the AI cache" tickets days later.
+                logger.warning(
+                    "Redis ping failed in clear_user_ai_data — falling back to "
+                    "MemoryCache; per-worker eviction only.",
+                )
                 cache = MemoryCache()
         except Exception:  # noqa: BLE001 — fall back to in-memory on any cache init issue
+            logger.warning(
+                "RedisCache.from_url raised in clear_user_ai_data — falling back "
+                "to MemoryCache; per-worker eviction only.",
+                exc_info=True,
+            )
             cache = MemoryCache()
 
     try:
