@@ -250,9 +250,7 @@ function createRenderModals(context) {
         const collectionState = _detailCollectionState(detail);
         const detailTitleText = detail.title || "товар";
         const leadText = collectionState.inLeads ? "В покупках" : "В покупки";
-        const watchText = collectionState.inWatchlist
-            ? "В избранном"
-            : collectionState.inLeads ? "В покупках" : "В избранное";
+        const watchText = collectionState.inWatchlist ? "В избранном" : "В избранное";
         _setDetailActionButton(
             elements.detailAddLeadButton,
             leadText,
@@ -264,7 +262,7 @@ function createRenderModals(context) {
         _setDetailActionButton(
             elements.detailAddWatchlistButton,
             watchText,
-            collectionState.inLeads || collectionState.inWatchlist,
+            collectionState.inWatchlist,
             collectionState.inWatchlist
                 ? `«${detailTitleText}» уже в избранном`
                 : collectionState.inLeads
@@ -272,9 +270,11 @@ function createRenderModals(context) {
                     : `Добавить «${detailTitleText}» в избранное`,
         );
 
+        const shouldOpenDetailModal = elements.detailModal.hidden;
+
         // Reset scroll position to top when modal opens
         const scrollContainer = elements.detailModal?.querySelector(".detail-sheet-content");
-        if (scrollContainer) {
+        if (shouldOpenDetailModal && scrollContainer) {
             scrollContainer.scrollTop = 0;
         }
 
@@ -296,7 +296,7 @@ function createRenderModals(context) {
             elements.detailMainImage._pinchController.reset(false);
         }
 
-        if (elements.detailModal.hidden) {
+        if (shouldOpenDetailModal) {
             openModalAnimated(elements.detailModal);
         }
         });

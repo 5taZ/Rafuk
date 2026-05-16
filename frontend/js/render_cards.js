@@ -130,6 +130,35 @@ function createRenderCards(context) {
 
     /* ===== Collections ===== */
 
+    function _setListingActionButton(button, text, disabled, label) {
+        if (!button) return;
+        button.textContent = text;
+        button.disabled = Boolean(disabled);
+        if (disabled) {
+            button.setAttribute("aria-disabled", "true");
+        } else {
+            button.removeAttribute("aria-disabled");
+        }
+        if (label) button.setAttribute("aria-label", label);
+    }
+
+    function _updateListingActionButtons(card, collectionState) {
+        const item = card?._item || {};
+        const itemTitle = item.title || "товар";
+        const leadButton = card.querySelector('[data-role="lead"]');
+        const watchButton = card.querySelector('[data-role="watch"]');
+        card.dataset.collectionState = collectionState;
+        if (collectionState === "lead") {
+            _setListingActionButton(leadButton, "В покупках", true, `«${itemTitle}» уже в покупках`);
+            _setListingActionButton(watchButton, "В избранное", false, `«${itemTitle}» уже в покупках`);
+            return;
+        }
+        if (collectionState === "watchlist") {
+            _setListingActionButton(leadButton, "В покупки", false, `Добавить «${itemTitle}» в покупки`);
+            _setListingActionButton(watchButton, "В избранном", true, `«${itemTitle}» уже в избранном`);
+        }
+    }
+
     function _delegateListingClick(container) {
         if (container._listingDelegated) return;
         container._listingDelegated = true;
@@ -142,9 +171,13 @@ function createRenderCards(context) {
                 event.stopPropagation();
                 if (actionBtn.disabled) return;
                 if (actionBtn.dataset.role === "lead") {
-                    void actions.addLeadFromListing(item);
+                    void Promise.resolve(actions.addLeadFromListing(item)).then((changed) => {
+                        if (changed) _updateListingActionButtons(card, "lead");
+                    });
                 } else {
-                    void actions.addWatchlistFromListing(item);
+                    void Promise.resolve(actions.addWatchlistFromListing(item)).then((changed) => {
+                        if (changed) _updateListingActionButtons(card, "watchlist");
+                    });
                 }
                 return;
             }

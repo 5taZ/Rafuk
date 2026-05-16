@@ -652,8 +652,9 @@ function createRenderTrackers(context) {
                 });
             });
             card.querySelector('[data-role="lead"]')?.addEventListener("click", (clickEvent) => {
-                if (clickEvent.currentTarget.disabled) return;
-                void actions.addLeadFromListing(
+                const button = clickEvent.currentTarget;
+                if (button.disabled) return;
+                void Promise.resolve(actions.addLeadFromListing(
                     {
                         ad_id: event.ad_id,
                         title: event.title,
@@ -663,7 +664,13 @@ function createRenderTrackers(context) {
                     },
                     "tracker_event",
                     event.query
-                );
+                )).then((changed) => {
+                    if (!changed) return;
+                    button.textContent = "В покупках";
+                    button.disabled = true;
+                    button.setAttribute("aria-disabled", "true");
+                    button.setAttribute("aria-label", `«${eventTitle}» уже в покупках`);
+                });
             });
             return card;
         }

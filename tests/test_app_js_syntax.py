@@ -1047,10 +1047,12 @@ const leadListing = builders.buildListingNode(
 );
 assert.strictEqual(findByRole(leadListing, "lead").textContent, "В покупках");
 assert.strictEqual(findByRole(leadListing, "lead").disabled, true);
-assert.strictEqual(findByRole(leadListing, "watch").textContent, "В покупках");
-assert.strictEqual(findByRole(leadListing, "watch").disabled, true);
+assert.strictEqual(findByRole(leadListing, "watch").textContent, "В избранное");
+assert.strictEqual(findByRole(leadListing, "watch").disabled, false);
 assert.strictEqual(menus[0][0].label, "В покупках");
 assert.strictEqual(menus[0][0].disabled, true);
+assert.strictEqual(menus[0][1].label, "В избранное");
+assert.strictEqual(menus[0][1].disabled, false);
 
 const watchListing = builders.buildListingNode(
     { ad_id: "watch-1", title: "Ноутбук", price: 200 },
@@ -1120,8 +1122,8 @@ state.detail.data = {
 renderer.renderDetailModal();
 assert.strictEqual(elements.detailAddLeadButton.textContent, "В покупках");
 assert.strictEqual(elements.detailAddLeadButton.disabled, true);
-assert.strictEqual(elements.detailAddWatchlistButton.textContent, "В покупках");
-assert.strictEqual(elements.detailAddWatchlistButton.disabled, true);
+assert.strictEqual(elements.detailAddWatchlistButton.textContent, "В избранное");
+assert.strictEqual(elements.detailAddWatchlistButton.disabled, false);
 
 state.detail.data = {
     ad_id: "watch-1",
@@ -1149,6 +1151,8 @@ def test_duplicate_action_state_covers_secondary_surfaces() -> None:
     modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
     trackers_js = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
     events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
     css = _read_all_css()
 
     assert "_buildWatchlistActions" in builders_js
@@ -1162,10 +1166,28 @@ def test_duplicate_action_state_covers_secondary_surfaces() -> None:
 
     assert "const inLeads = _isActiveLeadAd(event.ad_id)" in trackers_js
     assert 'text: leadText' in trackers_js
-    assert "if (clickEvent.currentTarget.disabled) return;" in trackers_js
+    assert "if (button.disabled) return;" in trackers_js
 
     assert "detailAddLeadButton.disabled" in events_js
     assert "detailAddWatchlistButton.disabled" in events_js
+    assert "Promise.resolve(actions.addLeadFromListing" in (JS_DIR / "render_cards.js").read_text(
+        encoding="utf-8",
+    )
+
+    action_refresh_start = actions_js.index("function _refreshCollectionActionSurfaces")
+    action_refresh = actions_js[
+        action_refresh_start:
+        actions_js.index("\n    function _validVersion", action_refresh_start)
+    ]
+    watch_refresh_start = watchlist_js.index("function refreshCollectionActionSurfaces")
+    watch_refresh = watchlist_js[
+        watch_refresh_start:
+        watchlist_js.index("\n    // Tracks", watch_refresh_start)
+    ]
+    assert "markDirty('listings'" not in action_refresh
+    assert "renderAll();" not in action_refresh
+    assert "markDirty('listings'" not in watch_refresh
+    assert "renderAll();" not in watch_refresh
 
     for selector in (
         ".listing-btn:disabled",
@@ -1922,7 +1944,7 @@ def test_collection_actions_only_show_final_toasts() -> None:
     ]
     assert 'showToast("Добавляю…", "info"' not in add_lead
     assert 'showToast("В покупках", "success"' in add_lead
-    assert 'showToast("Уже в покупках"' not in add_lead
+    assert 'showToast("Уже в покупках", "info"' in add_lead
 
     for fn_name, success_text in (
         ("addWatchlistFromListing", "В избранном"),
@@ -1932,8 +1954,9 @@ def test_collection_actions_only_show_final_toasts() -> None:
         fn_body = watchlist_js[fn_start:watchlist_js.index("\n    // ──", fn_start + 1)]
         assert 'showToast("Добавляю…", "info"' not in fn_body
         assert f'showToast("{success_text}", "success"' in fn_body
-        assert 'showToast("Уже в покупках"' not in fn_body
-        assert 'showToast("Уже в избранном"' not in fn_body
+        assert 'showToast("Уже в покупках", "info"' in fn_body
+        if fn_name == "addWatchlistFromListing":
+            assert 'showToast("Уже в избранном", "info"' in fn_body
 
     confirm_start = leads_js.index("async function confirmLead")
     confirm_body = leads_js[confirm_start:leads_js.index("\n    // ──", confirm_start + 1)]

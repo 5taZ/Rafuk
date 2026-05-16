@@ -758,6 +758,17 @@ function createApiEvents(context) {
 
     function bindModalEvents() {
         // ── Detail modal ─────────────────────────────────────────────
+        function setDetailActionButton(button, text, disabled) {
+            if (!button) return;
+            button.textContent = text;
+            button.disabled = Boolean(disabled);
+            if (disabled) {
+                button.setAttribute("aria-disabled", "true");
+            } else {
+                button.removeAttribute("aria-disabled");
+            }
+        }
+
         elements.detailClose?.addEventListener("click", () => {
             closeDetailModal();
         });
@@ -768,13 +779,21 @@ function createApiEvents(context) {
 
         elements.detailAddLeadButton?.addEventListener("click", () => {
             if (state.detail.data && !elements.detailAddLeadButton.disabled) {
-                void context.addLeadFromListing(state.detail.data, "detail_modal", state.detail.data.query || state.search.query);
+                void Promise.resolve(
+                    context.addLeadFromListing(state.detail.data, "detail_modal", state.detail.data.query || state.search.query),
+                ).then((changed) => {
+                    if (changed) setDetailActionButton(elements.detailAddLeadButton, "В покупках", true);
+                });
             }
         });
 
         elements.detailAddWatchlistButton?.addEventListener("click", () => {
             if (state.detail.data && !elements.detailAddWatchlistButton.disabled) {
-                void context.addWatchlistFromListing(state.detail.data, state.detail.data.query || state.search.query);
+                void Promise.resolve(
+                    context.addWatchlistFromListing(state.detail.data, state.detail.data.query || state.search.query),
+                ).then((changed) => {
+                    if (changed) setDetailActionButton(elements.detailAddWatchlistButton, "В избранном", true);
+                });
             }
         });
 

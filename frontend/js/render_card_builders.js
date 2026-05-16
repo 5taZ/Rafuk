@@ -119,6 +119,21 @@ function createRenderCardBuilders(context) {
         return attrs;
     }
 
+    function _listingActionState(item, override = "") {
+        const itemTitle = item.title || "товар";
+        const inLeads = override === "lead" || (!override && _isActiveLeadAd(item.ad_id));
+        const inWatchlist = !inLeads && (
+            override === "watchlist" || (!override && _isWatchlistAd(item.ad_id))
+        );
+        return {
+            itemTitle,
+            inLeads,
+            inWatchlist,
+            leadText: inLeads ? "В покупках" : "В покупки",
+            watchText: inWatchlist ? "В избранном" : "В избранное",
+        };
+    }
+
     function buildListingNode(item, verdictClassName) {
         const listing = domEl("article", {
             className: "listing",
@@ -178,11 +193,10 @@ function createRenderCardBuilders(context) {
         if (item.condition) tags.appendChild(domEl("span", { className: "tag", text: formatCondition(item.condition) }));
         if (item.seller_type) tags.appendChild(domEl("span", { className: "tag", text: formatSeller(item.seller_type) }));
 
-        const itemTitle = item.title || "товар";
-        const inLeads = _isActiveLeadAd(item.ad_id);
-        const inWatchlist = !inLeads && _isWatchlistAd(item.ad_id);
-        const leadText = inLeads ? "В покупках" : "В покупки";
-        const watchText = inWatchlist ? "В избранном" : inLeads ? "В покупках" : "В избранное";
+        const actionState = _listingActionState(item);
+        listing.dataset.collectionState = actionState.inLeads
+            ? "lead"
+            : actionState.inWatchlist ? "watchlist" : "";
 
         listing.appendChild(
             domFragment(
@@ -213,22 +227,24 @@ function createRenderCardBuilders(context) {
                         className: "listing-btn",
                         type: "button",
                         dataset: { role: "lead" },
-                        text: leadText,
+                        text: actionState.leadText,
                         attrs: _actionButtonAttrs(
-                            inLeads,
-                            inLeads ? `«${itemTitle}» уже в покупках` : `Добавить «${itemTitle}» в покупки`,
+                            actionState.inLeads,
+                            actionState.inLeads ? `«${actionState.itemTitle}» уже в покупках` : `Добавить «${actionState.itemTitle}» в покупки`,
                         ),
                     }),
                     domEl("button", {
                         className: "listing-btn",
                         type: "button",
                         dataset: { role: "watch" },
-                        text: watchText,
+                        text: actionState.watchText,
                         attrs: _actionButtonAttrs(
-                            inLeads || inWatchlist,
-                            inWatchlist
-                                ? `«${itemTitle}» уже в избранном`
-                                : inLeads ? `«${itemTitle}» уже в покупках` : `Добавить «${itemTitle}» в избранное`,
+                            actionState.inWatchlist,
+                            actionState.inWatchlist
+                                ? `«${actionState.itemTitle}» уже в избранном`
+                                : actionState.inLeads
+                                    ? `«${actionState.itemTitle}» уже в покупках`
+                                    : `Добавить «${actionState.itemTitle}» в избранное`,
                         ),
                     }),
                     domEl("a", {
@@ -243,30 +259,33 @@ function createRenderCardBuilders(context) {
         listing._item = item;
 
         if (typeof attachLongPress === "function") {
-            attachLongPress(listing, () => [
-                {
-                    label: leadText,
-                    tone: "accent",
-                    disabled: inLeads,
-                    icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/><polyline points="9 11 12 8 15 11"/><line x1="12" y1="2" x2="12" y2="14"/></svg>',
-                    onSelect: () => actions.addLeadFromListing(item),
-                },
-                {
-                    label: watchText,
-                    disabled: inLeads || inWatchlist,
-                    icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
-                    onSelect: () => actions.addWatchlistFromListing(item),
-                },
-                {
-                    label: "Открыть на Kufar",
-                    icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
-                    onSelect: () => {
-                        const link = safeKufarUrl(item.link);
-                        if (!link) return;
-                        openExternalLink(link);
+            attachLongPress(listing, () => {
+                const currentState = _listingActionState(item, listing.dataset.collectionState || "");
+                return [
+                    {
+                        label: currentState.leadText,
+                        tone: "accent",
+                        disabled: currentState.inLeads,
+                        icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/><polyline points="9 11 12 8 15 11"/><line x1="12" y1="2" x2="12" y2="14"/></svg>',
+                        onSelect: () => actions.addLeadFromListing(item),
                     },
-                },
-            ]);
+                    {
+                        label: currentState.watchText,
+                        disabled: currentState.inWatchlist,
+                        icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+                        onSelect: () => actions.addWatchlistFromListing(item),
+                    },
+                    {
+                        label: "Открыть на Kufar",
+                        icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+                        onSelect: () => {
+                            const link = safeKufarUrl(item.link);
+                            if (!link) return;
+                            openExternalLink(link);
+                        },
+                    },
+                ];
+            });
         }
         return listing;
     }

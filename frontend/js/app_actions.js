@@ -185,10 +185,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260516-1943e16"),
-            context._loadScript("js/api_ai_render.js?v=20260516-1943e16"),
-            context._loadScript("js/api_ai.js?v=20260516-1943e16"),
-            context._loadScript("js/api_listing_assistant.js?v=20260516-1943e16"),
+            context._loadScript("js/api_ai_modal.js?v=20260516-4a99cea"),
+            context._loadScript("js/api_ai_render.js?v=20260516-4a99cea"),
+            context._loadScript("js/api_ai.js?v=20260516-4a99cea"),
+            context._loadScript("js/api_listing_assistant.js?v=20260516-4a99cea"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -302,8 +302,8 @@ function createAppActions(baseContext) {
     }
 
     function _refreshCollectionActionSurfaces() {
-        markDirty('listings', 'trackerEvents', 'leads', 'watchlist');
-        renderAll();
+        if (typeof renderLeads === "function") renderLeads();
+        if (typeof renderWatchlist === "function") renderWatchlist();
         if (state.detail?.data) renderDetailModal();
     }
 
@@ -335,11 +335,11 @@ function createAppActions(baseContext) {
 
     async function addLeadFromListing(item, source = "manual", queryOverride = null) {
         if (!hasTelegramInitData() || !item?.ad_id) {
-            return;
+            return false;
         }
         if (_inflightAdMutations.has(item.ad_id)) {
             // A previous click for this ad is still mid-flight — ignore.
-            return;
+            return false;
         }
 
         // Closed/skipped leads stay in history but should NOT block a
@@ -356,8 +356,9 @@ function createAppActions(baseContext) {
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
+            showToast("Уже в покупках", "info", 1600);
             _refreshCollectionActionSurfaces();
-            return;
+            return false;
         }
 
         // If the ad is currently in the watchlist (status='watching'),
@@ -375,7 +376,7 @@ function createAppActions(baseContext) {
                 const version = await _resolveWatchingVersion(watchingItem);
                 if (!version) {
                     showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
-                    return;
+                    return false;
                 }
                 await core.requestJson(`/api/v1/leads/${watchingItem.id}`, {
                     method: "PATCH",
@@ -408,8 +409,10 @@ function createAppActions(baseContext) {
             // from "Избранное" and shows up in "Покупки" together.
             await Promise.all([leads.loadLeads(), watchlist.loadWatchlist()]);
             _refreshCollectionActionSurfaces();
+            return true;
         } catch (error) {
             showToast(error.message || "Не удалось добавить в покупки", "error");
+            return false;
         } finally {
             _inflightAdMutations.delete(item.ad_id);
         }

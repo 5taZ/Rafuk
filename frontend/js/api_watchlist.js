@@ -37,12 +37,7 @@ function createApiWatchlist(context) {
     }
 
     function refreshCollectionActionSurfaces() {
-        if (typeof context.markDirty === "function" && typeof renderAll === "function") {
-            context.markDirty('listings', 'trackerEvents', 'leads', 'watchlist');
-            renderAll();
-        } else {
-            refreshAfterWatchlistChange();
-        }
+        refreshAfterWatchlistChange();
         if (state.detail?.data && typeof renderDetailModal === "function") renderDetailModal();
     }
 
@@ -140,10 +135,10 @@ function createApiWatchlist(context) {
     // ── Add item to watchlist from a listing ─────────────────────────────
     async function addWatchlistFromListing(item, queryOverride = null) {
         if (!hasTelegramInitData() || !item?.ad_id) {
-            return;
+            return false;
         }
         if (_inflightAd.has(item.ad_id)) {
-            return;
+            return false;
         }
 
         // Check both surfaces — after the watchlist→leads merge a single
@@ -157,15 +152,17 @@ function createApiWatchlist(context) {
         ]);
         const alreadyInWatchlist = state.watchlist.items.some((w) => w.ad_id === item.ad_id);
         if (alreadyInWatchlist) {
+            showToast("Уже в избранном", "info", 1600);
             refreshCollectionActionSurfaces();
-            return;
+            return true;
         }
         const alreadyInLeads = state.leads.items.some(
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
+            showToast("Уже в покупках", "info", 1600);
             refreshCollectionActionSurfaces();
-            return;
+            return false;
         }
 
         _guardInflightAd(item.ad_id);
@@ -182,20 +179,23 @@ function createApiWatchlist(context) {
             showToast("В избранном", "success", 1600);
             await loadWatchlist();
             refreshCollectionActionSurfaces();
+            return true;
         } catch (error) {
             // Server returns 409 with detail "Этот лот уже в покупках"
             // when the ad already has a non-watching lead. Refresh local
-            // collections so disabled buttons show the real state.
+            // collections so buttons show the real state.
             const message = error?.message || "";
             if (/уже\s+в\s+покупках/i.test(message)) {
+                showToast("Уже в покупках", "info", 1600);
                 // Make sure UI reflects reality.
                 if (typeof context.loadLeads === "function") {
                     await context.loadLeads();
                 }
                 refreshCollectionActionSurfaces();
-                return;
+                return false;
             }
             showToast(message || "Не удалось добавить в избранное", "error");
+            return false;
         } finally {
             _inflightAd.delete(item.ad_id);
         }
@@ -231,10 +231,10 @@ function createApiWatchlist(context) {
     // ── Promote watchlist item to lead ───────────────────────────────────
     async function promoteWatchlistToLead(item) {
         if (!item?.id || !item?.ad_id) {
-            return;
+            return false;
         }
         if (_inflightWatchId.has(item.id)) {
-            return;
+            return false;
         }
 
         // Watchlist items live in the same lead_items table after the
@@ -251,8 +251,9 @@ function createApiWatchlist(context) {
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
+            showToast("Уже в покупках", "info", 1600);
             refreshCollectionActionSurfaces();
-            return;
+            return false;
         }
 
         _guardInflightWatchId(item.id);
@@ -260,7 +261,7 @@ function createApiWatchlist(context) {
             const version = await _resolveWatchlistVersion(item);
             if (!version) {
                 _showStaleWatchlistToast();
-                return;
+                return false;
             }
             await requestJson(`/api/v1/leads/${item.id}`, {
                 method: "PATCH",
@@ -280,8 +281,10 @@ function createApiWatchlist(context) {
                 typeof context.loadLeads === "function" ? context.loadLeads() : null,
             ]);
             refreshCollectionActionSurfaces();
+            return true;
         } catch (error) {
             showToast(error?.message || "Не удалось перевести в покупки", "error");
+            return false;
         } finally {
             _inflightWatchId.delete(item.id);
         }
