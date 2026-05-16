@@ -116,7 +116,25 @@ async def negotiate_price(
     client_ip = get_client_ip(request)
 
     cache = get_cache(request)
-    cache_key = f"ai_negotiate:{payload.ad_id}:{payload.my_offer_byn}:{payload.asking_price_byn}"
+    # PR-03: namespace the cache key by user_id. The earlier shape
+    # ``ai_negotiate:{ad}:{offer}:{asking}`` had no per-user
+    # component, so two users supplying the same triple were served
+    # the same AI response — a small but real cross-user data leak
+    # (the reply text quotes the buyer's offer back at them, plus
+    # the optional condition/market_context strings the previous
+    # user supplied). Mirrors the ``ai_listing:u{uid}:...`` shape
+    # already used by the listing assistant.
+    cache_key = digest_cache_key(
+        "ai_negotiate",
+        {
+            "u": int(_user.user_id),
+            "ad_id": payload.ad_id,
+            "my_offer_byn": payload.my_offer_byn,
+            "asking_price_byn": payload.asking_price_byn,
+            "query": payload.query,
+            "condition": payload.condition,
+        },
+    )
     cached = await cache.get_json(cache_key)
     if isinstance(cached, dict):
         try:

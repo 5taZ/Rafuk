@@ -114,6 +114,66 @@ def test_negotiate_cache_hit_does_not_consume_quota(monkeypatch) -> None:
     assert [call.get("cached") for call in audit_calls] == [None, True]
 
 
+def test_negotiate_cache_does_not_cross_users(monkeypatch) -> None:
+    """PR-03: two distinct users supplying the same negotiate payload
+    must NOT share a cached AI response. The previous cache key
+    omitted user_id and the reply text (which echoes the buyer's
+    offer + condition + market_context) was being served from the
+    first caller's cache entry.
+    """
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis, ai_tools
+
+    fake_ai = FakeAIChatService()
+    rate_calls: list[str] = []
+    audit_calls: list[dict] = []
+
+    async def _fake_rate_limit(request, user_id, *, endpoint="default"):
+        del request, user_id
+        rate_calls.append(endpoint)
+
+    async def _fake_audit(*args, **kwargs):
+        del args
+        audit_calls.append(kwargs)
+
+    monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
+    monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(ai_tools, "_log_ai_audit", _fake_audit)
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+
+    app = create_app()
+    payload = {
+        "ad_id": 970099,
+        "asking_price_byn": 1000,
+        "my_offer_byn": 800,
+        "query": "iphone 14 wave134",
+        "condition": "Б/у",
+    }
+
+    def _user_a() -> TelegramInitData:
+        return TelegramInitData(user_id=111111, first_name="A", raw={})
+
+    def _user_b() -> TelegramInitData:
+        return TelegramInitData(user_id=222222, first_name="B", raw={})
+
+    with TestClient(app) as client:
+        app.dependency_overrides[get_telegram_user] = _user_a
+        first = client.post("/api/v1/ai/negotiate", json=payload)
+        app.dependency_overrides[get_telegram_user] = _user_b
+        second = client.post("/api/v1/ai/negotiate", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    # Each user pays one quota point — no cross-user cache hit.
+    assert rate_calls == ["negotiate", "negotiate"]
+    # AI was hit twice — once per user.
+    assert len(fake_ai.calls) == 2
+    # Both audit rows are "fresh" (cached=None), not "cached=True".
+    assert [call.get("cached") for call in audit_calls] == [None, None]
+
+
 def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
     import api.services.query_pipeline as _qp_mod
     from api.dependencies import get_kufar_client, get_telegram_user
