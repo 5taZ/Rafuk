@@ -338,6 +338,80 @@ def test_build_threshold_message_discount_alerts():
 
 
 # ---------------------------------------------------------------------------
+# SCH-HIGH / LOGIC-HIGH (issues §5.1, §11.3): discount alert sign
+# ---------------------------------------------------------------------------
+
+def test_detect_threshold_alerts_ignores_overpriced_listings():
+    """Overpriced listings (delta>0) must NOT trigger a discount alert.
+
+    The previous impl used ``abs(compute_price_vs_reference(...))`` which
+    folded "30% cheaper than median" and "30% dearer than median" into
+    the same value. After the fix only negative deltas (true discounts)
+    drive the alert.
+    """
+    from api.services.aggregator import PriceStats
+
+    tracker = MagicMock(spec=Tracker)
+    tracker.id = 1
+    tracker.user_id = 1
+    tracker.query = "test"
+    tracker.strict_mode = False
+    tracker.alert_price_threshold = None
+    tracker.alert_discount_percent = 30.0
+    tracker.seller_type = None
+    tracker.condition = None
+    tracker.region_name = None
+    tracker.config_keyword = None
+    tracker.category_id = None
+
+    market_stats = PriceStats(
+        mean=1000.0, median=1000.0, q1=900.0, q3=1100.0,
+        min=800.0, max=1300.0, count=20,
+    )
+    # Ad priced 30% ABOVE median → must NOT fire a discount alert.
+    # NB: Kufar's price_byn field is in kopecks; PriceStats fields are
+    # in BYN. 130000 kopecks → 1300 BYN, so the ad is +30% vs 1000 BYN.
+    overpriced_ad = {
+        "ad_id": 100,
+        "subject": "Overpriced phone",
+        "ad_link": "https://kufar.by/100",
+        "price_byn": 130000,  # +30% vs median=1000 BYN (kopecks!)
+        "category": 17000,
+    }
+    events = collector._detect_threshold_alerts(
+        ads_by_id={100: overpriced_ad},
+        tracker=tracker,
+        market_stats=market_stats,
+        category_price_stats=None,
+        seen=set(),
+    )
+    assert events == [], (
+        "Overpriced listing must not trip discount_alert (was a bug "
+        "where abs() folded over- and under-pricing together)"
+    )
+
+    # Ad priced 30% BELOW median → must fire a discount alert.
+    underpriced_ad = {
+        "ad_id": 200,
+        "subject": "Discount phone",
+        "ad_link": "https://kufar.by/200",
+        "price_byn": 70000,  # 70000 kopecks → 700 BYN = −30% vs median=1000
+        "category": 17000,
+    }
+    events = collector._detect_threshold_alerts(
+        ads_by_id={200: underpriced_ad},
+        tracker=tracker,
+        market_stats=market_stats,
+        category_price_stats=None,
+        seen=set(),
+    )
+    assert len(events) == 1
+    assert events[0].event_type == "discount_alert"
+    # delta_byn carries the positive percentage.
+    assert events[0].delta_byn is not None and events[0].delta_byn > 0
+
+
+# ---------------------------------------------------------------------------
 # Test notify_user
 # ---------------------------------------------------------------------------
 

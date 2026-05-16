@@ -526,9 +526,19 @@ def _detect_threshold_alerts(
 
         # Discount alert
         if tracker.alert_discount_percent:
-            discount_pct = abs(
-                compute_price_vs_reference(ad, market_stats, category_price_stats)
-            )
+            # SCH-HIGH / LOGIC-HIGH (issues §5.1, §11.3): the previous
+            # impl computed `abs(compute_price_vs_reference(...))`, which
+            # collapsed "30% cheaper than median" and "30% dearer than
+            # median" into the same value. An overpriced listing would
+            # then trip the user's "≥30% discount" alert as a fake
+            # bargain. compute_price_vs_reference already returns a
+            # signed percentage where negative = below reference, so we
+            # only treat negative deltas as real discounts.
+            delta_pct = compute_price_vs_reference(ad, market_stats, category_price_stats)
+            if delta_pct < 0:
+                discount_pct = -delta_pct
+            else:
+                discount_pct = 0.0
             if discount_pct >= float(tracker.alert_discount_percent):
                 if (ad_id, "discount_alert") in seen:
                     continue
@@ -732,13 +742,39 @@ async def _check_trackers_inner(
                             session, query=search_key, days=10
                         )
                         trend_signal = detect_trend_reversal_up(snapshots)
-                        sync_result = await sync_query_listing_states(
-                            session,
-                            query=search_key,
-                            ads=ads,
-                            observed_at=observed_at,
-                            total_results=len(ads),
+                        # SCH-MEDIUM / LOGIC-MEDIUM (issues §5.1, §11.3):
+                        # if Kufar returns 0 ads on this tick but the
+                        # prior snapshots show the query DID have
+                        # results, treat the empty payload as a
+                        # transient upstream outage rather than "every
+                        # listing disappeared". Without this guard,
+                        # sync_query_listing_states marks every known
+                        # listing as inactive and the next tick fires
+                        # false-positive "пропало" notifications.
+                        prior_snapshots_had_ads = any(
+                            int(s.total_results or 0) > 0
+                            for s in snapshots[:-1]
                         )
+                        if not ads and prior_snapshots_had_ads:
+                            logger.warning(
+                                "Suspected Kufar outage for query=%r: 0 ads "
+                                "returned but prior snapshots had results — "
+                                "skipping listing-state sync to avoid "
+                                "false-positive removals",
+                                search_key,
+                            )
+                            sync_result = QuerySyncResult(
+                                stats_count=0,
+                                total_results=0,
+                            )
+                        else:
+                            sync_result = await sync_query_listing_states(
+                                session,
+                                query=search_key,
+                                ads=ads,
+                                observed_at=observed_at,
+                                total_results=len(ads),
+                            )
                         ads_by_id = {
                             int(ad["ad_id"]): ad
                             for ad in ads
