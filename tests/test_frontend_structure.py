@@ -632,19 +632,9 @@ def test_totals_refresh_buttons_force_refresh_search(soup: BeautifulSoup, css_te
     assert stats_head.find(id="overview-refresh-btn") is not None
     listings_head = soup.find(id="listings-section").find(class_="listings-head")
     assert listings_head.find(id="listings-refresh-btn") is not None
-    sample_badge = listings_head.find(id="listings-sample-badge")
-    assert sample_badge is not None
-    assert sample_badge.get("hidden") is not None
-    assert "badge--sample" in (sample_badge.get("class") or [])
-
     dom = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
     assert 'elements.overviewRefreshBtn = document.getElementById("overview-refresh-btn");' in dom
     assert 'elements.listingsRefreshBtn = document.getElementById("listings-refresh-btn");' in dom
-    assert (
-        'elements.listingsSampleBadge = document.getElementById("listings-sample-badge");'
-        in dom
-    )
-
     events = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
     assert 'elements.overviewRefreshBtn?.addEventListener("click"' in events
     assert 'elements.listingsRefreshBtn?.addEventListener("click"' in events
@@ -660,21 +650,17 @@ def test_totals_refresh_buttons_force_refresh_search(soup: BeautifulSoup, css_te
     assert "@keyframes totals-refresh-spin" in css_text
 
 
-def test_limited_listings_show_persistent_sample_badge(css_text: str) -> None:
+def test_limited_listings_do_not_show_sample_count_badge(css_text: str) -> None:
+    html = HTML_FILE.read_text(encoding="utf-8")
+    dom = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
     cards_js = (JS_DIR / "render_cards.js").read_text(encoding="utf-8")
 
-    assert "function _updateListingsSampleBadge(forceHidden = false)" in cards_js
-    assert "const badge = elements.listingsSampleBadge;" in cards_js
-    assert "total > servedCap" in cards_js
-    assert (
-        "badge.textContent = `выборка ${_formatCount(servedCap)} "
-        "из ${_formatCount(total)}`;" in cards_js
-    )
-    assert "badge.setAttribute(\"aria-label\", label);" in cards_js
-    assert "_updateListingsSampleBadge(true);" in cards_js
-    assert "_updateListingsSampleBadge();" in cards_js
-
-    assert ".badge--sample" in css_text
+    assert "listings-sample-badge" not in html
+    assert "listingsSampleBadge" not in dom
+    assert "listingsSampleBadge" not in cards_js
+    assert "выборка ${_formatCount(servedCap)} из ${_formatCount(total)}" not in cards_js
+    assert "Показана быстрая выборка" not in cards_js
+    assert ".badge--sample" not in css_text
 
 
 def test_listings_section_stays_visible_on_zero_result_queries() -> None:

@@ -338,29 +338,6 @@ function createRenderCards(context) {
         }
     }
 
-    function _updateListingsSampleBadge(forceHidden = false) {
-        const badge = elements.listingsSampleBadge;
-        if (!badge) return;
-        const servedCap = Number(state.listings.servedCap || 0);
-        const total = Number(state.listings.total || 0);
-        const isLimited = Boolean(!forceHidden && state.listings.isLimited && servedCap > 0 && total > servedCap);
-        badge.hidden = !isLimited;
-        if (!isLimited) {
-            badge.textContent = "";
-            badge.removeAttribute("aria-label");
-            badge.removeAttribute("title");
-            return;
-        }
-        badge.textContent = `выборка ${_formatCount(servedCap)} из ${_formatCount(total)}`;
-        const label = `Показана быстрая выборка: ${_formatCount(servedCap)} из ${_formatCount(total)} объявлений. Уточните запрос, чтобы сузить выдачу.`;
-        badge.setAttribute("aria-label", label);
-        badge.title = label;
-    }
-
-    function _formatCount(value) {
-        return Number(value || 0).toLocaleString("ru-RU");
-    }
-
     function _setListingsRefreshBusy(busy) {
         // SEARCH-7: keep the refresh button beside the listings total
         // badge in lock-step with the section state. `disabled` when
@@ -398,7 +375,6 @@ function createRenderCards(context) {
                 if (elements.listingsTotalBadge) {
                     elements.listingsTotalBadge.textContent = "";
                 }
-                _updateListingsSampleBadge(true);
                 _setListingsRefreshBusy(true);
                 return;
             }
@@ -426,13 +402,12 @@ function createRenderCards(context) {
             if (elements.listingsFallbackBadge) {
                 elements.listingsFallbackBadge.hidden = !state.listings.fallbackUsed;
             }
-            _updateListingsSampleBadge();
             if (hasContent && elements.listingsList) {
                 const reachableTotal = state.listings.isLimited && state.listings.servedCap
                     ? Math.min(state.listings.total || state.listings.servedCap, state.listings.servedCap)
                     : state.listings.total;
                 const limitedText = state.listings.isLimited
-                    ? `Показана быстрая выборка: до ${_formatCount(state.listings.servedCap)} из ${_formatCount(state.listings.total)}. Уточните запрос или потяните вниз, чтобы обновить.`
+                    ? "Уточните запрос или потяните вниз, чтобы обновить выдачу."
                     : "Все объявления загружены.";
                 if (state.listings.isLimited && state.listings.hasMore) {
                     elements.listingsList.appendChild(domEl("p", {

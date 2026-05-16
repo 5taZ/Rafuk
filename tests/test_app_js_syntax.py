@@ -266,9 +266,9 @@ def test_search_refresh_and_cap_disclosure_contracts() -> None:
     assert "forceRefresh: true" in events_js
     assert "force_refresh: forceRefresh ? \"1\" : \"\"" in listings_js
     assert "state.listings.servedCap" in render_cards_js
-    assert "Показана быстрая выборка" in render_cards_js
-    assert "elements.listingsSampleBadge" in render_cards_js
-    assert "выборка ${_formatCount(servedCap)} из ${_formatCount(total)}" in render_cards_js
+    assert "Показана быстрая выборка" not in render_cards_js
+    assert "elements.listingsSampleBadge" not in render_cards_js
+    assert "выборка ${_formatCount(servedCap)} из ${_formatCount(total)}" not in render_cards_js
     assert "categories_limited" in render_views_js
     assert "const displayTotal = totalResults || totalCount;" in render_views_js
     assert "Math.max(totalResults, totalCount)" not in render_views_js

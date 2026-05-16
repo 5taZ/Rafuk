@@ -1229,11 +1229,6 @@
     line-height: 1.4;
 }
 
-.badge--sample {
-    background: var(--bg-surface-tint);
-    color: var(--text-muted);
-    border-color: var(--border);
-}
 
 .section-toggle {
     appearance: none;

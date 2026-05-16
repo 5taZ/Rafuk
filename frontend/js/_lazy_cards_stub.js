@@ -20,8 +20,8 @@
  */
 /* global window */
 
-const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20260516-4d2b0cd";
-const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20260516-4d2b0cd";
+const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20260516-748bb6e";
+const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20260516-748bb6e";
 
 function _lazyLoadCardsSources(context) {
     window.App = window.App || {};
