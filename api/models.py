@@ -491,6 +491,13 @@ class DealExpense(Base):
             "expense_type IN ('delivery', 'repair', 'customs', 'packaging', 'transport', 'other')",
             name="chk_deal_expenses_expense_type",
         ),
+        # DB-MEDIUM (issues §4.1): defence-in-depth alongside the
+        # Pydantic gt=0 validator; raw SQL / CLI inserts can't bypass
+        # the storage layer.
+        CheckConstraint(
+            "amount_byn > 0",
+            name="chk_deal_expenses_amount_positive",
+        ),
         Index("idx_deal_expenses_lead", "lead_id"),
         Index("idx_deal_expenses_user", "user_id"),
     )
@@ -576,6 +583,14 @@ class TelegramNotificationDLQ(Base):
         Index("idx_telegram_notification_dlq_created", "created_at"),
         Index("idx_telegram_notification_dlq_user", "user_id"),
         Index("idx_telegram_notification_dlq_pump", "next_retry_at", "retry_count"),
+        # DB-MEDIUM (issues §4.1): hard ceiling so a runaway retry pump
+        # cannot push the counter unboundedly. The collector enforces
+        # _DLQ_MAX_RETRIES=10 in code; this constraint catches any
+        # bypass via direct SQL or a future bug.
+        CheckConstraint(
+            "retry_count >= 0 AND retry_count <= 10",
+            name="chk_telegram_notification_dlq_retry_count_bounds",
+        ),
     )
 
 

@@ -12,6 +12,16 @@ BEGIN;
 ALTER TABLE query_snapshots RENAME TO query_snapshots_old;
 
 -- Step 2: Create new partitioned table
+--
+-- DB-MEDIUM (issues §4.2):
+--   * PRIMARY KEY (id, snapshot_at) is required because the partition
+--     key (snapshot_at) must be part of the PK on a partitioned table.
+--     Without it the migration fails with "primary key constraints are
+--     not supported on partitioned tables" once a unique-by-id index
+--     is added downstream.
+--   * UNIQUE (query, snapshot_at) mirrors the
+--     uq_query_snapshot_bucket constraint on the unpartitioned table —
+--     prevents duplicate rows after partitioning.
 CREATE TABLE query_snapshots (
     id INTEGER NOT NULL,
     query VARCHAR(255) NOT NULL,
@@ -22,7 +32,9 @@ CREATE TABLE query_snapshots (
     median_byn NUMERIC(12, 2) NOT NULL DEFAULT 0.0,
     min_byn NUMERIC(12, 2) NOT NULL DEFAULT 0.0,
     max_byn NUMERIC(12, 2) NOT NULL DEFAULT 0.0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (id, snapshot_at),
+    UNIQUE (query, snapshot_at)
 ) PARTITION BY RANGE (snapshot_at);
 
 -- Step 3: Create indexes on the partitioned table
@@ -57,10 +69,23 @@ CREATE TABLE query_snapshots_y2027m02 PARTITION OF query_snapshots
 CREATE TABLE query_snapshots_y2027m03 PARTITION OF query_snapshots
     FOR VALUES FROM ('2027-03-01') TO ('2027-04-01');
 
+-- DB-LOW (issues §4.2): default partition catches inserts that fall
+-- outside the predefined monthly range — without it any out-of-range
+-- snapshot_at would raise "no partition of relation found".
+CREATE TABLE query_snapshots_default PARTITION OF query_snapshots DEFAULT;
+
 -- Step 5: Migrate data from old table to new partitioned table
--- This may take a while for large tables
-INSERT INTO query_snapshots
-    SELECT * FROM query_snapshots_old;
+-- This may take a while for large tables.
+-- DB-LOW (issues §4.2): explicit column list so future schema
+-- additions/reorderings don't silently corrupt the migration.
+INSERT INTO query_snapshots (
+    id, query, snapshot_at, total_results, analyzed_count,
+    mean_byn, median_byn, min_byn, max_byn, created_at
+)
+SELECT
+    id, query, snapshot_at, total_results, analyzed_count,
+    mean_byn, median_byn, min_byn, max_byn, created_at
+FROM query_snapshots_old;
 
 -- Step 6: Drop old table
 DROP TABLE query_snapshots_old;

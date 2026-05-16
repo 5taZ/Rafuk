@@ -315,7 +315,12 @@ class TrackerRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
+    # BE-HIGH (issues §2.2): internal autoincrement users.id was leaked
+    # to clients in TrackerRead/TrackerEventRead/LeadRead/WatchlistRead/
+    # DealExpenseRead. Telegram clients only know their own
+    # telegram_user_id; the internal id has no client-side use and
+    # exposing it is an information leak. Removed across the five
+    # schemas the audit named.
     query: str
     strict_mode: bool = False
     interval_min: int
@@ -350,7 +355,6 @@ class TrackerEventRead(BaseModel):
 
     id: int
     tracker_id: int
-    user_id: int
     ad_id: int | None = None
     query: str
     strict_mode: bool
@@ -397,7 +401,6 @@ class LeadRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
     ad_id: int
     query: str
     title: str
@@ -462,7 +465,6 @@ class WatchlistRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
     ad_id: int
     query: str
     title: str
@@ -544,7 +546,6 @@ class DealExpenseRead(BaseModel):
 
     id: int
     lead_id: int
-    user_id: int
     expense_type: str
     amount_byn: float
     notes: str | None = None
