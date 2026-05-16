@@ -392,6 +392,19 @@ def create_app() -> FastAPI:
     _provisioned_users: dict[int, float] = {}
     _provision_user_timeout_seconds = 5.0
     _provision_user_ttl_seconds = 300.0
+    # PR-05: amortise the expired-entry sweep across hot calls so the
+    # dict tracks live users instead of growing to its 4096-entry
+    # safety cap before any cleanup runs. ``_last_sweep_at`` is a
+    # one-element list so the closure can mutate it without
+    # ``nonlocal`` ceremony.
+    _provision_sweep_interval_seconds = 30.0
+    _last_sweep_at: list[float] = [0.0]
+    _provision_users_safety_cap = 4096
+
+    def _sweep_expired_provisioned_users(now: float) -> None:
+        expired = [uid for uid, expiry in _provisioned_users.items() if expiry <= now]
+        for uid in expired:
+            _provisioned_users.pop(uid, None)
 
     def _should_auto_provision(user_id: int) -> bool:
         now = time.monotonic()
@@ -399,10 +412,20 @@ def create_app() -> FastAPI:
         if expires_at is not None and expires_at > now:
             return False
         _provisioned_users[user_id] = now + _provision_user_ttl_seconds
-        if len(_provisioned_users) > 4096:
-            expired = [uid for uid, expiry in _provisioned_users.items() if expiry <= now]
-            for uid in expired:
-                _provisioned_users.pop(uid, None)
+        # Periodic sweep — every ~30s on a busy worker. This keeps
+        # the dict size proportional to the recently-active user
+        # set instead of the lifetime user count, but the loop is
+        # bounded by the safety cap below so a quiet period
+        # followed by a churn burst still gets cleaned up.
+        if now - _last_sweep_at[0] >= _provision_sweep_interval_seconds:
+            _sweep_expired_provisioned_users(now)
+            _last_sweep_at[0] = now
+        # Emergency cap: if periodic sweep can't keep up (e.g. clock
+        # jumped backwards, or churn outpaces the 30s interval), make
+        # absolutely sure we never leak past the hard ceiling.
+        if len(_provisioned_users) > _provision_users_safety_cap:
+            _sweep_expired_provisioned_users(now)
+            _last_sweep_at[0] = now
         return True
 
     async def _provision_user_async(
