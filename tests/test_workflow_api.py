@@ -294,3 +294,158 @@ def test_create_lead_accepts_long_kufar_link(monkeypatch) -> None:
     assert len(long_link) <= 2048
     assert response.status_code == 201
     assert response.json()["link"] == long_link
+
+
+
+def test_lead_status_state_machine_blocks_invalid_transitions(monkeypatch) -> None:
+    """LOGIC-HIGH (issues §11.4): update_lead must reject status
+    transitions outside the deal-pipeline state machine.
+
+    Specifically ``sold`` is terminal except for archiving via
+    ``closed``, and ``watching`` cannot jump straight to ``sold`` /
+    ``bought`` (must pass through one of the active deal lanes).
+    """
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        # Create a lead, sell it, then try to bounce it back to "new".
+        created = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "iphone 15 128",
+                "ad_id": 9001,
+                "title": "iPhone 15 128GB",
+                "link": "https://www.kufar.by/item/9001",
+                "price_byn": 2000,
+                "source": "manual",
+            },
+        )
+        assert created.status_code == 201
+        lead = created.json()
+
+        sold = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={
+                "status": "sold",
+                "buy_price_byn": 1800,
+                "sold_price_byn": 2100,
+                "version": lead["version"],
+            },
+        )
+        assert sold.status_code == 200
+        sold_lead = sold.json()
+        assert sold_lead["status"] == "sold"
+
+        # sold → new is blocked (only sold → closed is allowed).
+        invalid = client.patch(
+            f"/api/v1/leads/{sold_lead['id']}",
+            json={"status": "new", "version": sold_lead["version"]},
+        )
+        assert invalid.status_code == 422
+
+        # sold → closed (archive) is allowed.
+        archived = client.patch(
+            f"/api/v1/leads/{sold_lead['id']}",
+            json={"status": "closed", "version": sold_lead["version"]},
+        )
+        assert archived.status_code == 200
+        assert archived.json()["status"] == "closed"
+
+    # Watchlist → sold transition is blocked by the helper (the
+    # /leads PATCH wouldn't normally surface watching items, so we
+    # exercise the state-machine helper directly).
+    from fastapi import HTTPException
+
+    import pytest as _pytest
+    from api.routers.workflow import _validate_lead_status_transition
+
+    with _pytest.raises(HTTPException) as exc:
+        _validate_lead_status_transition("watching", "sold")
+    assert exc.value.status_code == 422
+    with _pytest.raises(HTTPException):
+        _validate_lead_status_transition("watching", "bought")
+    # watching → reviewing is OK
+    _validate_lead_status_transition("watching", "reviewing")
+    # closed → reviewing reactivation is OK
+    _validate_lead_status_transition("closed", "reviewing")
+    # closed → sold is blocked
+    with _pytest.raises(HTTPException):
+        _validate_lead_status_transition("closed", "sold")
+
+
+def test_lead_double_sale_protection(monkeypatch) -> None:
+    """LOGIC-MEDIUM (issues §11.4): once sold_price_byn is recorded,
+    overwriting it with a different value must require an explicit
+    revert (``sold_price_byn=None``) first."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "ipad",
+                "ad_id": 9100,
+                "title": "iPad Air",
+                "link": "https://www.kufar.by/item/9100",
+                "price_byn": 1500,
+                "source": "manual",
+            },
+        )
+        lead = created.json()
+        first_sale = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={
+                "status": "sold",
+                "buy_price_byn": 1400,
+                "sold_price_byn": 1700,
+                "version": lead["version"],
+            },
+        )
+        assert first_sale.status_code == 200
+        sold_lead = first_sale.json()
+
+        # Trying to overwrite sold_price with a DIFFERENT amount: 409.
+        clobber = client.patch(
+            f"/api/v1/leads/{sold_lead['id']}",
+            json={"sold_price_byn": 1900, "version": sold_lead["version"]},
+        )
+        assert clobber.status_code == 409
+
+        # Same amount is idempotent: 200.
+        idem = client.patch(
+            f"/api/v1/leads/{sold_lead['id']}",
+            json={"sold_price_byn": 1700, "version": sold_lead["version"]},
+        )
+        assert idem.status_code == 200
+
+        # Revert to bought via None, then re-sell at a new price.
+        revert = client.patch(
+            f"/api/v1/leads/{idem.json()['id']}",
+            json={"sold_price_byn": None, "version": idem.json()["version"]},
+        )
+        assert revert.status_code == 200
+        assert revert.json()["status"] == "bought"
+        re_sold = client.patch(
+            f"/api/v1/leads/{revert.json()['id']}",
+            json={
+                "status": "sold",
+                "sold_price_byn": 1900,
+                "version": revert.json()["version"],
+            },
+        )
+        assert re_sold.status_code == 200
+        assert re_sold.json()["sold_price_byn"] == 1900

@@ -54,6 +54,81 @@ WATCHING_STATUS = "watching"
 _REFRESH_SEMAPHORE = asyncio.Semaphore(3)
 
 
+# LOGIC-HIGH (issues §11.4): explicit lead-status state machine.
+#
+# The previous update_lead handler accepted any LeadStatusEnum value and
+# applied it directly to ``lead.status``, which let nonsense transitions
+# slip through ("sold" → "new", "watching" → "sold" without an
+# intermediate buying state, etc.). The map below codifies the
+# transitions the product actually supports; everything not listed
+# raises 422.
+#
+# Design notes:
+#   * ``sold`` is reachable only via ``bought`` / ``negotiating`` /
+#     ``in_progress`` / ``reviewing`` / ``new`` — i.e. states that
+#     represent an active deal. The "un-sell" reversion (sold →
+#     bought, triggered when payload.sold_price_byn is None) is
+#     handled before this guard runs.
+#   * ``watching`` (legacy watchlist surface) only graduates into the
+#     deal-pipeline lanes; it can never jump straight to ``sold`` /
+#     ``bought`` / ``closed``.
+#   * Terminal-ish states (``closed``, ``abandoned``) accept a small
+#     set of "reactivate" transitions so an accidental abandonment
+#     can be undone.
+_ANY_ACTIVE = {
+    "new", "reviewing", "in_progress", "researching",
+    "negotiating", "deferred",
+}
+# Active deal lanes (everything except the watchlist surface and the
+# terminal/exit states) can transition to "bought" or "sold" — the
+# user might record the buy and the resell in the same edit if it's
+# a fast flip. The audit's concern was the broken paths "watching →
+# sold" (which still requires graduating through new/reviewing first)
+# and "sold → new" (which is blocked by the empty allowed-set for
+# sold).
+_LEAD_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "watching": _ANY_ACTIVE | {"skipped", "abandoned"},
+    "new": _ANY_ACTIVE | {"bought", "sold", "skipped", "abandoned", "closed"},
+    "reviewing": _ANY_ACTIVE | {"bought", "sold", "skipped", "abandoned", "closed"},
+    "in_progress": _ANY_ACTIVE | {"bought", "sold", "skipped", "abandoned", "closed"},
+    "researching": _ANY_ACTIVE | {"bought", "sold", "skipped", "abandoned", "closed"},
+    "negotiating": _ANY_ACTIVE | {"bought", "sold", "skipped", "abandoned", "closed"},
+    "deferred": _ANY_ACTIVE | {"bought", "sold", "skipped", "abandoned", "closed"},
+    "bought": {"sold", "abandoned", "closed", "deferred"},
+    # ``sold`` was originally modelled as terminal but the deal flow
+    # archives sold deals via ``closed`` for finance reporting (see
+    # delete_all_leads which preserves both statuses), so allow that
+    # one outbound edge. Reverting "sold" via the un-sell path
+    # (clearing sold_price_byn) bypasses this map entirely.
+    "sold": {"closed"},
+    "skipped": {"new", "reviewing", "abandoned"},
+    "abandoned": {"new", "reviewing"},
+    "closed": {"reviewing"},  # reopen for review only
+}
+
+
+def _validate_lead_status_transition(current: str, target: str) -> None:
+    """Reject a non-allowed lead-status transition with HTTP 422.
+
+    No-op when ``current == target``. Unknown current statuses are
+    treated as permissive (we don't want a stale enum to lock a user
+    out of fixing their lead).
+    """
+    if current == target:
+        return
+    allowed = _LEAD_STATUS_TRANSITIONS.get(current)
+    if allowed is None:
+        return
+    if target not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Lead status transition '{current}' → '{target}' is not "
+                "allowed by the deal pipeline state machine"
+            ),
+        )
+
+
 def _check_lead_version(
     item: LeadItem,
     expected: int | None,
@@ -283,14 +358,36 @@ async def update_lead(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
         _check_lead_version(lead, payload.version)
         if "status" in payload.model_fields_set:
+            _validate_lead_status_transition(lead.status, payload.status.value)
             lead.status = payload.status.value
         if "target_resale_byn" in payload.model_fields_set:
             lead.target_resale_byn = payload.target_resale_byn
         if "buy_price_byn" in payload.model_fields_set:
             lead.buy_price_byn = payload.buy_price_byn
         if "sold_price_byn" in payload.model_fields_set:
+            # LOGIC-MEDIUM (issues §11.4): once a lead is sold, refuse
+            # to overwrite ``sold_price_byn`` with a different value —
+            # the old impl let the field be re-set repeatedly, silently
+            # corrupting the profit calculation. Setting None still
+            # works (it triggers the "un-sell" reversion below) and
+            # the same value is idempotent.
+            if (
+                lead.status == "sold"
+                and payload.sold_price_byn is not None
+                and lead.sold_price_byn is not None
+                and float(payload.sold_price_byn) != float(lead.sold_price_byn)
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Lead is already sold; clear sold_price_byn to "
+                        "first revert to 'bought' before recording a "
+                        "different sale price."
+                    ),
+                )
             lead.sold_price_byn = payload.sold_price_byn
             if payload.sold_price_byn is not None and lead.status != "sold":
+                _validate_lead_status_transition(lead.status, "sold")
                 lead.status = "sold"
                 lead.sold_at = datetime.now(UTC)
             elif payload.sold_price_byn is None and lead.status == "sold":
