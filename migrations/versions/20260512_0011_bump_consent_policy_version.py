@@ -5,6 +5,7 @@ Revises: 20260511_0010
 
 """
 from collections.abc import Sequence
+from contextlib import suppress
 
 import sqlalchemy as sa
 from alembic import op
@@ -46,23 +47,19 @@ def upgrade() -> None:
         # effectively a no-op; we still execute the drop+recreate so
         # the path remains identical for existing dbs that ran the
         # original strict-equality 0008. Each drop_constraint is
-        # wrapped in try/except since SQLite's batch_alter_table cannot
+        # wrapped in suppress() since SQLite's batch_alter_table cannot
         # express IF EXISTS.
         with op.batch_alter_table("user_consents") as batch_op:
-            try:
+            with suppress(Exception):
                 batch_op.drop_constraint(
                     "chk_user_consents_version_current",
                     type_="check",
                 )
-            except Exception:  # noqa: BLE001
-                pass
-            try:
+            with suppress(Exception):
                 batch_op.drop_constraint(
                     "chk_user_consents_version_known",
                     type_="check",
                 )
-            except Exception:  # noqa: BLE001
-                pass
             batch_op.alter_column(
                 "version",
                 existing_type=sa.String(length=16),

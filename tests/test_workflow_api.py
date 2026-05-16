@@ -361,9 +361,9 @@ def test_lead_status_state_machine_blocks_invalid_transitions(monkeypatch) -> No
     # Watchlist → sold transition is blocked by the helper (the
     # /leads PATCH wouldn't normally surface watching items, so we
     # exercise the state-machine helper directly).
+    import pytest as _pytest
     from fastapi import HTTPException
 
-    import pytest as _pytest
     from api.routers.workflow import _validate_lead_status_transition
 
     with _pytest.raises(HTTPException) as exc:

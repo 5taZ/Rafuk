@@ -51,6 +51,7 @@ from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS
 from api.services.market_signals import anomaly_labels, detect_anomaly_flags
 from api.services.query_pipeline import load_query_dataset
+from api.services.reseller_tools import compute_deal_score
 
 
 # AI-HIGH (issues §3.1): the previous cache key hard-coded a "v5" tag,
@@ -77,7 +78,6 @@ def _compute_ai_cache_version() -> str:
 
 
 _AI_CACHE_VERSION = _compute_ai_cache_version()
-from api.services.reseller_tools import compute_deal_score
 
 logger = logging.getLogger(__name__)
 

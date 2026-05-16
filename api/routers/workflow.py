@@ -221,7 +221,8 @@ async def get_leads(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0, le=10_000),  # BE-MEDIUM (issues §2.2): cap to avoid full-table scans on absurd offsets
+    # BE-MEDIUM (issues §2.2): cap to avoid full-table scans on absurd offsets.
+    offset: int = Query(default=0, ge=0, le=10_000),
 ) -> list[LeadRead]:
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
@@ -487,7 +488,8 @@ async def get_watchlist(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0, le=10_000),  # BE-MEDIUM (issues §2.2): cap to avoid full-table scans on absurd offsets
+    # BE-MEDIUM (issues §2.2): cap to avoid full-table scans on absurd offsets.
+    offset: int = Query(default=0, ge=0, le=10_000),
 ) -> list[WatchlistRead]:
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)

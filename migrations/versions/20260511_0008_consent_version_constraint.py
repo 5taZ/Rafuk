@@ -21,6 +21,7 @@ unaffected. The unique change is that a partial deploy that lands
 0008 alone is now safe.
 """
 from collections.abc import Sequence
+from contextlib import suppress
 
 import sqlalchemy as sa
 from alembic import op
@@ -64,20 +65,16 @@ def upgrade() -> None:
         # table; drop_constraint with NOT EXISTS is unsupported, so
         # we wrap in try/except to remain idempotent.
         with op.batch_alter_table("user_consents") as batch_op:
-            try:
+            with suppress(Exception):
                 batch_op.drop_constraint(
                     "chk_user_consents_version_current",
                     type_="check",
                 )
-            except Exception:  # noqa: BLE001 — constraint may not exist
-                pass
-            try:
+            with suppress(Exception):
                 batch_op.drop_constraint(
                     "chk_user_consents_version_known",
                     type_="check",
                 )
-            except Exception:  # noqa: BLE001
-                pass
             batch_op.alter_column(
                 "version",
                 existing_type=sa.String(length=16),
@@ -102,13 +99,11 @@ def downgrade() -> None:
         )
     else:
         with op.batch_alter_table("user_consents") as batch_op:
-            try:
+            with suppress(Exception):
                 batch_op.drop_constraint(
                     "chk_user_consents_version_known",
                     type_="check",
                 )
-            except Exception:  # noqa: BLE001
-                pass
             batch_op.alter_column(
                 "version",
                 existing_type=sa.String(length=16),

@@ -536,10 +536,7 @@ def _detect_threshold_alerts(
             # signed percentage where negative = below reference, so we
             # only treat negative deltas as real discounts.
             delta_pct = compute_price_vs_reference(ad, market_stats, category_price_stats)
-            if delta_pct < 0:
-                discount_pct = -delta_pct
-            else:
-                discount_pct = 0.0
+            discount_pct = -delta_pct if delta_pct < 0 else 0.0
             if discount_pct >= float(tracker.alert_discount_percent):
                 if (ad_id, "discount_alert") in seen:
                     continue
