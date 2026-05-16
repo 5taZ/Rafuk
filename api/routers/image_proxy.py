@@ -93,8 +93,41 @@ def _get_user_semaphore(user_key: str) -> asyncio.Semaphore:
     sem = _user_semaphores.get(user_key)
     if sem is None:
         if len(_user_semaphores) >= _MAX_USER_SEMAPHORES:
-            for stale_key in list(_user_semaphores.keys())[: _MAX_USER_SEMAPHORES // 2]:
+            # PR-07: only evict semaphores that are NOT currently
+            # locked. The previous FIFO sweep could drop a semaphore
+            # that an in-flight request still held; the next request
+            # from that user would then build a fresh semaphore and
+            # bypass the per-user concurrency cap.
+            #
+            # ``asyncio.Semaphore.locked()`` returns True iff every
+            # slot is in use, so a request that just acquired its
+            # first slot (``_USER_TRANSCODE_LIMIT == 2`` ⇒ value=1
+            # after one acquire) would technically be eligible for
+            # eviction by ``locked()`` alone. Cover that case via the
+            # ``_value`` check too — any in-flight request leaves
+            # ``_value < _USER_TRANSCODE_LIMIT``, so it pins the
+            # semaphore in the registry.
+            target = _MAX_USER_SEMAPHORES // 2
+            evicted = 0
+            for stale_key in list(_user_semaphores.keys()):
+                candidate = _user_semaphores.get(stale_key)
+                if candidate is None:
+                    continue
+                inflight = getattr(candidate, "_value", _USER_TRANSCODE_LIMIT)
+                if candidate.locked() or inflight < _USER_TRANSCODE_LIMIT:
+                    continue
                 _user_semaphores.pop(stale_key, None)
+                evicted += 1
+                if evicted >= target:
+                    break
+            # Emergency release valve: if every semaphore is in use
+            # (1024+ concurrent users mid-request), we still have to
+            # make room or the registry grows unbounded. Drop the
+            # oldest entries — same fallback as before, just only
+            # when there are no idle entries to harvest.
+            if evicted == 0:
+                for stale_key in list(_user_semaphores.keys())[:target]:
+                    _user_semaphores.pop(stale_key, None)
         sem = asyncio.Semaphore(_USER_TRANSCODE_LIMIT)
         _user_semaphores[user_key] = sem
     return sem

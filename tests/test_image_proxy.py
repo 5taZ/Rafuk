@@ -439,3 +439,48 @@ def test_user_semaphore_registry_evicts_oldest_over_cap() -> None:
     # The newest key must still be present; the oldest half must be gone.
     assert f"tg:{_MAX_USER_SEMAPHORES}" in _user_semaphores
     assert "tg:0" not in _user_semaphores
+
+
+def test_user_semaphore_registry_skips_inflight_semaphores() -> None:
+    """PR-07: an evictable semaphore must NOT be one currently held by
+    an in-flight request. The previous FIFO sweep evicted by insertion
+    order alone, which could drop a semaphore mid-request and let a
+    parallel request from the same user create a fresh one — bypassing
+    the per-user concurrency cap. Now the sweep prefers idle entries.
+    """
+    import asyncio
+
+    from api.routers.image_proxy import (
+        _MAX_USER_SEMAPHORES,
+        _USER_TRANSCODE_LIMIT,
+        _get_user_semaphore,
+        _user_semaphores,
+    )
+
+    async def _run() -> None:
+        _user_semaphores.clear()
+        # Pin "tg:0" by acquiring all its slots — emulates a request
+        # in flight for that user (one slot would be enough; we take
+        # both to make the test deterministic against the eviction
+        # heuristic).
+        pinned = _get_user_semaphore("tg:0")
+        for _ in range(_USER_TRANSCODE_LIMIT):
+            await pinned.acquire()
+
+        # Fill the registry to the cap with idle semaphores.
+        for i in range(1, _MAX_USER_SEMAPHORES):
+            _get_user_semaphore(f"tg:{i}")
+        assert len(_user_semaphores) == _MAX_USER_SEMAPHORES
+
+        # Trip the cap — eviction must keep the pinned semaphore.
+        _get_user_semaphore(f"tg:{_MAX_USER_SEMAPHORES}")
+        assert "tg:0" in _user_semaphores, "pinned in-flight semaphore must survive eviction"
+        # The new entry landed.
+        assert f"tg:{_MAX_USER_SEMAPHORES}" in _user_semaphores
+
+        # Cleanup — release the held slots so other tests see a fresh
+        # registry through the conftest tear-down.
+        for _ in range(_USER_TRANSCODE_LIMIT):
+            pinned.release()
+
+    asyncio.run(_run())
