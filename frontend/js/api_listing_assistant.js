@@ -58,6 +58,7 @@ function createApiListingAssistant(context) {
     const resultBackBtn = document.getElementById("la-result-back");
     const historyList = document.getElementById("la-history-list");
     const historyEmpty = document.getElementById("la-history-empty");
+    const historyFooter = document.getElementById("la-history-footer");
     const historyClearBtn = document.getElementById("la-history-clear");
     const saveHistoryCheckbox = document.getElementById("la-save-history-checkbox");
 
@@ -166,7 +167,6 @@ function createApiListingAssistant(context) {
         const list = loadHistory();
         list.unshift(entry);
         saveHistory(list);
-        renderHistoryCounts();
         renderHistoryList();
     }
 
@@ -176,6 +176,7 @@ function createApiListingAssistant(context) {
             tabHistoryCount.textContent = String(count);
             tabHistoryCount.hidden = count === 0;
         }
+        if (historyFooter) historyFooter.hidden = count === 0;
         if (historyClearBtn) historyClearBtn.disabled = count === 0;
     }
 
@@ -849,6 +850,7 @@ function createApiListingAssistant(context) {
     function renderHistoryList() {
         if (!historyList) return;
         const entries = loadHistory();
+        renderHistoryCounts();
         historyList.replaceChildren();
         if (!entries.length) {
             if (historyEmpty) historyEmpty.hidden = false;
@@ -896,7 +898,6 @@ function createApiListingAssistant(context) {
             deleteBtnEl.addEventListener("click", () => {
                 const list = loadHistory().filter((e) => e.id !== entry.id);
                 saveHistory(list);
-                renderHistoryCounts();
                 renderHistoryList();
             });
 
@@ -915,7 +916,6 @@ function createApiListingAssistant(context) {
         } catch (_) {
             saveHistory([]);
         }
-        renderHistoryCounts();
         renderHistoryList();
         showToast("История помощника очищена", "success", 1400);
     }

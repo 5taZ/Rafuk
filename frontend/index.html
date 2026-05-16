@@ -48,17 +48,17 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#0a0a0b">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260516-4a99cea">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260516-4a99cea">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260516-3237e01">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260516-3237e01">
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
          depending on the user's network RTT. -->
     <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
     <link rel="dns-prefetch" href="https://rms.kufar.by">
-    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20260516-4a99cea">
-    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260516-4a99cea">
-    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260516-4a99cea"></noscript>
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20260516-3237e01">
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260516-3237e01">
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260516-3237e01"></noscript>
     <!-- FE-M1: Preload the bundled stylesheet so the browser starts
          fetching it during HTML parse, in parallel with the font
          CSS request above. The subsequent ``<link rel="stylesheet">``
@@ -73,8 +73,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20260516-4a99cea">
-    <link rel="stylesheet" href="css/style.css?v=20260516-4a99cea">
+    <link rel="preload" as="style" href="css/style.css?v=20260516-3237e01">
+    <link rel="stylesheet" href="css/style.css?v=20260516-3237e01">
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -91,14 +91,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20260516-4a99cea"
+            src="vendor/telegram-web-app.js?v=20260516-3237e01"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers without leaking IP to a CDN. -->
-    <script defer src="js/app_bundle.js?v=20260516-4a99cea"></script>
+    <script defer src="js/app_bundle.js?v=20260516-3237e01"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -121,7 +121,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20260516-4a99cea" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260516-3237e01" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">
@@ -319,16 +319,6 @@
             <div class="sec-head">
                 <h2 class="sec-title">Статистика</h2>
                 <span class="badge" id="market-total-badge"></span>
-                <button class="ghost-btn small totals-refresh-btn" id="overview-refresh-btn" type="button"
-                        aria-label="Обновить количество объявлений" title="Обновить количество объявлений">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="23 4 23 10 17 10"/>
-                        <polyline points="1 20 1 14 7 14"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/>
-                        <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/>
-                    </svg>
-                </button>
             </div>
             <div class="stats-grid" id="stats-grid">
                 <div class="stat-card">
@@ -438,16 +428,6 @@
                 </button>
                 <span class="badge" id="listings-total-badge"></span>
                 <span class="badge badge--fallback" id="listings-fallback-badge" hidden>Показаны похожие</span>
-                <button class="ghost-btn small totals-refresh-btn" id="listings-refresh-btn" type="button"
-                        aria-label="Обновить количество объявлений" title="Обновить количество объявлений">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="23 4 23 10 17 10"/>
-                        <polyline points="1 20 1 14 7 14"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/>
-                        <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/>
-                    </svg>
-                </button>
             </div>
 
             <div class="filter-dropdown" id="filter-dropdown" hidden>
@@ -1098,17 +1078,34 @@
                     </form>
                 </section>
 
-                <section class="la-pane" id="la-pane-history" role="tabpanel" aria-labelledby="la-tab-history" hidden>
-                    <div class="la-history-tools">
-                        <p class="la-field-help">Запросы и AI-ответы хранятся локально до 30 дней только если включено сохранение истории.</p>
-                        <button class="ghost-btn small danger" id="la-history-clear" type="button" disabled>
-                            Очистить историю
-                        </button>
+                <section class="la-pane la-pane--history" id="la-pane-history" role="tabpanel" aria-labelledby="la-tab-history" hidden>
+                    <div class="la-history-shell">
+                        <div class="la-history-hero">
+                            <span class="la-history-kicker">Локальная история</span>
+                            <h4 class="la-history-heading">Ответы, к которым можно вернуться</h4>
+                            <p class="la-history-copy">
+                                Сохраняем запрос и AI-ответ только на этом устройстве до 30 дней, когда включено сохранение истории.
+                            </p>
+                        </div>
+                        <div class="la-history-list" id="la-history-list"></div>
+                        <div class="la-history-empty" id="la-history-empty" hidden>
+                            <span class="la-history-empty-icon" aria-hidden="true">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 6v6l4 2"/>
+                                    <circle cx="12" cy="12" r="9"/>
+                                </svg>
+                            </span>
+                            <strong>История пока пустая</strong>
+                            <span>Включи сохранение в «Новый запрос» и подготовь первое объявление — ответ появится здесь.</span>
+                        </div>
+                        <div class="la-history-footer" id="la-history-footer" hidden>
+                            <span>Можно удалить все сохранённые ответы одним действием.</span>
+                            <button class="ghost-btn small danger" id="la-history-clear" type="button" disabled>
+                                Очистить
+                            </button>
+                        </div>
                     </div>
-                    <div class="la-history-list" id="la-history-list"></div>
-                    <p class="la-history-empty" id="la-history-empty" hidden>
-                        Здесь будут сохраняться твои запросы. Открой первый — он появится в списке.
-                    </p>
                 </section>
             </div>
 

@@ -101,6 +101,20 @@ function createApiEvents(context) {
         return Number.isFinite(numeric) ? Math.max(0, numeric) : null;
     }
 
+    function _normaliseRefinementText(value) {
+        return String(value ?? "")
+            .toLowerCase()
+            .replace(/[^0-9a-zа-яё]+/gi, " ")
+            .trim()
+            .replace(/\s+/g, " ");
+    }
+
+    function _queryContainsRefinement(query, token) {
+        const normalizedQuery = _normaliseRefinementText(query);
+        const normalizedToken = _normaliseRefinementText(token);
+        return !!normalizedToken && ` ${normalizedQuery} `.includes(` ${normalizedToken} `);
+    }
+
     function bindSearchEvents() {
         // ── Search input ─────────────────────────────────────────────
         elements.searchInput?.addEventListener("input", () => {
@@ -140,23 +154,6 @@ function createApiEvents(context) {
             void search(state.ui.activeView || "overview", { forceRefresh: true });
         });
 
-        // SEARCH-7: opt-in fresh-count buttons. The 300 s analytics
-        // cache (`cache_ttl_seconds`) on price-stats + listings means
-        // a freshly opened result panel can lag kufar.by by a handful
-        // of ads — that's the cache doing its job, but the user has
-        // no way to ask for a recheck without re-typing the query. A
-        // tiny refresh button next to each totals badge calls the
-        // already-wired `forceRefresh: true` path in `search()`, which
-        // bypasses the cache for both `/price-stats` and `/listings`
-        // (and the dataset cache underneath) without disturbing the
-        // current scroll position or filter state.
-        function _forceRefreshTotals() {
-            if (!state.search.query?.trim()) return;
-            void search(state.ui.activeView || "overview", { forceRefresh: true });
-            _haptic("light");
-        }
-        elements.overviewRefreshBtn?.addEventListener("click", _forceRefreshTotals);
-        elements.listingsRefreshBtn?.addEventListener("click", _forceRefreshTotals);
     }
 
     function bindRecentSearchEvents() {
@@ -227,10 +224,8 @@ function createApiEvents(context) {
             const token = chip.dataset.refinement || "";
             if (!token) return;
             const current = (state.search.query || "").trim();
-            const lowerCurrent = current.toLowerCase();
-            const lowerToken = token.toLowerCase();
             // Avoid duplicating the token if it's already in the query.
-            const merged = lowerCurrent.includes(lowerToken)
+            const merged = _queryContainsRefinement(current, token)
                 ? current
                 : `${current} ${token}`.trim();
             if (merged === current) return;

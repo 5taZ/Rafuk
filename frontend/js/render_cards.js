@@ -372,28 +372,13 @@ function createRenderCards(context) {
         }
     }
 
-    function _setListingsRefreshBusy(busy) {
-        // SEARCH-7: keep the refresh button beside the listings total
-        // badge in lock-step with the section state. `disabled` when
-        // there's no active query (the parent section is also hidden);
-        // `aria-busy="true"` while a force-refresh round-trip is in
-        // flight (icon spins, pointer events drop).
-        const button = elements.listingsRefreshBtn;
-        if (!button) return;
-        const hasQuery = Boolean(state.search.query?.trim?.());
-        button.disabled = !hasQuery;
-        button.setAttribute("aria-busy", String(Boolean(busy)));
-    }
-
     function renderListings() {
         return safeRender('renderListings', () => {
             if (state.ui.loading) {
-                _setListingsRefreshBusy(true);
                 return;
             }
             // Keep skeletons while listings request is in flight
             if (state.listings._pending) {
-                _setListingsRefreshBusy(true);
                 return;
             }
 
@@ -466,13 +451,12 @@ function createRenderCards(context) {
             // active, even when total=0. The previous logic
             // (`!hasContent && !hasData`) hid the entire #listings-section,
             // which also took the filter button, the totals badge,
-            // the SEARCH-7 refresh button, and the SEARCH-9
+            // and the SEARCH-9
             // "Снять фильтры" CTA out of the DOM — leaving the user
             // staring at a blank page with no way to widen the
             // search. We only fall back to hiding when there's no
             // active query at all (initial load, search cleared).
             elements.listingsSection.hidden = !hasContent && !hasData && !hasQuery;
-            _setListingsRefreshBusy(false);
         });
     }
 

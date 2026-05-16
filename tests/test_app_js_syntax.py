@@ -2001,6 +2001,10 @@ def test_toasts_are_minimal_and_fast() -> None:
     assert ".toast-icon" not in css
     assert ".toast.entering:nth-child(2)" not in css
     assert "animation: toast-in 120ms" in css
+    assert "pointer-events: auto;" in css
+    assert 'closeBtn.addEventListener("click", (event) => {' in render_core
+    assert "event.preventDefault();" in render_core
+    assert "event.stopPropagation();" in render_core
 
 
 def test_toast_messages_do_not_duplicate_status_symbols() -> None:
@@ -2016,6 +2020,25 @@ def test_toast_messages_do_not_duplicate_status_symbols() -> None:
     render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     for symbol in ("✓", "✔", "✅", "✕", "✖", "❌", "↩", "⚠"):
         assert symbol in render_core
+
+
+def test_summary_refinements_are_filtered_before_rendering() -> None:
+    render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+    api_events = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+
+    assert "const MAX_REFINEMENT_CHIPS = 4;" in render_core
+    assert "function normaliseRefinementText(value)" in render_core
+    assert "function queryContainsRefinement(query, token)" in render_core
+    assert "function visibleRefinementTokens(refinements, query)" in render_core
+    assert "seen.has(key)" in render_core
+    assert "queryContainsRefinement(query, token)" in render_core
+    assert "if (visible.length >= MAX_REFINEMENT_CHIPS) break;" in render_core
+    assert (
+        "const visibleRefinements = visibleRefinementTokens(refinements, state.search.query);"
+    ) in render_core
+    assert "for (const token of visibleRefinements)" in render_core
+    assert "function _queryContainsRefinement(query, token)" in api_events
+    assert "const merged = _queryContainsRefinement(current, token)" in api_events
 
 
 def test_unified_item_card_replaces_lead_and_watchlist_builders() -> None:

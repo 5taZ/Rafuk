@@ -604,50 +604,20 @@ def test_secondary_tablists_have_roving_aria_relationships(soup: BeautifulSoup) 
     assert soup.find(id="la-pane-history").get("aria-labelledby") == "la-tab-history"
 
 
-def test_totals_refresh_buttons_force_refresh_search(soup: BeautifulSoup, css_text: str) -> None:
-    """SEARCH-7: the analytics cache (`cache_ttl_seconds=300`) means a
-    freshly opened result panel can lag kufar.by by a few ads on a
-    fast-churning query like `iPhone 14 Pro`. Surface a tiny refresh
-    button next to each totals badge so the user can opt into a fresh
-    count without re-typing the query.
-    """
-    overview = soup.find(id="overview-refresh-btn")
-    listings = soup.find(id="listings-refresh-btn")
-    assert overview is not None, "overview totals must have a refresh button"
-    assert listings is not None, "listings totals must have a refresh button"
-    for button in (overview, listings):
-        assert button.name == "button"
-        assert button.get("type") == "button"
-        # aria-label keeps the icon-only button accessible
-        assert button.get("aria-label") == "Обновить количество объявлений"
-        # share class with other ghost buttons + the dedicated refresh
-        # variant so the spinner CSS can hook in
-        classes = button.get("class") or []
-        assert "ghost-btn" in classes
-        assert "totals-refresh-btn" in classes
-        assert button.find("svg") is not None
+def test_totals_refresh_buttons_are_removed(soup: BeautifulSoup, css_text: str) -> None:
+    assert soup.find(id="overview-refresh-btn") is None
+    assert soup.find(id="listings-refresh-btn") is None
+    assert soup.find(class_="totals-refresh-btn") is None
 
-    # Refresh buttons sit inside the relevant section heads.
-    stats_head = soup.find(id="stats-section").find(class_="sec-head")
-    assert stats_head.find(id="overview-refresh-btn") is not None
-    listings_head = soup.find(id="listings-section").find(class_="listings-head")
-    assert listings_head.find(id="listings-refresh-btn") is not None
     dom = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
-    assert 'elements.overviewRefreshBtn = document.getElementById("overview-refresh-btn");' in dom
-    assert 'elements.listingsRefreshBtn = document.getElementById("listings-refresh-btn");' in dom
+    assert "overviewRefreshBtn" not in dom
+    assert "listingsRefreshBtn" not in dom
     events = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
-    assert 'elements.overviewRefreshBtn?.addEventListener("click"' in events
-    assert 'elements.listingsRefreshBtn?.addEventListener("click"' in events
-    assert "{ forceRefresh: true }" in events
-    # No-op when nothing has been searched yet so the button can't fire
-    # an empty `query=` request.
-    assert "if (!state.search.query?.trim()) return;" in events
+    assert "overviewRefreshBtn" not in events
+    assert "listingsRefreshBtn" not in events
 
-    # CSS hooks for the spinning aria-busy state survive minification
-    # via the `parts/` source files that the css_text fixture stitches.
-    assert ".totals-refresh-btn" in css_text
-    assert ".totals-refresh-btn[aria-busy=\"true\"]" in css_text
-    assert "@keyframes totals-refresh-spin" in css_text
+    assert ".totals-refresh-btn" not in css_text
+    assert "@keyframes totals-refresh-spin" not in css_text
 
 
 def test_limited_listings_do_not_show_sample_count_badge(css_text: str) -> None:
@@ -667,8 +637,8 @@ def test_listings_section_stays_visible_on_zero_result_queries() -> None:
     """SEARCH-10: a zero-result search used to set
     `elements.listingsSection.hidden = !hasContent && !hasData`,
     which collapsed the entire #listings-section — taking the
-    filter button, the totals badge, the SEARCH-7 refresh button
-    and the SEARCH-9 "Снять фильтры" CTA out of the DOM with it.
+    filter button, the totals badge, and the SEARCH-9 "Снять фильтры"
+    CTA out of the DOM with it.
     The fix keeps the section visible whenever a query is active
     so the recovery affordances remain reachable.
     """
@@ -801,8 +771,26 @@ def test_filter_controls_have_accessible_state_and_labels(soup: BeautifulSoup) -
     assert 'setAttribute("aria-pressed", String(allActive))' in render_views
 
 
-def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
+def test_summary_refinement_chips_are_compact_scroll_row(css_text: str) -> None:
     assert ".summary-refinement-chip" in css_text
+    assert ".summary-refinements-chips" in css_text
+    chips_block = css_text[
+        css_text.index(".summary-refinements-chips {"):
+        css_text.index("}", css_text.index(".summary-refinements-chips {"))
+    ]
+    chip_block = css_text[
+        css_text.index(".summary-refinement-chip {"):
+        css_text.index("}", css_text.index(".summary-refinement-chip {"))
+    ]
+    assert "flex-wrap: nowrap" in chips_block
+    assert "overflow-x: auto" in chips_block
+    assert "scroll-snap-type: x proximity" in chips_block
+    assert "min-height: 36px" in chip_block
+    assert "padding: 7px 11px" in chip_block
+    assert "scroll-snap-align: start" in chip_block
+
+
+def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
     assert ".empty-state-action" in css_text
     assert ".list-pagination-button" in css_text
     def declarations(selector: str, prop: str) -> list[str]:
@@ -821,13 +809,12 @@ def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
     for selector in (
         ".theme-toggle",
         ".header-privacy-btn",
-        ".summary-refinement-chip",
         ".empty-state-action",
         ".list-pagination-button",
         ".filter-chip",
-        ".totals-refresh-btn",
         ".lead-btn--emoji",
         ".la-history-delete",
+        ".toast-close",
     ):
         height_blocks = declarations(selector, "min-height")
         width_blocks = declarations(selector, "min-width")
@@ -849,13 +836,17 @@ def test_listing_assistant_history_has_privacy_controls(
     assert clear_button is not None
     assert clear_button.get("type") == "button"
     assert clear_button.has_attr("disabled")
-    assert "Очистить историю" in clear_button.get_text(strip=True)
+    assert "Очистить" in clear_button.get_text(strip=True)
+    footer = soup.find(id="la-history-footer")
+    assert footer is not None
+    assert footer.has_attr("hidden")
     page_text = soup.get_text(" ", strip=True)
     assert "Сохранять запросы в истории 30 дней" in page_text
     assert (
         "История с запросом и AI-ответом по умолчанию выключена"
     ) in page_text
-    assert "если включено сохранение истории" in page_text
+    assert "когда включено сохранение истории" in page_text
+    assert "История пока пустая" in page_text
     assert "История AI-помощника продавцу по умолчанию выключена" in page_text
     assert "серверное удаление аккаунта её не удаляет" in page_text
 
@@ -869,7 +860,10 @@ def test_listing_assistant_history_has_privacy_controls(
     assert "localStorage.removeItem(HISTORY_KEY)" in la_js
     assert 'saveHistoryCheckbox?.addEventListener("change"' in la_js
     assert 'historyClearBtn?.addEventListener("click"' in la_js
-    assert ".la-history-tools" in css_text
+    assert "historyFooter.hidden = count === 0" in la_js
+    assert ".la-history-shell" in css_text
+    assert ".la-history-hero" in css_text
+    assert ".la-history-footer" in css_text
     assert ".la-history-privacy-note" in css_text
 
 

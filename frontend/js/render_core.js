@@ -292,7 +292,9 @@ function createRenderCore(context) {
         toast.addEventListener("focusout", _resumeDismiss);
 
         const closeBtn = toast.querySelector(".toast-close");
-        closeBtn.addEventListener("click", () => {
+        closeBtn.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
             const timerId = Number(toast.dataset.dismissTimer || 0);
             if (timerId) clearTimeout(timerId);
             dismissToast(toast);
@@ -530,17 +532,48 @@ function createRenderCore(context) {
 
     /* ===== Summary ===== */
 
+    const MAX_REFINEMENT_CHIPS = 4;
+
+    function normaliseRefinementText(value) {
+        return String(value ?? "")
+            .toLowerCase()
+            .replace(/[^0-9a-zа-яё]+/gi, " ")
+            .trim()
+            .replace(/\s+/g, " ");
+    }
+
+    function queryContainsRefinement(query, token) {
+        const normalizedQuery = normaliseRefinementText(query);
+        const normalizedToken = normaliseRefinementText(token);
+        return !!normalizedToken && ` ${normalizedQuery} `.includes(` ${normalizedToken} `);
+    }
+
+    function visibleRefinementTokens(refinements, query) {
+        const seen = new Set();
+        const visible = [];
+        for (const raw of refinements) {
+            const token = typeof raw === "string" ? raw.trim().replace(/\s+/g, " ") : "";
+            const key = normaliseRefinementText(token);
+            if (!key || seen.has(key) || queryContainsRefinement(query, token)) continue;
+            seen.add(key);
+            visible.push(token);
+            if (visible.length >= MAX_REFINEMENT_CHIPS) break;
+        }
+        return visible;
+    }
+
     function renderRefinementChips() {
         if (!elements.summaryRefinements || !elements.summaryRefinementsChips) return;
         const refinements = Array.isArray(state.misc.stats?.suggested_refinements)
             ? state.misc.stats.suggested_refinements
             : [];
-        domClear(elements.summaryRefinementsChips);        if (!refinements.length) {
+        const visibleRefinements = visibleRefinementTokens(refinements, state.search.query);
+        domClear(elements.summaryRefinementsChips);
+        if (!visibleRefinements.length) {
             elements.summaryRefinements.hidden = true;
             return;
         }
-        for (const token of refinements) {
-            if (typeof token !== "string" || !token.trim()) continue;
+        for (const token of visibleRefinements) {
             const chip = document.createElement("button");
             chip.type = "button";
             chip.className = "summary-refinement-chip";

@@ -521,7 +521,7 @@ body.modal-open {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    pointer-events: none;
+    pointer-events: auto;
     max-width: 340px;
     width: calc(100% - 24px);
 }
@@ -616,8 +616,10 @@ body.modal-open {
 
 .toast-close {
     flex-shrink: 0;
-    width: 26px;
-    height: 26px;
+    min-width: 44px;
+    min-height: 44px;
+    width: 44px;
+    height: 44px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -627,7 +629,7 @@ body.modal-open {
     font-size: var(--text-sm);
     line-height: 1;
     padding: 0;
-    margin: -3px -2px -3px 0;
+    margin: -8px -7px -8px 0;
     border-radius: var(--r-sm);
     transition: background-color var(--tr-base), color var(--tr-base);
     cursor: pointer;
