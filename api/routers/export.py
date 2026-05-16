@@ -52,6 +52,32 @@ def _csv_safe(value: object) -> object:
     return value
 
 
+# Free-text column indices in CSV_HEADERS / _row_for_lead output that
+# should be guarded against spreadsheet formula injection. Both the
+# CSV writer (Excel/LibreOffice/Numbers) and the XLSX writer (Excel
+# specifically) interpret a leading ``=``/``+``/``-``/``@`` as a
+# formula even when the source column is plain text. We share the
+# list so a single audit point covers both export paths (PR-04).
+_SPREADSHEET_FREE_TEXT_COLUMNS = (1, 2, 3, 6, 7)
+
+
+def _sanitize_row_for_spreadsheet(row: list[object]) -> list[object]:
+    """Apply ``_csv_safe`` to every free-text column in ``row``.
+
+    PR-04: previously only the CSV path called ``_csv_safe`` inline;
+    the XLSX writer wrote raw cell values, so a Kufar title or
+    user-typed note starting with ``=`` was interpreted as an Excel
+    formula on first open. Wrap the row once, here, and reuse it
+    from both writers so the two export shapes can't drift.
+    """
+    for idx in _SPREADSHEET_FREE_TEXT_COLUMNS:
+        value = row[idx]
+        if value is None:
+            continue
+        row[idx] = _csv_safe(value)
+    return row
+
+
 def _empty_csv_response() -> Response:
     output = io.StringIO()
     csv.writer(output).writerow(CSV_HEADERS)
@@ -126,7 +152,10 @@ def _build_xlsx_workbook(leads: list[LeadItem], lead_expenses: dict[int, float])
     numeric_cols = (5, 6, 9, 11, 12, 13)
 
     for lead in leads:
-        ws.append(_row_for_lead(lead, lead_expenses))
+        # PR-04: sanitise free-text columns so a value starting with
+        # ``=``/``+``/``-``/``@`` is treated as text, not as an Excel
+        # formula. CSV path applies the same guard below.
+        ws.append(_sanitize_row_for_spreadsheet(_row_for_lead(lead, lead_expenses)))
 
     # Format numbers — money to 2 decimals, ROI to 2 decimals + "%".
     for col in numeric_cols:
@@ -217,11 +246,10 @@ async def export_leads(
         writer = csv.writer(output)
         writer.writerow(CSV_HEADERS)
         for lead in leads:
-            row = _row_for_lead(lead, lead_expenses)
-            # CSV-injection guard for free-text columns (query, title,
-            # link, status, source).
-            for idx in (1, 2, 3, 6, 7):
-                row[idx] = _csv_safe(row[idx]) if row[idx] is not None else ""
+            # PR-04: single sanitisation helper shared with the XLSX
+            # writer above so the two export shapes can't drift.
+            row = _sanitize_row_for_spreadsheet(_row_for_lead(lead, lead_expenses))
+            # Per-cell None-to-empty + float formatting (CSV-only).
             row = [
                 "" if value is None
                 else (

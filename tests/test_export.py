@@ -98,6 +98,54 @@ def test_export_xlsx_returns_valid_workbook() -> None:
     assert isinstance(first_row[4], (int, float))
 
 
+def test_export_xlsx_neutralises_spreadsheet_formulas() -> None:
+    """PR-04: a lead title or query starting with ``=``/``+``/``-``/``@``
+    must be stored as text in both export shapes. The CSV path
+    already prefixed a single quote; the XLSX path previously wrote
+    the raw value and Excel would interpret it as a formula on open.
+    """
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    malicious_payload = {
+        "query": "@SUM(1,2)",
+        "ad_id": 50202,
+        "title": "=cmd|'/c calc.exe'!A1",
+        "link": "https://www.kufar.by/item/50202",
+        "price_byn": 100.0,
+        "status": "new",
+        "source": "+manual",
+    }
+
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/leads", json=malicious_payload)
+        assert resp.status_code == 201, resp.text
+
+        # XLSX path
+        xlsx = client.get("/api/v1/leads/export?format=xlsx")
+        assert xlsx.status_code == 200
+        wb = load_workbook(io.BytesIO(xlsx.content), read_only=False)
+        sheet = wb["Leads"]
+        first_row = [cell.value for cell in sheet[2]]
+        # PR-04: every formula-triggering free-text cell starts with
+        # a single quote — Excel renders this as literal text.
+        assert first_row[1] == "'@SUM(1,2)"
+        assert first_row[2] == "'=cmd|'/c calc.exe'!A1"
+        assert first_row[7] == "'+manual"
+
+        # CSV path keeps the same shape (already protected pre-wave135,
+        # the assertion locks the contract in).
+        csv_resp = client.get("/api/v1/leads/export?format=csv")
+        assert csv_resp.status_code == 200
+        body = csv_resp.content.decode("utf-8")
+        assert "'@SUM(1,2)" in body
+        assert "'=cmd|" in body
+        assert "'+manual" in body
+
+
 def test_export_rejects_unknown_format() -> None:
     """An invalid `format=` query value must be rejected by FastAPI's
     Literal validator with 422 — not silently picked.
