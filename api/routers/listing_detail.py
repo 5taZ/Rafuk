@@ -61,7 +61,7 @@ async def _backfill_lead_thumbnail(
             user_id = await ensure_user(
                 session,
                 telegram_user_id=telegram_user_id,
-                first_name=first_name,
+                first_name=first_name or "",
             )
             await session.execute(
                 update(LeadItem)

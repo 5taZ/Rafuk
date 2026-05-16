@@ -1,4 +1,4 @@
-"""Tests for inline callback handlers (📌 В покупки / 👁 Отслеживать).
+"""Tests for inline callback handlers (📌 В покупки / ⭐ В Избранное).
 
 BE-15: the previous implementation hard-coded `query=""` and `link=""` in
 the API payload, which `LeadCreate`/`WatchlistCreate` rejected with a
@@ -308,3 +308,42 @@ async def test_add_lead_conflict_keeps_user_informed(
     args, kwargs = callback.answer.await_args
     text = args[0] if args else kwargs.get("text", "")
     assert "Уже в покупках" in text
+
+
+
+@pytest.mark.asyncio
+async def test_add_watch_success_answers_with_favourites_text(
+    patch_bot_session, captured_api_post
+) -> None:
+    """After the rename, success answer is '⭐ Добавлено в избранное',
+    not the legacy '👁 Добавлено в отслеживание'."""
+    ad_id = 6262
+    await _seed_tracker_event(ad_id=ad_id)
+    callback = _make_callback(f"add_watch:{ad_id}")
+
+    await cb_module.cb_add_to_watchlist(callback)
+
+    args, kwargs = callback.answer.await_args
+    text = args[0] if args else kwargs.get("text", "")
+    assert "избранное" in text
+    assert "отслеживание" not in text
+
+
+@pytest.mark.asyncio
+async def test_add_watch_conflict_says_already_in_favourites(
+    patch_bot_session, captured_api_post
+) -> None:
+    """Watchlist conflict response must say 'Уже в избранном', not
+    'Уже в покупках' — the latter was the original copy bug surfaced
+    during the bot-thumbnail audit."""
+    ad_id = 6363
+    await _seed_tracker_event(ad_id=ad_id)
+    captured_api_post["_response"] = {"conflict": True}
+    callback = _make_callback(f"add_watch:{ad_id}")
+
+    await cb_module.cb_add_to_watchlist(callback)
+
+    args, kwargs = callback.answer.await_args
+    text = args[0] if args else kwargs.get("text", "")
+    assert "избранном" in text
+    assert "покупках" not in text

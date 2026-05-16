@@ -139,6 +139,6 @@ async def cb_add_to_watchlist(callback: CallbackQuery) -> None:
     if result is None:
         await callback.answer("⚠️ Ошибка. Попробуйте позже.", show_alert=True)
     elif result.get("conflict"):
-        await callback.answer("Уже в покупках", show_alert=False)
+        await callback.answer("Уже в избранном", show_alert=False)
     else:
         await callback.answer("⭐ Добавлено в избранное", show_alert=False)

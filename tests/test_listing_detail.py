@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.services.cache import MemoryCache
@@ -257,3 +258,135 @@ def test_listing_detail_keeps_price_delta_stable_in_category_view(monkeypatch) -
     assert broad_response.status_code == 200
     assert category_response.status_code == 200
     assert broad_response.json()["price_vs_median"] == category_response.json()["price_vs_median"]
+
+
+
+# ---------------------------------------------------------------------------
+# _backfill_lead_thumbnail — unit tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def backfill_session_factory():
+    """In-memory aiosqlite + freshly-created tables. Mirrors the
+    pattern used by test_ai_consent_enforcement so the unit tests
+    don't depend on the autouse ``create_test_tables`` fixture
+    leaking between modules."""
+    from api.database import get_engine, get_session_factory
+    from api.models import Base
+
+    engine = get_engine("sqlite+aiosqlite:///:memory:")
+    factory = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield factory
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_backfill_lead_thumbnail_patches_null_row(
+    backfill_session_factory,
+) -> None:
+    """LeadItem with thumbnail=NULL gets patched when the detail
+    endpoint discovers a thumbnail. Targets the bot-callback flow:
+    rows added via '📌 В покупки' / '⭐ В Избранное' before the
+    scheduler fix landed with NULL — opening detail backfills them."""
+    from api.models import LeadItem, User
+    from api.routers.listing_detail import _backfill_lead_thumbnail
+
+    async with backfill_session_factory() as session:
+        user = User(telegram_user_id=12345, first_name="Test")
+        session.add(user)
+        await session.flush()
+        lead = LeadItem(
+            user_id=user.id,
+            ad_id=999,
+            query="x",
+            title="t",
+            link="https://www.kufar.by/item/999",
+            price_byn=100.0,
+            thumbnail=None,
+            status="new",
+            source="bot_callback",
+        )
+        session.add(lead)
+        await session.commit()
+
+    await _backfill_lead_thumbnail(
+        backfill_session_factory,
+        telegram_user_id=12345,
+        first_name="Test",
+        ad_id=999,
+        thumbnail="https://rms.kufar.by/v1/gallery/x/y.jpg",
+    )
+
+    async with backfill_session_factory() as session:
+        from sqlalchemy import select
+        refreshed = await session.scalar(select(LeadItem).where(LeadItem.ad_id == 999))
+        assert refreshed.thumbnail == "https://rms.kufar.by/v1/gallery/x/y.jpg"
+
+
+@pytest.mark.asyncio
+async def test_backfill_lead_thumbnail_skips_existing(
+    backfill_session_factory,
+) -> None:
+    """An existing thumbnail must NOT be overwritten. The WHERE clause
+    has ``thumbnail IS NULL`` precisely so a manual edit or a later
+    Kufar response with a different image doesn't clobber what the
+    user already saw."""
+    from api.models import LeadItem, User
+    from api.routers.listing_detail import _backfill_lead_thumbnail
+
+    existing_url = "https://rms.kufar.by/v1/gallery/old/photo.jpg"
+    async with backfill_session_factory() as session:
+        user = User(telegram_user_id=12346, first_name="Test")
+        session.add(user)
+        await session.flush()
+        session.add(
+            LeadItem(
+                user_id=user.id,
+                ad_id=998,
+                query="x",
+                title="t",
+                link="https://www.kufar.by/item/998",
+                price_byn=100.0,
+                thumbnail=existing_url,
+                status="new",
+                source="bot_callback",
+            )
+        )
+        await session.commit()
+
+    await _backfill_lead_thumbnail(
+        backfill_session_factory,
+        telegram_user_id=12346,
+        first_name="Test",
+        ad_id=998,
+        thumbnail="https://rms.kufar.by/v1/gallery/new/photo.jpg",
+    )
+
+    async with backfill_session_factory() as session:
+        from sqlalchemy import select
+        refreshed = await session.scalar(select(LeadItem).where(LeadItem.ad_id == 998))
+        assert refreshed.thumbnail == existing_url
+
+
+@pytest.mark.asyncio
+async def test_backfill_lead_thumbnail_noop_when_thumbnail_arg_is_none(
+    backfill_session_factory,
+) -> None:
+    """Caller passes thumbnail=None (Kufar returned no images) → the
+    function returns immediately without opening a session. Important
+    so a missing image doesn't NULL out an existing thumbnail via the
+    UPDATE."""
+    from api.routers.listing_detail import _backfill_lead_thumbnail
+
+    # Should not raise even though the user/lead don't exist — early
+    # return before any DB I/O happens.
+    await _backfill_lead_thumbnail(
+        backfill_session_factory,
+        telegram_user_id=999999,
+        first_name="Missing",
+        ad_id=12345,
+        thumbnail=None,
+    )

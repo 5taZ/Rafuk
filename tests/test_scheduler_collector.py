@@ -1857,3 +1857,78 @@ def test_scheduler_does_not_import_aiogram_types() -> None:
     assert "WebAppInfo(" not in source
     assert "InlineKeyboardMarkup(" not in source
     assert "lead_reminder_keyboard" in source
+
+
+
+@pytest.mark.asyncio
+async def test_persist_tracker_events_extracts_thumbnail_from_images(
+    populated_session,
+):
+    """Regression for the bot-thumbnail bug: scheduler used to call
+    ``ad.get('thumbnail')`` but raw Kufar payloads have no top-level
+    ``thumbnail`` key — images live under ``images[].path``. The fix
+    routes through ``first_image_url(ad)`` so new TrackerEvent rows
+    get a proper URL the bot can forward into LeadItem/WatchlistItem."""
+    session, user, tracker = populated_session
+    now = datetime.now(UTC)
+    state = QueryListingState(
+        ad_id=4242,
+        query="iphone 15",
+        title="iPhone 15 256GB",
+        last_price_byn=2000.0,
+        link="https://www.kufar.by/item/4242",
+        active=True,
+        first_seen_at=now,
+        last_seen_at=now,
+    )
+    sync = QuerySyncResult(
+        stats_count=1, total_results=1, new_listings=[state], price_drops=[]
+    )
+    # Raw Kufar shape: no 'thumbnail' key, image lives in images[0].path.
+    ads_by_id = {
+        4242: {
+            "ad_id": 4242,
+            "images": [{"path": "adim1/photo.jpg"}],
+            "seller_type": "private",
+        },
+    }
+
+    events = await persist_tracker_events(
+        session, tracker, sync, ads_by_id=ads_by_id, seen=set()
+    )
+    await session.flush()
+
+    assert len(events) == 1
+    assert events[0].thumbnail == "https://rms.kufar.by/v1/gallery/adim1/photo.jpg"
+    assert events[0].seller_type == "private"
+
+
+@pytest.mark.asyncio
+async def test_persist_tracker_events_thumbnail_none_when_no_images(
+    populated_session,
+):
+    """When the Kufar payload has no images at all, thumbnail must be
+    None — not a crash, not an empty string."""
+    session, user, tracker = populated_session
+    now = datetime.now(UTC)
+    state = QueryListingState(
+        ad_id=4243,
+        query="iphone",
+        title="iPhone",
+        last_price_byn=1500.0,
+        link="https://www.kufar.by/item/4243",
+        active=True,
+        first_seen_at=now,
+        last_seen_at=now,
+    )
+    sync = QuerySyncResult(
+        stats_count=1, total_results=1, new_listings=[state], price_drops=[]
+    )
+    ads_by_id = {4243: {"ad_id": 4243, "images": []}}
+
+    events = await persist_tracker_events(
+        session, tracker, sync, ads_by_id=ads_by_id, seen=set()
+    )
+    await session.flush()
+
+    assert events[0].thumbnail is None
