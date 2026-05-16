@@ -100,6 +100,23 @@ async def track_init_data_use(
                 {"ip": ip, "first_seen_ts": now, "user_id": int(user_id)},
                 ttl=_INITDATA_TTL_SECONDS,
             )
+            # PR-11: re-read to catch the race where two concurrent
+            # first-time requests both saw ``existing is None`` and
+            # both wrote — only one IP wins, but we want to flag
+            # the loser the same way an after-the-fact mismatch
+            # would. ``get_json`` is cheap on the local Redis hop
+            # and this branch only fires on the very first observation
+            # for a digest, so the cost is bounded.
+            settled = await cache.get_json(key)
+            if isinstance(settled, dict):
+                settled_ip = settled.get("ip")
+                if settled_ip and settled_ip != ip:
+                    logger.warning(
+                        "session_security.initdata_first_write_race "
+                        "user_id=%s digest=%s observed_ip=%s settled_ip=%s",
+                        user_id, digest[:12], ip, settled_ip,
+                    )
+                    await _record_replay_warning(cache, user_id)
             return
         first_ip = existing.get("ip")
         if first_ip and first_ip != ip:

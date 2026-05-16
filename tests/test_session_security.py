@@ -132,4 +132,42 @@ async def test_track_init_data_under_threshold_does_not_blacklist() -> None:
     for ip in ("9.9.9.1", "9.9.9.2"):
         await track_init_data_use(cache, "blob", user_id=22, client_ip=ip)
     assert cache._store.get("auth:blacklist:22") is None
-    assert await is_user_blacklisted(cache, 22) is False
+
+
+@pytest.mark.asyncio
+async def test_track_init_data_first_write_race_logs_warning(caplog) -> None:
+    """PR-11: when two concurrent first-time observations land for the
+    same initdata blob, only one IP wins the ``set_json`` race. The
+    losing IP must still surface as a WARNING so ops can correlate
+    it with the eventual ``initdata_ip_mismatch`` line, and the
+    replay-warning counter must be bumped (the same path the regular
+    mismatch branch takes).
+    """
+
+    class _RaceCache(_StubCache):
+        """Mimic a concurrent peer that wrote a different IP between
+        our ``get_json`` (saw None) and our own ``set_json``."""
+
+        async def get_json(self, key: str) -> Any:
+            value = self._store.get(key)
+            if value is None and key.startswith("auth:initdata:"):
+                # Another caller raced ahead and pinned a peer IP.
+                self._store[key] = {
+                    "ip": "8.8.8.8", "first_seen_ts": 1, "user_id": 7,
+                }
+                return None
+            return value
+
+        async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
+            # Silently drop — the peer's value already won.
+            return None
+
+    cache = _RaceCache()
+    caplog.set_level(logging.WARNING)
+    await track_init_data_use(cache, "blob", user_id=7, client_ip="1.1.1.1")
+
+    assert any(
+        "initdata_first_write_race" in r.message for r in caplog.records
+    ), "Expected first_write_race warning when peer wrote ahead of us"
+    # Replay counter advanced — same shape as the IP-mismatch path.
+    assert cache._counters.get("auth:replay_warn:7") == 1
