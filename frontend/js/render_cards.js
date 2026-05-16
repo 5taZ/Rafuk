@@ -140,6 +140,7 @@ function createRenderCards(context) {
             const actionBtn = event.target.closest('[data-role="lead"], [data-role="watch"]');
             if (actionBtn) {
                 event.stopPropagation();
+                if (actionBtn.disabled) return;
                 if (actionBtn.dataset.role === "lead") {
                     void actions.addLeadFromListing(item);
                 } else {

@@ -42,6 +42,43 @@ function createRenderModals(context) {
         return item;
     }
 
+    const ACTIVE_DETAIL_STATUSES = new Set([
+        "new",
+        "in_progress",
+        "researching",
+        "bought",
+        "sold",
+    ]);
+
+    function _sameAdId(left, right) {
+        return left != null && right != null && String(left) === String(right);
+    }
+
+    function _detailCollectionState(detail) {
+        const adId = detail?.ad_id;
+        const inLeads = (state.leads?.items || []).some(
+            (lead) => _sameAdId(lead.ad_id, adId) && ACTIVE_DETAIL_STATUSES.has(lead.status),
+        );
+        const inWatchlist = !inLeads && (
+            Boolean(state.detail.fromWatchlist)
+            || (state.watchlist?.items || []).some((watch) => _sameAdId(watch.ad_id, adId))
+        );
+        return { inLeads, inWatchlist };
+    }
+
+    function _setDetailActionButton(button, text, disabled, label) {
+        if (!button) return;
+        button.hidden = false;
+        button.textContent = text;
+        button.disabled = Boolean(disabled);
+        if (disabled) {
+            button.setAttribute("aria-disabled", "true");
+        } else {
+            button.removeAttribute("aria-disabled");
+        }
+        button.setAttribute("aria-label", label);
+    }
+
     /* ===== Detail Modal ===== */
 
     function renderDetailModal() {
@@ -210,10 +247,30 @@ function createRenderModals(context) {
         }
         elements.detailSellerBlock.hidden = sellerFields.length === 0;
 
-        // Hide "Следить" button if item is already in watchlist
-        if (elements.detailAddWatchlistButton) {
-            elements.detailAddWatchlistButton.hidden = state.detail.fromWatchlist || false;
-        }
+        const collectionState = _detailCollectionState(detail);
+        const detailTitleText = detail.title || "товар";
+        const leadText = collectionState.inLeads ? "В покупках" : "В покупки";
+        const watchText = collectionState.inWatchlist
+            ? "В избранном"
+            : collectionState.inLeads ? "В покупках" : "В избранное";
+        _setDetailActionButton(
+            elements.detailAddLeadButton,
+            leadText,
+            collectionState.inLeads,
+            collectionState.inLeads
+                ? `«${detailTitleText}» уже в покупках`
+                : `Добавить «${detailTitleText}» в покупки`,
+        );
+        _setDetailActionButton(
+            elements.detailAddWatchlistButton,
+            watchText,
+            collectionState.inLeads || collectionState.inWatchlist,
+            collectionState.inWatchlist
+                ? `«${detailTitleText}» уже в избранном`
+                : collectionState.inLeads
+                    ? `«${detailTitleText}» уже в покупках`
+                    : `Добавить «${detailTitleText}» в избранное`,
+        );
 
         // Reset scroll position to top when modal opens
         const scrollContainer = elements.detailModal?.querySelector(".detail-sheet-content");

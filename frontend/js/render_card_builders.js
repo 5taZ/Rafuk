@@ -88,6 +88,37 @@ function createRenderCardBuilders(context) {
         return domEl("div", { className: placeholderClass, text: placeholderText });
     }
 
+    const ACTIVE_COLLECTION_STATUSES = new Set([
+        "new",
+        "in_progress",
+        "researching",
+        "bought",
+        "sold",
+    ]);
+
+    function _sameAdId(left, right) {
+        return left != null && right != null && String(left) === String(right);
+    }
+
+    function _isActiveLeadAd(adId) {
+        return (state.leads?.items || []).some(
+            (lead) => _sameAdId(lead.ad_id, adId) && ACTIVE_COLLECTION_STATUSES.has(lead.status),
+        );
+    }
+
+    function _isWatchlistAd(adId) {
+        return (state.watchlist?.items || []).some((watch) => _sameAdId(watch.ad_id, adId));
+    }
+
+    function _actionButtonAttrs(disabled, label) {
+        const attrs = { "aria-label": label };
+        if (disabled) {
+            attrs.disabled = true;
+            attrs["aria-disabled"] = "true";
+        }
+        return attrs;
+    }
+
     function buildListingNode(item, verdictClassName) {
         const listing = domEl("article", {
             className: "listing",
@@ -147,6 +178,12 @@ function createRenderCardBuilders(context) {
         if (item.condition) tags.appendChild(domEl("span", { className: "tag", text: formatCondition(item.condition) }));
         if (item.seller_type) tags.appendChild(domEl("span", { className: "tag", text: formatSeller(item.seller_type) }));
 
+        const itemTitle = item.title || "товар";
+        const inLeads = _isActiveLeadAd(item.ad_id);
+        const inWatchlist = !inLeads && _isWatchlistAd(item.ad_id);
+        const leadText = inLeads ? "В покупках" : "В покупки";
+        const watchText = inWatchlist ? "В избранном" : inLeads ? "В покупках" : "В избранное";
+
         listing.appendChild(
             domFragment(
                 domEl(
@@ -172,8 +209,28 @@ function createRenderCardBuilders(context) {
                 domEl(
                     "div",
                     { className: "listing-actions" },
-                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "lead" }, text: "В покупки", attrs: { "aria-label": `Добавить «${item.title || "товар"}» в покупки` } }),
-                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "watch" }, text: "В избранное", attrs: { "aria-label": `Добавить «${item.title || "товар"}» в избранное` } }),
+                    domEl("button", {
+                        className: "listing-btn",
+                        type: "button",
+                        dataset: { role: "lead" },
+                        text: leadText,
+                        attrs: _actionButtonAttrs(
+                            inLeads,
+                            inLeads ? `«${itemTitle}» уже в покупках` : `Добавить «${itemTitle}» в покупки`,
+                        ),
+                    }),
+                    domEl("button", {
+                        className: "listing-btn",
+                        type: "button",
+                        dataset: { role: "watch" },
+                        text: watchText,
+                        attrs: _actionButtonAttrs(
+                            inLeads || inWatchlist,
+                            inWatchlist
+                                ? `«${itemTitle}» уже в избранном`
+                                : inLeads ? `«${itemTitle}» уже в покупках` : `Добавить «${itemTitle}» в избранное`,
+                        ),
+                    }),
                     domEl("a", {
                         className: "listing-btn listing-btn--kufar",
                         text: "Kufar",
@@ -188,13 +245,15 @@ function createRenderCardBuilders(context) {
         if (typeof attachLongPress === "function") {
             attachLongPress(listing, () => [
                 {
-                    label: "В покупки",
+                    label: leadText,
                     tone: "accent",
+                    disabled: inLeads,
                     icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/><polyline points="9 11 12 8 15 11"/><line x1="12" y1="2" x2="12" y2="14"/></svg>',
                     onSelect: () => actions.addLeadFromListing(item),
                 },
                 {
-                    label: "В избранное",
+                    label: watchText,
+                    disabled: inLeads || inWatchlist,
                     icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
                     onSelect: () => actions.addWatchlistFromListing(item),
                 },
@@ -584,6 +643,8 @@ function createRenderCardBuilders(context) {
     /** Watchlist action row — Kufar link is hidden when the listing is missing. */
     function _buildWatchlistActions(item, isMissing) {
         const itemTitle = item.title || "товар";
+        const inLeads = _isActiveLeadAd(item.ad_id);
+        const leadText = inLeads ? "В покупках" : "В покупки";
         return domEl(
             "div",
             { className: "watchlist-card-actions" },
@@ -599,8 +660,11 @@ function createRenderCardBuilders(context) {
                     className: "wl-btn wl-btn--accent",
                     type: "button",
                     dataset: { role: "lead" },
-                    text: "В покупки",
-                    attrs: { "aria-label": `Добавить «${itemTitle}» в покупки` },
+                    text: leadText,
+                    attrs: _actionButtonAttrs(
+                        inLeads,
+                        inLeads ? `«${itemTitle}» уже в покупках` : `Добавить «${itemTitle}» в покупки`,
+                    ),
                 })
                 : null,
             !isMissing
@@ -644,7 +708,8 @@ function createRenderCardBuilders(context) {
             card.querySelector('[data-role="detail"]')?.addEventListener("click", () => {
                 void actions.openWatchlistDetail(item);
             }, { signal });
-            card.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
+            card.querySelector('[data-role="lead"]')?.addEventListener("click", (event) => {
+                if (event.currentTarget.disabled) return;
                 void actions.promoteWatchlistToLead(item);
             }, { signal });
             card.querySelector('[data-role="delete"]')?.addEventListener("click", () => {

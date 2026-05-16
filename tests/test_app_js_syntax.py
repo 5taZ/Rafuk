@@ -912,6 +912,270 @@ const renderer = createRenderModals({
     assert result.returncode == 0, result.stderr
 
 
+def test_listing_and_detail_duplicate_actions_render_disabled_labels() -> None:
+    builders_js = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+    modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
+    harness = (
+        builders_js
+        + "\n"
+        + modals_js
+        + r"""
+const assert = require("assert");
+
+class FakeNode {
+    constructor(tagName) {
+        this.tagName = tagName;
+        this.children = [];
+        this.dataset = {};
+        this.attributes = {};
+        this.className = "";
+        this.textContent = "";
+        this.hidden = false;
+        this.disabled = false;
+        this.style = {};
+        this.classList = { contains: () => false, add() {}, remove() {}, toggle() {} };
+    }
+    appendChild(child) { this.children.push(child); return child; }
+    append(...items) { this.children.push(...items); }
+    prepend(item) { this.children.unshift(item); return item; }
+    replaceChildren(...items) { this.children = [...items]; }
+    addEventListener() {}
+    removeEventListener() {}
+    setAttribute(name, value) {
+        this.attributes[name] = value === "" ? "" : String(value);
+        if (name === "disabled") this.disabled = true;
+    }
+    removeAttribute(name) {
+        delete this.attributes[name];
+        if (name === "disabled") this.disabled = false;
+    }
+    getAttribute(name) { return this.attributes[name] || null; }
+    querySelector() { return null; }
+}
+
+global.Node = FakeNode;
+global.document = {
+    createElement: (tagName) => new FakeNode(tagName),
+    createDocumentFragment: () => new FakeNode("#fragment"),
+    createTextNode: (text) => {
+        const node = new FakeNode("#text");
+        node.textContent = String(text);
+        return node;
+    },
+};
+
+function appendChild(target, child) {
+    if (child == null || child === false) return;
+    if (Array.isArray(child)) {
+        for (const nested of child) appendChild(target, nested);
+        return;
+    }
+    if (child instanceof FakeNode) {
+        target.appendChild(child);
+        return;
+    }
+    target.appendChild(document.createTextNode(String(child)));
+}
+
+function domEl(tagName, options, ...children) {
+    const node = document.createElement(tagName);
+    const config = options || {};
+    if (config.className) node.className = config.className;
+    if (config.text != null) node.textContent = String(config.text);
+    if (config.hidden != null) node.hidden = Boolean(config.hidden);
+    if (config.type) node.type = config.type;
+    if (config.attrs) {
+        for (const [name, value] of Object.entries(config.attrs)) {
+            if (value == null || value === false) continue;
+            node.setAttribute(name, value === true ? "" : String(value));
+        }
+    }
+    if (config.dataset) {
+        for (const [name, value] of Object.entries(config.dataset)) {
+            if (value != null) node.dataset[name] = String(value);
+        }
+    }
+    for (const child of children) appendChild(node, child);
+    return node;
+}
+
+function domFragment(...children) {
+    const fragment = document.createDocumentFragment();
+    for (const child of children) appendChild(fragment, child);
+    return fragment;
+}
+
+function findByRole(root, role) {
+    if (root.dataset?.role === role) return root;
+    for (const child of root.children || []) {
+        const found = findByRole(child, role);
+        if (found) return found;
+    }
+    return null;
+}
+
+const state = {
+    leads: { items: [{ ad_id: "lead-1", status: "new" }] },
+    watchlist: { items: [{ ad_id: "watch-1" }] },
+    misc: { stats: {} },
+    detail: { data: null, imageIndex: 0, fromWatchlist: false, ai: {} },
+};
+const menus = [];
+const builders = createRenderCardBuilders({
+    state,
+    elements: {},
+    actions: { addLeadFromListing() {}, addWatchlistFromListing() {} },
+    formatPrice: () => "100 BYN",
+    formatCondition: (value) => value,
+    formatSeller: (value) => value,
+    formatDelta: (value) => value,
+    deltaClass: () => "",
+    hasTelegramInitData: () => true,
+    safeKufarUrl: () => "",
+    openExternalLink() {},
+    safeImageUrl: () => "",
+    optimizedImage: (url) => url,
+    escapeHtml: (value) => String(value),
+    domEl,
+    domFragment,
+    attachLongPress: (_node, menuBuilder) => menus.push(menuBuilder()),
+});
+
+const leadListing = builders.buildListingNode(
+    { ad_id: "lead-1", title: "Консоль", price: 100 },
+    () => "neutral",
+);
+assert.strictEqual(findByRole(leadListing, "lead").textContent, "В покупках");
+assert.strictEqual(findByRole(leadListing, "lead").disabled, true);
+assert.strictEqual(findByRole(leadListing, "watch").textContent, "В покупках");
+assert.strictEqual(findByRole(leadListing, "watch").disabled, true);
+assert.strictEqual(menus[0][0].label, "В покупках");
+assert.strictEqual(menus[0][0].disabled, true);
+
+const watchListing = builders.buildListingNode(
+    { ad_id: "watch-1", title: "Ноутбук", price: 200 },
+    () => "neutral",
+);
+assert.strictEqual(findByRole(watchListing, "lead").textContent, "В покупки");
+assert.strictEqual(findByRole(watchListing, "lead").disabled, false);
+assert.strictEqual(findByRole(watchListing, "watch").textContent, "В избранном");
+assert.strictEqual(findByRole(watchListing, "watch").disabled, true);
+assert.strictEqual(menus[1][1].label, "В избранном");
+assert.strictEqual(menus[1][1].disabled, true);
+
+const elements = {
+    detailTitle: new FakeNode("div"),
+    detailPrice: new FakeNode("div"),
+    detailLink: new FakeNode("a"),
+    detailAiBlock: new FakeNode("div"),
+    detailAiContent: new FakeNode("div"),
+    detailDescription: new FakeNode("div"),
+    detailProfitBlock: new FakeNode("div"),
+    detailLiquidity: new FakeNode("div"),
+    detailLiquidityBlock: new FakeNode("div"),
+    detailMeta: new FakeNode("div"),
+    detailMainImage: new FakeNode("img"),
+    detailNoImage: new FakeNode("div"),
+    detailMedia: new FakeNode("div"),
+    detailThumbs: new FakeNode("div"),
+    detailParams: new FakeNode("div"),
+    detailParamsBlock: new FakeNode("div"),
+    detailSeller: new FakeNode("div"),
+    detailSellerBlock: new FakeNode("div"),
+    detailAddLeadButton: new FakeNode("button"),
+    detailAddWatchlistButton: new FakeNode("button"),
+    detailModal: new FakeNode("div"),
+};
+elements.detailModal.hidden = true;
+elements.detailModal.querySelector = () => ({ scrollTop: 0 });
+const renderer = createRenderModals({
+    state,
+    elements,
+    actions: {},
+    formatPrice: () => "100 BYN",
+    formatCondition: (value) => value,
+    formatSeller: (value) => value,
+    formatDelta: (value) => value,
+    formatDate: (value) => value,
+    trapFocus: () => {},
+    safeKufarUrl: () => "",
+    safeImageUrl: () => "",
+    optimizedImage: (url) => url,
+    safeRender: (_label, fn) => fn(),
+    escapeHtml: (value) => String(value),
+    domClear: (node) => { node.children = []; },
+    openModalAnimated: (node) => { node.hidden = false; },
+    closeModalAnimated: (node) => { node.hidden = true; },
+    attachPinchZoom: () => ({ reset() {} }),
+});
+
+state.detail.data = {
+    ad_id: "lead-1",
+    title: "Консоль",
+    price: 100,
+    images: [],
+    parameters: [],
+    seller_fields: [],
+};
+renderer.renderDetailModal();
+assert.strictEqual(elements.detailAddLeadButton.textContent, "В покупках");
+assert.strictEqual(elements.detailAddLeadButton.disabled, true);
+assert.strictEqual(elements.detailAddWatchlistButton.textContent, "В покупках");
+assert.strictEqual(elements.detailAddWatchlistButton.disabled, true);
+
+state.detail.data = {
+    ad_id: "watch-1",
+    title: "Ноутбук",
+    price: 200,
+    images: [],
+    parameters: [],
+    seller_fields: [],
+};
+state.detail.fromWatchlist = true;
+renderer.renderDetailModal();
+assert.strictEqual(elements.detailAddLeadButton.textContent, "В покупки");
+assert.strictEqual(elements.detailAddLeadButton.disabled, false);
+assert.strictEqual(elements.detailAddWatchlistButton.hidden, false);
+assert.strictEqual(elements.detailAddWatchlistButton.textContent, "В избранном");
+assert.strictEqual(elements.detailAddWatchlistButton.disabled, true);
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_duplicate_action_state_covers_secondary_surfaces() -> None:
+    builders_js = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
+    modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
+    trackers_js = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
+    events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    css = _read_all_css()
+
+    assert "_buildWatchlistActions" in builders_js
+    assert "const inLeads = _isActiveLeadAd(item.ad_id)" in builders_js
+    assert "text: leadText" in builders_js
+    assert "if (event.currentTarget.disabled) return;" in builders_js
+
+    assert "_setDetailActionButton(" in modals_js
+    assert "detailAddWatchlistButton.hidden = state.detail.fromWatchlist" not in modals_js
+    assert "collectionState.inWatchlist" in modals_js
+
+    assert "const inLeads = _isActiveLeadAd(event.ad_id)" in trackers_js
+    assert 'text: leadText' in trackers_js
+    assert "if (clickEvent.currentTarget.disabled) return;" in trackers_js
+
+    assert "detailAddLeadButton.disabled" in events_js
+    assert "detailAddWatchlistButton.disabled" in events_js
+
+    for selector in (
+        ".listing-btn:disabled",
+        ".wl-btn:disabled",
+        ".lead-btn:disabled",
+        ".lp-menu-item:disabled",
+    ):
+        assert selector in css
+
+
 def test_external_kufar_links_open_outside_telegram_webview() -> None:
     core_js = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
@@ -1658,6 +1922,7 @@ def test_collection_actions_only_show_final_toasts() -> None:
     ]
     assert 'showToast("Добавляю…", "info"' not in add_lead
     assert 'showToast("В покупках", "success"' in add_lead
+    assert 'showToast("Уже в покупках"' not in add_lead
 
     for fn_name, success_text in (
         ("addWatchlistFromListing", "В избранном"),
@@ -1667,6 +1932,8 @@ def test_collection_actions_only_show_final_toasts() -> None:
         fn_body = watchlist_js[fn_start:watchlist_js.index("\n    // ──", fn_start + 1)]
         assert 'showToast("Добавляю…", "info"' not in fn_body
         assert f'showToast("{success_text}", "success"' in fn_body
+        assert 'showToast("Уже в покупках"' not in fn_body
+        assert 'showToast("Уже в избранном"' not in fn_body
 
     confirm_start = leads_js.index("async function confirmLead")
     confirm_body = leads_js[confirm_start:leads_js.index("\n    // ──", confirm_start + 1)]

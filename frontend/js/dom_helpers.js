@@ -1053,6 +1053,10 @@ function showLongPressMenu(items) {
         btn.type = "button";
         btn.className = `lp-menu-item ${item.tone ? `lp-menu-item--${item.tone}` : ""}`.trim();
         btn.setAttribute("role", "menuitem");
+        if (item.disabled) {
+            btn.disabled = true;
+            btn.setAttribute("aria-disabled", "true");
+        }
         if (item.icon) {
             const iconBox = document.createElement("span");
             iconBox.className = "lp-menu-icon";
@@ -1107,6 +1111,7 @@ function showLongPressMenu(items) {
         btn.appendChild(label);
         btn.addEventListener("click", (event) => {
             event.stopPropagation();
+            if (btn.disabled) return;
             hideLongPressMenu();
             try {
                 if (typeof item.onSelect === "function") item.onSelect();

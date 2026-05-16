@@ -36,6 +36,16 @@ function createApiWatchlist(context) {
         if (typeof renderLeads === "function") renderLeads();
     }
 
+    function refreshCollectionActionSurfaces() {
+        if (typeof context.markDirty === "function" && typeof renderAll === "function") {
+            context.markDirty('listings', 'trackerEvents', 'leads', 'watchlist');
+            renderAll();
+        } else {
+            refreshAfterWatchlistChange();
+        }
+        if (state.detail?.data && typeof renderDetailModal === "function") renderDetailModal();
+    }
+
     // Tracks ad_ids and watchlist row ids with an in-flight mutation so
     // a rapid double-click doesn't fire two POST/PATCH/DELETE for the
     // same row. The backend is race-safe (savepoint + 409), but the
@@ -147,14 +157,14 @@ function createApiWatchlist(context) {
         ]);
         const alreadyInWatchlist = state.watchlist.items.some((w) => w.ad_id === item.ad_id);
         if (alreadyInWatchlist) {
-            showToast("Уже в избранном");
+            refreshCollectionActionSurfaces();
             return;
         }
         const alreadyInLeads = state.leads.items.some(
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
-            showToast("Уже в покупках");
+            refreshCollectionActionSurfaces();
             return;
         }
 
@@ -171,17 +181,18 @@ function createApiWatchlist(context) {
             });
             showToast("В избранном", "success", 1600);
             await loadWatchlist();
+            refreshCollectionActionSurfaces();
         } catch (error) {
             // Server returns 409 with detail "Этот лот уже в покупках"
-            // when the ad already has a non-watching lead. Surface a
-            // friendly toast instead of the generic "internal error".
+            // when the ad already has a non-watching lead. Refresh local
+            // collections so disabled buttons show the real state.
             const message = error?.message || "";
             if (/уже\s+в\s+покупках/i.test(message)) {
-                showToast("Уже в покупках");
                 // Make sure UI reflects reality.
                 if (typeof context.loadLeads === "function") {
                     await context.loadLeads();
                 }
+                refreshCollectionActionSurfaces();
                 return;
             }
             showToast(message || "Не удалось добавить в избранное", "error");
@@ -240,7 +251,7 @@ function createApiWatchlist(context) {
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
-            showToast("Уже в покупках");
+            refreshCollectionActionSurfaces();
             return;
         }
 
@@ -268,6 +279,7 @@ function createApiWatchlist(context) {
                 loadWatchlist(),
                 typeof context.loadLeads === "function" ? context.loadLeads() : null,
             ]);
+            refreshCollectionActionSurfaces();
         } catch (error) {
             showToast(error?.message || "Не удалось перевести в покупки", "error");
         } finally {

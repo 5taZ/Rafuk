@@ -314,7 +314,11 @@
 
 .primary-btn:disabled,
 .ghost-btn:disabled,
-.search-btn:disabled {
+.search-btn:disabled,
+.listing-btn:disabled,
+.wl-btn:disabled,
+.lead-btn:disabled,
+.lp-menu-item:disabled {
     opacity: 0.5;
     cursor: not-allowed;
     pointer-events: none;

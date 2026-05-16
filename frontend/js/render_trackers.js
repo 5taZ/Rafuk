@@ -133,6 +133,24 @@ function createRenderTrackers(context) {
             ]);
     }
 
+    const ACTIVE_COLLECTION_STATUSES = new Set([
+        "new",
+        "in_progress",
+        "researching",
+        "bought",
+        "sold",
+    ]);
+
+    function _sameAdId(left, right) {
+        return left != null && right != null && String(left) === String(right);
+    }
+
+    function _isActiveLeadAd(adId) {
+        return (state.leads?.items || []).some(
+            (lead) => _sameAdId(lead.ad_id, adId) && ACTIVE_COLLECTION_STATUSES.has(lead.status),
+        );
+    }
+
     /* ===== Tracker Status ===== */
 
     function renderTrackerStatus() {
@@ -569,6 +587,9 @@ function createRenderTrackers(context) {
                 badgeLabel = "Скидка от медианы";
                 cardModifier = " discount-alert";
             }
+            const inLeads = _isActiveLeadAd(event.ad_id);
+            const leadText = inLeads ? "В покупках" : "В покупки";
+            const eventTitle = event.title || "лот";
 
             const card = domEl(
                 "article",
@@ -599,7 +620,15 @@ function createRenderTrackers(context) {
                     "div",
                     { className: "event-actions" },
                     domEl("button", { className: "listing-btn", type: "button", dataset: { role: "open-query" }, text: "Открыть" }),
-                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "lead" }, text: "В покупки" }),
+                    domEl("button", {
+                        className: "listing-btn",
+                        type: "button",
+                        dataset: { role: "lead" },
+                        text: leadText,
+                        attrs: inLeads
+                            ? { disabled: true, "aria-disabled": "true", "aria-label": `«${eventTitle}» уже в покупках` }
+                            : { "aria-label": `Добавить «${eventTitle}» в покупки` },
+                    }),
                     domEl("a", {
                         className: "listing-btn listing-btn--kufar",
                         text: "Kufar →",
@@ -622,7 +651,8 @@ function createRenderTrackers(context) {
                     price_byn: event.price_byn,
                 });
             });
-            card.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
+            card.querySelector('[data-role="lead"]')?.addEventListener("click", (clickEvent) => {
+                if (clickEvent.currentTarget.disabled) return;
                 void actions.addLeadFromListing(
                     {
                         ad_id: event.ad_id,

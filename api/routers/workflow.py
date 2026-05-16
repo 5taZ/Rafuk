@@ -221,7 +221,7 @@ async def create_lead(
             first_name=telegram_user.first_name,
         )
         # Prevent silent overwrite — if an active lead already exists for
-        # this ad, return 409 so the frontend can show a clear message.
+        # this ad, return 409 so the frontend can refresh disabled state.
         existing = await session.scalar(
             select(LeadItem).where(
                 LeadItem.user_id == user_id,
@@ -450,8 +450,8 @@ async def create_watchlist_item(
             first_name=telegram_user.first_name,
         )
         # If the user already has an active lead for this ad, refuse the
-        # "add to watchlist" with a 409 — the frontend treats it as
-        # "уже в покупках" instead of silently no-op'ing in a confusing way.
+        # "add to watchlist" with a 409 so the frontend can refresh
+        # disabled state instead of silently no-op'ing.
         existing = await session.scalar(
             select(LeadItem).where(
                 LeadItem.user_id == user_id,

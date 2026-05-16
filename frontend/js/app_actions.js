@@ -185,10 +185,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260516-edb6c86"),
-            context._loadScript("js/api_ai_render.js?v=20260516-edb6c86"),
-            context._loadScript("js/api_ai.js?v=20260516-edb6c86"),
-            context._loadScript("js/api_listing_assistant.js?v=20260516-edb6c86"),
+            context._loadScript("js/api_ai_modal.js?v=20260516-1943e16"),
+            context._loadScript("js/api_ai_render.js?v=20260516-1943e16"),
+            context._loadScript("js/api_ai.js?v=20260516-1943e16"),
+            context._loadScript("js/api_listing_assistant.js?v=20260516-1943e16"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -301,6 +301,12 @@ function createAppActions(baseContext) {
         setTimeout(() => _inflightAdMutations.delete(adId), inflightGuardMs);
     }
 
+    function _refreshCollectionActionSurfaces() {
+        markDirty('listings', 'trackerEvents', 'leads', 'watchlist');
+        renderAll();
+        if (state.detail?.data) renderDetailModal();
+    }
+
     function _validVersion(value) {
         const numeric = Number(value);
         return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
@@ -350,7 +356,7 @@ function createAppActions(baseContext) {
             (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
-            showToast("Уже в покупках", "info", 1600);
+            _refreshCollectionActionSurfaces();
             return;
         }
 
@@ -401,6 +407,7 @@ function createAppActions(baseContext) {
             // Refresh both surfaces so a once-watched item disappears
             // from "Избранное" and shows up in "Покупки" together.
             await Promise.all([leads.loadLeads(), watchlist.loadWatchlist()]);
+            _refreshCollectionActionSurfaces();
         } catch (error) {
             showToast(error.message || "Не удалось добавить в покупки", "error");
         } finally {

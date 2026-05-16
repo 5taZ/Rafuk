@@ -767,13 +767,13 @@ function createApiEvents(context) {
         });
 
         elements.detailAddLeadButton?.addEventListener("click", () => {
-            if (state.detail.data) {
+            if (state.detail.data && !elements.detailAddLeadButton.disabled) {
                 void context.addLeadFromListing(state.detail.data, "detail_modal", state.detail.data.query || state.search.query);
             }
         });
 
         elements.detailAddWatchlistButton?.addEventListener("click", () => {
-            if (state.detail.data) {
+            if (state.detail.data && !elements.detailAddWatchlistButton.disabled) {
                 void context.addWatchlistFromListing(state.detail.data, state.detail.data.query || state.search.query);
             }
         });
