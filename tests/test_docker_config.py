@@ -59,3 +59,30 @@ def test_nginx_has_frontend_security_headers() -> None:
     assert "img-src 'self' https://rms.kufar.by https://*.kufar.by data: blob:" in nginx_conf
     assert "object-src 'none'" in nginx_conf
     assert "Permissions-Policy" in nginx_conf
+
+
+def test_nginx_cors_origin_is_strict_allowlist() -> None:
+    """PR-19: the nginx CORS allowlist must spell each Telegram
+    Mini-App embedder out, not match every ``*.telegram.org``
+    subdomain via regex. A subdomain takeover on an unrelated
+    ``*.telegram.org`` host would otherwise inherit
+    ``Access-Control-Allow-Origin`` for the API.
+    """
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+
+    # The wildcard regex from before must be gone.
+    assert (
+        '~* "^https://[a-z0-9.-]+\\.telegram\\.org$"' not in nginx_conf
+    ), (
+        "Old wildcard regex still present — PR-19 expects an explicit "
+        "Mini-App embedder allowlist."
+    )
+    # Each known embedder is matched exactly.
+    for origin in (
+        'https://web.telegram.org',
+        'https://webk.telegram.org',
+        'https://webz.telegram.org',
+    ):
+        assert (
+            f'$http_origin = "{origin}"' in nginx_conf
+        ), f"missing exact-match guard for {origin}"
