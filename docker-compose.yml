@@ -261,9 +261,17 @@ services:
     command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --maxmemory 192mb --maxmemory-policy allkeys-lru"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-    # Note: port 6380 exposed for local debugging. Remove in production.
-    ports:
-      - "127.0.0.1:6380:6379"
+    # PR-18: no host port mapping in the base compose. Other services
+    # in the kufar-net bridge network reach Redis at ``redis:6379``
+    # without it. Local development that needs to talk to the
+    # containerised Redis from outside the compose project (e.g.
+    # ``start-local.sh`` running uvicorn on the host) gets the port
+    # via ``docker-compose.override.yml`` — the override is auto-
+    # loaded by ``docker compose up``, so dev workflow is unchanged,
+    # but a production deploy that uses ``docker compose -f docker-compose.yml up``
+    # never publishes the port. Previously the host port lived inline
+    # here with a "Remove in production" comment that was easy to
+    # miss on copy-paste deploys.
     networks:
       - kufar-net
     deploy:

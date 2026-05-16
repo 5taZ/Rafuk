@@ -110,9 +110,13 @@ list of importers so removing them is a deliberate decision.
    bot token, AI API key, DB credentials and proxy credentials in
    `.env` are unrotated. `.env` is gitignored — that's the only line
    of defence and that's intentional.
-2. **Local Redis on `:6380` has no password.** `REDIS_URL` stays
-   plaintext for the host; `DOCKER_REDIS_URL` carries the
-   `REDIS_PASSWORD` env var.
+2. **Local Redis on `:6380` is dev-only.** The host port mapping
+   lives in `docker-compose.override.yml` (auto-loaded by
+   `docker compose up`); production deploys use
+   `docker compose -f docker-compose.yml up` and the port stays
+   internal to `kufar-net`. `REDIS_URL` for host processes still
+   points at `localhost:6380`; `DOCKER_REDIS_URL` carries the
+   `REDIS_PASSWORD` env var for in-cluster traffic.
 3. **The full pytest suite must stay green.** Verify with
    `uv run pytest --tb=short -q` before commits that touch runtime
    code or tests. If a refactor breaks tests, either update the test
