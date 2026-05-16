@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.config import get_settings
 from api.dependencies import get_cache, get_kufar_client, get_telegram_user
+from api.limiter import limiter
 from api.schemas import AIAnalysisRequest
 
 # ── Re-exports for back-compat with sibling routers and tests ────────────
@@ -92,6 +93,11 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 @router.get("/task/{task_id}")
+# PR-02: cap the polling endpoint at 60/min so a stuck or hostile
+# client can't hammer the cache on a single user_id. AI tasks
+# advance every few seconds, so 60 poll attempts per minute is
+# generous for legitimate use and stops a runaway poll loop dead.
+@limiter.limit("60/minute")
 async def get_task_status(
     task_id: str,
     request: Request,
@@ -116,6 +122,12 @@ async def get_task_status(
 
 
 @router.post("/analyze")
+# PR-02: edge cap on top of the per-user AI quota guard inside
+# the body. The quota guard keeps the per-user budget honest;
+# this limit keeps the absolute rate of NEW analyses sane so a
+# user can't spawn dozens of background tasks at once even if
+# they each spend exactly one quota point.
+@limiter.limit("10/minute")
 async def analyze_listing(
     payload: AIAnalysisRequest,
     request: Request,

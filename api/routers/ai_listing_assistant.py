@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from api.config import get_settings
 from api.dependencies import get_cache, get_kufar_client, get_telegram_user
+from api.limiter import limiter
 from api.routers.ai_analysis import (
     _AI_ANALYSIS_ERRORS,
     _check_ai_available,
@@ -449,6 +450,12 @@ def _build_listing_fallback_response(
 
 
 @router.post("/listing-assistant", response_model=AIListingAssistantResponse)
+# PR-02: edge cap on top of the per-user AI quota guard. Listing
+# assistant is the heaviest AI endpoint (multi-photo upload + a
+# parallel Gemini call + Kufar strict-then-broad fan-out), so the
+# absolute call cap is intentionally tight — the cache fast-path
+# is the right answer for repeat clicks on the same draft.
+@limiter.limit("10/minute")
 async def listing_assistant(
     payload: AIListingAssistantRequest,
     request: Request,

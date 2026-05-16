@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from api.config import get_settings
 from api.dependencies import get_cache, get_kufar_client, get_telegram_user
+from api.limiter import limiter
 from api.routers.ai_analysis import (
     _check_ai_available,
     _check_ai_consent,
@@ -99,6 +100,11 @@ def _ai_price_advice_cache_key(payload: AIPriceAdviceRequest) -> str:
 
 
 @router.post("/negotiate", response_model=AINegotiateResponse)
+# PR-02: edge cap on top of _check_rate_limit (per-user quota).
+# Same shape as /ai/analyze and /ai/listing-assistant — the heavy
+# chat path can't be slow-drained at burst, and a cached hit
+# (after PR-03's user-scoped cache key) costs nothing here anyway.
+@limiter.limit("10/minute")
 async def negotiate_price(
     payload: AINegotiateRequest,
     request: Request,
@@ -184,6 +190,11 @@ async def negotiate_price(
 
 
 @router.post("/price-advice", response_model=AIPriceAdviceResponse)
+# PR-02: edge cap on top of _check_rate_limit (per-user quota).
+# Price advice is anonymous-keyed (current-market-v1) so the
+# cache is shared across users — the edge limit only protects
+# the cold-cache fan-out, which Kufar+AI cost roughly $0.01 each.
+@limiter.limit("10/minute")
 async def price_advice(
     payload: AIPriceAdviceRequest,
     request: Request,
