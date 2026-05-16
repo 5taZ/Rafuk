@@ -319,6 +319,11 @@ async def revoke_consent(
             await clear_user_ai_data(
                 _user.user_id,
                 cache=getattr(request.app.state, "cache", None),
+                # AI-HIGH (issues §3.2): hand over the session factory
+                # so the helper can walk this user's audit log and
+                # evict the (ad_id, query) entries from the shared
+                # ai_analysis cache too.
+                session_factory=request.app.state.session_factory,
             )
         except Exception:
             logger.warning(
@@ -407,6 +412,9 @@ async def delete_account(
         await clear_user_ai_data(
             _user.user_id,
             cache=getattr(request.app.state, "cache", None),
+            # AI-HIGH (issues §3.2): walk audit log and evict
+            # ai_analysis:* keys for the entries this user touched.
+            session_factory=request.app.state.session_factory,
         )
     except Exception:
         logger.warning(

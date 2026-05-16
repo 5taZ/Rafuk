@@ -25,6 +25,7 @@ async def clear_user_ai_data(
     telegram_user_id: int,
     *,
     cache: Any | None = None,
+    session_factory: Any | None = None,
 ) -> None:
     """Remove all per-user data for a Telegram user (Law-99-З erasure).
 
@@ -46,20 +47,22 @@ async def clear_user_ai_data(
     * ``auth:initdata:*`` — IP-tracking entries (filter by user_id in value)
     * in-memory ``_tasks`` shadow store
 
+    AI-HIGH (issues §3.2): the shared analysis cache
+    (``ai_analysis:{version}:{ad_id}:{query}:cat=*``) has no user_id
+    in the key, but a freshly-revoked user still has its previously-
+    cached results live. When ``session_factory`` is provided we walk
+    that user's ``AIAuditLog`` entries (which DO carry user_id) and
+    SCAN+DELETE every analysis cache key matching ``{ad_id, query}``.
+    Other users continue to share whatever cohort cache the eviction
+    didn't touch — a partial cold cache is the right trade-off
+    against silently serving consented results to a revoked user.
+
     OPUS-20: ``cache`` lets callers reuse ``app.state.cache`` instead
     of opening a fresh Redis pool just for the cleanup. With the
     pool already warm, both ``delete_account`` and ``revoke_consent``
     avoid the connect/close cost. When ``cache`` isn't provided we
     fall back to the original "open + close" behaviour so legacy
     callers (and the privacy module's own tests) keep working.
-
-    The shared deterministic listing-analysis cache
-    (``ai_analysis:v6-<hash>:*`` — the version tag is derived from
-    ``ai_prompts.py`` + ``schemas.py`` SHA256 so it auto-rotates on
-    prompt edits) is intentionally untouched: it has no user_id,
-    evicting it would just hand cold caches to everyone else. See
-    Wave 2E for the consent-aware invalidation that does walk the
-    namespace by query hash.
     """
     from api.services.cache import MemoryCache, RedisCache
 
@@ -133,6 +136,63 @@ async def clear_user_ai_data(
                             await redis_client.delete(key)
                     if cursor == 0:
                         break
+
+            # AI-HIGH (issues §3.2): also evict ``ai_analysis:*`` entries
+            # the user touched. Cache keys have shape
+            # ``ai_analysis:{version}:{ad_id}:{query}:cat={category}``,
+            # so a glob ``ai_analysis:*:{ad_id}:{query}:*`` is unique to
+            # this user's audit-logged tuples. We resolve the user's
+            # internal id and walk the audit log within the cache TTL
+            # window (1h is the default) to bound the work.
+            if session_factory is not None:
+                try:
+                    from datetime import UTC, datetime, timedelta
+
+                    from sqlalchemy import select
+
+                    from api.models import AIAuditLog, User
+
+                    cutoff = datetime.now(UTC) - timedelta(hours=2)
+                    async with session_factory() as session:
+                        internal_id = await session.scalar(
+                            select(User.id).where(
+                                User.telegram_user_id == telegram_user_id
+                            )
+                        )
+                        if internal_id is not None:
+                            rows = await session.execute(
+                                select(AIAuditLog.ad_id, AIAuditLog.query)
+                                .where(
+                                    AIAuditLog.user_id == internal_id,
+                                    AIAuditLog.created_at >= cutoff,
+                                    AIAuditLog.endpoint == "analyze",
+                                    AIAuditLog.ad_id.is_not(None),
+                                )
+                                .distinct()
+                            )
+                            for ad_id, query in rows:
+                                if not ad_id or not query:
+                                    continue
+                                # Redis glob-escape only ``[`` and ``]``;
+                                # query strings rarely contain them, but
+                                # if they do the SCAN simply returns no
+                                # match — we skip rather than crash.
+                                pattern = f"ai_analysis:*:{ad_id}:{query}:*"
+                                cursor = 0
+                                while True:
+                                    cursor, keys = await redis_client.scan(
+                                        cursor, match=pattern, count=50
+                                    )
+                                    if keys:
+                                        await redis_client.delete(*keys)
+                                    if cursor == 0:
+                                        break
+                except Exception:  # noqa: BLE001 — eviction is best-effort
+                    logger.warning(
+                        "ai_analysis cache eviction failed for user %d",
+                        telegram_user_id,
+                        exc_info=True,
+                    )
         # Also clean shadow stores. The lock guards us from a
         # concurrent pruner walking the same keys.
         async with _get_shadow_lock():

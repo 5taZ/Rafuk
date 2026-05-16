@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import re
@@ -25,8 +26,12 @@ async def fetch_image_b64(url: str, get_client: GetClient) -> dict | None:
     if not data:
         return None
 
-    # Try to resize for faster AI processing
-    compressed = compress_image(data)
+    # AI-HIGH (issues §3.1): Pillow's open/resize/save are CPU-bound and
+    # take 1–3s for the typical 3 × 5 MB Kufar listing photo set. Calling
+    # them inline from the analysis pipeline blocks the event loop and
+    # stalls every other coroutine on the worker. Offload to a thread
+    # so other requests can be served while the bytes get crunched.
+    compressed = await asyncio.to_thread(compress_image, data)
     if compressed:
         data = compressed
 
