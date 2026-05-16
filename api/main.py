@@ -191,6 +191,10 @@ def create_app() -> FastAPI:
         settings.api_base_url,
         "https://web.telegram.org",
         "https://webk.telegram.org",
+        # SEC-MEDIUM (issues §1.2): nginx CORS allows webz.telegram.org
+        # (Telegram Web Z client); FastAPI must mirror it or every
+        # POST/PATCH/DELETE from Web Z fails the Origin gate below.
+        "https://webz.telegram.org",
     ]
     if settings.debug:
         origins.extend(
@@ -330,6 +334,7 @@ def create_app() -> FastAPI:
         [
             "https://web.telegram.org",
             "https://webk.telegram.org",
+            "https://webz.telegram.org",
         ]
     )
     if settings.debug:

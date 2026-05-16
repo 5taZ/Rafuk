@@ -48,6 +48,17 @@ def test_client_ip_uses_x_forwarded_for_single_entry() -> None:
     assert get_client_ip(request) == "203.0.113.10"
 
 
+def test_client_ip_trusts_cloudflare_ipv6_peer() -> None:
+    """SEC-MEDIUM (issues §1.5): the CF IPv6 prefix list must be
+    populated, otherwise the trusted-peer check rejects every IPv6
+    edge and we silently bucket all IPv6 traffic by a single CF IP."""
+    request = _request(
+        {"CF-Connecting-IP": "2001:db8::42"},
+        client_host="2606:4700:4400::1",
+    )
+    assert get_client_ip(request) == "2001:db8::42"
+
+
 def test_client_ip_ignores_x_forwarded_for_from_untrusted_peer() -> None:
     request = _request({"X-Forwarded-For": "203.0.113.10"}, client_host="10.0.0.1")
     assert get_client_ip(request) == "10.0.0.1"

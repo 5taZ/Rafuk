@@ -29,7 +29,24 @@ def test_frontend_csp_matches_vendored_telegram_sdk_policy() -> None:
 def test_nginx_uses_csp_frame_ancestors_instead_of_x_frame_options() -> None:
     nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
     assert "X-Frame-Options" not in nginx_conf
-    assert "frame-ancestors https://web.telegram.org https://webk.telegram.org" in nginx_conf
+    # SEC-LOW (issues §1.2): all three Telegram web clients must be
+    # listed in frame-ancestors so the Mini App embeds correctly.
+    assert (
+        "frame-ancestors https://web.telegram.org "
+        "https://webk.telegram.org https://webz.telegram.org"
+        in nginx_conf
+    )
+
+
+def test_nginx_disables_server_tokens_and_sets_hsts() -> None:
+    """SEC-MEDIUM/LOW (issues §1.2): nginx must hide its version
+    (server_tokens off) and emit HSTS at the server level so static
+    assets carry the header even when /api/ isn't traversed."""
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    assert "server_tokens off;" in nginx_conf
+    assert "Strict-Transport-Security" in nginx_conf
+    assert "max-age=31536000" in nginx_conf
+    assert "includeSubDomains" in nginx_conf
 
 
 def test_nginx_rate_limit_key_trusts_cf_header_only_from_proxy_peer() -> None:

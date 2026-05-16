@@ -5,6 +5,7 @@ import ipaddress
 from fastapi import Request
 
 _CLOUDFLARE_IP_RANGES = [
+    # IPv4 (https://www.cloudflare.com/ips-v4)
     ipaddress.ip_network("173.245.48.0/20"),
     ipaddress.ip_network("103.21.244.0/22"),
     ipaddress.ip_network("103.22.200.0/22"),
@@ -20,6 +21,19 @@ _CLOUDFLARE_IP_RANGES = [
     ipaddress.ip_network("104.24.0.0/14"),
     ipaddress.ip_network("172.64.0.0/13"),
     ipaddress.ip_network("131.0.72.0/22"),
+    # SEC-MEDIUM (issues §1.5): IPv6 (https://www.cloudflare.com/ips-v6).
+    # Without these, IPv6 traffic from CF edges fails the trusted-peer
+    # check, so CF-Connecting-IP / X-Forwarded-For are ignored and every
+    # IPv6 user gets bucketed by the CF edge's IP — rate limits and
+    # IDOR-style telemetry break. Refresh from the CF endpoint at the
+    # cadence noted in AGENTS.md.
+    ipaddress.ip_network("2400:cb00::/32"),
+    ipaddress.ip_network("2606:4700::/32"),
+    ipaddress.ip_network("2803:f800::/32"),
+    ipaddress.ip_network("2405:b500::/32"),
+    ipaddress.ip_network("2405:8100::/32"),
+    ipaddress.ip_network("2a06:98c0::/29"),
+    ipaddress.ip_network("2c0f:f248::/32"),
 ]
 
 _TRUSTED_PROXY_IP_RANGES = [
