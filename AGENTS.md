@@ -1,9 +1,10 @@
 # Working on this repo
 
 This file is the canonical reference for anyone — human or AI — working
-on the Kufar Analytics codebase. It supersedes `claude.md` (which is a
-session handoff snapshot) for everything except the latest in-flight
-context.
+on the Kufar Analytics codebase. It supersedes the historical
+`claude.md` / `mybad.md` session-handoff snapshots; for the live
+audit-fix plan see `konechno.md` and the source-of-truth audit log
+`issues.md`.
 
 ## TL;DR
 
@@ -40,7 +41,7 @@ Do **not** commit a red suite.
 | `nginx/` | Reverse-proxy config, CSP/headers |
 | `docker-compose.yml` | api / bot / scheduler / frontend / redis / cloudflared |
 
-A more detailed file map lives at the bottom of `claude.md`. Update it
+A more detailed file map lives at the bottom of `konechno.md`. Update it
 there when you reshape the layout.
 
 ## Conventions
@@ -178,12 +179,13 @@ user first**.
   `api/services/ai_shadow_store.py`,
   `api/services/ai_privacy.py`,
   `api/services/ai_audit.py`. Wave 10 split the original god-file —
-  the seams are documented in `claude.md`.
+  the seams are documented in `konechno.md`.
 
 ## Current open work
 
-Historical audit context may live in gitignored review notes or
-`mybad.md`; treat those as snapshots, not live source of truth. Use
+Historical audit context lives in `issues.md` (latest deep-dive log)
+and the wave plan at `konechno.md`; treat older `claude.md` / `mybad.md`
+mentions as superseded snapshots, not live source of truth. Use
 `git log --oneline` and current test/lint output to establish what is
 still open. Keep waves themed and atomic.
 

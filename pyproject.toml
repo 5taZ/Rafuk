@@ -3,6 +3,14 @@ name = "kufar-analytics"
 version = "0.1.0"
 description = "Telegram Mini App for analyzing the kufar.by marketplace"
 readme = "README.md"
+# INF-LOW (issues §9.7): README declares the project as "Private — not
+# yet open-sourced", so we attach an explicit proprietary license tag
+# rather than letting build tooling default to "no licence" (which some
+# package indexes treat as MIT-permissive).
+license = "LicenseRef-Proprietary"
+authors = [
+    { name = "Kufar Analytics maintainers" },
+]
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
@@ -22,9 +30,16 @@ dependencies = [
     "openpyxl>=3.1.0",
 ]
 
+# CON-MEDIUM / INF-LOW (issues §9.7, §12.3): single dev-deps mechanism.
+# The previous file declared dev-deps via both
+# ``[project.optional-dependencies] dev`` (pytest>=8.3.0) and
+# ``[dependency-groups] dev`` (pytest>=9.0.3), so ``--extra dev`` and
+# ``--group dev`` produced different versions. Consolidating to one
+# canonical extra ([project.optional-dependencies]) and pinning
+# pytest to >=9.0.3 to match the actually-installed venv.
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.3.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "aiosqlite>=0.20.0",
@@ -61,8 +76,3 @@ packages = ["api", "bot", "scheduler"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[dependency-groups]
-dev = [
-    "pytest>=9.0.3",
-]

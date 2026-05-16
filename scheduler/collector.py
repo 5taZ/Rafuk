@@ -1308,6 +1308,11 @@ def create_scheduler(
     # per-tracker interval_min.  Each tick skips trackers whose interval
     # hasn't elapsed yet, so a 30-min tracker is only checked every 30 min.
     tick_minutes = min(settings.alert_check_interval, 5)
+    # SCH-MEDIUM (issues §5.1): APScheduler defaults misfire_grace_time
+    # to 1s, so a long tick (slow Kufar, big DB cleanup) marks the next
+    # fire as "misfired" and skips it. Set 60s grace + coalesce=True so
+    # a late tick still runs once instead of vanishing or stacking.
+    _job_defaults = {"misfire_grace_time": 60, "coalesce": True}
     scheduler.add_job(
         check_trackers,
         trigger="interval",
@@ -1315,6 +1320,7 @@ def create_scheduler(
         kwargs={"bot": bot, "session_factory": session_factory, "settings": settings},
         id="tracker-check",
         replace_existing=True,
+        **_job_defaults,
     )
     # Daily cleanup of old events and inactive listings
     scheduler.add_job(
@@ -1325,6 +1331,11 @@ def create_scheduler(
         kwargs={"session_factory": session_factory},
         id="daily-cleanup",
         replace_existing=True,
+        # SCH-LOW (issues §5.1): jitter avoids the DST-edge case where
+        # 3:00 either disappears or repeats; APScheduler tolerates it
+        # but explicit jitter keeps the cleanup window predictable.
+        jitter=120,
+        **_job_defaults,
     )
     # Check due reminders every 15 minutes
     scheduler.add_job(
@@ -1334,6 +1345,7 @@ def create_scheduler(
         kwargs={"bot": bot, "session_factory": session_factory, "settings": settings},
         id="reminder-check",
         replace_existing=True,
+        **_job_defaults,
     )
     # OPUS-2: pump the Telegram DLQ every minute so transient
     # failures (Telegram API blip, single user retry-after) get
@@ -1346,6 +1358,7 @@ def create_scheduler(
         kwargs={"bot": bot, "session_factory": session_factory},
         id="dlq-retry",
         replace_existing=True,
+        **_job_defaults,
     )
     return scheduler
 

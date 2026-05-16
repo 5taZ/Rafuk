@@ -541,6 +541,17 @@
     border: 1px solid var(--accent-secondary-border);
 }
 
+/* DESIGN-HIGH (issues §7.4): the JS pipeline ACTIVE_LEAD_STATUSES list
+   includes "researching" but the CSS only had a "reviewing" class, so
+   leads in the researching lane rendered with no visual style.
+   Use the violet palette (same family as reviewing) since the two
+   states are stylistically adjacent. */
+.lead-status-badge.researching {
+    color: var(--violet);
+    background: var(--violet-soft);
+    border: 1px solid var(--accent-secondary-border);
+}
+
 .lead-status-badge.in_progress {
     color: var(--accent);
     background: var(--accent-soft);
