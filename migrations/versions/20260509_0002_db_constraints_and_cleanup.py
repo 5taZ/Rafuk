@@ -21,6 +21,14 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # DB-MEDIUM (issues §4.2): partial indexes (WHERE revoked_at IS NULL),
+    # PL/pgSQL functions and ALTER TABLE ... ADD CONSTRAINT semantics
+    # are PostgreSQL-specific. Skip on SQLite (test stand) — existing
+    # tests don't drive this path.
+    bind = op.get_bind()
+    if bind is not None and bind.dialect.name != "postgresql":
+        return
+
     op.execute(
         "ALTER TABLE lead_items ADD CONSTRAINT chk_lead_items_market_status "
         "CHECK (market_status IN ('active', 'missing', 'price_drop'))"
@@ -62,6 +70,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    if bind is not None and bind.dialect.name != "postgresql":
+        return
     op.execute("DROP FUNCTION IF EXISTS clean_query_listing_states(integer)")
     op.execute("DROP INDEX IF EXISTS uq_user_consents_active")
     op.execute("DROP INDEX IF EXISTS idx_lead_items_user_created")

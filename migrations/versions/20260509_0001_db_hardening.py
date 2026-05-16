@@ -23,6 +23,15 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # DB-MEDIUM (issues §4.2): all DDL below is PostgreSQL-specific
+    # (PL/pgSQL functions, ALTER COLUMN TYPE ... USING, JSONB). On
+    # SQLite (test stand) every op.execute would crash, so the whole
+    # migration is a no-op there. Production / staging always run on
+    # Postgres so behaviour for real deployments is unchanged.
+    bind = op.get_bind()
+    if bind is not None and bind.dialect.name != "postgresql":
+        return
+
     # ── P1-03: JSON -> JSONB ──────────────────────────────────────────────
     op.execute(
         "ALTER TABLE tracker_events "
@@ -93,6 +102,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    if bind is not None and bind.dialect.name != "postgresql":
+        return
     # ── Reverse triggers ──────────────────────────────────────────────────
     for tbl in ("lead_items", "trackers", "query_listing_states"):
         op.execute(f"DROP TRIGGER IF EXISTS set_updated_at ON {tbl}")

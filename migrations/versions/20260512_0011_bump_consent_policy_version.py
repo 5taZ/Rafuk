@@ -41,11 +41,28 @@ def upgrade() -> None:
             "CHECK (version IN ('2026.1', '2026.2'))"
         )
     else:
+        # SQLite (test stand). On a fresh deploy 0008 already created
+        # the forward-compat constraint + default so this migration is
+        # effectively a no-op; we still execute the drop+recreate so
+        # the path remains identical for existing dbs that ran the
+        # original strict-equality 0008. Each drop_constraint is
+        # wrapped in try/except since SQLite's batch_alter_table cannot
+        # express IF EXISTS.
         with op.batch_alter_table("user_consents") as batch_op:
-            batch_op.drop_constraint(
-                "chk_user_consents_version_current",
-                type_="check",
-            )
+            try:
+                batch_op.drop_constraint(
+                    "chk_user_consents_version_current",
+                    type_="check",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                batch_op.drop_constraint(
+                    "chk_user_consents_version_known",
+                    type_="check",
+                )
+            except Exception:  # noqa: BLE001
+                pass
             batch_op.alter_column(
                 "version",
                 existing_type=sa.String(length=16),
