@@ -398,6 +398,7 @@ def test_lazy_modules_destructure_dom_helpers_from_context() -> None:
         ),
         "render_charts.js": ("domEl", "domClear", "domFragment"),
         "api_trackers.js": ("domEl", "openModalAnimated", "closeModalAnimated"),
+        "api_watchlist.js": ("inflightGuardMs",),
     }
     for filename, helpers in requirements.items():
         src = (JS_DIR / filename).read_text(encoding="utf-8")
@@ -436,6 +437,65 @@ def test_lazy_modules_destructure_dom_helpers_from_context() -> None:
         assert f"context.{fn} = {fn};" in app_actions, (
             f"app_actions.js must expose ``{fn}`` on context for lazy api_*"
         )
+    assert 'typeof INFLIGHT_GUARD_MS === "number" ? INFLIGHT_GUARD_MS : 30_000' in app_actions
+    assert "context.inflightGuardMs = inflightGuardMs;" in app_actions
+
+
+def test_lazy_watchlist_add_uses_context_guard_timer() -> None:
+    """The watchlist API is lazy-loaded outside app_bundle's IIFE.
+
+    Referencing ``INFLIGHT_GUARD_MS`` directly from api_watchlist.js
+    throws ``ReferenceError`` before the POST request when a user taps
+    "В избранное". The real module must use the value supplied through
+    context instead.
+    """
+    watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+    harness = (
+        watchlist_js
+        + r"""
+const assert = require("assert");
+const calls = [];
+const api = createApiWatchlist({
+    state: {
+        watchlist: { items: [], _requestId: 0 },
+        leads: { items: [] },
+        search: { query: "iphone" },
+        misc: { stats: {} },
+    },
+    elements: {},
+    hasTelegramInitData: () => true,
+    renderAll: () => {},
+    renderError: () => {},
+    renderWatchlist: () => {},
+    renderLeads: () => {},
+    renderDetailModal: () => {},
+    showToast: (...args) => calls.push(["toast", ...args]),
+    getJson: async () => [],
+    postJson: async (...args) => {
+        calls.push(["post", ...args]);
+        return {};
+    },
+    deleteJson: async () => {},
+    requestJson: async () => {},
+    buildCommonQuery: () => "",
+    inflightGuardMs: 1,
+});
+
+api.addWatchlistFromListing({
+    ad_id: "ad-1",
+    title: "iPhone",
+    link: "https://example.test/ad-1",
+    price_byn: 1000,
+}).then(() => {
+    assert.strictEqual(calls[0][0], "post");
+}).catch((err) => {
+    console.error(err && err.stack || err);
+    process.exit(1);
+});
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 def test_charts_split_uses_lazy_stub_in_bundle() -> None:

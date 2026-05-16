@@ -21,6 +21,7 @@ function createApiWatchlist(context) {
         deleteJson,
         requestJson,
         buildCommonQuery,
+        inflightGuardMs = 30_000,
     } = context;
 
     let _watchlistDetailAbortController = null;
@@ -42,17 +43,15 @@ function createApiWatchlist(context) {
     const _inflightAd = new Set();
     const _inflightWatchId = new Set();
 
-    // FE-M14: ``INFLIGHT_GUARD_MS`` lives in dom_helpers.js so the
-    // dedupe window matches the cross-pipeline guard in app_actions —
-    // a "Добавить" click and a "Удалить" on the same row can't race
-    // past each other regardless of which surface fired first.
+    // FE-M14: keep the lazy-loaded watchlist dedupe window in sync
+    // with the cross-pipeline guard supplied by app_actions.
     function _guardInflightAd(adId) {
         _inflightAd.add(adId);
-        setTimeout(() => _inflightAd.delete(adId), INFLIGHT_GUARD_MS);
+        setTimeout(() => _inflightAd.delete(adId), inflightGuardMs);
     }
     function _guardInflightWatchId(watchId) {
         _inflightWatchId.add(watchId);
-        setTimeout(() => _inflightWatchId.delete(watchId), INFLIGHT_GUARD_MS);
+        setTimeout(() => _inflightWatchId.delete(watchId), inflightGuardMs);
     }
 
     function _validVersion(value) {

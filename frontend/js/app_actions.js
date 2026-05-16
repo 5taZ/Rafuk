@@ -24,6 +24,8 @@ function createAppActions(baseContext) {
     context.closeModalAnimated = closeModalAnimated;
     context.bindRovingTablist = bindRovingTablist;
     context._prefersReducedMotion = _prefersReducedMotion;
+    const inflightGuardMs = typeof INFLIGHT_GUARD_MS === "number" ? INFLIGHT_GUARD_MS : 30_000;
+    context.inflightGuardMs = inflightGuardMs;
     const {
         state,
         elements,
@@ -183,10 +185,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260516-748bb6e"),
-            context._loadScript("js/api_ai_render.js?v=20260516-748bb6e"),
-            context._loadScript("js/api_ai.js?v=20260516-748bb6e"),
-            context._loadScript("js/api_listing_assistant.js?v=20260516-748bb6e"),
+            context._loadScript("js/api_ai_modal.js?v=20260516-d03c316"),
+            context._loadScript("js/api_ai_render.js?v=20260516-d03c316"),
+            context._loadScript("js/api_ai.js?v=20260516-d03c316"),
+            context._loadScript("js/api_listing_assistant.js?v=20260516-d03c316"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -296,7 +298,7 @@ function createAppActions(baseContext) {
         // FE-M14: shared INFLIGHT_GUARD_MS from dom_helpers.js — same
         // window as api_watchlist's per-row dedupe so a click in one
         // surface and a click in the other can't race past each other.
-        setTimeout(() => _inflightAdMutations.delete(adId), INFLIGHT_GUARD_MS);
+        setTimeout(() => _inflightAdMutations.delete(adId), inflightGuardMs);
     }
 
     function _validVersion(value) {
