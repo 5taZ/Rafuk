@@ -215,17 +215,40 @@ document.addEventListener("DOMContentLoaded", () => {
         app.syncTelegramChromeTheme?.();
     }
 
+    // PR-15: Telegram themeParams come from the WebView host. The
+    // values are normally trusted (Telegram controls them) but
+    // ``setProperty`` accepts anything string-shaped — including
+    // ``"red; --custom: …"`` style payloads that would inject extra
+    // CSS variables. Defence-in-depth: only let strict CSS color
+    // literals through. Unrecognised values are dropped, leaving
+    // the cascade to use the value from frontend/css.
+    const _TG_THEME_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
+    function _isSafeTelegramThemeColor(value) {
+        return typeof value === "string"
+            && value.length > 0
+            && value.length <= 16
+            && _TG_THEME_COLOR_RE.test(value.trim());
+    }
+
     function _applyTelegramTheme() {
         const tp = window.Telegram?.WebApp?.themeParams || {};
         const root = document.documentElement;
-        if (tp.bg_color) root.style.setProperty('--tg-theme-bg-color', tp.bg_color);
-        if (tp.text_color) root.style.setProperty('--tg-theme-text-color', tp.text_color);
-        if (tp.hint_color) root.style.setProperty('--tg-theme-hint-color', tp.hint_color);
-        if (tp.link_color) root.style.setProperty('--tg-theme-link-color', tp.link_color);
-        if (tp.button_color) root.style.setProperty('--tg-theme-button-color', tp.button_color);
-        if (tp.button_text_color) root.style.setProperty('--tg-theme-button-text-color', tp.button_text_color);
-        if (tp.secondary_bg_color) root.style.setProperty('--tg-theme-secondary-bg-color', tp.secondary_bg_color);
-        if (tp.destructive_text_color) root.style.setProperty('--tg-theme-destructive-text-color', tp.destructive_text_color);
+        const map = [
+            ["bg_color", "--tg-theme-bg-color"],
+            ["text_color", "--tg-theme-text-color"],
+            ["hint_color", "--tg-theme-hint-color"],
+            ["link_color", "--tg-theme-link-color"],
+            ["button_color", "--tg-theme-button-color"],
+            ["button_text_color", "--tg-theme-button-text-color"],
+            ["secondary_bg_color", "--tg-theme-secondary-bg-color"],
+            ["destructive_text_color", "--tg-theme-destructive-text-color"],
+        ];
+        for (const [tgKey, cssVar] of map) {
+            const value = tp[tgKey];
+            if (_isSafeTelegramThemeColor(value)) {
+                root.style.setProperty(cssVar, value.trim());
+            }
+        }
     }
     _applyTelegramTheme();
     window.Telegram?.WebApp?.onEvent?.('themeChanged', _applyTelegramTheme);
