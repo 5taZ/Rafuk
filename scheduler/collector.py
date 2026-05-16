@@ -27,6 +27,7 @@ from api.database import get_engine, get_session_factory
 from api.models import (
     AIAuditLog,
     LeadItem,
+    LeadItemPriceSnapshot,
     LeadReminder,
     QueryListingState,
     QuerySnapshot,
@@ -1358,6 +1359,10 @@ async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None
             await cleanup_inactive_listing_states(session, days=90)
             await cleanup_stale_missing_watchlist(session, days=settings.auto_remove_missing_days)
             await cleanup_old_snapshots(session, days=90)
+            # DB-HIGH (issues §4.3): apply the same 90-day rolling
+            # window to LeadItemPriceSnapshot — the table grew
+            # unbounded prior to this commit.
+            await cleanup_lead_item_price_snapshots(session, days=90)
             # DB-H3: previously the cleanup function existed in
             # 20260510_0004 as a SQL function but nothing actually
             # called it, so ai_audit_log kept growing forever. We
@@ -1435,6 +1440,35 @@ async def cleanup_old_snapshots(session: AsyncSession, days: int = 90) -> int:
     if deleted_count > 0:
         logger.info(
             "Cleaned up %d old query snapshots (older than %d days)", deleted_count, days
+        )
+    return deleted_count
+
+
+async def cleanup_lead_item_price_snapshots(
+    session: AsyncSession, days: int = 90
+) -> int:
+    """Delete LeadItemPriceSnapshot rows older than ``days``.
+
+    DB-HIGH (issues §4.3): the ``LeadItemPriceSnapshot`` table never had
+    a global retention task. The model docstring promises a rolling
+    window and ``api.services.workflow_store.prune_price_snapshots`` is
+    invoked from the watchlist refresh path on a per-lead basis, but
+    snapshots for archived/closed leads accumulate forever. This cleanup
+    runs nightly from ``run_cleanup`` and applies the same 90-day
+    horizon the other large tables already use.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    result = await session.execute(
+        delete(LeadItemPriceSnapshot).where(
+            LeadItemPriceSnapshot.snapped_at < cutoff
+        )
+    )
+    deleted_count = result.rowcount
+    if deleted_count > 0:
+        logger.info(
+            "Cleaned up %d lead-item price snapshots (older than %d days)",
+            deleted_count,
+            days,
         )
     return deleted_count
 

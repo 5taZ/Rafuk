@@ -1252,6 +1252,45 @@ async def test_cleanup_old_snapshots(populated_session):
     assert deleted == 1
 
 
+@pytest.mark.asyncio
+async def test_cleanup_lead_item_price_snapshots(populated_session):
+    """DB-HIGH (issues §4.3): the global retention task must delete
+    LeadItemPriceSnapshot rows older than the configured window."""
+    from api.models import LeadItemPriceSnapshot
+    from scheduler.collector import cleanup_lead_item_price_snapshots
+
+    session, user, tracker = populated_session
+
+    lead = LeadItem(
+        user_id=user.id,
+        query="ipad",
+        ad_id=99001,
+        title="iPad",
+        link="https://www.kufar.by/item/99001",
+        price_byn=1500.0,
+        source="manual",
+        status="watching",
+    )
+    session.add(lead)
+    await session.flush()
+
+    old_snap = LeadItemPriceSnapshot(
+        lead_item_id=lead.id,
+        snapped_at=datetime.now(UTC) - timedelta(days=120),
+        price_byn=1400.0,
+    )
+    fresh_snap = LeadItemPriceSnapshot(
+        lead_item_id=lead.id,
+        snapped_at=datetime.now(UTC) - timedelta(days=10),
+        price_byn=1500.0,
+    )
+    session.add_all([old_snap, fresh_snap])
+    await session.flush()
+
+    deleted = await cleanup_lead_item_price_snapshots(session, days=90)
+    assert deleted == 1
+
+
 # ---------------------------------------------------------------------------
 # Test _recent_events_by_tracker
 # ---------------------------------------------------------------------------
