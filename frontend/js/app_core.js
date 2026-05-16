@@ -257,26 +257,7 @@ function createAppCore() {
         if (priceType === "free" || value === 0) return "Бесплатно";
         const numeric = Number(value);
         if (Number.isNaN(numeric)) return "Договорная";
-
-        if (numeric >= 10000) {
-            const formatted = Number(numeric / 1000).toLocaleString("ru-RU", {
-                maximumFractionDigits: 1,
-                minimumFractionDigits: 0,
-            });
-            return `${formatted} тыс. р.`;
-        }
-        if (numeric >= 1000) {
-            const formatted = Number(numeric / 1000).toLocaleString("ru-RU", {
-                maximumFractionDigits: 2,
-                minimumFractionDigits: 0,
-            });
-            return `${formatted} тыс. р.`;
-        }
-        if (numeric >= 100) {
-            return `${Math.round(numeric)} р.`;
-        }
-        // Small amounts — show up to 2 decimals (e.g. 6.5 р., 0.99 р.)
-        return `${numeric.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} р.`;
+        return `${Math.round(numeric)} BYN`;
     }
 
     function formatCondition(condition) {

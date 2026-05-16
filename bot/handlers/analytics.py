@@ -30,10 +30,10 @@ def _truncate_for_telegram(value: str, max_chars: int = _STATS_QUERY_DISPLAY_LIM
 
 
 def _fmt_byn(value: float | None) -> str:
-    """Format a BYN amount with thousands separator."""
+    """Format a BYN amount without compact notation."""
     if value is None:
         return "—"
-    return f"{value:,.0f}"
+    return f"{value:.0f}"
 
 
 @router.message(Command("deals"))

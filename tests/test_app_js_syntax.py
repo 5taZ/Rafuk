@@ -76,6 +76,37 @@ def test_has_required_methods_and_endpoints() -> None:
     assert "Telegram.WebApp" in all_js
 
 
+def test_price_format_is_plain_byn_everywhere() -> None:
+    dom_helpers_js = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    app_core_dom_js = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
+    app_core_js = (JS_DIR / "app_core.js").read_text(encoding="utf-8")
+    render_core_js = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
+    trackers_js = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
+
+    harness = (
+        dom_helpers_js
+        + app_core_dom_js
+        + app_core_js
+        + r"""
+const assert = require("assert");
+global.document = { documentElement: { setAttribute() {}, getAttribute() { return "dark"; } } };
+global.localStorage = { getItem() { return null; }, setItem() {} };
+global.window = { Telegram: null, matchMedia: null };
+const core = createAppCore();
+assert.strictEqual(core.formatPrice(1150), "1150 BYN");
+assert.strictEqual(core.formatPrice(2500), "2500 BYN");
+assert.strictEqual(core.formatPrice(999.4), "999 BYN");
+assert.strictEqual(core.formatPrice(null), "Договорная");
+assert.strictEqual(core.formatPrice(0, "free"), "Бесплатно");
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "тыс. р." not in app_core_js
+    assert "`к`" not in render_core_js
+    assert " р." not in trackers_js
+
+
 def test_listing_filter_query_omits_non_finite_prices() -> None:
     api_listings = (JS_DIR / "api_listings.js").read_text(encoding="utf-8")
     harness = (

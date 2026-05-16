@@ -600,11 +600,7 @@ function createRenderCore(context) {
                 if (v == null || v === 0) return "—";
                 const n = Number(v);
                 if (Number.isNaN(n)) return "—";
-                if (n >= 1000) {
-                    const k = n / 1000;
-                    return `${k % 1 === 0 ? k : k.toFixed(1)}к`;
-                }
-                return `${Math.round(n)} р.`;
+                return `${Math.round(n)} BYN`;
             }
 
             elements.summaryMedian.textContent = shortPrice(state.misc.stats.median);

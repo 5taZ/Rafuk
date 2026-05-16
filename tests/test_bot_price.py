@@ -35,7 +35,7 @@ async def test_cmd_deals_formats_summary() -> None:
     text = message.answer.await_args.args[0]
     assert "Активные сделки" in text
     assert "В работе — 4" in text
-    assert "1,200" in text
+    assert "1200 BYN" in text
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_cmd_profit_formats_finance_summary() -> None:
     message.answer.assert_awaited_once()
     text = message.answer.await_args.args[0]
     assert "Финансы" in text
-    assert "3,500" in text
+    assert "3500 BYN" in text
     assert "35%" in text
 
 
@@ -123,7 +123,7 @@ async def test_cmd_stats_returns_price_stats() -> None:
     message.answer.assert_awaited_once()
     text = message.answer.await_args.args[0]
     assert "iphone 15" in text
-    assert "2,000" in text
+    assert "2000 BYN" in text
 
 
 @pytest.mark.asyncio

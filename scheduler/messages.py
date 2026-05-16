@@ -11,11 +11,7 @@ def _format_price_byn(value: float | None, price_type: str | None = None) -> str
         return "договорная"
     if price_type == "free" or value == 0:
         return "бесплатно"
-    fval = float(value)
-    if fval >= 1000:
-        compact = f"{fval / 1000:.2f}".rstrip("0").rstrip(".")
-        return f"{compact} тыс. р."
-    return f"{round(fval)} р."
+    return f"{round(float(value))} BYN"
 
 
 def _build_threshold_message(
@@ -36,8 +32,8 @@ def _build_threshold_message(
         lines.append(f'🎯 ПОРОГ ЦЕНЫ: "{label}"')
         for event in price_alerts[:3]:
             threshold = event.parameters.get("threshold") if event.parameters else None
-            threshold_str = f" (порог: {float(threshold):,.0f} BYN)" if threshold else ""
-            lines.append(f"💰 {float(event.price_byn):,.0f} BYN{threshold_str}")
+            threshold_str = f" (порог: {round(float(threshold))} BYN)" if threshold else ""
+            lines.append(f"💰 {round(float(event.price_byn))} BYN{threshold_str}")
             lines.append(f"  {event.title}")
             if event.link:
                 lines.append(event.link)
@@ -53,9 +49,9 @@ def _build_threshold_message(
             median_byn = event.parameters.get("median_byn") if event.parameters else None
             discount_str = f" (-{float(discount_pct):.0f}% от медианы" if discount_pct else ""
             if median_byn:
-                discount_str += f" {float(median_byn):,.0f} BYN"
+                discount_str += f" {round(float(median_byn))} BYN"
             discount_str += ")" if discount_str else ""
-            lines.append(f"💰 {float(event.price_byn):,.0f} BYN{discount_str}")
+            lines.append(f"💰 {round(float(event.price_byn))} BYN{discount_str}")
             lines.append(f"  {event.title}")
             if event.link:
                 lines.append(event.link)
@@ -95,7 +91,7 @@ def _build_tracker_message(
             lines.append(f'Запрос "{label}"')
         lines.append(f"Снижение цены: {len(sync_result.price_drops)}")
         for state, delta in sync_result.price_drops[:3]:
-            delta_str = f"(-{math.ceil(float(delta))} р.)" if float(delta) >= 0.5 else ""
+            delta_str = f"(-{math.ceil(float(delta))} BYN)" if float(delta) >= 0.5 else ""
             lines.append(
                 (
                     f"• {state.title} - "
@@ -170,7 +166,7 @@ def _build_price_drop_message(
     """Format a single price-drop notification with market context."""
     price = _format_price_byn(state.last_price_byn, state.price_type)
     title = (state.title or "Без названия").replace("\n", " ")[:120]
-    delta_str = f"(-{round(float(delta))} р.)" if round(float(delta)) > 0 else ""
+    delta_str = f"(-{round(float(delta))} BYN)" if round(float(delta)) > 0 else ""
 
     lines = [f"📉 СНИЖЕНИЕ ЦЕНЫ: {title}"]
     if median_byn is not None and median_byn > 0:

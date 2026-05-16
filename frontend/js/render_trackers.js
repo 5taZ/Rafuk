@@ -531,13 +531,13 @@ function createRenderTrackers(context) {
             const priceRow = domEl(
                 "div",
                 { className: "event-price-row" },
-                domEl("span", { className: "event-price mono", text: event.price_byn ? `${Math.round(event.price_byn)} р.` : "без цены" }),
+                domEl("span", { className: "event-price mono", text: event.price_byn ? formatPrice(event.price_byn) : "без цены" }),
             );
             if (event.delta_byn && event.event_type === "price_drop") {
-                priceRow.appendChild(domEl("span", { className: "event-delta", text: `-${Math.round(event.delta_byn)} р.` }));
+                priceRow.appendChild(domEl("span", { className: "event-delta", text: `-${formatPrice(event.delta_byn)}` }));
             }
             if (event.event_type === "price_threshold_alert" && event.parameters?.threshold) {
-                priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `порог: ${Math.round(event.parameters.threshold)} р.` }));
+                priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `порог: ${formatPrice(event.parameters.threshold)}` }));
             }
             if (event.event_type === "discount_alert" && event.parameters?.discount_percent) {
                 priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `-${Math.round(event.parameters.discount_percent)}% от медианы` }));

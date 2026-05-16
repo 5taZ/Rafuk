@@ -127,18 +127,15 @@ def test_format_price_byn_zero_free():
 
 
 def test_format_price_byn_small():
-    assert _format_price_byn(150) == "150 р."
+    assert _format_price_byn(150) == "150 BYN"
 
 
 def test_format_price_byn_large():
-    result = _format_price_byn(2500)
-    assert "тыс. р." in result
+    assert _format_price_byn(2500) == "2500 BYN"
 
 
 def test_format_price_byn_large_rounding():
-    # 1000 -> 1.0 тыс. р.
-    result = _format_price_byn(1000)
-    assert "тыс. р." in result
+    assert _format_price_byn(1000) == "1000 BYN"
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +232,7 @@ def test_build_new_listing_message_basic():
     )
     msg = _build_new_listing_message(state)
     assert "НОВЫЙ ЛОТ" in msg
-    assert "2 тыс. р." in msg
+    assert "2000 BYN" in msg
 
 
 def test_build_new_listing_message_with_median():
@@ -275,7 +272,7 @@ def test_build_price_drop_message_basic():
     )
     msg = _build_price_drop_message(state, 200.0)
     assert "СНИЖЕНИЕ ЦЕНЫ" in msg
-    assert "1.8 тыс. р." in msg
+    assert "1800 BYN" in msg
 
 
 def test_build_price_drop_message_with_median():
