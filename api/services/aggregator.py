@@ -674,7 +674,11 @@ def _remove_outliers(prices: list[float]) -> list[float]:
     if iqr <= 0:
         med = statistics.median(sorted_prices)
         if med > 0:
-            return [p for p in prices if 0.2 * med <= p <= 5.0 * med]
+            # B-04: keep free listings (p == 0.0) — they are
+            # intentionally included by ``extract_prices`` and a
+            # 0.2*median lower band would otherwise drop them,
+            # making /segments and /price-stats disagree.
+            return [p for p in prices if p == 0.0 or 0.2 * med <= p <= 5.0 * med]
         return prices
     lower = q1 - 2.5 * iqr
     upper = q3 + 2.5 * iqr
@@ -795,7 +799,10 @@ def filter_ads_for_accessory_category(
 
     filtered: list[dict[str, Any]] = []
     for ad in ads:
-        price = normalize_price_byn(ad.get("price_byn"))
+        # B-02: pass ``ad`` so free accessories (price=0 + giveaway
+        # text) survive the cap filter — their normalised price is
+        # 0.0, which is trivially ``<= cap``.
+        price = normalize_price_byn(ad.get("price_byn"), ad)
         if price is not None and price <= cap:
             filtered.append(ad)
 
@@ -865,11 +872,24 @@ def sort_listings(
     category_price_stats: dict[int, PriceStats] | None = None,
 ) -> list[dict[str, Any]]:
     effective_market_stats = market_stats or compute_price_stats(extract_prices(ads))
+
+    # B-03: in price-driven sorts, negotiable listings (price unknown)
+    # used to collapse to ``or 0.0``, mixing them with free listings
+    # at the cheap end of every list. Bucket by ``known vs unknown``
+    # so the unknown bucket always sinks to the tail regardless of
+    # ascending/descending direction. Free listings still surface as
+    # 0.0 in the known bucket where they belong.
+    def _priced_key(ad: dict[str, Any]) -> tuple[int, float]:
+        p = normalize_price_byn(ad.get("price_byn"), ad)
+        if p is None:
+            return (1, 0.0)
+        return (0, p)
+
     if sort == "cheap":
         decorated = [
             (
                 compute_price_vs_reference(ad, effective_market_stats, category_price_stats),
-                normalize_price_byn(ad.get("price_byn")) or 0.0,
+                _priced_key(ad),
                 i,
                 ad,
             )
@@ -878,18 +898,26 @@ def sort_listings(
         decorated.sort()
         return [ad for _, _, _, ad in decorated]
     if sort == "price_asc":
-        return sorted(ads, key=lambda ad: normalize_price_byn(ad.get("price_byn")) or 0.0)
+        return sorted(ads, key=_priced_key)
     if sort == "price_desc":
-        return sorted(
-            ads,
-            key=lambda ad: normalize_price_byn(ad.get("price_byn")) or 0.0,
-            reverse=True,
-        )
+        # B-03: invert price inside the known bucket so descending
+        # order keeps the unknown bucket at the tail (otherwise
+        # ``reverse=True`` would surface negotiable listings first).
+        def _desc_key(ad: dict[str, Any]) -> tuple[int, float]:
+            p = normalize_price_byn(ad.get("price_byn"), ad)
+            if p is None:
+                return (1, 0.0)
+            return (0, -p)
+
+        return sorted(ads, key=_desc_key)
     if sort == "near_median":
-        return sorted(
-            ads,
-            key=lambda ad: abs((normalize_price_byn(ad.get("price_byn")) or 0.0) - median),
-        )
+        def _near_key(ad: dict[str, Any]) -> tuple[int, float]:
+            p = normalize_price_byn(ad.get("price_byn"), ad)
+            if p is None:
+                return (1, 0.0)
+            return (0, abs(p - median))
+
+        return sorted(ads, key=_near_key)
     return sorted(ads, key=lambda ad: ad.get("list_time", ""), reverse=True)
 
 
@@ -1073,7 +1101,10 @@ def compute_segments(ads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     grouped: dict[str, list[float]] = {}
 
     for ad in ads:
-        price_byn = normalize_price_byn(ad.get("price_byn"))
+        # B-01: pass ``ad`` so a free listing (price=0 + giveaway text)
+        # is normalised to 0.0 instead of None and shows up in the
+        # segment count, matching ``extract_prices`` / /price-stats.
+        price_byn = normalize_price_byn(ad.get("price_byn"), ad)
         if price_byn is None:
             continue
         condition = condition_map.get(get_param(ad, "condition") or "")

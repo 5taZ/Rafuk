@@ -4,6 +4,7 @@ import pytest
 
 from api.services.aggregator import (
     PriceStats,
+    _remove_outliers,
     apply_search_mode,
     build_query_key,
     compute_category_price_stats,
@@ -15,6 +16,7 @@ from api.services.aggregator import (
     extract_category_distribution,
     extract_prices,
     extract_search_refinements,
+    filter_ads_for_accessory_category,
     filter_deal_ads,
     is_strict_match,
     normalize_price_byn,
@@ -449,3 +451,109 @@ class TestExtractPricesSemantic:
         negotiable_ad = {"price_byn": 0, "subject": "Стол", "body": "Торг"}
         delta = compute_price_vs_median(negotiable_ad, median=1000.0)
         assert delta == 0.0
+
+
+class TestWave1FreeListingConsistency:
+    """B-01..B-04: free listings (price=0 + giveaway text) must show
+    up consistently across /price-stats, /segments, accessory filter
+    and the IQR-zero outlier fallback. Negotiable listings (price=0
+    without giveaway text) must not be confused with free in priced
+    sorts."""
+
+    @staticmethod
+    def _free(subject: str = "Стол") -> dict:
+        return {"price_byn": 0, "subject": subject, "body": "Отдам бесплатно"}
+
+    @staticmethod
+    def _negotiable(subject: str = "Шкаф") -> dict:
+        return {"price_byn": 0, "subject": subject, "body": "Цена договорная"}
+
+    @staticmethod
+    def _priced(price_byn: int, subject: str = "Item") -> dict:
+        return {"price_byn": price_byn, "subject": subject, "body": ""}
+
+    # ----- B-01 ----------------------------------------------------
+
+    def test_compute_segments_includes_free_listings(self) -> None:
+        # /price-stats counts free as 0.0 (extract_prices); /segments
+        # used to drop them because the helper called normalize_price_byn
+        # without ``ad``. Both endpoints now agree.
+        ads = [
+            {**self._free("Бесплатный диван"), "company_ad": False,
+             "ad_parameters": [{"p": "condition", "v": "1"}]},
+            {**self._priced(150_00, "Б/у диван"), "company_ad": False,
+             "ad_parameters": [{"p": "condition", "v": "1"}]},
+        ]
+        result = compute_segments(ads)
+        assert result["used_private"]["count"] == 2
+        # 150_00 kopecks → 150.0 BYN; median of [0.0, 150.0] = 75.0.
+        assert result["used_private"]["median"] == pytest.approx(75.0)
+
+    # ----- B-02 ----------------------------------------------------
+
+    def test_filter_ads_for_accessory_category_keeps_free(self) -> None:
+        # Free phone case under the accessory cap must survive the
+        # filter; previously normalize_price_byn(...) without ``ad``
+        # returned None and the giveaway listing was dropped.
+        ads = [
+            self._free("Чехол iPhone бесплатно"),
+            self._priced(20_00, "Чехол iPhone"),  # 20 BYN
+            self._priced(2_000_00, "iPhone 14 Pro"),  # 2000 BYN — parent product
+        ]
+        # ``phone_accessory`` cap is 150 BYN — see ACCESSORY_PRICE_CAPS.
+        filtered = filter_ads_for_accessory_category(ads, "phone_accessory")
+        # free + 20 BYN case should be kept; the 2000 BYN phone dropped.
+        subjects = {ad["subject"] for ad in filtered}
+        assert "Чехол iPhone бесплатно" in subjects
+        assert "iPhone 14 Pro" not in subjects
+
+    # ----- B-03 ----------------------------------------------------
+
+    def test_sort_listings_price_asc_pushes_negotiable_to_tail(self) -> None:
+        ads = [
+            self._negotiable("Negotiable A"),
+            self._priced(500_00, "Cheap 5 BYN"),
+            self._free("Free 0 BYN"),
+            self._priced(100_000_00, "Expensive 1000 BYN"),
+        ]
+        ordered = sort_listings(ads, "price_asc", median=10.0)
+        subjects = [ad["subject"] for ad in ordered]
+        # Free (0) and 5 BYN cheap come first; expensive next; negotiable last.
+        assert subjects[-1] == "Negotiable A"
+        # Free should out-rank the 5 BYN cheap (0 < 5).
+        assert subjects[0] == "Free 0 BYN"
+
+    def test_sort_listings_price_desc_keeps_negotiable_at_tail(self) -> None:
+        ads = [
+            self._negotiable("Negotiable A"),
+            self._priced(500_00, "Cheap"),
+            self._priced(100_000_00, "Expensive"),
+        ]
+        ordered = sort_listings(ads, "price_desc", median=10.0)
+        subjects = [ad["subject"] for ad in ordered]
+        # Expensive first, cheap second, negotiable still last.
+        assert subjects == ["Expensive", "Cheap", "Negotiable A"]
+
+    def test_sort_listings_near_median_excludes_negotiable_first(self) -> None:
+        ads = [
+            self._negotiable("Negotiable"),
+            self._priced(1_000_00, "Right at median"),  # 10 BYN
+            self._priced(2_000_00, "20 BYN"),
+        ]
+        ordered = sort_listings(ads, "near_median", median=10.0)
+        subjects = [ad["subject"] for ad in ordered]
+        # The exact-match should win; negotiable must not surface
+        # ahead of priced listings just because (0.0 - median) is small.
+        assert subjects[0] == "Right at median"
+        assert subjects[-1] == "Negotiable"
+
+    # ----- B-04 ----------------------------------------------------
+
+    def test_remove_outliers_iqr_zero_fallback_keeps_free(self) -> None:
+        # 8 prices, all 100 BYN, plus a free 0.0 → IQR=0, median=100.
+        # Old fallback band [20, 500] dropped 0.0; now it survives.
+        prices = [0.0] + [100.0] * 8
+        kept = _remove_outliers(prices)
+        assert 0.0 in kept
+        assert kept.count(100.0) == 8
+
