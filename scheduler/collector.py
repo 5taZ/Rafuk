@@ -804,7 +804,46 @@ async def _check_trackers_inner(
                         strict_mode,
                         category_id,
                     )
+                    # C-04: count consecutive failures per tracker so a
+                    # genuinely stuck tracker (Kufar ban, malformed
+                    # filters, dead query) gets paused instead of
+                    # eating a query-group every tick forever. The
+                    # threshold is intentionally generous so a couple
+                    # of transient outages don't auto-pause healthy
+                    # trackers.
+                    paused_now: list[int] = []
+                    for t in query_trackers:
+                        bumped = _tracker_failure_counts.get(t.id, 0) + 1
+                        _tracker_failure_counts[t.id] = bumped
+                        if bumped >= _TRACKER_AUTO_PAUSE_THRESHOLD:
+                            paused_now.append(t.id)
+                    if paused_now:
+                        await session.execute(
+                            update(Tracker)
+                            .where(Tracker.id.in_(paused_now))
+                            .values(
+                                paused=True,
+                                paused_at=datetime.now(UTC),
+                                pause_reason="persistent_kufar_error",
+                                updated_at=datetime.now(UTC),
+                            )
+                        )
+                        for tid in paused_now:
+                            _tracker_failure_counts.pop(tid, None)
+                        logger.warning(
+                            "Auto-paused %d tracker(s) after %d consecutive "
+                            "Kufar errors: %s",
+                            len(paused_now),
+                            _TRACKER_AUTO_PAUSE_THRESHOLD,
+                            paused_now,
+                        )
                     continue
+
+                # C-04: success path — clear failure counters for every
+                # tracker in this group so transient outages don't
+                # accumulate across long runtimes.
+                for t in query_trackers:
+                    _tracker_failure_counts.pop(t.id, None)
 
                 search_key = build_query_key(query, strict_mode, category_id)
                 # Use a savepoint per query group so that a rollback only
@@ -1701,6 +1740,15 @@ _DLQ_RETRY_TICK_MINUTES = 1
 _DLQ_PUMP_BATCH_LIMIT = 50
 _DLQ_MAX_RETRIES = 5
 _DLQ_BACKOFF_BASE_MINUTES = 2
+
+# C-04: auto-pause persistent-error trackers. After this many consecutive
+# query-group failures (KufarAPIError, network timeout, etc.) we pause
+# the tracker so a stuck query (banned by Kufar, malformed filters, etc.)
+# stops burning every tick. Counter lives in-memory: after a scheduler
+# restart it resets to zero, which is the right behaviour — give the
+# tracker a fresh chance once Kufar might have recovered.
+_TRACKER_AUTO_PAUSE_THRESHOLD = 5
+_tracker_failure_counts: dict[int, int] = {}
 
 
 def _dlq_next_retry_after(retry_count: int) -> datetime:

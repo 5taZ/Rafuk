@@ -595,9 +595,12 @@ class TelegramNotificationDLQ(Base):
         Index("idx_telegram_notification_dlq_user", "user_id"),
         Index("idx_telegram_notification_dlq_pump", "next_retry_at", "retry_count"),
         # DB-MEDIUM (issues §4.1): hard ceiling so a runaway retry pump
-        # cannot push the counter unboundedly. The collector enforces
-        # _DLQ_MAX_RETRIES=10 in code; this constraint catches any
-        # bypass via direct SQL or a future bug.
+        # cannot push the counter unboundedly. C-07: the collector
+        # enforces ``_DLQ_MAX_RETRIES = 5`` in code; this DB constraint
+        # is a wider fail-safe (10) so a future bump of the code
+        # constant doesn't require a CHECK migration. The comment used
+        # to read "10 in code" which mismatched reality and confused
+        # operators tuning retry behaviour.
         CheckConstraint(
             "retry_count >= 0 AND retry_count <= 10",
             name="chk_telegram_notification_dlq_retry_count_bounds",

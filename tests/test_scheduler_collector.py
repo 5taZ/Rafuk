@@ -2247,3 +2247,140 @@ def test_new_listing_message_omits_discount_when_above_market() -> None:
         state, median_byn=2000.0, discount_pct=20.0,
     )
     assert "-20% от медианы" in msg_discount
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_auto_pauses_after_persistent_kufar_errors(
+    monkeypatch, mock_bot: AsyncMock,
+):
+    """C-04: a tracker whose query group raises ``KufarAPIError`` on
+    every tick gets paused after ``_TRACKER_AUTO_PAUSE_THRESHOLD``
+    consecutive failures, with ``pause_reason='persistent_kufar_error'``.
+    """
+    from sqlalchemy import select
+
+    from api.services.kufar_client import KufarAPIError
+
+    class AlwaysFailingClient:
+        def __init__(self, settings):
+            del settings
+
+        async def search(self, **kwargs):
+            del kwargs
+            raise KufarAPIError("Kufar 503")
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(collector, "KufarClient", AlwaysFailingClient)
+    # Reset module-level counter — earlier tests in the same process
+    # may have populated it.
+    collector._tracker_failure_counts.clear()
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=909, first_name="Persistent")
+        session.add(user)
+        await session.flush()
+        session.add(
+            Tracker(user_id=user.id, query="phantom query", strict_mode=False),
+        )
+        await session.commit()
+
+    settings = MagicMock()
+    settings.mini_app_url = "https://example.com/app"
+
+    # _TRACKER_AUTO_PAUSE_THRESHOLD - 1 ticks must NOT pause yet.
+    for _ in range(collector._TRACKER_AUTO_PAUSE_THRESHOLD - 1):
+        await check_trackers(mock_bot, sf, settings)
+
+    async with sf() as session:
+        tracker = (await session.execute(select(Tracker))).scalar_one()
+        assert tracker.paused is False
+        assert tracker.pause_reason is None
+
+    # The threshold-th failure must trigger the pause.
+    await check_trackers(mock_bot, sf, settings)
+
+    async with sf() as session:
+        tracker = (await session.execute(select(Tracker))).scalar_one()
+        assert tracker.paused is True
+        assert tracker.pause_reason == "persistent_kufar_error"
+        assert tracker.paused_at is not None
+
+    # Counter must clear after auto-pause so a manually-resumed
+    # tracker starts fresh.
+    assert collector._tracker_failure_counts.get(tracker.id) is None
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_failure_counter_resets_on_success(
+    monkeypatch, mock_bot: AsyncMock,
+):
+    """C-04: a transient outage that recovers must NOT lead to
+    auto-pause. The failure counter is cleared as soon as a tick
+    succeeds.
+    """
+    from sqlalchemy import select
+
+    from api.services.kufar_client import KufarAPIError
+
+    fail_count = {"value": 2}  # fail twice, then succeed forever
+
+    class FlakyClient:
+        def __init__(self, settings):
+            del settings
+
+        async def search(self, **kwargs):
+            if fail_count["value"] > 0:
+                fail_count["value"] -= 1
+                raise KufarAPIError("transient")
+            return {"ads": [], "total": 0}
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(collector, "KufarClient", FlakyClient)
+    collector._tracker_failure_counts.clear()
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=910, first_name="Flaky")
+        session.add(user)
+        await session.flush()
+        session.add(Tracker(user_id=user.id, query="fluctuates", strict_mode=False))
+        await session.commit()
+
+    settings = MagicMock()
+    settings.mini_app_url = "https://example.com/app"
+
+    # Two failed ticks → counter at 2, well below threshold.
+    await check_trackers(mock_bot, sf, settings)
+    await check_trackers(mock_bot, sf, settings)
+    # One successful tick → counter cleared.
+    await check_trackers(mock_bot, sf, settings)
+    # Many more successful ticks must keep the tracker active even
+    # if we passed _TRACKER_AUTO_PAUSE_THRESHOLD ticks total.
+    for _ in range(collector._TRACKER_AUTO_PAUSE_THRESHOLD + 2):
+        await check_trackers(mock_bot, sf, settings)
+
+    async with sf() as session:
+        tracker = (await session.execute(select(Tracker))).scalar_one()
+        assert tracker.paused is False, "Transient outage must not auto-pause"
+        assert tracker.pause_reason is None
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
