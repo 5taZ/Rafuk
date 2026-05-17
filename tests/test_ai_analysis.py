@@ -1017,6 +1017,26 @@ def test_complete_analysis_sections_adds_resale_potential_fallback() -> None:
     assert empty is None
 
 
+def test_fallback_resale_fast_price_never_below_purchase() -> None:
+    """E-FIND-07: fast_price is no longer clamped below purchase when market supports it."""
+    from api.services.ai_marketplace import _fallback_resale_potential
+
+    # Purchase well below market median — fast_price should reflect market (anchor*0.88)
+    # and NOT be artificially reduced to purchase*0.92
+    result = _fallback_resale_potential(
+        price_byn=800,
+        is_negotiable_price=False,
+        market_median=1400,
+        market_q1=1200,
+        market_q3=1600,
+        best_alternative=None,
+    )
+    assert result is not None
+    # fast_price = 1400 * 0.88 = 1232, which is above purchase (800)
+    # Old code would have clamped to 800*0.92=736 — a loss. Now it stays at 1232.
+    assert result["fast_price"]["price_byn"] == int(round(1400 * 0.88))
+
+
 # ─── Listing Assistant ─────────────────────────────────────────────────────
 
 

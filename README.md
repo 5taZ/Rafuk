@@ -17,7 +17,7 @@ runs analytics and AI-assisted decisioning over them, and surfaces
 * **Tracks "leads"** the user is interested in — purchase price, target
   resale, sold price, deal-status pipeline, expense ledger.
 * **Detects market signals** — price drops, new listings, trend
-  reversals, low-supply windows, restock spikes.
+  reversals, low-supply windows.
 * **AI analysis** of individual listings (condition, fit-for-purpose,
   resale potential, negotiation talking points) via a Together API-
   compatible Gemini model (`gemini-2.5-flash` by default).

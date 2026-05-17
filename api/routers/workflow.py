@@ -87,7 +87,9 @@ _ANY_ACTIVE = {
 # and "sold → new" (which is blocked by the empty allowed-set for
 # sold).
 _LEAD_STATUS_TRANSITIONS: dict[str, set[str]] = {
-    "watching": _ANY_ACTIVE | {"skipped", "abandoned"},
+    # E-FIND-06: watching→bought allowed — user can buy directly from watchlist.
+    # Wave 6 already stamps bought_at on the transition.
+    "watching": _ANY_ACTIVE | {"bought", "skipped", "abandoned"},
     "new": _ANY_ACTIVE | {"bought", "sold", "skipped", "abandoned", "closed"},
     "reviewing": _ANY_ACTIVE | {"bought", "sold", "skipped", "abandoned", "closed"},
     "in_progress": _ANY_ACTIVE | {"bought", "sold", "skipped", "abandoned", "closed"},

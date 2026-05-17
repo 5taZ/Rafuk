@@ -369,8 +369,8 @@ def test_lead_status_state_machine_blocks_invalid_transitions(monkeypatch) -> No
     with _pytest.raises(HTTPException) as exc:
         _validate_lead_status_transition("watching", "sold")
     assert exc.value.status_code == 422
-    with _pytest.raises(HTTPException):
-        _validate_lead_status_transition("watching", "bought")
+    # E-FIND-06: watching → bought is now allowed (direct purchase from watchlist).
+    _validate_lead_status_transition("watching", "bought")
     # watching → reviewing is OK
     _validate_lead_status_transition("watching", "reviewing")
     # closed → reviewing reactivation is OK
