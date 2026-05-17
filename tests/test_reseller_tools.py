@@ -199,3 +199,126 @@ def test_matches_tracker_filters_combined_filters() -> None:
         )
         is False
     )
+
+
+class TestWave2TrackerFilterMatching:
+    """D-1 / D-2: matches_tracker_filters used to accept only numeric
+    ``condition`` codes and exact-case ``region_name``. With the
+    shared helpers in ``api.services.listing_filters`` it now mirrors
+    the behaviour of ``/listings`` local filtering — Kufar's text
+    labels and case variations no longer drop legitimate matches.
+    """
+
+    @staticmethod
+    def _market_stats() -> PriceStats:
+        return PriceStats(
+            count=10, mean=100.0, median=100.0,
+            q1=80.0, q3=120.0, min=50.0, max=200.0,
+        )
+
+    def test_condition_text_label_matches_new(self) -> None:
+        # Kufar returned 'Новый' as a text label — the old map only
+        # accepted '2' so the tracker silently dropped this match.
+        ad = {
+            "subject": "Новый телефон",
+            "ad_parameters": [{"p": "condition", "v": "Новый"}],
+            "price_byn": 50_000,  # 500 BYN
+        }
+        assert matches_tracker_filters(
+            ad,
+            market_stats=self._market_stats(),
+            condition="new",
+        )
+
+    def test_condition_text_label_b_u_matches_used(self) -> None:
+        ad = {
+            "subject": "Б/у телефон",
+            "ad_parameters": [{"p": "condition", "v": "Б/у"}],
+            "price_byn": 50_000,
+        }
+        assert matches_tracker_filters(
+            ad,
+            market_stats=self._market_stats(),
+            condition="used",
+        )
+
+    def test_condition_numeric_code_still_matches(self) -> None:
+        # Regression: numeric codes must still work.
+        ad = {
+            "subject": "Phone",
+            "ad_parameters": [{"p": "condition", "v": "2"}],
+            "price_byn": 50_000,
+        }
+        assert matches_tracker_filters(
+            ad,
+            market_stats=self._market_stats(),
+            condition="new",
+        )
+
+    def test_condition_mismatch_rejected(self) -> None:
+        ad = {
+            "subject": "Б/у",
+            "ad_parameters": [{"p": "condition", "v": "1"}],
+            "price_byn": 50_000,
+        }
+        assert not matches_tracker_filters(
+            ad,
+            market_stats=self._market_stats(),
+            condition="new",
+        )
+
+    def test_region_match_is_case_insensitive(self) -> None:
+        # Tracker stored canonical 'Минск'; Kufar returns 'минск'.
+        # Old exact-match ``!=`` rejected the ad even though regions
+        # are the same.
+        ad = {
+            "subject": "iPhone",
+            "ad_parameters": [],
+            "region_name": "минск",
+            "price_byn": 50_000,
+        }
+        assert matches_tracker_filters(
+            ad,
+            market_stats=self._market_stats(),
+            region_name="Минск",
+        )
+
+    def test_region_match_strips_whitespace(self) -> None:
+        ad = {
+            "subject": "Item",
+            "region_name": "  Брест  ",
+            "ad_parameters": [],
+            "price_byn": 50_000,
+        }
+        assert matches_tracker_filters(
+            ad,
+            market_stats=self._market_stats(),
+            region_name="Брест",
+        )
+
+    def test_region_falls_back_to_area(self) -> None:
+        ad = {
+            "subject": "Item",
+            "area_name": "Гомельская обл.",
+            "ad_parameters": [],
+            "price_byn": 50_000,
+        }
+        assert matches_tracker_filters(
+            ad,
+            market_stats=self._market_stats(),
+            region_name="гомельская обл.",
+        )
+
+    def test_region_mismatch_still_rejected(self) -> None:
+        ad = {
+            "subject": "Item",
+            "region_name": "Витебск",
+            "ad_parameters": [],
+            "price_byn": 50_000,
+        }
+        assert not matches_tracker_filters(
+            ad,
+            market_stats=self._market_stats(),
+            region_name="Минск",
+        )
+

@@ -28,8 +28,12 @@ from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.kufar_filters import build_kufar_search_filters
+from api.services.listing_filters import (
+    match_condition_filter,
+    match_region_filter,
+    normalize_filter_text,
+)
 from api.services.listing_mapper import build_listing_item, compute_listing_sort_key
-from api.services.market_signals import area_label, region_label
 from api.services.query_pipeline import load_query_dataset_context_with_fallback
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
@@ -91,25 +95,10 @@ def _listings_cache_key(
     )
 
 
-def _normalized_filter_text(value: str | None) -> str:
-    return " ".join(str(value or "").casefold().split())
-
-
-def _matches_condition(ad: dict[str, Any], condition: str | None) -> bool:
-    if condition is None:
-        return True
-    normalized = _normalized_filter_text(get_param(ad, "condition"))
-    allowed = {
-        "new": {"new", "новый", "2"},
-        "used": {"used", "б/у", "бу", "1"},
-    }.get(condition)
-    return normalized in allowed if allowed else True
-
-
 def _matches_seller_type(ad: dict[str, Any], seller_type: str | None) -> bool:
     if seller_type is None:
         return True
-    raw = _normalized_filter_text(get_param(ad, "seller_type"))
+    raw = normalize_filter_text(get_param(ad, "seller_type"))
     is_shop = bool(ad.get("company_ad")) or raw in {"магазин", "shop"}
     return is_shop if seller_type == "shop" else not is_shop
 
@@ -123,16 +112,6 @@ def _matches_price(ad: dict[str, Any], min_price: float | None, max_price: float
     if min_price is not None and price < min_price:
         return False
     return not (max_price is not None and price > max_price)
-
-
-def _matches_region(ad: dict[str, Any], region_name: str | None) -> bool:
-    normalized = _normalized_filter_text(region_name)
-    if not normalized:
-        return True
-    return normalized in {
-        _normalized_filter_text(region_label(ad)),
-        _normalized_filter_text(area_label(ad)),
-    }
 
 
 def _filter_visible_ads(
@@ -149,15 +128,15 @@ def _filter_visible_ads(
         and max_price is None
         and condition is None
         and seller_type is None
-        and not _normalized_filter_text(region_name)
+        and not normalize_filter_text(region_name)
     ):
         return ads
     return [
         ad for ad in ads
         if _matches_price(ad, min_price, max_price)
-        and _matches_condition(ad, condition)
+        and match_condition_filter(ad, condition)
         and _matches_seller_type(ad, seller_type)
-        and _matches_region(ad, region_name)
+        and match_region_filter(ad, region_name)
     ]
 
 
@@ -199,7 +178,7 @@ async def get_listings(
         effective_from, effective_to = effective_to, effective_from
     if min_price is not None and max_price is not None and max_price < min_price:
         min_price, max_price = max_price, min_price
-    normalized_region_name = _normalized_filter_text(region_name) or None
+    normalized_region_name = normalize_filter_text(region_name) or None
     listing_filters_active = (
         min_price is not None
         or max_price is not None

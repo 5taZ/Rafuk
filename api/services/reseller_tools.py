@@ -15,7 +15,11 @@ from api.services.aggregator import (
     resolve_price_reference,
     tokenize_search_text,
 )
-from api.services.market_signals import area_label, detect_anomaly_flags, region_label
+from api.services.listing_filters import (
+    match_condition_filter,
+    match_region_filter,
+)
+from api.services.market_signals import detect_anomaly_flags
 
 
 # =============================================================================
@@ -370,18 +374,15 @@ def matches_tracker_filters(
             return False
         if seller_type == "private" and is_shop:
             return False
-    if condition:
-        ad_condition = get_param(ad, "condition")
-        # Map tracker values to Kufar numeric codes for comparison
-        condition_map = {"new": "2", "used": "1"}
-        expected = condition_map.get(condition, condition)
-        if ad_condition != expected:
-            return False
-    if region_name:
-        ad_region = region_label(ad)
-        ad_area = area_label(ad)
-        if ad_region != region_name and ad_area != region_name:
-            return False
+    # D-1: condition can arrive from Kufar as either text labels
+    # ("Новый"/"Б/у") or numeric codes ("1"/"2"); the shared helper
+    # (also used by /listings local filter) accepts either form.
+    if not match_condition_filter(ad, condition):
+        return False
+    # D-2: region comparison is now case-insensitive and
+    # whitespace-tolerant — matches /listings behaviour.
+    if not match_region_filter(ad, region_name):
+        return False
     if config_keyword and not config_keyword_matches(str(ad.get("subject", "")), config_keyword):
         return False
     if min_discount_percent is not None:
