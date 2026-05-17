@@ -109,6 +109,8 @@ async def upsert_query_snapshot(
     existing.analyzed_count = stats.count
     existing.mean_byn = stats.mean
     existing.median_byn = stats.median
+    existing.q1_byn = stats.q1
+    existing.q3_byn = stats.q3
     existing.min_byn = stats.min
     existing.max_byn = stats.max
     return existing

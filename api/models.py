@@ -124,6 +124,9 @@ class TrackerFiltersMixin:
     condition: Mapped[str | None] = mapped_column(String(32), nullable=True)
     region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     config_keyword: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # C-09: field exists but is never read by collector/reseller_tools/query_pipeline.
+    # Kept for schema stability; removing requires a destructive migration.
+    # Intended for a future duplicate-detection feature.
     exclude_duplicates: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -213,6 +216,9 @@ class QuerySnapshot(Base, TimestampMixin):
     analyzed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mean_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
     median_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    # B-06: q1/q3 persisted so /price-history can render the fair-price band.
+    q1_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    q3_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     min_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
     max_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
 
@@ -738,6 +744,7 @@ class SavedSearch(Base, UserIDMixin, TimestampMixin):
     condition: Mapped[str | None] = mapped_column(String(32), nullable=True)
     region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     config_keyword: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # C-09: unused — see Tracker.exclude_duplicates comment.
     exclude_duplicates: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

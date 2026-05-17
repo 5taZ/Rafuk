@@ -244,9 +244,18 @@ class SegmentsResponse(BaseModel):
 
 
 class PriceHistoryPoint(BaseModel):
+    """A single snapshot in the price-history series.
+
+    - total_results: Kufar's reported total for the query.
+    - analyzed_count: post-outlier sample used for stats.
+    - q1/q3: 25th/75th percentile — defines the fair-price band.
+    """
+
     snapshot_at: datetime
     mean: float
     median: float
+    q1: float | None = None
+    q3: float | None = None
     min: float
     max: float
     analyzed_count: int

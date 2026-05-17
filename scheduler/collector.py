@@ -77,6 +77,9 @@ from scheduler.messages import (
 _CYCLE_TIMEOUT_SECONDS = 600
 
 # Maximum events per tracker per check cycle (new listings + price drops).
+# C-10: This is the *audit trail* cap — all 10 events are persisted to
+# tracker_events for the UI feed. Telegram notifications are capped at 3
+# per type (see new_listings[:3] / price_drops[:3] below) to avoid spam.
 _MAX_EVENTS_PER_TYPE = 10
 
 # INF-H9: structured JSON logging (or LOG_FORMAT=text for local dev).
@@ -973,6 +976,8 @@ async def _check_trackers_inner(
                                 trend_sent_recently.add(tracker.id)
 
                             # Send per-listing enhanced notifications for new listings
+                            # C-10: Telegram cap=3 per type (UX); full set persisted
+                            # to tracker_events (audit trail, see _MAX_EVENTS_PER_TYPE).
                             for state in tracker_sync_result.new_listings[:3]:
                                 ad = ads_by_id.get(state.ad_id)
                                 median_byn = (

@@ -89,6 +89,12 @@ def _normalize_response_ads(response: dict[str, Any]) -> dict[str, Any]:
       kopeck values are always multiples of 100 and typically > 1000.
     - Otherwise (values not all divisible by 100, or all ≤ 1000) the
       response is treated as direct BYN and multiplied by 100.
+
+    B-08: Edge case — a test fixture with BYN prices like [1200, 1500, 2000]
+    (all divisible by 100, any > 1000) would be misclassified as kopecks.
+    Production responses always include price_usd so the earlier check
+    short-circuits. Test fixtures should set price_usd explicitly to avoid
+    hitting this branch.
     """
     ads = response.get("ads")
     if not isinstance(ads, list) or not ads:

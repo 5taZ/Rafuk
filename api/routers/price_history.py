@@ -67,6 +67,14 @@ async def get_price_history(
             snapshot_at=snapshot.snapshot_at,
             mean=currency_service.convert_from_byn(float(snapshot.mean_byn), currency, rates),
             median=currency_service.convert_from_byn(float(snapshot.median_byn), currency, rates),
+            q1=(
+                currency_service.convert_from_byn(float(snapshot.q1_byn), currency, rates)
+                if snapshot.q1_byn is not None else None
+            ),
+            q3=(
+                currency_service.convert_from_byn(float(snapshot.q3_byn), currency, rates)
+                if snapshot.q3_byn is not None else None
+            ),
             min=currency_service.convert_from_byn(float(snapshot.min_byn), currency, rates),
             max=currency_service.convert_from_byn(float(snapshot.max_byn), currency, rates),
             analyzed_count=snapshot.analyzed_count,

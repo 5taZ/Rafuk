@@ -217,3 +217,47 @@ def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
     payload = history_response.json()
     assert len(payload["points"]) == 1
     assert payload["points"][0]["median"] == 2500
+
+
+def test_price_history_includes_q1_q3() -> None:
+    """B-06: PriceHistoryPoint exposes q1/q3 from snapshot."""
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+
+    async def seed_q1q3(session_factory) -> None:
+        from api.services.aggregator import build_query_key
+
+        async with session_factory() as session:
+            now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+            session.add(
+                QuerySnapshot(
+                    query=build_query_key("q1q3test", True),
+                    snapshot_at=now,
+                    total_results=50,
+                    analyzed_count=40,
+                    mean_byn=2000,
+                    median_byn=1900,
+                    q1_byn=1500,
+                    q3_byn=2300,
+                    min_byn=1000,
+                    max_byn=3000,
+                )
+            )
+            await session.commit()
+
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        asyncio.run(seed_q1q3(app.state.session_factory))
+        response = client.get(
+            "/api/v1/price-history",
+            params={"query": "q1q3test", "currency": "BYN", "days": 7},
+        )
+
+    assert response.status_code == 200
+    points = response.json()["points"]
+    assert len(points) == 1
+    assert points[0]["q1"] == 1500
+    assert points[0]["q3"] == 2300

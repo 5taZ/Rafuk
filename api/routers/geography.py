@@ -79,20 +79,27 @@ async def get_geography(
     except Exception:  # noqa: BLE001 — fallback to identity rates
         rates_payload = {"rates": {"BYN": 1.0}}
     rates = rates_payload["rates"]
-    total_analyzed = max(1, dataset.price_stats.count)
-    regions: list[GeographyRegionPoint] = []
-
+    # B-05/D-3: use sum of per-region counts as denominator so share_percent
+    # sums to ~100. total_analyzed (post-global-outlier) differs from the sum
+    # of per-region counts (post-per-region-outlier + ungrouped ads skipped).
+    region_stats_list: list[tuple] = []
     for region_id, ads in sorted(grouped.items(), key=lambda item: len(item[1]), reverse=True):
         stats = compute_price_stats(extract_prices(ads))
         if stats.count == 0:
             continue
         label = next((region_label(ad) for ad in ads if region_label(ad)), f"Регион {region_id}")
+        region_stats_list.append((region_id, label, stats))
+
+    total_for_share = max(1, sum(s.count for _, _, s in region_stats_list))
+    regions: list[GeographyRegionPoint] = []
+
+    for region_id, label, stats in region_stats_list:
         regions.append(
             GeographyRegionPoint(
                 region_id=region_id,
                 region_name=label,
                 count=stats.count,
-                share_percent=round(stats.count / total_analyzed * 100.0, 1),
+                share_percent=round(stats.count / total_for_share * 100.0, 1),
                 mean=currency_service.convert_from_byn(stats.mean, currency, rates),
                 median=currency_service.convert_from_byn(stats.median, currency, rates),
                 min=currency_service.convert_from_byn(stats.min, currency, rates),
