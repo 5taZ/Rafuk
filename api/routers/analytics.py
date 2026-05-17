@@ -71,6 +71,7 @@ async def get_lead_analytics(
                 total_cost_byn=0.0,
                 total_profit_byn=0.0,
                 total_expenses_byn=0.0,
+                total_projected_profit_byn=0.0,
                 average_roi_percent=0.0,
                 funnel=[],
             )
@@ -152,6 +153,21 @@ async def get_lead_analytics(
         total_profit = total_revenue - total_cost
         total_expenses = sum(expenses_by_lead.values())
 
+        # E-FIND-01 follow-up: projected profit for unsold leads with target_resale.
+        projected_filter = and_(
+            LeadItem.sold_price_byn.is_(None),
+            LeadItem.target_resale_byn.isnot(None),
+        )
+        proj_stream = await session.stream(
+            select(LeadItem.id, LeadItem.buy_price_byn, LeadItem.target_resale_byn)
+            .where(LeadItem.user_id == user_id, projected_filter)
+            .execution_options(yield_per=500)
+        )
+        total_projected_profit = 0.0
+        async for lid, buy, target in proj_stream:
+            expenses = expenses_by_lead.get(lid, 0.0)
+            total_projected_profit += float(target) - float(buy or 0) - expenses
+
     _active_keys = ("new", "in_progress", "researching", "bought")
     active_leads = sum(funnel_counter.get(k, 0) for k in _active_keys)
     total_leads = sum(funnel_counter.values())
@@ -168,6 +184,7 @@ async def get_lead_analytics(
         total_cost_byn=round(total_cost, 2),
         total_profit_byn=round(total_profit, 2),
         total_expenses_byn=round(total_expenses, 2),
+        total_projected_profit_byn=round(total_projected_profit, 2),
         average_roi_percent=round(statistics.fmean(roi_values), 1) if roi_values else 0.0,
         funnel=funnel,
     )

@@ -232,3 +232,44 @@ def test_lead_analytics_excludes_incomplete_cost_basis_from_profit() -> None:
     assert payload["total_revenue_byn"] == 1000.0
     assert payload["total_profit_byn"] == 200.0
     assert payload["sold_leads"] == 1
+
+
+def test_lead_analytics_total_projected_profit_for_unsold_leads() -> None:
+    """E-FIND-01: total_projected_profit_byn sums target_resale - buy - expenses
+    for unsold leads with target_resale_byn set. Sold leads are excluded."""
+    from decimal import Decimal
+
+    async def _seed(session_factory) -> int:
+        async with session_factory() as session:
+            user = make_user(telegram_user_id=987654, first_name="Analytics")
+            session.add(user)
+            await session.flush()
+            now = datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC)
+            # Unsold lead with target — should contribute 500 projected profit.
+            watching = LeadItem(
+                user_id=user.id, ad_id=200, query="x", title="Watching",
+                link="https://www.kufar.by/item/200", price_byn=1000,
+                buy_price_byn=Decimal("1000"), target_resale_byn=Decimal("1500"),
+                sold_price_byn=None, status="watching", created_at=now,
+            )
+            # Sold lead with target — must NOT count in projected.
+            sold = LeadItem(
+                user_id=user.id, ad_id=201, query="x", title="Sold",
+                link="https://www.kufar.by/item/201", price_byn=800,
+                buy_price_byn=Decimal("800"), target_resale_byn=Decimal("1200"),
+                sold_price_byn=Decimal("1100"), status="sold", sold_at=now,
+                created_at=now,
+            )
+            session.add_all([watching, sold])
+            await session.commit()
+            return user.id
+
+    app = _bootstrap_app()
+    with TestClient(app) as client:
+        asyncio.run(_create_tables(app.state.engine))
+        asyncio.run(_seed(app.state.session_factory))
+        response = client.get("/api/v1/analytics/leads")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_projected_profit_byn"] == 500.0

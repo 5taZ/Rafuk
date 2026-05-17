@@ -156,10 +156,8 @@ async def grant_consent(
     ),
 ):
     """Grant a consent (e.g. AI analysis, PD processing, cross-border transfer)."""
-    if payload.consent_type not in VALID_CONSENT_TYPES:
-        raise HTTPException(
-            status_code=400, detail="Указанный тип согласия не найден"
-        )
+    # A-6: runtime check removed — ConsentGrantRequest.consent_type is a
+    # Literal, so Pydantic returns 422 for invalid values before we get here.
 
     # Reject stale consent versions — forces re-consent when policy changes
     if payload.version != CURRENT_POLICY_VERSION:

@@ -589,3 +589,13 @@ def test_sort_listings_cheap_does_not_treat_zero_delta_as_inf() -> None:
     assert ids.index(1) < ids.index(2) < ids.index(4)
     # Fair (delta=0.0) must NOT be at the tail with negotiable.
     assert ids[-1] == 4
+
+
+def test_filter_deal_ads_excludes_negotiable() -> None:
+    """B-09: negotiable ads (delta=None) must not match a discount filter."""
+    priced_ad = {"ad_id": 1, "price_byn": 80000, "subject": "Cheap", "body": ""}
+    at_median_ad = {"ad_id": 3, "price_byn": 100000, "subject": "Fair", "body": ""}
+    negotiable_ad = {"ad_id": 2, "price_byn": 0, "subject": "Шкаф", "body": "Цена договорная"}
+    # Median of [800, 1000] = 900 BYN; priced_ad is 800 → ~-11% discount.
+    result = filter_deal_ads([priced_ad, at_median_ad, negotiable_ad], 900.0, 5.0)
+    assert [ad["ad_id"] for ad in result] == [1]

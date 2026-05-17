@@ -546,6 +546,7 @@ class LeadAnalyticsResponse(BaseModel):
     total_cost_byn: float
     total_profit_byn: float
     total_expenses_byn: float
+    total_projected_profit_byn: float = 0.0  # E-FIND-01: unsold leads aggregate
     average_roi_percent: float
     funnel: list[LeadFunnelStage]
 

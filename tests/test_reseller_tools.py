@@ -322,3 +322,25 @@ class TestWave2TrackerFilterMatching:
             region_name="Минск",
         )
 
+
+
+def test_compute_deal_score_negotiable_returns_dogovornaya_verdict() -> None:
+    """B-09: negotiable ad gets verdict='Цена договорная', no discount adjustment."""
+    ad = _make_ad(price_byn=0, seller_type="Другое", company_ad=True)
+    ad["body"] = "Цена договорная"
+    ad["subject"] = "Разное"
+    stats = _make_stats(median=1000.0)
+    result = compute_deal_score(ad, query="xyz123", market_stats=stats)
+    assert result.verdict == "Цена договорная"
+    # No discount adjustment applied — score starts at base_score.
+    # Seller type "Другое" is neither private nor shop, so no seller bonus.
+    # Query "xyz123" won't match subject "Разное" for profile bonus.
+    assert result.score == SCORING.base_score
+
+
+def test_matches_tracker_filters_negotiable_with_min_discount_returns_false() -> None:
+    """B-09: negotiable ad cannot satisfy min_discount_percent filter."""
+    ad = _make_ad(price_byn=0)
+    ad["body"] = "Цена договорная"
+    stats = _make_stats(median=1000.0)
+    assert matches_tracker_filters(ad, market_stats=stats, min_discount_percent=5.0) is False
