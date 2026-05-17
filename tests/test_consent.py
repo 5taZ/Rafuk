@@ -566,3 +566,106 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
         "auth:initdata:otherdigest",
     ):
         assert await cache.get_json(key) is not None, f"{key} should survive"
+
+
+@pytest.mark.asyncio
+async def test_revoke_pd_processing_pauses_trackers(client):
+    """C-08: revoking ``pd_processing`` (the broadest consent) must
+    pause every active tracker for that user with
+    pause_reason='consent_revoked'. Other consent types do not
+    affect trackers — they're tested separately below.
+    """
+    from sqlalchemy import select
+
+    from api.models import Tracker, User
+
+    # Grant + create the user row, then add an active tracker.
+    grant = await client.post(
+        "/api/v1/account/consent",
+        json={"consent_type": "pd_processing", "version": "2026.2"},
+    )
+    assert grant.status_code in (200, 201, 204)
+
+    sf = app.state.session_factory
+    async with sf() as session:
+        user = (await session.execute(select(User))).scalar_one()
+        session.add(
+            Tracker(user_id=user.id, query="iphone", strict_mode=False),
+        )
+        await session.commit()
+
+    revoke = await client.delete("/api/v1/account/consent/pd_processing")
+    assert revoke.status_code == 204
+
+    async with sf() as session:
+        tracker = (await session.execute(select(Tracker))).scalar_one()
+        assert tracker.paused is True
+        assert tracker.pause_reason == "consent_revoked"
+        assert tracker.paused_at is not None
+
+
+@pytest.mark.asyncio
+async def test_revoke_ai_analysis_does_not_pause_trackers(client):
+    """C-08: ``ai_analysis`` is a narrower scope — only AI features.
+    Revoking it should NOT pause the user's trackers, which are a
+    plain price-tracking feature.
+    """
+    from sqlalchemy import select
+
+    from api.models import Tracker, User
+
+    await client.post(
+        "/api/v1/account/consent",
+        json={"consent_type": "ai_analysis", "version": "2026.2"},
+    )
+
+    sf = app.state.session_factory
+    async with sf() as session:
+        user = (await session.execute(select(User))).scalar_one()
+        session.add(Tracker(user_id=user.id, query="iphone", strict_mode=False))
+        await session.commit()
+
+    revoke = await client.delete("/api/v1/account/consent/ai_analysis")
+    assert revoke.status_code == 204
+
+    async with sf() as session:
+        tracker = (await session.execute(select(Tracker))).scalar_one()
+        assert tracker.paused is False
+        assert tracker.pause_reason is None
+
+
+@pytest.mark.asyncio
+async def test_revoke_pd_processing_keeps_already_paused_trackers_paused(client):
+    """C-08: a tracker that the user already paused manually for some
+    other reason must keep its existing pause_reason (not be
+    overwritten with 'consent_revoked').
+    """
+    from sqlalchemy import select
+
+    from api.models import Tracker, User
+
+    await client.post(
+        "/api/v1/account/consent",
+        json={"consent_type": "pd_processing", "version": "2026.2"},
+    )
+
+    sf = app.state.session_factory
+    async with sf() as session:
+        user = (await session.execute(select(User))).scalar_one()
+        session.add(Tracker(
+            user_id=user.id,
+            query="iphone",
+            strict_mode=False,
+            paused=True,
+            paused_at=datetime.now(UTC),
+            pause_reason="manually_paused_by_user",
+        ))
+        await session.commit()
+
+    revoke = await client.delete("/api/v1/account/consent/pd_processing")
+    assert revoke.status_code == 204
+
+    async with sf() as session:
+        tracker = (await session.execute(select(Tracker))).scalar_one()
+        assert tracker.paused is True
+        assert tracker.pause_reason == "manually_paused_by_user"

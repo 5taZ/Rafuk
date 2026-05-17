@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -298,10 +298,43 @@ async def revoke_consent(
         for consent in results:
             consent.revoked_at = now
         revoked_count = len(results)
+
+        # C-08: ``pd_processing`` is the broadest consent — revoking
+        # it means the user has withdrawn permission to process their
+        # personal data. Tracker notifications keep flowing through
+        # the scheduler unless the trackers themselves are paused, so
+        # we pause every active tracker for this user with a
+        # distinguishable reason. Re-granting + manually un-pausing is
+        # an explicit re-opt-in. Other consent types (``ai_analysis``,
+        # ``cross_border``) only revoke specific feature scopes and
+        # do not require pausing trackers.
+        paused_tracker_count = 0
+        if revoked_count and consent_type == "pd_processing":
+            pause_result = await session.execute(
+                update(Tracker)
+                .where(
+                    Tracker.user_id == uid,
+                    Tracker.paused.is_(False),
+                )
+                .values(
+                    paused=True,
+                    paused_at=now,
+                    pause_reason="consent_revoked",
+                    updated_at=now,
+                )
+            )
+            paused_tracker_count = pause_result.rowcount or 0
+
         await session.commit()
 
     if revoked_count:
         logger.info("User %d revoked consent %s", _user.user_id, consent_type)
+        if consent_type == "pd_processing":
+            logger.info(
+                "User %d revoked pd_processing — paused %d active tracker(s) "
+                "with pause_reason='consent_revoked'",
+                _user.user_id, paused_tracker_count,
+            )
         # OPUS-1: revoke means the previously processed AI artefacts
         # (task results, listing-assistant cache, rate-limit buckets,
         # initdata replay tracker) must also be evicted — otherwise
