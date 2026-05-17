@@ -988,17 +988,15 @@ def _fallback_resale_potential(
         else:
             return None
 
-    # For negotiable price, use market anchor as the assumed purchase price
-    purchase = price_byn if (price_byn > 0 and not is_negotiable_price) else anchor
-
-    fast_price = int(round(anchor * 0.88))
-    market_price = int(round(anchor * 0.96))
-    optimal_price = int(round(min(anchor * 1.04, (market_q3 or anchor * 1.05) * 1.02)))
-
     # E-FIND-07: removed the previous clamp that set fast_price = purchase * 0.92
     # when fast_price >= purchase. That advertised a loss when the market
     # genuinely sat above purchase price. Now fast_price stays as computed
     # from market data — if it's above purchase, that's a real signal.
+    # The `purchase`/`is_negotiable_price` derivation that fed the old clamp
+    # is also gone; the parameters remain in the signature for back-compat.
+    fast_price = int(round(anchor * 0.88))
+    market_price = int(round(anchor * 0.96))
+    optimal_price = int(round(min(anchor * 1.04, (market_q3 or anchor * 1.05) * 1.02)))
 
     reasoning_parts = [
         f"Ориентир по рынку — около {int(round(anchor))} BYN.",
