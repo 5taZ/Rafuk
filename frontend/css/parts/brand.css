@@ -235,16 +235,34 @@
 /* ── Listing Assistant: card on Deals view ────────────────────────────── */
 
 .la-card {
-    background: var(--bg-card);
+    background: color-mix(in srgb, var(--accent-secondary) 4%, var(--bg-card));
     display: flex;
     flex-direction: column;
     gap: 14px;
+    border-radius: var(--r-lg);
+    border: 1px solid color-mix(in srgb, var(--accent-secondary) 15%, transparent);
+    padding: var(--space-4);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 2px 12px color-mix(in srgb, var(--accent-secondary) 6%, transparent);
+}
+
+.la-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--accent-secondary);
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    opacity: 0.6;
 }
 
 .la-card-head {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
 }
 
 .la-card-kicker {
@@ -253,6 +271,14 @@
     letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--accent-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.la-card-kicker::before {
+    content: "✨";
+    font-size: 12px;
 }
 
 .la-card-title {
@@ -282,6 +308,7 @@
     min-width: 200px;
     padding: 12px 16px;
     font-weight: 700;
+    border-radius: var(--r-md);
 }
 
 /* .la-card-history / .la-card-history-count rules removed — the
