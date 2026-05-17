@@ -61,7 +61,12 @@ class CurrencyService:
                 response = await client.get(NBRB_URL)
                 response.raise_for_status()
                 items = response.json()
-                rates = self._extract_rates(items)
+                # B-07 follow-up: partial NBRB response (e.g. only USD)
+                # must not discard fallback EUR/RUB — backfill missing.
+                fetched_rates = self._extract_rates(items)
+                for code, fallback_rate in rates.items():
+                    fetched_rates.setdefault(code, fallback_rate)
+                rates = fetched_rates
                 source = "nbrb"
             except (httpx.HTTPError, ValueError, KeyError, TypeError, RuntimeError) as exc:
                 # BE-H6: previously the except body was a silent `pass`,

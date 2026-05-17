@@ -92,17 +92,24 @@ def _empty_csv_response() -> Response:
 
 def _row_for_lead(lead: LeadItem, lead_expenses: dict[int, float]) -> list[Any]:
     """Build the per-lead row payload shared by the CSV and XLSX writers."""
-    buy_price = float(lead.buy_price_byn) if lead.buy_price_byn is not None else 0.0
-    sold_price = float(lead.sold_price_byn or 0)
+    # E-FIND-09 follow-up: when buy_price_byn is NULL but sold_price exists,
+    # profit/ROI are indeterminate — output None instead of inflating.
+    buy_price = float(lead.buy_price_byn) if lead.buy_price_byn is not None else None
+    sold_price = float(lead.sold_price_byn) if lead.sold_price_byn is not None else 0.0
     total_expenses = lead_expenses.get(lead.id, 0.0)
-    total_cost = buy_price + total_expenses
 
-    actual_profit = (sold_price - total_cost) if sold_price > 0 else None
-    roi_percent = (
-        (actual_profit / total_cost * 100)
-        if actual_profit is not None and total_cost > 0
-        else None
-    )
+    if buy_price is not None:
+        total_cost = buy_price + total_expenses
+        actual_profit = (sold_price - total_cost) if sold_price > 0 else None
+        roi_percent = (
+            (actual_profit / total_cost * 100)
+            if actual_profit is not None and total_cost > 0
+            else None
+        )
+    else:
+        actual_profit = None
+        roi_percent = None
+
     return [
         lead.id,
         lead.query,

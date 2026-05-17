@@ -247,6 +247,7 @@ class PriceHistoryPoint(BaseModel):
     """A single snapshot in the price-history series.
 
     - total_results: Kufar's reported total for the query.
+    - fetched_count: raw pre-outlier sample (prices extracted from ads).
     - analyzed_count: post-outlier sample used for stats.
     - q1/q3: 25th/75th percentile — defines the fair-price band.
     """
@@ -260,6 +261,8 @@ class PriceHistoryPoint(BaseModel):
     max: float
     analyzed_count: int
     total_results: int
+    # B-10: raw pre-outlier sample count.
+    fetched_count: int | None = None
 
 
 class PriceHistoryResponse(BaseModel):

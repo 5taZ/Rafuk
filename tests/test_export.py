@@ -165,3 +165,51 @@ def test_export_rejects_unknown_format() -> None:
     with TestClient(app) as client:
         response = client.get("/api/v1/leads/export?format=pdf")
         assert response.status_code == 422
+
+
+def test_export_csv_incomplete_cost_basis_shows_empty_profit() -> None:
+    """E-FIND-09: a lead with sold_price but NULL buy_price must NOT
+    show inflated profit — profit and ROI columns should be empty."""
+    import csv as csv_mod
+
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        # Create a lead, then mark it sold without setting buy_price.
+        resp = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "test incomplete",
+                "ad_id": 60001,
+                "title": "Incomplete cost basis item",
+                "link": "https://www.kufar.by/item/60001",
+                "price_byn": 900,
+                "status": "new",
+                "source": "manual",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        lead_id = resp.json()["id"]
+        version = resp.json()["version"]
+        # Mark sold without buy_price.
+        patch_resp = client.patch(
+            f"/api/v1/leads/{lead_id}",
+            json={"status": "sold", "sold_price_byn": 1000.0, "version": version},
+        )
+        assert patch_resp.status_code == 200, patch_resp.text
+
+        export_resp = client.get("/api/v1/leads/export?format=csv")
+        assert export_resp.status_code == 200
+
+    body = export_resp.content.decode("utf-8")
+    reader = csv_mod.DictReader(io.StringIO(body))
+    rows = [r for r in reader if r["id"] == str(lead_id)]
+    assert len(rows) == 1
+    row = rows[0]
+    # Profit and ROI must be empty, not "1000.00".
+    assert row["actual_profit"] == ""
+    assert row["roi_percent"] == ""

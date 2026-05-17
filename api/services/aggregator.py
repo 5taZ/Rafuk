@@ -889,18 +889,15 @@ def sort_listings(
         return (0, p)
 
     if sort == "cheap":
-        decorated = [
-            (
-                # B-09: None (negotiable) sorts to the tail via inf.
-                compute_price_vs_reference(
-                    ad, effective_market_stats, category_price_stats,
-                ) or float("inf"),
-                _priced_key(ad),
-                i,
-                ad,
+        decorated = []
+        for i, ad in enumerate(ads):
+            delta = compute_price_vs_reference(
+                ad, effective_market_stats, category_price_stats,
             )
-            for i, ad in enumerate(ads)
-        ]
+            # B-09 follow-up: explicit None check; `or float('inf')` would
+            # also bucket fairly-priced ads (delta=0.0) with negotiables.
+            sort_key = delta if delta is not None else float("inf")
+            decorated.append((sort_key, _priced_key(ad), i, ad))
         decorated.sort()
         return [ad for _, _, _, ad in decorated]
     if sort == "price_asc":

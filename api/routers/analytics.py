@@ -17,7 +17,7 @@ import statistics
 from collections import Counter
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import (
@@ -98,7 +98,12 @@ async def get_lead_analytics(
             row[0]: float(row[1] or 0) for row in expense_rows
         }
 
-        won = LeadItem.sold_price_byn.isnot(None)
+        # E-FIND-09 follow-up: exclude incomplete cost-basis leads from
+        # headline aggregates — consistent with per-lead ROI skip below.
+        won = and_(
+            LeadItem.sold_price_byn.isnot(None),
+            LeadItem.buy_price_byn.isnot(None),
+        )
         agg = await session.execute(
             select(
                 func.count(case((won, 1))).label("won_count"),

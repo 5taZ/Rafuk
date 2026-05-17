@@ -189,3 +189,46 @@ def test_lead_analytics_returns_zero_dashboard_for_unknown_user() -> None:
     assert payload["total_leads"] == 0
     assert payload["sold_leads"] == 0
     assert payload["funnel"] == []
+
+
+def test_lead_analytics_excludes_incomplete_cost_basis_from_profit() -> None:
+    """E-FIND-09 follow-up: a sold lead with NULL buy_price must NOT
+    inflate total_revenue/total_profit. Only fully-tracked leads count."""
+    from decimal import Decimal
+
+    async def _seed_mixed(session_factory) -> int:
+        async with session_factory() as session:
+            user = make_user(telegram_user_id=987654, first_name="Analytics")
+            session.add(user)
+            await session.flush()
+            now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+            # Fully tracked: buy=800, sold=1000 → profit=200.
+            full = LeadItem(
+                user_id=user.id, ad_id=100, query="x", title="Full",
+                link="https://www.kufar.by/item/100", price_byn=800,
+                buy_price_byn=Decimal("800"), sold_price_byn=Decimal("1000"),
+                status="sold", sold_at=now, created_at=now,
+            )
+            # Incomplete: buy=NULL, sold=2000 → must be excluded.
+            incomplete = LeadItem(
+                user_id=user.id, ad_id=101, query="x", title="Incomplete",
+                link="https://www.kufar.by/item/101", price_byn=1500,
+                buy_price_byn=None, sold_price_byn=Decimal("2000"),
+                status="sold", sold_at=now, created_at=now,
+            )
+            session.add_all([full, incomplete])
+            await session.commit()
+            return user.id
+
+    app = _bootstrap_app()
+    with TestClient(app) as client:
+        asyncio.run(_create_tables(app.state.engine))
+        asyncio.run(_seed_mixed(app.state.session_factory))
+        response = client.get("/api/v1/analytics/leads")
+
+    assert response.status_code == 200
+    payload = response.json()
+    # Only the fully-tracked lead contributes to revenue/profit.
+    assert payload["total_revenue_byn"] == 1000.0
+    assert payload["total_profit_byn"] == 200.0
+    assert payload["sold_leads"] == 1

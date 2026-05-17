@@ -64,3 +64,28 @@ async def test_currency_fallback_includes_eur_and_rub() -> None:
     assert eur_result == round(330.0 / rates["EUR"], 2)
     rub_result = service.convert_from_byn(3.3, "RUB", rates)
     assert rub_result == round(3.3 / rates["RUB"], 2)
+
+
+@pytest.mark.asyncio
+async def test_currency_partial_nbrb_backfills_missing_currencies() -> None:
+    """B-07 follow-up: when NBRB returns only USD, EUR/RUB are backfilled
+    from fallback so convert_from_byn never silently passes BYN through."""
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    # Only USD in the response — EUR and RUB missing.
+    response.json.return_value = [
+        {"Cur_Abbreviation": "USD", "Cur_OfficialRate": 3.25, "Cur_Scale": 1},
+    ]
+    http_client = MagicMock()
+    http_client.is_closed = False
+    http_client.get = AsyncMock(return_value=response)
+
+    service = CurrencyService(MemoryCache(), http_client=http_client)
+    payload = await service.get_rates()
+
+    assert payload["source"] == "nbrb"
+    rates = payload["rates"]
+    assert rates["USD"] == 3.25
+    # EUR and RUB backfilled from fallback defaults.
+    assert "EUR" in rates and rates["EUR"] > 0
+    assert "RUB" in rates and rates["RUB"] > 0

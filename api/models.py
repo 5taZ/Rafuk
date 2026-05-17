@@ -219,6 +219,8 @@ class QuerySnapshot(Base, TimestampMixin):
     # B-06: q1/q3 persisted so /price-history can render the fair-price band.
     q1_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     q3_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # B-10: raw pre-outlier sample size (len(extract_prices(ads))).
+    fetched_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     min_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
     max_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
 

@@ -74,7 +74,8 @@ async def upsert_query_snapshot(
     total_results: int,
     bucket_at: datetime,
 ) -> QuerySnapshot:
-    stats = compute_price_stats(extract_prices(ads))
+    prices = extract_prices(ads)
+    stats = compute_price_stats(prices)
     existing = await session.scalar(
         select(QuerySnapshot).where(
             QuerySnapshot.query == query,
@@ -113,6 +114,8 @@ async def upsert_query_snapshot(
     existing.q3_byn = stats.q3
     existing.min_byn = stats.min
     existing.max_byn = stats.max
+    # B-10: raw pre-outlier sample size.
+    existing.fetched_count = len(prices)
     return existing
 
 

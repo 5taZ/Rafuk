@@ -556,3 +556,36 @@ class TestWave1FreeListingConsistency:
         assert 0.0 in kept
         assert kept.count(100.0) == 8
 
+
+
+def test_sort_listings_cheap_does_not_treat_zero_delta_as_inf() -> None:
+    """B-09 follow-up: an ad priced exactly at median (delta=0.0) must NOT
+    sort to the tail with negotiable ads. 0.0 is falsy but is a valid delta."""
+    # Prices in kopecks. Median of [800, 1000, 1200] = 1000 BYN (after /100).
+    cheap_ad = {
+        "ad_id": 1, "subject": "Cheap", "price_byn": 80000,
+        "ad_link": "x", "list_time": "",
+    }
+    fair_ad = {
+        "ad_id": 2, "subject": "Fair", "price_byn": 100000,
+        "ad_link": "x", "list_time": "",
+    }
+    expensive_ad = {
+        "ad_id": 3, "subject": "Expensive", "price_byn": 120000,
+        "ad_link": "x", "list_time": "",
+    }
+    negotiable_ad = {
+        "ad_id": 4, "subject": "Negotiable", "price_byn": 0,
+        "ad_link": "x", "list_time": "",
+    }
+
+    ordered = sort_listings(
+        [fair_ad, cheap_ad, negotiable_ad, expensive_ad],
+        "cheap",
+        median=1000.0,
+    )
+    ids = [ad["ad_id"] for ad in ordered]
+    # cheap < fair < expensive < negotiable (inf)
+    assert ids.index(1) < ids.index(2) < ids.index(4)
+    # Fair (delta=0.0) must NOT be at the tail with negotiable.
+    assert ids[-1] == 4

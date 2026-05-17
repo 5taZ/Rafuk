@@ -261,3 +261,45 @@ def test_price_history_includes_q1_q3() -> None:
     assert len(points) == 1
     assert points[0]["q1"] == 1500
     assert points[0]["q3"] == 2300
+
+
+def test_price_history_includes_fetched_count() -> None:
+    """B-10: PriceHistoryPoint exposes fetched_count from snapshot."""
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+
+    async def seed_fetched_count(session_factory) -> None:
+        from api.services.aggregator import build_query_key
+
+        async with session_factory() as session:
+            now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+            session.add(
+                QuerySnapshot(
+                    query=build_query_key("fetchcount_test", True),
+                    snapshot_at=now,
+                    total_results=100,
+                    analyzed_count=40,
+                    fetched_count=50,
+                    mean_byn=2000,
+                    median_byn=1900,
+                    min_byn=1000,
+                    max_byn=3000,
+                )
+            )
+            await session.commit()
+
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        asyncio.run(seed_fetched_count(app.state.session_factory))
+        response = client.get(
+            "/api/v1/price-history",
+            params={"query": "fetchcount_test", "currency": "BYN", "days": 7},
+        )
+
+    assert response.status_code == 200
+    points = response.json()["points"]
+    assert len(points) == 1
+    assert points[0]["fetched_count"] == 50

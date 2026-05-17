@@ -79,6 +79,7 @@ async def get_price_history(
             max=currency_service.convert_from_byn(float(snapshot.max_byn), currency, rates),
             analyzed_count=snapshot.analyzed_count,
             total_results=snapshot.total_results,
+            fetched_count=snapshot.fetched_count,
         )
         for snapshot in snapshots
     ]
