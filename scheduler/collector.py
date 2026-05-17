@@ -625,6 +625,9 @@ def _detect_threshold_alerts(
             # signed percentage where negative = below reference, so we
             # only treat negative deltas as real discounts.
             delta_pct = compute_price_vs_reference(ad, market_stats, category_price_stats)
+            # B-09: negotiable ads (delta=None) cannot trigger discount alerts.
+            if delta_pct is None:
+                continue
             discount_pct = -delta_pct if delta_pct < 0 else 0.0
             if discount_pct >= float(tracker.alert_discount_percent):
                 if (ad_id, "discount_alert") in seen:
@@ -1001,7 +1004,10 @@ async def _check_trackers_inner(
                                     delta = compute_price_vs_reference(
                                         ad, market_stats, category_price_stats
                                     )
-                                    discount_pct = abs(delta) if delta < 0 else None
+                                    discount_pct = (
+                                        abs(delta) if delta is not None and delta < 0
+                                        else None
+                                    )
                                     try:
                                         deal = compute_deal_score(
                                             ad, query=query, market_stats=market_stats
@@ -1054,7 +1060,9 @@ async def _check_trackers_inner(
                                         ad, market_stats, category_price_stats
                                     )
                                     discount_pct = (
-                                        abs(delta_vs_ref) if delta_vs_ref < 0 else None
+                                        abs(delta_vs_ref)
+                                        if delta_vs_ref is not None and delta_vs_ref < 0
+                                        else None
                                     )
                                 drop_msg = _build_price_drop_message(
                                     state,

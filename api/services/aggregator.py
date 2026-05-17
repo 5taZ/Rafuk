@@ -708,12 +708,14 @@ def compute_price_stats(prices: list[float]) -> PriceStats:
     )
 
 
-def compute_price_vs_median(ad: dict[str, Any], median: float) -> float:
+def compute_price_vs_median(ad: dict[str, Any], median: float) -> float | None:
+    """Percentage delta of ad price vs median. None if price is missing (negotiable)."""
     if not median:
         return 0.0
     price_byn = normalize_price_byn(ad.get("price_byn"), ad)
     if price_byn is None:
-        return 0.0
+        # B-09: negotiable ads have no meaningful price delta.
+        return None
     return round((price_byn - median) / median * 100.0, 2)
 
 
@@ -817,7 +819,7 @@ def compute_price_vs_reference(
     category_price_stats: dict[int, PriceStats] | None = None,
     *,
     min_category_count: int = MIN_CATEGORY_REFERENCE_COUNT,
-) -> float:
+) -> float | None:
     reference = resolve_price_reference(
         ad,
         market_stats,
@@ -852,7 +854,8 @@ def filter_deal_ads(
             effective_market_stats,
             category_price_stats,
         )
-        if delta >= 0:
+        # B-09: negotiable ads (delta=None) cannot match a discount filter.
+        if delta is None or delta >= 0:
             continue
         discount = abs(delta)
         if discount < lower_bound:
@@ -888,7 +891,10 @@ def sort_listings(
     if sort == "cheap":
         decorated = [
             (
-                compute_price_vs_reference(ad, effective_market_stats, category_price_stats),
+                # B-09: None (negotiable) sorts to the tail via inf.
+                compute_price_vs_reference(
+                    ad, effective_market_stats, category_price_stats,
+                ) or float("inf"),
                 _priced_key(ad),
                 i,
                 ad,

@@ -446,11 +446,10 @@ class TestExtractPricesSemantic:
         assert delta == -100.0
 
     def test_negotiable_has_zero_delta_not_minus_100(self) -> None:
-        # Negotiable items are excluded from delta calc — returns 0.0,
-        # NOT -100% (which would falsely indicate a huge discount).
+        # B-09: Negotiable items return None — they have no meaningful price delta.
         negotiable_ad = {"price_byn": 0, "subject": "Стол", "body": "Торг"}
         delta = compute_price_vs_median(negotiable_ad, median=1000.0)
-        assert delta == 0.0
+        assert delta is None
 
 
 class TestWave1FreeListingConsistency:

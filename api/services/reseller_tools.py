@@ -285,8 +285,12 @@ def compute_deal_score(
     reasons: list[str] = []
     delta = compute_price_vs_median(ad, market_stats.median)
 
-    # Verdict is driven purely by price vs median
-    if delta <= SCORING.verdict_good_price_threshold:
+    # B-09: negotiable ads have no price delta — skip score adjustment.
+    if delta is None:
+        verdict = "Цена договорная"
+        score = SCORING.base_score
+        reasons.append("Цена не указана")
+    elif delta <= SCORING.verdict_good_price_threshold:
         verdict = "Хорошая цена"
     elif delta <= SCORING.verdict_below_market_threshold:
         verdict = "Ниже рынка"
@@ -295,15 +299,18 @@ def compute_deal_score(
     else:
         verdict = "Выше рынка"
 
-    # Score is also primarily price-driven, with small bonuses/penalties
-    score = SCORING.base_score
-    if delta < 0:
-        discount = abs(delta)
-        score += min(discount * SCORING.discount_score_multiplier, SCORING.discount_score_cap)
-        reasons.append(f"-{discount:.0f}% к медиане")
-    elif delta > 0:
-        score -= min(delta * SCORING.premium_penalty_multiplier, SCORING.premium_penalty_cap)
-        reasons.append(f"+{delta:.0f}% к медиане")
+    if delta is None:
+        pass  # score already set above
+    else:
+        # Score is also primarily price-driven, with small bonuses/penalties
+        score = SCORING.base_score
+        if delta < 0:
+            discount = abs(delta)
+            score += min(discount * SCORING.discount_score_multiplier, SCORING.discount_score_cap)
+            reasons.append(f"-{discount:.0f}% к медиане")
+        elif delta > 0:
+            score -= min(delta * SCORING.premium_penalty_multiplier, SCORING.premium_penalty_cap)
+            reasons.append(f"+{delta:.0f}% к медиане")
 
     seller_type_param = get_param(ad, "seller_type")
     is_private = seller_type_param == "Частное лицо" or (
@@ -387,6 +394,9 @@ def matches_tracker_filters(
         return False
     if min_discount_percent is not None:
         delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
+        # B-09: negotiable (delta=None) cannot match a discount filter.
+        if delta is None:
+            return False
         if abs(min(delta, 0.0)) < min_discount_percent:
             return False
     return True
