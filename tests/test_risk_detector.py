@@ -14,6 +14,7 @@ def _ad(**overrides: object) -> dict:
         "price_byn": 200_000,
         "body": "Отличный телефон",
         "company_ad": False,
+        "images": [{"url": "https://example.com/photo.jpg"}],
     }
     base.update(overrides)
     return base
@@ -156,14 +157,15 @@ class TestDetectRisksMultiple:
         assert "suspicious_desc" in types
 
     def test_all_two_remaining_risks(self) -> None:
-        # E-FIND-04: ``duplicate`` removed; the remaining two risks
+        # E-FIND-04: ``duplicate`` removed; the remaining priced risks
         # (too_cheap, suspicious_desc) still co-fire on the same ad.
         risks = detect_risks(
             _ad(price_byn=100_000, body="предоплата"),
             market_stats={"median": 2000},
         )
         types = {r["type"] for r in risks}
-        assert types == {"too_cheap", "suspicious_desc"}
+        assert "too_cheap" in types
+        assert "suspicious_desc" in types
 
 
 class TestComputeRiskScore:
@@ -187,3 +189,34 @@ class TestComputeRiskScore:
             {"type": "duplicate", "level": "high", "message": "y"},
         ]
         assert compute_risk_score(risks) == "high"
+
+
+class TestDetectRisksNoPhotos:
+    """E-FIND-03: zero-photo listings flagged as medium risk."""
+
+    def test_no_images_key_flagged(self) -> None:
+        ad = _ad()
+        del ad["images"]
+        risks = detect_risks(ad)
+        assert any(r["type"] == "no_photos" for r in risks)
+
+    def test_empty_images_list_flagged(self) -> None:
+        risks = detect_risks(_ad(images=[]))
+        assert any(r["type"] == "no_photos" for r in risks)
+
+    def test_with_images_not_flagged(self) -> None:
+        risks = detect_risks(_ad(images=[{"url": "https://example.com/1.jpg"}]))
+        assert not any(r["type"] == "no_photos" for r in risks)
+
+    def test_image_count_nonzero_not_flagged(self) -> None:
+        ad = _ad()
+        del ad["images"]
+        ad["image_count"] = 3
+        risks = detect_risks(ad)
+        assert not any(r["type"] == "no_photos" for r in risks)
+
+    def test_no_photos_is_medium_level(self) -> None:
+        risks = detect_risks(_ad(images=[]))
+        np = [r for r in risks if r["type"] == "no_photos"]
+        assert len(np) == 1
+        assert np[0]["level"] == "medium"

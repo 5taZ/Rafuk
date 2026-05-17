@@ -132,7 +132,10 @@ async def get_lead_analytics(
         won_expenses_total = 0.0
         roi_values: list[float] = []
         async for lid, buy, sold in won_stream:
-            buy_price = float(buy) if buy is not None else 0.0
+            # E-FIND-09: skip leads with missing buy_price from ROI calc.
+            if buy is None:
+                continue
+            buy_price = float(buy)
             sold_price = float(sold or 0)
             expenses = expenses_by_lead.get(lid, 0.0)
             cost = buy_price + expenses

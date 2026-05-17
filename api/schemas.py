@@ -436,6 +436,11 @@ class LeadRead(BaseModel):
     total_expenses: float = Field(default=0.0)
     actual_profit: float | None = None
     roi_percent: float | None = None
+    # E-FIND-01: projected profit for watching/bought leads using target_resale_byn.
+    projected_profit_byn: float | None = None
+    # E-FIND-09: True when sold_price_byn is set but buy_price_byn is missing,
+    # meaning profit/ROI cannot be reliably computed.
+    incomplete_cost_basis: bool = False
     # E-FIND-02: integer days between bought_at and sold_at (or now()
     # if still held). NULL when bought_at is missing — old rows that
     # never went through the explicit * → bought transition. Computed

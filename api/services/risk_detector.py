@@ -52,6 +52,7 @@ def detect_risks(
     risks: list[dict[str, str]] = []
     _check_too_cheap(ad, market_stats, risks)
     _check_suspicious_desc(ad, risks)
+    _check_no_photos(ad, risks)
     return risks
 
 
@@ -104,6 +105,19 @@ def _check_suspicious_desc(
             "type": "suspicious_desc",
             "level": "medium",
             "message": "Подозрительные слова в описании",
+        })
+
+
+def _check_no_photos(
+    ad: dict[str, Any],
+    risks: list[dict[str, str]],
+) -> None:
+    """E-FIND-03: zero-photo listings are a medium risk signal."""
+    if not (ad.get("images") or ad.get("image_count")):
+        risks.append({
+            "type": "no_photos",
+            "level": "medium",
+            "message": "Объявление без фото",
         })
 
 

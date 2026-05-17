@@ -198,6 +198,15 @@ def _serialize_lead_read(
     out.actual_profit = actual_profit
     out.roi_percent = roi_percent
     out.hold_time_days = _compute_hold_time_days(lead)
+    # E-FIND-09: flag incomplete cost basis when sold without buy_price.
+    if lead.sold_price_byn is not None and lead.buy_price_byn is None:
+        out.incomplete_cost_basis = True
+        out.actual_profit = None
+        out.roi_percent = None
+    # E-FIND-01: projected profit for unsold leads with target_resale_byn.
+    if lead.sold_price_byn is None and lead.target_resale_byn is not None:
+        basis = float(lead.buy_price_byn or 0) + total_expenses
+        out.projected_profit_byn = round(float(lead.target_resale_byn) - basis, 2)
     return out
 
 
@@ -307,11 +316,13 @@ async def get_leads(
 
             if lead.sold_price_byn is not None:
                 sold_price = float(lead.sold_price_byn)
-                buy_price = float(lead.buy_price_byn) if lead.buy_price_byn is not None else 0.0
-                total_cost = buy_price + total_expenses
-                actual_profit = round(sold_price - total_cost, 2)
-                if total_cost > 0:
-                    roi_percent = round((actual_profit / total_cost) * 100, 2)
+                # E-FIND-09: only compute profit/ROI when buy_price is known.
+                if lead.buy_price_byn is not None:
+                    buy_price = float(lead.buy_price_byn)
+                    total_cost = buy_price + total_expenses
+                    actual_profit = round(sold_price - total_cost, 2)
+                    if total_cost > 0:
+                        roi_percent = round((actual_profit / total_cost) * 100, 2)
 
             lead_read = _serialize_lead_read(
                 lead,

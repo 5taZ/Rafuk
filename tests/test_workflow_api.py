@@ -585,3 +585,67 @@ def test_update_lead_stamps_bought_at_on_skip_to_sold(monkeypatch) -> None:
         assert body["sold_at"] is not None
         assert body["bought_at"] is not None
         assert body["hold_time_days"] == 0
+
+
+def test_lead_projected_profit_from_target_resale(monkeypatch) -> None:
+    """E-FIND-01: unsold leads with target_resale_byn show projected_profit_byn."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        create = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "test", "ad_id": 9001,
+                "title": "Test", "link": "https://www.kufar.by/item/9001",
+                "price_byn": 1000,
+                "target_resale_byn": 1500, "source": "manual",
+            },
+        )
+        lead = create.json()
+        # Set buy_price via update
+        updated = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"buy_price_byn": 1000, "version": lead["version"]},
+        )
+        body = updated.json()
+        assert body["projected_profit_byn"] == 500.0
+        assert body["actual_profit"] is None
+
+
+def test_lead_incomplete_cost_basis_when_sold_without_buy_price(monkeypatch) -> None:
+    """E-FIND-09: sold lead with buy_price=None → incomplete_cost_basis=True."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        create = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "test", "ad_id": 9002,
+                "title": "Test", "link": "https://www.kufar.by/item/9002",
+                "price_byn": 1000, "source": "manual",
+            },
+        )
+        lead = create.json()
+        # Sell without setting buy_price
+        sold = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"sold_price_byn": 1500, "version": lead["version"]},
+        )
+        body = sold.json()
+        assert body["incomplete_cost_basis"] is True
+        assert body["actual_profit"] is None
+        assert body["roi_percent"] is None
