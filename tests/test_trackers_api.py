@@ -514,3 +514,33 @@ async def test_tracker_events_endpoint_filters_out_trend_reversal_by_default() -
         assert len(explicit_payload) == 1
         assert explicit_payload[0]["event_type"] == "trend_reversal"
         assert explicit_payload[0]["ad_id"] is None
+
+
+def test_trackers_pagination() -> None:
+    """A-3: GET /trackers respects limit/offset pagination."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        # Create 3 trackers
+        for i in range(3):
+            resp = client.post(
+                "/api/v1/trackers",
+                json={"query": f"item {i}", "strict_mode": False, "interval_min": 30},
+            )
+            assert resp.status_code == 201
+
+        # Request page with limit=2, offset=1
+        resp = client.get("/api/v1/trackers", params={"limit": 2, "offset": 1})
+        assert resp.status_code == 200
+        page = resp.json()
+        assert len(page) == 2
+
+        # Full list for comparison
+        full = client.get("/api/v1/trackers").json()
+        assert len(full) == 3
+        # Paginated result should match the slice
+        assert [t["id"] for t in page] == [t["id"] for t in full[1:3]]

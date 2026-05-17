@@ -96,6 +96,9 @@ async def clear_tracker_events(
 @limiter.limit("30/minute")
 async def get_trackers(
     request: Request,
+    # A-3: pagination for consistency with other list endpoints
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[TrackerRead]:
@@ -107,6 +110,8 @@ async def get_trackers(
             select(Tracker)
             .where(Tracker.user_id == user_id, Tracker.active.is_(True))
             .order_by(Tracker.created_at.desc(), Tracker.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
         trackers = list(result.scalars())
 

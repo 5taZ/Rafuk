@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -604,7 +604,8 @@ class ConsentStatusResponse(BaseModel):
 
 
 class ConsentGrantRequest(BaseModel):
-    consent_type: str  # "ai_analysis" | "pd_processing" | "cross_border"
+    # A-6: Literal validates at schema level; OpenAPI/422 reflects allowed values.
+    consent_type: Literal["ai_analysis", "pd_processing", "cross_border"]
     version: str = "2026.2"
 
 

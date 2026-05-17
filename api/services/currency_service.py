@@ -46,8 +46,12 @@ class CurrencyService:
             if cached and cached_usd > 0:
                 return cached
 
+            # B-07: fallback covers all supported currencies so convert_from_byn
+            # never silently returns BYN-amount labelled as EUR/RUB.
             rates = {
                 "USD": DEFAULT_USD_RATE,
+                "EUR": 3.3,
+                "RUB": 0.033,
             }
             source = "fallback"
             fetched_at = datetime.now(UTC).isoformat()

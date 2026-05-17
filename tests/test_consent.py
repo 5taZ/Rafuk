@@ -144,7 +144,8 @@ async def test_grant_consent_rejects_invalid_type(client):
         "/api/v1/account/consent",
         json={"consent_type": "bogus", "version": "2026.2"},
     )
-    assert resp.status_code == 400
+    # A-6: Pydantic Literal now catches invalid types at schema level (422)
+    assert resp.status_code == 422
 
 
 # ── Consent status after grant ──────────────────────────────────────────

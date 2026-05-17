@@ -226,9 +226,10 @@ def _serialize_watchlist(
         delta_byn = round(float(current) - float(initial), 2)
         if initial:
             delta_percent = round((delta_byn / float(initial)) * 100.0, 2)
+    # A-4: dropped user_id= kwarg — WatchlistRead has no such field;
+    # Pydantic v2 silently ignores extras but would break under extra='forbid'.
     return WatchlistRead(
         id=item.id,
-        user_id=item.user_id,
         ad_id=item.ad_id,
         query=item.query,
         title=item.title,
