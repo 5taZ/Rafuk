@@ -412,6 +412,7 @@ class LeadRead(BaseModel):
     target_resale_byn: float | None = None
     status: str
     source: str
+    bought_at: datetime | None = None
     sold_at: datetime | None = None
     market_status: str = Field(default="active")
     missing_since_at: datetime | None = None
@@ -426,6 +427,12 @@ class LeadRead(BaseModel):
     total_expenses: float = Field(default=0.0)
     actual_profit: float | None = None
     roi_percent: float | None = None
+    # E-FIND-02: integer days between bought_at and sold_at (or now()
+    # if still held). NULL when bought_at is missing — old rows that
+    # never went through the explicit * → bought transition. Computed
+    # in the handler, not in the model, so it stays in sync with the
+    # current request time.
+    hold_time_days: int | None = None
     price_delta_byn: float | None = None
     price_delta_percent: float | None = None
     created_at: datetime

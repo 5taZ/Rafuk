@@ -505,3 +505,83 @@ def test_update_lead_notes_round_trip(monkeypatch) -> None:
         )
         assert cleared.status_code == 200
         assert cleared.json()["notes"] is None
+
+
+def test_update_lead_stamps_bought_at_on_bought_transition(monkeypatch) -> None:
+    """E-FIND-02: status → 'bought' must populate bought_at, and the
+    LeadRead response must surface a hold_time_days value derived
+    from it. Idempotent re-bought does NOT re-stamp."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        create = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "lens", "ad_id": 8001,
+                "title": "Sigma 18-35", "link": "https://www.kufar.by/item/8001",
+                "price_byn": 800, "source": "manual",
+            },
+        )
+        lead = create.json()
+        assert lead["bought_at"] is None
+        assert lead["hold_time_days"] is None
+
+        bought = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"status": "bought", "version": lead["version"]},
+        )
+        assert bought.status_code == 200
+        body = bought.json()
+        assert body["bought_at"] is not None
+        assert body["hold_time_days"] == 0  # bought just now
+
+        # Idempotent: re-PATCH bought → bought (well, status unchanged
+        # but explicitly listed) keeps the original bought_at.
+        original_bought_at = body["bought_at"]
+        idem = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"target_resale_byn": 1000, "version": body["version"]},
+        )
+        assert idem.json()["bought_at"] == original_bought_at
+
+
+def test_update_lead_stamps_bought_at_on_skip_to_sold(monkeypatch) -> None:
+    """E-FIND-02: a lead that goes straight from new → sold (skipping
+    bought) gets bought_at retroactively stamped at sold_at so
+    hold_time_days renders as 0 instead of NULL."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        create = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "drone", "ad_id": 8002,
+                "title": "DJI Mini", "link": "https://www.kufar.by/item/8002",
+                "price_byn": 1500, "source": "manual",
+            },
+        )
+        lead = create.json()
+        # Skip bought, go straight to sold via sold_price_byn.
+        sold = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"sold_price_byn": 1700, "version": lead["version"]},
+        )
+        body = sold.json()
+        assert body["status"] == "sold"
+        assert body["sold_at"] is not None
+        assert body["bought_at"] is not None
+        assert body["hold_time_days"] == 0

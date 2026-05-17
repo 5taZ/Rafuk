@@ -213,13 +213,33 @@ def compute_liquidity_insight(
 def compute_flip_estimates(
     ad: dict[str, Any],
     market_stats: PriceStats,
+    *,
+    expenses_byn: float = 0.0,
 ) -> list[FlipEstimate]:
+    """Compute three resale-target tiers (quick / market / optimal).
+
+    E-FIND-08: ``expenses_byn`` is the user's recorded out-of-pocket
+    cost (delivery, repair, packaging, customs, …). Subtracting it
+    from each tier's profit makes the result a *net* projection
+    instead of gross — a 200 BYN gross flip after 150 BYN of
+    fix-up costs is a 50 BYN net deal, and the UI should reflect
+    that. The argument is keyword-only and defaults to 0.0 so
+    existing callers stay binary-compatible (the projection just
+    keeps showing gross until the caller wires expenses through).
+    """
     price_byn = normalize_price_byn(ad.get("price_byn"))
     if price_byn is None or market_stats.count == 0:
         return []
+    expenses = max(0.0, float(expenses_byn or 0.0))
+    cost_basis = price_byn + expenses
 
     def build(label: str, target: float) -> FlipEstimate:
-        profit = round(target - price_byn, 2)
+        profit = round(target - cost_basis, 2)
+        # Profit-percent denominator stays at price_byn so the % stays
+        # comparable to the listing price rather than the user-specific
+        # expenses stack. Switching to cost_basis would conflate
+        # "this listing's flip potential" with "this user's planned
+        # rework" and confuse the comparison across users.
         profit_percent = round((profit / price_byn) * 100.0, 2) if price_byn else 0.0
         return FlipEstimate(
             label=label,

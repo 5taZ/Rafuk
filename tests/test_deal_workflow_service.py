@@ -256,3 +256,50 @@ class TestComputeFlipEstimates:
         market = [e for e in estimates if e.label == "По рынку"][0]
         assert market.profit_byn > 0
         assert market.profit_percent > 0
+
+
+class TestComputeFlipEstimatesExpenses:
+    """E-FIND-08: ``expenses_byn`` shifts every tier's profit_byn by
+    the same amount (negatively) so the projection becomes net
+    instead of gross. ``profit_percent`` denominator stays at the
+    listing price for cross-user comparability.
+    """
+
+    def test_default_expenses_zero_matches_legacy_behaviour(self) -> None:
+        ad = _ad(price_byn=200_000)
+        stats = _make_stats(median=2000)
+        without = compute_flip_estimates(ad, stats)
+        with_zero = compute_flip_estimates(ad, stats, expenses_byn=0.0)
+        assert [(e.label, e.profit_byn) for e in without] == [
+            (e.label, e.profit_byn) for e in with_zero
+        ]
+
+    def test_expenses_subtract_from_each_tier(self) -> None:
+        ad = _ad(price_byn=200_000)  # 2000 BYN listing price
+        stats = _make_stats(q1=1800, median=2000, q3=2200)
+        gross = {e.label: e.profit_byn for e in compute_flip_estimates(ad, stats)}
+        net = {
+            e.label: e.profit_byn
+            for e in compute_flip_estimates(ad, stats, expenses_byn=150)
+        }
+        for label, gross_profit in gross.items():
+            assert net[label] == round(gross_profit - 150, 2)
+
+    def test_expenses_can_flip_market_target_to_negative(self) -> None:
+        ad = _ad(price_byn=200_000)
+        stats = _make_stats(median=2000)
+        # Listing at median (zero gross) + 100 BYN of fix-up costs
+        # → net flip of −100 BYN at the market tier.
+        net = [
+            e for e in compute_flip_estimates(ad, stats, expenses_byn=100)
+            if e.label == "По рынку"
+        ][0]
+        assert net.profit_byn == -100.0
+
+    def test_negative_expenses_clamped_to_zero(self) -> None:
+        # Defensive: we never trust user input to be non-negative.
+        ad = _ad(price_byn=200_000)
+        stats = _make_stats(median=2000)
+        expected = compute_flip_estimates(ad, stats, expenses_byn=0.0)
+        actual = compute_flip_estimates(ad, stats, expenses_byn=-99.0)
+        assert [e.profit_byn for e in actual] == [e.profit_byn for e in expected]

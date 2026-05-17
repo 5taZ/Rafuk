@@ -353,6 +353,13 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         server_default="manual",
     )
     thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # E-FIND-02: timestamp of the * → bought transition. NULL until
+    # the user marks the lead as bought; populated by ``update_lead``
+    # in the same handler that sets ``status = 'bought'``. Used by
+    # the read schema to compute hold-time days.
+    bought_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     market_status: Mapped[str] = mapped_column(
         String(32),

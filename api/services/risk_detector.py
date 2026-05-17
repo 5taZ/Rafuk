@@ -29,7 +29,6 @@ _SUSPICIOUS_WORDS = re.compile(
 def detect_risks(
     ad: dict[str, Any],
     market_stats: dict[str, Any] | None = None,
-    seller_info: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     """Return a list of risk dicts for *ad* given optional context.
 
@@ -42,15 +41,17 @@ def detect_risks(
     market_stats:
         Dict with at least a ``median`` key (in BYN, **not** kopecks).
         If *None* the too-cheap check is skipped.
-    seller_info:
-        Reserved for future use (e.g. seller listing count from DB).
-        Currently unused — new-seller detection works off the ad dict
-        itself.
+
+    E-FIND-04: a previous ``seller_info`` parameter and an
+    ``is_duplicate`` check were removed in the May-2026 audit. The
+    duplicate path was dead code — every production caller passed
+    ``seller_info=None``, so the check never fired. A real duplicate
+    detector needs ``Listing`` history (same title+price+region in
+    24h) and is tracked separately as a feature in logicissues.md.
     """
     risks: list[dict[str, str]] = []
     _check_too_cheap(ad, market_stats, risks)
     _check_suspicious_desc(ad, risks)
-    _check_duplicate(ad, seller_info, risks)
     return risks
 
 
@@ -106,19 +107,14 @@ def _check_suspicious_desc(
         })
 
 
-def _check_duplicate(
-    ad: dict[str, Any],
-    seller_info: dict[str, Any] | None,
-    risks: list[dict[str, str]],
-) -> None:
-    # Duplicate detection requires DB context (seller_info) which is
-    # populated by the listing-detail endpoint.  When seller_info is
-    # None (e.g. bulk listing mapper) this check is silently skipped.
-    if not seller_info:
-        return
-    if seller_info.get("is_duplicate"):
-        risks.append({
-            "type": "duplicate",
-            "level": "high",
-            "message": "Дубликат от того же продавца",
-        })
+def _check_duplicate(*_args, **_kwargs) -> None:  # pragma: no cover
+    """Removed in the May-2026 logic audit (E-FIND-04).
+
+    The function used to read ``seller_info["is_duplicate"]`` but
+    every production caller passed ``seller_info=None`` so it never
+    fired. A real duplicate detector needs ``Listing`` history (same
+    title+price+region in 24h) and is tracked separately as a
+    feature. This stub remains so legacy imports don't blow up;
+    delete after one release if no one notices.
+    """
+    return None

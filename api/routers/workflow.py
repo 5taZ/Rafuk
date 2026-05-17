@@ -161,6 +161,46 @@ def _bump_lead_version(item: LeadItem) -> None:
     item.version = int(item.version or 1) + 1
 
 
+def _compute_hold_time_days(lead: LeadItem) -> int | None:
+    """E-FIND-02: integer days the lead has been (or was) held.
+
+    Returns ``None`` for leads that never went through the explicit
+    ``* → bought`` transition (rows pre-dating the migration, or
+    leads still in watching/reviewing). For sold leads we measure
+    bought→sold; for active bought leads we measure bought→now.
+    """
+    if lead.bought_at is None:
+        return None
+    # SQLite returns DateTime(timezone=True) as naive — coerce to UTC
+    # so the subtraction below doesn't raise. Postgres returns aware
+    # datetimes already; this is a no-op there.
+    bought_at = lead.bought_at
+    if bought_at.tzinfo is None:
+        bought_at = bought_at.replace(tzinfo=UTC)
+    end = lead.sold_at if lead.sold_at is not None else datetime.now(UTC)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+    delta = end - bought_at
+    return max(0, int(delta.total_seconds() // 86400))
+
+
+def _serialize_lead_read(
+    lead: LeadItem,
+    *,
+    total_expenses: float = 0.0,
+    actual_profit: float | None = None,
+    roi_percent: float | None = None,
+) -> LeadRead:
+    """Single seam for building LeadRead so computed fields stay
+    consistent across list/create/update handlers."""
+    out = LeadRead.model_validate(lead)
+    out.total_expenses = total_expenses
+    out.actual_profit = actual_profit
+    out.roi_percent = roi_percent
+    out.hold_time_days = _compute_hold_time_days(lead)
+    return out
+
+
 async def _limited_query(coro):
     async with _REFRESH_SEMAPHORE:
         return await coro
@@ -272,10 +312,12 @@ async def get_leads(
                 if total_cost > 0:
                     roi_percent = round((actual_profit / total_cost) * 100, 2)
 
-            lead_read = LeadRead.model_validate(lead)
-            lead_read.total_expenses = total_expenses
-            lead_read.actual_profit = actual_profit
-            lead_read.roi_percent = roi_percent
+            lead_read = _serialize_lead_read(
+                lead,
+                total_expenses=total_expenses,
+                actual_profit=actual_profit,
+                roi_percent=roi_percent,
+            )
 
             output.append(lead_read)
 
@@ -332,7 +374,7 @@ async def create_lead(
         # ORM attributes — accessing expired attrs after commit would
         # otherwise trigger a sync lazy load and raise MissingGreenlet.
         await session.refresh(lead)
-        return LeadRead.model_validate(lead)
+        return _serialize_lead_read(lead)
 
 
 @router.patch("/leads/{lead_id}", response_model=LeadRead)
@@ -361,6 +403,13 @@ async def update_lead(
         if "status" in payload.model_fields_set:
             _validate_lead_status_transition(lead.status, payload.status.value)
             lead.status = payload.status.value
+            # E-FIND-02: stamp bought_at on the first transition into
+            # ``bought``. We never overwrite an existing value — the
+            # user might have manually corrected the date elsewhere
+            # in the future, and round-tripping through bought →
+            # bought (idempotent) shouldn't reset the clock.
+            if lead.status == "bought" and lead.bought_at is None:
+                lead.bought_at = datetime.now(UTC)
         if "target_resale_byn" in payload.model_fields_set:
             lead.target_resale_byn = payload.target_resale_byn
         if "buy_price_byn" in payload.model_fields_set:
@@ -396,6 +445,14 @@ async def update_lead(
                 _validate_lead_status_transition(lead.status, "sold")
                 lead.status = "sold"
                 lead.sold_at = datetime.now(UTC)
+                # E-FIND-02: if the lead transitions straight from
+                # an active status into ``sold`` without ever passing
+                # through ``bought``, retroactively stamp bought_at
+                # at the same moment so hold_time_days renders as 0
+                # rather than NULL. Skipping the bought stage is
+                # rare but legitimate (e.g. quick flip).
+                if lead.bought_at is None:
+                    lead.bought_at = lead.sold_at
             elif payload.sold_price_byn is None and lead.status == "sold":
                 # BE-M10: revert un-sold deal to a real LeadStatusEnum value.
                 # The previous "active" string was not in the enum and would
@@ -406,10 +463,17 @@ async def update_lead(
                 # symmetrically when computing deal potential.
                 lead.status = LeadStatusEnum.bought.value
                 lead.sold_at = None
+                # E-FIND-02: rollback path — if the lead never had
+                # bought_at set (e.g. it went watching → reviewing →
+                # sold without an explicit bought transition), stamp
+                # it now so hold_time is at least computable from
+                # this point forward.
+                if lead.bought_at is None:
+                    lead.bought_at = datetime.now(UTC)
         _bump_lead_version(lead)
         await session.commit()
         await session.refresh(lead)  # Refresh to get server-generated updated_at
-        return LeadRead.model_validate(lead)
+        return _serialize_lead_read(lead)
 
 
 @router.delete("/leads/all", status_code=status.HTTP_204_NO_CONTENT)

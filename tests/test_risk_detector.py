@@ -127,24 +127,22 @@ class TestDetectRisksSuspiciousDesc:
         assert any(r["type"] == "suspicious_desc" for r in risks)
 
 
-class TestDetectRisksDuplicate:
-    def test_duplicate_flagged(self) -> None:
-        risks = detect_risks(_ad(), seller_info={"is_duplicate": True})
-        assert any(r["type"] == "duplicate" for r in risks)
+class TestDetectRisksDuplicateRemoved:
+    """E-FIND-04: the seller_info/_check_duplicate path was dead code
+    in production (no caller passed seller_info). Removed in the
+    May-2026 audit. A real duplicate detector based on Listing
+    history is tracked as a separate feature."""
 
-    def test_not_duplicate(self) -> None:
-        risks = detect_risks(_ad(), seller_info={"is_duplicate": False})
-        assert not any(r["type"] == "duplicate" for r in risks)
+    def test_seller_info_argument_no_longer_accepted(self) -> None:
+        # Regression: callers passing the old kwarg now get a TypeError
+        # so we don't silently accept-and-ignore the parameter.
+        import pytest as _pytest
+        with _pytest.raises(TypeError):
+            detect_risks(_ad(), seller_info={"is_duplicate": True})  # type: ignore[call-arg]
 
-    def test_no_seller_info_skips_duplicate_check(self) -> None:
+    def test_no_duplicate_risk_emitted(self) -> None:
         risks = detect_risks(_ad())
         assert not any(r["type"] == "duplicate" for r in risks)
-
-    def test_duplicate_risk_is_high_level(self) -> None:
-        risks = detect_risks(_ad(), seller_info={"is_duplicate": True})
-        dup = [r for r in risks if r["type"] == "duplicate"]
-        assert len(dup) == 1
-        assert dup[0]["level"] == "high"
 
 
 class TestDetectRisksMultiple:
@@ -157,14 +155,15 @@ class TestDetectRisksMultiple:
         assert "too_cheap" in types
         assert "suspicious_desc" in types
 
-    def test_all_three_risks(self) -> None:
+    def test_all_two_remaining_risks(self) -> None:
+        # E-FIND-04: ``duplicate`` removed; the remaining two risks
+        # (too_cheap, suspicious_desc) still co-fire on the same ad.
         risks = detect_risks(
             _ad(price_byn=100_000, body="предоплата"),
             market_stats={"median": 2000},
-            seller_info={"is_duplicate": True},
         )
         types = {r["type"] for r in risks}
-        assert types == {"too_cheap", "suspicious_desc", "duplicate"}
+        assert types == {"too_cheap", "suspicious_desc"}
 
 
 class TestComputeRiskScore:

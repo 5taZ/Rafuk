@@ -300,7 +300,15 @@ async def sync_query_listing_states(
                 else Decimal(str(existing.last_price_byn))
             )
             price_dec = Decimal(str(price_byn))
-            if price_dec < last_dec and (last_dec - price_dec) >= Decimal("0.5"):
+            # E-FIND-05: an absolute 0.50 BYN threshold meant a 5000 BYN
+            # listing fired a price_drop event on a 0.50 BYN flicker —
+            # 0.01% noise. Floor the threshold at the larger of 0.50 BYN
+            # (kopecks-rounding noise) and 0.5% of the previous price
+            # (relative noise on expensive items). The Decimal arithmetic
+            # keeps this exact across SQLite/Postgres.
+            relative_floor = (last_dec * Decimal("0.005")).quantize(Decimal("0.01"))
+            min_drop = max(Decimal("0.5"), relative_floor)
+            if price_dec < last_dec and (last_dec - price_dec) >= min_drop:
                 price_drops.append((existing, last_dec - price_dec))
 
         existing.title = title

@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from api.models import QuerySnapshot
-from api.services.history_service import detect_trend_reversal_up
+import pytest
+
+from api.database import get_engine, get_session_factory
+from api.models import Base, QueryListingState, QuerySnapshot
+from api.services.history_service import (
+    detect_trend_reversal_up,
+    sync_query_listing_states,
+)
 
 
 def _snap(median: float, when: datetime) -> QuerySnapshot:
@@ -106,3 +112,110 @@ def test_detect_trend_reversal_up_low_must_be_recent() -> None:
 
 def test_detect_trend_reversal_up_returns_none_for_empty() -> None:
     assert detect_trend_reversal_up([]) is None
+
+
+# E-FIND-05: price_drop threshold is now max(0.50 BYN, last_price * 0.5%).
+# Cheap items keep the 0.50 BYN floor; expensive items need a real %
+# move so we don't fire price_drop events on rounding noise.
+
+
+def _existing_state(query: str, ad_id: int, last_price_byn: float) -> QueryListingState:
+    now = datetime.now(UTC)
+    return QueryListingState(
+        query=query,
+        ad_id=ad_id,
+        title="Item",
+        link=f"https://www.kufar.by/item/{ad_id}",
+        last_price_byn=last_price_byn,
+        active=True,
+        first_seen_at=now,
+        last_seen_at=now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_query_listing_states_cheap_item_keeps_absolute_floor() -> None:
+    """A 50 BYN listing dropping by 0.50 BYN still fires (relative
+    floor 0.005*50 = 0.25 < 0.50, so the absolute 0.50 BYN floor
+    wins)."""
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with sf() as session:
+            session.add(_existing_state("cheap", ad_id=1, last_price_byn=50.0))
+            await session.commit()
+
+        async with sf() as session:
+            result = await sync_query_listing_states(
+                session,
+                query="cheap",
+                # 49.50 BYN = 4950 kopecks (price_byn from Kufar is in kopecks).
+                ads=[{"ad_id": 1, "price_byn": 4950, "subject": "Item",
+                      "ad_link": "https://www.kufar.by/item/1"}],
+                observed_at=datetime.now(UTC),
+                total_results=1,
+            )
+            assert len(result.price_drops) == 1
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sync_query_listing_states_expensive_item_ignores_subwhisper_drop() -> None:
+    """A 5000 BYN listing dropping by 1 BYN must NOT fire — relative
+    floor 0.005*5000 = 25 BYN, well above the 1 BYN move."""
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with sf() as session:
+            session.add(_existing_state("expensive", ad_id=2, last_price_byn=5000.0))
+            await session.commit()
+
+        async with sf() as session:
+            result = await sync_query_listing_states(
+                session,
+                query="expensive",
+                ads=[{"ad_id": 2, "price_byn": 499_900, "subject": "Item",
+                      "ad_link": "https://www.kufar.by/item/2"}],
+                observed_at=datetime.now(UTC),
+                total_results=1,
+            )
+            assert result.price_drops == []
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sync_query_listing_states_expensive_item_real_drop_fires() -> None:
+    """5000 → 4960 BYN is 40 BYN, above the 25 BYN relative floor."""
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with sf() as session:
+            session.add(_existing_state("real_drop", ad_id=3, last_price_byn=5000.0))
+            await session.commit()
+
+        async with sf() as session:
+            result = await sync_query_listing_states(
+                session,
+                query="real_drop",
+                ads=[{"ad_id": 3, "price_byn": 496_000, "subject": "Item",
+                      "ad_link": "https://www.kufar.by/item/3"}],
+                observed_at=datetime.now(UTC),
+                total_results=1,
+            )
+            assert len(result.price_drops) == 1
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
