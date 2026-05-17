@@ -571,13 +571,15 @@
 }
 
 .la-sheet {
-    height: min(780px, 94vh);
-    max-height: 94vh;
+    /* Inherits height from .ai-sheet (Wave 26). Kept as a hook for
+       Listing Assistant-only tweaks; the la-sheet-expanded variant
+       used to grow the sheet on result reveal but the unified height
+       makes that redundant — both modals are 780px / 94vh. */
 }
 
 .la-sheet.la-sheet-expanded {
-    height: min(820px, 96vh);
-    max-height: 96vh;
+    /* No-op: kept so legacy callers that still toggle this class
+       don't break. Both states share the same height as .ai-sheet. */
 }
 
 .la-result-overlay {
@@ -616,6 +618,12 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+    /* Wave 26: flex column so the .la-loading child can flex: 1
+       fill the available height and vertically center the spinner /
+       status text. Result content (la-section list) flows normally
+       at intrinsic height; if it overflows, the parent scrolls. */
+    display: flex;
+    flex-direction: column;
     padding: 0 var(--space-5) calc(env(safe-area-inset-bottom, 18px) + var(--space-5));
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
@@ -1976,14 +1984,14 @@ button.active .filter-count {
     color: var(--accent);
 }
 
-/* Footer container for the per-tab "Очистить" button. Sits below
-   the list, centered, with extra top spacing so it doesn't crowd
-   the last card. Only one of the two child buttons is visible at
-   a time, controlled by renderLeads based on the active tab. */
-.items-clear-footer {
+/* Header container for the per-tab "Очистить" button. Sits above
+   the list, centered, with bottom spacing so it doesn't crowd the
+   first card. Only one of the two child buttons is visible at a
+   time, controlled by renderLeads based on the active tab. */
+.items-clear-header {
     display: flex;
     justify-content: center;
-    margin-top: 16px;
+    margin-bottom: 16px;
 }
 
 .items-clear-btn {

@@ -717,11 +717,15 @@ async def fetch_category_totals(
         if not isinstance(resp, dict):
             return cat_id, None
         ads = resp.get("ads") or []
+        if strict_search:
+            # Kufar's per-category `total` ignores our strict-token filter; trust
+            # the actual filtered count so chip sums match the visible listing count.
+            filtered = apply_search_mode(ads, query, strict_search)
+            return cat_id, len(filtered)
         kufar_total = resp.get("total")
         if isinstance(kufar_total, int) and kufar_total > 0:
             return cat_id, kufar_total
-        filtered = apply_search_mode(ads, query, strict_search)
-        return cat_id, len(filtered)
+        return cat_id, len(ads)
 
     started_at = time.monotonic()
     results = await asyncio.gather(

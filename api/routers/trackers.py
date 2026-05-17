@@ -19,6 +19,21 @@ from api.services.workflow_store import ensure_user, resolve_user_id
 router = APIRouter(tags=["trackers"])
 
 
+# Query-level signals (no underlying ad_id/title/link) that must not
+# show up in the listing-events feed UI — they are delivered via the
+# scheduler's Telegram message but the rows exist purely for the
+# 24h dedup lookup in ``_recent_trend_event_tracker_ids``. If the
+# frontend tries to render one as a card, all three action buttons
+# (Открыть / В покупки / Kufar →) silently fail because ad_id is
+# null and link is empty.
+_LISTING_LEVEL_EVENT_TYPES = (
+    "new_listing",
+    "price_drop",
+    "price_threshold_alert",
+    "discount_alert",
+)
+
+
 @router.get("/tracker-events", response_model=list[TrackerEventRead])
 @limiter.limit("30/minute")
 async def get_tracker_events(
@@ -48,7 +63,16 @@ async def get_tracker_events(
         if tracker_id is not None:
             stmt = stmt.where(TrackerEvent.tracker_id == tracker_id)
         if event_type is not None:
+            # Explicit filter wins — caller can still request
+            # ``trend_reversal`` (or any other type) if they have a
+            # use case for it.
             stmt = stmt.where(TrackerEvent.event_type == event_type)
+        else:
+            # Default response: only listing-level events. Query-level
+            # market signals (``trend_reversal``) live in the DB for
+            # dedup but must not pollute the frontend feed where they
+            # would render as broken listing cards.
+            stmt = stmt.where(TrackerEvent.event_type.in_(_LISTING_LEVEL_EVENT_TYPES))
         result = await session.execute(stmt)
         return list(result.scalars())
 

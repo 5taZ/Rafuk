@@ -58,7 +58,12 @@ from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.listing_mapper import first_image_url
 from api.services.market_signals import region_label
 from api.services.reseller_tools import compute_deal_score, matches_tracker_filters
-from bot.keyboards import enhanced_alert_keyboard, lead_reminder_keyboard, tracker_alert_keyboard
+from bot.keyboards import (
+    enhanced_alert_keyboard,
+    inline_keyboard_from_json,
+    lead_reminder_keyboard,
+    tracker_alert_keyboard,
+)
 from scheduler.messages import (
     _build_new_listing_message,
     _build_price_drop_message,
@@ -141,6 +146,57 @@ async def _send_message_classified(
         return "retry"
 
 
+def _serialize_reply_markup(reply_markup: object | None) -> str | None:
+    """Serialize an aiogram ``InlineKeyboardMarkup`` for DLQ persistence.
+
+    AUDIT-LOW (audit follow-up): aiogram 3 markup types are pydantic v2
+    BaseModel subclasses, so ``.model_dump_json()`` produces a stable,
+    schema-validated string that the retry pump can round-trip back
+    via ``InlineKeyboardMarkup.model_validate_json``. We accept ``None``
+    and any non-pydantic object (just in case a caller passes a raw
+    dict for the reminder path that bypasses the typed keyboard
+    helpers) and degrade to ``None`` rather than raise — losing a
+    keyboard on retry is cosmetic, but tripping an exception inside
+    ``_queue_notification_dlq`` would lose the entire DLQ row.
+    """
+    if reply_markup is None:
+        return None
+    dump = getattr(reply_markup, "model_dump_json", None)
+    if callable(dump):
+        try:
+            return dump()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "DLQ: failed to serialize reply_markup of type %s — "
+                "retry will fall back to plain text",
+                type(reply_markup).__name__,
+            )
+    return None
+
+
+def _deserialize_reply_markup(payload: str | None) -> object | None:
+    """Inverse of ``_serialize_reply_markup`` — reconstruct the markup.
+
+    ARC-P1: imports the InlineKeyboardMarkup factory through
+    ``bot.keyboards`` rather than ``aiogram.types`` directly so the
+    scheduler keeps its single seam to the bot layer (the
+    test_scheduler_does_not_import_aiogram_types guardrail enforces
+    this). Returns ``None`` if the payload is missing or malformed;
+    the retry then sends a plain message, identical to pre-fix
+    behaviour.
+    """
+    if not payload:
+        return None
+    try:
+        return inline_keyboard_from_json(payload)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "DLQ: failed to deserialize reply_markup_json — "
+            "falling back to plain-text retry"
+        )
+        return None
+
+
 def _queue_notification_dlq(
     session: AsyncSession,
     *,
@@ -151,6 +207,7 @@ def _queue_notification_dlq(
     error_kind: str = "retry",
     error_message: str | None = None,
     retry_after_seconds: int | None = None,
+    reply_markup: object | None = None,
 ) -> None:
     session.add(
         TelegramNotificationDLQ(
@@ -161,6 +218,7 @@ def _queue_notification_dlq(
             error_kind=error_kind[:64],
             error_message=error_message[:512] if error_message else None,
             retry_after_seconds=retry_after_seconds,
+            reply_markup_json=_serialize_reply_markup(reply_markup),
         )
     )
 
@@ -212,6 +270,11 @@ async def notify_user(
         message=message,
         source="notify_user",
         internal_user_id=internal_user_id,
+        # AUDIT-LOW: keyboard preserved so the retry pump can rebuild
+        # the same buttons. Without this, a transient send failure on
+        # a tracker alert would replay as plain text on the next pump
+        # tick, losing the "📌 В покупки" / "⭐ В Избранное" actions.
+        reply_markup=reply_markup,
     )
     return True
 
@@ -310,6 +373,28 @@ async def persist_tracker_events(
     # behaviour for any external/test callers.
     if seen is None:
         seen = await _recent_event_keys(session, tracker.id)
+
+    # Observability: when a tracker produces more than ``_MAX_EVENTS_PER_TYPE``
+    # new listings or price drops in a single tick, the slice below silently
+    # discards the overflow. Log a single line per type so operators can
+    # see when the cap is biting (legitimate spikes during a Kufar restock,
+    # a stuck tracker that needs widening, or a too-narrow filter).
+    new_count = len(sync_result.new_listings)
+    drop_count = len(sync_result.price_drops)
+    if new_count > _MAX_EVENTS_PER_TYPE:
+        logger.info(
+            "Tracker %d (user %d, query=%r): _MAX_EVENTS_PER_TYPE cap dropped %d "
+            "of %d new_listing event(s)",
+            tracker.id, tracker.user_id, tracker.query[:80],
+            new_count - _MAX_EVENTS_PER_TYPE, new_count,
+        )
+    if drop_count > _MAX_EVENTS_PER_TYPE:
+        logger.info(
+            "Tracker %d (user %d, query=%r): _MAX_EVENTS_PER_TYPE cap dropped %d "
+            "of %d price_drop event(s)",
+            tracker.id, tracker.user_id, tracker.query[:80],
+            drop_count - _MAX_EVENTS_PER_TYPE, drop_count,
+        )
 
     created: list[TrackerEvent] = []
     for state in sync_result.new_listings[:_MAX_EVENTS_PER_TYPE]:
@@ -858,11 +943,21 @@ async def _check_trackers_inner(
                                 discount_pct = None
                                 liquidity_label = None
                                 if ad is not None:
-                                    discount_pct = abs(
-                                        compute_price_vs_reference(
-                                            ad, market_stats, category_price_stats
-                                        )
+                                    # Sign matters: ``compute_price_vs_reference``
+                                    # returns negative for below-market and
+                                    # positive for above-market. Only show
+                                    # the "% от медианы" suffix when this
+                                    # ad is genuinely cheaper than the
+                                    # reference — otherwise the message
+                                    # template renders it as "📉 -X% от
+                                    # медианы" which IMPLIES a discount,
+                                    # so a +20% premium would falsely look
+                                    # like a deal. ``_detect_threshold_alerts``
+                                    # already uses this same guard.
+                                    delta = compute_price_vs_reference(
+                                        ad, market_stats, category_price_stats
                                     )
+                                    discount_pct = abs(delta) if delta < 0 else None
                                     try:
                                         deal = compute_deal_score(
                                             ad, query=query, market_stats=market_stats
@@ -892,6 +987,10 @@ async def _check_trackers_inner(
                                     internal_user_id=tracker.user_id,
                                     message=listing_msg,
                                     reply_markup=keyboard,
+                                    # AUDIT-LOW: same (user, ad, event)
+                                    # across trackers in the same query
+                                    # group → one Telegram message.
+                                    dedup_key=f"new_listing:{state.ad_id}",
                                 ))
 
                             # Send per-listing enhanced notifications for price drops
@@ -903,10 +1002,15 @@ async def _check_trackers_inner(
                                 )
                                 discount_pct = None
                                 if ad is not None:
-                                    discount_pct = abs(
-                                        compute_price_vs_reference(
-                                            ad, market_stats, category_price_stats
-                                        )
+                                    # Sign-aware: see new-listing branch
+                                    # above. A price drop on a listing
+                                    # that's still above market shouldn't
+                                    # be advertised as "📊 -X% от медианы".
+                                    delta_vs_ref = compute_price_vs_reference(
+                                        ad, market_stats, category_price_stats
+                                    )
+                                    discount_pct = (
+                                        abs(delta_vs_ref) if delta_vs_ref < 0 else None
                                     )
                                 drop_msg = _build_price_drop_message(
                                     state,
@@ -924,6 +1028,8 @@ async def _check_trackers_inner(
                                     internal_user_id=tracker.user_id,
                                     message=drop_msg,
                                     reply_markup=keyboard,
+                                    # AUDIT-LOW: dedup across same-user trackers.
+                                    dedup_key=f"price_drop:{state.ad_id}",
                                 ))
 
                             # Send trend reversal as a separate message (uses old keyboard)
@@ -952,6 +1058,12 @@ async def _check_trackers_inner(
                                         internal_user_id=tracker.user_id,
                                         message=trend_msg,
                                         reply_markup=keyboard,
+                                        # AUDIT-LOW: trend signal is
+                                        # query-level — two trackers on
+                                        # the same query group share the
+                                        # same TrendReversal object, so
+                                        # dedup on the search_key.
+                                        dedup_key=f"trend_reversal:{search_key}",
                                     ))
 
                             tracker.last_seen_ad_id = newest_id
@@ -1061,11 +1173,23 @@ class _TrackerNotifyJob:
     argument list — internal_user_id is kept so a blocked-user outcome
     can trigger the same per-user tracker deactivation as before,
     batched across the whole tick.
+
+    AUDIT-LOW (cross-tracker dedup): ``dedup_key`` is set when two
+    trackers belonging to the SAME user can legitimately observe the
+    same underlying event (e.g. one user owns two trackers for
+    "iphone 14 pro" with different price ceilings — both fire on the
+    same listing). Without dedup the user gets two near-identical
+    Telegram messages. ``_dispatch_tracker_notifications`` collapses
+    jobs sharing the same ``(telegram_user_id, dedup_key)`` to a
+    single send. Jobs with ``dedup_key=None`` are not deduped (used
+    for threshold messages, which legitimately differ per tracker
+    because each tracker has its own price/discount threshold).
     """
     telegram_user_id: int
     internal_user_id: int
     message: str
     reply_markup: object | None
+    dedup_key: str | None = None
 
 
 async def _dispatch_tracker_notifications(
@@ -1100,6 +1224,34 @@ async def _dispatch_tracker_notifications(
     by_user: dict[int, list[_TrackerNotifyJob]] = defaultdict(list)
     for job in jobs:
         by_user[job.telegram_user_id].append(job)
+
+    # AUDIT-LOW (cross-tracker dedup): collapse jobs sharing the same
+    # ``(telegram_user_id, dedup_key)``. Within each user's queue we
+    # keep the FIRST occurrence of each dedup_key — order is the same
+    # as enqueue order (insertion order is preserved by ``defaultdict``
+    # + ``list``), so the message tied to the earlier-iterated tracker
+    # wins. Jobs with ``dedup_key=None`` (threshold messages) are kept
+    # verbatim because each tracker's threshold is genuinely
+    # independent.
+    deduped_count = 0
+    for user_id, user_jobs in by_user.items():
+        seen_keys: set[str] = set()
+        unique: list[_TrackerNotifyJob] = []
+        for job in user_jobs:
+            if job.dedup_key is None:
+                unique.append(job)
+                continue
+            if job.dedup_key in seen_keys:
+                deduped_count += 1
+                continue
+            seen_keys.add(job.dedup_key)
+            unique.append(job)
+        by_user[user_id] = unique
+    if deduped_count:
+        logger.info(
+            "Tracker notifications: deduped %d cross-tracker duplicate(s)",
+            deduped_count,
+        )
 
     sem = asyncio.Semaphore(_TRACKER_USER_CONCURRENCY)
 
@@ -1155,6 +1307,10 @@ async def _dispatch_tracker_notifications(
                     message=job.message,
                     source="tracker",
                     internal_user_id=job.internal_user_id,
+                    # AUDIT-LOW: see _queue_notification_dlq docstring
+                    # — preserve the keyboard so a retried tracker
+                    # alert still carries its action buttons.
+                    reply_markup=job.reply_markup,
                 )
             await session.commit()
             if blocked_user_ids:
@@ -1274,6 +1430,9 @@ async def check_reminders(
                     message=_text,
                     source="reminder",
                     internal_user_id=reminder.user_id,
+                    # AUDIT-LOW: keep the reminder's "📌 Открыть сделку"
+                    # web-app button across retries.
+                    reply_markup=_kb,
                 )
 
         if blocked_user_ids:
@@ -1593,20 +1752,33 @@ async def retry_telegram_notification_dlq(
         # Snapshot the bytes we need before we leave the session — the
         # async send loop runs without a session open so we don't block
         # connections on outbound I/O.
-        snapshots: list[tuple[int, int, int | None, str, int]] = [
-            (row.id, row.telegram_user_id, row.user_id, row.message, row.retry_count)
+        # AUDIT-LOW (audit follow-up): also snapshot the serialized
+        # keyboard so the retry can rebuild the inline buttons. We
+        # keep it as raw JSON in the snapshot tuple and deserialize
+        # lazily on the send side — that way pympling 50 rows doesn't
+        # do 50 InlineKeyboardMarkup constructions if most of them
+        # never get sent (e.g. a user blocks the bot mid-pump).
+        snapshots: list[tuple[int, int, int | None, str, int, str | None]] = [
+            (
+                row.id,
+                row.telegram_user_id,
+                row.user_id,
+                row.message,
+                row.retry_count,
+                row.reply_markup_json,
+            )
             for row in rows
         ]
 
-    by_user: dict[int, list[tuple[int, int | None, str, int]]] = defaultdict(list)
-    for row_id, tg_id, user_id, message, retry_count in snapshots:
-        by_user[tg_id].append((row_id, user_id, message, retry_count))
+    by_user: dict[int, list[tuple[int, int | None, str, int, str | None]]] = defaultdict(list)
+    for row_id, tg_id, user_id, message, retry_count, markup_json in snapshots:
+        by_user[tg_id].append((row_id, user_id, message, retry_count, markup_json))
 
     sem = asyncio.Semaphore(_TRACKER_USER_CONCURRENCY)
 
     async def _drain(
         tg_user_id: int,
-        items: list[tuple[int, int | None, str, int]],
+        items: list[tuple[int, int | None, str, int, str | None]],
     ) -> tuple[int, list[int], list[tuple[int, int]], int | None]:
         """Send every queued message for one user, serially.
 
@@ -1621,9 +1793,17 @@ async def retry_telegram_notification_dlq(
         bump_ids: list[tuple[int, int]] = []
         blocked_internal_id: int | None = None
         async with sem:
-            for row_id, user_id, message, retry_count in items:
+            for row_id, user_id, message, retry_count, markup_json in items:
                 outcome = await _send_message_classified(
-                    bot, tg_user_id, message,
+                    bot,
+                    tg_user_id,
+                    message,
+                    # AUDIT-LOW: rebuild the inline keyboard from JSON
+                    # so the retried message carries its action
+                    # buttons (📌 В покупки / ⭐ В Избранное / 🔗
+                    # Открыть, or the trend-alert pair). Falls back to
+                    # plain text if the JSON is missing/malformed.
+                    reply_markup=_deserialize_reply_markup(markup_json),
                 )
                 if outcome == "sent":
                     sent_count += 1

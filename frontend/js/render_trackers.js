@@ -151,6 +151,12 @@ function createRenderTrackers(context) {
         );
     }
 
+    function _isActiveWatchAd(adId) {
+        return (state.watchlist?.items || []).some(
+            (w) => _sameAdId(w.ad_id, adId),
+        );
+    }
+
     /* ===== Tracker Status ===== */
 
     function renderTrackerStatus() {
@@ -428,14 +434,25 @@ function createRenderTrackers(context) {
             ? state.trackers.events.filter((event) => event.tracker_id === state.trackers.eventFilterTrackerId)
             : state.trackers.events.slice();
 
+        // Defense in depth: query-level market signals (e.g.
+        // ``trend_reversal``) have no ad_id / link — they must never
+        // be rendered as listing cards because the action buttons
+        // (Открыть / В покупки / Kufar →) all silently no-op without
+        // a real listing behind them. The API already filters these
+        // out by default, but skip-on-render here keeps any stale or
+        // explicit-filter responses from leaking into the feed.
+        const renderableEvents = trackerScopedEvents.filter(
+            (event) => event && event.ad_id != null && event.event_type !== "trend_reversal",
+        );
+
         let dropCount = 0, newCount = 0, thresholdCount = 0, discountAlertCount = 0;
-        for (const e of trackerScopedEvents) {
+        for (const e of renderableEvents) {
             if (e.event_type === "price_drop") dropCount++;
             else if (e.event_type === "new_listing") newCount++;
             else if (e.event_type === "price_threshold_alert") thresholdCount++;
             else if (e.event_type === "discount_alert") discountAlertCount++;
         }
-        const totalCount = trackerScopedEvents.length;
+        const totalCount = renderableEvents.length;
 
         if (elements.trackerEventsBadge) {
             elements.trackerEventsBadge.textContent = totalCount > 0 ? `${totalCount} событий` : "чат + Mini App";
@@ -485,7 +502,7 @@ function createRenderTrackers(context) {
         }
 
         // Filter events by selected tracker first, then by event type
-        let filteredEvents = trackerScopedEvents.filter((event) => {
+        let filteredEvents = renderableEvents.filter((event) => {
             if (state.trackers.eventFilter === "all") {
                 return true;
             }
@@ -588,12 +605,14 @@ function createRenderTrackers(context) {
                 cardModifier = " discount-alert";
             }
             const inLeads = _isActiveLeadAd(event.ad_id);
+            const inWatchlist = _isActiveWatchAd(event.ad_id);
             const leadText = inLeads ? "В покупках" : "В покупки";
+            const watchText = inWatchlist ? "В избранном" : "В избранное";
             const eventTitle = event.title || "лот";
 
             const card = domEl(
                 "article",
-                { className: `tracker-event-card${cardModifier}` },
+                { className: `tracker-event-card${cardModifier}`, attrs: { role: "button", "aria-label": `Открыть «${eventTitle}»`, tabindex: "0" } },
                 domEl(
                     "div",
                     { className: "event-header" },
@@ -619,7 +638,6 @@ function createRenderTrackers(context) {
                 domEl(
                     "div",
                     { className: "event-actions" },
-                    domEl("button", { className: "listing-btn", type: "button", dataset: { role: "open-query" }, text: "Открыть" }),
                     domEl("button", {
                         className: "listing-btn",
                         type: "button",
@@ -629,6 +647,15 @@ function createRenderTrackers(context) {
                             ? { disabled: true, "aria-disabled": "true", "aria-label": `«${eventTitle}» уже в покупках` }
                             : { "aria-label": `Добавить «${eventTitle}» в покупки` },
                     }),
+                    domEl("button", {
+                        className: "listing-btn",
+                        type: "button",
+                        dataset: { role: "watch" },
+                        text: watchText,
+                        attrs: inWatchlist
+                            ? { disabled: true, "aria-disabled": "true", "aria-label": `«${eventTitle}» уже в избранном` }
+                            : { "aria-label": `Добавить «${eventTitle}» в избранное` },
+                    }),
                     domEl("a", {
                         className: "listing-btn listing-btn--kufar",
                         text: "Kufar →",
@@ -637,21 +664,23 @@ function createRenderTrackers(context) {
                 ),
             );
 
-            card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
-                if (event.query) {
-                    elements.searchInput.value = event.query;
-                    state.search.query = event.query;
-                }
-                state.search.strictSearch = Boolean(event.strict_mode);
-                if (context._hooks?.renderStrictSearch) context._hooks.renderStrictSearch();
-                void actions.openListingDetail({
-                    ad_id: event.ad_id,
-                    title: event.title,
-                    link: event.link,
-                    price_byn: event.price_byn,
-                });
+            card.dataset.adId = String(event.ad_id);
+
+            const detailItem = { ad_id: event.ad_id, title: event.title, link: event.link, price_byn: event.price_byn, query: event.query };
+
+            card.querySelector(".event-header")?.addEventListener("click", () => {
+                void actions.openListingDetail(detailItem);
             });
+
+            card.addEventListener("keydown", (e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                if (e.target !== card) return;
+                e.preventDefault();
+                void actions.openListingDetail(detailItem);
+            });
+
             card.querySelector('[data-role="lead"]')?.addEventListener("click", (clickEvent) => {
+                clickEvent.stopPropagation();
                 const button = clickEvent.currentTarget;
                 if (button.disabled) return;
                 void Promise.resolve(actions.addLeadFromListing(
@@ -660,6 +689,7 @@ function createRenderTrackers(context) {
                         title: event.title,
                         link: event.link,
                         price_byn: event.price_byn,
+                        thumbnail: event.thumbnail || null,
                         flip_estimates: [],
                     },
                     "tracker_event",
@@ -672,6 +702,25 @@ function createRenderTrackers(context) {
                     button.setAttribute("aria-label", `«${eventTitle}» уже в покупках`);
                 });
             });
+
+            card.querySelector('[data-role="watch"]')?.addEventListener("click", (clickEvent) => {
+                clickEvent.stopPropagation();
+                const button = clickEvent.currentTarget;
+                if (button.disabled) return;
+                void Promise.resolve(actions.addWatchlistFromListing(
+                    { ad_id: event.ad_id, title: event.title, link: event.link, price_byn: event.price_byn, thumbnail: event.thumbnail || null },
+                    event.query
+                )).then((changed) => {
+                    if (!changed) return;
+                    button.textContent = "В избранном";
+                    button.disabled = true;
+                    button.setAttribute("aria-disabled", "true");
+                    button.setAttribute("aria-label", `«${eventTitle}» уже в избранном`);
+                    // Mutual exclusion: if watchlist accepted, lead button stays enabled
+                    // (addWatchlistFromListing already rejects if in leads).
+                });
+            });
+
             return card;
         }
 
@@ -696,8 +745,13 @@ function createRenderTrackers(context) {
     function renderTrackerEventFilters() {
         // Tally events by event_type so each filter chip can show how
         // many alerts it represents — gives the user a sense of where
-        // the action is before they tap. "all" mirrors the total.
-        const events = state.trackers.events || [];
+        // the action is before they tap. "all" mirrors the total of
+        // listing-level events only — query-level signals like
+        // ``trend_reversal`` have no ad_id and would render as broken
+        // cards, so they're excluded from the feed counters too.
+        const events = (state.trackers.events || []).filter(
+            (event) => event && event.ad_id != null && event.event_type !== "trend_reversal",
+        );
         const total = events.length;
         let priceDrops = 0;
         let newListings = 0;

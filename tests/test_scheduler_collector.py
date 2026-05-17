@@ -28,11 +28,13 @@ from scheduler.collector import (
     _build_price_drop_message,
     _build_threshold_message,
     _build_tracker_message,
+    _deserialize_reply_markup,
     _dispatch_tracker_notifications,
     _format_price_byn,
     _recent_event_keys,
     _recent_events_by_tracker,
     _recent_trend_event_tracker_ids,
+    _serialize_reply_markup,
     _TrackerNotifyJob,
     check_reminders,
     check_trackers,
@@ -1932,3 +1934,316 @@ async def test_persist_tracker_events_thumbnail_none_when_no_images(
     await session.flush()
 
     assert events[0].thumbnail is None
+
+
+# ---------------------------------------------------------------------------
+# AUDIT-LOW: cross-tracker dedup of pending Telegram notifications
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dispatch_tracker_notifications_dedups_same_user_same_ad(
+    mock_bot: AsyncMock,
+):
+    """If a user owns two trackers for the same query (e.g. different
+    price ceilings) and a single ad passes both filter sets, the user
+    should get ONE Telegram message — not two near-identical pings.
+
+    Dedup keys jobs sharing ``(telegram_user_id, dedup_key)``; the
+    first-enqueued job wins so the message tied to the earlier-iterated
+    tracker is the one delivered."""
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=701, first_name="Dup")
+        session.add(user)
+        await session.flush()
+        session.add(Tracker(user_id=user.id, query="iphone", strict_mode=False))
+        session.add(Tracker(user_id=user.id, query="iphone", strict_mode=True))
+        await session.commit()
+        u_id = user.id
+
+    # Two jobs for the same (user, ad, event) — should collapse to 1.
+    jobs = [
+        _TrackerNotifyJob(701, u_id, "msg-strict", None, dedup_key="new_listing:42"),
+        _TrackerNotifyJob(701, u_id, "msg-loose", None, dedup_key="new_listing:42"),
+        # Different ad → goes through.
+        _TrackerNotifyJob(701, u_id, "msg-other", None, dedup_key="new_listing:99"),
+        # Threshold-style job (dedup_key=None) is NOT collapsed.
+        _TrackerNotifyJob(701, u_id, "msg-threshold-A", None, dedup_key=None),
+        _TrackerNotifyJob(701, u_id, "msg-threshold-B", None, dedup_key=None),
+    ]
+    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+
+    # 1 deduped + 1 unique listing + 2 threshold = 4 sends; first
+    # listing job (msg-strict) wins.
+    assert total == 4
+    sent_messages = [
+        call.kwargs.get("text") or call.args[1] if len(call.args) > 1 else call.kwargs.get("text")
+        for call in mock_bot.send_message.await_args_list
+    ]
+    assert "msg-strict" in sent_messages
+    assert "msg-loose" not in sent_messages  # deduped
+    assert "msg-other" in sent_messages
+    assert "msg-threshold-A" in sent_messages
+    assert "msg-threshold-B" in sent_messages
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tracker_notifications_dedup_is_per_user(
+    mock_bot: AsyncMock,
+):
+    """Two different users can both receive the same dedup_key — the
+    dedup is scoped per-user, not global."""
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        u1 = make_user(telegram_user_id=801, first_name="A")
+        u2 = make_user(telegram_user_id=802, first_name="B")
+        session.add_all([u1, u2])
+        await session.flush()
+        session.add(Tracker(user_id=u1.id, query="x", strict_mode=False))
+        session.add(Tracker(user_id=u2.id, query="x", strict_mode=False))
+        await session.commit()
+        u1_id, u2_id = u1.id, u2.id
+
+    jobs = [
+        _TrackerNotifyJob(801, u1_id, "user-1", None, dedup_key="new_listing:7"),
+        _TrackerNotifyJob(802, u2_id, "user-2", None, dedup_key="new_listing:7"),
+    ]
+    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+
+    assert total == 2
+    assert mock_bot.send_message.await_count == 2
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# AUDIT-LOW: DLQ keyboard preservation across retries
+# ---------------------------------------------------------------------------
+
+def test_serialize_reply_markup_roundtrip() -> None:
+    """``_serialize_reply_markup`` + ``_deserialize_reply_markup`` must
+    produce a markup with the same button text/callback_data as the
+    original — this is what makes a DLQ retry land with usable
+    "📌 В покупки" / "⭐ В Избранное" / "🔗 Открыть" buttons."""
+    from bot.keyboards import enhanced_alert_keyboard
+
+    original = enhanced_alert_keyboard(
+        ad_id=4242, listing_url="https://www.kufar.by/item/4242",
+    )
+    payload = _serialize_reply_markup(original)
+    assert payload is not None
+    assert "В покупки" in payload
+    assert "add_lead:4242" in payload
+
+    restored = _deserialize_reply_markup(payload)
+    assert restored is not None
+    # Same shape as the original — first row has both action buttons.
+    assert restored.inline_keyboard[0][0].text == "📌 В покупки"
+    assert restored.inline_keyboard[0][0].callback_data == "add_lead:4242"
+    assert restored.inline_keyboard[0][1].text == "⭐ В Избранное"
+    # Second row has the URL button.
+    assert restored.inline_keyboard[1][0].text == "🔗 Открыть"
+    assert restored.inline_keyboard[1][0].url == "https://www.kufar.by/item/4242"
+
+
+def test_serialize_reply_markup_handles_none_and_garbage() -> None:
+    """Robustness: serializer/deserializer must never raise on bad input
+    — losing a keyboard on retry is cosmetic, but raising here would
+    drop the entire DLQ row or block the pump."""
+    assert _serialize_reply_markup(None) is None
+    # Plain object with no model_dump_json — falls through to None.
+    assert _serialize_reply_markup({"not": "a markup"}) is None
+    assert _deserialize_reply_markup(None) is None
+    assert _deserialize_reply_markup("") is None
+    assert _deserialize_reply_markup("{not valid json") is None
+
+
+@pytest.mark.asyncio
+async def test_dlq_retry_pump_preserves_inline_keyboard(mock_bot: AsyncMock):
+    """End-to-end: a DLQ row written with a serialized keyboard must
+    have that keyboard rebuilt and passed back to ``send_message`` on
+    retry. Pre-fix this dropped the markup and the retried message
+    arrived as plain text with no action buttons."""
+    from bot.keyboards import enhanced_alert_keyboard
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    keyboard = enhanced_alert_keyboard(
+        ad_id=999, listing_url="https://www.kufar.by/item/999",
+    )
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=901, first_name="DLQ")
+        session.add(user)
+        await session.flush()
+        # Hand-craft the DLQ row with a serialized keyboard.
+        session.add(
+            TelegramNotificationDLQ(
+                user_id=user.id,
+                telegram_user_id=901,
+                source="tracker",
+                message="iPhone 15 Pro 1100 BYN",
+                error_kind="retry",
+                reply_markup_json=_serialize_reply_markup(keyboard),
+            )
+        )
+        await session.commit()
+
+    sent = await retry_telegram_notification_dlq(mock_bot, sf)
+    assert sent == 1
+
+    # The pump rebuilt the keyboard from JSON and passed it through to
+    # send_message. Verify by inspecting the call.
+    assert mock_bot.send_message.await_count == 1
+    call = mock_bot.send_message.await_args
+    reply_markup = call.kwargs.get("reply_markup")
+    assert reply_markup is not None
+    assert reply_markup.inline_keyboard[0][0].callback_data == "add_lead:999"
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dlq_retry_pump_falls_back_to_plain_text_when_no_markup(
+    mock_bot: AsyncMock,
+):
+    """Backward-compat: rows queued before the schema change have
+    NULL ``reply_markup_json`` and must still send (just without
+    buttons) — the retry pump shouldn't refuse to dispatch them."""
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=902, first_name="Legacy")
+        session.add(user)
+        await session.flush()
+        session.add(
+            TelegramNotificationDLQ(
+                user_id=user.id,
+                telegram_user_id=902,
+                source="tracker",
+                message="legacy row, no keyboard",
+                error_kind="retry",
+                reply_markup_json=None,
+            )
+        )
+        await session.commit()
+
+    sent = await retry_telegram_notification_dlq(mock_bot, sf)
+    assert sent == 1
+    call = mock_bot.send_message.await_args
+    assert call.kwargs.get("reply_markup") is None
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# AUDIT-LOW: _MAX_EVENTS_PER_TYPE cap is logged when it bites
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_persist_tracker_events_logs_when_max_events_cap_drops_events(
+    populated_session,
+    caplog,
+):
+    """When ``sync_result.new_listings`` exceeds the per-type cap, the
+    overflow is silently sliced off — log a single info line so the
+    drop is observable."""
+    import logging
+
+    session, user, tracker = populated_session
+    now = datetime.now(UTC)
+    cap = collector._MAX_EVENTS_PER_TYPE
+    overflow = 3
+    states = [
+        QueryListingState(
+            ad_id=10_000 + i,
+            query=tracker.query,
+            title=f"Listing {i}",
+            last_price_byn=1000.0 + i,
+            link=f"https://www.kufar.by/item/{10_000 + i}",
+            active=True,
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+        for i in range(cap + overflow)
+    ]
+    sync = QuerySyncResult(
+        stats_count=cap + overflow,
+        total_results=cap + overflow,
+        new_listings=states,
+        price_drops=[],
+    )
+
+    with caplog.at_level(logging.INFO, logger="scheduler.collector"):
+        events = await persist_tracker_events(
+            session, tracker, sync, ads_by_id={}, seen=set(),
+        )
+        await session.flush()
+
+    # Only `cap` events persisted — overflow dropped.
+    assert len(events) == cap
+    # And we logged about it.
+    assert any(
+        "_MAX_EVENTS_PER_TYPE cap dropped" in record.getMessage()
+        and "new_listing" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# AUDIT-MEDIUM: discount_pct sign — only show "% от медианы" when below market
+# ---------------------------------------------------------------------------
+
+def test_new_listing_message_omits_discount_when_above_market() -> None:
+    """A listing priced ABOVE the median is a premium, not a discount;
+    the "% от медианы" line implies a discount via its leading "-"
+    prefix in the template, so we MUST NOT emit it for positive
+    deltas. The fix in ``check_trackers`` passes ``discount_pct=None``
+    when ``compute_price_vs_reference >= 0``; this test pins that the
+    template-side rendering matches."""
+    state = QueryListingState(
+        ad_id=1,
+        query="iphone",
+        title="iPhone 15 Pro",
+        last_price_byn=2500.0,
+        link="https://www.kufar.by/item/1",
+        active=True,
+        first_seen_at=datetime.now(UTC),
+        last_seen_at=datetime.now(UTC),
+    )
+    # Pre-fix: collector passed ``abs(+20%)=20`` here even for premiums,
+    # producing a "-20% от медианы" line. Post-fix the collector passes
+    # None for premium-priced listings, so the template never emits it.
+    msg_premium = _build_new_listing_message(
+        state, median_byn=2000.0, discount_pct=None,
+    )
+    assert "% от медианы" not in msg_premium
+    # Genuine discount still renders as before.
+    msg_discount = _build_new_listing_message(
+        state, median_byn=2000.0, discount_pct=20.0,
+    )
+    assert "-20% от медианы" in msg_discount

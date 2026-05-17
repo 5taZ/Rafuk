@@ -399,15 +399,19 @@ async def get_listings(
     #  - Cheap sort: show the post-discount count, not Kufar's raw
     #    broad total, otherwise the "Выгодные" tab repeats the "Новые"
     #    badge even though it renders a much smaller filtered set.
-    #  - Default/category query: use Kufar's raw `total` so the pill
-    #    matches kufar.by's header/sidebar, not the strict/local sample
-    #    or pagination cap.
+    #  - Non-strict, no filters: use Kufar's raw `total` so the pill
+    #    matches kufar.by's header/sidebar.
+    # When strict_search is on, Kufar's broad total (visible_dataset.total_results)
+    # overcounts — the user sees only the strict-matched subset, so the badge
+    # must reflect the rendered card count, not the pre-strict API total.
     if sort == "cheap":
         filtered_total = len(deal_ads)
     elif listing_filters_active:
         filtered_total = (
             visible_dataset.total_results if use_upstream_filter_total else len(sorted_ads)
         )
+    elif strict_search:
+        filtered_total = len(visible_dataset.ads)
     else:
         filtered_total = visible_dataset.total_results
     # `has_more` mirrors the obvious "is there a next page?" question

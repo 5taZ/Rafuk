@@ -255,16 +255,23 @@ def test_listings_category_total_uses_kufar_total_when_strict_sample_is_small(mo
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
+        # strict_search=False: badge should reflect Kufar's broad category total,
+        # not the local sample size. With strict_search=True the badge would
+        # correctly show only the strict-matched count instead.
         response = client.get(
             "/api/v1/listings",
-            params={"query": "Iphone 14 Pro", "currency": "BYN", "category": 17010},
+            params={
+                "query": "Iphone 14 Pro", "currency": "BYN",
+                "category": 17010, "strict_search": False,
+            },
         )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["total"] == 2242
-    assert payload["dataset_count"] == 1
-    assert payload["served_cap"] == 1
+    # strict_search=False: both ads pass through unfiltered
+    assert payload["dataset_count"] == 2
+    assert payload["served_cap"] == 2
     assert payload["is_limited"] is True
 
 
@@ -944,7 +951,9 @@ def test_listings_exposes_served_cap_metadata(monkeypatch) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["total"] == 999
+    # strict_search=True (default): badge shows post-strict count (250 ads
+    # all match "iphone"), not Kufar's broad total (999).
+    assert payload["total"] == 250
     assert payload["dataset_count"] == 250
     assert payload["served_cap"] == 200
     assert payload["is_limited"] is True
@@ -1188,3 +1197,65 @@ def test_listings_singleflight_collapses_concurrent_kufar_fetches(monkeypatch) -
         f"singleflight failed: 6 concurrent calls triggered {fetch_calls} "
         f"Kufar paginations; expected exactly 1"
     )
+
+
+def test_strict_search_badge_total_matches_rendered_card_count(monkeypatch) -> None:
+    """Badge pill must show post-strict count, not Kufar's broad total.
+
+    Regression: user saw "7 объявлений" pill but only 4 cards rendered
+    when strict_search=True filtered out non-matching ads.
+    """
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import listings
+
+    class BroadTotalClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            # Kufar returns 7 broad hits, but only 4 match "Wlmouse Beast X Max"
+            base = {
+                "ad_link": "https://www.kufar.by/item/{}",
+                "list_time": "2026-05-01T10:00:00",
+                "region_id": 6,
+                "ad_parameters": [],
+            }
+
+            def _ad(id_, subject, price):
+                return {**base, "ad_id": id_, "subject": subject,
+                        "price_byn": price, "ad_link": base["ad_link"].format(id_)}
+
+            return {
+                "total": 7,
+                "ads": [
+                    _ad(1, "Wlmouse Beast X Max Black", 300),
+                    _ad(2, "Wlmouse Beast X Max White", 310),
+                    _ad(3, "Wlmouse Beast X Max Red", 290),
+                    _ad(4, "Wlmouse Beast X Max Blue", 320),
+                    # These 3 don't match strict "Wlmouse Beast X Max"
+                    _ad(5, "Wlmouse Beast X Mini", 200),
+                    _ad(6, "Wlmouse Beast Pro", 250),
+                    _ad(7, "Logitech G Pro X", 180),
+                ],
+            }
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(listings, "KufarClient", BroadTotalClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: BroadTotalClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/listings",
+            params={"query": "Wlmouse Beast X Max", "currency": "BYN", "strict_search": True},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    # Badge must show 4 (strict-matched), not 7 (Kufar's broad total)
+    assert payload["total"] == 4, f"Expected 4 strict-matched ads, got {payload['total']}"
+    assert len(payload["listings"]) == 4

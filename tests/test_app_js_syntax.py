@@ -2249,3 +2249,23 @@ def test_theme_init_does_not_inherit_telegram_palette_colours() -> None:
             f"theme integration leaked back: {needle} must not be referenced — "
             "the Mini App keeps its own palette"
         )
+
+
+def test_tracker_event_card_buttons_refactored() -> None:
+    """Tracker event cards: 'Открыть' button removed, 'В избранное'
+    added, header click opens detail via openListingDetail."""
+    src = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
+
+    # (a) old open-query button must be gone
+    assert 'role: "open-query"' not in src
+    assert "open-query" not in src
+
+    # (b) favorites button present
+    assert 'role: "watch"' in src
+
+    # (c) watchlist action wired
+    assert "addWatchlistFromListing" in src
+
+    # (d) header click opens detail
+    assert "event-header" in src
+    assert "openListingDetail" in src

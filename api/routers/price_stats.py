@@ -147,6 +147,9 @@ async def get_price_stats(
     converted.pop("count", None)
     insights = analyze_query_text(query)
     category_distribution = extract_category_distribution(dataset.ads)
+    # When strict_search is on, the user-facing total must match the strict-filtered
+    # count to stay consistent with the listings badge and category chip sums.
+    effective_total = len(dataset.ads) if strict_search else dataset.total_results
     category_total_candidates = 0
     categories_limited = False
 
@@ -166,7 +169,7 @@ async def get_price_stats(
         )
         if len(seed_ids) == 1 and not totals_by_id:
             totals_by_id = {
-                seed_ids[0]: dataset.total_results or category_distribution[0]["count"]
+                seed_ids[0]: effective_total or category_distribution[0]["count"]
             }
         # Build a lookup of existing chips by id so we can update or
         # extend in place. ``totals_by_id`` covers the in-dataset chips
@@ -202,7 +205,7 @@ async def get_price_stats(
         storage_gb=insights.storage_gb,
         ram_gb=insights.ram_gb,
         count=stats.count,
-        total_results=dataset.total_results,
+        total_results=effective_total,
         analyzed_count=stats.count,
         fair_price_from=converted.get("q1"),
         fair_price_to=converted.get("q3"),

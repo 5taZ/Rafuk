@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     column,
     func,
@@ -572,6 +573,16 @@ class TelegramNotificationDLQ(Base):
     )
     next_retry_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
+    )
+    # AUDIT-LOW (audit follow-up): inline keyboard payload preserved
+    # across retries. Stored as the JSON produced by aiogram's
+    # ``InlineKeyboardMarkup.model_dump_json()`` so the retry pump
+    # can rebuild the exact buttons the original send carried.
+    # Nullable: notifications without a keyboard (some DLQ ingress
+    # paths don't bother) leave this as NULL and fall back to a
+    # plain text retry, matching pre-fix behaviour.
+    reply_markup_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -124,6 +124,7 @@ async def test_fetch_category_totals_caps_cold_fanout_calls() -> None:
 
 @pytest.mark.asyncio
 async def test_fetch_category_totals_uses_kufar_sidebar_total_even_below_filtered_cap() -> None:
+    """When strict_search=False, trust Kufar's raw total even if it exceeds the page."""
     class Client:
         async def search(self, **kwargs) -> dict:
             del kwargs
@@ -140,12 +141,39 @@ async def test_fetch_category_totals_uses_kufar_sidebar_total_even_below_filtere
     result = await fetch_category_totals(
         query="Volkswagen Polo",
         currency="BYN",
-        strict_search=True,
+        strict_search=False,
         client=Client(),
         category_ids=[2010],
     )
 
     assert result == {2010: 236}
+
+
+@pytest.mark.asyncio
+async def test_fetch_category_totals_strict_search_uses_filtered_count() -> None:
+    """When strict_search=True, ignore Kufar's total and return strict-filtered count."""
+    class Client:
+        async def search(self, **kwargs) -> dict:
+            del kwargs
+            matching = [
+                {"subject": f"Wlmouse Beast X Max {i}", "price_byn": 100}
+                for i in range(4)
+            ]
+            noisy = [
+                {"subject": f"Wlmouse Beast X {i}", "price_byn": 100}
+                for i in range(3)
+            ]
+            return {"ads": [*matching, *noisy], "total": 7}
+
+    result = await fetch_category_totals(
+        query="Wlmouse Beast X Max",
+        currency="BYN",
+        strict_search=True,
+        client=Client(),
+        category_ids=[5010],
+    )
+
+    assert result == {5010: 4}
 
 
 @pytest.mark.asyncio

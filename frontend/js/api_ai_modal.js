@@ -234,21 +234,13 @@ function createAiModal(context, aiCtx) {
             elements.aiModalSubtitle.textContent = subtitle;
         }
 
-        // Show time estimate notice
-        const bodyEl = elements.aiModal?.querySelector(".ai-modal-body");
-        if (bodyEl) {
-            let notice = bodyEl.querySelector(".ai-time-notice");
-            if (!notice) {
-                notice = document.createElement("p");
-                notice.className = "ai-time-notice";
-                const loadingEl = elements.aiModalLoading;
-                if (loadingEl) {
-                    loadingEl.parentNode.insertBefore(notice, loadingEl.nextSibling);
-                }
-            }
-            notice.textContent = "Обычно 20–60 секунд, сложные объявления — дольше";
-            notice.hidden = !startLoading;
-        }
+        // Wave 26: time notice is now baked into the static HTML
+        // INSIDE .ai-modal-loading (id=ai-time-notice), so we no
+        // longer have to create + insertBefore a sibling here. Just
+        // toggle visibility — when the loader hides on success the
+        // notice hides with it (it's a child of the loader now).
+        const noticeEl = document.getElementById("ai-time-notice");
+        if (noticeEl) noticeEl.hidden = !startLoading;
 
         // Reset completion classes from previous run
         const loadingEl = elements.aiModalLoading;

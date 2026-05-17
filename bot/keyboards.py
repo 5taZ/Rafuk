@@ -101,3 +101,18 @@ def enhanced_alert_keyboard(
     if row2:
         keyboard.append(row2)
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def inline_keyboard_from_json(payload: str) -> InlineKeyboardMarkup:
+    """Reconstruct an ``InlineKeyboardMarkup`` from its JSON payload.
+
+    AUDIT-LOW (audit follow-up): the scheduler's DLQ persists keyboards
+    via ``InlineKeyboardMarkup.model_dump_json()`` so retries can
+    rebuild the exact buttons. The deserialization side lives here in
+    ``bot/keyboards.py`` rather than ``scheduler/collector.py`` because
+    of ARC-P1: the scheduler talks to ``bot/keyboards`` only, never
+    to ``aiogram.types`` directly. Raises whatever
+    ``model_validate_json`` raises on malformed input — the caller
+    in the scheduler swallows it and falls back to plain-text retry.
+    """
+    return InlineKeyboardMarkup.model_validate_json(payload)

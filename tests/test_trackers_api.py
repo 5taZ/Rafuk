@@ -425,3 +425,92 @@ async def test_recent_trend_event_tracker_ids_within_window() -> None:
 
     assert ids == {tracker_recent.id}
     await engine.dispose()
+
+
+async def seed_mixed_tracker_events(session_factory) -> None:
+    """Seed one trend_reversal (query-level) and one new_listing event."""
+    async with session_factory() as session:
+        from api.services.workflow_store import ensure_user
+
+        user_id = await ensure_user(session, telegram_user_id=123456, first_name="Test")
+        await session.commit()
+
+        now = datetime.now(UTC)
+        session.add_all(
+            [
+                # Listing-level: should be returned by default.
+                TrackerEvent(
+                    tracker_id=1,
+                    user_id=user_id,
+                    ad_id=42,
+                    query="iphone 14 pro",
+                    strict_mode=True,
+                    event_type="new_listing",
+                    title="iPhone 14 Pro 256GB",
+                    link="https://www.kufar.by/item/42",
+                    price_byn=2400.0,
+                    created_at=now,
+                ),
+                # Query-level market signal: should be filtered out by default.
+                TrackerEvent(
+                    tracker_id=1,
+                    user_id=user_id,
+                    ad_id=None,
+                    query="iphone 14 pro",
+                    strict_mode=True,
+                    event_type="trend_reversal",
+                    title="Цена ↑ 5.7% после 8.2% падения",
+                    link="",
+                    price_byn=1480.0,
+                    delta_byn=5.7,
+                    parameters={
+                        "low_byn": 1400.0,
+                        "today_byn": 1480.0,
+                        "decline_pct": 8.2,
+                        "rebound_pct": 5.7,
+                    },
+                    created_at=now,
+                ),
+            ]
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_tracker_events_endpoint_filters_out_trend_reversal_by_default() -> None:
+    """trend_reversal events have ad_id=None / link="" — they are
+    query-level market signals delivered via Telegram, not listings.
+
+    The frontend feed renders every event as a listing card with three
+    action buttons (В покупки / В избранное / Kufar →); rendering a trend
+    signal there would produce a card with non-functional buttons. So
+    GET /tracker-events MUST exclude them by default. An explicit
+    ?event_type=trend_reversal filter still works for callers that
+    deliberately want them."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        await seed_mixed_tracker_events(app.state.session_factory)
+
+        # Default: trend_reversal must NOT be in the response.
+        default_resp = client.get("/api/v1/tracker-events")
+        assert default_resp.status_code == 200
+        default_payload = default_resp.json()
+        assert len(default_payload) == 1
+        assert default_payload[0]["event_type"] == "new_listing"
+        assert default_payload[0]["ad_id"] == 42
+
+        # Explicit filter: client can still request trend_reversal if it
+        # really wants to (e.g. an admin/debug view).
+        explicit_resp = client.get(
+            "/api/v1/tracker-events", params={"event_type": "trend_reversal"}
+        )
+        assert explicit_resp.status_code == 200
+        explicit_payload = explicit_resp.json()
+        assert len(explicit_payload) == 1
+        assert explicit_payload[0]["event_type"] == "trend_reversal"
+        assert explicit_payload[0]["ad_id"] is None

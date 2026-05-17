@@ -153,7 +153,10 @@ def test_price_stats_fetches_real_total_for_dominant_category(monkeypatch) -> No
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
     with TestClient(app) as client:
         asyncio.get_event_loop().run_until_complete(init_test_tables(app))
-        response = client.get("/api/v1/price-stats", params={"query": "Iphone 14 Pro"})
+        response = client.get(
+            "/api/v1/price-stats",
+            params={"query": "Iphone 14 Pro", "strict_search": "false"},
+        )
 
     assert response.status_code == 200
     payload = response.json()
@@ -161,3 +164,102 @@ def test_price_stats_fetches_real_total_for_dominant_category(monkeypatch) -> No
     assert payload["total_results"] == 3174
     assert categories["Мобильные телефоны"] == 2242
     assert categories["Аксессуары для телефонов"] == 320
+
+
+def test_price_stats_strict_search_total_results_uses_filtered_count(monkeypatch) -> None:
+    """strict_search=true: total_results reflects post-strict ads count."""
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import price_stats
+
+    class StrictClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            matching = [
+                {"subject": f"Wlmouse Beast X Max {i}", "price_byn": 2000 + i, "category": "5010"}
+                for i in range(4)
+            ]
+            noisy = [
+                {"subject": f"Wlmouse Beast X {i}", "price_byn": 1500 + i, "category": "5010"}
+                for i in range(3)
+            ]
+            return {"ads": [*matching, *noisy], "total": 7}
+
+        async def search(self, **kwargs) -> dict:
+            category = int(kwargs["category"])
+            matching = [
+                {"subject": f"Wlmouse Beast X Max {i}",
+                 "price_byn": 2000 + i, "category": str(category)}
+                for i in range(4)
+            ]
+            noisy = [
+                {"subject": f"Wlmouse Beast X {i}",
+                 "price_byn": 1500 + i, "category": str(category)}
+                for i in range(3)
+            ]
+            return {"ads": [*matching, *noisy], "total": 7}
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(price_stats, "KufarClient", StrictClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: StrictClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        asyncio.get_event_loop().run_until_complete(init_test_tables(app))
+        response = client.get(
+            "/api/v1/price-stats",
+            params={"query": "Wlmouse Beast X Max", "strict_search": "true"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    # strict_search=True: total_results must equal post-strict filtered count (4),
+    # not Kufar's raw broad total (7).
+    assert payload["total_results"] == 4
+
+
+def test_price_stats_non_strict_total_results_uses_kufar_total(monkeypatch) -> None:
+    """With strict_search=false, total_results uses Kufar's raw total as before."""
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.routers import price_stats
+
+    class NonStrictClient:
+        def __init__(self, settings) -> None:
+            del settings
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            return {
+                "ads": [
+                    {"subject": f"Wlmouse Beast X Max {i}", "price_byn": 2000 + i}
+                    for i in range(4)
+                ],
+                "total": 50,
+            }
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(price_stats, "KufarClient", NonStrictClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: NonStrictClient(None)
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        asyncio.get_event_loop().run_until_complete(init_test_tables(app))
+        response = client.get(
+            "/api/v1/price-stats",
+            params={"query": "Wlmouse Beast X Max", "strict_search": "false"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    # strict_search=False: total_results should be Kufar's raw total (50)
+    assert payload["total_results"] == 50

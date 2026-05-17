@@ -597,14 +597,15 @@ function createApiListingAssistant(context) {
     function showResultOverlay() {
         if (resultOverlay) resultOverlay.hidden = false;
         if (resultBox) resultBox.scrollTop = 0;
-        const sheet = modal?.querySelector(".detail-sheet");
-        if (sheet) sheet.classList.add("la-sheet-expanded");
+        // Wave 26: la-sheet-expanded was used to grow the sheet on
+        // result reveal. Now that .ai-sheet and .la-sheet share the
+        // same fixed height there is nothing to grow, so the toggle
+        // is dropped. The class itself is kept as a CSS no-op so any
+        // legacy DOM that still has it does not break.
     }
 
     function hideResultOverlay() {
         if (resultOverlay) resultOverlay.hidden = true;
-        const sheet = modal?.querySelector(".detail-sheet");
-        if (sheet) sheet.classList.remove("la-sheet-expanded");
         _cancelLaProgress();
     }
 
