@@ -123,3 +123,44 @@ def test_delete_expense_happy_path() -> None:
 
         list_resp = client.get(f"/api/v1/leads/{lead['id']}/expenses")
         assert all(e["id"] != expense_id for e in list_resp.json())
+
+
+def test_update_expense_can_clear_notes_with_null() -> None:
+    # A-2: PATCH with {"notes": null} must clear the notes field.
+    # The previous ``if payload.notes is not None`` guard silently
+    # ignored the null and left the old note in place.
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        create_resp = client.post(
+            f"/api/v1/leads/{lead['id']}/expenses",
+            json={"expense_type": "other", "amount_byn": 10.0, "notes": "old note"},
+        )
+        expense_id = create_resp.json()["id"]
+        resp = client.patch(
+            f"/api/v1/leads/{lead['id']}/expenses/{expense_id}",
+            json={"notes": None},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["notes"] is None
+
+
+def test_update_expense_omitted_field_is_unchanged() -> None:
+    # Regression: omitting a field must NOT clear it. Only an
+    # explicit ``null`` should clear (and only for nullable fields).
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        create_resp = client.post(
+            f"/api/v1/leads/{lead['id']}/expenses",
+            json={"expense_type": "other", "amount_byn": 10.0, "notes": "kept"},
+        )
+        expense_id = create_resp.json()["id"]
+        resp = client.patch(
+            f"/api/v1/leads/{lead['id']}/expenses/{expense_id}",
+            json={"amount_byn": 12.0},  # notes intentionally absent
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["amount_byn"] == 12.0
+        assert body["notes"] == "kept"

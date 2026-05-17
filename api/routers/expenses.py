@@ -122,7 +122,15 @@ async def update_expense(
             expense.expense_type = payload.expense_type.value
         if payload.amount_byn is not None:
             expense.amount_byn = payload.amount_byn
-        if payload.notes is not None:
+        # A-2: ``notes`` is the only nullable text field on
+        # DealExpense — a client sending ``{"notes": null}``
+        # legitimately wants to clear it, so we have to
+        # distinguish "field absent" from "field set to None".
+        # The other fields keep ``is not None`` because the
+        # underlying columns are NOT NULL (expense_type and
+        # amount_byn via DB CHECK; expense_date has a
+        # server_default but no nullable=True).
+        if "notes" in payload.model_fields_set:
             expense.notes = payload.notes
         if payload.expense_date is not None:
             expense.expense_date = payload.expense_date

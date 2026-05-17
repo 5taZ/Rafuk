@@ -449,3 +449,59 @@ def test_lead_double_sale_protection(monkeypatch) -> None:
         )
         assert re_sold.status_code == 200
         assert re_sold.json()["sold_price_byn"] == 1900
+
+
+def test_update_lead_notes_round_trip(monkeypatch) -> None:
+    """A-1: PATCH /leads/{id} now respects ``notes`` (used to be
+    silently dropped because update_lead never checked the field).
+    Sending None clears it; omitting the field leaves it untouched.
+    """
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        create = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "macbook",
+                "ad_id": 7777,
+                "title": "MacBook",
+                "link": "https://www.kufar.by/item/7777",
+                "price_byn": 3000,
+                "source": "manual",
+            },
+        )
+        assert create.status_code == 201
+        lead = create.json()
+
+        # Set notes via PATCH.
+        set_notes = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"notes": "haggle hard", "version": lead["version"]},
+        )
+        assert set_notes.status_code == 200
+        assert set_notes.json()["notes"] == "haggle hard"
+
+        # Omitting notes must NOT clear them.
+        bumped = set_notes.json()
+        keep = client.patch(
+            f"/api/v1/leads/{bumped['id']}",
+            json={"target_resale_byn": 3500, "version": bumped["version"]},
+        )
+        assert keep.status_code == 200
+        assert keep.json()["notes"] == "haggle hard"
+
+        # Explicit null clears notes.
+        bumped2 = keep.json()
+        cleared = client.patch(
+            f"/api/v1/leads/{bumped2['id']}",
+            json={"notes": None, "version": bumped2["version"]},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["notes"] is None

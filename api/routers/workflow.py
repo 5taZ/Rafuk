@@ -365,6 +365,11 @@ async def update_lead(
             lead.target_resale_byn = payload.target_resale_byn
         if "buy_price_byn" in payload.model_fields_set:
             lead.buy_price_byn = payload.buy_price_byn
+        if "notes" in payload.model_fields_set:
+            # A-1: schema declared ``notes`` as updatable but the
+            # handler used to silently drop it. PATCH /leads/{id}
+            # now mirrors PATCH /watchlist/{id} for the notes field.
+            lead.notes = payload.notes
         if "sold_price_byn" in payload.model_fields_set:
             # LOGIC-MEDIUM (issues §11.4): once a lead is sold, refuse
             # to overwrite ``sold_price_byn`` with a different value —

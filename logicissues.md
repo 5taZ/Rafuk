@@ -51,17 +51,18 @@ INFO-class findings (D-5..D-12, A-5, A-7, A-8, A-9) are documented but
 * **Patch:** Add `if "notes" in payload.model_fields_set: lead.notes = payload.notes`.
 * **Wave:** 3
 
-### A-2 [MEDIUM] · `update_expense` cannot null fields
+### A-2 [MEDIUM] · `update_expense` cannot null `notes`
 
 * **File:** `api/routers/expenses.py:125`
 * **Evidence:** `if payload.notes is not None: expense.notes = payload.notes`.
-  Same `is not None` guard for `expense_date`.
 * **Why:** A client sending `{"notes": null}` cannot clear notes —
   `None` skips the assignment. Should be `model_fields_set` like
   `update_lead` does for the working fields.
-* **Patch:** Switch `notes` and `expense_date` to `model_fields_set`.
-  `amount_byn` keeps the `is not None` guard because Pydantic enforces
-  `gt=0` and clearing it would violate the DB CHECK.
+* **Patch:** Switch `notes` to `model_fields_set`. `expense_type`
+  and `amount_byn` keep the `is not None` guard because the DB
+  enforces NOT NULL / `gt=0`. `expense_date` is also NOT NULL
+  (server_default=now()), so its existing `is not None` guard is
+  correct — the original audit listing was over-broad.
 * **Wave:** 3
 
 ### A-3 [MEDIUM] · `get_trackers` lacks pagination
