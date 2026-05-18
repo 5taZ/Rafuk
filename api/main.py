@@ -54,15 +54,35 @@ from api.services.kufar_client import KufarClient
 logger = logging.getLogger(__name__)
 
 
+# BE-DEEP-1: shared between the security middleware and the exception handlers
+# so 4xx/5xx responses also carry the headers (Starlette dispatches exception
+# handlers outside the @app.middleware chain).
+def _apply_security_headers(response: Response) -> None:
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    response.headers.setdefault(
+        "Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+    )
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+
+
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     """Handle rate limit exceeded."""
-    return JSONResponse(
+    response = JSONResponse(
         status_code=429,
         content={
             "detail": "Rate limit exceeded. Please try again later.",
             "limit": str(exc.detail),
         },
     )
+    _apply_security_headers(response)
+    req_id = request_id_ctxvar.get(None)
+    if req_id:
+        response.headers["X-Request-ID"] = req_id
+    return response
 
 
 @asynccontextmanager
@@ -243,10 +263,15 @@ def create_app() -> FastAPI:
             exc,
             exc_info=True,
         )
-        return JSONResponse(
+        response = JSONResponse(
             status_code=500,
             content={"detail": "Внутренняя ошибка сервера. Попробуйте позже."},
         )
+        _apply_security_headers(response)
+        req_id = request_id_ctxvar.get(None)
+        if req_id:
+            response.headers["X-Request-ID"] = req_id
+        return response
 
     # INF-H9: request-ID middleware. Generate (or accept) a short ID
     # for each request and stash it on a contextvar so every
@@ -278,26 +303,7 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
         response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        # X-Frame-Options: DENY for API responses (frontend uses SAMEORIGIN via nginx)
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        # FE-H6 / SEC-LOW: API responses are JSON, no <script>/<style>
-        # contexts to lock down — but the modern cross-origin trio
-        # still pays off:
-        #   * Permissions-Policy clamps device APIs even if a future
-        #     route accidentally serves HTML.
-        #   * COOP cuts a window opener off from this origin, blocking
-        #     a class of XS-leak attacks via window.opener.
-        #   * CORP says "this resource isn't shareable cross-origin",
-        #     stopping a malicious page from `<img src=...>`-loading
-        #     our JSON to probe for side-channels.
-        response.headers["Permissions-Policy"] = (
-            "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
-        )
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-        response.headers["Cross-Origin-Resource-Policy"] = "same-site"
+        _apply_security_headers(response)
         return response
 
     # Cache-Control middleware

@@ -905,3 +905,20 @@ def test_nginx_serves_sw_js_without_long_cache() -> None:
     assert "location = /sw.js" in nginx_conf
     assert "no-cache" in nginx_conf
     assert "Service-Worker-Allowed" in nginx_conf
+
+
+def test_frontend_meta_csp_includes_webz_telegram_org() -> None:
+    """G-10 / FE-NEW-2: meta CSP frame-ancestors must list all three
+    Telegram embedders so it matches the nginx policy."""
+    index_text = HTML_FILE.read_text(encoding="utf-8")
+    assert "https://webz.telegram.org" in index_text
+    # Check the actual frame-ancestors directive in the meta CSP content
+    for line in index_text.splitlines():
+        stripped = line.strip()
+        if ("frame-ancestors" in stripped
+                and not stripped.startswith("*")
+                and not stripped.startswith("<!--")):
+            assert "https://webz.telegram.org" in stripped, (
+                "frame-ancestors directive must include https://webz.telegram.org"
+            )
+            break
