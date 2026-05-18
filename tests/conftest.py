@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,11 +9,18 @@ import fastapi.testclient as _ftc
 import pytest
 from sqlalchemy import Integer as _Integer
 
+os.environ["ENV"] = "test"
+os.environ["DEBUG"] = "true"
+os.environ["AUTH_BYPASS"] = "true"
+os.environ.setdefault("BOT_TOKEN", "7123456789:AAFtesttoken")
+os.environ.setdefault("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:"))
+os.environ.setdefault("REDIS_URL", "redis://localhost:6380/15")
+os.environ.setdefault("API_BASE_URL", "https://kufar-analytics.example.com")
+os.environ.setdefault("MINI_APP_URL", "https://kufar-analytics.example.com/app")
+
 
 @pytest.fixture(autouse=True)
 def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    import os
-
     monkeypatch.setenv("BOT_TOKEN", "7123456789:AAFtesttoken")
 
     # Use TEST_DATABASE_URL if set (CI uses PostgreSQL), otherwise SQLite for local dev
@@ -27,6 +35,7 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6380/15")
     monkeypatch.setenv("API_BASE_URL", "https://kufar-analytics.example.com")
     monkeypatch.setenv("MINI_APP_URL", "https://kufar-analytics.example.com/app")
+    monkeypatch.setenv("ENV", "test")
     # Tests must never hit real telegram auth (they use dependency_overrides).
     # Debug mode is on for verbose logging / extra dev origins.
     monkeypatch.setenv("DEBUG", "true")

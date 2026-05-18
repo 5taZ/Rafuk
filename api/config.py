@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ipaddress
-import os
 from functools import lru_cache
 from urllib.parse import urlparse
 
@@ -70,6 +69,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    env: str = "development"
     bot_token: SecretStr
     database_url: str
     redis_url: str
@@ -109,13 +109,18 @@ class Settings(BaseSettings):
     # a reasonable balance between security and usability.
     telegram_init_data_max_age: int = 7200
 
+    @field_validator("env", mode="before")
+    @classmethod
+    def _normalize_env(cls, v: object) -> str:
+        return str(v or "development").strip().lower() or "development"
+
     @field_validator("debug")
     @classmethod
     def _force_debug_off_in_production(cls, v: bool, info) -> bool:
         """Prevent debug=True when connected to a non-localhost database."""
         if not v:
             return False
-        if os.getenv("ENV") == "production":
+        if info.data.get("env") == "production":
             raise ValueError(
                 "debug=True is not allowed when ENV=production."
             )
@@ -138,7 +143,7 @@ class Settings(BaseSettings):
         """
         if not v:
             return False
-        if os.getenv("ENV") == "production":
+        if info.data.get("env") == "production":
             raise ValueError(
                 "auth_bypass=True is not allowed when ENV=production."
             )
@@ -203,6 +208,7 @@ class Settings(BaseSettings):
     # falls back to the legacy initData-forge path with a
     # deprecation warning so existing deployments keep working.
     internal_service_token: SecretStr | None = None
+    admin_telegram_user_ids: str = ""
 
     # Image proxy (WebP/AVIF transcode of Kufar JPEGs).
     image_proxy_enabled: bool = True
@@ -214,8 +220,8 @@ class Settings(BaseSettings):
 
     @field_validator("redis_url")
     @classmethod
-    def validate_production_redis_auth(cls, v: str) -> str:
-        if os.getenv("ENV") != "production" or _is_local_url(v):
+    def validate_production_redis_auth(cls, v: str, info) -> str:
+        if info.data.get("env") != "production" or _is_local_url(v):
             return v
         parsed = urlparse(v)
         if parsed.scheme in {"redis", "rediss"} and parsed.password is None:
@@ -252,7 +258,7 @@ class Settings(BaseSettings):
 
 
 def is_production_like_deployment(settings: Settings) -> bool:
-    if os.getenv("ENV") == "production":
+    if settings.env == "production":
         return True
     return not _is_local_database_url(settings.database_url)
 

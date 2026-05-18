@@ -23,6 +23,7 @@ from api.metrics import (
     render_prometheus_metrics_with_backend,
 )
 from api.routers import (
+    admin,
     ai_analysis,
     ai_listing_assistant,
     ai_tools,
@@ -37,6 +38,7 @@ from api.routers import (
     listings,
     price_history,
     price_stats,
+    profile,
     reminders,
     segments,
     trackers,
@@ -164,7 +166,14 @@ def create_app() -> FastAPI:
     # early as possible so any import-time warnings we log land in
     # the right formatter.
     configure_logging(service="api")
-    app = FastAPI(title="Rafuk API", lifespan=lifespan)
+    production_like = is_production_like_deployment(settings)
+    app = FastAPI(
+        title="Rafuk API",
+        lifespan=lifespan,
+        docs_url=None if production_like else "/docs",
+        redoc_url=None if production_like else "/redoc",
+        openapi_url=None if production_like else "/openapi.json",
+    )
 
     @app.get("/metrics", include_in_schema=False)
     async def metrics_endpoint(request: Request) -> Response:
@@ -481,6 +490,8 @@ def create_app() -> FastAPI:
     app.include_router(expenses.router, prefix="/api/v1")
     app.include_router(reminders.router, prefix="/api/v1")
     app.include_router(health.router, prefix="/api/v1")
+    app.include_router(profile.router, prefix="/api/v1")
+    app.include_router(admin.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
     app.include_router(ai_analysis.router, prefix="/api/v1")
     app.include_router(ai_listing_assistant.router, prefix="/api/v1")

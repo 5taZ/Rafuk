@@ -80,6 +80,15 @@ function createApiEvents(context) {
         createExpense,
         deleteExpense,
         exportLeadsCSV,
+        loadProfile,
+        openOverview,
+        openProfile,
+        openAdmin,
+        canUseAiFeature,
+        loadAdminUsers,
+        updateUserStatus,
+        loadAdminStatuses,
+        updateStatusLimits,
         loadAIAnalysis,
         closeAIModal,
         startTrackerRefresh,
@@ -338,6 +347,107 @@ function createApiEvents(context) {
                 }
             });
         }
+    }
+
+    function bindProfileAdminEvents() {
+        let adminQueryTimer = null;
+        elements.profileChip?.addEventListener("click", () => {
+            openProfile({ refresh: !state.profile.data });
+            _haptic("light");
+        });
+        elements.profileContent?.addEventListener("click", (event) => {
+            const action = event.target.closest("[data-profile-action]")?.dataset.profileAction;
+            if (!action) return;
+            if (action === "admin") {
+                void openAdmin();
+            } else if (action === "overview") {
+                openOverview();
+            } else if (action === "retry") {
+                void loadProfile({ silent: false, retry: false });
+            }
+            _haptic("light");
+        });
+        elements.adminBackProfileButton?.addEventListener("click", () => {
+            openProfile();
+            _haptic("light");
+        });
+        elements.adminUsersRefreshButton?.addEventListener("click", () => {
+            void loadAdminUsers({ retry: false });
+            _haptic("light");
+        });
+        elements.adminStatusesRefreshButton?.addEventListener("click", () => {
+            void loadAdminStatuses({ retry: false });
+            _haptic("light");
+        });
+        elements.adminUserQuery?.addEventListener("input", () => {
+            state.admin.query = elements.adminUserQuery.value.trim();
+            clearTimeout(adminQueryTimer);
+            adminQueryTimer = setTimeout(() => {
+                void loadAdminUsers({ silent: true, retry: false });
+            }, 350);
+        });
+        elements.adminUserQuery?.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            clearTimeout(adminQueryTimer);
+            state.admin.query = elements.adminUserQuery.value.trim();
+            void loadAdminUsers({ retry: false });
+        });
+        elements.adminStatusFilter?.addEventListener("change", () => {
+            state.admin.selectedStatus = elements.adminStatusFilter.value || "";
+            void loadAdminUsers({ silent: true, retry: false });
+        });
+        elements.adminUsersList?.addEventListener("click", (event) => {
+            const card = event.target.closest("[data-admin-user-card]");
+            if (!card) return;
+            const telegramUserId = Number(card.dataset.telegramUserId);
+            if (!Number.isFinite(telegramUserId)) return;
+            if (event.target.closest("[data-admin-edit-user]")) {
+                state.admin.editingUserId = telegramUserId;
+                context.markDirty("adminUsers");
+                renderAll();
+                return;
+            }
+            if (event.target.closest("[data-admin-cancel-user]")) {
+                state.admin.editingUserId = null;
+                context.markDirty("adminUsers");
+                renderAll();
+                return;
+            }
+            if (!event.target.closest("[data-admin-save-user]")) return;
+            const statusCode = card.querySelector("[data-admin-user-status]")?.value || "";
+            const expiresRaw = card.querySelector("[data-admin-user-expires]")?.value || "";
+            const note = card.querySelector("[data-admin-user-note]")?.value?.trim() || null;
+            if (!statusCode) {
+                showToast("Выберите статус", "error");
+                return;
+            }
+            let expiresAt = null;
+            if (expiresRaw) {
+                const parsed = new Date(expiresRaw);
+                if (Number.isNaN(parsed.getTime())) {
+                    showToast("Некорректная дата окончания", "error");
+                    return;
+                }
+                expiresAt = parsed.toISOString();
+            }
+            void updateUserStatus(telegramUserId, { status_code: statusCode, expires_at: expiresAt, note });
+        });
+        elements.adminStatusesList?.addEventListener("click", (event) => {
+            const card = event.target.closest("[data-admin-status-card]");
+            if (!card || !event.target.closest("[data-admin-save-status]")) return;
+            const code = card.dataset.statusCode || "";
+            const aiLimit = Number(card.querySelector("[data-admin-status-ai]")?.value || 0);
+            const assistantLimit = Number(card.querySelector("[data-admin-status-assistant]")?.value || 0);
+            if (!Number.isInteger(aiLimit) || !Number.isInteger(assistantLimit) || aiLimit < 0 || assistantLimit < 0) {
+                showToast("Лимиты должны быть целыми числами от 0", "error");
+                return;
+            }
+            void updateStatusLimits(code, {
+                ai_daily_limit: aiLimit,
+                assistant_daily_limit: assistantLimit,
+            });
+        });
     }
 
     function bindFilterEvents() {
@@ -753,7 +863,7 @@ function createApiEvents(context) {
 
     function bindModalEvents() {
         // ── Detail modal ─────────────────────────────────────────────
-        function setDetailActionButton(button, text, disabled) {
+        function setDetailActionButton(button, text, disabled, label) {
             if (!button) return;
             button.textContent = text;
             button.disabled = Boolean(disabled);
@@ -762,6 +872,7 @@ function createApiEvents(context) {
             } else {
                 button.removeAttribute("aria-disabled");
             }
+            if (label) button.setAttribute("aria-label", label);
         }
 
         elements.detailClose?.addEventListener("click", () => {
@@ -777,7 +888,10 @@ function createApiEvents(context) {
                 void Promise.resolve(
                     context.addLeadFromListing(state.detail.data, "detail_modal", state.detail.data.query || state.search.query),
                 ).then((changed) => {
-                    if (changed) setDetailActionButton(elements.detailAddLeadButton, "В покупках", true);
+                    if (!changed) return;
+                    const title = state.detail.data?.title || "товар";
+                    setDetailActionButton(elements.detailAddLeadButton, "В покупках", true, `«${title}» уже в покупках`);
+                    setDetailActionButton(elements.detailAddWatchlistButton, "В избранное", true, `«${title}» уже в покупках`);
                 });
             }
         });
@@ -787,12 +901,15 @@ function createApiEvents(context) {
                 void Promise.resolve(
                     context.addWatchlistFromListing(state.detail.data, state.detail.data.query || state.search.query),
                 ).then((changed) => {
-                    if (changed) setDetailActionButton(elements.detailAddWatchlistButton, "В избранном", true);
+                    if (!changed) return;
+                    const title = state.detail.data?.title || "товар";
+                    setDetailActionButton(elements.detailAddWatchlistButton, "В избранном", true, `«${title}» уже в избранном`);
                 });
             }
         });
 
         elements.detailAiBtn?.addEventListener("click", () => {
+            if (typeof canUseAiFeature === "function" && !canUseAiFeature("ai")) return;
             if (state.detail.data?.ad_id) {
                 void loadAIAnalysis(state.detail.data.ad_id);
             }
@@ -1102,6 +1219,7 @@ function createApiEvents(context) {
         bindSearchEvents();
         bindRecentSearchEvents();
         bindViewTabEvents();
+        bindProfileAdminEvents();
         bindFilterEvents();
         bindDiscountEvents();
         bindTrackerEvents();
@@ -1118,9 +1236,11 @@ function createApiEvents(context) {
         const laOpenBtn = document.getElementById("listing-assistant-open-btn");
         laOpenBtn?.addEventListener("click", async function onFirstLaClick(e) {
             e.stopImmediatePropagation();
+            if (typeof canUseAiFeature === "function" && !canUseAiFeature("assistant")) return;
             await context.ensureAiLoaded();
+            laOpenBtn.removeEventListener("click", onFirstLaClick);
             laOpenBtn.click();
-        }, { once: true });
+        });
     }
 
     return {

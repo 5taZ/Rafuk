@@ -10,6 +10,8 @@ Three thin checks every AI handler runs before doing real work:
   backed by ``cache.incr``. Centralised so every endpoint
   (analyze, listing-assistant, ai-tools) gets the same behaviour
   without re-implementing the math.
+* ``_check_ai_entitlement`` — same status gate as quota consumption,
+  but without spending quota on cache hits.
 * ``_check_ai_consent`` — verify the user granted ``ai_analysis``,
   ``cross_border`` and ``pd_processing`` consent. The skip path is
   tied to ``auth_bypass`` (NOT plain ``debug``); ``auth_bypass``
@@ -34,13 +36,25 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from api.config import get_settings
-from api.models import UserConsent
+from api.models import User, UserConsent
+from api.services.account_status import (
+    BARE_SEARCH_STATUS_CODE,
+    QUOTA_BUCKET_AI,
+    QUOTA_BUCKET_ASSISTANT,
+    _quota_error_message,
+    consume_quota,
+    get_effective_status,
+    get_status_by_code,
+    quota_snapshot,
+)
 from api.services.consent_policy import CURRENT_POLICY_VERSION
 from api.services.workflow_store import resolve_user_id
 
 _REQUIRED_AI_CONSENTS = ("ai_analysis", "cross_border", "pd_processing")
+_ASSISTANT_QUOTA_ENDPOINTS = {"listing", "listing_assistant"}
 
 
 def _check_ai_available():
@@ -68,40 +82,90 @@ async def _check_rate_limit(
     *,
     endpoint: str = "default",
 ) -> None:
-    """Per-user rate limit: hourly per-endpoint + shared daily cap.
+    """Consume one status-based AI quota unit for this endpoint.
 
-    Hits two cache counters via ``incr``: ``ai_rate:{user_id}:{endpoint}``
-    (1h TTL) and ``ai_daily:{user_id}`` (24h TTL). Both raise 429 when
-    the limits are crossed. Limits come from ``settings`` so ops can
-    tune them without redeploying the router.
-
-    Like ``_check_ai_available``, ``get_cache`` is resolved via
-    ``api.routers.ai_analysis`` so per-router test patches keep
-    working.
+    The public signature stays compatible with the old per-endpoint
+    limiter so sibling routers and tests can keep monkeypatching it.
+    ``listing``/``listing_assistant`` spend from the assistant bucket;
+    buyer-facing AI endpoints spend from the shared AI bucket.
     """
     from api.routers import ai_analysis as _aa  # late, preserves test patch
 
     cache = _aa.get_cache(request)
-    settings = getattr(request.app.state, "settings", None)
-    hourly_limit = int(getattr(settings, "ai_hourly_limit", 10) or 10)
-    daily_limit = int(getattr(settings, "ai_daily_limit", 50) or 50)
+    bucket = _quota_bucket_for_endpoint(endpoint)
+    limit = await _status_quota_limit(request, user_id, bucket=bucket)
+    await consume_quota(
+        cache,
+        bucket=bucket,
+        telegram_user_id=user_id,
+        limit=limit,
+    )
 
-    hourly_key = f"ai_rate:{user_id}:{endpoint}"
-    count = await cache.incr(hourly_key, ttl=3600)
 
-    if count > hourly_limit:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Превышен лимит AI-анализов ({hourly_limit} в час)",
+async def _check_ai_entitlement(
+    request: Request,
+    user_id: int,
+    *,
+    endpoint: str = "default",
+) -> None:
+    from api.routers import ai_analysis as _aa  # late, preserves test patch
+
+    bucket = _quota_bucket_for_endpoint(endpoint)
+    limit = await _status_quota_limit(request, user_id, bucket=bucket)
+    if limit > 0:
+        return
+    snapshot = await quota_snapshot(
+        _aa.get_cache(request),
+        bucket=bucket,
+        telegram_user_id=user_id,
+        limit=limit,
+    )
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "premium_required",
+            "bucket": bucket,
+            "used": snapshot.used,
+            "limit": snapshot.limit,
+            "resets_at": snapshot.resets_at.isoformat(),
+            "message": _quota_error_message(bucket, premium_required=True),
+        },
+    )
+
+
+def _quota_bucket_for_endpoint(endpoint: str) -> str:
+    normalized = (endpoint or "").strip().lower()
+    return QUOTA_BUCKET_ASSISTANT if normalized in _ASSISTANT_QUOTA_ENDPOINTS else QUOTA_BUCKET_AI
+
+
+async def _status_quota_limit(request: Request, user_id: int, *, bucket: str) -> int:
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        user = (
+            await session.execute(select(User).where(User.telegram_user_id == int(user_id)))
+        ).scalar_one_or_none()
+        if user is None and int(user_id) > 0:
+            user = User(telegram_user_id=int(user_id), first_name="")
+            session.add(user)
+            try:
+                await session.flush()
+            except IntegrityError:
+                await session.rollback()
+                user = (
+                    await session.execute(
+                        select(User).where(User.telegram_user_id == int(user_id))
+                    )
+                ).scalar_one()
+            else:
+                await session.commit()
+        status = (
+            await get_effective_status(session, user)
+            if user is not None
+            else await get_status_by_code(session, BARE_SEARCH_STATUS_CODE)
         )
-
-    daily_key = f"ai_daily:{user_id}"
-    daily_count = await cache.incr(daily_key, ttl=86400)
-    if daily_count > daily_limit:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Превышен дневной лимит AI-анализов ({daily_limit})",
-        )
+    if bucket == QUOTA_BUCKET_ASSISTANT:
+        return int(status.assistant_daily_limit)
+    return int(status.ai_daily_limit)
 
 
 async def _check_ai_consent(request: Request, user_id: int) -> None:

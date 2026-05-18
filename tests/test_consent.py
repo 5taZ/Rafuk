@@ -201,6 +201,8 @@ async def test_revoke_consent_clears_per_user_cache(client, monkeypatch):
         f"ai_listing:u{target_uid}:abc": {"title_suggestion": "private"},
         f"ai_rate:{target_uid}:default": {"count": 5},
         f"ai_daily:{target_uid}": {"count": 2},
+        f"quota:ai:{target_uid}:2026-05-18": 2,
+        f"quota:assistant:{target_uid}:2026-05-18": 1,
         f"auth:blacklist:{target_uid}": {"reason": "test"},
     }
     for k, v in seeds.items():
@@ -500,6 +502,8 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
         f"ai_listing:u{target_uid}:abc": {"title_suggestion": "private"},
         f"ai_rate:{target_uid}:default": {"count": 5},
         f"ai_daily:{target_uid}": {"count": 2},
+        f"quota:ai:{target_uid}:2026-05-18": 2,
+        f"quota:assistant:{target_uid}:2026-05-18": 1,
         f"auth:blacklist:{target_uid}": {"reason": "test"},
         "auth:initdata:targetdigest": {
             "user_id": target_uid,
@@ -510,6 +514,7 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
         f"ai_task:u{other_uid}:keep": {"x": 1},
         f"ai_listing:u{other_uid}:keep": {"title_suggestion": "keep"},
         f"ai_rate:{other_uid}:default": {"count": 5},
+        f"quota:ai:{other_uid}:2026-05-18": 2,
         "auth:initdata:otherdigest": {
             "user_id": other_uid,
             "ip": "10.0.0.2",
@@ -554,6 +559,8 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
         f"ai_listing:u{target_uid}:abc",
         f"ai_rate:{target_uid}:default",
         f"ai_daily:{target_uid}",
+        f"quota:ai:{target_uid}:2026-05-18",
+        f"quota:assistant:{target_uid}:2026-05-18",
         f"auth:blacklist:{target_uid}",
         "auth:initdata:targetdigest",
     ):
@@ -564,9 +571,112 @@ async def test_clear_user_ai_data_covers_all_namespaces(monkeypatch):
         f"ai_task:u{other_uid}:keep",
         f"ai_listing:u{other_uid}:keep",
         f"ai_rate:{other_uid}:default",
+        f"quota:ai:{other_uid}:2026-05-18",
         "auth:initdata:otherdigest",
     ):
         assert await cache.get_json(key) is not None, f"{key} should survive"
+
+
+@pytest.mark.asyncio
+async def test_clear_user_ai_data_covers_memory_cache_fallback():
+    from api.routers.ai_analysis import clear_user_ai_data
+    from api.services.cache import MemoryCache
+
+    cache = MemoryCache()
+    target_uid = 5252
+    other_uid = 6262
+    seeds = {
+        f"ai_task:u{target_uid}:abc": {"x": 1},
+        f"ai_listing:u{target_uid}:abc": {"title_suggestion": "private"},
+        f"ai_rate:{target_uid}:default": {"count": 5},
+        f"ai_daily:{target_uid}": {"count": 2},
+        f"quota:ai:{target_uid}:2026-05-18": 2,
+        f"quota:assistant:{target_uid}:2026-05-18": 1,
+        f"auth:blacklist:{target_uid}": {"reason": "test"},
+        f"auth:replay_warn:{target_uid}": {"count": 1},
+        "auth:initdata:memory-target": {"user_id": target_uid, "ip": "10.0.0.1"},
+        f"ai_task:u{other_uid}:keep": {"x": 1},
+        f"quota:ai:{other_uid}:2026-05-18": 2,
+        "auth:initdata:memory-other": {"user_id": other_uid, "ip": "10.0.0.2"},
+    }
+    for key, value in seeds.items():
+        await cache.set_json(key, value)
+
+    await clear_user_ai_data(target_uid, cache=cache)
+
+    for key in (
+        f"ai_task:u{target_uid}:abc",
+        f"ai_listing:u{target_uid}:abc",
+        f"ai_rate:{target_uid}:default",
+        f"ai_daily:{target_uid}",
+        f"quota:ai:{target_uid}:2026-05-18",
+        f"quota:assistant:{target_uid}:2026-05-18",
+        f"auth:blacklist:{target_uid}",
+        f"auth:replay_warn:{target_uid}",
+        "auth:initdata:memory-target",
+    ):
+        assert await cache.get_json(key) is None, f"{key} should be cleared"
+
+    for key in (
+        f"ai_task:u{other_uid}:keep",
+        f"quota:ai:{other_uid}:2026-05-18",
+        "auth:initdata:memory-other",
+    ):
+        assert await cache.get_json(key) is not None, f"{key} should survive"
+
+
+@pytest.mark.asyncio
+async def test_clear_user_ai_data_escapes_ai_analysis_glob_metacharacters():
+    import fnmatch
+
+    from api.database import get_engine, get_session_factory
+    from api.models import AIAuditLog, User
+    from api.routers.ai_analysis import clear_user_ai_data
+    from api.services.cache import MemoryCache
+
+    target_uid = 6363
+    cache = MemoryCache()
+    target_key = "ai_analysis:v3:123:phone *:cat=None"
+    sibling_key = "ai_analysis:v3:123:phone secret:cat=None"
+    await cache.set_json(target_key, {"ad_id": 123, "summary": "target"})
+    await cache.set_json(sibling_key, {"ad_id": 123, "summary": "sibling"})
+
+    class _FakeRedis:
+        def __init__(self, storage):
+            self._storage = storage
+
+        async def scan(self, cursor, match="*", count=100):
+            del count
+            return 0, [k for k in self._storage if fnmatch.fnmatch(k, match)]
+
+        async def delete(self, *keys):
+            for key in keys:
+                self._storage.pop(key, None)
+            return len(keys)
+
+    cache._client = _FakeRedis(cache._storage)
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    try:
+        async with session_factory() as session:
+            user = User(telegram_user_id=target_uid, first_name="Glob")
+            session.add(user)
+            await session.flush()
+            session.add(AIAuditLog(
+                user_id=user.id,
+                endpoint="analyze",
+                ad_id="123",
+                query="phone *",
+                model="test-model",
+            ))
+            await session.commit()
+
+        await clear_user_ai_data(target_uid, cache=cache, session_factory=session_factory)
+    finally:
+        await engine.dispose()
+
+    assert await cache.get_json(target_key) is None
+    assert await cache.get_json(sibling_key) is not None
 
 
 @pytest.mark.asyncio

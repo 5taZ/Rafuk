@@ -36,6 +36,42 @@ def fake_telegram_user() -> TelegramInitData:
     return TelegramInitData(user_id=123456, first_name="Test", raw={})
 
 
+def _grant_ai_access(
+    telegram_user_id: int = 123456,
+    *,
+    status_code: str = "market_maker",
+) -> None:
+    import asyncio
+
+    from sqlalchemy import select
+
+    from api.database import get_engine, get_session_factory
+    from api.models import User
+
+    async def _grant() -> None:
+        engine = get_engine()
+        try:
+            session_factory = get_session_factory(engine)
+            async with session_factory() as session:
+                user = (
+                    await session.execute(
+                        select(User).where(User.telegram_user_id == telegram_user_id)
+                    )
+                ).scalar_one_or_none()
+                if user is None:
+                    user = User(
+                        telegram_user_id=telegram_user_id,
+                        first_name="Test",
+                    )
+                    session.add(user)
+                user.account_status_code = status_code
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_grant())
+
+
 def test_ai_parse_json_handles_reasoning_with_braces_before_final_json() -> None:
     text = (
         'Сначала модель рассуждает: {"draft": "не финал"}. '
@@ -252,6 +288,7 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     with TestClient(app) as client:
         response = client.post(
@@ -512,6 +549,7 @@ def test_ai_guardrails_clamp_outlier_price_for_negotiable_financing_bait(monkeyp
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     with TestClient(app) as client:
         response = client.post(
@@ -680,6 +718,7 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     with TestClient(app) as client:
         response = client.post(
@@ -1148,6 +1187,7 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     with TestClient(app) as client:
         response = client.post(
@@ -1240,6 +1280,7 @@ def test_listing_assistant_returns_market_fallback_when_ai_fails(monkeypatch) ->
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     with TestClient(app) as client:
         response = client.post(
@@ -1325,6 +1366,7 @@ def test_listing_assistant_passes_photos_to_ai_and_drops_invalid_ones(monkeypatc
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     # 1×1 transparent JPEG-ish; the router only validates the data-URL prefix and size,
     # not whether bytes decode to a real image (that's the AI's problem).
@@ -1421,6 +1463,7 @@ def test_listing_assistant_handles_empty_market_gracefully(monkeypatch) -> None:
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     with TestClient(app) as client:
         response = client.post(
@@ -1669,6 +1712,7 @@ def test_listing_assistant_caches_identical_inputs(monkeypatch) -> None:
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     payload = {
         "title": "Уникальный товар для теста кеша 12345",
@@ -1753,6 +1797,7 @@ def test_listing_assistant_cache_hit_skips_rate_limit(monkeypatch) -> None:
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     payload = {
         "title": "Cache hit rate limit guard 99887766",
@@ -1820,6 +1865,7 @@ def test_listing_assistant_strips_prompt_injection_from_notes(monkeypatch) -> No
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     with TestClient(app) as client:
         # Avoid cache pollution from previous tests
@@ -2101,7 +2147,7 @@ def test_repair_truncated_json_handles_truncated_value() -> None:
 
 
 def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
-    """Each AI endpoint gets its own hourly rate limit counter."""
+    """Listing assistant spends from the assistant quota bucket."""
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
@@ -2155,6 +2201,7 @@ def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     with TestClient(app) as client:
         cache = MemoryCache()
@@ -2168,18 +2215,19 @@ def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
         )
         assert resp.status_code == 200
 
-        keys_in_cache = [k for k in cache._storage if "ai_rate" in k]
-        assert any(":listing" in k for k in keys_in_cache), (
-            f"Expected per-endpoint key with ':listing', got: {keys_in_cache}"
+        keys_in_cache = [k for k in cache._storage if k.startswith("quota:")]
+        assert any(k.startswith("quota:assistant:123456:") for k in keys_in_cache), (
+            f"Expected assistant quota key, got: {keys_in_cache}"
         )
 
 
 def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
-    """Daily cap blocks requests even if hourly limit is not reached."""
+    """Status quota blocks requests after the assistant bucket limit."""
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
     from api.services import ai_analysis_pipeline
+    from api.services.account_status import QUOTA_BUCKET_ASSISTANT, quota_key
     from api.services.cache import MemoryCache
 
     async def fake_load_query_dataset(**kwargs):
@@ -2221,6 +2269,7 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
 
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
 
     with TestClient(app) as client:
         cache = MemoryCache()
@@ -2228,14 +2277,16 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
         monkeypatch.setattr(ai_analysis, "get_cache", lambda r: cache)
         monkeypatch.setattr(_la, "get_cache", lambda r: cache)
 
-        cache._storage["ai_daily:123456"] = ("999", 0.0)
+        cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, 123456)] = ("100", 0.0)
 
         resp = client.post(
             "/api/v1/ai/listing-assistant",
             json={"title": "Test daily cap"},
         )
         assert resp.status_code == 429
-        assert "дневной лимит" in resp.json()["detail"].lower()
+        detail = resp.json()["detail"]
+        assert detail["error"] == "quota_exceeded"
+        assert detail["bucket"] == "assistant"
 
 
 @pytest.mark.asyncio

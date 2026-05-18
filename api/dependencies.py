@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import logging
-import os
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.config import Settings, get_settings
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
 from api.models import User
+from api.services.account_status import is_admin_user
 from api.services.cache import CacheBackend
 from api.services.client_ip import get_client_ip
 from api.services.currency_service import CurrencyService
@@ -86,7 +86,7 @@ async def get_telegram_user(
     # production. The Settings validator already rejects auth_bypass=True
     # on a non-local DB, but we double-check here so a misconfigured env
     # never silently authenticates strangers as user_id=0.
-    if settings.auth_bypass and os.environ.get("ENV") == "production":
+    if settings.auth_bypass and settings.env == "production":
         raise RuntimeError("auth_bypass is not allowed in production")
 
     # OPUS-12: internal-service path. If both the service-token
@@ -198,6 +198,15 @@ async def get_telegram_user(
 
     request.state.telegram_user = user
     return user
+
+
+async def require_admin_user(
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    settings: Settings = Depends(get_settings_dependency),
+) -> TelegramInitData:
+    if not is_admin_user(telegram_user.user_id, settings):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return telegram_user
 
 
 async def ensure_user_exists(

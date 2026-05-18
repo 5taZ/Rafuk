@@ -76,6 +76,9 @@ function createAppActions(baseContext) {
         if (!(view in elements.views)) {
             return;
         }
+        if (view === "admin" && state.profile.data?.permissions?.is_admin !== true) {
+            view = "profile";
+        }
         // No-op when the view is already active. Otherwise an in-page
         // action that happens to re-call setActiveView (e.g. picking a
         // discount preset inside the Объявления view) would run a full
@@ -148,6 +151,71 @@ function createAppActions(baseContext) {
     context.focusTarget = focusTarget;
     context.markDirty = markDirty;
 
+    function openOverview() {
+        setActiveView("overview");
+        renderAll();
+    }
+
+    function openProfile(options = {}) {
+        setActiveView("profile");
+        renderAll();
+        if (options.refresh || (!state.profile.data && !state.profile.loading)) {
+            void context.loadProfile?.({ silent: true });
+        }
+    }
+
+    async function openAdmin() {
+        if (!state.profile.data && !state.profile.loading && typeof context.loadProfile === "function") {
+            await context.loadProfile({ silent: true });
+        }
+        if (state.profile.data?.permissions?.is_admin !== true) {
+            showToast("Админка доступна только владельцу", "info", 2200);
+            openProfile();
+            return;
+        }
+        setActiveView("admin");
+        markDirty("adminUsers", "adminStatuses");
+        renderAll();
+        void context.loadAdminStatuses?.({ silent: true });
+        void context.loadAdminUsers?.({ silent: true });
+    }
+
+    function canUseAiFeature(bucket = "ai") {
+        const profile = state.profile.data;
+        if (!profile) return true;
+        const isAssistant = bucket === "assistant";
+        const allowed = isAssistant
+            ? profile.permissions?.can_use_assistant === true
+            : profile.permissions?.can_use_ai === true;
+        if (allowed) return true;
+        showToast(
+            isAssistant
+                ? "AI-помощник продавца доступен со статуса Скаут Барахолки"
+                : "AI доступен со статуса Скаут Барахолки",
+            "info",
+            3200,
+        );
+        openProfile();
+        return false;
+    }
+
+    async function handleAiAccessError(error, bucket = "ai") {
+        const detail = error?.detail || {};
+        const code = error?.errorCode || detail.error || "";
+        if (code !== "premium_required" && code !== "quota_exceeded") return false;
+        const message = detail.message || error.message || (
+            code === "premium_required"
+                ? "AI доступен со статуса Скаут Барахолки"
+                : "Лимит AI-запросов на сегодня закончился"
+        );
+        showToast(message, code === "quota_exceeded" ? "error" : "info", 3600);
+        if (typeof context.loadProfile === "function") {
+            await context.loadProfile({ silent: true });
+        }
+        if (code === "premium_required") openProfile();
+        return true;
+    }
+
     // ── Instantiate sub-modules ──────────────────────────────────────────
     const core = createApiCore(context);
     
@@ -174,6 +242,26 @@ function createAppActions(baseContext) {
     // both surfaces atomically when promoting a watching item to a lead.
     context.loadLeads = leads.loadLeads;
     const watchlist = createApiWatchlist(context);
+    const profileApiFactory = typeof createApiProfile === "function"
+        ? createApiProfile
+        : () => ({ loadProfile: async () => null });
+    const adminApiFactory = typeof createApiAdmin === "function"
+        ? createApiAdmin
+        : () => ({
+            loadAdminUsers: async () => [],
+            updateUserStatus: async () => null,
+            loadAdminStatuses: async () => [],
+            updateStatusLimits: async () => null,
+        });
+    const profileApi = profileApiFactory(context);
+    context.loadProfile = profileApi.loadProfile;
+    const adminApi = adminApiFactory(context);
+    Object.assign(context, {
+        loadAdminUsers: adminApi.loadAdminUsers,
+        updateUserStatus: adminApi.updateUserStatus,
+        loadAdminStatuses: adminApi.loadAdminStatuses,
+        updateStatusLimits: adminApi.updateStatusLimits,
+    });
     let _aiModule = null;
     let _listingAssistantModule = null;
 
@@ -185,10 +273,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260517-41f130e"),
-            context._loadScript("js/api_ai_render.js?v=20260517-41f130e"),
-            context._loadScript("js/api_ai.js?v=20260517-41f130e"),
-            context._loadScript("js/api_listing_assistant.js?v=20260517-41f130e"),
+            context._loadScript("js/api_ai_modal.js?v=20260518-bc3a948"),
+            context._loadScript("js/api_ai_render.js?v=20260518-bc3a948"),
+            context._loadScript("js/api_ai.js?v=20260518-bc3a948"),
+            context._loadScript("js/api_listing_assistant.js?v=20260518-bc3a948"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {
@@ -214,6 +302,16 @@ function createAppActions(baseContext) {
     Object.assign(context, {
         fetchProxyImageObjectUrl,
         clearProxyImageObjectUrls,
+        loadProfile: profileApi.loadProfile,
+        openOverview,
+        openProfile,
+        openAdmin,
+        canUseAiFeature,
+        handleAiAccessError,
+        loadAdminUsers: adminApi.loadAdminUsers,
+        updateUserStatus: adminApi.updateUserStatus,
+        loadAdminStatuses: adminApi.loadAdminStatuses,
+        updateStatusLimits: adminApi.updateStatusLimits,
 
         // From listings
         search: listings.search,
@@ -312,9 +410,13 @@ function createAppActions(baseContext) {
         return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
     }
 
+    function _sameAdId(left, right) {
+        return left != null && right != null && String(left) === String(right);
+    }
+
     function _findWatchingSnapshot(item) {
         return state.watchlist.items.find(
-            (w) => w.id === item?.id || w.ad_id === item?.ad_id,
+            (w) => w.id === item?.id || _sameAdId(w.ad_id, item?.ad_id),
         ) || null;
     }
 
@@ -353,7 +455,7 @@ function createAppActions(baseContext) {
             "sold",
         ]);
         const alreadyInLeads = state.leads.items.some(
-            (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
+            (l) => _sameAdId(l.ad_id, item.ad_id) && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
             showToast("Уже в покупках", "info", 1600);
@@ -986,6 +1088,16 @@ function createAppActions(baseContext) {
         exportLeads,
         exportLeadsCSV,
         exportLeadsXLSX,
+        loadProfile: profileApi.loadProfile,
+        openOverview,
+        openProfile,
+        openAdmin,
+        canUseAiFeature,
+        handleAiAccessError,
+        loadAdminUsers: adminApi.loadAdminUsers,
+        updateUserStatus: adminApi.updateUserStatus,
+        loadAdminStatuses: adminApi.loadAdminStatuses,
+        updateStatusLimits: adminApi.updateStatusLimits,
         loadAIAnalysis,
         closeAIModal,
         checkAiConsent,

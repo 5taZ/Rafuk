@@ -45,6 +45,7 @@ def test_negotiate_endpoint_returns_response(monkeypatch) -> None:
 
     monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
     monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_ai_entitlement", _noop_async)
     monkeypatch.setattr(ai_tools, "_check_rate_limit", _noop_async)
     monkeypatch.setattr(ai_tools, "_log_ai_audit", _noop_async)
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
@@ -89,6 +90,7 @@ def test_negotiate_cache_hit_does_not_consume_quota(monkeypatch) -> None:
 
     monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
     monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_ai_entitlement", _noop_async)
     monkeypatch.setattr(ai_tools, "_check_rate_limit", _fake_rate_limit)
     monkeypatch.setattr(ai_tools, "_log_ai_audit", _fake_audit)
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
@@ -139,6 +141,7 @@ def test_negotiate_cache_does_not_cross_users(monkeypatch) -> None:
 
     monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
     monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_ai_entitlement", _noop_async)
     monkeypatch.setattr(ai_tools, "_check_rate_limit", _fake_rate_limit)
     monkeypatch.setattr(ai_tools, "_log_ai_audit", _fake_audit)
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
@@ -192,6 +195,7 @@ def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
 
     monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
     monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_ai_entitlement", _noop_async)
     monkeypatch.setattr(ai_tools, "_check_rate_limit", _noop_async)
     monkeypatch.setattr(ai_tools, "_log_ai_audit", _noop_async)
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
@@ -257,6 +261,7 @@ def test_price_advice_cache_hit_does_not_consume_quota(monkeypatch) -> None:
 
     monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
     monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_ai_entitlement", _noop_async)
     monkeypatch.setattr(ai_tools, "_check_rate_limit", _fake_rate_limit)
     monkeypatch.setattr(ai_tools, "_log_ai_audit", _fake_audit)
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)

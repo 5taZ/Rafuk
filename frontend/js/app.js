@@ -41,6 +41,16 @@ function analyticsApp() {
                 actions.loadWatchlist ? actions.loadWatchlist() : null,
             ]);
         }
+        if (view === "profile") {
+            return () => actions.loadProfile && actions.loadProfile({ retry: false });
+        }
+        if (view === "admin") {
+            return () => Promise.all([
+                actions.loadAdminUsers ? actions.loadAdminUsers({ retry: false }) : null,
+                actions.loadAdminStatuses ? actions.loadAdminStatuses({ retry: false }) : null,
+                actions.loadProfile ? actions.loadProfile({ silent: true, retry: false }) : null,
+            ]);
+        }
         if (view === "tracking") {
             return () => actions.loadTrackers && actions.loadTrackers();
         }
@@ -135,6 +145,7 @@ function analyticsApp() {
 
         core.state.search.query = core.elements.searchInput.value.trim();
         renderers.renderAll();
+        void actions.loadProfile({ silent: true });
         void actions.loadTrackers();
         void actions.loadLeads();
         void actions.loadWatchlist();

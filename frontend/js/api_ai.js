@@ -44,6 +44,7 @@ function createApiAi(context) {
     async function loadAIAnalysis(adId) {
         const query = (state.detail.data?.query || state.search.query || "").trim();
         if (!adId || !query) return;
+        if (typeof context.canUseAiFeature === "function" && !context.canUseAiFeature("ai")) return;
 
         const cached = state.detail.ai;
         if (cached && cached.adId === adId && cached.result && !cached.error) {
@@ -174,6 +175,14 @@ function createApiAi(context) {
         } catch (err) {
             if (isCancelled()) return;
             logClientError("[AI] Request failed:", err);
+            if (typeof context.handleAiAccessError === "function") {
+                const handledAccessError = await context.handleAiAccessError(err, "ai");
+                if (handledAccessError) {
+                    state.detail.ai = { adId, loading: false, result: null, error: "", source: "ai" };
+                    modal.closeAIModal();
+                    return;
+                }
+            }
             const message = err.message || "Не удалось выполнить анализ. Проверьте интернет-соединение.";
             state.detail.ai = {
                 adId,

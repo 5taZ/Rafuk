@@ -129,6 +129,8 @@ function createRenderCardBuilders(context) {
             itemTitle,
             inLeads,
             inWatchlist,
+            leadDisabled: inLeads,
+            watchDisabled: inLeads || inWatchlist,
             leadText: inLeads ? "В покупках" : "В покупки",
             watchText: inWatchlist ? "В избранном" : "В избранное",
         };
@@ -229,7 +231,7 @@ function createRenderCardBuilders(context) {
                         dataset: { role: "lead" },
                         text: actionState.leadText,
                         attrs: _actionButtonAttrs(
-                            actionState.inLeads,
+                            actionState.leadDisabled,
                             actionState.inLeads ? `«${actionState.itemTitle}» уже в покупках` : `Добавить «${actionState.itemTitle}» в покупки`,
                         ),
                     }),
@@ -239,7 +241,7 @@ function createRenderCardBuilders(context) {
                         dataset: { role: "watch" },
                         text: actionState.watchText,
                         attrs: _actionButtonAttrs(
-                            actionState.inWatchlist,
+                            actionState.watchDisabled,
                             actionState.inWatchlist
                                 ? `«${actionState.itemTitle}» уже в избранном`
                                 : actionState.inLeads
@@ -265,13 +267,13 @@ function createRenderCardBuilders(context) {
                     {
                         label: currentState.leadText,
                         tone: "accent",
-                        disabled: currentState.inLeads,
+                        disabled: currentState.leadDisabled,
                         icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/><polyline points="9 11 12 8 15 11"/><line x1="12" y1="2" x2="12" y2="14"/></svg>',
                         onSelect: () => actions.addLeadFromListing(item),
                     },
                     {
                         label: currentState.watchText,
-                        disabled: currentState.inWatchlist,
+                        disabled: currentState.watchDisabled,
                         icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
                         onSelect: () => actions.addWatchlistFromListing(item),
                     },

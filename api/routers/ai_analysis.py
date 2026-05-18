@@ -58,6 +58,7 @@ from api.services.ai_audit import _log_ai_audit  # noqa: F401 — re-export
 from api.services.ai_guards import (  # noqa: F401 — re-exports
     _check_ai_available,
     _check_ai_consent,
+    _check_ai_entitlement,
     _check_rate_limit,
     _coerce_string_list,
 )
@@ -138,6 +139,7 @@ async def analyze_listing(
     """Start async AI analysis. Returns task_id immediately for polling."""
     _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
+    await _check_ai_entitlement(request, _user.user_id, endpoint="analyze")
     # OPUS-17: snapshot client IP once per request — both audit
     # paths (cache hit / miss) write the same IP.
     client_ip = get_client_ip(request)

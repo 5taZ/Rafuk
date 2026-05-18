@@ -11,6 +11,8 @@ def test_tracker_table_exists() -> None:
     assert "query_listing_states" in Base.metadata.tables
     assert "tracker_events" in Base.metadata.tables
     assert "lead_items" in Base.metadata.tables
+    assert "account_statuses" in Base.metadata.tables
+    assert "admin_audit_log" in Base.metadata.tables
     # `watchlist_items` was merged into `lead_items` (status='watching')
     # in migration 20260427_0001.
     assert "watchlist_items" not in Base.metadata.tables
@@ -119,6 +121,27 @@ def test_user_consents_version_constraint() -> None:
     consents = Base.metadata.tables["user_consents"]
     constraint_names = {constraint.name for constraint in consents.constraints}
     assert "chk_user_consents_version_known" in constraint_names
+
+
+def test_account_status_tables_shape() -> None:
+    users = Base.metadata.tables["users"]
+    user_columns = {column.name: column for column in users.columns}
+    assert "account_status_code" in user_columns
+    assert user_columns["account_status_code"].default.arg == "bare_search"
+    assert "status_granted_at" in user_columns
+    assert "status_expires_at" in user_columns
+    assert "status_note" in user_columns
+
+    statuses = Base.metadata.tables["account_statuses"]
+    status_columns = {column.name: column for column in statuses.columns}
+    assert status_columns["code"].primary_key
+    assert "ai_daily_limit" in status_columns
+    assert "assistant_daily_limit" in status_columns
+    assert "idx_account_statuses_sort_order" in {index.name for index in statuses.indexes}
+
+    audit = Base.metadata.tables["admin_audit_log"]
+    audit_columns = {column.name for column in audit.columns}
+    assert {"actor_user_id", "target_user_id", "action", "payload", "ip_address"} <= audit_columns
 
 
 def test_telegram_notification_dlq_table_shape() -> None:

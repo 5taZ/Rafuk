@@ -608,6 +608,7 @@ function createRenderTrackers(context) {
             const inWatchlist = _isActiveWatchAd(event.ad_id);
             const leadText = inLeads ? "В покупках" : "В покупки";
             const watchText = inWatchlist ? "В избранном" : "В избранное";
+            const watchDisabled = inLeads || inWatchlist;
             const eventTitle = event.title || "лот";
 
             const card = domEl(
@@ -652,8 +653,14 @@ function createRenderTrackers(context) {
                         type: "button",
                         dataset: { role: "watch" },
                         text: watchText,
-                        attrs: inWatchlist
-                            ? { disabled: true, "aria-disabled": "true", "aria-label": `«${eventTitle}» уже в избранном` }
+                        attrs: watchDisabled
+                            ? {
+                                disabled: true,
+                                "aria-disabled": "true",
+                                "aria-label": inLeads
+                                    ? `«${eventTitle}» уже в покупках`
+                                    : `«${eventTitle}» уже в избранном`,
+                            }
                             : { "aria-label": `Добавить «${eventTitle}» в избранное` },
                     }),
                     domEl("a", {
@@ -700,6 +707,13 @@ function createRenderTrackers(context) {
                     button.disabled = true;
                     button.setAttribute("aria-disabled", "true");
                     button.setAttribute("aria-label", `«${eventTitle}» уже в покупках`);
+                    const watchButton = card.querySelector('[data-role="watch"]');
+                    if (watchButton) {
+                        watchButton.textContent = "В избранное";
+                        watchButton.disabled = true;
+                        watchButton.setAttribute("aria-disabled", "true");
+                        watchButton.setAttribute("aria-label", `«${eventTitle}» уже в покупках`);
+                    }
                 });
             });
 

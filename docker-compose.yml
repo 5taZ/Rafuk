@@ -21,6 +21,9 @@ services:
     restart: "no"
     command: ["uv", "run", "alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
     environment:
+      ENV: ${ENV:-production}
+      DEBUG: ${DEBUG:-false}
+      AUTH_BYPASS: ${AUTH_BYPASS:-false}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
       BOT_TOKEN: ${BOT_TOKEN}
       REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
@@ -45,12 +48,16 @@ services:
     build: .
     restart: unless-stopped
     environment:
+      ENV: ${ENV:-production}
+      DEBUG: ${DEBUG:-false}
+      AUTH_BYPASS: ${AUTH_BYPASS:-false}
       SERVICE: api
       BOT_TOKEN: ${BOT_TOKEN}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
       REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
+      ADMIN_TELEGRAM_USER_IDS: ${ADMIN_TELEGRAM_USER_IDS:-}
       METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
       # OPUS-12: shared with the bot via env so /api/v1/leads etc.
       # can accept service-token auth on the bot's behalf.
@@ -112,6 +119,9 @@ services:
     build: .
     restart: unless-stopped
     environment:
+      ENV: ${ENV:-production}
+      DEBUG: ${DEBUG:-false}
+      AUTH_BYPASS: ${AUTH_BYPASS:-false}
       SERVICE: bot
       BOT_TOKEN: ${BOT_TOKEN}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
@@ -157,6 +167,9 @@ services:
     build: .
     restart: unless-stopped
     environment:
+      ENV: ${ENV:-production}
+      DEBUG: ${DEBUG:-false}
+      AUTH_BYPASS: ${AUTH_BYPASS:-false}
       SERVICE: scheduler
       BOT_TOKEN: ${BOT_TOKEN}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}

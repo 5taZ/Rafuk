@@ -94,6 +94,14 @@ function createAppRenderers(baseContext) {
 
     const cards = createRenderCards(context);
     const views = createRenderViews(context);
+    const profileFactory = typeof createRenderProfile === "function"
+        ? createRenderProfile
+        : () => ({ renderProfile: () => {} });
+    const adminFactory = typeof createRenderAdmin === "function"
+        ? createRenderAdmin
+        : () => ({ renderAdminUsers: () => {}, renderAdminStatuses: () => {} });
+    const profile = profileFactory(context);
+    const admin = adminFactory(context);
     const modals = createRenderModals(context);
     const charts = createRenderCharts(context);
     const trackers = createRenderTrackers(context);
@@ -184,6 +192,15 @@ function createAppRenderers(baseContext) {
     } = views;
 
     const {
+        renderProfile,
+    } = profile;
+
+    const {
+        renderAdminUsers,
+        renderAdminStatuses,
+    } = admin;
+
+    const {
         renderDetailModal,
         closeDetailModal,
         renderExpensesModal,
@@ -248,6 +265,9 @@ function createAppRenderers(baseContext) {
         leads: renderLeads,
         watchlist: renderWatchlist,
         profit: renderProfitDashboard,
+        profile: renderProfile,
+        adminUsers: renderAdminUsers,
+        adminStatuses: renderAdminStatuses,
     };
 
     function renderAll() {
@@ -306,6 +326,9 @@ function createAppRenderers(baseContext) {
         renderSegments,
         renderGeography,
         renderRecentSearches,
+        renderProfile,
+        renderAdminUsers,
+        renderAdminStatuses,
         renderListingsCollection,
         renderListings,
         renderTrackerStatus,

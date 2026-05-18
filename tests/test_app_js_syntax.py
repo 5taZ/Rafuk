@@ -196,6 +196,151 @@ api.loadListings(true).then(() => {
     assert result.returncode == 0, result.stderr
 
 
+def test_request_json_summarizes_fastapi_validation_arrays() -> None:
+    api_core_js = (JS_DIR / "api_core.js").read_text(encoding="utf-8")
+    harness = (
+        api_core_js
+        + r"""
+const assert = require("assert");
+global.window = { Telegram: { WebApp: { initData: "" } } };
+global.fetch = async () => ({
+    ok: false,
+    status: 422,
+    headers: { get() { return null; } },
+    json: async () => ({
+        detail: [
+            { loc: ["body", "status_code"], msg: "Field required" },
+            { loc: ["body", "ai_daily_limit"], msg: "Input should be greater than or equal to 0" },
+        ],
+    }),
+});
+const api = createApiCore({
+    state: { search: { query: "" }, misc: { currency: "BYN" }, filters: {} },
+    elements: {},
+});
+api.requestJson("/api/v1/admin/statuses/scout", { method: "PATCH" })
+    .then(() => {
+        console.error("request unexpectedly succeeded");
+        process.exit(1);
+    })
+    .catch((error) => {
+        assert.strictEqual(error.status, 422);
+        assert.match(error.message, /status_code: Field required/);
+        assert.match(error.message, /ai_daily_limit: Input should be greater than or equal to 0/);
+        assert.notStrictEqual(error.message, "Не удалось выполнить запрос.");
+    });
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_admin_users_ignores_stale_responses() -> None:
+    api_admin_js = (JS_DIR / "api_admin.js").read_text(encoding="utf-8")
+    harness = (
+        api_admin_js
+        + r"""
+const assert = require("assert");
+const state = {
+    profile: { data: { permissions: { is_admin: true } } },
+    admin: {
+        query: "older",
+        selectedStatus: "",
+        loading: false,
+        error: "",
+        users: [],
+        savingUserIds: new Set(),
+        savingStatusCodes: new Set(),
+    },
+};
+const pending = [];
+const api = createApiAdmin({
+    state,
+    getJson(url) {
+        return new Promise((resolve) => pending.push({ url, resolve }));
+    },
+    requestJson: async () => ({}),
+    markDirty() {},
+    renderAll() {},
+    showToast() {},
+});
+(async () => {
+    const first = api.loadAdminUsers();
+    state.admin.query = "newer";
+    const second = api.loadAdminUsers();
+    assert.match(pending[0].url, /query=older/);
+    assert.match(pending[1].url, /query=newer/);
+    pending[1].resolve([{ telegram_user_id: 2, first_name: "Newer" }]);
+    await second;
+    pending[0].resolve([{ telegram_user_id: 1, first_name: "Older" }]);
+    await first;
+    assert.deepStrictEqual(state.admin.users.map((u) => u.telegram_user_id), [2]);
+})().catch((error) => {
+    console.error(error);
+    process.exit(1);
+});
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_ai_modal_access_error_handler_suppresses_duplicate_error_ui() -> None:
+    api_ai_js = (JS_DIR / "api_ai.js").read_text(encoding="utf-8")
+    harness = (
+        r"""
+const assert = require("assert");
+global.window = { App: {} };
+let loaderErrorCalls = 0;
+let renderErrorCalls = 0;
+window.App.createAiModal = () => ({
+    openAIModal() {},
+    stopLoadingAnimation() {},
+    showLoaderError() { loaderErrorCalls += 1; },
+    closeAIModal() {},
+});
+window.App.createAiRender = () => ({
+    renderAIModalResult() {},
+    renderAiErrorState() { renderErrorCalls += 1; },
+});
+"""
+        + api_ai_js
+        + r"""
+const state = {
+    search: { query: "iphone" },
+    filters: {},
+    detail: { data: { query: "iphone", title: "iPhone" }, ai: null },
+};
+const handledError = new Error("AI доступен со статуса Скаут Барахолки");
+handledError.detail = { error: "premium_required", message: handledError.message };
+handledError.errorCode = "premium_required";
+const api = window.App.createApiAi({
+    state,
+    elements: {
+        aiModalLoading: { hidden: false },
+        aiModalResult: { hidden: false },
+        aiModalError: { hidden: true },
+    },
+    postJson: async () => { throw handledError; },
+    getJson: async () => ({}),
+    handleAiAccessError: async () => true,
+    logClientError() {},
+});
+(async () => {
+    await api.loadAIAnalysis(42);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert.strictEqual(loaderErrorCalls, 0);
+    assert.strictEqual(renderErrorCalls, 0);
+})().catch((error) => {
+    console.error(error);
+    process.exit(1);
+});
+"""
+    )
+    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_listing_dependency_does_not_overwrite_changed_filters() -> None:
     api_listings = (JS_DIR / "api_listings.js").read_text(encoding="utf-8")
     harness = (
@@ -1048,11 +1193,11 @@ const leadListing = builders.buildListingNode(
 assert.strictEqual(findByRole(leadListing, "lead").textContent, "В покупках");
 assert.strictEqual(findByRole(leadListing, "lead").disabled, true);
 assert.strictEqual(findByRole(leadListing, "watch").textContent, "В избранное");
-assert.strictEqual(findByRole(leadListing, "watch").disabled, false);
+assert.strictEqual(findByRole(leadListing, "watch").disabled, true);
 assert.strictEqual(menus[0][0].label, "В покупках");
 assert.strictEqual(menus[0][0].disabled, true);
 assert.strictEqual(menus[0][1].label, "В избранное");
-assert.strictEqual(menus[0][1].disabled, false);
+assert.strictEqual(menus[0][1].disabled, true);
 
 const watchListing = builders.buildListingNode(
     { ad_id: "watch-1", title: "Ноутбук", price: 200 },
@@ -1123,7 +1268,7 @@ renderer.renderDetailModal();
 assert.strictEqual(elements.detailAddLeadButton.textContent, "В покупках");
 assert.strictEqual(elements.detailAddLeadButton.disabled, true);
 assert.strictEqual(elements.detailAddWatchlistButton.textContent, "В избранное");
-assert.strictEqual(elements.detailAddWatchlistButton.disabled, false);
+assert.strictEqual(elements.detailAddWatchlistButton.disabled, true);
 
 state.detail.data = {
     ad_id: "watch-1",

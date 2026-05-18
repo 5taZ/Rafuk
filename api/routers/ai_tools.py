@@ -14,6 +14,7 @@ from api.limiter import limiter
 from api.routers.ai_analysis import (
     _check_ai_available,
     _check_ai_consent,
+    _check_ai_entitlement,
     _check_rate_limit,
     _coerce_string_list,
     _log_ai_audit,
@@ -113,6 +114,7 @@ async def negotiate_price(
     """Generate negotiation text for a buyer — counter-offer and tips."""
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
+    await _check_ai_entitlement(request, _user.user_id, endpoint="negotiate")
     client_ip = get_client_ip(request)
 
     cache = get_cache(request)
@@ -221,6 +223,7 @@ async def price_advice(
     """Price timing advice — should I buy now or wait? NOT an investment recommendation."""
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
+    await _check_ai_entitlement(request, _user.user_id, endpoint="price_advice")
     client_ip = get_client_ip(request)
 
     cache = get_cache(request)

@@ -13,12 +13,82 @@ that list in sync with whatever new per-user keys we introduce.
 from __future__ import annotations
 
 import logging
+from fnmatch import fnmatch
 from typing import Any
 
 from api.config import get_settings
 from api.services.ai_shadow_store import _get_shadow_lock, _tasks
 
 logger = logging.getLogger(__name__)
+
+
+def _redis_glob_escape(value: object) -> str:
+    replacements = {"*": "[*]", "?": "[?]", "[": "[[]", "]": "[]]"}
+    return "".join(replacements.get(ch, ch) for ch in str(value))
+
+
+async def _scan_delete(redis_client: Any, pattern: str, *, count: int = 100) -> None:
+    cursor = 0
+    while True:
+        cursor, keys = await redis_client.scan(cursor, match=pattern, count=count)
+        if keys:
+            await redis_client.delete(*keys)
+        if cursor == 0:
+            break
+
+
+async def _analysis_cache_patterns(
+    session_factory: Any | None,
+    telegram_user_id: int,
+) -> list[str]:
+    if session_factory is None:
+        return []
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from api.models import AIAuditLog, User
+
+    cutoff = datetime.now(UTC) - timedelta(hours=2)
+    async with session_factory() as session:
+        internal_id = await session.scalar(
+            select(User.id).where(User.telegram_user_id == telegram_user_id)
+        )
+        if internal_id is None:
+            return []
+        rows = (
+            await session.execute(
+                select(AIAuditLog.ad_id, AIAuditLog.query)
+                .where(
+                    AIAuditLog.user_id == internal_id,
+                    AIAuditLog.created_at >= cutoff,
+                    AIAuditLog.endpoint == "analyze",
+                    AIAuditLog.ad_id.is_not(None),
+                )
+                .distinct()
+            )
+        ).all()
+    return [
+        f"ai_analysis:*:{_redis_glob_escape(ad_id)}:{_redis_glob_escape(query)}:*"
+        for ad_id, query in rows
+        if ad_id and query
+    ]
+
+
+async def _delete_memory_matches(
+    cache: Any,
+    *,
+    telegram_user_id: int,
+    patterns: list[str],
+) -> None:
+    for key in list(getattr(cache, "_storage", {}).keys()):
+        if any(fnmatch(key, pattern) for pattern in patterns):
+            await cache.delete(key)
+            continue
+        if key.startswith("auth:initdata:"):
+            item = await cache.get_json(key)
+            if isinstance(item, dict) and item.get("user_id") == telegram_user_id:
+                await cache.delete(key)
 
 
 async def clear_user_ai_data(
@@ -42,6 +112,7 @@ async def clear_user_ai_data(
     * ``ai_listing:u{tg}:*`` — Listing Assistant response cache
     * ``ai_rate:{tg}:*`` — per-endpoint hourly limiter buckets
     * ``ai_daily:{tg}`` — shared daily limiter counter
+    * ``quota:ai:{tg}:*`` / ``quota:assistant:{tg}:*`` — status quotas
     * ``auth:blacklist:{tg}`` — session blacklist entry (if any)
     * ``auth:replay_warn:{tg}`` — replay-warning counter (OPUS-8)
     * ``auth:initdata:*`` — IP-tracking entries (filter by user_id in value)
@@ -92,32 +163,40 @@ async def clear_user_ai_data(
             cache = MemoryCache()
 
     try:
+        user_scoped_patterns = [
+            f"ai_task:u{telegram_user_id}:*",
+            f"ai_listing:u{telegram_user_id}:*",
+            f"ai_rate:{telegram_user_id}:*",
+            f"ai_daily:{telegram_user_id}",
+            f"quota:ai:{telegram_user_id}:*",
+            f"quota:assistant:{telegram_user_id}:*",
+            # Session blacklist key is a fixed shape, but reuse
+            # the same scan loop for symmetry — it's a 1-key scan
+            # in practice.
+            f"auth:blacklist:{telegram_user_id}",
+            # OPUS-8: rolling replay counter must die with the
+            # user — otherwise a previously-flagged session leaks
+            # its history into a fresh account.
+            f"auth:replay_warn:{telegram_user_id}",
+        ]
+        try:
+            analysis_patterns = await _analysis_cache_patterns(
+                session_factory, telegram_user_id,
+            )
+        except Exception:  # noqa: BLE001 — eviction is best-effort
+            analysis_patterns = []
+            logger.warning(
+                "ai_analysis cache eviction failed for user %d",
+                telegram_user_id,
+                exc_info=True,
+            )
+
         redis_client = getattr(cache, "_client", None)
         if redis_client is not None:
             # Patterns where the user id lives in the key. SCAN+DELETE
             # rather than KEYS so we don't block Redis on big DBs.
-            user_scoped_patterns = [
-                f"ai_task:u{telegram_user_id}:*",
-                f"ai_listing:u{telegram_user_id}:*",
-                f"ai_rate:{telegram_user_id}:*",
-                f"ai_daily:{telegram_user_id}",
-                # Session blacklist key is a fixed shape, but reuse
-                # the same scan loop for symmetry — it's a 1-key scan
-                # in practice.
-                f"auth:blacklist:{telegram_user_id}",
-                # OPUS-8: rolling replay counter must die with the
-                # user — otherwise a previously-flagged session leaks
-                # its history into a fresh account.
-                f"auth:replay_warn:{telegram_user_id}",
-            ]
             for pattern in user_scoped_patterns:
-                cursor = 0
-                while True:
-                    cursor, keys = await redis_client.scan(cursor, match=pattern, count=100)
-                    if keys:
-                        await redis_client.delete(*keys)
-                    if cursor == 0:
-                        break
+                await _scan_delete(redis_client, pattern)
 
             # Patterns where the user_id is inside the value, not the
             # key.
@@ -144,55 +223,14 @@ async def clear_user_ai_data(
             # this user's audit-logged tuples. We resolve the user's
             # internal id and walk the audit log within the cache TTL
             # window (1h is the default) to bound the work.
-            if session_factory is not None:
-                try:
-                    from datetime import UTC, datetime, timedelta
-
-                    from sqlalchemy import select
-
-                    from api.models import AIAuditLog, User
-
-                    cutoff = datetime.now(UTC) - timedelta(hours=2)
-                    async with session_factory() as session:
-                        internal_id = await session.scalar(
-                            select(User.id).where(
-                                User.telegram_user_id == telegram_user_id
-                            )
-                        )
-                        if internal_id is not None:
-                            rows = await session.execute(
-                                select(AIAuditLog.ad_id, AIAuditLog.query)
-                                .where(
-                                    AIAuditLog.user_id == internal_id,
-                                    AIAuditLog.created_at >= cutoff,
-                                    AIAuditLog.endpoint == "analyze",
-                                    AIAuditLog.ad_id.is_not(None),
-                                )
-                                .distinct()
-                            )
-                            for ad_id, query in rows:
-                                if not ad_id or not query:
-                                    continue
-                                # Redis glob-escape only ``[`` and ``]``;
-                                # query strings rarely contain them, but
-                                # if they do the SCAN simply returns no
-                                # match — we skip rather than crash.
-                                pattern = f"ai_analysis:*:{ad_id}:{query}:*"
-                                cursor = 0
-                                while True:
-                                    cursor, keys = await redis_client.scan(
-                                        cursor, match=pattern, count=50
-                                    )
-                                    if keys:
-                                        await redis_client.delete(*keys)
-                                    if cursor == 0:
-                                        break
-                except Exception:  # noqa: BLE001 — eviction is best-effort
-                    logger.warning(
-                        "ai_analysis cache eviction failed for user %d",
-                        telegram_user_id,
-                        exc_info=True,
-                    )
+            for pattern in analysis_patterns:
+                await _scan_delete(redis_client, pattern, count=50)
+        elif isinstance(cache, MemoryCache):
+            await _delete_memory_matches(
+                cache,
+                telegram_user_id=telegram_user_id,
+                patterns=[*user_scoped_patterns, *analysis_patterns],
+            )
         # Also clean shadow stores. The lock guards us from a
         # concurrent pruner walking the same keys.
         async with _get_shadow_lock():

@@ -17,6 +17,7 @@ from api.routers.ai_analysis import (
     _AI_ANALYSIS_ERRORS,
     _check_ai_available,
     _check_ai_consent,
+    _check_ai_entitlement,
     _check_rate_limit,
     _coerce_string_list,
     _log_ai_audit,
@@ -472,6 +473,7 @@ async def listing_assistant(
 
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
+    await _check_ai_entitlement(request, _user.user_id, endpoint="listing")
 
     settings = getattr(request.app.state, "settings", None)
     if settings is None:

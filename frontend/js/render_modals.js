@@ -251,6 +251,7 @@ function createRenderModals(context) {
         const detailTitleText = detail.title || "товар";
         const leadText = collectionState.inLeads ? "В покупках" : "В покупки";
         const watchText = collectionState.inWatchlist ? "В избранном" : "В избранное";
+        const watchDisabled = collectionState.inLeads || collectionState.inWatchlist;
         _setDetailActionButton(
             elements.detailAddLeadButton,
             leadText,
@@ -262,7 +263,7 @@ function createRenderModals(context) {
         _setDetailActionButton(
             elements.detailAddWatchlistButton,
             watchText,
-            collectionState.inWatchlist,
+            watchDisabled,
             collectionState.inWatchlist
                 ? `«${detailTitleText}» уже в избранном`
                 : collectionState.inLeads

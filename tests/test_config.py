@@ -131,7 +131,7 @@ def test_auth_bypass_rejected_with_env_production() -> None:
         "API_BASE_URL": "https://example.com",
         "MINI_APP_URL": "https://example.com/app",
         "AUTH_BYPASS": "true",
-        "ENV": "production",
+        "ENV": " Production ",
     }
     with patch.dict(os.environ, env, clear=True):
         from api import config

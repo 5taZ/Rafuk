@@ -62,6 +62,17 @@ function createApiCore(context) {
         return message;
     }
 
+    function _validationErrorMessage(detail) {
+        if (!Array.isArray(detail)) return "";
+        return detail.slice(0, 4).map((item) => {
+            const loc = Array.isArray(item?.loc)
+                ? item.loc.filter((part) => !["body", "query", "path"].includes(String(part))).join(".")
+                : "";
+            const msg = String(item?.msg || item?.message || "").trim();
+            return loc && msg ? `${loc}: ${msg}` : (msg || loc);
+        }).filter(Boolean).join("; ");
+    }
+
     // ── Telegram headers ─────────────────────────────────────────────────
     function telegramHeaders() {
         const initData = window.Telegram?.WebApp?.initData;
@@ -135,17 +146,36 @@ function createApiCore(context) {
 
         if (!response || !response.ok) {
             let message = "Не удалось выполнить запрос.";
+            let detailPayload = null;
             try {
                 const payload = await response.json();
-                if (typeof payload.detail === "string" && payload.detail.trim()) {
+                if (Array.isArray(payload.detail)) {
+                    const validationMessage = _validationErrorMessage(payload.detail);
+                    if (validationMessage) {
+                        message = validationMessage;
+                        detailPayload = { errors: payload.detail };
+                    }
+                } else if (typeof payload.detail === "string" && payload.detail.trim()) {
                     message = _friendlyErrorMessage(payload.detail.trim());
+                } else if (payload.detail && typeof payload.detail === "object") {
+                    detailPayload = payload.detail;
+                    if (typeof payload.detail.message === "string" && payload.detail.message.trim()) {
+                        message = payload.detail.message.trim();
+                    }
                 }
             } catch (_) {
                 if (response.status >= 500) {
                     message = "Сервер временно недоступен. Попробуйте позже.";
                 }
             }
-            throw new Error(message);
+            const err = new Error(message);
+            err.status = response?.status || 0;
+            if (detailPayload) {
+                err.detail = detailPayload;
+                err.errorCode = detailPayload.error || "";
+                err.bucket = detailPayload.bucket || "";
+            }
+            throw err;
         }
 
         if (response.status === 204) {

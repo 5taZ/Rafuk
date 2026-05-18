@@ -150,7 +150,7 @@ function createRenderCards(context) {
         card.dataset.collectionState = collectionState;
         if (collectionState === "lead") {
             _setListingActionButton(leadButton, "В покупках", true, `«${itemTitle}» уже в покупках`);
-            _setListingActionButton(watchButton, "В избранное", false, `«${itemTitle}» уже в покупках`);
+            _setListingActionButton(watchButton, "В избранное", true, `«${itemTitle}» уже в покупках`);
             return;
         }
         if (collectionState === "watchlist") {

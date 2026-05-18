@@ -48,17 +48,17 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#0a0a0b">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260517-41f130e">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260517-41f130e">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260518-bc3a948">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260518-bc3a948">
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
          depending on the user's network RTT. -->
     <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
     <link rel="dns-prefetch" href="https://rms.kufar.by">
-    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20260517-41f130e">
-    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260517-41f130e">
-    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260517-41f130e"></noscript>
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20260518-bc3a948">
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260518-bc3a948">
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260518-bc3a948"></noscript>
     <!-- FE-M1: Preload the bundled stylesheet so the browser starts
          fetching it during HTML parse, in parallel with the font
          CSS request above. The subsequent ``<link rel="stylesheet">``
@@ -73,8 +73,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20260517-41f130e">
-    <link rel="stylesheet" href="css/style.css?v=20260517-41f130e">
+    <link rel="preload" as="style" href="css/style.css?v=20260518-bc3a948">
+    <link rel="stylesheet" href="css/style.css?v=20260518-bc3a948">
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -91,14 +91,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20260517-41f130e"
+            src="vendor/telegram-web-app.js?v=20260518-bc3a948"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers without leaking IP to a CDN. -->
-    <script defer src="js/app_bundle.js?v=20260517-41f130e"></script>
+    <script defer src="js/app_bundle.js?v=20260518-bc3a948"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -121,10 +121,14 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20260517-41f130e" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260518-bc3a948" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">
+                <button class="profile-chip profile-chip--loading" id="profile-chip" type="button" aria-label="Открыть профиль" aria-busy="true">
+                    <span class="profile-chip-dot" aria-hidden="true"></span>
+                    <span class="profile-chip-label" id="profile-chip-label">Профиль</span>
+                </button>
                 <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Сменить тему">
                     <svg class="theme-icon theme-icon--sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="5"/>
@@ -720,6 +724,53 @@
                 <div class="history-deals-list" id="history-deals-list" role="list"></div>
             </div>
         </section>
+    </section>
+
+    <section class="view-panel profile-view" id="profile-view" hidden role="region" aria-labelledby="profile-view-title">
+        <div class="profile-content" id="profile-content"></div>
+    </section>
+
+    <section class="view-panel admin-view" id="admin-view" hidden role="region" aria-labelledby="admin-view-title">
+        <div class="admin-shell" id="admin-content">
+            <div class="admin-hero">
+                <div>
+                    <span class="admin-kicker">Внутренняя админка</span>
+                    <h2 class="admin-title" id="admin-view-title">Пользователи и статусы</h2>
+                    <p class="admin-copy">Ручная выдача доступа и настройка дневных AI-лимитов.</p>
+                </div>
+                <button class="ghost-btn small" id="admin-back-profile-btn" type="button">Профиль</button>
+            </div>
+
+            <section class="admin-section" aria-labelledby="admin-users-title">
+                <div class="sec-head admin-section-head">
+                    <h3 class="sec-title" id="admin-users-title">Пользователи</h3>
+                    <button class="ghost-btn small" id="admin-users-refresh-btn" type="button">Обновить</button>
+                </div>
+                <div class="admin-toolbar">
+                    <label class="admin-field admin-field--search">
+                        <span class="admin-field-label">Поиск</span>
+                        <input id="admin-user-query" class="admin-input" type="search" placeholder="TG ID, username или имя" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="admin-field">
+                        <span class="admin-field-label">Статус</span>
+                        <select id="admin-status-filter" class="admin-input">
+                            <option value="">Все статусы</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="admin-status-line" id="admin-users-state" role="status" aria-live="polite"></div>
+                <div class="admin-users-list" id="admin-users-list" role="list"></div>
+            </section>
+
+            <section class="admin-section" aria-labelledby="admin-statuses-title">
+                <div class="sec-head admin-section-head">
+                    <h3 class="sec-title" id="admin-statuses-title">Статусы</h3>
+                    <button class="ghost-btn small" id="admin-statuses-refresh-btn" type="button">Обновить</button>
+                </div>
+                <div class="admin-status-line" id="admin-statuses-state" role="status" aria-live="polite"></div>
+                <div class="admin-statuses-list" id="admin-statuses-list" role="list"></div>
+            </section>
+        </div>
     </section>
 
     </main>

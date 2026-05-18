@@ -99,7 +99,7 @@ CI runs the same matrix against PostgreSQL 16 — see
 Four Docker services + Redis + cloudflared:
 
 ```bash
-docker compose --profile tunnel up -d
+docker compose -f docker-compose.yml --profile tunnel up -d
 ```
 
 See [`docker-compose.yml`](./docker-compose.yml). Resource limits are

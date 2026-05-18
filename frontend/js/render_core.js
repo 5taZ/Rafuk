@@ -587,7 +587,7 @@ function createRenderCore(context) {
 
     function renderSummary() {
         return safeRender('renderSummary', () => {
-            if (!state.misc.stats || !state.search.query) {
+            if (!state.misc.stats || !state.search.query || state.ui.activeView === "profile" || state.ui.activeView === "admin") {
                 elements.summaryStrip.hidden = true;
                 elements.summaryQuery.textContent = "—";
                 elements.summarySignal.textContent = "—";
@@ -657,7 +657,9 @@ function createRenderCore(context) {
                 !state.misc.stats &&
                 state.ui.activeView !== "tracking" &&
                 state.ui.activeView !== "monitoring" &&
-                state.ui.activeView !== "deals";
+                state.ui.activeView !== "deals" &&
+                state.ui.activeView !== "profile" &&
+                state.ui.activeView !== "admin";
             elements.helperPanel.hidden = !shouldShow;
         });
     }
@@ -666,6 +668,9 @@ function createRenderCore(context) {
 
     function renderViews() {
         return safeRender('renderViews', () => {
+            const isUtilityView = state.ui.activeView === "profile" || state.ui.activeView === "admin";
+            if (elements.searchSection) elements.searchSection.hidden = isUtilityView;
+            if (elements.viewNav) elements.viewNav.hidden = isUtilityView;
             for (const [name, panel] of Object.entries(elements.views)) {
                 if (!panel) continue;
                 panel.hidden = state.ui.activeView !== name;

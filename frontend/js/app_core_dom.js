@@ -12,6 +12,7 @@ function cacheAppElements(elements) {
     elements.searchInput = document.getElementById("search-input");
     elements.searchButton = document.getElementById("search-btn");
     elements.searchButtonLabel = document.getElementById("search-btn-label");
+    elements.searchSection = document.querySelector(".search-section");
     elements.strictSearchToggle = document.getElementById("strict-search-toggle");
     elements.errorBar = document.getElementById("error-bar");
     elements.errorText = document.getElementById("error-text");
@@ -25,13 +26,29 @@ function cacheAppElements(elements) {
     elements.summaryFair = document.getElementById("summary-fair");
     elements.summaryRefinements = document.getElementById("summary-refinements");
     elements.summaryRefinementsChips = document.getElementById("summary-refinements-chips");
+    elements.viewNav = document.querySelector(".view-nav");
+    elements.profileChip = document.getElementById("profile-chip");
+    elements.profileChipLabel = document.getElementById("profile-chip-label");
     elements.viewTabs = Array.from(document.querySelectorAll("[data-view]"));
     elements.views = {
         overview: document.getElementById("overview-view"),
         ads: document.getElementById("ads-view"),
         tracking: document.getElementById("tracking-view"),
         deals: document.getElementById("deals-view"),
+        profile: document.getElementById("profile-view"),
+        admin: document.getElementById("admin-view"),
     };
+    elements.profileContent = document.getElementById("profile-content");
+    elements.adminContent = document.getElementById("admin-content");
+    elements.adminBackProfileButton = document.getElementById("admin-back-profile-btn");
+    elements.adminUsersRefreshButton = document.getElementById("admin-users-refresh-btn");
+    elements.adminStatusesRefreshButton = document.getElementById("admin-statuses-refresh-btn");
+    elements.adminUserQuery = document.getElementById("admin-user-query");
+    elements.adminStatusFilter = document.getElementById("admin-status-filter");
+    elements.adminUsersState = document.getElementById("admin-users-state");
+    elements.adminStatusesState = document.getElementById("admin-statuses-state");
+    elements.adminUsersList = document.getElementById("admin-users-list");
+    elements.adminStatusesList = document.getElementById("admin-statuses-list");
     elements.dealsControls = document.getElementById("deals-controls");
     elements.statsSection = document.getElementById("stats-section");
     elements.chartSection = document.getElementById("chart-section");
@@ -130,6 +147,8 @@ function cacheAppElements(elements) {
     elements.detailAiBlock = document.getElementById("detail-ai-block");
     elements.detailAiContent = document.getElementById("detail-ai-content");
     elements.detailAiBtn = document.getElementById("detail-ai-btn");
+    elements.listingAssistantSection = document.getElementById("listing-assistant-section");
+    elements.listingAssistantOpenButton = document.getElementById("listing-assistant-open-btn");
     elements.expensesModal = document.getElementById("expenses-modal");
     elements.expensesOverlay = document.getElementById("expenses-overlay");
     elements.expensesClose = document.getElementById("expenses-close");

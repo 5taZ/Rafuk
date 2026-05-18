@@ -660,6 +660,101 @@ class AccountDeletionConfirmation(BaseModel):
     )
 
 
+class AccountStatusRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    display_name: str
+    tagline: str
+    accent: str
+    sort_order: int
+    ai_daily_limit: int
+    assistant_daily_limit: int
+    updated_at: datetime
+
+
+class QuotaBucketRead(BaseModel):
+    used: int = Field(ge=0)
+    limit: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+    resets_at: datetime
+
+
+class ProfileUserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    telegram_user_id: int
+    first_name: str
+    username: str | None = None
+    created_at: datetime
+    last_seen_at: datetime | None = None
+
+
+class ProfileStatusRead(BaseModel):
+    code: str
+    display_name: str
+    tagline: str
+    accent: str
+    granted_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class ProfileLimitsRead(BaseModel):
+    ai: QuotaBucketRead
+    assistant: QuotaBucketRead
+
+
+class ProfilePermissionsRead(BaseModel):
+    can_use_ai: bool
+    can_use_assistant: bool
+    is_admin: bool
+
+
+class ProfileRead(BaseModel):
+    user: ProfileUserRead
+    status: ProfileStatusRead
+    limits: ProfileLimitsRead
+    permissions: ProfilePermissionsRead
+
+
+class AdminUserRead(BaseModel):
+    telegram_user_id: int
+    first_name: str
+    username: str | None = None
+    created_at: datetime
+    last_seen_at: datetime | None = None
+    status: ProfileStatusRead
+    limits: ProfileLimitsRead
+    status_note: str | None = None
+
+
+class AdminUserStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status_code: str = Field(min_length=1, max_length=32)
+    expires_at: datetime | None = None
+    note: str | None = Field(default=None, max_length=512)
+
+
+class AdminStatusLimitUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ai_daily_limit: int = Field(ge=0, le=10_000, strict=True)
+    assistant_daily_limit: int = Field(ge=0, le=10_000, strict=True)
+
+
+class AdminAuditRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    actor_user_id: int | None = None
+    target_user_id: int | None = None
+    action: str
+    payload: dict[str, object]
+    ip_address: str | None = None
+    created_at: datetime
+
+
 # ── AI Analysis ──────────────────────────────────────────────────────────
 
 

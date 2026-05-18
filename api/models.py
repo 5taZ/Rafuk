@@ -16,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     column,
+    event,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -23,6 +24,99 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
     """Base declarative model."""
+
+
+ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
+    {
+        "code": "bare_search",
+        "display_name": "Голый Поиск",
+        "tagline": "базовый режим: ищешь руками, без магии",
+        "accent": "gray",
+        "sort_order": 10,
+        "ai_daily_limit": 0,
+        "assistant_daily_limit": 0,
+    },
+    {
+        "code": "scout",
+        "display_name": "Скаут Барахолки",
+        "tagline": "попробовать AI, понять ценность",
+        "accent": "blue",
+        "sort_order": 20,
+        "ai_daily_limit": 10,
+        "assistant_daily_limit": 3,
+    },
+    {
+        "code": "flipper",
+        "display_name": "Флиппер",
+        "tagline": "регулярный поиск выгодных лотов",
+        "accent": "violet",
+        "sort_order": 30,
+        "ai_daily_limit": 40,
+        "assistant_daily_limit": 12,
+    },
+    {
+        "code": "shark",
+        "display_name": "Куфарная Акула",
+        "tagline": "активный ресейл / постоянные сделки",
+        "accent": "amber",
+        "sort_order": 40,
+        "ai_daily_limit": 120,
+        "assistant_daily_limit": 35,
+    },
+    {
+        "code": "market_maker",
+        "display_name": "Имба Маркетмейкер",
+        "tagline": "почти “god mode”, высокий лимит",
+        "accent": "red",
+        "sort_order": 50,
+        "ai_daily_limit": 300,
+        "assistant_daily_limit": 100,
+    },
+)
+
+
+class AccountStatus(Base):
+    __tablename__ = "account_statuses"
+
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    tagline: Mapped[str] = mapped_column(String(255), nullable=False)
+    accent: Mapped[str] = mapped_column(String(32), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    ai_daily_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    assistant_daily_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    users = relationship("User", back_populates="account_status")
+
+    __table_args__ = (
+        CheckConstraint(
+            "ai_daily_limit >= 0 AND ai_daily_limit <= 10000",
+            name="chk_account_statuses_ai_daily_limit_bounds",
+        ),
+        CheckConstraint(
+            "assistant_daily_limit >= 0 AND assistant_daily_limit <= 10000",
+            name="chk_account_statuses_assistant_daily_limit_bounds",
+        ),
+        Index("idx_account_statuses_sort_order", "sort_order"),
+    )
+
+
+@event.listens_for(AccountStatus.__table__, "after_create")
+def _seed_account_statuses(_target, connection, **_kw) -> None:
+    connection.execute(
+        AccountStatus.__table__.insert(),
+        [dict(row) for row in ACCOUNT_STATUS_SEED_ROWS],
+    )
 
 
 class User(Base):
@@ -50,8 +144,23 @@ class User(Base):
         server_default=func.now(),
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    account_status_code: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("account_statuses.code"),
+        nullable=False,
+        default="bare_search",
+        server_default="bare_search",
+    )
+    status_granted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    status_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    status_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     # Relationships
+    account_status = relationship("AccountStatus", back_populates="users")
     trackers = relationship("Tracker", back_populates="user", cascade="all, delete-orphan")
     tracker_events = relationship(
         "TrackerEvent", back_populates="user", cascade="all, delete-orphan"
@@ -66,6 +175,39 @@ class User(Base):
     contacts = relationship("Contact", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
+
+
+class AdminAuditLog(Base):
+    __tablename__ = "admin_audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    target_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    actor = relationship("User", foreign_keys=[actor_user_id])
+    target = relationship("User", foreign_keys=[target_user_id])
+
+    __table_args__ = (
+        Index("idx_admin_audit_actor", "actor_user_id"),
+        Index("idx_admin_audit_target", "target_user_id"),
+        Index("idx_admin_audit_created", "created_at"),
+    )
 
 
 class UserIDMixin:

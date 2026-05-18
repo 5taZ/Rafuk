@@ -18,6 +18,30 @@ def test_create_app_has_expected_routes() -> None:
     assert "/metrics" in paths
 
 
+def test_create_app_disables_schema_docs_in_production(monkeypatch) -> None:
+    from api import main
+    from api.config import Settings
+
+    settings = Settings(
+        env="production",
+        bot_token="test",
+        database_url="sqlite+aiosqlite:///test.db",
+        redis_url="redis://localhost:6379/0",
+        api_base_url="https://example.com",
+        mini_app_url="https://example.com/app",
+        debug=False,
+        auth_bypass=False,
+        _env_file=None,
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+
+    app = main.create_app()
+
+    assert app.docs_url is None
+    assert app.redoc_url is None
+    assert app.openapi_url is None
+
+
 @pytest.mark.asyncio
 async def test_degraded_limiter_fails_closed_for_remote_database_without_env(monkeypatch) -> None:
     from api import limiter as limiter_mod

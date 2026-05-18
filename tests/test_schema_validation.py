@@ -6,6 +6,8 @@ import pytest
 from pydantic import ValidationError
 
 from api.schemas import (
+    AdminStatusLimitUpdate,
+    AdminUserStatusUpdate,
     AIAnalysisRequest,
     AINegotiateRequest,
     LeadCreate,
@@ -179,3 +181,14 @@ def test_watchlist_read_price_history_uses_distinct_lists() -> None:
     assert first.price_history == []
     assert second.price_history == []
     assert first.price_history is not second.price_history
+
+
+def test_admin_status_update_schemas_enforce_bounds() -> None:
+    with pytest.raises(ValidationError):
+        AdminStatusLimitUpdate(ai_daily_limit=-1, assistant_daily_limit=0)
+    with pytest.raises(ValidationError):
+        AdminStatusLimitUpdate(ai_daily_limit=0, assistant_daily_limit=10_001)
+    with pytest.raises(ValidationError):
+        AdminUserStatusUpdate(status_code="", note=None)
+    with pytest.raises(ValidationError):
+        AdminUserStatusUpdate(status_code="scout", note="x" * 513)

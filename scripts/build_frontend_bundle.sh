@@ -12,6 +12,8 @@ modules=(
   render_core.js
   virtual_list.js
   render_views.js
+  render_profile.js
+  render_admin.js
   # OPUS-13 wave 70 — tracking-view modules ship as stubs.
   _lazy_trackers_stub.js
   # OPUS-13 wave 71 — deals-view modules api_leads + api_watchlist
@@ -26,6 +28,8 @@ modules=(
   _lazy_cards_stub.js
   app_renderers.js
   api_core.js
+  api_profile.js
+  api_admin.js
   api_image_proxy.js
   api_listings.js
   api_events.js

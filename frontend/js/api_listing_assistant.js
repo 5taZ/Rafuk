@@ -932,6 +932,7 @@ function createApiListingAssistant(context) {
 
     async function handleSubmit(event) {
         event.preventDefault();
+        if (typeof context.canUseAiFeature === "function" && !context.canUseAiFeature("assistant")) return;
         const title = (titleInput.value || "").trim();
         if (title.length < 3) {
             showToast("Опиши товар хотя бы в 3 символа", "error");
@@ -1006,9 +1007,13 @@ function createApiListingAssistant(context) {
             if (_analysisId !== myId) return;
             _stopLaProgress(false);
             _cancelLaProgress();
+            let handledAccessError = false;
+            if (typeof context.handleAiAccessError === "function") {
+                handledAccessError = await context.handleAiAccessError(error, "assistant");
+            }
             const text = (error && error.message) || "Не удалось получить ответ AI";
             renderError(text);
-            showToast(text, "error");
+            if (!handledAccessError) showToast(text, "error");
         } finally {
             setBusy(false);
         }
@@ -1027,6 +1032,7 @@ function createApiListingAssistant(context) {
         if (target) switchTab(target.dataset.laTab);
     };
     const _openHandler = () => {
+        if (typeof context.canUseAiFeature === "function" && !context.canUseAiFeature("assistant")) return;
         clearForm();
         openModal("form");
     };
