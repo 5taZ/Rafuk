@@ -634,11 +634,13 @@ async def create_watchlist_item(
         # If the user already has an active lead for this ad, refuse the
         # "add to watchlist" with a 409 so the frontend can refresh
         # button state instead of silently no-op'ing.
+        # BE-DEEP-8: serialize concurrent POSTs for the same (user_id, ad_id)
+        # so the 409 contract holds.
         existing = await session.scalar(
             select(LeadItem).where(
                 LeadItem.user_id == user_id,
                 LeadItem.ad_id == payload.ad_id,
-            )
+            ).with_for_update()
         )
         if existing is not None and existing.status != WATCHING_STATUS:
             raise HTTPException(
@@ -688,12 +690,14 @@ async def update_watchlist_item(
             telegram_user_id=telegram_user.user_id,
             first_name=telegram_user.first_name,
         )
+        # G-01: row lock to enforce optimistic locking against concurrent
+        # PATCHes that share the same version.
         item = await session.scalar(
             select(LeadItem).where(
                 LeadItem.id == watchlist_id,
                 LeadItem.user_id == user_id,
                 LeadItem.status == WATCHING_STATUS,
-            )
+            ).with_for_update()
         )
         if item is None:
             raise HTTPException(

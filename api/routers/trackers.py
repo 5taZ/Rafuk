@@ -295,12 +295,13 @@ async def update_tracker(
 ) -> TrackerRead:
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        # LOGIC-NEW-2: row lock to prevent last-write-wins on concurrent tracker PATCHes.
         result = await session.execute(
             select(Tracker).where(
                 Tracker.id == tracker_id,
                 Tracker.user_id == user_id,
                 Tracker.active.is_(True),
-            )
+            ).with_for_update()
         )
         tracker = result.scalar_one_or_none()
         if tracker is None:

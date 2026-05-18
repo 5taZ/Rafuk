@@ -544,3 +544,30 @@ def test_trackers_pagination() -> None:
         assert len(full) == 3
         # Paginated result should match the slice
         assert [t["id"] for t in page] == [t["id"] for t in full[1:3]]
+
+
+def test_tracker_sequential_patches_last_write_wins() -> None:
+    """LOGIC-NEW-2: two sequential PATCHes both succeed; final state
+    matches the second PATCH. Row lock serializes but no optimistic
+    version check exists on trackers yet."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/trackers",
+            json={"query": "pixel 8", "strict_mode": False, "interval_min": 30},
+        )
+        assert created.status_code == 201
+        tid = created.json()["id"]
+
+        first = client.patch(f"/api/v1/trackers/{tid}", json={"interval_min": 60})
+        assert first.status_code == 200
+        assert first.json()["interval_min"] == 60
+
+        second = client.patch(f"/api/v1/trackers/{tid}", json={"interval_min": 15})
+        assert second.status_code == 200
+        assert second.json()["interval_min"] == 15

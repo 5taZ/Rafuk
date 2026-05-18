@@ -649,3 +649,89 @@ def test_lead_incomplete_cost_basis_when_sold_without_buy_price(monkeypatch) -> 
         assert body["incomplete_cost_basis"] is True
         assert body["actual_profit"] is None
         assert body["roi_percent"] is None
+
+
+def test_watchlist_patch_optimistic_lock_409(monkeypatch) -> None:
+    """G-01: two PATCHes with the same version — first succeeds, second 409."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/watchlist",
+            json={
+                "query": "iphone 15 128",
+                "ad_id": 501,
+                "title": "iPhone 15 128GB",
+                "link": "https://www.kufar.by/item/501",
+                "price_byn": 1800,
+            },
+        )
+        assert created.status_code == 201
+        item = created.json()
+        v = item["version"]
+
+        first = client.patch(
+            f"/api/v1/watchlist/{item['id']}",
+            json={"notes": "first", "version": v},
+        )
+        assert first.status_code == 200
+
+        second = client.patch(
+            f"/api/v1/watchlist/{item['id']}",
+            json={"notes": "second", "version": v},
+        )
+        assert second.status_code == 409
+
+
+def test_create_watchlist_duplicate_409(monkeypatch) -> None:
+    """BE-DEEP-8: POST /watchlist for an ad_id already in 'reviewing' returns 409."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        # Create a lead and promote it to 'reviewing' so it's non-watching.
+        created = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "iphone 15 128",
+                "ad_id": 601,
+                "title": "iPhone 15 128GB",
+                "link": "https://www.kufar.by/item/601",
+                "price_byn": 1900,
+                "source": "manual",
+            },
+        )
+        assert created.status_code == 201
+        lead = created.json()
+        promoted = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"status": "reviewing", "version": lead["version"]},
+        )
+        assert promoted.status_code == 200
+
+        # Now POST /watchlist with the same ad_id — must 409.
+        dup = client.post(
+            "/api/v1/watchlist",
+            json={
+                "query": "iphone 15 128",
+                "ad_id": 601,
+                "title": "iPhone 15 128GB",
+                "link": "https://www.kufar.by/item/601",
+                "price_byn": 1900,
+            },
+        )
+        assert dup.status_code == 409
+        assert "уже в покупках" in dup.json()["detail"]
