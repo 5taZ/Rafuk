@@ -123,7 +123,7 @@ def _validate_lead_status_transition(current: str, target: str) -> None:
         return
     if target not in allowed:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Lead status transition '{current}' → '{target}' is not "
                 "allowed by the deal pipeline state machine"
@@ -414,7 +414,9 @@ async def update_lead(
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
         _check_lead_version(lead, payload.version)
-        if "status" in payload.model_fields_set:
+        # BE-DEEP-10: explicit ``status: null`` would crash on .value;
+        # treat null as no-op for the status field.
+        if "status" in payload.model_fields_set and payload.status is not None:
             _validate_lead_status_transition(lead.status, payload.status.value)
             lead.status = payload.status.value
             # E-FIND-02: stamp bought_at on the first transition into

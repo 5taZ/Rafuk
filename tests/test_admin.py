@@ -384,3 +384,18 @@ def test_regular_user_gets_403_on_admin_patch_endpoints() -> None:
 
     assert user_status.status_code == 403
     assert status_limits.status_code == 403
+
+
+def test_admin_users_rejects_oversized_query_status_and_offset() -> None:
+    """G-02 / SEC-NEW-6: query, status, and offset are capped."""
+    app = _admin_app(_ADMIN_TG_ID)
+
+    with TestClient(app) as client:
+        client.app.state.cache = MemoryCache()
+        long_query = client.get("/api/v1/admin/users", params={"query": "x" * 129})
+        long_status = client.get("/api/v1/admin/users", params={"status": "x" * 33})
+        big_offset = client.get("/api/v1/admin/users", params={"offset": 10001})
+
+    assert long_query.status_code == 422
+    assert long_status.status_code == 422
+    assert big_offset.status_code == 422

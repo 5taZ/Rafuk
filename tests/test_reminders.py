@@ -203,3 +203,12 @@ def test_idor_user_b_cannot_see_user_a_reminders() -> None:
 
         delete_resp = client.delete(f"/api/v1/leads/{lead_id}/reminders/{reminder_id}")
         assert delete_resp.status_code == 404
+
+
+def test_reminders_offset_cap_rejects_over_10000() -> None:
+    """G-02: offset > 10_000 returns 422."""
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        resp = client.get(f"/api/v1/leads/{lead['id']}/reminders", params={"offset": 10001})
+    assert resp.status_code == 422

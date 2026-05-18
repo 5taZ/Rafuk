@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import secrets as _secrets
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -254,7 +255,6 @@ def create_app() -> FastAPI:
     # ``request_id`` field. The ID is also echoed back in the
     # ``X-Request-ID`` response header so clients can correlate a
     # bug report with server logs.
-    import secrets as _secrets
 
     @app.middleware("http")
     async def add_request_id(request: Request, call_next):

@@ -77,7 +77,8 @@ async def get_reminders(
     # reminders on a single lead would burn a multi-MB response per
     # call. Defaults mirror the expenses endpoint (BE-M2 pattern).
     limit: int = Query(default=100, ge=1, le=500, description="Max reminders to return"),
-    offset: int = Query(default=0, ge=0, description="Number of reminders to skip"),
+    # G-02: cap offset to bound pagination drift.
+    offset: int = Query(default=0, ge=0, le=10_000, description="Number of reminders to skip"),
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(
         get_session_factory_dependency,

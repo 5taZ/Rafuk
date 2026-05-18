@@ -39,10 +39,12 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.get("/users", response_model=list[AdminUserRead])
 async def list_admin_users(
     request: Request,
-    query: str = "",
-    status: str = "",
+    # G-02 / SEC-NEW-6: cap admin search inputs and offset to prevent
+    # unbounded LIKE patterns / pagination drift.
+    query: str = Query(default="", max_length=128),
+    status: str = Query(default="", max_length=32),
     limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=10_000),
     _admin: TelegramInitData = Depends(require_admin_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     cache: CacheBackend = Depends(get_cache),

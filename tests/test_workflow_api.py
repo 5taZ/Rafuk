@@ -735,3 +735,38 @@ def test_create_watchlist_duplicate_409(monkeypatch) -> None:
         )
         assert dup.status_code == 409
         assert "уже в покупках" in dup.json()["detail"]
+
+
+def test_update_lead_with_null_status_is_noop(monkeypatch) -> None:
+    """BE-DEEP-10: PATCH with {"status": null} must not crash; treat as no-op."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "iphone 15",
+                "ad_id": 701,
+                "title": "iPhone 15 128GB",
+                "link": "https://www.kufar.by/item/701",
+                "price_byn": 2000,
+                "source": "manual",
+            },
+        )
+        assert created.status_code == 201
+        lead = created.json()
+        assert lead["status"] == "new"
+
+        resp = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"status": None, "version": lead["version"]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "new"

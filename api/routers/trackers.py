@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import delete, func, select
@@ -45,7 +46,11 @@ async def get_tracker_events(
     # reflect the contract.
     limit: int = Query(default=20, ge=1, le=50),
     tracker_id: int | None = None,
-    event_type: str | None = None,
+    # SEC-NEW-5: enum-validate event_type so OpenAPI/422 matches DB CHECK constraint.
+    event_type: Literal[
+        "new_listing", "price_drop", "trend_reversal",
+        "price_threshold_alert", "discount_alert",
+    ] | None = None,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[TrackerEventRead]:
@@ -98,7 +103,7 @@ async def get_trackers(
     request: Request,
     # A-3: pagination for consistency with other list endpoints
     limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=10_000),  # G-02: cap offset to bound pagination drift.
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[TrackerRead]:
@@ -183,7 +188,7 @@ async def create_tracker(
     query = payload.query.strip()
     if not query:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Query must not be empty",
         )
 
@@ -323,7 +328,7 @@ async def update_tracker(
             and "category_label" not in update_data
         ):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="category_label is required when category_id changes",
             )
         nullable_fields = {

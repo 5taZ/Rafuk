@@ -571,3 +571,34 @@ def test_tracker_sequential_patches_last_write_wins() -> None:
         second = client.patch(f"/api/v1/trackers/{tid}", json={"interval_min": 15})
         assert second.status_code == 200
         assert second.json()["interval_min"] == 15
+
+
+@pytest.mark.asyncio
+async def test_tracker_events_rejects_invalid_event_type() -> None:
+    """SEC-NEW-5: event_type must match the DB CHECK constraint Literal."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        invalid = client.get("/api/v1/tracker-events", params={"event_type": "invalid_value"})
+        valid = client.get("/api/v1/tracker-events", params={"event_type": "price_drop"})
+
+    assert invalid.status_code == 422
+    assert valid.status_code == 200
+
+
+def test_trackers_offset_cap_rejects_over_10000() -> None:
+    """G-02: offset > 10_000 returns 422."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/trackers", params={"offset": 10001})
+
+    assert resp.status_code == 422

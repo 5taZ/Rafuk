@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import secrets as _secrets
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -98,8 +99,6 @@ async def get_telegram_user(
     # valid token (the initData would be ignored either way).
     configured_token = settings.internal_service_token
     if configured_token is not None and x_internal_service_token:
-        import secrets as _secrets  # noqa: PLC0415 — local helper
-
         if not _secrets.compare_digest(
             x_internal_service_token, configured_token.get_secret_value()
         ):
