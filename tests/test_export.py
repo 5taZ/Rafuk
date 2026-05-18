@@ -213,3 +213,94 @@ def test_export_csv_incomplete_cost_basis_shows_empty_profit() -> None:
     # Profit and ROI must be empty, not "1000.00".
     assert row["actual_profit"] == ""
     assert row["roi_percent"] == ""
+
+
+def test_export_csv_sold_price_zero_reports_negative_profit() -> None:
+    """LOGIC-NEW-1: sold_price_byn=0 is a legitimate giveaway — export must
+    report negative profit (matching the API), not leave it blank."""
+    import csv as csv_mod
+
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "giveaway item",
+                "ad_id": 70001,
+                "title": "Free giveaway",
+                "link": "https://www.kufar.by/item/70001",
+                "price_byn": 100,
+                "status": "new",
+                "source": "manual",
+            },
+        )
+        assert resp.status_code == 201
+        lead_id = resp.json()["id"]
+        version = resp.json()["version"]
+
+        patch_resp = client.patch(
+            f"/api/v1/leads/{lead_id}",
+            json={
+                "status": "sold",
+                "buy_price_byn": 100,
+                "sold_price_byn": 0,
+                "version": version,
+            },
+        )
+        assert patch_resp.status_code == 200
+
+        export_resp = client.get("/api/v1/leads/export?format=csv")
+        assert export_resp.status_code == 200
+
+    body = export_resp.content.decode("utf-8")
+    reader = csv_mod.DictReader(io.StringIO(body))
+    rows = [r for r in reader if r["id"] == str(lead_id)]
+    assert len(rows) == 1
+    row = rows[0]
+    # Profit must be -100.00 (0 - 100 - 0 expenses), not empty.
+    assert row["actual_profit"] == "-100.00"
+
+
+def test_export_csv_sold_price_none_reports_empty_profit() -> None:
+    """LOGIC-NEW-1 regression: sold_price_byn=None must still produce
+    empty profit — only the 0-case changed."""
+    import csv as csv_mod
+
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "unsold item",
+                "ad_id": 70002,
+                "title": "Still holding",
+                "link": "https://www.kufar.by/item/70002",
+                "price_byn": 200,
+                "status": "bought",
+                "source": "manual",
+                "buy_price_byn": 200,
+            },
+        )
+        assert resp.status_code == 201
+        lead_id = resp.json()["id"]
+
+        export_resp = client.get("/api/v1/leads/export?format=csv")
+        assert export_resp.status_code == 200
+
+    body = export_resp.content.decode("utf-8")
+    reader = csv_mod.DictReader(io.StringIO(body))
+    rows = [r for r in reader if r["id"] == str(lead_id)]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["actual_profit"] == ""
+    assert row["roi_percent"] == ""

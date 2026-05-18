@@ -770,3 +770,80 @@ def test_update_lead_with_null_status_is_noop(monkeypatch) -> None:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "new"
+
+
+def test_is_sold_field_in_lead_responses(monkeypatch) -> None:
+    """LOGIC-NEW-3: /leads responses include is_sold matching
+    sold_price_byn is not None or status == 'sold'."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        # 1) Sold lead with sold_price set → is_sold=True
+        resp = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "sold test",
+                "ad_id": 80001,
+                "title": "Sold item",
+                "link": "https://www.kufar.by/item/80001",
+                "price_byn": 500,
+                "source": "manual",
+            },
+        )
+        assert resp.status_code == 201
+        lead = resp.json()
+        sold_resp = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={
+                "status": "sold",
+                "buy_price_byn": 400,
+                "sold_price_byn": 600,
+                "version": lead["version"],
+            },
+        )
+        assert sold_resp.status_code == 200
+        assert sold_resp.json()["is_sold"] is True
+
+        # 2) Bought lead (not sold) → is_sold=False
+        resp2 = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "bought test",
+                "ad_id": 80002,
+                "title": "Bought item",
+                "link": "https://www.kufar.by/item/80002",
+                "price_byn": 300,
+                "status": "bought",
+                "source": "manual",
+                "buy_price_byn": 300,
+            },
+        )
+        assert resp2.status_code == 201
+        assert resp2.json()["is_sold"] is False
+
+        # 3) New lead (watching-like) → is_sold=False
+        resp3 = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "new test",
+                "ad_id": 80003,
+                "title": "New item",
+                "link": "https://www.kufar.by/item/80003",
+                "price_byn": 200,
+                "source": "manual",
+            },
+        )
+        assert resp3.status_code == 201
+        assert resp3.json()["is_sold"] is False
+
+        # Verify list endpoint also includes is_sold
+        leads_list = client.get("/api/v1/leads").json()
+        sold_leads = [x for x in leads_list if x["id"] == lead["id"]]
+        assert sold_leads[0]["is_sold"] is True

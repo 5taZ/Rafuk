@@ -200,6 +200,7 @@ def _serialize_lead_read(
     out.actual_profit = actual_profit
     out.roi_percent = roi_percent
     out.hold_time_days = _compute_hold_time_days(lead)
+    out.is_sold = lead.sold_price_byn is not None or lead.status == "sold"
     # E-FIND-09: flag incomplete cost basis when sold without buy_price.
     if lead.sold_price_byn is not None and lead.buy_price_byn is None:
         out.incomplete_cost_basis = True

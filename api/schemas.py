@@ -450,6 +450,8 @@ class LeadRead(BaseModel):
     # in the handler, not in the model, so it stays in sync with the
     # current request time.
     hold_time_days: int | None = None
+    # LOGIC-NEW-3: disambiguate hold_time_days=0 between same-day-sold and bought-today.
+    is_sold: bool = False
     price_delta_byn: float | None = None
     price_delta_percent: float | None = None
     created_at: datetime
