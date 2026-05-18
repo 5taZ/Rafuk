@@ -266,21 +266,31 @@ def render_prometheus_metrics() -> str:
 
 
 async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]] | None:
+    # PERF-NEW-8: pipelined HGETALL fan-out for metrics (was 6 sequential round-trips).
+    if not hasattr(cache, "pipeline_hgetall") or _redis_client(cache) is None:
+        return None
+    keys = [
+        "metrics:v1:http_requests",
+        "metrics:v1:http_duration_sum",
+        "metrics:v1:http_duration_count",
+        "metrics:v1:query_dataset_events",
+        "metrics:v1:query_dataset_fetch_duration_sum",
+        "metrics:v1:query_dataset_fetch_duration_count",
+    ]
+    try:
+        results = await cache.pipeline_hgetall(keys)
+    except Exception:
+        logger.warning("Redis metrics pipeline_hgetall failed", exc_info=True)
+        return None
     hashes = {
-        "requests": await _redis_hgetall(cache, "metrics:v1:http_requests"),
-        "duration_sum": await _redis_hgetall(cache, "metrics:v1:http_duration_sum"),
-        "duration_count": await _redis_hgetall(cache, "metrics:v1:http_duration_count"),
-        "dataset_events": await _redis_hgetall(cache, "metrics:v1:query_dataset_events"),
-        "dataset_fetch_sum": await _redis_hgetall(
-            cache, "metrics:v1:query_dataset_fetch_duration_sum"
-        ),
-        "dataset_fetch_count": await _redis_hgetall(
-            cache, "metrics:v1:query_dataset_fetch_duration_count"
-        ),
+        "requests": results[0],
+        "duration_sum": results[1],
+        "duration_count": results[2],
+        "dataset_events": results[3],
+        "dataset_fetch_sum": results[4],
+        "dataset_fetch_count": results[5],
         "ai_audit_failures": {},
     }
-    if any(value is None for value in hashes.values()):
-        return None
 
     snapshot: dict[str, list[tuple[Any, Any]]] = {
         "requests": [],

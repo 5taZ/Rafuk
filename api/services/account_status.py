@@ -29,6 +29,7 @@ QUOTA_BUCKET_ASSISTANT = "assistant"
 QUOTA_BUCKETS = (QUOTA_BUCKET_AI, QUOTA_BUCKET_ASSISTANT)
 _MINSK_TZ = ZoneInfo("Europe/Minsk")
 _QUOTA_TTL_MARGIN = timedelta(hours=48)
+_LAST_SEEN_REFRESH_SECONDS = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,7 +224,13 @@ async def get_or_create_profile_user(
     if username and user.username != username[:128]:
         user.username = username[:128]
         changed = True
-    if user.last_seen_at != now:
+    # BE-DEEP-4: throttle last_seen_at writes so /profile/me is a read
+    # on the typical hot-poll path.
+    _last_seen = user.last_seen_at
+    if _last_seen is not None and _last_seen.tzinfo is None:
+        _last_seen = _last_seen.replace(tzinfo=UTC)
+    last_seen_delta = (now - _last_seen).total_seconds() if _last_seen else None
+    if last_seen_delta is None or last_seen_delta >= _LAST_SEEN_REFRESH_SECONDS:
         user.last_seen_at = now
         changed = True
     if changed:

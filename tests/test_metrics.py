@@ -55,6 +55,9 @@ class _FakeRedisCache:
     def __init__(self) -> None:
         self._client = _FakeRedisClient()
 
+    async def pipeline_hgetall(self, keys: list[str]) -> list[dict[str, str]]:
+        return [dict(self._client.hashes[k]) for k in keys]
+
 
 def test_metrics_endpoint_exposes_prometheus_text() -> None:
     _reset_metrics_for_tests()

@@ -248,3 +248,29 @@ async def test_quota_buckets_are_independent() -> None:
     assert ai_snapshot.remaining == 10
     assert assistant_snapshot.used == 1
     assert assistant_snapshot.remaining == 2
+
+
+@pytest.mark.asyncio
+async def test_profile_me_throttles_last_seen_at(profile_client) -> None:
+    """BE-DEEP-4: second GET within 60s does not update last_seen_at."""
+    client, session_factory, _cache = profile_client
+
+    resp1 = await client.get("/api/v1/profile/me")
+    assert resp1.status_code == 200
+
+    async with session_factory() as session:
+        user = (
+            await session.execute(select(User).where(User.telegram_user_id == _PROFILE_USER_ID))
+        ).scalar_one()
+        first_seen = user.last_seen_at
+
+    resp2 = await client.get("/api/v1/profile/me")
+    assert resp2.status_code == 200
+
+    async with session_factory() as session:
+        user = (
+            await session.execute(select(User).where(User.telegram_user_id == _PROFILE_USER_ID))
+        ).scalar_one()
+        second_seen = user.last_seen_at
+
+    assert first_seen == second_seen

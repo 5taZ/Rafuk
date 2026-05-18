@@ -76,3 +76,30 @@ async def test_memory_cache_incr_enforces_max_entries() -> None:
     assert len(cache._storage) <= cache.MAX_ENTRIES
     # The most recently incremented key must still be present.
     assert f"counter:{cache.MAX_ENTRIES + 49}" in cache._storage
+
+
+@pytest.mark.asyncio
+async def test_memory_cache_pipeline_get_order_and_misses() -> None:
+    """PERF-NEW-4: pipeline_get preserves order, returns None for misses."""
+    cache = MemoryCache()
+    await cache.set("a", "1")
+    await cache.set("c", "3")
+
+    result = await cache.pipeline_get(["a", "b", "c"])
+
+    assert result == ["1", None, "3"]
+
+
+@pytest.mark.asyncio
+async def test_memory_cache_pipeline_hgetall_returns_empty_dicts() -> None:
+    """PERF-NEW-4: MemoryCache has no hash type — returns {} per key."""
+    cache = MemoryCache()
+    result = await cache.pipeline_hgetall(["k1", "k2", "k3"])
+    assert result == [{}, {}, {}]
+
+
+@pytest.mark.asyncio
+async def test_memory_cache_pipeline_get_empty_list() -> None:
+    cache = MemoryCache()
+    assert await cache.pipeline_get([]) == []
+    assert await cache.pipeline_hgetall([]) == []

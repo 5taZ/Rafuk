@@ -306,6 +306,26 @@ def create_app() -> FastAPI:
         _apply_security_headers(response)
         return response
 
+    # BE-DEEP-2: reject oversized bodies at the app layer so a direct hit
+    # bypassing nginx (port 8010 dev exposure) still gets the 8 MiB cap.
+    _api_max_body_bytes = settings.api_max_body_bytes
+
+    @app.middleware("http")
+    async def enforce_body_size_limit(request: Request, call_next):
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                if int(cl) > _api_max_body_bytes:
+                    response = JSONResponse(
+                        status_code=413,
+                        content={"detail": "Request body too large"},
+                    )
+                    _apply_security_headers(response)
+                    return response
+            except ValueError:
+                pass
+        return await call_next(request)
+
     # Cache-Control middleware
     @app.middleware("http")
     async def add_cache_control(request: Request, call_next):

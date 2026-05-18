@@ -28,6 +28,10 @@ class CacheBackend(Protocol):
     async def delete(self, key: str) -> None: ...
     async def ping(self) -> bool: ...
 
+    # PERF-NEW-4: batched pipeline ops
+    async def pipeline_get(self, keys: list[str]) -> list[str | None]: ...
+    async def pipeline_hgetall(self, keys: list[str]) -> list[dict[str, str]]: ...
+
 
 class MemoryCache:
     """In-memory cache with TTL enforcement and LRU eviction."""
@@ -134,6 +138,14 @@ class MemoryCache:
         """Remove a key from the cache. No-op if the key does not exist."""
         async with self._lock:
             self._storage.pop(key, None)
+
+    async def pipeline_get(self, keys: list[str]) -> list[str | None]:
+        """PERF-NEW-4: fan-out to per-key get (no real round-trip to save)."""
+        return [await self.get(k) for k in keys]
+
+    async def pipeline_hgetall(self, keys: list[str]) -> list[dict[str, str]]:
+        """PERF-NEW-4: no-op fan-out — MemoryCache has no hash type."""
+        return [{} for _ in keys]
 
     async def ping(self) -> bool:
         return True
@@ -261,6 +273,33 @@ class RedisCache:
             await self._client.delete(key)
         except RedisError:
             logger.warning("Redis delete failed for key=%s", key, exc_info=True)
+
+    async def pipeline_get(self, keys: list[str]) -> list[str | None]:
+        """PERF-NEW-4: batched GET over a Redis pipeline."""
+        if not keys:
+            return []
+        try:
+            async with self._client.pipeline(transaction=False) as pipe:
+                for k in keys:
+                    pipe.get(k)
+                return await pipe.execute()
+        except RedisError:
+            logger.warning("Redis pipeline_get failed", exc_info=True)
+            return [await self.get(k) for k in keys]
+
+    async def pipeline_hgetall(self, keys: list[str]) -> list[dict[str, str]]:
+        """PERF-NEW-4: batched HGETALL over a Redis pipeline."""
+        if not keys:
+            return []
+        try:
+            async with self._client.pipeline(transaction=False) as pipe:
+                for k in keys:
+                    pipe.hgetall(k)
+                results = await pipe.execute()
+            return [dict(r) if r else {} for r in results]
+        except RedisError:
+            logger.warning("Redis pipeline_hgetall failed", exc_info=True)
+            return [{} for _ in keys]
 
     async def try_acquire_lock(
         self,

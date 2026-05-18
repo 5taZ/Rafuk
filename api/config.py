@@ -220,6 +220,7 @@ class Settings(BaseSettings):
     image_proxy_fetch_timeout: float = 5.0
     image_proxy_max_bytes: int = 5 * 1024 * 1024
     metrics_bearer_token: SecretStr | None = None
+    api_max_body_bytes: int = 8 * 1024 * 1024
 
     @field_validator("redis_url")
     @classmethod

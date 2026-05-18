@@ -186,3 +186,25 @@ async def test_auto_provision_user_runs_once_per_ttl(monkeypatch) -> None:
             await asyncio.sleep(0.01)
 
     assert calls == [(session_factory, 777, "TTL")]
+
+
+def test_body_size_limit_returns_413_with_security_headers() -> None:
+    """BE-DEEP-2: oversized Content-Length gets 413 with security headers."""
+    from fastapi.testclient import TestClient
+
+    from api.main import create_app
+
+    app = create_app()
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/v1/leads",
+            headers={"content-length": "9000000"},
+            content=b"",
+        )
+
+    assert resp.status_code == 413
+    assert resp.json()["detail"] == "Request body too large"
+    assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+    assert "DENY" in resp.headers.get("X-Frame-Options", "")
+    assert "max-age=" in resp.headers.get("Strict-Transport-Security", "")
