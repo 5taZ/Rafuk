@@ -40,6 +40,7 @@ from api.services.ai_marketplace import (
     complete_analysis_sections,
     finalize_red_flags,
 )
+from api.services.ai_sanitize import strip_html_in_payload
 from api.services.ai_service import (
     dedupe_analysis_payload,
     detect_category,
@@ -919,6 +920,8 @@ async def _stage_response(c: _AC) -> None:
     # observation ("ЛКП имеет блеск" + "ЛКП имеет блеск, без вмятин"),
     # so we re-run the paraphrase-aware dedupe here as a final pass.
     c.result = dedupe_analysis_payload(c.result)
+    # SEC-NEW-4: defence-in-depth strip of HTML tags in AI output before cache/return.
+    c.result = strip_html_in_payload(c.result)
 
     resale_potential = _build_resale_potential(c.result.get("resale_potential"))
 

@@ -269,9 +269,39 @@ def sanitize_user_text(
     return text
 
 
+# ── SEC-NEW-4: HTML tag stripping for AI output ─────────────────────────
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def strip_html_tags(text: str) -> str:
+    """SEC-NEW-4: defence-in-depth strip for AI output.
+    We own a strict CSP so an ``<img onerror>`` won't fire, but stripping
+    ensures a future innerHTML callsite (or relaxed CSP) doesn't open
+    a fresh XSS hole. Keep the regex permissive — we'd rather strip a
+    legitimate ``<`` than leak ``<script>``.
+    """
+    if not text:
+        return text
+    return _HTML_TAG_RE.sub("", text)
+
+
+def strip_html_in_payload(value):
+    """Recurse into dict/list and apply ``strip_html_tags`` to every string."""
+    if isinstance(value, str):
+        return strip_html_tags(value)
+    if isinstance(value, list):
+        return [strip_html_in_payload(v) for v in value]
+    if isinstance(value, dict):
+        return {k: strip_html_in_payload(v) for k, v in value.items()}
+    return value
+
+
 __all__ = [
     "sanitize_user_text",
     "scrub_pii",
+    "strip_html_tags",
+    "strip_html_in_payload",
     "_PROMPT_ROLE_MARKERS",
     "_PROMPT_INJECTION_PATTERNS",
     "_TRIPLE_BACKTICK_RE",

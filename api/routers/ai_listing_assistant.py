@@ -42,6 +42,7 @@ from api.services.ai_listing_guardrails import (
     normalize_listing_pricing,
     thin_market_warning,
 )
+from api.services.ai_sanitize import strip_html_in_payload
 from api.services.ai_service import (
     CATEGORY_HINTS,
     detect_category,
@@ -650,6 +651,8 @@ async def listing_assistant(
         market_summary=market_summary[:600],
     )
 
+    # SEC-NEW-4: defence-in-depth strip of HTML tags in AI output before cache/return.
+    serialized = strip_html_in_payload(response.model_dump(mode="json"))
     cache_ttl = int(getattr(settings, "ai_listing_assistant_cache_ttl", 3600) or 3600)
-    await cache.set_json(cache_key, response.model_dump(mode="json"), ttl=cache_ttl)
-    return response
+    await cache.set_json(cache_key, serialized, ttl=cache_ttl)
+    return AIListingAssistantResponse.model_validate(serialized)

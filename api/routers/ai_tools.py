@@ -25,6 +25,7 @@ from api.schemas import (
     AIPriceAdviceRequest,
     AIPriceAdviceResponse,
 )
+from api.services.ai_sanitize import strip_html_in_payload
 from api.services.ai_service import sanitize_user_text
 from api.services.cache import digest_cache_key
 from api.services.client_ip import get_client_ip
@@ -202,8 +203,10 @@ async def negotiate_price(
         tips=_coerce_string_list(result.get("tips"), limit=4, max_len=140),
     )
 
-    await cache.set_json(cache_key, response.model_dump(mode="json"), ttl=1800)
-    return response
+    # SEC-NEW-4: defence-in-depth strip of HTML tags in AI output before cache/return.
+    serialized = strip_html_in_payload(response.model_dump(mode="json"))
+    await cache.set_json(cache_key, serialized, ttl=1800)
+    return AINegotiateResponse.model_validate(serialized)
 
 
 # ── Price Advice ──────────────────────────────────────────────────────────
@@ -321,5 +324,7 @@ async def price_advice(
         confidence=float(result.get("confidence") or 0.0),
     )
 
-    await cache.set_json(cache_key, response.model_dump(mode="json"), ttl=3600)
-    return response
+    # SEC-NEW-4: defence-in-depth strip of HTML tags in AI output before cache/return.
+    serialized = strip_html_in_payload(response.model_dump(mode="json"))
+    await cache.set_json(cache_key, serialized, ttl=3600)
+    return AIPriceAdviceResponse.model_validate(serialized)

@@ -63,6 +63,7 @@ from api.services.ai_guards import (  # noqa: F401 — re-exports
     _coerce_string_list,
 )
 from api.services.ai_privacy import clear_user_ai_data  # noqa: F401 — re-export
+from api.services.ai_sanitize import strip_html_in_payload
 
 # ``get_ai_service`` is re-exported here so ai_guards' late-bound
 # lookup (and several monkeypatch sites in tests) can stay anchored
@@ -164,7 +165,8 @@ async def analyze_listing(
                 cached=True,
                 ip_address=client_ip,
             )
-            return {"task_id": None, "cached": True, "result": cached}
+            # SEC-NEW-4: strip tags from old cached entries written before the pipeline strip.
+            return {"task_id": None, "cached": True, "result": strip_html_in_payload(cached)}
 
     await _check_rate_limit(request, _user.user_id, endpoint="analyze")
 

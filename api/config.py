@@ -208,6 +208,9 @@ class Settings(BaseSettings):
     # falls back to the legacy initData-forge path with a
     # deprecation warning so existing deployments keep working.
     internal_service_token: SecretStr | None = None
+    # SEC-NEW-8: HMAC key for AI audit log hashes. Falls back to
+    # BOT_TOKEN-derived key when unset.
+    audit_hash_secret: SecretStr | None = Field(default=None, alias="AUDIT_HASH_SECRET")
     admin_telegram_user_ids: str = ""
 
     # Image proxy (WebP/AVIF transcode of Kufar JPEGs).

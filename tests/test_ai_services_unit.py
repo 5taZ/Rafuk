@@ -79,7 +79,12 @@ async def test_log_ai_audit_creates_row_for_known_user() -> None:
     assert entry.model == "gemini-2.5-flash"
     assert entry.latency_ms == 42
     assert entry.query == "iphone"
-    assert entry.query_hash == hashlib.sha256(b"iphone").hexdigest()
+    # SEC-NEW-8: hashes are now HMAC-keyed, not raw SHA-256.
+    import hmac as _hmac
+
+    from api.services.ai_audit import _get_audit_secret
+    expected_hash = _hmac.new(_get_audit_secret(), b"iphone", hashlib.sha256).hexdigest()
+    assert entry.query_hash == expected_hash
     # OPUS-17: IP captured at decision time matches what we passed.
     assert entry.ip_address == "203.0.113.5"
 
@@ -128,9 +133,18 @@ async def test_log_ai_audit_scrubs_free_text_and_keeps_hashes() -> None:
     async with factory() as session:
         row = (await session.execute(select(AIAuditLog))).scalar_one()
     assert row.query == "iPhone [phone] [email] [handle]"
-    assert row.query_hash == hashlib.sha256(raw_query.encode("utf-8")).hexdigest()
+    # SEC-NEW-8: hashes are now HMAC-keyed, not raw SHA-256.
+    import hmac as _hmac
+
+    from api.services.ai_audit import _get_audit_secret
+    secret = _get_audit_secret()
+    assert row.query_hash == _hmac.new(
+        secret, raw_query.encode("utf-8"), hashlib.sha256,
+    ).hexdigest()
     assert row.result_summary == "Seller answer: [phone]"
-    assert row.result_summary_hash == hashlib.sha256(raw_summary.encode("utf-8")).hexdigest()
+    assert row.result_summary_hash == _hmac.new(
+        secret, raw_summary.encode("utf-8"), hashlib.sha256,
+    ).hexdigest()
     for raw_fragment in ("+375291234567", "user@example.com", "@seller"):
         assert raw_fragment not in (row.query or "")
         assert raw_fragment not in (row.result_summary or "")
@@ -391,3 +405,124 @@ async def test_task_lock_eviction_keeps_held_locks() -> None:
     finally:
         pinned.release()
         ai_task_store._task_locks.clear()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# SEC-NEW-4: strip_html_tags / strip_html_in_payload
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_strip_html_tags_empty_passthrough():
+    from api.services.ai_sanitize import strip_html_tags
+    assert strip_html_tags("") == ""
+    assert strip_html_tags(None) is None  # type: ignore[arg-type]
+
+
+def test_strip_html_tags_plain_text_passthrough():
+    from api.services.ai_sanitize import strip_html_tags
+    assert strip_html_tags("Hello world") == "Hello world"
+    assert strip_html_tags("Price: 500 BYN") == "Price: 500 BYN"
+
+
+def test_strip_html_tags_removes_tags():
+    from api.services.ai_sanitize import strip_html_tags
+    assert strip_html_tags('<script>alert(1)</script>') == "alert(1)"
+    assert strip_html_tags('<img src=x onerror=alert(1)>') == ""
+    assert strip_html_tags("safe <b>bold</b> text") == "safe bold text"
+
+
+def test_strip_html_in_payload_nested():
+    from api.services.ai_sanitize import strip_html_in_payload
+    payload = {
+        "summary": "<script>xss</script>clean",
+        "watch_out": ["<img src=x onerror=hack>", "legit"],
+        "nested": {"key": "<div>inner</div>"},
+        "number": 42,
+        "none_val": None,
+    }
+    result = strip_html_in_payload(payload)
+    assert result["summary"] == "xssclean"
+    assert result["watch_out"] == ["", "legit"]
+    assert result["nested"]["key"] == "inner"
+    assert result["number"] == 42
+    assert result["none_val"] is None
+
+
+def test_strip_html_in_payload_no_angle_brackets_in_ai_result():
+    """Construct an AI result with XSS payloads and verify no '<' remains."""
+    from api.services.ai_sanitize import strip_html_in_payload
+    ai_result = {
+        "summary": '<script>alert(1)</script>Good phone',
+        "watch_out": ['<img src=x onerror="steal()">Watch battery'],
+        "recommendation": {"text": "<b>Buy it</b>"},
+        "negotiation_tips": ["<a href=evil>click</a>"],
+        "red_flags": ["<marquee>scam</marquee>"],
+        "market_context": "Normal <span>market</span>",
+    }
+    cleaned = strip_html_in_payload(ai_result)
+    flat = str(cleaned)
+    assert "<" not in flat
+
+
+# ──────────────────────────────────────────────────────────────────────
+# SEC-NEW-8: audit_text_hash (HMAC)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_audit_text_hash_deterministic():
+    from api.services.ai_audit import audit_text_hash
+    secret = b"test-secret"
+    h1 = audit_text_hash("iphone 15", secret=secret)
+    h2 = audit_text_hash("iphone 15", secret=secret)
+    assert h1 == h2
+    assert h1 is not None
+
+
+def test_audit_text_hash_different_secret_different_hash():
+    from api.services.ai_audit import audit_text_hash
+    h1 = audit_text_hash("iphone 15", secret=b"secret-a")
+    h2 = audit_text_hash("iphone 15", secret=b"secret-b")
+    assert h1 != h2
+
+
+def test_audit_text_hash_differs_from_sha256():
+    from api.services.ai_audit import audit_text_hash, audit_text_sha256
+    value = "macbook pro"
+    hmac_hash = audit_text_hash(value, secret=b"any-secret")
+    sha_hash = audit_text_sha256(value)
+    assert hmac_hash != sha_hash
+
+
+def test_audit_text_hash_none_and_empty():
+    from api.services.ai_audit import audit_text_hash
+    assert audit_text_hash(None, secret=b"s") is None
+    assert audit_text_hash("", secret=b"s") is None
+
+
+@pytest.mark.asyncio
+async def test_log_ai_audit_uses_hmac(monkeypatch) -> None:
+    """New audit writes go through HMAC, not raw SHA-256."""
+    import hmac as _hmac
+
+    factory = await _fresh_session_factory()
+    async with factory() as session:
+        session.add(User(telegram_user_id=444444, first_name="D"))
+        await session.commit()
+
+    test_secret = b"wave175-test-secret"
+    monkeypatch.setattr("api.services.ai_audit._audit_secret_cache", test_secret)
+
+    await _log_ai_audit(
+        factory,
+        telegram_user_id=444444,
+        endpoint="analyze",
+        query="iphone 15",
+        model="m",
+    )
+
+    async with factory() as session:
+        row = (await session.execute(select(AIAuditLog))).scalar_one()
+    expected = _hmac.new(test_secret, b"iphone 15", hashlib.sha256).hexdigest()
+    assert row.query_hash == expected
+    # Confirm it's NOT the old sha256
+    assert row.query_hash != hashlib.sha256(b"iphone 15").hexdigest()

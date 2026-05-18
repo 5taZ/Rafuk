@@ -15,6 +15,7 @@ scheduler (``scheduler/collector.py``); this module only writes.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 from typing import Any
 
@@ -25,7 +26,53 @@ from api.services.workflow_store import resolve_user_id
 
 logger = logging.getLogger(__name__)
 
+# SEC-NEW-8: module-level cache for the derived HMAC secret so we
+# don't re-hash on every audit call.
+_audit_secret_cache: bytes | None = None
 
+
+def _get_audit_secret() -> bytes:
+    """Return the HMAC key for audit hashes.
+
+    Uses AUDIT_HASH_SECRET if configured, otherwise derives a key from
+    BOT_TOKEN via SHA-256. Cached module-level after first call.
+    """
+    global _audit_secret_cache
+    if _audit_secret_cache is not None:
+        return _audit_secret_cache
+    from api.config import get_settings
+    settings = get_settings()
+    if settings.audit_hash_secret:
+        _audit_secret_cache = settings.audit_hash_secret.get_secret_value().encode("utf-8")
+    else:
+        _audit_secret_cache = hashlib.sha256(
+            settings.bot_token.get_secret_value().encode("utf-8"),
+        ).digest()
+    return _audit_secret_cache
+
+
+def audit_text_hash(value: str | None, *, secret: bytes) -> str | None:
+    """HMAC-SHA256 hash of ``value`` keyed by ``secret``.
+
+    SEC-NEW-8: HMAC keyed by AUDIT_HASH_SECRET (or BOT_TOKEN-derived
+    fallback) so leaked audit rows can't be rainbow-tabled back to
+    user queries.
+
+    Migration policy: old rows keep their unsalted SHA-256 hashes.
+    New writes go through this function. The DB column shape is
+    unchanged (TEXT). Read-side code that needs to verify old rows
+    should use ``audit_text_sha256`` for those.
+    """
+    if value is None:
+        return None
+    text = str(value)
+    if not text:
+        return None
+    return hmac.new(secret, text.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+# SEC-NEW-8: kept for read-side compatibility with rows hashed before
+# the HMAC migration. New writes go through ``audit_text_hash``.
 def audit_text_sha256(value: str | None) -> str | None:
     if value is None:
         return None
@@ -87,12 +134,14 @@ async def _log_ai_audit(
                 user_id=uid,
                 endpoint=endpoint,
                 ad_id=ad_id,
-                # P1-PRIV-01: keep a sanitized preview plus a raw-text
+                # P1-PRIV-01: keep a sanitized preview plus a keyed
                 # digest for traceability; never persist raw user text.
                 query=query_preview,
-                query_hash=audit_text_sha256(query),
+                # SEC-NEW-8: HMAC keyed by AUDIT_HASH_SECRET (or BOT_TOKEN-derived fallback)
+                # so leaked audit rows can't be rainbow-tabled back to user queries.
+                query_hash=audit_text_hash(query, secret=_get_audit_secret()),
                 result_summary=result_preview,
-                result_summary_hash=audit_text_sha256(result_summary),
+                result_summary_hash=audit_text_hash(result_summary, secret=_get_audit_secret()),
                 model=model,
                 latency_ms=latency_ms,
                 ip_address=ip_address,
