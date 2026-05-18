@@ -46,6 +46,9 @@ def test_alembic_chain_has_single_head() -> None:
         f"Alembic should have exactly one head, found {len(heads)}: {heads!r}. "
         "Run `alembic merge -m 'merge heads' " + " ".join(heads) + "` to fix."
     )
+    assert heads[0] == "20260519_0025", (
+        f"Expected alembic head to be 20260519_0025, got {heads[0]!r}"
+    )
 
 
 def test_alembic_chain_is_walkable_from_head_to_base() -> None:

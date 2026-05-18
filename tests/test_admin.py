@@ -399,3 +399,49 @@ def test_admin_users_rejects_oversized_query_status_and_offset() -> None:
     assert long_query.status_code == 422
     assert long_status.status_code == 422
     assert big_offset.status_code == 422
+
+
+def test_admin_users_query_count_bounded() -> None:
+    """PERF-NEW-3: GET /admin/users must not do N+1 DB roundtrips."""
+    num_users = 10
+    _seed_users(*(
+        {
+            "telegram_user_id": 890000 + i,
+            "first_name": f"User{i}",
+            "account_status_code": "scout",
+        }
+        for i in range(num_users)
+    ))
+    app = _admin_app(_ADMIN_TG_ID)
+
+    query_count = 0
+
+    from api.database import get_engine
+
+    engine = asyncio.run(_get_engine_sync(get_engine))
+
+    from sqlalchemy import event as sa_event
+
+    @sa_event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _count_queries(*args, **kwargs):
+        nonlocal query_count
+        query_count += 1
+
+    with TestClient(app) as client:
+        client.app.state.cache = MemoryCache()
+        resp = client.get("/api/v1/admin/users", params={"limit": num_users})
+
+    assert resp.status_code == 200
+    assert len(resp.json()) >= num_users
+    # With joinedload the query count should be much less than num_users.
+    # Allow some slack for transaction management queries.
+    assert query_count < num_users, (
+        f"Expected fewer than {num_users} queries, got {query_count}. "
+        "The N+1 fix may not be working."
+    )
+
+
+async def _get_engine_sync(get_engine_fn):
+    """Helper to get the sync engine from the async engine."""
+    engine = get_engine_fn()
+    return engine

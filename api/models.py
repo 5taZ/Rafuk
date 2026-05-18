@@ -468,6 +468,8 @@ class TrackerEvent(Base, UserIDMixin):
         Index("idx_tracker_events_user", "user_id"),
         Index("idx_tracker_events_created", "created_at"),
         Index("idx_tracker_events_tracker_created", "tracker_id", column("created_at").desc()),
+        # PERF-NEW-1: covers WHERE user_id=? ORDER BY created_at DESC, id DESC.
+        Index("idx_tracker_events_user_created", "user_id", column("created_at").desc(), "id"),
         CheckConstraint(
             "event_type IN ('new_listing', 'price_drop', 'trend_reversal', "
             "'price_threshold_alert', 'discount_alert')",
@@ -574,6 +576,11 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         # two); the latter indexed a 2-3 value column that Postgres
         # would never pick over a seq scan.
         Index("idx_lead_items_user_status", "user_id", "status"),
+        # PERF-NEW-2: covers WHERE user_id=? AND status=? ORDER BY updated_at DESC.
+        Index(
+            "idx_lead_items_user_status_updated",
+            "user_id", "status", column("updated_at").desc(),
+        ),
     )
 
 

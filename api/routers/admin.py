@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import joinedload
 
 from api.dependencies import (
     get_cache,
@@ -53,6 +55,7 @@ async def list_admin_users(
     async with session_factory() as session:
         stmt = (
             select(User)
+            .options(joinedload(User.account_status))  # PERF-NEW-3: eager-load AccountStatus
             .order_by(User.created_at.desc(), User.id.desc())
             .limit(limit)
             .offset(offset)
@@ -82,8 +85,12 @@ async def list_admin_users(
                     User.account_status_code == status_code,
                     or_(User.status_expires_at.is_(None), User.status_expires_at > now),
                 )
-        users = (await session.execute(stmt)).scalars().all()
-        return [await _admin_user_read(session, cache, user) for user in users]
+        users = (await session.execute(stmt)).scalars().unique().all()
+        # PERF-NEW-3: parallelize quota_snapshot fan-out so /admin/users is
+        # O(1) DB roundtrip + concurrent Redis GETs instead of N+1 sequential.
+        return list(await asyncio.gather(*(
+            _admin_user_read(session, cache, user) for user in users
+        )))
 
 
 @router.patch("/users/{telegram_user_id}/status", response_model=AdminUserRead)
@@ -180,7 +187,22 @@ async def _admin_user_read(
     *,
     status: AccountStatus | None = None,
 ) -> AdminUserRead:
-    current_status = status or await get_effective_status(session, user)
+    if status is not None:
+        current_status = status
+    elif user.account_status is not None:
+        # PERF-NEW-3: use eager-loaded relationship; still check expiry.
+        expires_at = user.status_expires_at
+        if expires_at is not None:
+            if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at <= datetime.now(UTC):
+                current_status = await session.get(AccountStatus, BARE_SEARCH_STATUS_CODE)
+            else:
+                current_status = user.account_status
+        else:
+            current_status = user.account_status
+    else:
+        current_status = await get_effective_status(session, user)
     granted_at, expires_at = effective_status_metadata(user, current_status)
     return AdminUserRead(
         telegram_user_id=user.telegram_user_id,
