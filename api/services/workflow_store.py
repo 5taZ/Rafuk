@@ -315,5 +315,9 @@ async def upsert_lead(
     if not keep_existing_status:
         existing.status = status_value or existing.status
         existing.source = source or existing.source
+    # H7: version bump — ONLY upsert_lead should bump the version.
+    # Callers in routers/workflow.py MUST NOT also call _bump_lead_version
+    # on the same lead within the same request, or the version will jump by 2
+    # (e.g. 1→3) causing spurious 409 conflicts on optimistic-lock updates.
     existing.version = int(existing.version or 1) + 1
     return existing

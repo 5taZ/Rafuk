@@ -183,7 +183,13 @@ def _compute_hold_time_days(lead: LeadItem) -> int | None:
     if end.tzinfo is None:
         end = end.replace(tzinfo=UTC)
     delta = end - bought_at
-    return max(0, int(delta.total_seconds() // 86400))
+    total_seconds = delta.total_seconds()
+    # M14: instant flip (bought_at == sold_at, same second) returns None
+    # to signal "instant flip" rather than the confusing "0 days held".
+    # Only applies when sold_at is set — active bought leads still show 0.
+    if lead.sold_at is not None and total_seconds < 1.0:
+        return None
+    return max(0, int(total_seconds // 86400))
 
 
 def _serialize_lead_read(

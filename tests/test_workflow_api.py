@@ -584,7 +584,9 @@ def test_update_lead_stamps_bought_at_on_skip_to_sold(monkeypatch) -> None:
         assert body["status"] == "sold"
         assert body["sold_at"] is not None
         assert body["bought_at"] is not None
-        assert body["hold_time_days"] == 0
+        # M14: instant flip (bought_at == sold_at, same second) returns None
+        # instead of 0 to indicate "instant flip".
+        assert body["hold_time_days"] is None
 
 
 def test_lead_projected_profit_from_target_resale(monkeypatch) -> None:

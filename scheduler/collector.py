@@ -11,6 +11,7 @@ import httpx
 from aiogram import Bot
 from aiogram.exceptions import (
     TelegramAPIError,
+    TelegramBadRequest,
     TelegramForbiddenError,
     TelegramNotFound,
     TelegramRetryAfter,
@@ -140,6 +141,16 @@ async def _send_message_classified(
             getattr(exc, "retry_after", "?"),
         )
         return "retry"
+    # H13: catch permanent errors separately — BadRequest (malformed message,
+    # invalid chat ID, etc.) will never succeed on retry.
+    except TelegramBadRequest as exc:
+        logger.warning(
+            "Telegram permanent error sending to user %d: [%s] %s",
+            telegram_user_id,
+            type(exc).__name__,
+            exc,
+        )
+        return "permanent_error"
     except TelegramAPIError as exc:
         logger.warning(
             "Telegram API error sending to user %d: [%s] %s",

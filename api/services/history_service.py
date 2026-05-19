@@ -151,8 +151,13 @@ def detect_trend_reversal_up(
         by_date.setdefault(day, []).append(float(snap.median_byn))
     if len(by_date) < min_days:
         return None
+    # M13: truncate to the analysis window AFTER confirming the full dataset
+    # has enough days. If window_days is small (7) and some days lack data,
+    # the truncated window may have fewer days than min_days — but the
+    # function intentionally analyses only recent data. Callers that need a
+    # wider window should increase window_days accordingly.
     daily = sorted(by_date.items())[-window_days:]
-    if len(daily) < min_days:
+    if len(daily) < min(min_days, len(by_date)):
         return None
     series = [statistics.median(values) for _, values in daily]
     low_idx = min(range(len(series)), key=lambda i: series[i])

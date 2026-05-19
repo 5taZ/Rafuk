@@ -230,6 +230,13 @@ def compute_flip_estimates(
     price_byn = normalize_price_byn(ad.get("price_byn"))
     if price_byn is None or market_stats.count == 0:
         return []
+    # H6: guard against kopecks being passed instead of BYN.
+    # PriceStats fields should be in BYN; if median > 100000 the caller
+    # likely passed raw kopecks.
+    if market_stats.median > 100_000:
+        raise ValueError(
+            f"PriceStats.median={market_stats.median} looks like kopecks, not BYN"
+        )
     expenses = max(0.0, float(expenses_byn or 0.0))
     cost_basis = price_byn + expenses
 
