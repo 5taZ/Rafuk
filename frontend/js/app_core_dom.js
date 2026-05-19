@@ -49,6 +49,9 @@ function cacheAppElements(elements) {
     elements.adminStatusesState = document.getElementById("admin-statuses-state");
     elements.adminUsersList = document.getElementById("admin-users-list");
     elements.adminStatusesList = document.getElementById("admin-statuses-list");
+    elements.adminAuditRefreshButton = document.getElementById("admin-audit-refresh-btn");
+    elements.adminAuditState = document.getElementById("admin-audit-state");
+    elements.adminAuditList = document.getElementById("admin-audit-list");
     elements.dealsControls = document.getElementById("deals-controls");
     elements.statsSection = document.getElementById("stats-section");
     elements.chartSection = document.getElementById("chart-section");

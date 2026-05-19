@@ -252,6 +252,7 @@ function createAppActions(baseContext) {
             updateUserStatus: async () => null,
             loadAdminStatuses: async () => [],
             updateStatusLimits: async () => null,
+            loadAdminAudit: async () => [],
         });
     const profileApi = profileApiFactory(context);
     context.loadProfile = profileApi.loadProfile;
@@ -261,6 +262,7 @@ function createAppActions(baseContext) {
         updateUserStatus: adminApi.updateUserStatus,
         loadAdminStatuses: adminApi.loadAdminStatuses,
         updateStatusLimits: adminApi.updateStatusLimits,
+        loadAdminAudit: adminApi.loadAdminAudit,
     });
     let _aiModule = null;
     let _listingAssistantModule = null;
@@ -273,10 +275,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260518-4fa817a"),
-            context._loadScript("js/api_ai_render.js?v=20260518-4fa817a"),
-            context._loadScript("js/api_ai.js?v=20260518-4fa817a"),
-            context._loadScript("js/api_listing_assistant.js?v=20260518-4fa817a"),
+            context._loadScript("js/api_ai_modal.js?v=20260519-489c069"),
+            context._loadScript("js/api_ai_render.js?v=20260519-489c069"),
+            context._loadScript("js/api_ai.js?v=20260519-489c069"),
+            context._loadScript("js/api_listing_assistant.js?v=20260519-489c069"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

@@ -99,7 +99,7 @@ function createAppRenderers(baseContext) {
         : () => ({ renderProfile: () => {} });
     const adminFactory = typeof createRenderAdmin === "function"
         ? createRenderAdmin
-        : () => ({ renderAdminUsers: () => {}, renderAdminStatuses: () => {} });
+        : () => ({ renderAdminUsers: () => {}, renderAdminStatuses: () => {}, renderAdminAudit: () => {} });
     const profile = profileFactory(context);
     const admin = adminFactory(context);
     const modals = createRenderModals(context);
@@ -198,6 +198,7 @@ function createAppRenderers(baseContext) {
     const {
         renderAdminUsers,
         renderAdminStatuses,
+        renderAdminAudit,
     } = admin;
 
     const {
@@ -268,6 +269,7 @@ function createAppRenderers(baseContext) {
         profile: renderProfile,
         adminUsers: renderAdminUsers,
         adminStatuses: renderAdminStatuses,
+        adminAudit: renderAdminAudit,
     };
 
     function renderAll() {

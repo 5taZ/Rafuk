@@ -2505,6 +2505,29 @@
     min-height: 42px;
 }
 
+.admin-audit-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+
+.admin-audit-table th,
+.admin-audit-table td {
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.admin-audit-table th {
+    font-weight: 600;
+    opacity: 0.7;
+}
+
+.admin-audit-more {
+    margin-top: var(--space-3);
+    width: 100%;
+}
+
 @media (min-width: 430px) {
     .profile-limits-grid,
     .admin-toolbar,

@@ -48,6 +48,7 @@ function analyticsApp() {
             return () => Promise.all([
                 actions.loadAdminUsers ? actions.loadAdminUsers({ retry: false }) : null,
                 actions.loadAdminStatuses ? actions.loadAdminStatuses({ retry: false }) : null,
+                actions.loadAdminAudit ? actions.loadAdminAudit({ retry: false }) : null,
                 actions.loadProfile ? actions.loadProfile({ silent: true, retry: false }) : null,
             ]);
         }

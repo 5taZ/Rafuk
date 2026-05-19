@@ -131,10 +131,42 @@ function createApiAdmin(context) {
         }
     }
 
+    async function loadAdminAudit(options = {}) {
+        if (!_isAdmin()) return [];
+        state.admin.auditLoading = true;
+        state.admin.auditError = "";
+        markDirty("adminAudit");
+        renderAll();
+        try {
+            const params = new URLSearchParams();
+            params.set("limit", "50");
+            params.set("offset", String(state.admin.auditOffset || 0));
+            const entries = await getJson(`/api/v1/admin/audit?${params.toString()}`, { retry: options.retry !== false });
+            const list = Array.isArray(entries) ? entries : [];
+            if (state.admin.auditOffset > 0) {
+                state.admin.auditEntries = (state.admin.auditEntries || []).concat(list);
+            } else {
+                state.admin.auditEntries = list;
+            }
+            state.admin.auditHasMore = list.length >= 50;
+            state.admin.auditError = "";
+            return state.admin.auditEntries;
+        } catch (error) {
+            state.admin.auditError = error.message || "Не удалось загрузить аудит";
+            if (!options.silent) showToast(state.admin.auditError, "error");
+            return [];
+        } finally {
+            state.admin.auditLoading = false;
+            markDirty("adminAudit");
+            renderAll();
+        }
+    }
+
     return {
         loadAdminUsers,
         updateUserStatus,
         loadAdminStatuses,
         updateStatusLimits,
+        loadAdminAudit,
     };
 }

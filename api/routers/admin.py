@@ -13,10 +13,12 @@ from api.dependencies import (
     get_session_factory_dependency,
     require_admin_user,
 )
+from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import AccountStatus, AdminAuditLog, User
 from api.schemas import (
     AccountStatusRead,
+    AdminAuditRead,
     AdminStatusLimitUpdate,
     AdminUserRead,
     AdminUserStatusUpdate,
@@ -38,7 +40,9 @@ from api.services.client_ip import get_client_ip
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+# BE-DEEP-5/6/7: admin endpoints get the same rate-limit decorator as the rest of the API.
 @router.get("/users", response_model=list[AdminUserRead])
+@limiter.limit("30/minute")
 async def list_admin_users(
     request: Request,
     # G-02 / SEC-NEW-6: cap admin search inputs and offset to prevent
@@ -94,6 +98,7 @@ async def list_admin_users(
 
 
 @router.patch("/users/{telegram_user_id}/status", response_model=AdminUserRead)
+@limiter.limit("30/minute")
 async def update_admin_user_status(
     telegram_user_id: int,
     payload: AdminUserStatusUpdate,
@@ -136,11 +141,13 @@ async def update_admin_user_status(
 
 
 @router.get("/statuses", response_model=list[AccountStatusRead])
+@limiter.limit("30/minute")
 async def list_admin_statuses(
+    request: Request,
     _admin: TelegramInitData = Depends(require_admin_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[AccountStatus]:
-    del _admin
+    del request, _admin
     async with session_factory() as session:
         return (
             await session.execute(select(AccountStatus).order_by(AccountStatus.sort_order))
@@ -148,6 +155,7 @@ async def list_admin_statuses(
 
 
 @router.patch("/statuses/{code}", response_model=AccountStatusRead)
+@limiter.limit("30/minute")
 async def update_admin_status_limits(
     code: str,
     payload: AdminStatusLimitUpdate,
@@ -178,6 +186,42 @@ async def update_admin_status_limits(
         await session.commit()
         await session.refresh(status)
         return status
+
+
+# G-06: read-only admin audit endpoint so the team can see who changed what without psql.
+@router.get("/audit", response_model=list[AdminAuditRead])
+@limiter.limit("30/minute")
+async def list_admin_audit(
+    request: Request,
+    actor_user_id: int | None = Query(default=None),
+    target_user_id: int | None = Query(default=None),
+    action: str | None = Query(default=None, max_length=64),
+    from_ts: datetime | None = Query(default=None),
+    to_ts: datetime | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=10_000),
+    _admin: TelegramInitData = Depends(require_admin_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> list[AdminAuditLog]:
+    del request, _admin
+    async with session_factory() as session:
+        stmt = (
+            select(AdminAuditLog)
+            .order_by(AdminAuditLog.created_at.desc(), AdminAuditLog.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        if actor_user_id is not None:
+            stmt = stmt.where(AdminAuditLog.actor_user_id == actor_user_id)
+        if target_user_id is not None:
+            stmt = stmt.where(AdminAuditLog.target_user_id == target_user_id)
+        if action is not None:
+            stmt = stmt.where(AdminAuditLog.action == action)
+        if from_ts is not None:
+            stmt = stmt.where(AdminAuditLog.created_at >= from_ts)
+        if to_ts is not None:
+            stmt = stmt.where(AdminAuditLog.created_at <= to_ts)
+        return (await session.execute(stmt)).scalars().all()
 
 
 async def _admin_user_read(

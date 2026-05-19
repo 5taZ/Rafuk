@@ -320,8 +320,64 @@ function createRenderAdmin(context) {
         });
     }
 
+    function renderAdminAudit() {
+        return safeRender("renderAdminAudit", () => {
+            if (!elements.adminAuditList || !elements.adminAuditState) return;
+            domClear(elements.adminAuditList);
+            if (!_isAdmin()) {
+                elements.adminAuditState.textContent = "";
+                return;
+            }
+            if (state.admin.auditLoading && !(state.admin.auditEntries || []).length) {
+                elements.adminAuditState.textContent = "Загружаю аудит…";
+                return;
+            }
+            if (state.admin.auditError) {
+                elements.adminAuditState.textContent = state.admin.auditError;
+                return;
+            }
+            const entries = state.admin.auditEntries || [];
+            elements.adminAuditState.textContent = entries.length ? `${entries.length} записей` : "";
+            if (!entries.length) {
+                elements.adminAuditList.appendChild(_emptyAdmin("Нет записей", "Аудит-лог пуст."));
+                return;
+            }
+            const table = domEl("table", { className: "admin-audit-table" });
+            const thead = domEl("thead", {},
+                domEl("tr", {},
+                    domEl("th", { text: "Дата" }),
+                    domEl("th", { text: "Действие" }),
+                    domEl("th", { text: "Актор" }),
+                    domEl("th", { text: "Цель" }),
+                ),
+            );
+            table.appendChild(thead);
+            const tbody = domEl("tbody", {});
+            for (const entry of entries) {
+                tbody.appendChild(domEl("tr", {},
+                    domEl("td", { text: _date(entry.created_at) }),
+                    domEl("td", { text: entry.action || "—" }),
+                    domEl("td", { className: "mono", text: entry.actor_user_id != null ? String(entry.actor_user_id) : "—" }),
+                    domEl("td", { className: "mono", text: entry.target_user_id != null ? String(entry.target_user_id) : "—" }),
+                ));
+            }
+            table.appendChild(tbody);
+            elements.adminAuditList.appendChild(table);
+            if (state.admin.auditHasMore) {
+                elements.adminAuditList.appendChild(domEl("button", {
+                    className: "ghost-btn small admin-audit-more",
+                    type: "button",
+                    text: state.admin.auditLoading ? "Загружаю…" : "Загрузить ещё",
+                    attrs: { disabled: state.admin.auditLoading },
+                    dataset: { adminAuditMore: "" },
+                }));
+            }
+        });
+    }
+
     return {
         renderAdminUsers,
         renderAdminStatuses,
+        renderAdminAudit,
     };
 }

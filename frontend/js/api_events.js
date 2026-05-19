@@ -89,6 +89,7 @@ function createApiEvents(context) {
         updateUserStatus,
         loadAdminStatuses,
         updateStatusLimits,
+        loadAdminAudit,
         loadAIAnalysis,
         closeAIModal,
         startTrackerRefresh,
@@ -378,6 +379,16 @@ function createApiEvents(context) {
         elements.adminStatusesRefreshButton?.addEventListener("click", () => {
             void loadAdminStatuses({ retry: false });
             _haptic("light");
+        });
+        elements.adminAuditRefreshButton?.addEventListener("click", () => {
+            state.admin.auditOffset = 0;
+            void loadAdminAudit({ retry: false });
+            _haptic("light");
+        });
+        elements.adminAuditList?.addEventListener("click", (event) => {
+            if (!event.target.closest("[data-admin-audit-more]")) return;
+            state.admin.auditOffset = (state.admin.auditEntries || []).length;
+            void loadAdminAudit({ silent: true });
         });
         elements.adminUserQuery?.addEventListener("input", () => {
             state.admin.query = elements.adminUserQuery.value.trim();

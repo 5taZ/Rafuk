@@ -126,6 +126,11 @@ function createAppCore() {
             editingUserId: null,
             savingUserIds: new Set(),
             savingStatusCodes: new Set(),
+            auditEntries: [],
+            auditLoading: false,
+            auditError: "",
+            auditOffset: 0,
+            auditHasMore: false,
         },
         charts: {
             distribution: null,
@@ -401,7 +406,7 @@ function createAppCore() {
      * 'sort','discount','eventFilters','dealInputs','trackerInputs','stats',
      * 'history','segments','geography','recent','listings','deals',
      * 'rates','trackerStatus','trackers','trackerEvents','leads','watchlist',
-     * 'profit','profile','adminUsers','adminStatuses'.
+     * 'profit','profile','adminUsers','adminStatuses','adminAudit'.
      * Call without args or with 'all' to mark everything dirty.
      */
     function markDirty() {
