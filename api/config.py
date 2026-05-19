@@ -154,6 +154,14 @@ class Settings(BaseSettings):
                 "DATABASE_URL — every request would share user_id=0."
             )
         return v
+    # Production policy gates (G-03/G-04/G-05). Defaults are
+    # backwards-compatible (lax); production deployments should set the
+    # first three to True and the last to False via env.
+    security_cache_required: bool = Field(default=False)
+    internal_service_token_required: bool = Field(default=False)
+    ai_audit_required: bool = Field(default=False)
+    allow_legacy_bot_initdata: bool = Field(default=True)
+
     # Connection-pool sizing.
     #
     # The API runs multiple uvicorn workers (PERF-H1, see Dockerfile —

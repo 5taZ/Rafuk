@@ -92,6 +92,15 @@ async def lifespan(app: FastAPI):
     session_factory = get_session_factory(engine)
     cache = RedisCache.from_url(settings.redis_url)
     if not await cache.ping():
+        # G-03: production fail-fast when Redis is mandatory for rate-limit/blacklist semantics.
+        if settings.security_cache_required:
+            logger.error(
+                "SECURITY_CACHE_REQUIRED=true but Redis ping failed — refusing to start.",
+            )
+            raise RuntimeError(
+                "Redis is unreachable and SECURITY_CACHE_REQUIRED=true. "
+                "Cannot start without the security cache backend."
+            )
         cache = MemoryCache()
     currency_service = CurrencyService(cache)
 

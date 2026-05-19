@@ -102,6 +102,17 @@ def build_api_headers(telegram_user_id: int, *, mutating: bool = False) -> dict[
             "X-Acting-Telegram-User-Id": str(telegram_user_id),
         }
     else:
+        # G-04: production must set INTERNAL_SERVICE_TOKEN; legacy forge path is explicit opt-in.
+        if settings.internal_service_token_required:
+            raise RuntimeError(
+                "INTERNAL_SERVICE_TOKEN is required (INTERNAL_SERVICE_TOKEN_REQUIRED=true) "
+                "but not configured. Refusing to forge initData."
+            )
+        if not settings.allow_legacy_bot_initdata:
+            raise RuntimeError(
+                "ALLOW_LEGACY_BOT_INITDATA=false and INTERNAL_SERVICE_TOKEN is not set. "
+                "Refusing to forge initData."
+            )
         if not _warned_about_legacy_initdata_path:
             logger.warning(
                 "INTERNAL_SERVICE_TOKEN not configured — bot is forging initData "

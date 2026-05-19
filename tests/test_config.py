@@ -240,3 +240,24 @@ def test_ai_defaults_match_their_provider() -> None:
         assert s.ai_base_url == (
             "https://generativelanguage.googleapis.com/v1beta/openai"
         )
+
+
+def test_production_policy_gate_defaults() -> None:
+    """Wave 180: all four policy-gate fields exist with documented defaults."""
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        s = config.Settings(_env_file=None)
+        assert s.security_cache_required is False
+        assert s.internal_service_token_required is False
+        assert s.ai_audit_required is False
+        assert s.allow_legacy_bot_initdata is True

@@ -61,7 +61,9 @@ async def is_user_blacklisted(cache: Any, user_id: int) -> bool:
         logger.warning(
             "session_security.blacklist_lookup_failed user_id=%s", user_id, exc_info=True,
         )
-        return False
+        # G-03 strict mode: blacklist lookup fails closed when SECURITY_CACHE_REQUIRED=true.
+        from api.config import get_settings
+        return bool(get_settings().security_cache_required)
     return value is not None
 
 

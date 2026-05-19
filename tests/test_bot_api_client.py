@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from starlette.testclient import TestClient as _OriginalTestClient
 
 
@@ -98,4 +99,39 @@ def test_service_auth_without_mutating_csrf_headers_is_rejected(monkeypatch) -> 
 
     assert response.status_code == 403
     assert response.json()["detail"].startswith("CSRF:")
+    get_settings.cache_clear()
+
+
+def test_build_api_headers_raises_when_internal_token_required_and_missing(monkeypatch) -> None:
+    """G-04: internal_service_token_required=True + missing token must raise."""
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN_REQUIRED", "true")
+    api_client = _reset_settings(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="INTERNAL_SERVICE_TOKEN_REQUIRED"):
+        api_client.build_api_headers(telegram_user_id=123456)
+
+    from api.config import get_settings
+    get_settings.cache_clear()
+
+
+def test_build_api_headers_raises_when_legacy_initdata_disallowed(monkeypatch) -> None:
+    """G-04: allow_legacy_bot_initdata=False + missing token must raise."""
+    monkeypatch.setenv("ALLOW_LEGACY_BOT_INITDATA", "false")
+    api_client = _reset_settings(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="ALLOW_LEGACY_BOT_INITDATA"):
+        api_client.build_api_headers(telegram_user_id=123456)
+
+    from api.config import get_settings
+    get_settings.cache_clear()
+
+
+def test_build_api_headers_legacy_path_works_by_default(monkeypatch) -> None:
+    """G-04: default settings keep the legacy forge path alive."""
+    api_client = _reset_settings(monkeypatch)
+
+    headers = api_client.build_api_headers(telegram_user_id=123456)
+    assert "X-Telegram-Init-Data" in headers
+
+    from api.config import get_settings
     get_settings.cache_clear()

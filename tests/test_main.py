@@ -208,3 +208,36 @@ def test_body_size_limit_returns_413_with_security_headers() -> None:
     assert resp.headers.get("X-Content-Type-Options") == "nosniff"
     assert "DENY" in resp.headers.get("X-Frame-Options", "")
     assert "max-age=" in resp.headers.get("Strict-Transport-Security", "")
+
+
+@pytest.mark.asyncio
+async def test_lifespan_fails_fast_when_cache_required_and_redis_down(monkeypatch) -> None:
+    """G-03: lifespan raises when SECURITY_CACHE_REQUIRED=true and Redis ping fails."""
+    from api import main
+    from api.config import Settings
+
+    class _DeadRedis:
+        @staticmethod
+        def from_url(_url):
+            return _DeadRedis()
+
+        async def ping(self) -> bool:
+            return False
+
+    settings = Settings(
+        bot_token="test",
+        database_url="sqlite+aiosqlite:///test.db",
+        redis_url="redis://localhost:6379/0",
+        api_base_url="https://example.com",
+        mini_app_url="https://example.com/app",
+        security_cache_required=True,
+        _env_file=None,
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    monkeypatch.setattr(main, "get_engine", lambda _url: None)
+    monkeypatch.setattr(main, "get_session_factory", lambda _engine: object())
+    monkeypatch.setattr(main.RedisCache, "from_url", _DeadRedis.from_url)
+
+    with pytest.raises(RuntimeError, match="SECURITY_CACHE_REQUIRED"):
+        async with main.lifespan(FastAPI()):
+            pass

@@ -171,3 +171,25 @@ async def test_track_init_data_first_write_race_logs_warning(caplog) -> None:
     ), "Expected first_write_race warning when peer wrote ahead of us"
     # Replay counter advanced — same shape as the IP-mismatch path.
     assert cache._counters.get("auth:replay_warn:7") == 1
+
+
+@pytest.mark.asyncio
+async def test_blacklist_fails_open_when_lax_mode(monkeypatch) -> None:
+    """G-03: Redis outage + security_cache_required=False → fail-open (not blocked)."""
+    monkeypatch.setattr(
+        "api.config.get_settings",
+        lambda: type("S", (), {"security_cache_required": False})(),
+    )
+    cache = _ExplodingCache()
+    assert await is_user_blacklisted(cache, 42) is False
+
+
+@pytest.mark.asyncio
+async def test_blacklist_fails_closed_when_strict_mode(monkeypatch) -> None:
+    """G-03: Redis outage + security_cache_required=True → fail-closed (blocked)."""
+    monkeypatch.setattr(
+        "api.config.get_settings",
+        lambda: type("S", (), {"security_cache_required": True})(),
+    )
+    cache = _ExplodingCache()
+    assert await is_user_blacklisted(cache, 42) is True

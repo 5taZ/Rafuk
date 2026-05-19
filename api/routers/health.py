@@ -57,6 +57,8 @@ async def readiness_check(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
     """Readiness probe — returns 200 only if DB and Redis are reachable."""
+    from api.config import get_settings
+
     try:
         async with session_factory() as session:
             await asyncio.wait_for(
@@ -67,11 +69,22 @@ async def readiness_check(
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
     cache = getattr(request.app.state, "cache", None)
+    redis_degraded = False
     if cache is not None:
         try:
             if not await cache.ping():
-                return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+                redis_degraded = True
         except Exception:
+            redis_degraded = True
+
+    if redis_degraded:
+        settings = get_settings()
+        if settings.security_cache_required:
             return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response(
+            content='{"status":"degraded","redis":"unavailable"}',
+            media_type="application/json",
+            status_code=status.HTTP_200_OK,
+        )
 
     return Response(status_code=status.HTTP_200_OK)

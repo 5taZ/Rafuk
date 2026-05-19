@@ -149,5 +149,10 @@ async def _log_ai_audit(
             session.add(entry)
             await session.commit()
     except Exception:
+        # G-05: strict mode (AI_AUDIT_REQUIRED=true) propagates audit-write failures
+        # so the AI endpoint returns 5xx instead of degrading silently.
+        from api.config import get_settings
+        if get_settings().ai_audit_required:
+            raise
         observe_ai_audit_failure(endpoint=endpoint)
         logger.warning("Failed to write AI audit log", exc_info=True)
