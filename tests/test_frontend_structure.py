@@ -973,3 +973,49 @@ def test_bundle_contains_lazy_integrity_map() -> None:
     # Key modules must be present.
     for module in ("render_trackers.js", "api_ai.js", "render_charts.js", "render_cards.js"):
         assert module in entries, f"{module} missing from __LAZY_INTEGRITY map"
+
+
+def test_toast_container_has_aria_live_polite(soup: BeautifulSoup) -> None:
+    """FE-NEW-6: toast container must have role=status + aria-live=polite
+    so screen readers announce dynamic toast feedback."""
+    toast = soup.find(id="toast-container")
+    assert toast is not None
+    assert toast.get("role") == "status"
+    assert toast.get("aria-live") == "polite"
+    assert toast.get("aria-atomic") == "false"
+
+
+def test_no_document_kufar_escape_handler_in_frontend_js() -> None:
+    """FE-NEW-8: escape handler dedup state must NOT live on document."""
+    js_dir = Path("frontend/js")
+    for path in js_dir.glob("*.js"):
+        if path.name == "app_bundle.js":
+            continue
+        text = path.read_text(encoding="utf-8")
+        assert "document._kufarEscapeHandler" not in text, (
+            f"{path.name} still uses document._kufarEscapeHandler"
+        )
+
+
+def test_theme_changed_single_registration() -> None:
+    """FE-NEW-3: only one onEvent('themeChanged', ...) registration site
+    should exist across the source modules (excluding the bundle), or
+    the registration must be guarded by a sentinel."""
+    js_dir = Path("frontend/js")
+    registration_sites: list[str] = []
+    for path in js_dir.glob("*.js"):
+        if path.name == "app_bundle.js":
+            continue
+        text = path.read_text(encoding="utf-8")
+        for i, line in enumerate(text.splitlines(), 1):
+            if "onEvent" in line and "themeChanged" in line:
+                registration_sites.append(f"{path.name}:{i}")
+    # Either exactly one site, or all sites are guarded by a sentinel.
+    if len(registration_sites) > 1:
+        # Check that the registration in app_core.js is guarded
+        app_core = (js_dir / "app_core.js").read_text(encoding="utf-8")
+        assert "_themeChangedRegistered" in app_core, (
+            f"Multiple themeChanged registrations found ({registration_sites}) "
+            "without a sentinel guard"
+        )
+    assert len(registration_sites) >= 1, "No themeChanged registration found"

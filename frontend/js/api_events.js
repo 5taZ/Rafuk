@@ -101,6 +101,8 @@ function createApiEvents(context) {
     const _confirmTimers = {};
     const _preloadCache = [];
     let _filterCloseTimeout = null;
+    // FE-NEW-8: keep dedup state in module scope, not on document.
+    let _escapeHandler = null;
 
     function _parseFilterPrice(value) {
         const trimmed = value == null ? "" : String(value).trim();
@@ -955,10 +957,11 @@ function createApiEvents(context) {
         // FE-04: previously this used an anonymous arrow which made
         // ``bindEvents()`` idempotency impossible — a re-init would
         // pile a second listener on top, and Escape would close two
-        // modals at once. Now we hang the handler off ``document``
-        // under a sentinel attribute so we can dedupe.
-        if (document._kufarEscapeHandler) {
-            document.removeEventListener("keydown", document._kufarEscapeHandler);
+        // modals at once. Now we hang the handler off a module-scoped
+        // variable so we can dedupe.
+        // FE-NEW-8: keep dedup state in module scope, not on document.
+        if (_escapeHandler) {
+            document.removeEventListener("keydown", _escapeHandler);
         }
         const escapeHandler = (event) => {
             if (event.key !== "Escape") return;
@@ -972,8 +975,8 @@ function createApiEvents(context) {
                 closeEditTrackerAction();
             }
         };
-        document._kufarEscapeHandler = escapeHandler;
-        document.addEventListener("keydown", escapeHandler);
+        _escapeHandler = escapeHandler;
+        document.addEventListener("keydown", _escapeHandler);
     }
 
     function bindCarouselEvents() {

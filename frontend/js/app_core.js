@@ -220,6 +220,32 @@ function createAppCore() {
         }
     }
 
+    // FE-NEW-3: single themeChanged listener with stored ref so re-init / pagehide can deregister.
+    let _themeChangedRef = null;
+    let _themeChangedRegistered = false;
+
+    const _TG_THEME_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
+    function _applyTelegramThemeVars() {
+        const tp = window.Telegram?.WebApp?.themeParams || {};
+        const root = document.documentElement;
+        const map = [
+            ["bg_color", "--tg-theme-bg-color"],
+            ["text_color", "--tg-theme-text-color"],
+            ["hint_color", "--tg-theme-hint-color"],
+            ["link_color", "--tg-theme-link-color"],
+            ["button_color", "--tg-theme-button-color"],
+            ["button_text_color", "--tg-theme-button-color-text"],
+            ["secondary_bg_color", "--tg-theme-secondary-bg-color"],
+            ["destructive_text_color", "--tg-theme-destructive-text-color"],
+        ];
+        for (const [tgKey, cssVar] of map) {
+            const value = tp[tgKey];
+            if (typeof value === "string" && value.length > 0 && value.length <= 16 && _TG_THEME_COLOR_RE.test(value.trim())) {
+                root.style.setProperty(cssVar, value.trim());
+            }
+        }
+    }
+
     /**
      * Pick a starting theme. We mirror Telegram's coarse dark/light
      * preference (so a user who has Telegram in light mode opens the
@@ -245,11 +271,9 @@ function createAppCore() {
                 // ready/expand can throw outside a real Telegram client
             }
             syncTelegramChromeTheme(initialTheme);
-            // React to the user toggling dark/light in the Telegram
-            // client without a reload — but only swap our binary mode,
-            // never override individual palette variables.
-            try {
-                tg.onEvent?.("themeChanged", () => {
+            // FE-NEW-3: single themeChanged listener with stored ref so re-init / pagehide can deregister.
+            if (!_themeChangedRegistered) {
+                _themeChangedRef = () => {
                     if (localStorage.getItem("theme")) {
                         syncTelegramChromeTheme();
                         return;
@@ -258,9 +282,15 @@ function createAppCore() {
                     const next = s === "light" ? "light" : "dark";
                     document.documentElement.setAttribute("data-theme", next);
                     syncTelegramChromeTheme(next);
-                });
-            } catch (_) {
-                // onEvent missing on older WebApp builds — non-fatal
+                    // Also sync Telegram CSS custom properties (app.js palette).
+                    _applyTelegramThemeVars();
+                };
+                try {
+                    tg.onEvent?.("themeChanged", _themeChangedRef);
+                    _themeChangedRegistered = true;
+                } catch (_) {
+                    // onEvent missing on older WebApp builds — non-fatal
+                }
             }
             return;
         }

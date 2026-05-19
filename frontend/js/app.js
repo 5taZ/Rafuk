@@ -263,7 +263,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
     _applyTelegramTheme();
-    window.Telegram?.WebApp?.onEvent?.('themeChanged', _applyTelegramTheme);
+    // FE-NEW-3: themeChanged listener now lives in app_core.js (single registration).
+    // Initial CSS var application still runs here on DOMContentLoaded.
 
     // Offline / online detection
     const _offlineBadge = document.getElementById("offline-badge");
