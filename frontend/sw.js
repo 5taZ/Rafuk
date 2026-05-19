@@ -26,7 +26,7 @@
 // max-age check; v7 added the offline-fallback page; v8 moves that
 // fallback's CSS out of inline <style>; v9 evicts stale frontend
 // bundles after the lead-version compatibility fix.
-const CACHE_VERSION = "rafuk-cache-20260519-af6378a";
+const CACHE_VERSION = "rafuk-cache-20260519-f92c642";
 const OFFLINE_FALLBACK_URL = "/offline.html";
 const OFFLINE_FALLBACK_ASSETS = [OFFLINE_FALLBACK_URL, "/offline.css"];
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -118,6 +118,21 @@ self.addEventListener("fetch", (event) => {
 
     // Hard bypass for sensitive / always-fresh endpoints.
     if (BYPASS_PATHS.some((p) => url.pathname.startsWith(p))) return;
+
+    // FE-M8: offline fallback for API calls. If the browser is offline
+    // and the request targets /api/v1/, respond with a 503 JSON body
+    // so the app can show a user-friendly "offline" toast instead of
+    // a generic network error. Only API requests — navigation and
+    // static assets already have their own offline fallbacks below.
+    if (!self.navigator.onLine && url.pathname.startsWith("/api/v1/")) {
+        event.respondWith(
+            new Response(
+                JSON.stringify({ detail: "offline" }),
+                { status: 503, headers: { "Content-Type": "application/json" } },
+            ),
+        );
+        return;
+    }
 
     // The HTML shell — network-first so a deploy is picked up on the
     // next refresh; falls back to cached shell when offline.

@@ -4,6 +4,7 @@ import pytest
 
 from api.services.aggregator import (
     PriceStats,
+    _precompute_cluster_stats_sync,  # M9: test sync impl directly
     _remove_outliers,
     apply_search_mode,
     build_query_key,
@@ -23,7 +24,6 @@ from api.services.aggregator import (
     normalize_search_text,
     sort_listings,
 )
-from api.services.aggregator import _precompute_cluster_stats_sync  # M9: test sync impl directly
 
 
 def test_extract_prices_filters_zero_and_anomalies(sample_ads: list[dict[str, object]]) -> None:

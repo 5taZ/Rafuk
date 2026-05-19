@@ -147,6 +147,25 @@ function createApiCore(context) {
         if (!response || !response.ok) {
             let message = "Не удалось выполнить запрос.";
             let detailPayload = null;
+            // OPUS-3: 429 backoff UI — tell the user to wait instead of
+            // showing a generic error they'll just retry on (which would
+            // burn another quota point on the backend).
+            if (response?.status === 429) {
+                const retryAfter = response.headers?.get?.("retry-after");
+                let waitHint = "";
+                if (retryAfter) {
+                    const seconds = Number(retryAfter);
+                    if (Number.isFinite(seconds) && seconds > 0) {
+                        waitHint = seconds >= 60
+                            ? ` Подождите ~${Math.ceil(seconds / 60)} мин.`
+                            : ` Подождите ~${Math.ceil(seconds)} сек.`;
+                    }
+                }
+                message = `Слишком много запросов.${waitHint} Попробуйте позже.`;
+                const err = new Error(message);
+                err.status = 429;
+                throw err;
+            }
             try {
                 const payload = await response.json();
                 if (Array.isArray(payload.detail)) {
