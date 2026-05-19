@@ -63,9 +63,10 @@ def _build_ready_handler(
                 {"status": "timeout"}, status=503
             )
         except Exception as exc:  # pragma: no cover — surfaced via log
+            # H9: log full error internally but return generic message
             logger.warning("Healthcheck readiness raised: %s", exc)
             return web.json_response(
-                {"status": "error", "detail": str(exc)}, status=503
+                {"status": "error"}, status=503
             )
         if not ok:
             return web.json_response({"status": "unready"}, status=503)

@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     # header to be treated as a synthetic Debug user (user_id=0). Use this
     # ONLY for local manual testing. The validators below refuse to load
     # this in production / against a remote DB.
+    # C4: auth_bypass requires both AUTH_BYPASS=True AND
+    # AUTH_BYPASS_CONFIRM_RISK=True. The confirmation flag is defined
+    # BEFORE auth_bypass so the field_validator can read it via info.data.
+    auth_bypass_confirm_risk: bool = False
     auth_bypass: bool = False
     # Telegram initData max age in seconds. Telegram generates initData once
     # when the Mini App opens and never refreshes it — so a short window
@@ -153,7 +157,15 @@ class Settings(BaseSettings):
                 "auth_bypass=True is not allowed with a non-localhost "
                 "DATABASE_URL — every request would share user_id=0."
             )
+        # C4: require explicit confirmation flag alongside auth_bypass
+        confirm = info.data.get("auth_bypass_confirm_risk", False)
+        if not confirm:
+            raise ValueError(
+                "auth_bypass=True requires AUTH_BYPASS_CONFIRM_RISK=True "
+                "to make the risk explicit."
+            )
         return v
+
     # Production policy gates (G-03/G-04/G-05). Defaults are
     # backwards-compatible (lax); production deployments should set the
     # first three to True and the last to False via env.

@@ -93,6 +93,7 @@ def test_auth_bypass_rejected_with_remote_database() -> None:
         "API_BASE_URL": "https://example.com",
         "MINI_APP_URL": "https://example.com/app",
         "AUTH_BYPASS": "true",
+        "AUTH_BYPASS_CONFIRM_RISK": "true",
     }
     with patch.dict(os.environ, env, clear=True):
         from api import config
@@ -112,6 +113,7 @@ def test_auth_bypass_allowed_with_localhost_database() -> None:
         "API_BASE_URL": "https://example.com",
         "MINI_APP_URL": "https://example.com/app",
         "AUTH_BYPASS": "true",
+        "AUTH_BYPASS_CONFIRM_RISK": "true",
     }
     with patch.dict(os.environ, env, clear=True):
         from api import config
@@ -131,6 +133,7 @@ def test_auth_bypass_rejected_with_env_production() -> None:
         "API_BASE_URL": "https://example.com",
         "MINI_APP_URL": "https://example.com/app",
         "AUTH_BYPASS": "true",
+        "AUTH_BYPASS_CONFIRM_RISK": "true",
         "ENV": " Production ",
     }
     with patch.dict(os.environ, env, clear=True):
@@ -139,6 +142,25 @@ def test_auth_bypass_rejected_with_env_production() -> None:
         config.get_settings.cache_clear()
         importlib.reload(config)
         with pytest.raises(ValidationError, match="auth_bypass=True is not allowed"):
+            config.Settings(_env_file=None)
+
+
+def test_auth_bypass_requires_confirmation_flag() -> None:
+    """C4: auth_bypass=True without AUTH_BYPASS_CONFIRM_RISK must fail."""
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "AUTH_BYPASS": "true",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        with pytest.raises(ValidationError, match="AUTH_BYPASS_CONFIRM_RISK"):
             config.Settings(_env_file=None)
 
 

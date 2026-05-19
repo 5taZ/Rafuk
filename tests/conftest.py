@@ -12,6 +12,7 @@ from sqlalchemy import Integer as _Integer
 os.environ["ENV"] = "test"
 os.environ["DEBUG"] = "true"
 os.environ["AUTH_BYPASS"] = "true"
+os.environ["AUTH_BYPASS_CONFIRM_RISK"] = "true"
 os.environ.setdefault("BOT_TOKEN", "7123456789:AAFtesttoken")
 os.environ.setdefault("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:"))
 os.environ.setdefault("REDIS_URL", "redis://localhost:6380/15")
@@ -44,6 +45,7 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # rejected by the Settings validator in production / against a remote
     # DATABASE_URL, so this is dev/test-only by construction.
     monkeypatch.setenv("AUTH_BYPASS", "true")
+    monkeypatch.setenv("AUTH_BYPASS_CONFIRM_RISK", "true")
 
     try:
         from api.config import get_settings
