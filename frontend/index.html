@@ -48,17 +48,17 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#0a0a0b">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260519-8cbc864">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260519-8cbc864">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260519-af6378a">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260519-af6378a">
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
          depending on the user's network RTT. -->
     <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
     <link rel="dns-prefetch" href="https://rms.kufar.by">
-    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20260519-8cbc864">
-    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260519-8cbc864">
-    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260519-8cbc864"></noscript>
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20260519-af6378a">
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260519-af6378a">
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260519-af6378a"></noscript>
     <!-- FE-M1: Preload the bundled stylesheet so the browser starts
          fetching it during HTML parse, in parallel with the font
          CSS request above. The subsequent ``<link rel="stylesheet">``
@@ -73,8 +73,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20260519-8cbc864">
-    <link rel="stylesheet" href="css/style.css?v=20260519-8cbc864">
+    <link rel="preload" as="style" href="css/style.css?v=20260519-af6378a">
+    <link rel="stylesheet" href="css/style.css?v=20260519-af6378a">
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -91,14 +91,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20260519-8cbc864"
+            src="vendor/telegram-web-app.js?v=20260519-af6378a"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers without leaking IP to a CDN. -->
-    <script defer src="js/app_bundle.js?v=20260519-8cbc864"></script>
+    <script defer src="js/app_bundle.js?v=20260519-af6378a"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -121,7 +121,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20260519-8cbc864" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260519-af6378a" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">

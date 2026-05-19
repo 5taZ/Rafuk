@@ -170,6 +170,15 @@ user first**.
 * **Adding a migration** → `uv run alembic -c migrations/alembic.ini
   revision -m "<name>" --autogenerate`, then verify the diff and
   remove anything you didn't intend.
+
+  For new indexes on large tables (`tracker_events`, `lead_items`,
+  `query_snapshots`, `lead_item_price_snapshots`, `ai_audit_log`), prefer
+  `op.execute("CREATE INDEX CONCURRENTLY ...")` inside an autocommit-only
+  migration so a deploy doesn't take an ACCESS EXCLUSIVE lock for the
+  duration of the build. The migration must declare
+  `def with_autocommit() -> bool: return True` (or the equivalent Alembic
+  `op_kwargs` setup). For small tables this is unnecessary; default
+  `op.create_index` is fine. (BE-DEEP-11)
 * **Adding a frontend feature** → vanilla JS, no bundler. Read the
   `frontend/js/api_*.js` and `frontend/js/render_*.js` files and
   follow the existing module split. CSS uses `frontend/css/parts/`.

@@ -23,6 +23,9 @@
 # work is COPY + a permissions check.
 
 # SEC-NEW-9: nginxinc/nginx-unprivileged runs the master+workers as the nginx user (uid 101) instead of root.
+# PERF-NEW-5: brotli pending dedicated build pipeline — no maintained unprivileged+brotli
+# image exists; a multi-stage build that compiles ngx_brotli from source is deferred until
+# the CI pipeline supports custom nginx module builds. gzip remains the active compressor.
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 
 # Temporarily switch to root for file operations; the base image

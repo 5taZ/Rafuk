@@ -219,7 +219,7 @@ function createApiEvents(context) {
                 const view = shortcut.dataset.viewShortcut;
                 if (view) {
                     setActiveView(view);
-                    renderAll();
+                    // FE-NEW-7: setActiveView already calls markDirty + renderAll
                     requestAnimationFrame(() => {
                         document
                             .getElementById("listing-assistant-section")
@@ -274,7 +274,7 @@ function createApiEvents(context) {
                 _confirmTimers.leads = undefined;
                 _confirmTimers.watchlist = undefined;
                 setActiveView(view);
-                renderAll();
+                // FE-NEW-7: setActiveView already calls markDirty + renderAll
                 if (view === "tracking") {
                     void loadTrackers();
                     startTrackerRefresh();

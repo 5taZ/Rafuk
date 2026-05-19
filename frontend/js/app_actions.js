@@ -151,14 +151,13 @@ function createAppActions(baseContext) {
     context.focusTarget = focusTarget;
     context.markDirty = markDirty;
 
+    // FE-NEW-7: hot paths use targeted dirty flags; full renderAll only on cold init.
     function openOverview() {
         setActiveView("overview");
-        renderAll();
     }
 
     function openProfile(options = {}) {
         setActiveView("profile");
-        renderAll();
         if (options.refresh || (!state.profile.data && !state.profile.loading)) {
             void context.loadProfile?.({ silent: true });
         }
@@ -175,7 +174,6 @@ function createAppActions(baseContext) {
         }
         setActiveView("admin");
         markDirty("adminUsers", "adminStatuses");
-        renderAll();
         void context.loadAdminStatuses?.({ silent: true });
         void context.loadAdminUsers?.({ silent: true });
     }
@@ -275,10 +273,10 @@ function createAppActions(baseContext) {
         // by the time createApiAi calls them. They're loaded in
         // parallel and share the same cache-busting version stamp.
         await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260519-8cbc864"),
-            context._loadScript("js/api_ai_render.js?v=20260519-8cbc864"),
-            context._loadScript("js/api_ai.js?v=20260519-8cbc864"),
-            context._loadScript("js/api_listing_assistant.js?v=20260519-8cbc864"),
+            context._loadScript("js/api_ai_modal.js?v=20260519-af6378a"),
+            context._loadScript("js/api_ai_render.js?v=20260519-af6378a"),
+            context._loadScript("js/api_ai.js?v=20260519-af6378a"),
+            context._loadScript("js/api_listing_assistant.js?v=20260519-af6378a"),
         ]);
         const app = window.App || {};
         if (typeof app.createApiAi !== "function") {

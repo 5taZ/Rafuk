@@ -2446,3 +2446,51 @@ def test_render_charts_hex_literals_only_in_token_fallbacks() -> None:
         "render_charts.js has bare hex literals outside _token() fallbacks:\n"
         + "\n".join(f"  L{n}: {ln}" for n, ln in bare_hex_lines[:10])
     )
+
+
+def test_hot_path_view_switches_do_not_double_render() -> None:
+    """FE-NEW-7: hot paths (view switch, tab click) must NOT call
+    renderAll() immediately after setActiveView() — setActiveView
+    already calls markDirty('tabs', 'views') + renderAll() internally.
+    A redundant renderAll doubles the frame work on budget Android
+    Telegram WebView devices."""
+    actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
+    events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+
+    # openOverview and openProfile must not have renderAll() right after setActiveView
+    overview_start = actions_js.index("function openOverview()")
+    overview_end = actions_js.index(
+        "\n    function openProfile", overview_start,
+    )
+    overview_body = actions_js[overview_start:overview_end]
+    assert "setActiveView" in overview_body
+    # After setActiveView line, renderAll should NOT appear
+    after_set = overview_body[overview_body.index("setActiveView"):]
+    assert "renderAll();" not in after_set.split("\n", 1)[1] if "\n" in after_set else True
+
+    # api_events.js tab click handler: setActiveView(view) should not be
+    # followed immediately by renderAll()
+    tab_handler_start = events_js.index("_confirmTimers.watchlist = undefined;")
+    tab_section = events_js[tab_handler_start:tab_handler_start + 200]
+    set_idx = tab_section.index("setActiveView(view);")
+    after_set_tab = tab_section[set_idx + len("setActiveView(view);"):]
+    # The next non-comment, non-blank line should NOT be renderAll()
+    for line in after_set_tab.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        assert stripped != "renderAll();", (
+            "tab click handler calls renderAll() after setActiveView — "
+            "setActiveView already renders internally (FE-NEW-7)"
+        )
+        break
+
+
+def test_nginx_brotli_config_documented() -> None:
+    """PERF-NEW-5: nginx/default.conf must contain the brotli
+    configuration block (commented or active) so the compression
+    policy is documented and ready to activate."""
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+    assert "PERF-NEW-5" in nginx_conf
+    assert "brotli_comp_level 6" in nginx_conf
+    assert "brotli_types" in nginx_conf
