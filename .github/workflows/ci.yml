@@ -92,6 +92,40 @@ jobs:
         # under a minute.
         run: uv tool run --from pip-audit pip-audit --strict -r requirements.lock.txt --no-deps
 
+  # FE-NEW-4: enforce that frontend changes refresh ?v= tags so the SW cache picks them up.
+  frontend-version-gate:
+    name: Frontend Version Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 2
+
+      - name: Check frontend cache-busting tags
+        run: |
+          # Detect if frontend/js or frontend/css changed vs parent commit
+          if git diff --name-only HEAD~1 | grep -qE '^frontend/(js|css)/'; then
+            echo "Frontend JS/CSS changed — verifying version bump..."
+            # Extract current ?v= tag
+            CURRENT_V=$(grep -hoE '\?v=[A-Za-z0-9._-]+' frontend/index.html | head -1)
+            # Extract current CACHE_VERSION
+            CURRENT_CV=$(grep -oE 'const CACHE_VERSION = "[^"]+"' frontend/sw.js | head -1)
+            # Extract base (parent) values
+            BASE_V=$(git show HEAD~1:frontend/index.html | grep -hoE '\?v=[A-Za-z0-9._-]+' | head -1)
+            BASE_CV=$(git show HEAD~1:frontend/sw.js | grep -oE 'const CACHE_VERSION = "[^"]+"' | head -1)
+            if [[ "$CURRENT_V" == "$BASE_V" ]]; then
+              echo "::error::frontend/js or frontend/css changed but ?v= tag in index.html was NOT bumped ($CURRENT_V). Run scripts/bump_static_version.sh"
+              exit 1
+            fi
+            if [[ "$CURRENT_CV" == "$BASE_CV" ]]; then
+              echo "::error::frontend/js or frontend/css changed but CACHE_VERSION in sw.js was NOT bumped. Run scripts/bump_static_version.sh"
+              exit 1
+            fi
+            echo "✓ Version tags bumped: $CURRENT_V (was $BASE_V)"
+          else
+            echo "No frontend/js or frontend/css changes — skipping."
+          fi
+
   test:
     name: Tests
     runs-on: ubuntu-latest

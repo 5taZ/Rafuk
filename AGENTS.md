@@ -19,6 +19,7 @@ uv run pytest --tb=short
 uv run ruff check .
 
 # bump frontend cache-busting tags after touching frontend/js or frontend/css
+# CI enforces this via the frontend-version-gate job; see .github/workflows/ci.yml.
 scripts/bump_static_version.sh
 
 # alembic head revision
