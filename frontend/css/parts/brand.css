@@ -576,10 +576,7 @@
        makes that redundant — both modals are 780px / 94vh. */
 }
 
-.la-sheet.la-sheet-expanded {
-    /* No-op: kept so legacy callers that still toggle this class
-       don't break. Both states share the same height as .ai-sheet. */
-}
+/* L14: removed dead .la-sheet-expanded — no HTML references this class */
 
 .la-result-overlay {
     position: absolute;
@@ -1258,13 +1255,7 @@
     box-shadow: var(--shadow-section-card);
 }
 
-/* .section--bare is now a no-op (section is bare by default) but kept
-   for backwards compatibility with any existing HTML references. */
-.section.section--bare {
-    background: transparent;
-    border: 0;
-    box-shadow: none;
-    padding: 0;
+/* L14: removed dead .section--bare — no HTML references this class */
 }
 
 /* --- Cleaner section heads: no underline, balanced spacing -------- */

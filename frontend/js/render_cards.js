@@ -58,7 +58,19 @@ function createRenderCards(context) {
         return skel;
     }
 
-    function verdictClassName(verdict) {
+    // M5: map verdict to CSS class. Tries backend-provided verdict_key
+    // first (enum like "good"/"below_market"/"average"/"above_market"),
+    // falls back to Russian substring matching for backward compat.
+    var _VERDICT_KEY_MAP = {
+        good: "zabirat",
+        below_market: "smotret",
+        average: "norm",
+        above_market: "mimo",
+    };
+    function verdictClassName(verdict, verdictKey) {
+        if (verdictKey && _VERDICT_KEY_MAP[verdictKey]) {
+            return _VERDICT_KEY_MAP[verdictKey];
+        }
         if (!verdict) return "neutral";
         if (verdict.includes("Хорошая")) return "zabirat";
         if (verdict.includes("Ниже")) return "smotret";
