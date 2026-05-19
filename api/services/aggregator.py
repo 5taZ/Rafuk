@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import math
 import re
 import statistics
@@ -404,32 +405,11 @@ def _product_cluster_key(tokens: list[str], query_tokens: set[str]) -> tuple[str
     return tuple(sorted(aliases))
 
 
-def precompute_cluster_stats(
+def _precompute_cluster_stats_sync(
     all_ads: list[dict[str, Any]],
     query: str | None = None,
 ) -> dict[int, PriceStats | None]:
-    """Pre-compute cluster stats for every ad in *all_ads*.
-
-    Returns a dict mapping ``ad_id`` → ``PriceStats | None`` so callers
-    can look up per-ad cluster stats in O(1) instead of calling
-    :func:`cluster_price_stats` per listing.
-
-    Performance contract
-    --------------------
-    The naive implementation called :func:`cluster_price_stats` n times,
-    each of which iterates ``all_ads`` again calling ``is_strict_match``,
-    which itself calls ``normalize_search_text`` twice (each touching
-    150+ string operations). That made the function quadratic *and*
-    multiplied by a heavy per-pair constant — for 1500 ads this blocked
-    the event loop for several seconds.
-
-    This implementation tokenises every ad **once** up-front, then walks
-    the n×n pairs over already-built sets so the inner loop is just two
-    O(k) set comparisons (k = number of tokens, typically <10). On a
-    1500-ad fan-out this drops from ~340M string ops to ~22M set ops —
-    roughly 100× faster in practice and no longer event-loop blocking
-    on realistic inputs.
-    """
+    """Synchronous CPU-bound implementation — run via asyncio.to_thread()."""
     # Step 1: tokenise + extract variant set for each ad once.
     # ad_id_list[i] keeps ad_id for index lookup; tokens_list[i] is None
     # when the title was empty (those ads can never match anything).
@@ -506,6 +486,36 @@ def precompute_cluster_stats(
             )
 
     return result
+
+
+async def precompute_cluster_stats(
+    all_ads: list[dict[str, Any]],
+    query: str | None = None,
+) -> dict[int, PriceStats | None]:
+    """Async wrapper — offloads the O(n²) CPU work to a thread.
+
+    Returns a dict mapping ``ad_id`` → ``PriceStats | None`` so callers
+    can look up per-ad cluster stats in O(1) instead of calling
+    :func:`cluster_price_stats` per listing.
+
+    Performance contract
+    --------------------
+    The naive implementation called :func:`cluster_price_stats` n times,
+    each of which iterates ``all_ads`` again calling ``is_strict_match``,
+    which itself calls ``normalize_search_text`` twice (each touching
+    150+ string operations). That made the function quadratic *and*
+    multiplied by a heavy per-pair constant — for 1500 ads this blocked
+    the event loop for several seconds.
+
+    The sync helper tokenises every ad **once** up-front, then walks
+    the n×n pairs over already-built sets so the inner loop is just two
+    O(k) set comparisons (k = number of tokens, typically <10). On a
+    1500-ad fan-out this drops from ~340M string ops to ~22M set ops —
+    roughly 100× faster in practice. M9: the CPU-bound work is now
+    offloaded via ``asyncio.to_thread`` so it never blocks the event
+    loop.
+    """
+    return await asyncio.to_thread(_precompute_cluster_stats_sync, all_ads, query)
 
 
 # ── Price-type detection (free vs negotiable) ─────────────────────────

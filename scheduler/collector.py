@@ -809,6 +809,12 @@ async def _check_trackers_inner(
             # writes. See ``_dispatch_tracker_notifications``.
             pending_notifications: list[_TrackerNotifyJob] = []
 
+            # M18: per-group commit — expire_on_commit=False prevents
+            # SQLAlchemy from expiring loaded Tracker/User objects after
+            # each mid-loop commit, which would trigger lazy loads in the
+            # async session on subsequent iterations.
+            session.expire_on_commit = False
+
             for (query, strict_mode, category_id), query_trackers in trackers_by_query.items():
                 try:
                     payload = await client.search(
@@ -1188,6 +1194,10 @@ async def _check_trackers_inner(
                             category_id,
                         )
 
+                # M18: per-group commit so completed groups survive a later crash.
+                # expire_on_commit=False (set above) keeps loaded objects usable.
+                await session.commit()
+
             # Commit whatever succeeded — errors are logged but don't block
             await session.commit()
 
@@ -1427,6 +1437,7 @@ async def check_reminders(
             select(LeadReminder)
             .where(LeadReminder.remind_at <= now, LeadReminder.sent.is_(False))
             .options(joinedload(LeadReminder.lead).joinedload(LeadItem.user))
+            .limit(100)
         )
         due_reminders = list(result.scalars())
         if not due_reminders:

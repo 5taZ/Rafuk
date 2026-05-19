@@ -142,7 +142,7 @@ async def get_listing_detail(
 
     median_byn = visible_dataset.price_stats.median
     category_price_stats = compute_category_price_stats(reference_dataset.ads)
-    cluster_cache = precompute_cluster_stats(visible_dataset.ads, query=query)
+    cluster_cache = await precompute_cluster_stats(visible_dataset.ads, query=query)
     liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats, ad=ad)
     # BE-MEDIUM (issues §2.2): NBRB outage shouldn't 500 the detail.
     try:

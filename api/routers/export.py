@@ -197,7 +197,16 @@ async def export_leads(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
-    """Export leads to a file. Supports CSV (default) and XLSX."""
+    """Export leads to a file. Supports CSV (default) and XLSX.
+
+    M17 known limitation: this endpoint materializes the full result set
+    (up to 5000 leads + expenses) in memory before serialising. For CSV
+    output, a ``StreamingResponse`` with a generator that yields one row
+    at a time would reduce peak memory, but the XLSX path requires the
+    full workbook in memory (openpyxl limitation). Refactoring to stream
+    CSV while keeping XLSX materialised is feasible but requires
+    splitting the response path earlier; tracked for a future iteration.
+    """
     # BE-M12: the explicit re-validation that lived here was unreachable —
     # ``fmt: _FORMAT`` (Literal["csv", "xlsx"]) is enforced by FastAPI's
     # query validation before the handler runs, so any non-allowed value

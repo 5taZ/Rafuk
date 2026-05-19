@@ -21,9 +21,9 @@ from api.services.aggregator import (
     is_strict_match,
     normalize_price_byn,
     normalize_search_text,
-    precompute_cluster_stats,
     sort_listings,
 )
+from api.services.aggregator import _precompute_cluster_stats_sync  # M9: test sync impl directly
 
 
 def test_extract_prices_filters_zero_and_anomalies(sample_ads: list[dict[str, object]]) -> None:
@@ -258,7 +258,7 @@ def test_product_cluster_groups_vehicle_engines_in_mixed_parts_query() -> None:
         {"ad_id": 5, "subject": "Зеркало наружнее левое Volkswagen Polo", "price_byn": 4191},
     ]
 
-    clusters = precompute_cluster_stats(ads, query="Volkswagen Polo")
+    clusters = _precompute_cluster_stats_sync(ads, query="Volkswagen Polo")
 
     assert clusters[1] is not None
     assert clusters[1].count == 3

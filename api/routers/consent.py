@@ -466,7 +466,17 @@ async def export_account_data(
         get_session_factory_dependency
     ),
 ):
-    """Export all user data as JSON (right to data portability)."""
+    """Export all user data as JSON (right to data portability).
+
+    M17 known limitation: this endpoint materializes every collection
+    (each capped at export_row_cap) into a single JSON dict in memory.
+    Converting to ``StreamingResponse`` with chunked JSON output is
+    feasible for individual collections but would require significant
+    refactoring of the multi-query assembly logic (11+ independent
+    queries with cross-collection truncation flags). The per-collection
+    caps keep the peak payload well under 50 MB for realistic users,
+    so streaming is deferred to a future iteration.
+    """
     async with session_factory() as session:
         # User profile
         stmt = select(User).where(User.telegram_user_id == _user.user_id)

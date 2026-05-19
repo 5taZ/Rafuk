@@ -32,7 +32,13 @@ async def _scan_delete(redis_client: Any, pattern: str, *, count: int = 100) -> 
     while True:
         cursor, keys = await redis_client.scan(cursor, match=pattern, count=count)
         if keys:
-            await redis_client.delete(*keys)
+            # L4: use pipeline when available, fallback to direct delete
+            if hasattr(redis_client, "pipeline"):
+                async with redis_client.pipeline() as pipe:
+                    pipe.delete(*keys)
+                    await pipe.execute()
+            else:
+                await redis_client.delete(*keys)
         if cursor == 0:
             break
 
