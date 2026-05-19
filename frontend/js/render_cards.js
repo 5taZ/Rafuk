@@ -205,11 +205,12 @@ function createRenderCards(context) {
      * @param {number|null} totalOverride - Override for total count display
      * @returns {boolean} True if content was rendered, false if empty
      */
+    // M10: delegates to shared context.hasActiveListingFilters when available,
+    // falls back to local copy for backward compat during lazy-load bootstrap.
     function _hasActiveListingFilters() {
-        // SEARCH-9: mirrors `_hasActiveListingFilters` in api_listings.js
-        // — kept in sync because this file is lazy-loaded separately
-        // (no shared module scope). Both are tiny; duplication is
-        // cheaper than threading the helper through `context`.
+        if (typeof context.hasActiveListingFilters === "function") {
+            return context.hasActiveListingFilters();
+        }
         return (
             state.filters.category != null
             || Boolean(state.filters.condition)

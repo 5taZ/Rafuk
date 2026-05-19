@@ -520,6 +520,17 @@ function createAppCore() {
         isDirty,
         clearDirty,
         populateRegionSelect,
+        // M10: shared filter helper — single source of truth for lazy modules
+        hasActiveListingFilters: function () {
+            return (
+                state.filters.category != null
+                || Boolean(state.filters.condition)
+                || Boolean(state.filters.sellerType)
+                || state.filters.minPrice != null
+                || state.filters.maxPrice != null
+                || Boolean(state.filters.regionName)
+            );
+        },
         logClientError,
         _loadScript,
     };

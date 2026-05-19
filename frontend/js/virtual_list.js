@@ -195,11 +195,17 @@ function createVirtualList(container, options) {
 
     container.addEventListener("scroll", onScroll, { passive: true });
 
-    // Handle window resize (container height may change)
+    // M7: observe container resize (orientation change, Telegram panel width)
+    // in addition to window resize.
+    var resizeObserver = null;
     function onResize() {
         renderVisibleItems();
     }
     window.addEventListener("resize", onResize, { passive: true });
+    if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(onResize);
+        resizeObserver.observe(container);
+    }
 
     return {
         /**
@@ -278,6 +284,10 @@ function createVirtualList(container, options) {
             }
             container.removeEventListener("scroll", onScroll);
             window.removeEventListener("resize", onResize);
+            if (resizeObserver) {
+                resizeObserver.disconnect();
+                resizeObserver = null;
+            }
             if (spacer.parentNode) spacer.parentNode.removeChild(spacer);
             if (viewport.parentNode) viewport.parentNode.removeChild(viewport);
             // Reset container styles that were set by virtual list

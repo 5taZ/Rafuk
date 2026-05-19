@@ -133,7 +133,11 @@ function createApiListings(context) {
         state.filters.pendingRegionName = "";
     }
 
+    // M10: delegates to shared context.hasActiveListingFilters when available
     function _hasActiveListingFilters() {
+        if (typeof context.hasActiveListingFilters === "function") {
+            return context.hasActiveListingFilters();
+        }
         return (
             state.filters.category != null
             || Boolean(state.filters.condition)
