@@ -112,3 +112,41 @@ def test_compose_ports_bind_loopback_only() -> None:
         "Ports not bound to 127.0.0.1 in docker-compose.yml: "
         + ", ".join(violations)
     )
+
+
+def test_compose_services_have_security_hardening() -> None:
+    """SEC-NEW-1: every service in the base compose must have
+    security_opt: ['no-new-privileges:true'] and cap_drop: ['ALL'].
+    """
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+    missing_secopt: list[str] = []
+    missing_capdrop: list[str] = []
+    for svc_name, svc in compose.get("services", {}).items():
+        secopt = svc.get("security_opt") or []
+        if "no-new-privileges:true" not in secopt:
+            missing_secopt.append(svc_name)
+        capdrop = svc.get("cap_drop") or []
+        if "ALL" not in capdrop:
+            missing_capdrop.append(svc_name)
+    assert not missing_secopt, (
+        "Services missing security_opt no-new-privileges: " + ", ".join(missing_secopt)
+    )
+    assert not missing_capdrop, (
+        "Services missing cap_drop ALL: " + ", ".join(missing_capdrop)
+    )
+
+
+def test_frontend_uses_nginx_unprivileged() -> None:
+    """SEC-NEW-9: frontend Dockerfile must use the unprivileged nginx image."""
+    dockerfile = Path("Dockerfile.frontend").read_text(encoding="utf-8")
+    assert "nginxinc/nginx-unprivileged:1.27-alpine" in dockerfile
+
+
+def test_frontend_port_mapping_8080() -> None:
+    """SEC-NEW-9: frontend maps host 8081 -> container 8080."""
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+    frontend = compose["services"]["frontend"]
+    ports = frontend.get("ports", [])
+    assert any("8081:8080" in str(p) for p in ports), (
+        f"frontend ports should map 8081->8080, got: {ports}"
+    )

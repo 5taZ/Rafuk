@@ -1,3 +1,4 @@
+# SEC-NEW-1: cap_drop ALL + no-new-privileges + read_only by default. Writable scratch via tmpfs:/tmp.
 name: myprojetctkufar
 
 services:
@@ -19,6 +20,14 @@ services:
   migrate:
     build: .
     restart: "no"
+    # SEC-NEW-1: one-shot — read_only + tmpfs:/tmp for alembic temp files.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     command: ["uv", "run", "alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
     environment:
       ENV: ${ENV:-production}
@@ -48,6 +57,14 @@ services:
   api:
     build: .
     restart: unless-stopped
+    # SEC-NEW-1: Python tempfile/Pillow need /tmp writable.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       ENV: ${ENV:-production}
       DEBUG: ${DEBUG:-false}
@@ -119,6 +136,14 @@ services:
   bot:
     build: .
     restart: unless-stopped
+    # SEC-NEW-1: Python tempfile needs /tmp writable.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       ENV: ${ENV:-production}
       DEBUG: ${DEBUG:-false}
@@ -167,6 +192,14 @@ services:
   scheduler:
     build: .
     restart: unless-stopped
+    # SEC-NEW-1: Python tempfile needs /tmp writable.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       ENV: ${ENV:-production}
       DEBUG: ${DEBUG:-false}
@@ -237,10 +270,20 @@ services:
       extra_hosts:
         - "host.docker.internal:127.0.0.1"
     restart: unless-stopped
+    # SEC-NEW-1: fully read_only; nginx-unprivileged needs /tmp, /var/cache/nginx, /var/run writable.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:8081:80"
+      - "127.0.0.1:8081:8080"
     networks:
       - kufar-net
     deploy:
@@ -253,7 +296,7 @@ services:
           memory: 16M
           cpus: "0.05"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -266,6 +309,14 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # SEC-NEW-1: read_only is safe — data lives in the /data volume.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     volumes:
       - redis-data:/data
     # Redis requires AUTH. REDIS_PASSWORD must be set in .env (generate
@@ -308,6 +359,14 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:2024.12.1
     restart: unless-stopped
+    # SEC-NEW-1: stateless tunnel client — fully read_only.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     command: tunnel run
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
@@ -337,6 +396,12 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # SEC-NEW-1: no read_only — PG writes WAL/temp outside the data volume.
+    # cap_drop ALL is safe; PG doesn't need any Linux capabilities.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     profiles: ["local-db"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-kufar}

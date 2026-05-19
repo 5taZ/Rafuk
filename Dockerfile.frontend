@@ -22,7 +22,12 @@
 # (everything is hand-written ES modules + plain CSS), so the only
 # work is COPY + a permissions check.
 
-FROM nginx:1.27-alpine
+# SEC-NEW-9: nginxinc/nginx-unprivileged runs the master+workers as the nginx user (uid 101) instead of root.
+FROM nginxinc/nginx-unprivileged:1.27-alpine
+
+# Temporarily switch to root for file operations; the base image
+# sets USER nginx which would block writes to /etc/nginx.
+USER root
 
 # Drop the upstream default and replace it with ours. The site
 # config carries every cache/CSP/CORS rule the front-end relies on,
@@ -50,4 +55,7 @@ COPY assets /usr/share/nginx/assets
 # fail with "host not found in upstream".
 RUN nginx -t
 
-# Default nginx CMD already exposes 80; no override needed.
+# Switch back to unprivileged user for runtime.
+USER nginx
+
+EXPOSE 8080
