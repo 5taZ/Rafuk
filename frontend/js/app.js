@@ -141,6 +141,12 @@ function analyticsApp() {
         const themeBtn = document.getElementById("theme-toggle");
         if (themeBtn) themeBtn.addEventListener("click", () => core.toggleTheme());
 
+        // FE-NEW-5: re-render charts with fresh CSS tokens on theme change.
+        core.onThemeChange(() => {
+            renderers.renderChart();
+            renderers.renderHistoryChart();
+        });
+
         const privacyBtn = document.getElementById("privacy-btn");
         if (privacyBtn) privacyBtn.addEventListener("click", () => actions.openPrivacyModal?.());
 

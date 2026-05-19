@@ -223,6 +223,8 @@ function createAppCore() {
     // FE-NEW-3: single themeChanged listener with stored ref so re-init / pagehide can deregister.
     let _themeChangedRef = null;
     let _themeChangedRegistered = false;
+    // FE-NEW-5: callbacks invoked after any theme change (toggle or Telegram event).
+    const _themeChangeCallbacks = [];
 
     const _TG_THEME_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
     function _applyTelegramThemeVars() {
@@ -284,6 +286,8 @@ function createAppCore() {
                     syncTelegramChromeTheme(next);
                     // Also sync Telegram CSS custom properties (app.js palette).
                     _applyTelegramThemeVars();
+                    // FE-NEW-5: re-paint charts with fresh CSS tokens.
+                    for (const cb of _themeChangeCallbacks) cb();
                 };
                 try {
                     tg.onEvent?.("themeChanged", _themeChangedRef);
@@ -303,6 +307,7 @@ function createAppCore() {
         document.documentElement.setAttribute("data-theme", next);
         localStorage.setItem("theme", next);
         syncTelegramChromeTheme(next);
+        for (const cb of _themeChangeCallbacks) cb();
     }
 
     function formatPrice(value, priceType) {
@@ -496,6 +501,7 @@ function createAppCore() {
         REGIONS: APP_REGIONS,
         initTelegramTheme,
         toggleTheme,
+        onThemeChange: (cb) => _themeChangeCallbacks.push(cb),
         syncTelegramChromeTheme,
         formatPrice,
         formatCondition,

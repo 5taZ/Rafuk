@@ -2414,3 +2414,35 @@ def test_tracker_event_card_buttons_refactored() -> None:
     # (d) header click opens detail
     assert "event-header" in src
     assert "openListingDetail" in src
+
+
+def test_render_charts_hex_literals_only_in_token_fallbacks() -> None:
+    """FE-NEW-5: render_charts.js must not contain bare hex color literals
+    outside of _token("--name", "#fallback") calls. All chart colors
+    should be read from CSS tokens at render time."""
+    charts_js = (JS_DIR / "render_charts.js").read_text(encoding="utf-8")
+    hex_re = re.compile(r'#[0-9a-fA-F]{3,8}\b')
+    token_fallback_re = re.compile(r'_token\(\s*"[^"]+"\s*,\s*"(#[0-9a-fA-F]{3,8})"\s*\)')
+
+    # Collect all hex literals that are inside _token() fallback positions
+    allowed_hexes_in_context = set()
+    for m in token_fallback_re.finditer(charts_js):
+        allowed_hexes_in_context.add(m.start())
+
+    # Find all hex literals and check they appear inside _token() calls
+    bare_hex_lines = []
+    for i, line in enumerate(charts_js.splitlines(), 1):
+        # Skip lines that are _token() calls (fallbacks are fine)
+        if '_token(' in line:
+            continue
+        # Skip comments
+        stripped = line.strip()
+        if stripped.startswith('//') or stripped.startswith('*'):
+            continue
+        if hex_re.search(line):
+            bare_hex_lines.append((i, line.strip()))
+
+    assert bare_hex_lines == [], (
+        "render_charts.js has bare hex literals outside _token() fallbacks:\n"
+        + "\n".join(f"  L{n}: {ln}" for n, ln in bare_hex_lines[:10])
+    )

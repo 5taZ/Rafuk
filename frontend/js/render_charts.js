@@ -111,12 +111,17 @@ function createRenderCharts(context) {
 
         destroyChart();
 
-        const isDark = document.documentElement.getAttribute("data-theme") !== "light";
+        // FE-NEW-5: read colors from CSS tokens at render time so dark/light theme + future brand refresh propagate.
+        const _root = document.documentElement;
+        const _style = getComputedStyle(_root);
+        const _token = (name, fallback) => (_style.getPropertyValue(name).trim() || fallback);
+
+        const isDark = _root.getAttribute("data-theme") !== "light";
         const muted = isDark ? "rgba(136,128,120,0.6)" : "rgba(114,105,94,0.6)";
         const grid = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
-        const tooltipBackground = isDark ? "#1A1A1D" : "#FFFFFF";
-        const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
-        const accentColor = isDark ? "#3B82F6" : "#2563EB";
+        const tooltipBackground = _token("--bg-hover", isDark ? "#1A1A1D" : "#FFFFFF");
+        const tooltipText = _token("--text", isDark ? "#F2EFE8" : "#1A1917");
+        const accentColor = _token("--accent", isDark ? "#3B82F6" : "#2563EB");
         const values = [
             state.misc.stats.min,
             state.misc.stats.q1,
@@ -265,13 +270,18 @@ function createRenderCharts(context) {
         elements.historySummary.hidden = false;
 
         destroyHistoryChart();
-        const isDark = document.documentElement.getAttribute("data-theme") !== "light";
-        const lineColor = isDark ? "#3B82F6" : "#2563EB";
+        // FE-NEW-5: read colors from CSS tokens at render time so dark/light theme + future brand refresh propagate.
+        const _root = document.documentElement;
+        const _style = getComputedStyle(_root);
+        const _token = (name, fallback) => (_style.getPropertyValue(name).trim() || fallback);
+
+        const isDark = _root.getAttribute("data-theme") !== "light";
+        const lineColor = _token("--accent", isDark ? "#3B82F6" : "#2563EB");
         const fillColor = isDark ? "rgba(59,130,246,0.12)" : "rgba(37,99,235,0.12)";
         const muted = isDark ? "rgba(136,128,120,0.75)" : "rgba(114,105,94,0.75)";
         const grid = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.05)";
-        const tooltipBackground = isDark ? "#1A1A1D" : "#FFFFFF";
-        const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
+        const tooltipBackground = _token("--bg-hover", isDark ? "#1A1A1D" : "#FFFFFF");
+        const tooltipText = _token("--text", isDark ? "#F2EFE8" : "#1A1917");
 
         // Canvas is marked aria-hidden; the wrapper div carries the accessible label
         canvas.setAttribute("aria-hidden", "true");
