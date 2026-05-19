@@ -241,6 +241,10 @@ class FakeKufarClient:
         del kwargs
         return {"total": len(self._ads), "ads": self._ads}
 
+    async def search(self, **kwargs) -> dict:
+        del kwargs
+        return {"total": len(self._ads), "ads": self._ads}
+
     async def aclose(self) -> None:
         return None
 

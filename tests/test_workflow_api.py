@@ -884,3 +884,84 @@ def test_incomplete_projection_when_no_buy_price(monkeypatch) -> None:
         data = resp.json()
         assert data["projected_profit_byn"] is None
         assert data["incomplete_projection"] is True
+
+
+def test_delete_all_leads_deletes_sold(monkeypatch) -> None:
+    """L10: verify sold leads ARE deleted by delete_all_leads (only closed
+    and watching are preserved)."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "sold delete test",
+                "ad_id": 41001,
+                "title": "Sold Item",
+                "link": "https://www.kufar.by/item/41001",
+                "price_byn": 1000,
+                "source": "manual",
+            },
+        )
+        assert created.status_code == 201
+        lead = created.json()
+
+        sold = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={
+                "status": "sold",
+                "buy_price_byn": 900,
+                "sold_price_byn": 1200,
+                "version": lead["version"],
+            },
+        )
+        assert sold.status_code == 200
+        sold_lead = sold.json()
+        assert sold_lead["status"] == "sold"
+
+        client.delete("/api/v1/leads/all")
+        remaining = client.get("/api/v1/leads").json()
+        sold_items = [r for r in remaining if r["id"] == sold_lead["id"]]
+        assert len(sold_items) == 0
+
+
+def test_delete_watchlist_item_after_promotion_idempotent(monkeypatch) -> None:
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/watchlist",
+            json={
+                "query": "iphone 15 128",
+                "ad_id": 301,
+                "title": "iPhone 15 128GB",
+                "link": "https://www.kufar.by/item/301",
+                "price_byn": 1800,
+            },
+        )
+        assert created.status_code == 201
+        item = created.json()
+
+        promoted = client.patch(
+            f"/api/v1/leads/{item['id']}",
+            json={"status": "new", "version": item["version"]},
+        )
+        assert promoted.status_code == 200
+        assert promoted.json()["status"] == "new"
+
+        delete_resp = client.delete(f"/api/v1/watchlist/{item['id']}")
+        assert delete_resp.status_code == 204
