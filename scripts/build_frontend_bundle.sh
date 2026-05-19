@@ -32,6 +32,8 @@ modules=(
   api_admin.js
   api_image_proxy.js
   api_listings.js
+  api_events_carousel.js
+  api_events_expenses.js
   api_events.js
   app_actions.js
   app.js

@@ -980,230 +980,24 @@ function createApiEvents(context) {
     }
 
     function bindCarouselEvents() {
-        // ── Image carousel — minimal opacity-crossfade swipe ──────────
-        //
-        // Earlier we tried a finger-follow live drag with rAF
-        // coalescing and a compositor layer hint. Even with all the
-        // tricks the live drag stuttered on Telegram WebView for some
-        // users — the cheapest layout-only frame is still 16 ms of
-        // composite work and many devices can't keep up at 60 Hz on
-        // a full-width image.
-        //
-        // The simpler approach: don't animate during the gesture at
-        // all. Detect the swipe on touchend, then run a 280 ms
-        // crossfade with a tiny direction-hint translate (8 px). This
-        // is one transition over a fixed time window — no per-frame
-        // work, no layer-promotion fight with the page scroll. Looks
-        // clean and performs identically on every device.
-        //
-        // Adjacent images get preloaded so src-swap is instant.
-        let isAnimating = false;
-
-        function _preloadAdjacent() {
-            const images = state.detail.data?.images || [];
-            const idx = state.detail.imageIndex || 0;
-            _preloadCache.length = 0;
-            for (const i of [idx - 1, idx + 1]) {
-                if (i < 0 || i >= images.length) continue;
-                const raw = images[i];
-                if (typeof raw !== "string" || !raw) continue;
-                const validated = (typeof context.safeImageUrl === "function")
-                    ? context.safeImageUrl(raw)
-                    : "";
-                if (!validated) continue;
-                const proxyUrl = (typeof context.optimizedImage === "function")
-                    ? context.optimizedImage(validated, { width: 800, useProxy: true })
-                    : validated;
-                if (
-                    proxyUrl &&
-                    proxyUrl !== validated &&
-                    typeof context.fetchProxyImageObjectUrl === "function"
-                ) {
-                    void context.fetchProxyImageObjectUrl(proxyUrl).catch(() => {});
-                    continue;
-                }
-                const url = (typeof context.optimizedImage === "function")
-                    ? context.optimizedImage(validated, { width: 800 })
-                    : validated;
-                const ghost = new Image();
-                ghost.src = url;
-                _preloadCache.push(ghost);
-            }
-        }
-
-        async function navigateDetailImage(direction) {
-            const images = state.detail.data?.images;
-            if (!images || images.length <= 1) return;
-            if (isAnimating) return;
-
-            const total = images.length;
-            const newIndex = direction > 0
-                ? Math.min(total - 1, state.detail.imageIndex + 1)
-                : Math.max(0, state.detail.imageIndex - 1);
-            if (newIndex === state.detail.imageIndex) return;
-
-            const img = elements.detailMainImage;
-            if (!img) {
-                state.detail.imageIndex = newIndex;
-                context.renderDetailModal();
-                return;
-            }
-            if (img._pinchController) {
-                img._pinchController.reset(false);
-            }
-
-            isAnimating = true;
-
-            // Phase 1 — fade old image out + nudge 8 px in swipe dir.
-            const exitX = direction > 0 ? -8 : 8;
-            img.style.transition = "opacity 140ms ease-out, transform 140ms ease-out";
-            img.style.opacity = "0";
-            img.style.transform = `translate3d(${exitX}px, 0, 0)`;
-
-            await new Promise((resolve) => setTimeout(resolve, 140));
-
-            // Phase 2 — swap src, pre-position 8 px on the opposite
-            // side, then animate to (0, 0) with opacity 1. The
-            // opposite-side enter sells the direction of travel; the
-            // 8 px is small enough that the composite is trivially
-            // cheap on any device.
-            state.detail.imageIndex = newIndex;
-            context.renderDetailModal();
-            _preloadAdjacent();
-
-            const enterX = direction > 0 ? 8 : -8;
-            img.style.transition = "none";
-            img.style.opacity = "0";
-            img.style.transform = `translate3d(${enterX}px, 0, 0)`;
-            // Force style flush so the next frame's transition starts
-            // from the pre-positioned offset, not the previous one.
-            void img.offsetWidth;
-
-            requestAnimationFrame(() => {
-                img.style.transition = "opacity 200ms ease-out, transform 220ms ease-out";
-                img.style.opacity = "1";
-                img.style.transform = "translate3d(0, 0, 0)";
-                const release = () => {
-                    img.style.transition = "";
-                    img.style.opacity = "";
-                    img.style.transform = "";
-                    isAnimating = false;
-                };
-                setTimeout(release, 240);
-            });
-        }
-
-        // ── Detect-on-release swipe ──────────────────────────────────
-        // No live drag — we just record the start and check the delta
-        // on touchend. Browser scrolls vertically without our
-        // interference; we only fire navigateDetailImage when the
-        // gesture was clearly horizontal AND past the threshold.
-        // Scoped to .detail-media so swiping the thumbnail strip
-        // (or any other modal content) never moves the hero.
-        const SWIPE_THRESHOLD_PX = 50;
-        let touchStartX = 0;
-        let touchStartY = 0;
-        let touchSkip = false;
-
-        elements.detailMedia?.addEventListener("touchstart", (e) => {
-            if (isAnimating) {
-                touchSkip = true;
-                return;
-            }
-            if (e.touches && e.touches.length > 1) {
-                touchSkip = true;
-                return;
-            }
-            if (elements.detailMainImage?.classList.contains("is-zoomed")) {
-                touchSkip = true;
-                return;
-            }
-            touchSkip = false;
-            touchStartX = e.touches[0].clientX;
-            touchStartY = e.touches[0].clientY;
-        }, { passive: true });
-
-        elements.detailMedia?.addEventListener("touchend", (e) => {
-            if (touchSkip) {
-                touchSkip = false;
-                return;
-            }
-            const dx = e.changedTouches[0].clientX - touchStartX;
-            const dy = e.changedTouches[0].clientY - touchStartY;
-            if (Math.abs(dx) < SWIPE_THRESHOLD_PX) return;
-            // Vertical swipe wins → don't page the photo.
-            if (Math.abs(dy) > Math.abs(dx) * 0.8) return;
-            void navigateDetailImage(dx < 0 ? 1 : -1);
-        }, { passive: true });
-
-        // Preload adjacent images when the modal first becomes active
-        // so the first swipe doesn't show the network delay.
-        const _preloadOnOpen = () => {
-            if (state.detail.data) _preloadAdjacent();
-        };
-        elements.detailModal?.addEventListener("transitionend", _preloadOnOpen, { passive: true });
-
-        // Keyboard arrows — only react when the detail modal is open.
-        // FE-04: dedupe via the same sentinel-attribute trick used for
-        // the global Escape handler — a second bindEvents() must not
-        // pile up arrow handlers.
-        if (document._kufarArrowHandler) {
-            document.removeEventListener("keydown", document._kufarArrowHandler);
-        }
-        const arrowHandler = (event) => {
-            if (!state.detail.data) return;
-            if (event.key === "ArrowLeft") {
-                void navigateDetailImage(-1);
-            } else if (event.key === "ArrowRight") {
-                void navigateDetailImage(1);
-            }
-        };
-        document._kufarArrowHandler = arrowHandler;
-        document.addEventListener("keydown", arrowHandler);
+        _bindCarouselEvents({
+            state,
+            elements,
+            safeImageUrl: context.safeImageUrl,
+            optimizedImage: context.optimizedImage,
+            fetchProxyImageObjectUrl: context.fetchProxyImageObjectUrl,
+            renderDetailModal: context.renderDetailModal,
+        });
     }
 
     function bindExpenseEvents() {
-        // ── Expenses modal ───────────────────────────────────────────
-        elements.expensesClose?.addEventListener("click", () => {
-            closeExpensesModal();
-        });
-
-        elements.expensesOverlay?.addEventListener("click", () => {
-            closeExpensesModal();
-        });
-
-        elements.saveExpenseButton?.addEventListener("click", () => {
-            const leadId = state.expenses.currentLeadId;
-            if (!leadId) return;
-            const type = elements.expenseTypeSelect?.value || "other";
-            const rawAmount = elements.expenseAmountInput?.value?.trim();
-            const displayAmount = rawAmount ? Number(rawAmount) : null;
-            const notes = elements.expenseNotesInput?.value?.trim() || "";
-            if (!displayAmount || displayAmount <= 0) {
-                showToast("Введите корректную сумму");
-                return;
-            }
-            
-            const button = elements.saveExpenseButton;
-            button.disabled = true;
-            button.classList.add('is-loading');
-            const originalText = button.textContent;
-            button.textContent = 'Сохраняю...';
-            void (async () => {
-                try {
-                    await createExpense(leadId, { expense_type: type, amount_byn: displayAmount, notes });
-                    if (elements.expenseAmountInput) elements.expenseAmountInput.value = "";
-                    if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";
-                } finally {
-                    button.disabled = false;
-                    button.classList.remove('is-loading');
-                    button.textContent = originalText;
-                }
-            })().catch((err) => { logClientError("save expense failed", err); });
-        });
-
-        elements.cancelExpenseButton?.addEventListener("click", () => {
-            closeExpensesModal();
+        _bindExpenseEvents({
+            state,
+            elements,
+            closeExpensesModal,
+            showToast,
+            createExpense,
+            logClientError,
         });
     }
 

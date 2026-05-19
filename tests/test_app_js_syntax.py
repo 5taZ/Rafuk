@@ -913,8 +913,8 @@ def test_frontend_image_proxy_policy_is_explicit() -> None:
     assert "img.src = optimizeWith(image, 120, false)" in modals_js
     assert "actions.clearProxyImageObjectUrls()" in modals_js
 
-    assert "context.fetchProxyImageObjectUrl(proxyUrl)" in events_js
-    assert "context.optimizedImage(validated, { width: 800, useProxy: true })" in events_js
+    assert "ctx.fetchProxyImageObjectUrl(proxyUrl)" in (JS_DIR / "api_events_carousel.js").read_text(encoding="utf-8")
+    assert "ctx.optimizedImage(validated, { width: 800, useProxy: true })" in (JS_DIR / "api_events_carousel.js").read_text(encoding="utf-8")
 
     build_media = cards_js[
         cards_js.index("function buildMediaNode"):
@@ -2358,8 +2358,9 @@ def test_detail_modal_supports_pinch_zoom_with_swipe_deferral() -> None:
 
     # The swipe-between-photos handler must short-circuit while zoomed
     # OR while the user has more than one finger on the screen.
-    assert "is-zoomed" in events
-    assert "e.touches.length > 1" in events or "touches.length > 1" in events
+    carousel = (JS_DIR / "api_events_carousel.js").read_text(encoding="utf-8")
+    assert "is-zoomed" in carousel
+    assert "e.touches.length > 1" in carousel or "touches.length > 1" in carousel
 
     # render_modals.js wires the helper at render time and resets the
     # transform on close so the next lot opens at 1×.
