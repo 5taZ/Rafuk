@@ -2384,3 +2384,114 @@ async def test_check_trackers_failure_counter_resets_on_success(
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# LOGIC-NEW-5: DLQ inline purge at max retries
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dlq_pump_deletes_exhausted_rows_inline(mock_bot: AsyncMock):
+    """LOGIC-NEW-5: rows that hit _DLQ_MAX_RETRIES are deleted inline."""
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=950, first_name="Exhaust")
+        session.add(user)
+        await session.flush()
+        # Row at max_retries - 1 so next bump hits the limit
+        session.add(
+            TelegramNotificationDLQ(
+                user_id=user.id,
+                telegram_user_id=950,
+                source="tracker",
+                message="will exhaust",
+                error_kind="retry",
+                retry_count=_DLQ_MAX_RETRIES - 1,
+                next_retry_at=datetime.now(UTC) - timedelta(minutes=5),
+            )
+        )
+        await session.commit()
+
+    # Make send fail with retry outcome
+    mock_bot.send_message = AsyncMock(side_effect=Exception("timeout"))
+    import scheduler.collector as _col
+
+    original = _col._send_message_classified
+
+    async def _always_retry(*args, **kwargs):
+        return "retry"
+
+    _col._send_message_classified = _always_retry
+    try:
+        await retry_telegram_notification_dlq(mock_bot, sf)
+    finally:
+        _col._send_message_classified = original
+
+    # Row should be deleted inline
+    from sqlalchemy import select as sa_select
+    async with sf() as session:
+        remaining = (await session.execute(
+            sa_select(TelegramNotificationDLQ)
+        )).scalars().all()
+        assert len(remaining) == 0, "Exhausted DLQ row should be deleted inline"
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# LOGIC-NEW-6: cleanup_stale_missing_watchlist purges child rows
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_missing_watchlist_purges_child_rows(populated_session):
+    """LOGIC-NEW-6: snapshots and expenses are deleted before parent lead_items."""
+    session, user, tracker = populated_session
+    from api.models import DealExpense, LeadItemPriceSnapshot
+
+    old = datetime.now(UTC) - timedelta(days=10)
+    item = LeadItem(
+        user_id=user.id,
+        ad_id=9001,
+        query="iphone 15",
+        title="Stale with children",
+        link="https://www.kufar.by/item/9001",
+        status="watching",
+        market_status="missing",
+        missing_since_at=old,
+    )
+    session.add(item)
+    await session.flush()
+
+    # Add child snapshot and expense
+    session.add(LeadItemPriceSnapshot(
+        lead_item_id=item.id,
+        price_byn=100.0,
+    ))
+    session.add(DealExpense(
+        lead_id=item.id,
+        user_id=user.id,
+        expense_type="delivery",
+        amount_byn=50.0,
+    ))
+    await session.flush()
+
+    deleted = await cleanup_stale_missing_watchlist(session, days=7)
+    assert deleted == 1
+
+    # Verify child rows are gone
+    from sqlalchemy import select as sa_select
+    snaps = (await session.execute(
+        sa_select(LeadItemPriceSnapshot).where(LeadItemPriceSnapshot.lead_item_id == item.id)
+    )).scalars().all()
+    assert len(snaps) == 0
+
+    expenses = (await session.execute(
+        sa_select(DealExpense).where(DealExpense.lead_id == item.id)
+    )).scalars().all()
+    assert len(expenses) == 0

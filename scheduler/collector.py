@@ -26,6 +26,7 @@ from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
 from api.models import (
     AIAuditLog,
+    DealExpense,
     LeadItem,
     LeadItemPriceSnapshot,
     LeadReminder,
@@ -557,6 +558,10 @@ def _detect_threshold_alerts(
     threshold alerts *escalate* matching ads into dedicated event types.
     """
     if not tracker.alert_price_threshold and not tracker.alert_discount_percent:
+        return []
+    # LOGIC-NEW-4: small-sample stats are unreliable; tag them so
+    # threshold alerts don't fire on a single observation.
+    if not market_stats.reliable:
         return []
 
     events: list[TrackerEvent] = []
@@ -1634,6 +1639,20 @@ async def cleanup_stale_missing_watchlist(session: AsyncSession, days: int = 7) 
     """Auto-remove watchlist items (lead_items with status='watching')
     that have been missing for longer than the threshold."""
     cutoff = datetime.now(UTC) - timedelta(days=days)
+    # LOGIC-NEW-6: explicit child-row purge so SQLite without
+    # ON DELETE CASCADE doesn't leak orphans.
+    stale_ids = select(LeadItem.id).where(
+        LeadItem.status == "watching",
+        LeadItem.market_status == "missing",
+        LeadItem.missing_since_at.isnot(None),
+        LeadItem.missing_since_at < cutoff,
+    )
+    await session.execute(
+        delete(LeadItemPriceSnapshot).where(LeadItemPriceSnapshot.lead_item_id.in_(stale_ids))
+    )
+    await session.execute(
+        delete(DealExpense).where(DealExpense.lead_id.in_(stale_ids))
+    )
     result = await session.execute(
         delete(LeadItem).where(
             LeadItem.status == "watching",
@@ -1929,14 +1948,21 @@ async def retry_telegram_notification_dlq(
                 )
             )
         for row_id, new_retry_count in bump_ids:
-            await session.execute(
-                update(TelegramNotificationDLQ)
-                .where(TelegramNotificationDLQ.id == row_id)
-                .values(
-                    retry_count=new_retry_count,
-                    next_retry_at=_dlq_next_retry_after(new_retry_count),
+            # LOGIC-NEW-5: prune exhausted rows inline so the table
+            # doesn't accumulate during outages.
+            if new_retry_count >= _DLQ_MAX_RETRIES:
+                await session.execute(
+                    delete(TelegramNotificationDLQ).where(TelegramNotificationDLQ.id == row_id)
                 )
-            )
+            else:
+                await session.execute(
+                    update(TelegramNotificationDLQ)
+                    .where(TelegramNotificationDLQ.id == row_id)
+                    .values(
+                        retry_count=new_retry_count,
+                        next_retry_at=_dlq_next_retry_after(new_retry_count),
+                    )
+                )
         await session.commit()
     if total_sent or bump_ids:
         logger.info(

@@ -599,3 +599,20 @@ def test_filter_deal_ads_excludes_negotiable() -> None:
     # Median of [800, 1000] = 900 BYN; priced_ad is 800 → ~-11% discount.
     result = filter_deal_ads([priced_ad, at_median_ad, negotiable_ad], 900.0, 5.0)
     assert [ad["ad_id"] for ad in result] == [1]
+
+
+def test_compute_price_stats_small_sample_unreliable() -> None:
+    """LOGIC-NEW-4: fewer than 3 prices yields reliable=False with q1=q3=median."""
+    stats_one = compute_price_stats([500.0])
+    assert stats_one.reliable is False
+    assert stats_one.q1 == stats_one.median
+    assert stats_one.q3 == stats_one.median
+
+    stats_two = compute_price_stats([400.0, 600.0])
+    assert stats_two.reliable is False
+    assert stats_two.q1 == stats_two.median
+    assert stats_two.q3 == stats_two.median
+
+    # 3+ prices should be reliable
+    stats_three = compute_price_stats([100.0, 200.0, 300.0])
+    assert stats_three.reliable is True

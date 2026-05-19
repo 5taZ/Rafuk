@@ -208,8 +208,13 @@ def _serialize_lead_read(
         out.roi_percent = None
     # E-FIND-01: projected profit for unsold leads with target_resale_byn.
     if lead.sold_price_byn is None and lead.target_resale_byn is not None:
-        basis = float(lead.buy_price_byn or 0) + total_expenses
-        out.projected_profit_byn = round(float(lead.target_resale_byn) - basis, 2)
+        # LOGIC-NEW-8: refuse to project profit when the buy-price basis is unknown.
+        if lead.buy_price_byn is None:
+            out.projected_profit_byn = None
+            out.incomplete_projection = True
+        else:
+            basis = float(lead.buy_price_byn) + total_expenses
+            out.projected_profit_byn = round(float(lead.target_resale_byn) - basis, 2)
     return out
 
 
@@ -500,6 +505,8 @@ async def delete_all_leads(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
+    # BE-DEEP-9: bulk-delete race window is bounded by DB CASCADE +
+    # UNIQUE constraints; document as accept-by-design.
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is not None:
@@ -725,6 +732,8 @@ async def delete_all_watchlist_items(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> Response:
+    # BE-DEEP-9: bulk-delete race window is bounded by DB CASCADE +
+    # UNIQUE constraints; document as accept-by-design.
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is not None:

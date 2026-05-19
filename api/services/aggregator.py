@@ -155,6 +155,9 @@ class PriceStats(BaseModel):
     min: float
     max: float
     count: int
+    # LOGIC-NEW-4: small-sample stats are unreliable; tag them so
+    # threshold alerts don't fire on a single observation.
+    reliable: bool = True
 
 
 @dataclass(slots=True, frozen=True)
@@ -697,9 +700,23 @@ def compute_price_stats(prices: list[float]) -> PriceStats:
         return PriceStats(mean=0.0, median=0.0, q1=0.0, q3=0.0, min=0.0, max=0.0, count=0)
     cleaned = _remove_outliers(prices)
     sorted_prices = sorted(cleaned)
+    med = round(statistics.median(sorted_prices), 2)
+    # LOGIC-NEW-4: small-sample stats are unreliable; tag them so
+    # threshold alerts don't fire on a single observation.
+    if len(sorted_prices) < 3:
+        return PriceStats(
+            mean=round(statistics.mean(sorted_prices), 2),
+            median=med,
+            q1=med,
+            q3=med,
+            min=round(sorted_prices[0], 2),
+            max=round(sorted_prices[-1], 2),
+            count=len(sorted_prices),
+            reliable=False,
+        )
     return PriceStats(
         mean=round(statistics.mean(sorted_prices), 2),
-        median=round(statistics.median(sorted_prices), 2),
+        median=med,
         q1=round(_percentile(sorted_prices, 25), 2),
         q3=round(_percentile(sorted_prices, 75), 2),
         min=round(sorted_prices[0], 2),

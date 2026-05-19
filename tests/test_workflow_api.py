@@ -847,3 +847,38 @@ def test_is_sold_field_in_lead_responses(monkeypatch) -> None:
         leads_list = client.get("/api/v1/leads").json()
         sold_leads = [x for x in leads_list if x["id"] == lead["id"]]
         assert sold_leads[0]["is_sold"] is True
+
+
+def test_incomplete_projection_when_no_buy_price(monkeypatch) -> None:
+    """LOGIC-NEW-8: projected_profit_byn is null and incomplete_projection is true
+    when buy_price_byn is unknown but target_resale_byn is set."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+
+    with TestClient(app) as client:
+        # Create a lead with target_resale but no buy_price
+        resp = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "incomplete proj",
+                "ad_id": 90001,
+                "title": "No buy price",
+                "link": "https://www.kufar.by/item/90001",
+                "price_byn": 500,
+                "status": "bought",
+                "source": "manual",
+                "target_resale_byn": 800,
+                # buy_price_byn intentionally omitted
+            },
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["projected_profit_byn"] is None
+        assert data["incomplete_projection"] is True

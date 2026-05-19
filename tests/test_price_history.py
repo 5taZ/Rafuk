@@ -303,3 +303,24 @@ def test_price_history_includes_fetched_count() -> None:
     points = response.json()["points"]
     assert len(points) == 1
     assert points[0]["fetched_count"] == 50
+
+
+def test_price_history_response_includes_rate_source() -> None:
+    """LOGIC-NEW-7: response includes rate_source field."""
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        asyncio.run(seed_history(app.state.session_factory, query="rate_source_test"))
+        response = client.get(
+            "/api/v1/price-history",
+            params={"query": "rate_source_test", "currency": "BYN", "days": 7},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["rate_source"] == "current_nbrb"

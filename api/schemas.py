@@ -270,6 +270,12 @@ class PriceHistoryResponse(BaseModel):
     currency: str
     days: int
     points: list[PriceHistoryPoint]
+    # LOGIC-NEW-7: surface the current-rate caveat in the API contract;
+    # historical-rate per-snapshot is a separate feature.
+    rate_source: str = Field(
+        default="current_nbrb",
+        description="Conversion uses the current NBRB rate, not the historical rate per-snapshot.",
+    )
 
 
 class GeographyRegionPoint(BaseModel):
@@ -441,6 +447,8 @@ class LeadRead(BaseModel):
     roi_percent: float | None = None
     # E-FIND-01: projected profit for watching/bought leads using target_resale_byn.
     projected_profit_byn: float | None = None
+    # LOGIC-NEW-8: refuse to project profit when the buy-price basis is unknown.
+    incomplete_projection: bool = False
     # E-FIND-09: True when sold_price_byn is set but buy_price_byn is missing,
     # meaning profit/ROI cannot be reliably computed.
     incomplete_cost_basis: bool = False
