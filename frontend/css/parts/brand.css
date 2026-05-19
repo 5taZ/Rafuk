@@ -6,6 +6,11 @@
  * same colour via ``var(--bg)``, so all three competing copies were
  * computing identical pixels. Removed two; kept the tokens.css
  * version as the single source of truth. */
+.header {
+    background: var(--bg);
+    border-bottom-color: var(--border);
+}
+
 .logo {
     gap: 9px;
     padding: 4px 6px 4px 3px;
@@ -43,6 +48,36 @@
 
 .search-wrap {
     min-height: 58px;
+    background: var(--bg-input);
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
+}
+
+[data-theme="light"] .search-wrap {
+    background: var(--bg-input);
+    box-shadow: var(--shadow-sm);
+}
+
+.search-wrap:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-btn,
+.primary-btn,
+.primary-link {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-inverse);
+    box-shadow: var(--shadow-sm);
+}
+
+.view-tab.active,
+.s-tab.active {
+    background: var(--info-soft);
+    border-color: var(--info-border);
+    color: var(--accent);
+    box-shadow: none;
 }
 
 .strict-toggle {
@@ -53,13 +88,70 @@
     box-shadow: var(--shadow-control-inset);
 }
 
+.quick-chip,
+.view-tab,
+.s-tab,
+.listing,
+.summary-strip,
+.stat-card,
+.tracker-card,
+.helper-panel {
+    background: var(--bg-card);
+    border-color: var(--border);
+}
+
+[data-theme="light"] .quick-chip,
+[data-theme="light"] .view-tab,
+[data-theme="light"] .s-tab,
+[data-theme="light"] .listing,
+[data-theme="light"] .summary-strip,
+[data-theme="light"] .stat-card,
+[data-theme="light"] .tracker-card,
+[data-theme="light"] .helper-panel {
+    background: var(--overlay-light);
+}
+
+[data-theme="light"] .view-tab.active,
+[data-theme="light"] .s-tab.active {
+    background: var(--info-soft);
+    border-color: var(--info-border);
+    color: var(--accent);
+}
+
 .view-tab {
     box-shadow: none;
+}
+
+.summary-strip {
+    padding: 15px 16px;
+    box-shadow: var(--shadow-elevated);
+}
+
+.summary-strip::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--accent);
+}
+
+.summary-kicker,
+.sec-title,
+.stat-lbl,
+.summary-pill-label {
+    letter-spacing: 0.09em;
+}
+
+.summary-pill,
+.range-item {
+    background: var(--bg-elevated);
+    border-color: var(--border);
 }
 
 .listing {
     padding: 13px;
     gap: 12px;
+    box-shadow: var(--shadow-surface-hairline), var(--shadow-card);
 }
 
 .listing:hover {
