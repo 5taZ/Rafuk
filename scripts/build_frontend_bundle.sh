@@ -40,10 +40,42 @@ modules=(
 RAW="$(mktemp)"
 trap 'rm -f "$RAW"' EXIT
 
+# FE-NEW-1: compute sha384 SRI hashes for every lazy-loadable module so
+# _loadScript can assert integrity at runtime. The map is emitted inside
+# the IIFE right after "use strict" so it shares scope with _loadScript.
+LAZY_MODULES=(
+  render_trackers.js   # FE-NEW-1
+  api_trackers.js      # FE-NEW-1
+  api_leads.js         # FE-NEW-1
+  api_watchlist.js     # FE-NEW-1
+  render_modals.js     # FE-NEW-1
+  render_charts.js     # FE-NEW-1
+  render_card_builders.js  # FE-NEW-1
+  render_cards.js      # FE-NEW-1
+  api_ai_modal.js      # FE-NEW-1
+  api_ai_render.js     # FE-NEW-1
+  api_ai.js            # FE-NEW-1
+  api_listing_assistant.js  # FE-NEW-1
+  render_admin.js      # FE-NEW-1
+)
+
+_build_integrity_map() {
+  printf 'const __LAZY_INTEGRITY = {\n'
+  for lm in "${LAZY_MODULES[@]}"; do
+    lm_path="$JS_DIR/$lm"
+    if [[ -f "$lm_path" ]]; then
+      hash=$(openssl dgst -sha384 -binary "$lm_path" | openssl base64 -A)
+      printf '  "%s": "sha384-%s",\n' "$lm" "$hash"
+    fi
+  done
+  printf '};\n'
+}
+
 {
   printf '(function (window) {\n'
   printf '"use strict";\n'
   printf 'window.App = window.App || {};\n'
+  _build_integrity_map
   printf '\n'
 } > "$RAW"
 for module in "${modules[@]}"; do

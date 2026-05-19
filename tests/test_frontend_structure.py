@@ -37,12 +37,44 @@ def _expected_app_bundle_text() -> str:
     keeps catching forgotten rebuilds without false-positive-ing on
     every build-script side-effect.
     """
+    import base64
+    import subprocess
+
     from scripts.minify_js import minify_js_text
+
+    # FE-NEW-1: build script embeds __LAZY_INTEGRITY map inside the IIFE.
+    lazy_modules = [
+        "render_trackers.js",
+        "api_trackers.js",
+        "api_leads.js",
+        "api_watchlist.js",
+        "render_modals.js",
+        "render_charts.js",
+        "render_card_builders.js",
+        "render_cards.js",
+        "api_ai_modal.js",
+        "api_ai_render.js",
+        "api_ai.js",
+        "api_listing_assistant.js",
+        "render_admin.js",
+    ]
+    integrity_lines = ['const __LAZY_INTEGRITY = {\n']
+    for lm in lazy_modules:
+        lm_path = JS_DIR / lm
+        if lm_path.exists():
+            result = subprocess.run(
+                ["openssl", "dgst", "-sha384", "-binary", str(lm_path)],
+                capture_output=True, check=True,
+            )
+            h = base64.b64encode(result.stdout).decode()
+            integrity_lines.append(f'  "{lm}": "sha384-{h}",\n')
+    integrity_lines.append('};\n')
 
     chunks = [
         "(function (window) {\n",
         '"use strict";\n',
         "window.App = window.App || {};\n",
+    ] + integrity_lines + [
         "\n",
     ]
     for module in _frontend_bundle_modules():
@@ -922,3 +954,22 @@ def test_frontend_meta_csp_includes_webz_telegram_org() -> None:
                 "frame-ancestors directive must include https://webz.telegram.org"
             )
             break
+
+
+def test_bundle_contains_lazy_integrity_map() -> None:
+    """FE-NEW-1: build_frontend_bundle.sh must embed a __LAZY_INTEGRITY
+    map with sha384 hashes for every lazy-loadable module so _loadScript
+    can assert subresource integrity at runtime."""
+    bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
+    assert "const __LAZY_INTEGRITY=" in bundle or "const __LAZY_INTEGRITY =" in bundle, (
+        "bundle must contain __LAZY_INTEGRITY map"
+    )
+    import re
+    # Extract the map entries — at least the 13 lazy modules should be present.
+    entries = re.findall(r'"([^"]+\.js)":\s*"sha384-[A-Za-z0-9+/=]+"', bundle)
+    assert len(entries) >= 4, (
+        f"__LAZY_INTEGRITY must have at least 4 entries, found {len(entries)}: {entries}"
+    )
+    # Key modules must be present.
+    for module in ("render_trackers.js", "api_ai.js", "render_charts.js", "render_cards.js"):
+        assert module in entries, f"{module} missing from __LAZY_INTEGRITY map"

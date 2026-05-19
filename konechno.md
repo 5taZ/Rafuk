@@ -29,6 +29,7 @@ originating finding.
 | 170+  | Frontend medium fixes, scheduler/bot medium, low-priority cleanup      | (active)|
 | 181   | Admin audit endpoint + admin rate-limits                               | 691e64e |
 | 182   | Schema freeze: SavedSearch + exclude_duplicates marked reserved        | 8c27b70 |
+| 183   | FE-NEW-1: SRI on lazy-loaded JS modules                                | 68ae62b |
 
 ## Source-of-truth files
 
