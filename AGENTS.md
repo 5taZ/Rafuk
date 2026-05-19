@@ -105,6 +105,7 @@ list of importers so removing them is a deliberate decision.
   `tests/test_consent.py`) must set both headers manually.
 * Pytest is async-mode auto (`asyncio_mode = "auto"`).
 * Coverage runs in CI via `pytest-cov`; local runs don't need it.
+* E2E smoke lives in `tests/e2e/`, gated by `KUFAR_E2E=1`; CI runs it on the `e2e` PR label or via `workflow_dispatch`.
 
 ## Hard constraints from the user
 
