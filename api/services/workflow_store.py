@@ -90,6 +90,13 @@ async def load_last_snapshot_prices(
     so we rely on a simple GROUP BY MAX(id) — snapshot ids are
     monotonically increasing so the row with the max id is the most
     recent one written, with one round-trip total.
+
+    M12: Under READ COMMITTED a concurrent writer may insert a newer
+    snapshot between the GROUP BY and the outer SELECT, so the bulk
+    load can return a slightly stale price. The downstream epsilon
+    guard in ``record_price_snapshot`` (|new − old| < ε → skip)
+    absorbs the race — at worst we record a redundant snapshot
+    identical to the one already stored.
     """
     if not lead_item_ids:
         return {}

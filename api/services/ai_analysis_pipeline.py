@@ -78,6 +78,11 @@ def _compute_ai_cache_version() -> str:
     return f"v6-{h.hexdigest()[:10]}"
 
 
+# L8: cache version is computed once at import time. During a rolling
+# update, old workers continue serving stale cache results under the
+# previous version tag until they are replaced. This is acceptable
+# because the AI cache TTL is short and the prompt changes are
+# infrequent; a brief window of mixed versions is harmless.
 _AI_CACHE_VERSION = _compute_ai_cache_version()
 
 logger = logging.getLogger(__name__)

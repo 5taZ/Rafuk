@@ -1632,7 +1632,9 @@ async def cleanup_old_events(session: AsyncSession, days: int = 30) -> int:
     """Delete tracker events older than specified days."""
     cutoff = datetime.now(UTC) - timedelta(days=days)
     result = await session.execute(delete(TrackerEvent).where(TrackerEvent.created_at < cutoff))
-    deleted_count = result.rowcount
+    # L6: SQLite aiosqlite driver may return None for rowcount on
+    # DELETE; coerce to int to match prune_price_snapshots pattern.
+    deleted_count = int(result.rowcount or 0)
     if deleted_count > 0:
         logger.info("Cleaned up %d old tracker events (older than %d days)", deleted_count, days)
     return deleted_count
@@ -1802,6 +1804,11 @@ _DLQ_BACKOFF_BASE_MINUTES = 2
 # restart it resets to zero, which is the right behaviour — give the
 # tracker a fresh chance once Kufar might have recovered.
 _TRACKER_AUTO_PAUSE_THRESHOLD = 5
+# M15: In-memory failure counts reset to zero on every scheduler restart.
+# Persisting to the Tracker model is deferred — a restart gives each
+# tracker a fresh chance, which is the desired behaviour for transient
+# Kufar outages. Only sustained failures within a single scheduler
+# lifetime trigger auto-pause.
 _tracker_failure_counts: dict[int, int] = {}
 
 

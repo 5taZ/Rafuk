@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 # SEC-NEW-8: module-level cache for the derived HMAC secret so we
 # don't re-hash on every audit call.
+# L1: In multi-worker deployments each worker process derives its own
+# HMAC secret at first call. This means audit hashes from different
+# workers are not comparable, but the audit log is write-heavy and
+# rarely read cross-worker, so the impact is negligible.
 _audit_secret_cache: bytes | None = None
 
 

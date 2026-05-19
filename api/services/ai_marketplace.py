@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,11 +29,30 @@ from api.services.reseller_tools import analyze_query_text
 # the same frozenset / tuple shapes the similarity scorer expected,
 # so nothing downstream changes.
 _DATA_DIR = Path(__file__).parent / "data"
+logger = logging.getLogger(__name__)
 
 
 def _load_marketplace_lexicon() -> dict[str, Any]:
-    with open(_DATA_DIR / "marketplace_lexicon.json", encoding="utf-8") as f:
-        return json.load(f)
+    # L3: missing lexicon file must not crash the import — degrade
+    # gracefully with empty defaults so the rest of the module can
+    # still be imported (all dependent lookups produce empty results).
+    try:
+        with open(_DATA_DIR / "marketplace_lexicon.json", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        logger.warning("marketplace_lexicon.json missing or invalid — using empty defaults")
+        return {
+            "ignored_param_keys": [],
+            "stop_tokens": [],
+            "fuel_words": {},
+            "transmission_words": {},
+            "hot_word_groups": {},
+            "auto_part_stems": [],
+            "color_words": [],
+            "auto_brand_tokens": [],
+            "category_generic_tokens": {},
+            "accessory_type_tokens": {},
+        }
 
 
 _LEXICON = _load_marketplace_lexicon()
@@ -521,8 +541,13 @@ def build_market_context_fallback(
 
 
 def _load_category_guidance() -> dict[str, Any]:
-    with open(_DATA_DIR / "category_guidance.json", encoding="utf-8") as f:
-        return json.load(f)
+    # L3: missing guidance file must not crash the import.
+    try:
+        with open(_DATA_DIR / "category_guidance.json", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        logger.warning("category_guidance.json missing or invalid — using empty defaults")
+        return {"watch_out": {}, "checklist": {}}
 
 
 _GUIDANCE = _load_category_guidance()

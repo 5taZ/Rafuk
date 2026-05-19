@@ -57,6 +57,11 @@ class CurrencyService:
             fetched_at = datetime.now(UTC).isoformat()
 
             try:
+                # L2: The NBRB HTTP fetch blocks all concurrent callers
+                # to get_rates() because there is no per-key lock —
+                # every coroutine awaits the same single HTTP client.
+                # Mitigated by the 3-second httpx timeout; a stuck
+                # request falls through to fallback rates.
                 client = await self._get_client()
                 response = await client.get(NBRB_URL)
                 response.raise_for_status()

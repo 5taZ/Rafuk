@@ -249,6 +249,10 @@ def _serialize_watchlist(
         delta_byn = round(float(current) - float(initial), 2)
         if initial:
             delta_percent = round((delta_byn / float(initial)) * 100.0, 2)
+            # L7: cap extreme delta_percent from tiny initial prices so
+            # the frontend doesn't render absurd values like +500000%.
+            if delta_percent is not None and abs(delta_percent) > 10000:
+                delta_percent = 9999.0 if delta_percent > 0 else -9999.0
     # A-4: dropped user_id= kwarg — WatchlistRead has no such field;
     # Pydantic v2 silently ignores extras but would break under extra='forbid'.
     return WatchlistRead(

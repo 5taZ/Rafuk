@@ -614,6 +614,10 @@ def detect_price_type(ad: dict[str, Any]) -> str:
 
 
 def normalize_price_byn(raw_price: Any, ad: dict[str, Any] | None = None) -> float | None:
+    # L5: 0 is treated identically to None — both return None unless
+    # the raw ad dict is provided and detect_price_type identifies
+    # the listing as "free". Kufar sends both "negotiable" and "free"
+    # as price=0, so the zero alone is ambiguous.
     if raw_price in (None, "", 0, 0.0):
         # Kufar API returns both "negotiable" and "free" as 0.
         # Distinguish them by ad text when the raw ad dict is provided.
