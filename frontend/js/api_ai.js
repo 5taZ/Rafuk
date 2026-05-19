@@ -106,7 +106,8 @@ function createApiAi(context) {
             // Poll for result every 3 seconds
             const POLL_INTERVAL = 3000;
             const POLL_TIMEOUT = 12000;
-            const MAX_POLLS = 120; // 6 minutes max
+            // M4: max 90 seconds total polling. 30 polls × ~3s = ~90s
+            const MAX_POLLS = 30;
             const MAX_CONSECUTIVE_POLL_ERRORS = 4;
             let pollCount = 0;
             let consecutivePollErrors = 0;
