@@ -28,8 +28,10 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    command: ["uv", "run", "alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
+      - /app/.cache
+    command: ["uv", "run", "--no-sync", "alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
     environment:
+      UV_CACHE_DIR: /app/.cache/uv
       ENV: ${ENV:-production}
       DEBUG: ${DEBUG:-false}
       AUTH_BYPASS: ${AUTH_BYPASS:-false}
@@ -309,21 +311,23 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # SEC-NEW-1: read_only is safe — data lives in the /data volume.
+    # SEC-NEW-1: cap_drop + no-new-privileges. `read_only: true` is
+    # not compatible with Redis AOF — the rewriter needs a writable
+    # rootfs for temp files alongside the /data volume. cap_drop:ALL
+    # strips CAP_SETUID/CAP_SETGID so the default gosu-based entrypoint
+    # fails; instead run directly as the redis user (uid 999) and pass
+    # redis-server as the entrypoint to bypass the gosu wrapper.
+    user: "999:1000"
+    entrypoint: ["redis-server"]
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    read_only: true
     tmpfs:
       - /tmp
     volumes:
       - redis-data:/data
-    # Redis requires AUTH. REDIS_PASSWORD must be set in .env (generate
-    # with `openssl rand -hex 32`). Without --requirepass, anyone with
-    # localhost access can read every cache entry, session token, and
-    # rate-limit counter.
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --maxmemory 192mb --maxmemory-policy allkeys-lru"]
+    command: ["--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "192mb", "--maxmemory-policy", "allkeys-lru"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     # PR-18: no host port mapping in the base compose. Other services
@@ -396,12 +400,21 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
-    # SEC-NEW-1: no read_only — PG writes WAL/temp outside the data volume.
-    # cap_drop ALL is safe; PG doesn't need any Linux capabilities.
+    # SEC-NEW-1: the postgres entrypoint runs as root, chown's the
+    # data dir to the postgres user, then gosu's down. cap_drop:ALL
+    # blocks chown+gosu, so add back exactly the capabilities the
+    # entrypoint needs (CHOWN/FOWNER for chown+chmod, DAC_OVERRIDE
+    # so root reads files owned by other UIDs, SETGID/SETUID for gosu).
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     profiles: ["local-db"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-kufar}
