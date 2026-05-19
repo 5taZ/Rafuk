@@ -27,6 +27,8 @@ originating finding.
 | 168   | Cache-key digests + Query bounds + currency fallback                   | 5155ff9 |
 | 169   | Remove internal user_id from read schemas + DB constraints             | f385292 |
 | 170+  | Frontend medium fixes, scheduler/bot medium, low-priority cleanup      | (active)|
+| 181   | Admin audit endpoint + admin rate-limits                               | 691e64e |
+| 182   | Schema freeze: SavedSearch + exclude_duplicates marked reserved        | 8c27b70 |
 
 ## Source-of-truth files
 

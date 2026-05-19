@@ -274,7 +274,7 @@ class TrackerFiltersMixin:
         nullable=False,
         default=False,
         server_default="false",
-    )
+    )  # G-08: reserved schema, no runtime path consumes this flag yet.
     alert_price_threshold: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     alert_discount_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
 
@@ -869,6 +869,12 @@ class AIAuditLog(Base):
     )
 
 
+# G-07: SavedSearch is reserved schema. The persistence layer is in place
+# (UNIQUE/indexes wired, GDPR export already exports rows) but no CRUD
+# endpoint creates or updates these rows in the current product. Keep
+# the table for forward compatibility — dropping it requires a
+# destructive migration; building the feature requires a UX decision.
+# See konechno.md Wave 182 entry.
 class SavedSearch(Base, UserIDMixin, TimestampMixin):
     """User-saved search queries with optional alert filters."""
 
@@ -901,7 +907,7 @@ class SavedSearch(Base, UserIDMixin, TimestampMixin):
         nullable=False,
         default=False,
         server_default="false",
-    )
+    )  # G-08: reserved schema, no runtime path consumes this flag yet.
     active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
