@@ -44,6 +44,7 @@ services:
         max-size: "5m"
         max-file: "2"
 
+  # SEC-NEW-2: bind to loopback in base; production ingress is cloudflared -> frontend -> api over the bridge net.
   api:
     build: .
     restart: unless-stopped
@@ -87,7 +88,7 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "8010:8000"
+      - "127.0.0.1:8010:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -239,7 +240,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8081:80"
+      - "127.0.0.1:8081:80"
     networks:
       - kufar-net
     deploy:
@@ -354,7 +355,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     networks:
       - kufar-net
     deploy:

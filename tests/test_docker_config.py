@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+import yaml
 
 
 def test_dockerfile_mentions_service_switch() -> None:
@@ -86,3 +89,26 @@ def test_nginx_cors_origin_is_strict_allowlist() -> None:
         assert (
             f'$http_origin = "{origin}"' in nginx_conf
         ), f"missing exact-match guard for {origin}"
+
+
+def test_compose_ports_bind_loopback_only() -> None:
+    """SEC-NEW-2: every published port in the base docker-compose.yml
+    must bind to 127.0.0.1 explicitly. Unprefixed ``"NNN:MMM"`` or
+    ``0.0.0.0:NNN:MMM`` forms expose the port on all interfaces,
+    which lets anyone on the same network bypass nginx/cloudflared.
+    """
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+    violations: list[str] = []
+    for svc_name, svc in compose.get("services", {}).items():
+        for port_entry in svc.get("ports") or []:
+            entry = str(port_entry)
+            # Pure numeric (container-only) is fine (rare but valid).
+            if re.fullmatch(r"\d+", entry):
+                continue
+            # Must start with 127.0.0.1:
+            if not entry.startswith("127.0.0.1:"):
+                violations.append(f"{svc_name}: {entry}")
+    assert not violations, (
+        "Ports not bound to 127.0.0.1 in docker-compose.yml: "
+        + ", ".join(violations)
+    )
