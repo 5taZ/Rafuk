@@ -317,12 +317,23 @@ async def _deliver_fallback_result(
 # up fresh loops via pytest-asyncio).
 _PIPELINE_SEARCH_LIMIT = 2
 _pipeline_search_semaphore: asyncio.Semaphore | None = None
+_pipeline_search_semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_pipeline_search_semaphore() -> asyncio.Semaphore:
-    global _pipeline_search_semaphore
-    if _pipeline_search_semaphore is None:
+    # H5: track event loop so test runs that create fresh loops don't
+    # inherit the previous loop's semaphore.
+    global _pipeline_search_semaphore, _pipeline_search_semaphore_loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if (
+        _pipeline_search_semaphore is None
+        or _pipeline_search_semaphore_loop is not loop
+    ):
         _pipeline_search_semaphore = asyncio.Semaphore(_PIPELINE_SEARCH_LIMIT)
+        _pipeline_search_semaphore_loop = loop
     return _pipeline_search_semaphore
 
 

@@ -36,13 +36,20 @@ _MAX_SHADOW_ENTRIES = 50
 # than whatever loop happened to be active at import time (important
 # for tests that spin up multiple loops).
 _shadow_lock: asyncio.Lock | None = None
+_shadow_lock_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_shadow_lock() -> asyncio.Lock:
-    """Return (and lazily create) the singleton shadow-store lock."""
-    global _shadow_lock
-    if _shadow_lock is None:
+    # H5: track event loop so test runs that create fresh loops don't
+    # inherit the previous loop's lock.
+    global _shadow_lock, _shadow_lock_loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _shadow_lock is None or _shadow_lock_loop is not loop:
         _shadow_lock = asyncio.Lock()
+        _shadow_lock_loop = loop
     return _shadow_lock
 
 

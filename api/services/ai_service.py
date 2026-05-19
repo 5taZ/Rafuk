@@ -212,12 +212,13 @@ def _repair_truncated_json(text: str) -> dict:
     for ch in fragment:
         if escape_next:
             escape_next = False
-            # Escaped char inside string — skip, but stay in_string
             continue
         if ch == "\\" and in_string:
             escape_next = True
             continue
-        if ch == '"' and not escape_next:
+        # C3: removed dead `and not escape_next` guard — escape_next is always
+        # False here because the block above consumes it and continues.
+        if ch == '"':
             in_string = not in_string
             continue
         if in_string:

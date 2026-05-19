@@ -82,8 +82,17 @@ def _check_too_cheap(
     median = market_stats.get("median")
     if not median or median <= 0:
         return
-    price_byn = normalize_price_byn(ad.get("price_byn"))
-    if not price_byn or price_byn <= 0:
+    # H4: pass full ad dict so normalize_price_byn can detect free listings
+    # (price=0 → returns 0.0 instead of None when ad context is provided).
+    price_byn = normalize_price_byn(ad.get("price_byn"), ad)
+    if price_byn is None:
+        return
+    if price_byn == 0:
+        risks.append({
+            "type": "too_cheap",
+            "level": "high",
+            "message": "Бесплатное объявление (цена 0)",
+        })
         return
     if price_byn < median * 0.68:
         risks.append({

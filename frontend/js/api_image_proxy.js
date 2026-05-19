@@ -1,5 +1,14 @@
 function createImageProxyLoader(core) {
+    const MAX_CACHED_IMAGES = 50;
     const proxyImageObjectUrls = new Map();
+
+    function revokeOldest() {
+        var firstKey = proxyImageObjectUrls.keys().next().value;
+        if (firstKey === undefined) return;
+        var entry = proxyImageObjectUrls.get(firstKey);
+        if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
+        proxyImageObjectUrls.delete(firstKey);
+    }
 
     function isImageProxyUrl(url) {
         return typeof url === "string" &&
@@ -9,18 +18,18 @@ function createImageProxyLoader(core) {
 
     async function fetchProxyImageObjectUrl(url) {
         if (!isImageProxyUrl(url)) throw new Error("Invalid image proxy URL");
-        const cached = proxyImageObjectUrls.get(url);
+        var cached = proxyImageObjectUrls.get(url);
         if (cached?.objectUrl) return cached.objectUrl;
         if (cached?.promise) return cached.promise;
-        const entry = { objectUrl: "", promise: null };
+        var entry = { objectUrl: "", promise: null };
         entry.promise = fetch(url, {
             headers: {
                 ...core.telegramHeaders(),
                 Accept: "image/avif,image/webp,image/*,*/*",
             },
-        }).then(async (response) => {
+        }).then(async function (response) {
             if (!response.ok) throw new Error("Image proxy request failed");
-            const objectUrl = URL.createObjectURL(await response.blob());
+            var objectUrl = URL.createObjectURL(await response.blob());
             if (proxyImageObjectUrls.get(url) !== entry) {
                 URL.revokeObjectURL(objectUrl);
                 throw new Error("Image proxy request superseded");
@@ -28,16 +37,20 @@ function createImageProxyLoader(core) {
             entry.objectUrl = objectUrl;
             entry.promise = null;
             return objectUrl;
-        }).catch((err) => {
+        }).catch(function (err) {
             if (proxyImageObjectUrls.get(url) === entry) proxyImageObjectUrls.delete(url);
             throw err;
         });
         proxyImageObjectUrls.set(url, entry);
+        // C1: LRU eviction — revoke oldest blob when cache exceeds limit
+        while (proxyImageObjectUrls.size > MAX_CACHED_IMAGES) {
+            revokeOldest();
+        }
         return entry.promise;
     }
 
     function clearProxyImageObjectUrls() {
-        for (const entry of proxyImageObjectUrls.values()) {
+        for (var entry of proxyImageObjectUrls.values()) {
             if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
         }
         proxyImageObjectUrls.clear();
