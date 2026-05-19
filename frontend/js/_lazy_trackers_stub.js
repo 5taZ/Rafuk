@@ -7,7 +7,7 @@
  * modules are loaded in parallel the first time any tracker
  * method is called; subsequent calls go straight to the real
  * factory output. The shared promise lives on
- * ``window.App._trackersLoadPromise`` so the api stub and the
+ * ``_loadPromises`` Map keyed by "trackers" so the api stub and the
  * render stub don't race each other into duplicate <script> tags.
  *
  * Why a stub-and-delegate pattern instead of replacing the
@@ -26,21 +26,20 @@
 // and the AI lazy-load URLs in app_actions.js. A template literal
 // over a separate version constant would be invisible to that
 // regex.
-const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20260519-b1e514e";
-const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20260519-b1e514e";
+const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20260519-1df931e";
+const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20260519-1df931e";
 
 function _lazyLoadTrackerSources(context) {
-    window.App = window.App || {};
-    if (window.App._trackersLoadPromise) return window.App._trackersLoadPromise;
-    window.App._trackersLoadPromise = Promise.all([
+    if (_loadPromises.has("trackers")) return _loadPromises.get("trackers");
+    const p = Promise.all([
         context._loadScript(_LAZY_TRACKERS_RENDER_URL),
         context._loadScript(_LAZY_TRACKERS_API_URL),
     ]).catch((err) => {
-        // Reset so the next user attempt can retry from scratch.
-        window.App._trackersLoadPromise = null;
+        _loadPromises.delete("trackers");
         throw err;
     });
-    return window.App._trackersLoadPromise;
+    _loadPromises.set("trackers", p);
+    return p;
 }
 
 function createRenderTrackers(context) {

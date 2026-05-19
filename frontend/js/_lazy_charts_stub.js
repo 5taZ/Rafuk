@@ -14,16 +14,16 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20260519-b1e514e";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20260519-1df931e";
 
 function _lazyLoadChartsSources(context) {
-    window.App = window.App || {};
-    if (window.App._chartsLoadPromise) return window.App._chartsLoadPromise;
-    window.App._chartsLoadPromise = context._loadScript(_LAZY_CHARTS_RENDER_URL).catch((err) => {
-        window.App._chartsLoadPromise = null;
+    if (_loadPromises.has("charts")) return _loadPromises.get("charts");
+    const p = context._loadScript(_LAZY_CHARTS_RENDER_URL).catch((err) => {
+        _loadPromises.delete("charts");
         throw err;
     });
-    return window.App._chartsLoadPromise;
+    _loadPromises.set("charts", p);
+    return p;
 }
 
 function createRenderCharts(context) {

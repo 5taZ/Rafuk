@@ -6,7 +6,7 @@
  * Same shape as _lazy_trackers_stub.js — see that file's header
  * for the design rationale. The three real modules load in
  * parallel through one shared promise on
- * ``window.App._dealsLoadPromise`` so any of the api stubs can
+ * ``_loadPromises`` Map keyed by "deals" so any of the api stubs can
  * trigger the bundle download without racing each other.
  *
  * Why bundle these three together: the user almost never opens
@@ -18,22 +18,22 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20260519-b1e514e";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20260519-b1e514e";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20260519-b1e514e";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20260519-1df931e";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20260519-1df931e";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20260519-1df931e";
 
 function _lazyLoadDealsSources(context) {
-    window.App = window.App || {};
-    if (window.App._dealsLoadPromise) return window.App._dealsLoadPromise;
-    window.App._dealsLoadPromise = Promise.all([
+    if (_loadPromises.has("deals")) return _loadPromises.get("deals");
+    const p = Promise.all([
         context._loadScript(_LAZY_DEALS_API_LEADS_URL),
         context._loadScript(_LAZY_DEALS_API_WATCHLIST_URL),
         context._loadScript(_LAZY_DEALS_RENDER_MODALS_URL),
     ]).catch((err) => {
-        window.App._dealsLoadPromise = null;
+        _loadPromises.delete("deals");
         throw err;
     });
-    return window.App._dealsLoadPromise;
+    _loadPromises.set("deals", p);
+    return p;
 }
 
 function _ensureRealFactory(globalKey, name) {

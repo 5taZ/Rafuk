@@ -20,16 +20,15 @@
  */
 /* global window */
 
-const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20260519-b1e514e";
-const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20260519-b1e514e";
+const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20260519-1df931e";
+const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20260519-1df931e";
 
 function _lazyLoadCardsSources(context) {
-    window.App = window.App || {};
-    if (window.App._cardsLoadPromise) return window.App._cardsLoadPromise;
+    if (_loadPromises.has("cards")) return _loadPromises.get("cards");
     // render_cards.js references createRenderCardBuilders at
     // factory-creation time; load builders first so its global
     // definition exists by the time render_cards.js parses.
-    window.App._cardsLoadPromise = context
+    const p = context
         ._loadScript(_LAZY_CARDS_BUILDERS_URL)
         .then(() => {
             if (typeof window.App._realCreateRenderCardBuilders !== "function") {
@@ -38,10 +37,11 @@ function _lazyLoadCardsSources(context) {
             return context._loadScript(_LAZY_CARDS_RENDER_URL);
         })
         .catch((err) => {
-            window.App._cardsLoadPromise = null;
+            _loadPromises.delete("cards");
             throw err;
         });
-    return window.App._cardsLoadPromise;
+    _loadPromises.set("cards", p);
+    return p;
 }
 
 function createRenderCards(context) {

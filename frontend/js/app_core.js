@@ -1,3 +1,5 @@
+const _loadPromises = new Map();
+
 function createAppCore() {
     const state = {
         ui: {
