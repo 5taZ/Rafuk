@@ -525,7 +525,7 @@ def test_ai_loading_motion_avoids_layout_property_animation(css_text: str) -> No
     recent_start = css_text.index(".recent-strip {")
     recent_end = css_text.index(".recent-kicker", recent_start)
     recent_css = css_text[recent_start:recent_end]
-    assert "transition: opacity 0.15s ease-out, transform 0.2s ease-out" in recent_css
+    assert "transition: opacity var(--t-base) ease-out, transform 0.2s ease-out" in recent_css
     assert "max-height 0.2s" not in recent_css
     assert "transform: translateY(-4px)" in recent_css
 

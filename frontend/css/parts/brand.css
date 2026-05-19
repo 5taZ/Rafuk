@@ -6,11 +6,6 @@
  * same colour via ``var(--bg)``, so all three competing copies were
  * computing identical pixels. Removed two; kept the tokens.css
  * version as the single source of truth. */
-.header {
-    background: var(--bg);
-    border-bottom-color: var(--border);
-}
-
 .logo {
     gap: 9px;
     padding: 4px 6px 4px 3px;
@@ -48,36 +43,6 @@
 
 .search-wrap {
     min-height: 58px;
-    background: var(--bg-input);
-    border-color: var(--border);
-    box-shadow: var(--shadow-sm);
-}
-
-[data-theme="light"] .search-wrap {
-    background: var(--bg-input);
-    box-shadow: var(--shadow-sm);
-}
-
-.search-wrap:focus-within {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.search-btn,
-.primary-btn,
-.primary-link {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--text-inverse);
-    box-shadow: var(--shadow-sm);
-}
-
-.view-tab.active,
-.s-tab.active {
-    background: var(--info-soft);
-    border-color: var(--info-border);
-    color: var(--accent);
-    box-shadow: none;
 }
 
 .strict-toggle {
@@ -88,70 +53,13 @@
     box-shadow: var(--shadow-control-inset);
 }
 
-.quick-chip,
-.view-tab,
-.s-tab,
-.listing,
-.summary-strip,
-.stat-card,
-.tracker-card,
-.helper-panel {
-    background: var(--bg-card);
-    border-color: var(--border);
-}
-
-[data-theme="light"] .quick-chip,
-[data-theme="light"] .view-tab,
-[data-theme="light"] .s-tab,
-[data-theme="light"] .listing,
-[data-theme="light"] .summary-strip,
-[data-theme="light"] .stat-card,
-[data-theme="light"] .tracker-card,
-[data-theme="light"] .helper-panel {
-    background: var(--overlay-light);
-}
-
-[data-theme="light"] .view-tab.active,
-[data-theme="light"] .s-tab.active {
-    background: var(--info-soft);
-    border-color: var(--info-border);
-    color: var(--accent);
-}
-
 .view-tab {
     box-shadow: none;
-}
-
-.summary-strip {
-    padding: 15px 16px;
-    box-shadow: var(--shadow-elevated);
-}
-
-.summary-strip::before {
-    content: "";
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: 3px;
-    background: var(--accent);
-}
-
-.summary-kicker,
-.sec-title,
-.stat-lbl,
-.summary-pill-label {
-    letter-spacing: 0.09em;
-}
-
-.summary-pill,
-.range-item {
-    background: var(--bg-elevated);
-    border-color: var(--border);
 }
 
 .listing {
     padding: 13px;
     gap: 12px;
-    box-shadow: var(--shadow-surface-hairline), var(--shadow-card);
 }
 
 .listing:hover {
@@ -195,6 +103,7 @@
 
 /* AI modal: clean neutral background — no purple tint */
 .ai-sheet {
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%);
     border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);
     border-bottom: 0;
@@ -205,6 +114,7 @@
 }
 
 .ai-header-bar {
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 88%, transparent);
     backdrop-filter: blur(16px);
     border-bottom-color: color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
@@ -314,6 +224,7 @@
     top: 0;
     z-index: 2;
     border-bottom: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 90%, transparent);
     backdrop-filter: blur(14px);
     margin-bottom: 0;
@@ -476,6 +387,7 @@
     margin-top: var(--space-4);
     border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);
     border-radius: var(--r-xl);
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%);
     box-shadow:
         inset 0 1px 0 color-mix(in srgb, var(--white) 5%, transparent),
@@ -585,6 +497,7 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    background: var(--bg);
     background: color-mix(in srgb, var(--bg) 96%, var(--accent) 4%);
     animation: aiFadeIn 0.22s ease;
 }
@@ -597,6 +510,7 @@
     align-items: center;
     gap: 10px;
     border-bottom: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 92%, transparent);
     backdrop-filter: blur(14px);
 }
@@ -1036,6 +950,7 @@
     line-height: 1.5;
     border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border) 90%);
     border-radius: var(--r-xl);
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%);
     display: flex;
     flex-direction: column;
@@ -1077,6 +992,7 @@
     padding: 16px;
     border: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
     border-radius: var(--r-xl);
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 94%, var(--accent) 6%);
     box-shadow: inset 0 1px 0 color-mix(in srgb, var(--white) 5%, transparent);
 }
@@ -1126,6 +1042,7 @@
     padding: 14px;
     border: 1px solid color-mix(in srgb, var(--accent) 9%, var(--border) 91%);
     border-radius: var(--r-lg);
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 97%, var(--accent) 3%);
     box-shadow: var(--shadow-card);
 }
@@ -1596,6 +1513,7 @@
  * "light"]``. The duplicates were no-ops in every cascade trace. */
 /* --- Header: subtle, не мерцает при scroll ----------------------- */
 .header {
+    background: var(--bg);
     background: color-mix(in srgb, var(--bg) 92%, transparent);
     border-bottom-color: var(--border);
     backdrop-filter: blur(14px);

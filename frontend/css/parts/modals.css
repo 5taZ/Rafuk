@@ -331,7 +331,7 @@ body.modal-open {
     background: var(--bg-card);
     padding: 0;
     cursor: pointer;
-    transition: border-color 0.15s;
+    transition: border-color var(--t-base);
 }
 
 .detail-thumb.active {
@@ -414,6 +414,7 @@ body.modal-open {
     padding: var(--space-3) var(--space-2);
     font-size: var(--text-sm);
     font-weight: 700;
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 92%, var(--bg-elevated));
     border-color: color-mix(in srgb, var(--border) 86%, transparent);
     color: var(--text-secondary);
@@ -427,6 +428,7 @@ body.modal-open {
 
 .detail-bottom-actions .listing-btn--ai {
     color: color-mix(in srgb, var(--accent) 86%, var(--text));
+    background: var(--bg-card);
     background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
     border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
 }

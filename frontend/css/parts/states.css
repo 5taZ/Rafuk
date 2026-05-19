@@ -168,7 +168,7 @@
     gap: var(--space-2);
     padding: 0;
     margin: var(--space-2) 0 0;
-    transition: opacity 0.15s ease-out, transform 0.2s ease-out;
+    transition: opacity var(--t-base) ease-out, transform 0.2s ease-out;
     transform: translateY(0);
     overflow: hidden;
     max-height: 60px;
@@ -373,7 +373,7 @@
 }
 
 .filter-dropdown.closing {
-    animation: dropdownSlideOut 0.15s ease-in forwards;
+    animation: dropdownSlideOut var(--t-base) ease-in forwards;
 }
 
 @keyframes dropdownSlideIn {
@@ -598,7 +598,7 @@
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    transition: background var(--t-base) ease, color var(--t-base) ease, border-color var(--t-base) ease;
     min-height: 44px;
 }
 
