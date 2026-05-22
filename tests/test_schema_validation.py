@@ -180,6 +180,31 @@ def test_ai_intent_goal_fields_reject_unknown_values() -> None:
         AIListingAssistantRequest(title="Стул деревянный", seller_goal="surprise")
 
 
+def test_ai_feedback_request_accepts_supported_values() -> None:
+    from api.schemas import AIFeedbackRequest
+
+    payload = AIFeedbackRequest(
+        endpoint="listing_assistant",
+        rating="not_helpful",
+        reason="too_generic",
+    )
+
+    assert payload.endpoint == "listing_assistant"
+    assert payload.rating == "not_helpful"
+    assert payload.reason == "too_generic"
+
+
+def test_ai_feedback_request_rejects_unknown_values() -> None:
+    from api.schemas import AIFeedbackRequest
+
+    with pytest.raises(ValidationError):
+        AIFeedbackRequest(endpoint="other", rating="helpful", reason="good")
+    with pytest.raises(ValidationError):
+        AIFeedbackRequest(endpoint="analyze", rating="meh", reason="good")
+    with pytest.raises(ValidationError):
+        AIFeedbackRequest(endpoint="analyze", rating="helpful", reason="random")
+
+
 def test_watchlist_read_price_history_uses_distinct_lists() -> None:
     payload = {
         "id": 1,

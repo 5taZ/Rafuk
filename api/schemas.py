@@ -770,6 +770,9 @@ class AdminAuditRead(BaseModel):
 
 AIAnalysisUserGoal = Literal["balanced", "safe_buy", "resale"]
 AIListingSellerGoal = Literal["balanced", "sell_fast", "maximize_price"]
+AIFeedbackEndpoint = Literal["analyze", "listing_assistant"]
+AIFeedbackRating = Literal["helpful", "not_helpful"]
+AIFeedbackReason = Literal["too_generic", "wrong_category", "bad_price", "good"]
 
 
 class AIAnalysisRequest(BaseModel):
@@ -778,6 +781,12 @@ class AIAnalysisRequest(BaseModel):
     query: str = Field(min_length=1, max_length=200)
     category: int | None = None
     user_goal: AIAnalysisUserGoal | None = None
+
+
+class AIFeedbackRequest(BaseModel):
+    endpoint: AIFeedbackEndpoint
+    rating: AIFeedbackRating
+    reason: AIFeedbackReason
 
 
 class AIConditionAssessment(BaseModel):

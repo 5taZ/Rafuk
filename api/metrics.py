@@ -22,6 +22,7 @@ _query_dataset_events: Counter[str] = Counter()
 _query_dataset_fetch_duration_sum: defaultdict[str, float] = defaultdict(float)
 _query_dataset_fetch_duration_count: Counter[str] = Counter()
 _ai_audit_failures: Counter[str] = Counter()
+_ai_feedback: Counter[tuple[str, str, str]] = Counter()
 _ai_provider_requests: Counter[tuple[str, str, str]] = Counter()
 _ai_provider_tokens: defaultdict[tuple[str, str, str], int] = defaultdict(int)
 _ai_provider_estimated_cost_usd: defaultdict[tuple[str, str], float] = defaultdict(float)
@@ -174,6 +175,33 @@ def observe_ai_audit_failure(*, endpoint: str) -> None:
         _ai_audit_failures[endpoint or "unknown"] += 1
 
 
+def observe_ai_feedback(
+    *,
+    endpoint: str,
+    rating: str,
+    reason: str,
+) -> None:
+    key = (endpoint or "unknown", rating or "unknown", reason or "unknown")
+    with _lock:
+        _ai_feedback[key] += 1
+
+
+async def observe_ai_feedback_with_backend(
+    cache: Any | None,
+    *,
+    endpoint: str,
+    rating: str,
+    reason: str,
+) -> None:
+    endpoint = endpoint or "unknown"
+    rating = rating or "unknown"
+    reason = reason or "unknown"
+    observe_ai_feedback(endpoint=endpoint, rating=rating, reason=reason)
+    await _redis_hincrby(
+        cache, "metrics:v1:ai_feedback", _field((endpoint, rating, reason)), 1
+    )
+
+
 def observe_ai_provider_call(
     *,
     endpoint: str,
@@ -233,6 +261,7 @@ def _local_snapshot() -> dict[str, list[tuple[Any, Any]]]:
             "dataset_fetch_sum": sorted(_query_dataset_fetch_duration_sum.items()),
             "dataset_fetch_count": sorted(_query_dataset_fetch_duration_count.items()),
             "ai_audit_failures": sorted(_ai_audit_failures.items()),
+            "ai_feedback": sorted(_ai_feedback.items()),
             "ai_provider_requests": sorted(_ai_provider_requests.items()),
             "ai_provider_tokens": sorted(_ai_provider_tokens.items()),
             "ai_provider_estimated_cost_usd": sorted(
@@ -312,6 +341,17 @@ def _render_prometheus_snapshot(
     for endpoint, value in snapshot["ai_audit_failures"]:
         lines.append(f'kufar_ai_audit_failures_total{{endpoint="{_label(endpoint)}"}} {value}')
     lines.extend([
+        "# HELP kufar_ai_feedback_total User feedback for AI output quality.",
+        "# TYPE kufar_ai_feedback_total counter",
+    ])
+    for (endpoint, rating, reason), value in snapshot["ai_feedback"]:
+        lines.append(
+            'kufar_ai_feedback_total{'
+            f'endpoint="{_label(endpoint)}",rating="{_label(rating)}",'
+            f'reason="{_label(reason)}"'
+            f"}} {value}"
+        )
+    lines.extend([
         "# HELP kufar_ai_provider_requests_total "
         "AI provider logical calls by endpoint, model, and status.",
         "# TYPE kufar_ai_provider_requests_total counter",
@@ -361,6 +401,7 @@ async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]]
         "metrics:v1:query_dataset_events",
         "metrics:v1:query_dataset_fetch_duration_sum",
         "metrics:v1:query_dataset_fetch_duration_count",
+        "metrics:v1:ai_feedback",
     ]
     try:
         results = await cache.pipeline_hgetall(keys)
@@ -374,6 +415,7 @@ async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]]
         "dataset_events": results[3],
         "dataset_fetch_sum": results[4],
         "dataset_fetch_count": results[5],
+        "ai_feedback": results[6],
         "ai_audit_failures": {},
         "ai_provider_requests": {},
         "ai_provider_tokens": {},
@@ -388,6 +430,7 @@ async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]]
         "dataset_fetch_sum": [],
         "dataset_fetch_count": [],
         "ai_audit_failures": _local_ai_audit_failures(),
+        "ai_feedback": [],
         "ai_provider_requests": [],
         "ai_provider_tokens": [],
         "ai_provider_estimated_cost_usd": [],
@@ -416,8 +459,14 @@ async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]]
         parsed = _parse_field(field, 1)
         if parsed is not None:
             snapshot["dataset_fetch_count"].append((parsed[0], int(value)))
+    for field, value in hashes["ai_feedback"].items():
+        parsed = _parse_field(field, 3)
+        if parsed is not None:
+            snapshot["ai_feedback"].append((parsed, int(value)))
 
     with _lock:
+        if not snapshot["ai_feedback"]:
+            snapshot["ai_feedback"] = sorted(_ai_feedback.items())
         snapshot["ai_provider_requests"] = sorted(_ai_provider_requests.items())
         snapshot["ai_provider_tokens"] = sorted(_ai_provider_tokens.items())
         snapshot["ai_provider_estimated_cost_usd"] = sorted(
@@ -454,6 +503,7 @@ def _reset_metrics_for_tests() -> None:
         _query_dataset_fetch_duration_sum.clear()
         _query_dataset_fetch_duration_count.clear()
         _ai_audit_failures.clear()
+        _ai_feedback.clear()
         _ai_provider_requests.clear()
         _ai_provider_tokens.clear()
         _ai_provider_estimated_cost_usd.clear()

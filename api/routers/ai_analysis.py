@@ -25,12 +25,13 @@ import logging
 import secrets
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.config import get_settings
 from api.dependencies import get_cache, get_kufar_client, get_telegram_user
 from api.limiter import limiter
-from api.schemas import AIAnalysisRequest
+from api.metrics import observe_ai_feedback_with_backend
+from api.schemas import AIAnalysisRequest, AIFeedbackRequest
 
 # ── Re-exports for back-compat with sibling routers and tests ────────────
 #
@@ -123,6 +124,22 @@ async def get_task_status(
     elif task["status"] == "error" and task.get("error"):
         resp["error"] = task["error"]
     return resp
+
+
+@router.post("/feedback", status_code=204)
+@limiter.limit("60/minute")
+async def record_ai_feedback(
+    payload: AIFeedbackRequest,
+    request: Request,
+    _user=Depends(get_telegram_user),
+):
+    await observe_ai_feedback_with_backend(
+        get_cache(request),
+        endpoint=payload.endpoint,
+        rating=payload.rating,
+        reason=payload.reason,
+    )
+    return Response(status_code=204)
 
 
 @router.post("/analyze")

@@ -167,6 +167,25 @@ def test_metrics_render_ai_provider_tokens_and_estimated_cost() -> None:
     ) in text
 
 
+def test_metrics_render_ai_feedback_counter() -> None:
+    from api import metrics
+
+    _reset_metrics_for_tests()
+
+    metrics.observe_ai_feedback(
+        endpoint="analyze",
+        rating="not_helpful",
+        reason="too_generic",
+    )
+
+    text = render_prometheus_metrics()
+
+    assert (
+        'kufar_ai_feedback_total{endpoint="analyze",'
+        'rating="not_helpful",reason="too_generic"} 1'
+    ) in text
+
+
 @pytest.mark.asyncio
 async def test_metrics_redis_backend_renders_aggregate_counters() -> None:
     _reset_metrics_for_tests()
@@ -193,6 +212,29 @@ async def test_metrics_redis_backend_renders_aggregate_counters() -> None:
         'kufar_query_dataset_upstream_fetch_duration_seconds_count{status="success"} 1'
         in text
     )
+
+
+@pytest.mark.asyncio
+async def test_metrics_redis_backend_renders_ai_feedback_counter() -> None:
+    from api import metrics
+
+    _reset_metrics_for_tests()
+    cache = _FakeRedisCache()
+
+    await metrics.observe_ai_feedback_with_backend(
+        cache,
+        endpoint="listing_assistant",
+        rating="helpful",
+        reason="good",
+    )
+
+    text = await render_prometheus_metrics_with_backend(cache)
+
+    assert 'kufar_metrics_backend_info{backend="redis"} 1' in text
+    assert (
+        'kufar_ai_feedback_total{endpoint="listing_assistant",'
+        'rating="helpful",reason="good"} 1'
+    ) in text
 
 
 @pytest.mark.asyncio

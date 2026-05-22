@@ -1981,6 +1981,35 @@ def test_listing_assistant_cache_hit_skips_rate_limit(monkeypatch) -> None:
     assert fake_ai.calls == 1
 
 
+def test_ai_feedback_endpoint_records_prometheus_metric() -> None:
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.metrics import _reset_metrics_for_tests, render_prometheus_metrics
+    from api.services.cache import MemoryCache
+
+    _reset_metrics_for_tests()
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        client.app.state.cache = MemoryCache()
+        response = client.post(
+            "/api/v1/ai/feedback",
+            json={
+                "endpoint": "analyze",
+                "rating": "not_helpful",
+                "reason": "wrong_category",
+            },
+        )
+
+    assert response.status_code == 204
+    text = render_prometheus_metrics()
+    assert (
+        'kufar_ai_feedback_total{endpoint="analyze",'
+        'rating="not_helpful",reason="wrong_category"} 1'
+    ) in text
+
+
 def test_listing_assistant_strips_prompt_injection_from_notes(monkeypatch) -> None:
     """Sanitize layer keeps prompt-injection text out of the AI prompt."""
     from api.dependencies import get_telegram_user
