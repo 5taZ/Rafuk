@@ -49,6 +49,7 @@ from typing import Any
 import httpx
 
 from api.config import get_settings
+from api.metrics import observe_ai_provider_call
 from api.services.ai_category_data import (  # noqa: F401 — re-export
     _VALID_CONDITION_LABELS,
     CATEGORY_HINTS,
@@ -57,6 +58,7 @@ from api.services.ai_category_data import (  # noqa: F401 — re-export
     detect_category,
     normalize_condition_label,
 )
+from api.services.ai_costs import estimate_ai_cost_usd, extract_ai_usage
 from api.services.ai_dedupe import (  # noqa: F401 — re-export
     _dedupe_dict_list,
     _dedupe_listing_payload,
@@ -291,10 +293,15 @@ class AIService:
             settings.ai_base_url or "https://generativelanguage.googleapis.com/v1beta/openai"
         ).rstrip("/")
         self._model = settings.ai_model or "gemini-2.5-flash"
+        self._analysis_model = settings.ai_analysis_model or self._model
+        self._listing_assistant_model = (
+            settings.ai_listing_assistant_model
+            or self._default_listing_assistant_model(self._base_url, self._model)
+        )
         self._max_images = settings.ai_max_images
         self._proxy_url = settings.ai_proxy_url
         self._chat_min_interval_seconds = max(
-            0.0, float(getattr(settings, "ai_chat_min_interval_seconds", 12.0) or 0.0)
+            0.0, float(getattr(settings, "ai_chat_min_interval_seconds", 1.5) or 0.0)
         )
         self._httpx_client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
@@ -317,14 +324,30 @@ class AIService:
     def available(self) -> bool:
         return self._api_key is not None
 
+    @property
+    def analysis_model(self) -> str:
+        return self._analysis_model
+
+    @property
+    def listing_assistant_model(self) -> str:
+        return self._listing_assistant_model
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._httpx_client is None or self._httpx_client.is_closed:
             async with self._client_lock:
                 if self._httpx_client is None or self._httpx_client.is_closed:
                     kwargs: dict = {
-                        "timeout": httpx.Timeout(connect=15, read=45, write=20, pool=10),
+                        # PERF: pool=20 was 10 — under concurrent users the
+                        # parallel sub-calls in ``analyze_listing_parallel``
+                        # plus the listing-assistant single-shot can race for
+                        # connections; a longer pool-acquire timeout avoids
+                        # spurious failures while we wait for an idle slot.
+                        "timeout": httpx.Timeout(connect=15, read=45, write=20, pool=20),
                         "max_redirects": MAX_AI_REDIRECTS,
-                        "limits": httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                        # PERF: doubled both caps so a single analysis
+                        # (2 sub-calls) plus listing-assistant traffic
+                        # don't queue on the connection pool.
+                        "limits": httpx.Limits(max_connections=40, max_keepalive_connections=20),
                     }
                     if self._proxy_url:
                         kwargs["proxy"] = self._proxy_url
@@ -334,10 +357,22 @@ class AIService:
     @property
     def _is_gemini(self) -> bool:
         """Gemini models served via Google's OpenAI-compatible endpoint."""
+        return self._is_gemini_model(self._model)
+
+    def _is_gemini_model(self, model: str) -> bool:
         return (
-            self._model.lower().startswith("gemini")
+            (model or "").lower().startswith("gemini")
             or "generativelanguage.googleapis.com" in self._base_url
         )
+
+    @staticmethod
+    def _default_listing_assistant_model(base_url: str, model: str) -> str:
+        if (
+            (model or "").strip().lower() == "gemini-2.5-flash"
+            and "generativelanguage.googleapis.com" in (base_url or "")
+        ):
+            return "gemini-2.5-flash-lite"
+        return model
 
     @property
     def _is_gemma_legacy(self) -> bool:
@@ -529,14 +564,17 @@ class AIService:
         content: list[dict] | str,
         max_tokens: int = 1200,
         reasoning_effort: str | None = None,
+        model: str | None = None,
+        operation: str = "chat",
     ) -> dict:
         """Call OpenAI-compatible /chat/completions endpoint."""
+        request_model = model or self._model
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": content},
         ]
         body: dict = {
-            "model": self._model,
+            "model": request_model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": 0.2,
@@ -551,7 +589,7 @@ class AIService:
         # negotiation playbook + competitors + photo tips).
         # At medium effort, thinking uses ~300-600 tokens, leaving
         # ~4200+ for the JSON payload — sufficient for all sections.
-        if self._is_gemini:
+        if self._is_gemini_model(request_model):
             body["reasoning_effort"] = reasoning_effort or "medium"
             # Gemini honours response_format properly — ask for JSON to
             # cut down on stray markdown fences and prose around the JSON.
@@ -560,7 +598,7 @@ class AIService:
         client = await self._get_client()
         logger.info(
             "AI _chat: model=%s, base_url=%s, proxy=%s, content_parts=%d",
-            self._model,
+            request_model,
             self._base_url,
             "yes" if self._proxy_url else "no",
             len(content) if isinstance(content, list) else 1,
@@ -577,16 +615,35 @@ class AIService:
                     logger.info("AI _chat throttle: sleeping %.1fs before provider call", wait_s)
                     await asyncio.sleep(wait_s)
                 self._last_chat_started_at = loop.time()
-        resp = await self._post_with_retry(
-            client,
-            f"{self._base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=body,
-        )
+        try:
+            resp = await self._post_with_retry(
+                client,
+                f"{self._base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+        except Exception:
+            observe_ai_provider_call(
+                endpoint=operation,
+                model=request_model,
+                status="error",
+            )
+            raise
         data = resp.json()
+        usage = extract_ai_usage(data)
+        observe_ai_provider_call(
+            endpoint=operation,
+            model=request_model,
+            status="success",
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            thinking_tokens=usage.thinking_tokens,
+            estimated_cost_usd=estimate_ai_cost_usd(request_model, usage),
+        )
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"AI returned empty choices (status={resp.status_code})")
@@ -765,15 +822,31 @@ class AIService:
         # hood; we don't need a separate `create_task` wrapper.
         async def _run_subcalls(content: list[dict] | str):
             async def _call_a():
-                return await self._chat(system=system_a, content=content, max_tokens=3200)
+                return await self._chat(
+                    system=system_a,
+                    content=content,
+                    max_tokens=3200,
+                    model=self._analysis_model,
+                    operation="analysis_price_market",
+                )
 
             async def _call_b():
-                # Stagger to avoid Together AI rate-limit (429) on concurrent
-                # requests. asyncio.sleep yields to the event loop, so Call A
-                # progresses while we're holding here.
-                await asyncio.sleep(1.0)
+                # Historically we slept 1.0s here to dodge Together AI's
+                # concurrent-request 429s. The current provider (Gemini
+                # 2.5 Flash via Google's OpenAI-compat endpoint) is happy
+                # with concurrent calls, and the global ``_chat_lock`` +
+                # ``_chat_min_interval_seconds`` already enforce a small
+                # spacing between LLM calls. Dropping the explicit sleep
+                # cuts ~1s off every analysis without changing behavior
+                # for callers.
                 # Call B includes scam_analysis + photo_authenticity — needs more tokens
-                return await self._chat(system=system_b, content=content, max_tokens=4000)
+                return await self._chat(
+                    system=system_b,
+                    content=content,
+                    max_tokens=4000,
+                    model=self._analysis_model,
+                    operation="analysis_condition_risks",
+                )
 
             return await asyncio.gather(_call_a(), _call_b(), return_exceptions=True)
 
@@ -952,6 +1025,8 @@ class AIService:
                 content=content,
                 max_tokens=4800,
                 reasoning_effort="medium",
+                model=self._listing_assistant_model,
+                operation="listing_assistant",
             )
             return _dedupe_listing_payload(result)
 
@@ -960,6 +1035,8 @@ class AIService:
             content=user_text,
             max_tokens=4800,
             reasoning_effort="medium",
+            model=self._listing_assistant_model,
+            operation="listing_assistant",
         )
         return _dedupe_listing_payload(result)
 
@@ -974,7 +1051,13 @@ class AIService:
                 content.append(img)
         if len(content) == 1:
             raise ValueError("Не удалось загрузить фото для анализа")
-        result = await self._chat(system=QUICK_CONDITION_PROMPT, content=content, max_tokens=1200)
+        result = await self._chat(
+            system=QUICK_CONDITION_PROMPT,
+            content=content,
+            max_tokens=1200,
+            model=self._analysis_model,
+            operation="quick_condition",
+        )
         notes = _clean_photo_notes(result.get("notes"))
         return {
             "condition": normalize_condition_label(result.get("condition")),
@@ -1390,7 +1473,13 @@ class AIService:
         self, *, system: str, content: list[dict] | str, max_tokens: int = 1200,
     ) -> dict:
         """Public wrapper around _chat for simple JSON responses."""
-        return await self._chat(system=system, content=content, max_tokens=max_tokens)
+        return await self._chat(
+            system=system,
+            content=content,
+            max_tokens=max_tokens,
+            model=self._analysis_model,
+            operation="chat_json",
+        )
 
 
 @functools.lru_cache(maxsize=1)

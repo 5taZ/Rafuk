@@ -9,6 +9,7 @@ from api.config import Settings
 from api.main import create_app
 from api.metrics import (
     _reset_metrics_for_tests,
+    observe_ai_provider_call,
     observe_http_request_with_backend,
     observe_query_dataset_event,
     observe_query_dataset_event_with_backend,
@@ -131,6 +132,39 @@ def test_metrics_render_process_identity_and_dataset_counters() -> None:
         'kufar_query_dataset_upstream_fetch_duration_seconds_count{status="success"} 1'
         in text
     )
+
+
+def test_metrics_render_ai_provider_tokens_and_estimated_cost() -> None:
+    _reset_metrics_for_tests()
+
+    observe_ai_provider_call(
+        endpoint="listing_assistant",
+        model="gemini-2.5-flash-lite",
+        status="success",
+        prompt_tokens=1000,
+        completion_tokens=500,
+        total_tokens=1500,
+        thinking_tokens=0,
+    )
+
+    text = render_prometheus_metrics()
+
+    assert (
+        'kufar_ai_provider_requests_total{endpoint="listing_assistant",'
+        'model="gemini-2.5-flash-lite",status="success"} 1'
+    ) in text
+    assert (
+        'kufar_ai_provider_tokens_total{endpoint="listing_assistant",'
+        'model="gemini-2.5-flash-lite",type="input"} 1000'
+    ) in text
+    assert (
+        'kufar_ai_provider_tokens_total{endpoint="listing_assistant",'
+        'model="gemini-2.5-flash-lite",type="output"} 500'
+    ) in text
+    assert (
+        'kufar_ai_provider_estimated_cost_usd_total{endpoint="listing_assistant",'
+        'model="gemini-2.5-flash-lite"} 0.000300000'
+    ) in text
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from threading import Lock
 from typing import Any
 
 from api.config import Settings, is_production_like_deployment
+from api.services.ai_costs import AIUsage, estimate_ai_cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,9 @@ _query_dataset_events: Counter[str] = Counter()
 _query_dataset_fetch_duration_sum: defaultdict[str, float] = defaultdict(float)
 _query_dataset_fetch_duration_count: Counter[str] = Counter()
 _ai_audit_failures: Counter[str] = Counter()
+_ai_provider_requests: Counter[tuple[str, str, str]] = Counter()
+_ai_provider_tokens: defaultdict[tuple[str, str, str], int] = defaultdict(int)
+_ai_provider_estimated_cost_usd: defaultdict[tuple[str, str], float] = defaultdict(float)
 _PROCESS_PID = os.getpid()
 _PROCESS_START_TIME_SECONDS = time.time()
 
@@ -170,6 +174,50 @@ def observe_ai_audit_failure(*, endpoint: str) -> None:
         _ai_audit_failures[endpoint or "unknown"] += 1
 
 
+def observe_ai_provider_call(
+    *,
+    endpoint: str,
+    model: str,
+    status: str,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
+    thinking_tokens: int = 0,
+    estimated_cost_usd: float = 0.0,
+) -> None:
+    endpoint = endpoint or "unknown"
+    model = model or "unknown"
+    status = status or "unknown"
+    prompt_tokens = max(0, int(prompt_tokens or 0))
+    completion_tokens = max(0, int(completion_tokens or 0))
+    thinking_tokens = max(0, int(thinking_tokens or 0))
+    total_tokens = max(0, int(total_tokens or 0))
+    if not estimated_cost_usd:
+        estimated_cost_usd = estimate_ai_cost_usd(
+            model,
+            AIUsage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                thinking_tokens=thinking_tokens,
+            ),
+        )
+    with _lock:
+        _ai_provider_requests[(endpoint, model, status)] += 1
+        if prompt_tokens:
+            _ai_provider_tokens[(endpoint, model, "input")] += prompt_tokens
+        if completion_tokens:
+            _ai_provider_tokens[(endpoint, model, "output")] += completion_tokens
+        if thinking_tokens:
+            _ai_provider_tokens[(endpoint, model, "thinking")] += thinking_tokens
+        if total_tokens:
+            _ai_provider_tokens[(endpoint, model, "total")] += total_tokens
+        if estimated_cost_usd:
+            _ai_provider_estimated_cost_usd[(endpoint, model)] += max(
+                estimated_cost_usd, 0.0
+            )
+
+
 def _local_ai_audit_failures() -> list[tuple[str, int]]:
     with _lock:
         return sorted(_ai_audit_failures.items())
@@ -185,6 +233,11 @@ def _local_snapshot() -> dict[str, list[tuple[Any, Any]]]:
             "dataset_fetch_sum": sorted(_query_dataset_fetch_duration_sum.items()),
             "dataset_fetch_count": sorted(_query_dataset_fetch_duration_count.items()),
             "ai_audit_failures": sorted(_ai_audit_failures.items()),
+            "ai_provider_requests": sorted(_ai_provider_requests.items()),
+            "ai_provider_tokens": sorted(_ai_provider_tokens.items()),
+            "ai_provider_estimated_cost_usd": sorted(
+                _ai_provider_estimated_cost_usd.items()
+            ),
         }
 
 
@@ -258,6 +311,38 @@ def _render_prometheus_snapshot(
     ])
     for endpoint, value in snapshot["ai_audit_failures"]:
         lines.append(f'kufar_ai_audit_failures_total{{endpoint="{_label(endpoint)}"}} {value}')
+    lines.extend([
+        "# HELP kufar_ai_provider_requests_total "
+        "AI provider logical calls by endpoint, model, and status.",
+        "# TYPE kufar_ai_provider_requests_total counter",
+    ])
+    for (endpoint, model, status), value in snapshot["ai_provider_requests"]:
+        lines.append(
+            'kufar_ai_provider_requests_total{'
+            f'endpoint="{_label(endpoint)}",model="{_label(model)}",status="{_label(status)}"'
+            f"}} {value}"
+        )
+    lines.extend([
+        "# HELP kufar_ai_provider_tokens_total "
+        "AI provider token usage by endpoint, model, and token type.",
+        "# TYPE kufar_ai_provider_tokens_total counter",
+    ])
+    for (endpoint, model, token_type), value in snapshot["ai_provider_tokens"]:
+        lines.append(
+            'kufar_ai_provider_tokens_total{'
+            f'endpoint="{_label(endpoint)}",model="{_label(model)}",type="{_label(token_type)}"'
+            f"}} {value}"
+        )
+    lines.extend([
+        "# HELP kufar_ai_provider_estimated_cost_usd_total Estimated AI provider cost in USD.",
+        "# TYPE kufar_ai_provider_estimated_cost_usd_total counter",
+    ])
+    for (endpoint, model), value in snapshot["ai_provider_estimated_cost_usd"]:
+        lines.append(
+            'kufar_ai_provider_estimated_cost_usd_total{'
+            f'endpoint="{_label(endpoint)}",model="{_label(model)}"'
+            f"}} {value:.9f}"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -290,6 +375,9 @@ async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]]
         "dataset_fetch_sum": results[4],
         "dataset_fetch_count": results[5],
         "ai_audit_failures": {},
+        "ai_provider_requests": {},
+        "ai_provider_tokens": {},
+        "ai_provider_estimated_cost_usd": {},
     }
 
     snapshot: dict[str, list[tuple[Any, Any]]] = {
@@ -300,6 +388,9 @@ async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]]
         "dataset_fetch_sum": [],
         "dataset_fetch_count": [],
         "ai_audit_failures": _local_ai_audit_failures(),
+        "ai_provider_requests": [],
+        "ai_provider_tokens": [],
+        "ai_provider_estimated_cost_usd": [],
     }
     for field, value in hashes["requests"].items():
         parsed = _parse_field(field, 3)
@@ -325,6 +416,13 @@ async def _redis_snapshot(cache: Any | None) -> dict[str, list[tuple[Any, Any]]]
         parsed = _parse_field(field, 1)
         if parsed is not None:
             snapshot["dataset_fetch_count"].append((parsed[0], int(value)))
+
+    with _lock:
+        snapshot["ai_provider_requests"] = sorted(_ai_provider_requests.items())
+        snapshot["ai_provider_tokens"] = sorted(_ai_provider_tokens.items())
+        snapshot["ai_provider_estimated_cost_usd"] = sorted(
+            _ai_provider_estimated_cost_usd.items()
+        )
 
     for key in snapshot:
         snapshot[key].sort()
@@ -356,3 +454,6 @@ def _reset_metrics_for_tests() -> None:
         _query_dataset_fetch_duration_sum.clear()
         _query_dataset_fetch_duration_count.clear()
         _ai_audit_failures.clear()
+        _ai_provider_requests.clear()
+        _ai_provider_tokens.clear()
+        _ai_provider_estimated_cost_usd.clear()

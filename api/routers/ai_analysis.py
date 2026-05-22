@@ -138,9 +138,10 @@ async def analyze_listing(
     kufar_client: KufarClient = Depends(get_kufar_client),
 ):
     """Start async AI analysis. Returns task_id immediately for polling."""
-    _check_ai_available()
+    ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
     await _check_ai_entitlement(request, _user.user_id, endpoint="analyze")
+    audit_model = getattr(ai, "analysis_model", get_settings().ai_model)
     # OPUS-17: snapshot client IP once per request — both audit
     # paths (cache hit / miss) write the same IP.
     client_ip = get_client_ip(request)
@@ -161,7 +162,7 @@ async def analyze_listing(
                 endpoint="analyze",
                 ad_id=str(payload.ad_id),
                 query=payload.query,
-                model=get_settings().ai_model,
+                model=audit_model,
                 cached=True,
                 ip_address=client_ip,
             )
@@ -176,7 +177,7 @@ async def analyze_listing(
         endpoint="analyze",
         ad_id=str(payload.ad_id),
         query=payload.query,
-        model=get_settings().ai_model,
+        model=audit_model,
         ip_address=client_ip,
     )
 

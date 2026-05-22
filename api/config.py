@@ -200,6 +200,8 @@ class Settings(BaseSettings):
     ai_api_key: SecretStr | None = None
     ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     ai_model: str = "gemini-2.5-flash"
+    ai_analysis_model: str | None = None
+    ai_listing_assistant_model: str | None = None
     ai_provider_name: str | None = None
     ai_provider_region: str | None = None
     ai_max_images: int = 3
@@ -211,7 +213,7 @@ class Settings(BaseSettings):
     ai_quick_condition_timeout: int = 45
     ai_photo_precheck_timeout: int = 30
     ai_photo_precheck_enabled: bool = False
-    ai_chat_min_interval_seconds: float = 12.0
+    ai_chat_min_interval_seconds: float = 1.5
     ai_task_ttl: int = 3600
     ai_fallback_cache_ttl: int = 1800
 

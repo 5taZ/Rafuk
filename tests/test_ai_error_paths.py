@@ -22,6 +22,7 @@ import datetime as dt
 import httpx
 import pytest
 
+from api.metrics import _reset_metrics_for_tests, render_prometheus_metrics
 from api.services.ai_sanitize import sanitize_user_text, scrub_pii
 from api.services.ai_service import AIService, _parse_retry_after
 
@@ -173,6 +174,8 @@ def _build_ai_service(monkeypatch) -> AIService:
     svc._api_key = None
     svc._base_url = "https://ai.test/v1"
     svc._model = "test-model"
+    svc._analysis_model = "test-model"
+    svc._listing_assistant_model = "test-model"
     svc._max_images = 4
     svc._proxy_url = None
     svc._httpx_client = None
@@ -283,6 +286,52 @@ async def test_post_with_retry_does_not_retry_on_402_billing(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
+async def test_chat_records_provider_usage_metrics(monkeypatch) -> None:
+    _reset_metrics_for_tests()
+    svc = _build_ai_service(monkeypatch)
+    svc._model = "gemini-2.5-flash-lite"
+    svc._analysis_model = "gemini-2.5-flash-lite"
+    svc._listing_assistant_model = "gemini-2.5-flash-lite"
+
+    async def fake_client():
+        return object()
+
+    async def fake_post_with_retry(*args, **kwargs):
+        del args, kwargs
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"summary":"ok"}'}}],
+                "usage": {
+                    "prompt_tokens": 1000,
+                    "completion_tokens": 500,
+                    "total_tokens": 1500,
+                },
+            },
+        )
+
+    monkeypatch.setattr(svc, "_get_client", fake_client)
+    monkeypatch.setattr(svc, "_post_with_retry", fake_post_with_retry)
+
+    result = await svc._chat(
+        system="s",
+        content="a",
+        operation="listing_assistant",
+    )
+
+    assert result == {"summary": "ok"}
+    text = render_prometheus_metrics()
+    assert (
+        'kufar_ai_provider_requests_total{endpoint="listing_assistant",'
+        'model="gemini-2.5-flash-lite",status="success"} 1'
+    ) in text
+    assert (
+        'kufar_ai_provider_estimated_cost_usd_total{endpoint="listing_assistant",'
+        'model="gemini-2.5-flash-lite"} 0.000300000'
+    ) in text
+
+
+@pytest.mark.asyncio
 async def test_chat_spaces_provider_starts_without_serializing_http(monkeypatch) -> None:
     svc = _build_ai_service(monkeypatch)
     svc._chat_min_interval_seconds = 5.0
@@ -339,8 +388,8 @@ async def test_multimodal_rate_limit_retries_text_only(monkeypatch) -> None:
     async def fake_fetch_image_b64(_url):
         return {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AA=="}}
 
-    async def fake_chat(*, system, content, max_tokens, reasoning_effort=None):
-        del system, max_tokens, reasoning_effort
+    async def fake_chat(*, system, content, max_tokens, reasoning_effort=None, **kwargs):
+        del system, max_tokens, reasoning_effort, kwargs
         calls.append(content)
         if len(calls) <= 2:
             raise RuntimeError("429 RATE_LIMITED")
@@ -367,6 +416,59 @@ async def test_multimodal_rate_limit_retries_text_only(monkeypatch) -> None:
     assert isinstance(calls[3], str)
     assert result["summary"] == "ok"
     assert result["condition"]["label"] == "Хорошее"
+
+
+@pytest.mark.asyncio
+async def test_listing_assistant_uses_cost_model_without_reducing_budget(
+    monkeypatch,
+) -> None:
+    svc = _build_ai_service(monkeypatch)
+    svc._model = "gemini-2.5-flash"
+    svc._listing_assistant_model = "gemini-2.5-flash-lite"
+    calls: list[dict] = []
+
+    async def fake_chat(**kwargs):
+        calls.append(kwargs)
+        return {
+            "title_suggestion": "Товар в хорошем состоянии",
+            "description": "Описание",
+            "description_short": "Коротко",
+            "selling_points": ["Факт"],
+            "pricing": {
+                "fast": {"label": "Быстро", "price_byn": 100, "weeks_to_sell": "1-2 недели"},
+                "market": {"label": "Рынок", "price_byn": 120, "weeks_to_sell": "3-4 недели"},
+                "patient": {"label": "Терпеливо", "price_byn": 140, "weeks_to_sell": "1-2 месяца"},
+                "floor_byn": 90,
+            },
+            "negotiation_playbook": [],
+            "photo_tips": ["Добавь фото"],
+            "market_summary": "Рынок спокойный.",
+            "competitors": [],
+        }
+
+    monkeypatch.setattr(svc, "_chat", fake_chat)
+
+    await svc.generate_listing(
+        title="Стул кухонный",
+        condition="Хорошее",
+        is_negotiable=False,
+        draft_price_byn=120,
+        extra_notes=None,
+        market_median=120,
+        market_q1=100,
+        market_q3=140,
+        market_min=90,
+        market_max=160,
+        market_count=5,
+        similar_listings=[],
+        category_hint=None,
+        category_bargain_hint=None,
+        photo_data_urls=None,
+    )
+
+    assert calls
+    assert calls[0]["model"] == "gemini-2.5-flash-lite"
+    assert calls[0]["max_tokens"] == 4800
 
 
 # ──────────────────────────────────────────────────────────────────────

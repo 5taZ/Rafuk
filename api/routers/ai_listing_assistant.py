@@ -479,6 +479,7 @@ async def listing_assistant(
     settings = getattr(request.app.state, "settings", None)
     if settings is None:
         settings = get_settings()
+    audit_model = getattr(ai, "listing_assistant_model", settings.ai_model)
 
     title = payload.title.strip()
     if not title:
@@ -510,7 +511,7 @@ async def listing_assistant(
                 telegram_user_id=_user.user_id,
                 endpoint="listing_assistant",
                 query=payload.title,
-                model=get_settings().ai_model,
+                model=audit_model,
                 cached=True,
                 ip_address=client_ip,
             )
@@ -524,7 +525,7 @@ async def listing_assistant(
         telegram_user_id=_user.user_id,
         endpoint="listing_assistant",
         query=payload.title,
-        model=get_settings().ai_model,
+        model=audit_model,
         ip_address=client_ip,
     )
 

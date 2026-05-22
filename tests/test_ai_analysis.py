@@ -1076,6 +1076,31 @@ def test_fallback_resale_fast_price_never_below_purchase() -> None:
     assert result["fast_price"]["price_byn"] == int(round(1400 * 0.88))
 
 
+def test_fallback_recommendation_marks_low_risk_fair_price_as_worth_it() -> None:
+    from api.services.ai_marketplace import MarketplaceRiskContext, _fallback_recommendation
+
+    recommendation = _fallback_recommendation(
+        price_byn=1000,
+        is_negotiable_price=False,
+        market_median=1000,
+        market_q1=900,
+        market_q3=1150,
+        risk_context=MarketplaceRiskContext(summary="", flags=[], score=0.0, hot_words=[]),
+    )
+
+    assert recommendation["verdict"] == "worth_it"
+    assert "провер" in recommendation["text"].lower()
+    assert "Сделка возможна" not in recommendation["text"]
+
+
+def test_listing_assistant_prompt_requires_category_adaptive_copy() -> None:
+    from api.services.ai_prompts import LISTING_ASSISTANT_PROMPT
+
+    assert "АДАПТАЦИЯ К ЛЮБОЙ КАТЕГОРИИ" in LISTING_ASSISTANT_PROMPT
+    assert "не используй электронику/авто-шаблоны" in LISTING_ASSISTANT_PROMPT
+    assert "растение, книга, одежда, мебель, детский товар" in LISTING_ASSISTANT_PROMPT
+
+
 # ─── Listing Assistant ─────────────────────────────────────────────────────
 
 
