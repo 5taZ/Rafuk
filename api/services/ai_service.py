@@ -78,6 +78,7 @@ from api.services.ai_images import (
     fetch_image_bytes,
     is_allowed_image_url,
 )
+from api.services.ai_intent_profiles import buyer_intent_text, seller_intent_text
 from api.services.ai_prompts import (  # noqa: F401 — re-export
     _CONDITION_RISKS_PROMPT_TEMPLATE,
     _CONDITION_RISKS_SCHEMA,
@@ -704,6 +705,7 @@ class AIService:
         photo_condition_label: str | None = None,
         photo_condition_notes: list[str] | None = None,
         image_urls: list[str] | None = None,
+        user_goal: str | None = None,
     ) -> dict:
         """Parallel AI analysis — splits work into 2 concurrent sub-calls.
 
@@ -758,6 +760,7 @@ class AIService:
             deal_verdict=deal_verdict,
             photo_condition_label=photo_condition_label,
             photo_condition_notes=photo_condition_notes,
+            user_goal=user_goal,
         )
 
         # Fetch listing images for multimodal analysis (scam detection,
@@ -939,6 +942,7 @@ class AIService:
         similar_listings: list[dict] | None,
         category_hint: str | None,
         category_bargain_hint: str | None,
+        seller_goal: str | None = None,
     ) -> str:
         safe_title = sanitize_user_text(title, max_length=200) or ""
         safe_condition = sanitize_user_text(condition, max_length=64) if condition else None
@@ -961,6 +965,10 @@ class AIService:
         if category_profile:
             ctx_lines.append("")
             ctx_lines.append(category_profile)
+        seller_intent = seller_intent_text(seller_goal)
+        if seller_intent:
+            ctx_lines.append("")
+            ctx_lines.append(seller_intent)
 
         ctx_lines.append("")
         ctx_lines.append("## РЫНОК (Kufar.by, BYN)")
@@ -1028,6 +1036,7 @@ class AIService:
         category_hint: str | None,
         category_bargain_hint: str | None,
         photo_data_urls: list[str] | None = None,
+        seller_goal: str | None = None,
     ) -> dict:
         """Generate seller-side listing draft (title, description, pricing, playbook).
 
@@ -1051,6 +1060,7 @@ class AIService:
             similar_listings=similar_listings,
             category_hint=category_hint,
             category_bargain_hint=category_bargain_hint,
+            seller_goal=seller_goal,
         )
 
         photos = [
@@ -1169,6 +1179,7 @@ class AIService:
         deal_verdict: str | None = None,
         photo_condition_label: str | None = None,
         photo_condition_notes: list[str] | None = None,
+        user_goal: str | None = None,
     ) -> str:
         # Title and description come from a Kufar listing — i.e. an
         # arbitrary user wrote them. Pass them through the same sanitiser
@@ -1246,6 +1257,9 @@ class AIService:
         category_profile = buyer_category_profile_text(title, parameters)
         if category_profile:
             parts.append(f"\n{category_profile}")
+        buyer_intent = buyer_intent_text(user_goal)
+        if buyer_intent:
+            parts.append(f"\n{buyer_intent}")
         if photo_condition_label or photo_condition_notes:
             parts.append("\n## БЫСТРЫЙ ФОТО-ОСМОТР")
             if photo_condition_label:

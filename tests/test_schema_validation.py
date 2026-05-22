@@ -9,6 +9,7 @@ from api.schemas import (
     AdminStatusLimitUpdate,
     AdminUserStatusUpdate,
     AIAnalysisRequest,
+    AIListingAssistantRequest,
     AINegotiateRequest,
     LeadCreate,
     LeadUpdate,
@@ -159,6 +160,24 @@ def test_ai_requests_reject_non_positive_ad_id() -> None:
             my_offer_byn=80,
             query="x",
         )
+
+
+def test_ai_intent_goal_fields_accept_known_values() -> None:
+    assert AIAnalysisRequest(ad_id=1, query="iphone", user_goal="safe_buy").user_goal == "safe_buy"
+    assert AIAnalysisRequest(ad_id=1, query="macbook", user_goal="resale").user_goal == "resale"
+    assert (
+        AIListingAssistantRequest(title="Стул деревянный", seller_goal="sell_fast").seller_goal
+        == "sell_fast"
+    )
+    patient = AIListingAssistantRequest(title="Стул деревянный", seller_goal="maximize_price")
+    assert patient.seller_goal == "maximize_price"
+
+
+def test_ai_intent_goal_fields_reject_unknown_values() -> None:
+    with pytest.raises(ValidationError):
+        AIAnalysisRequest(ad_id=1, query="iphone", user_goal="surprise")
+    with pytest.raises(ValidationError):
+        AIListingAssistantRequest(title="Стул деревянный", seller_goal="surprise")
 
 
 def test_watchlist_read_price_history_uses_distinct_lists() -> None:

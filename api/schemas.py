@@ -768,11 +768,16 @@ class AdminAuditRead(BaseModel):
 # ── AI Analysis ──────────────────────────────────────────────────────────
 
 
+AIAnalysisUserGoal = Literal["balanced", "safe_buy", "resale"]
+AIListingSellerGoal = Literal["balanced", "sell_fast", "maximize_price"]
+
+
 class AIAnalysisRequest(BaseModel):
     # OPUS-4: positive Kufar ad_id only.
     ad_id: int = Field(ge=1)
     query: str = Field(min_length=1, max_length=200)
     category: int | None = None
+    user_goal: AIAnalysisUserGoal | None = None
 
 
 class AIConditionAssessment(BaseModel):
@@ -941,6 +946,7 @@ class AIListingAssistantRequest(BaseModel):
     draft_price_byn: float | None = Field(None, ge=0, le=10_000_000)
     is_negotiable: bool = False
     extra_notes: str | None = Field(None, max_length=1200)
+    seller_goal: AIListingSellerGoal | None = None
     photos: list[Annotated[str, Field(max_length=AI_LISTING_PHOTO_MAX_CHARS)]] = Field(
         default_factory=list,
         max_length=AI_LISTING_PHOTO_MAX_COUNT,

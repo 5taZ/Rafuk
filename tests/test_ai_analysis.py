@@ -469,6 +469,92 @@ def test_listing_assistant_context_includes_clothing_specific_guidance() -> None
     assert "imei" not in lowered
 
 
+def test_ai_context_adapts_to_safe_buy_goal() -> None:
+    service = AIService()
+
+    context = service._build_listing_context(
+        title="iPhone 14 Pro",
+        description="В хорошем состоянии",
+        price_byn=1500,
+        is_negotiable_price=False,
+        condition="Хорошее",
+        parameters=[],
+        market_median=1550,
+        market_count=20,
+        user_goal="safe_buy",
+    )
+
+    lowered = context.lower()
+    assert "цель пользователя" in lowered
+    assert "мошеннич" in lowered
+    assert "скрытые дефекты" in lowered
+
+
+def test_ai_context_adapts_to_resale_goal() -> None:
+    service = AIService()
+
+    context = service._build_listing_context(
+        title="MacBook Air M2",
+        description="Полный комплект",
+        price_byn=2200,
+        is_negotiable_price=False,
+        condition="Хорошее",
+        parameters=[],
+        market_median=2400,
+        market_count=18,
+        user_goal="resale",
+    )
+
+    lowered = context.lower()
+    assert "маржа" in lowered
+    assert "ликвидность" in lowered
+    assert "цена входа" in lowered
+
+
+def test_listing_assistant_context_adapts_to_seller_goal() -> None:
+    service = AIService()
+
+    fast_context = service._build_listing_assistant_context(
+        title="Стул кухонный деревянный",
+        condition="Б/у",
+        is_negotiable=False,
+        draft_price_byn=80,
+        extra_notes=None,
+        market_median=90,
+        market_q1=70,
+        market_q3=110,
+        market_min=50,
+        market_max=130,
+        market_count=9,
+        similar_listings=[],
+        category_hint=None,
+        category_bargain_hint=None,
+        seller_goal="sell_fast",
+    )
+    max_context = service._build_listing_assistant_context(
+        title="Стул кухонный деревянный",
+        condition="Б/у",
+        is_negotiable=False,
+        draft_price_byn=80,
+        extra_notes=None,
+        market_median=90,
+        market_q1=70,
+        market_q3=110,
+        market_min=50,
+        market_max=130,
+        market_count=9,
+        similar_listings=[],
+        category_hint=None,
+        category_bargain_hint=None,
+        seller_goal="maximize_price",
+    )
+
+    assert "быструю продажу" in fast_context.lower()
+    assert "минимум трения" in fast_context.lower()
+    assert "максимальную цену" in max_context.lower()
+    assert "терпеливую продажу" in max_context.lower()
+
+
 def test_stage_extract_classifies_three_price_states_correctly() -> None:
     """_stage_extract is the source of truth: it must set is_negotiable_price
     and is_free_price independently so AI prompts can render all three
@@ -2185,6 +2271,26 @@ def test_listing_assistant_cache_key_is_user_scoped() -> None:
     assert key_one.startswith("ai_listing:u111:")
     assert key_two.startswith("ai_listing:u222:")
     assert key_one != key_two
+
+
+def test_listing_assistant_cache_key_includes_seller_goal() -> None:
+    from api.routers.ai_listing_assistant import _listing_assistant_cache_key
+    from api.schemas import AIListingAssistantRequest
+
+    fast = AIListingAssistantRequest(title="Phone", seller_goal="sell_fast")
+    patient = AIListingAssistantRequest(title="Phone", seller_goal="maximize_price")
+    assert _listing_assistant_cache_key(fast, [], user_id=111) != _listing_assistant_cache_key(
+        patient, [], user_id=111
+    )
+
+
+def test_analysis_cache_key_includes_user_goal() -> None:
+    from api.schemas import AIAnalysisRequest
+    from api.services.ai_analysis_pipeline import _analysis_cache_key
+
+    safe = AIAnalysisRequest(ad_id=1, query="iphone", user_goal="safe_buy")
+    resale = AIAnalysisRequest(ad_id=1, query="iphone", user_goal="resale")
+    assert _analysis_cache_key(safe) != _analysis_cache_key(resale)
 
 
 def test_cache_key_differentiates_zero_price_from_none() -> None:

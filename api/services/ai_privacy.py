@@ -125,7 +125,7 @@ async def clear_user_ai_data(
     * in-memory ``_tasks`` shadow store
 
     AI-HIGH (issues §3.2): the shared analysis cache
-    (``ai_analysis:{version}:{ad_id}:{query}:cat=*``) has no user_id
+    (``ai_analysis:{version}:{ad_id}:{query}:cat=*:goal=*``) has no user_id
     in the key, but a freshly-revoked user still has its previously-
     cached results live. When ``session_factory`` is provided we walk
     that user's ``AIAuditLog`` entries (which DO carry user_id) and
@@ -224,7 +224,7 @@ async def clear_user_ai_data(
 
             # AI-HIGH (issues §3.2): also evict ``ai_analysis:*`` entries
             # the user touched. Cache keys have shape
-            # ``ai_analysis:{version}:{ad_id}:{query}:cat={category}``,
+            # ``ai_analysis:{version}:{ad_id}:{query}:cat={category}:goal={goal}``,
             # so a glob ``ai_analysis:*:{ad_id}:{query}:*`` is unique to
             # this user's audit-logged tuples. We resolve the user's
             # internal id and walk the audit log within the cache TTL

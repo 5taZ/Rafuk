@@ -87,6 +87,15 @@ _AI_CACHE_VERSION = _compute_ai_cache_version()
 
 logger = logging.getLogger(__name__)
 
+
+def _analysis_cache_key(payload: AIAnalysisRequest) -> str:
+    goal = payload.user_goal or ""
+    return (
+        f"ai_analysis:{_AI_CACHE_VERSION}:{payload.ad_id}:"
+        f"{payload.query}:cat={payload.category}:goal={goal}"
+    )
+
+
 _AI_ANALYSIS_ERRORS = (
     httpx.HTTPError,
     KufarAPIError,
@@ -281,10 +290,7 @@ async def _deliver_fallback_result(
             title=title,
             parameters=parameters,
         )
-        cache_key = (
-            f"ai_analysis:{_AI_CACHE_VERSION}:{payload.ad_id}:"
-            f"{payload.query}:cat={payload.category}"
-        )
+        cache_key = _analysis_cache_key(payload)
         fallback_serialized = response.model_dump(by_alias=True)
         if warning:
             fallback_serialized["_ai_warning"] = warning
@@ -835,6 +841,7 @@ async def _stage_ai(c: _AC) -> None:
                 photo_condition_label=c.photo_condition_label or None,
                 photo_condition_notes=c.photo_condition_notes or None,
                 image_urls=c.images,
+                user_goal=c.payload.user_goal,
             )
         finally:
             pump_task.cancel()
@@ -978,10 +985,7 @@ async def _stage_response(c: _AC) -> None:
     )
 
     # Cache result (use cache passed from endpoint)
-    cache_key = (
-        f"ai_analysis:{_AI_CACHE_VERSION}:{c.payload.ad_id}:"
-        f"{c.payload.query}:cat={c.payload.category}"
-    )
+    cache_key = _analysis_cache_key(c.payload)
     serialized = response.model_dump(by_alias=True)
     await c.cache.set_json(cache_key, serialized, ttl=_task_ttl())
 

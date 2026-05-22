@@ -46,6 +46,7 @@ from api.services.ai_analysis_pipeline import (  # noqa: F401 — re-exports
     _AI_ANALYSIS_ERRORS,
     _AI_CACHE_VERSION,
     DISCLAIMER,
+    _analysis_cache_key,
     _AnalysisComplete,
     _build_fallback_response,
     _build_resale_potential,
@@ -147,10 +148,7 @@ async def analyze_listing(
     client_ip = get_client_ip(request)
 
     cache = get_cache(request)
-    cache_key = (
-        f"ai_analysis:{_AI_CACHE_VERSION}:{payload.ad_id}:"
-        f"{payload.query}:cat={payload.category}"
-    )
+    cache_key = _analysis_cache_key(payload)
     cached = await cache.get_json(cache_key)
     if cached:
         if isinstance(cached, dict) and cached.get("_ai_warning"):

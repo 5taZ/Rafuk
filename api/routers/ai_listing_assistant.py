@@ -244,6 +244,7 @@ def _listing_assistant_cache_key(
             if payload.draft_price_byn is not None else "",
         ),
         ("negot", "1" if payload.is_negotiable else "0"),
+        ("seller_goal", payload.seller_goal or ""),
         ("notes", canonical_notes),
         ("photos", ",".join(photo_hashes)),
     ]
@@ -609,6 +610,7 @@ async def listing_assistant(
                 category_hint=category_meta.get("category_hints"),
                 category_bargain_hint=category_meta.get("bargain_hint"),
                 photo_data_urls=photos or None,
+                seller_goal=payload.seller_goal,
             ),
             timeout=timeout_s,
         )
