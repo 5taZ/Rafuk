@@ -407,7 +407,14 @@ function createRenderCards(context) {
                 if (elements.listingsTotalBadge) {
                     elements.listingsTotalBadge.textContent = "";
                 }
-                _setListingsRefreshBusy(true);
+                // FE: do not call a `_setListingsRefreshBusy` helper —
+                // it never existed in this module and threw a
+                // ReferenceError that ``safeRender`` caught and
+                // surfaced as the misleading "Ошибка отображения"
+                // toast every time the user changed sort/filter.
+                // Skeleton cards already signal the loading state
+                // visually; aria-busy isn't worth re-introducing
+                // for the brief sort-swap window.
                 return;
             }
 

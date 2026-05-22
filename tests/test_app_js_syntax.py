@@ -895,7 +895,7 @@ def test_frontend_image_proxy_policy_is_explicit() -> None:
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
     image_proxy_js = (JS_DIR / "api_image_proxy.js").read_text(encoding="utf-8")
     modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
-    events_js = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
+    carousel_js = (JS_DIR / "api_events_carousel.js").read_text(encoding="utf-8")
     cards_js = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
     bundle_script = Path("scripts/build_frontend_bundle.sh").read_text(encoding="utf-8")
 
@@ -913,8 +913,8 @@ def test_frontend_image_proxy_policy_is_explicit() -> None:
     assert "img.src = optimizeWith(image, 120, false)" in modals_js
     assert "actions.clearProxyImageObjectUrls()" in modals_js
 
-    assert "ctx.fetchProxyImageObjectUrl(proxyUrl)" in (JS_DIR / "api_events_carousel.js").read_text(encoding="utf-8")
-    assert "ctx.optimizedImage(validated, { width: 800, useProxy: true })" in (JS_DIR / "api_events_carousel.js").read_text(encoding="utf-8")
+    assert "ctx.fetchProxyImageObjectUrl(proxyUrl)" in carousel_js
+    assert "ctx.optimizedImage(validated, { width: 800, useProxy: true })" in carousel_js
 
     build_media = cards_js[
         cards_js.index("function buildMediaNode"):
@@ -2334,7 +2334,6 @@ def test_detail_modal_supports_pinch_zoom_with_swipe_deferral() -> None:
     center. No getBoundingClientRect() is called in the pinch helper;
     it clamps against cached viewport dimensions instead."""
     helpers = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
-    events = (JS_DIR / "api_events.js").read_text(encoding="utf-8")
     modals = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
 
     assert "function attachPinchZoom" in helpers

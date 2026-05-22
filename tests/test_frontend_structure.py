@@ -369,6 +369,12 @@ def test_ai_analysis_export_ui_is_removed() -> None:
     assert "createAiPdf" not in ai_js
 
 
+def test_ai_verdict_badge_uses_actionable_caution_copy() -> None:
+    ai_render_js = (JS_DIR / "api_ai_render.js").read_text(encoding="utf-8")
+    assert 'think_twice: { text: "Проверь детали"' in ai_render_js
+    assert 'think_twice: { text: "Подумай"' not in ai_render_js
+
+
 def test_ai_consent_provider_copy_is_config_driven() -> None:
     index_text = HTML_FILE.read_text(encoding="utf-8")
     actions = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")

@@ -123,7 +123,7 @@ function createAiRender(context, aiCtx) {
         if (data.recommendation) {
             const verdictMap = {
                 worth_it: { text: "Стоит брать", cls: "ai-badge--good" },
-                think_twice: { text: "Подумай", cls: "ai-badge--warn" },
+                think_twice: { text: "Проверь детали", cls: "ai-badge--warn" },
                 overpriced: { text: "Дорого", cls: "ai-badge--bad" },
             };
             const verdict = verdictMap[data.recommendation.verdict] || verdictMap.think_twice;
