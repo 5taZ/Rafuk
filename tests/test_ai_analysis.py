@@ -423,6 +423,52 @@ def test_ai_free_price_context_distinguishes_giveaway_from_negotiable() -> None:
     assert "Разумный вход после торга" not in context
 
 
+def test_ai_context_includes_plant_specific_guidance() -> None:
+    service = AIService()
+
+    context = service._build_listing_context(
+        title="Монстера в горшке",
+        description="Большое комнатное растение",
+        price_byn=45,
+        is_negotiable_price=False,
+        condition="Хорошее",
+        parameters=[],
+        market_median=50,
+        market_count=8,
+    )
+
+    lowered = context.lower()
+    assert "вредители" in lowered
+    assert "корнев" in lowered
+    assert "imei" not in lowered
+
+
+def test_listing_assistant_context_includes_clothing_specific_guidance() -> None:
+    service = AIService()
+
+    context = service._build_listing_assistant_context(
+        title="Пальто женское шерстяное",
+        condition="Б/у",
+        is_negotiable=False,
+        draft_price_byn=120,
+        extra_notes=None,
+        market_median=130,
+        market_q1=100,
+        market_q3=160,
+        market_min=80,
+        market_max=200,
+        market_count=12,
+        similar_listings=[],
+        category_hint=None,
+        category_bargain_hint=None,
+    )
+
+    lowered = context.lower()
+    assert "размер" in lowered
+    assert "состав ткани" in lowered
+    assert "imei" not in lowered
+
+
 def test_stage_extract_classifies_three_price_states_correctly() -> None:
     """_stage_extract is the source of truth: it must set is_negotiable_price
     and is_free_price independently so AI prompts can render all three

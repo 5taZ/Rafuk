@@ -58,6 +58,10 @@ from api.services.ai_category_data import (  # noqa: F401 — re-export
     detect_category,
     normalize_condition_label,
 )
+from api.services.ai_category_profiles import (
+    buyer_category_profile_text,
+    seller_category_profile_text,
+)
 from api.services.ai_costs import estimate_ai_cost_usd, extract_ai_usage
 from api.services.ai_dedupe import (  # noqa: F401 — re-export
     _dedupe_dict_list,
@@ -918,7 +922,7 @@ class AIService:
         merged.setdefault("summary", "")
         return dedupe_analysis_payload(merged)
 
-    async def generate_listing(
+    def _build_listing_assistant_context(
         self,
         *,
         title: str,
@@ -935,19 +939,7 @@ class AIService:
         similar_listings: list[dict] | None,
         category_hint: str | None,
         category_bargain_hint: str | None,
-        photo_data_urls: list[str] | None = None,
-    ) -> dict:
-        """Generate seller-side listing draft (title, description, pricing, playbook).
-
-        The prompt receives concrete market anchors (median + Q1/Q3) so the
-        model can produce numerically-grounded fast/market/patient tiers
-        instead of guesses.
-        """
-
-        # User-supplied text fields go through sanitize_user_text first to
-        # neutralise prompt-injection markers like `### system:` / role
-        # tags / "ignore all previous instructions" before they reach the
-        # prompt. Length caps are enforced again here as defence-in-depth.
+    ) -> str:
         safe_title = sanitize_user_text(title, max_length=200) or ""
         safe_condition = sanitize_user_text(condition, max_length=64) if condition else None
         safe_notes = sanitize_user_text(extra_notes, max_length=600) if extra_notes else None
@@ -961,6 +953,14 @@ class AIService:
             ctx_lines.append("Цена черновая: договорная")
         if safe_notes:
             ctx_lines.append(f"Заметки продавца: {safe_notes}")
+
+        category_profile = seller_category_profile_text(
+            safe_title,
+            [{"label": "condition", "value": safe_condition}] if safe_condition else [],
+        )
+        if category_profile:
+            ctx_lines.append("")
+            ctx_lines.append(category_profile)
 
         ctx_lines.append("")
         ctx_lines.append("## РЫНОК (Kufar.by, BYN)")
@@ -1008,7 +1008,50 @@ class AIService:
             ctx_lines.append("## АРГУМЕНТЫ ТОРГА (категория)")
             ctx_lines.append(category_bargain_hint)
 
-        user_text = "\n".join(ctx_lines)
+        return "\n".join(ctx_lines)
+
+    async def generate_listing(
+        self,
+        *,
+        title: str,
+        condition: str | None,
+        is_negotiable: bool,
+        draft_price_byn: float | None,
+        extra_notes: str | None,
+        market_median: float | None,
+        market_q1: float | None,
+        market_q3: float | None,
+        market_min: float | None,
+        market_max: float | None,
+        market_count: int,
+        similar_listings: list[dict] | None,
+        category_hint: str | None,
+        category_bargain_hint: str | None,
+        photo_data_urls: list[str] | None = None,
+    ) -> dict:
+        """Generate seller-side listing draft (title, description, pricing, playbook).
+
+        The prompt receives concrete market anchors (median + Q1/Q3) so the
+        model can produce numerically-grounded fast/market/patient tiers
+        instead of guesses.
+        """
+
+        user_text = self._build_listing_assistant_context(
+            title=title,
+            condition=condition,
+            is_negotiable=is_negotiable,
+            draft_price_byn=draft_price_byn,
+            extra_notes=extra_notes,
+            market_median=market_median,
+            market_q1=market_q1,
+            market_q3=market_q3,
+            market_min=market_min,
+            market_max=market_max,
+            market_count=market_count,
+            similar_listings=similar_listings,
+            category_hint=category_hint,
+            category_bargain_hint=category_bargain_hint,
+        )
 
         photos = [
             url
@@ -1200,6 +1243,9 @@ class AIService:
             parts.append(f"Количество фото: {photo_count}")
         if risk_context_summary:
             parts.append(f"Риск-контекст площадки: {risk_context_summary}")
+        category_profile = buyer_category_profile_text(title, parameters)
+        if category_profile:
+            parts.append(f"\n{category_profile}")
         if photo_condition_label or photo_condition_notes:
             parts.append("\n## БЫСТРЫЙ ФОТО-ОСМОТР")
             if photo_condition_label:
