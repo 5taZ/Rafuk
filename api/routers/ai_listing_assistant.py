@@ -42,6 +42,7 @@ from api.services.ai_listing_guardrails import (
     normalize_listing_pricing,
     thin_market_warning,
 )
+from api.services.ai_quality import repair_seller_advice
 from api.services.ai_sanitize import strip_html_in_payload
 from api.services.ai_service import (
     CATEGORY_HINTS,
@@ -639,15 +640,22 @@ async def listing_assistant(
     warning = thin_market_warning(int(market_anchors["count"] or 0))
     if warning:
         market_summary = f"{warning}\n\n{market_summary}".strip() if market_summary else warning
+    selling_points, photo_tips = repair_seller_advice(
+        title=title,
+        condition=payload.condition,
+        market_count=int(market_anchors["count"] or 0),
+        selling_points=_coerce_string_list(ai_result.get("selling_points"), limit=6, max_len=160),
+        photo_tips=_coerce_string_list(ai_result.get("photo_tips"), limit=5, max_len=140),
+    )
 
     response = AIListingAssistantResponse(
         title_suggestion=str(ai_result.get("title_suggestion") or "").strip()[:200],
         description=str(ai_result.get("description") or "").strip()[:2000],
         description_short=str(ai_result.get("description_short") or "").strip()[:400],
-        selling_points=_coerce_string_list(ai_result.get("selling_points"), limit=6, max_len=160),
+        selling_points=selling_points,
         pricing=pricing,
         negotiation_playbook=_coerce_negotiation(ai_result.get("negotiation_playbook")),
-        photo_tips=_coerce_string_list(ai_result.get("photo_tips"), limit=5, max_len=140),
+        photo_tips=photo_tips,
         competitors=_coerce_competitors(
             ai_result.get("competitors"), dataset_competitors=competitors,
         ),

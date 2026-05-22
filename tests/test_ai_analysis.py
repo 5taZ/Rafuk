@@ -1088,6 +1088,62 @@ def test_complete_analysis_sections_restores_full_sections() -> None:
     assert len(result["summary"]) > 90
 
 
+def test_ai_quality_flags_generic_and_keeps_specific_advice() -> None:
+    from api.services.ai_quality import is_generic_ai_advice
+
+    assert is_generic_ai_advice("Обратите внимание на состояние товара")
+    assert is_generic_ai_advice("Попросите скидку у продавца")
+    assert not is_generic_ai_advice("Проверь корни и листья на вредителей")
+    assert not is_generic_ai_advice("Проверь IMEI, батарею и экран при встрече")
+
+
+def test_complete_analysis_sections_repairs_generic_advice() -> None:
+    from api.services.ai_marketplace import MarketplaceRiskContext
+    from api.services.ai_quality import is_generic_ai_advice
+
+    result = complete_analysis_sections(
+        result={
+            "recommendation": {"verdict": "think_twice", "text": "Проверь детали"},
+            "watch_out": [
+                {
+                    "point": "Состояние",
+                    "why": "Обратите внимание на состояние товара",
+                }
+            ],
+            "meeting_checklist": ["Проверь состояние товара"],
+            "negotiation_tips": ["Попросите скидку у продавца"],
+            "summary": "Коротко",
+        },
+        title="iPhone 14 128GB",
+        parameters=[],
+        price_byn=1200,
+        market_median=1400,
+        best_alternative=None,
+        risk_context=MarketplaceRiskContext(score=0.0, flags=[], summary="", hot_words=[]),
+        photo_condition_label=None,
+        photo_condition_notes=[],
+        is_negotiable_price=False,
+        red_flags=[],
+        market_q1=1100,
+        market_q3=1500,
+    )
+
+    assert result["recommendation"]["text"] != "Проверь детали"
+    assert not any(
+        is_generic_ai_advice(f"{item['point']} {item['why']}")
+        for item in result["watch_out"]
+    )
+    assert not any(is_generic_ai_advice(item) for item in result["meeting_checklist"])
+    assert not any(is_generic_ai_advice(item) for item in result["negotiation_tips"])
+    joined = " ".join(
+        [result["recommendation"]["text"]]
+        + [f"{item['point']} {item['why']}" for item in result["watch_out"]]
+        + result["meeting_checklist"]
+        + result["negotiation_tips"]
+    ).lower()
+    assert "батар" in joined or "imei" in joined or "экран" in joined
+
+
 def test_dedupe_analysis_payload_collapses_paraphrase_after_photo_merge() -> None:
     # Reproduces the duplicate "Лакокрасочное покрытие имеет хороший блеск"
     # bug: AI's condition.notes paraphrase the same observation as the
@@ -2008,6 +2064,71 @@ def test_ai_feedback_endpoint_records_prometheus_metric() -> None:
         'kufar_ai_feedback_total{endpoint="analyze",'
         'rating="not_helpful",reason="wrong_category"} 1'
     ) in text
+
+
+def test_listing_assistant_repairs_generic_seller_advice(monkeypatch) -> None:
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline
+    from api.services.ai_quality import is_generic_ai_advice
+    from api.services.cache import MemoryCache
+
+    async def fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            ads=[],
+            price_stats=SimpleNamespace(
+                median=100.0, count=7, q1=80.0, q3=120.0, min=70.0, max=130.0
+            ),
+        )
+
+    class FakeAI:
+        available = True
+
+        async def generate_listing(self, **kwargs):
+            del kwargs
+            return {
+                "title_suggestion": "iPhone 14 128GB",
+                "description": "Продаю iPhone 14 128GB.",
+                "description_short": "iPhone 14 128GB.",
+                "selling_points": [
+                    "Отличный товар",
+                    "Обратите внимание на состояние товара",
+                ],
+                "pricing": {
+                    "fast": {"label": "F", "price_byn": 90, "weeks_to_sell": "1"},
+                    "market": {"label": "M", "price_byn": 100, "weeks_to_sell": "2"},
+                    "patient": {"label": "P", "price_byn": 115, "weeks_to_sell": "3"},
+                    "floor_byn": 80,
+                },
+                "negotiation_playbook": [],
+                "photo_tips": ["Сделайте хорошие фото"],
+            }
+
+    fake_ai = FakeAI()
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
+    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    _grant_ai_access()
+
+    with TestClient(app) as client:
+        client.app.state.cache = MemoryCache()
+        response = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={"title": "iPhone 14 128GB", "condition": "Б/у", "draft_price_byn": 100},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["selling_points"]
+    assert payload["photo_tips"]
+    assert not any(is_generic_ai_advice(item) for item in payload["selling_points"])
+    assert not any(is_generic_ai_advice(item) for item in payload["photo_tips"])
+    assert any("iPhone 14" in item or "7 похож" in item for item in payload["selling_points"])
 
 
 def test_listing_assistant_strips_prompt_injection_from_notes(monkeypatch) -> None:

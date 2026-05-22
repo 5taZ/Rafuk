@@ -15,6 +15,7 @@ from api.services.aggregator import (
     tokenize_search_text,
 )
 from api.services.ai_guardrails import contains_financing_bait
+from api.services.ai_quality import filter_specific_advice, is_generic_ai_advice
 from api.services.ai_service import detect_category, normalize_condition_label
 from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS, first_image_url
 from api.services.reseller_tools import analyze_query_text
@@ -875,7 +876,12 @@ def complete_analysis_sections(
 
     # ── Recommendation ─────────────────────────────────────────
     rec = completed.get("recommendation")
-    if not isinstance(rec, dict) or not _clean_text(rec.get("verdict")):
+    rec_text = _clean_text(rec.get("text")) if isinstance(rec, dict) else ""
+    if (
+        not isinstance(rec, dict)
+        or not _clean_text(rec.get("verdict"))
+        or is_generic_ai_advice(rec_text)
+    ):
         completed["recommendation"] = _fallback_recommendation(
             price_byn=price_byn,
             is_negotiable_price=is_negotiable_price,
@@ -893,7 +899,7 @@ def complete_analysis_sections(
             continue
         point = _clean_text(item.get("point"))
         why = _clean_text(item.get("why"))
-        if point and why:
+        if point and why and not is_generic_ai_advice(f"{point} {why}"):
             watch_items.append({"point": point, "why": why})
     for item in _build_fallback_watch_out(
         category=category,
@@ -910,14 +916,16 @@ def complete_analysis_sections(
     completed["watch_out"] = watch_items[:5]
 
     # ── Meeting checklist ──────────────────────────────────────
-    checklist = _unique_texts(
+    checklist = filter_specific_advice(
         [str(item) for item in (completed.get("meeting_checklist") or [])],
-        max_items=7,
+        limit=7,
+        max_len=220,
     )
     if len(checklist) < 5:
-        checklist = _unique_texts(
+        checklist = filter_specific_advice(
             checklist + _build_fallback_meeting_checklist(category),
-            max_items=7,
+            limit=7,
+            max_len=220,
         )
 
     # Deduplicate: if a watch_out point covers the same topic as a checklist
@@ -948,19 +956,21 @@ def complete_analysis_sections(
     # If deduplication removed too many, add back from fallback
     if len(deduped_checklist) < 5:
         fallback_checklist = _build_fallback_meeting_checklist(category)
-        deduped_checklist = _unique_texts(
+        deduped_checklist = filter_specific_advice(
             deduped_checklist + fallback_checklist,
-            max_items=7,
+            limit=7,
+            max_len=220,
         )
     completed["meeting_checklist"] = deduped_checklist
 
     # ── Negotiation tips ───────────────────────────────────────
-    tips = _unique_texts(
+    tips = filter_specific_advice(
         [str(item) for item in (completed.get("negotiation_tips") or [])],
-        max_items=5,
+        limit=5,
+        max_len=320,
     )
     if len(tips) < 3:
-        tips = _unique_texts(
+        tips = filter_specific_advice(
             tips
             + _build_fallback_negotiation_tips(
                 category=category,
@@ -970,7 +980,8 @@ def complete_analysis_sections(
                 is_negotiable_price=is_negotiable_price,
                 risk_context=risk_context,
             ),
-            max_items=5,
+            limit=5,
+            max_len=320,
         )
     completed["negotiation_tips"] = tips
 
