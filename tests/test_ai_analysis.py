@@ -1998,6 +1998,22 @@ def test_normalize_pricing_passes_through_when_market_too_thin() -> None:
     assert out["patient"]["price_byn"] == 99999
 
 
+def test_normalize_pricing_tolerates_empty_ai_pricing_with_market_bounds() -> None:
+    out = normalize_listing_pricing(
+        {},
+        market_median=1500,
+        market_q1=1400,
+        market_q3=1600,
+        market_min=1200,
+        market_max=1800,
+        market_count=30,
+    )
+    assert out["fast"]["price_byn"] == 0
+    assert out["market"]["price_byn"] == 0
+    assert out["patient"]["price_byn"] == 0
+    assert "floor_byn" not in out
+
+
 # ─── Thin-market warning ──────────────────────────────────────────────────
 
 

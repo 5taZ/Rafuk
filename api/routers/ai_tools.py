@@ -90,12 +90,82 @@ def _ai_price_advice_cache_key(payload: AIPriceAdviceRequest) -> str:
     return digest_cache_key(
         "ai_price_advice",
         {
-            "contract": "current-market-v1",
+            "contract": "current-market-v2",
             "query": payload.query,
             "current_price_byn": payload.current_price_byn,
             "category": payload.category,
         },
     )
+
+
+def _price_advice_stats_usable(stats: object | None) -> bool:
+    return (
+        stats is not None
+        and float(getattr(stats, "median", 0) or 0) > 0
+        and int(getattr(stats, "count", 0) or 0) >= 3
+    )
+
+
+def _clamp_confidence(value: object) -> float:
+    try:
+        confidence = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, confidence))
+
+
+def _prefix_reason(prefix: str, original: str, *, limit: int = 500) -> str:
+    original = original.strip()
+    if not original:
+        return prefix[:limit]
+    return f"{prefix} {original}"[:limit]
+
+
+def _ground_price_advice(
+    *,
+    advice: str,
+    reasoning: str,
+    confidence: float,
+    current_price_byn: float,
+    stats: object | None,
+) -> tuple[str, str, float]:
+    if not _price_advice_stats_usable(stats):
+        return (
+            "neutral",
+            _prefix_reason(
+                "Недостаточно текущих объявлений для уверенного вывода; "
+                "поэтому совет скорректирован в нейтральный.",
+                reasoning,
+            ),
+            min(confidence, 0.35),
+        )
+
+    median = float(getattr(stats, "median", 0) or 0)
+    q1 = float(getattr(stats, "q1", 0) or 0)
+    q3 = float(getattr(stats, "q3", 0) or 0)
+    if q3 > 0 and current_price_byn > q3 and advice == "buy_now":
+        return (
+            "wait",
+            _prefix_reason(
+                f"Серверная проверка: текущая цена {current_price_byn:.0f} BYN "
+                f"выше Q3 {q3:.0f} BYN и медианы {median:.0f} BYN; "
+                "совет скорректирован по текущему срезу.",
+                reasoning,
+            ),
+            min(confidence, 0.75),
+        )
+    if q1 > 0 and current_price_byn <= q1 and advice == "wait":
+        return (
+            "buy_now",
+            _prefix_reason(
+                f"Серверная проверка: текущая цена {current_price_byn:.0f} BYN "
+                f"не выше Q1 {q1:.0f} BYN; "
+                "совет скорректирован по текущему срезу.",
+                reasoning,
+            ),
+            min(max(confidence, 0.55), 0.85),
+        )
+    return advice, reasoning, confidence
 
 
 # ── Negotiate ─────────────────────────────────────────────────────────────
@@ -278,7 +348,7 @@ async def price_advice(
     stats = dataset.price_stats if dataset else None
     market_info = ""
     current_market_context = "Недостаточно текущих рыночных данных для уверенного сравнения."
-    if stats:
+    if _price_advice_stats_usable(stats):
         market_info = (
             f"Медиана рынка: {stats.median:.0f} BYN\n"
             f"Q1 (25%): {stats.q1:.0f} BYN\n"
@@ -316,12 +386,20 @@ async def price_advice(
     valid_advice_values = {"buy_now", "wait", "neutral"}
     raw_advice = str(result.get("advice") or "neutral")[:20]
     advice = raw_advice if raw_advice in valid_advice_values else "neutral"
+    confidence = _clamp_confidence(result.get("confidence"))
+    advice, reasoning, confidence = _ground_price_advice(
+        advice=advice,
+        reasoning=str(result.get("reasoning") or "")[:500],
+        confidence=confidence,
+        current_price_byn=payload.current_price_byn,
+        stats=stats,
+    )
 
     response = AIPriceAdviceResponse(
         advice=advice,
-        reasoning=str(result.get("reasoning") or "")[:500],
+        reasoning=reasoning[:500],
         market_context=current_market_context[:400],
-        confidence=float(result.get("confidence") or 0.0),
+        confidence=confidence,
     )
 
     # SEC-NEW-4: defence-in-depth strip of HTML tags in AI output before cache/return.

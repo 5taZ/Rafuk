@@ -233,6 +233,88 @@ def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
         assert "исторические данные" not in fake_ai.calls[0]["system"].lower()
 
 
+def test_price_advice_forces_neutral_when_market_sample_is_empty(monkeypatch) -> None:
+    import api.services.query_pipeline as _qp_mod
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis, ai_tools
+
+    fake_ai = FakeAIChatService()
+
+    async def _fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            price_stats=SimpleNamespace(
+                median=0.0, count=0, q1=0.0, q3=0.0, min=0.0, max=0.0,
+            ),
+        )
+
+    monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
+    monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_ai_entitlement", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_rate_limit", _noop_async)
+    monkeypatch.setattr(ai_tools, "_log_ai_audit", _noop_async)
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(_qp_mod, "load_query_dataset", _fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/v1/ai/price-advice",
+            json={"query": "редкий товар без рынка", "current_price_byn": 950},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["advice"] == "neutral"
+    assert "недостаточно" in body["reasoning"].lower()
+    assert "недостаточно" in body["market_context"].lower()
+    assert body["confidence"] <= 0.35
+    assert "Медиана рынка: 0" not in fake_ai.calls[0]["content"]
+
+
+def test_price_advice_overrides_buy_now_when_price_is_above_market(monkeypatch) -> None:
+    import api.services.query_pipeline as _qp_mod
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+    from api.routers import ai_analysis, ai_tools
+
+    fake_ai = FakeAIChatService()
+
+    async def _fake_load_query_dataset(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            price_stats=SimpleNamespace(
+                median=1000.0, count=12, q1=900.0, q3=1100.0, min=800.0, max=1300.0,
+            ),
+        )
+
+    monkeypatch.setattr(ai_tools, "_check_ai_available", lambda: fake_ai)
+    monkeypatch.setattr(ai_tools, "_check_ai_consent", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_ai_entitlement", _noop_async)
+    monkeypatch.setattr(ai_tools, "_check_rate_limit", _noop_async)
+    monkeypatch.setattr(ai_tools, "_log_ai_audit", _noop_async)
+    monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
+    monkeypatch.setattr(_qp_mod, "load_query_dataset", _fake_load_query_dataset)
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/v1/ai/price-advice",
+            json={"query": "iphone 14", "current_price_byn": 1300},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["advice"] == "wait"
+    assert "выше q3" in body["reasoning"].lower()
+    assert body["confidence"] <= 0.75
+
+
 def test_price_advice_cache_hit_does_not_consume_quota(monkeypatch) -> None:
     import api.services.query_pipeline as _qp_mod
     from api.dependencies import get_telegram_user

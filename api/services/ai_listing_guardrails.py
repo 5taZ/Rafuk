@@ -188,7 +188,8 @@ def normalize_listing_pricing(
     elif floor is not None:
         out["floor_byn"] = _round(floor)
 
-    if low is not None and out["floor_byn"] < low:
+    floor_byn = _coerce_positive(out.get("floor_byn"))
+    if low is not None and floor_byn is not None and floor_byn < low:
         out["floor_byn"] = _round(low)
 
     return out
