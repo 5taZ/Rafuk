@@ -157,7 +157,8 @@ def upgrade() -> None:
                 op.create_check_constraint(
                     "chk_lead_items_status",
                     "lead_items",
-                    "status IN ('new', 'reviewing', 'in_progress', 'negotiating', 'deferred', 'closed', 'abandoned')",
+                    "status IN ('new', 'reviewing', 'in_progress', "
+                    "'negotiating', 'deferred', 'closed', 'abandoned')",
                 )
 
         # Watchlist items: workflow_status

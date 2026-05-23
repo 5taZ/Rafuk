@@ -8,12 +8,65 @@ from typing import Any
 from api.services.aggregator import (
     PriceStats,
     compute_price_vs_median,
+    compute_price_vs_reference,
     get_param,
     normalize_price_byn,
     normalize_search_text,
+    resolve_price_reference,
     tokenize_search_text,
 )
-from api.services.market_signals import detect_anomaly_flags, region_label
+from api.services.listing_filters import (
+    match_condition_filter,
+    match_region_filter,
+)
+from api.services.market_signals import detect_anomaly_flags
+
+
+# =============================================================================
+# Deal scoring weights — documented so they can be tuned without reading code.
+# =============================================================================
+@dataclass(slots=True, frozen=True)
+class _ScoringConfig:
+    # Base score (all listings start here)
+    base_score: float = 50.0
+
+    # Price vs median thresholds for verdict
+    verdict_good_price_threshold: float = -15.0
+    verdict_below_market_threshold: float = -3.0
+    verdict_fair_market_threshold: float = 3.0
+
+    # Price delta score modifiers
+    discount_score_multiplier: float = 2.0
+    discount_score_cap: float = 35.0
+    premium_penalty_multiplier: float = 1.5
+    premium_penalty_cap: float = 30.0
+
+    # Seller type modifiers
+    private_seller_bonus: float = 5.0
+    shop_seller_penalty: float = 2.0
+
+    # Freshness bonuses (hours → points + label)
+    freshness_6h_bonus: int = 12
+    freshness_6h_label: str = "свежий лот"
+    freshness_24h_bonus: int = 8
+    freshness_24h_label: str = "сегодня"
+    freshness_72h_bonus: int = 4
+    freshness_72h_label: str = "свежий"
+
+    # Profile match bonuses (config keyword matching)
+    storage_exact_match_bonus: int = 8
+    storage_mismatch_penalty: int = 8
+    ram_exact_match_bonus: int = 4
+    ram_mismatch_penalty: int = 6
+    model_subset_bonus: int = 6
+    # =============================================================================
+
+    # Penalties
+    anomaly_penalty_per_flag: int = 12
+    anomaly_penalty_cap: int = 24
+
+
+SCORING = _ScoringConfig()
 
 _RAM_STORAGE_RE = re.compile(r"\b(4|6|8|12|16|18|24)\s*/\s*(64|128|256|512|1024)\b")
 _RAM_STORAGE_GB_RE = re.compile(
@@ -125,7 +178,11 @@ def _model_tokens(tokens: list[str], storage_gb: int | None, ram_gb: int | None)
     ]
 
 
-def _format_config_summary(storage_gb: int | None, ram_gb: int | None, tokens: list[str]) -> str | None:
+def _format_config_summary(
+    storage_gb: int | None,
+    ram_gb: int | None,
+    tokens: list[str],
+) -> str | None:
     parts: list[str] = []
     variants = [token.title() for token in tokens if token in _CONFIG_TOKENS]
     if variants:
@@ -155,13 +212,6 @@ def analyze_query_text(value: str) -> QueryInsights:
     )
 
 
-def default_saved_search_name(query: str) -> str:
-    insights = analyze_query_text(query)
-    if insights.config_summary:
-        return f"{query.strip()} · {insights.config_summary}"[:128]
-    return query.strip()[:128]
-
-
 def default_config_keyword(query: str) -> str:
     return analyze_query_text(query).normalized_query[:128]
 
@@ -182,19 +232,19 @@ def profile_match_bonus(query: str, title: str) -> tuple[int, str | None, str | 
     reason = None
     if query_profile.storage_gb and title_profile.storage_gb:
         if query_profile.storage_gb == title_profile.storage_gb:
-            bonus += 8
+            bonus += SCORING.storage_exact_match_bonus
             reason = f"{title_profile.storage_gb}GB"
         else:
-            bonus -= 8
+            bonus -= SCORING.storage_mismatch_penalty
     if query_profile.ram_gb and title_profile.ram_gb:
         if query_profile.ram_gb == title_profile.ram_gb:
-            bonus += 4
+            bonus += SCORING.ram_exact_match_bonus
         else:
-            bonus -= 6
+            bonus -= SCORING.ram_mismatch_penalty
     query_tokens = set(query_profile.model_tokens)
     title_tokens = set(title_profile.model_tokens)
     if query_tokens and query_tokens.issubset(title_tokens):
-        bonus += 6
+        bonus += SCORING.model_subset_bonus
     return bonus, title_profile.config_summary, reason
 
 
@@ -217,11 +267,11 @@ def _freshness_bonus(list_time: str | None) -> tuple[int, str | None]:
         parsed = parsed.replace(tzinfo=UTC)
     age_hours = (datetime.now(UTC) - parsed.astimezone(UTC)).total_seconds() / 3600
     if age_hours <= 6:
-        return 12, "свежий лот"
+        return SCORING.freshness_6h_bonus, SCORING.freshness_6h_label
     if age_hours <= 24:
-        return 8, "сегодня"
+        return SCORING.freshness_24h_bonus, SCORING.freshness_24h_label
     if age_hours <= 72:
-        return 4, "свежий"
+        return SCORING.freshness_72h_bonus, SCORING.freshness_72h_label
     return 0, None
 
 
@@ -230,54 +280,73 @@ def compute_deal_score(
     *,
     query: str,
     market_stats: PriceStats,
-    duplicate_count: int = 0,
+    category_price_stats: dict[int, PriceStats] | None = None,
 ) -> DealScore:
-    score = 55.0
     reasons: list[str] = []
     delta = compute_price_vs_median(ad, market_stats.median)
-    if delta < 0:
-        discount = abs(delta)
-        score += min(discount * 1.5, 30)
-        reasons.append(f"-{discount:.0f}% к медиане")
-    elif delta > 0:
-        score -= min(delta * 1.2, 24)
-        reasons.append(f"+{delta:.0f}% к медиане")
 
-    seller_type = get_param(ad, "seller_type")
-    if seller_type == "Частное лицо":
-        score += 8
+    # B-09: negotiable ads have no price delta — skip score adjustment.
+    if delta is None:
+        verdict = "Цена договорная"
+        score = SCORING.base_score
+        reasons.append("Цена не указана")
+    elif delta <= SCORING.verdict_good_price_threshold:
+        verdict = "Хорошая цена"
+    elif delta <= SCORING.verdict_below_market_threshold:
+        verdict = "Ниже рынка"
+    elif delta <= SCORING.verdict_fair_market_threshold:
+        verdict = "Средняя цена"
+    else:
+        verdict = "Выше рынка"
+
+    if delta is None:
+        pass  # score already set above
+    else:
+        # Score is also primarily price-driven, with small bonuses/penalties
+        score = SCORING.base_score
+        if delta < 0:
+            discount = abs(delta)
+            score += min(discount * SCORING.discount_score_multiplier, SCORING.discount_score_cap)
+            reasons.append(f"-{discount:.0f}% к медиане")
+        elif delta > 0:
+            score -= min(delta * SCORING.premium_penalty_multiplier, SCORING.premium_penalty_cap)
+            reasons.append(f"+{delta:.0f}% к медиане")
+
+    seller_type_param = get_param(ad, "seller_type")
+    is_private = seller_type_param == "Частное лицо" or (
+        not seller_type_param and not ad.get("company_ad")
+    )
+    is_shop = seller_type_param == "Магазин" or (
+        not seller_type_param and ad.get("company_ad")
+    )
+    if is_private:
+        score += SCORING.private_seller_bonus
         reasons.append("частник")
-    elif seller_type == "Магазин":
-        score -= 2
+    elif is_shop:
+        score -= SCORING.shop_seller_penalty
 
     freshness_score, freshness_reason = _freshness_bonus(ad.get("list_time"))
     score += freshness_score
     if freshness_reason:
         reasons.append(freshness_reason)
 
-    config_bonus, config_summary, config_reason = profile_match_bonus(query, str(ad.get("subject", "")))
+    config_bonus, config_summary, config_reason = profile_match_bonus(
+        query, str(ad.get("subject", ""))
+    )
     score += config_bonus
     if config_reason:
         reasons.append(config_reason)
 
-    if duplicate_count > 0:
-        score -= min(duplicate_count * 10, 20)
-        reasons.append("есть дубли")
-
-    anomaly_flags = detect_anomaly_flags(ad, market_stats)
+    ref = resolve_price_reference(ad, market_stats, category_price_stats)
+    anomaly_flags = detect_anomaly_flags(ad, ref.stats)
     if anomaly_flags:
-        score -= min(len(anomaly_flags) * 12, 24)
+        score -= min(
+            len(anomaly_flags) * SCORING.anomaly_penalty_per_flag,
+            SCORING.anomaly_penalty_cap,
+        )
         reasons.append("есть аномалии")
 
     score = round(max(0.0, min(100.0, score)), 1)
-    if score >= 78:
-        verdict = "Забирать"
-    elif score >= 62:
-        verdict = "Смотреть"
-    elif score >= 45:
-        verdict = "Норм"
-    else:
-        verdict = "Мимо"
 
     unique_reasons = list(dict.fromkeys(reasons))
     return DealScore(
@@ -292,30 +361,42 @@ def matches_tracker_filters(
     ad: dict[str, Any],
     *,
     market_stats: PriceStats,
-    duplicate_count: int = 0,
+    category_price_stats: dict[int, PriceStats] | None = None,
     min_discount_percent: float | None = None,
     max_price_byn: float | None = None,
     seller_type: str | None = None,
     condition: str | None = None,
     region_name: str | None = None,
     config_keyword: str | None = None,
-    exclude_duplicates: bool = False,
 ) -> bool:
     price_byn = normalize_price_byn(ad.get("price_byn"))
     if max_price_byn is not None and price_byn is not None and price_byn > max_price_byn:
         return False
-    if seller_type and get_param(ad, "seller_type") != seller_type:
+    if seller_type:
+        ad_seller = get_param(ad, "seller_type")
+        is_shop = bool(ad.get("company_ad")) or (
+            ad_seller and ad_seller.lower() in ("shop", "магазин")
+        )
+        if seller_type == "shop" and not is_shop:
+            return False
+        if seller_type == "private" and is_shop:
+            return False
+    # D-1: condition can arrive from Kufar as either text labels
+    # ("Новый"/"Б/у") or numeric codes ("1"/"2"); the shared helper
+    # (also used by /listings local filter) accepts either form.
+    if not match_condition_filter(ad, condition):
         return False
-    if condition and get_param(ad, "condition") != condition:
-        return False
-    if region_name and region_label(ad) != region_name:
+    # D-2: region comparison is now case-insensitive and
+    # whitespace-tolerant — matches /listings behaviour.
+    if not match_region_filter(ad, region_name):
         return False
     if config_keyword and not config_keyword_matches(str(ad.get("subject", "")), config_keyword):
         return False
-    if exclude_duplicates and duplicate_count > 0:
-        return False
     if min_discount_percent is not None:
-        delta = compute_price_vs_median(ad, market_stats.median)
+        delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
+        # B-09: negotiable (delta=None) cannot match a discount filter.
+        if delta is None:
+            return False
         if abs(min(delta, 0.0)) < min_discount_percent:
             return False
     return True

@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from api.config import Settings
+from api.services.kufar_filters import KUFAR_CONDITION_VALUES, KUFAR_SELLER_VALUES
 
 logger = logging.getLogger(__name__)
 
@@ -25,24 +26,85 @@ class KufarClient:
         self._settings = settings
         self._http_client = http_client
         self._owns_client = http_client is None
-        self._last_request_time = 0.0
+        self._closed = False
+        self._last_request_time: float = 0.0
+        # Serialises _enforce_delay so concurrent search() calls (e.g.
+        # the parallel category-totals fan-out) read+write
+        # _last_request_time atomically. Without this two coroutines
+        # could both observe the previous timestamp, both decide they
+        # don't need to wait, and fire requests inside Kufar's
+        # configured rate-limit window. The semaphore in
+        # query_pipeline already caps concurrency to 2, but the lock
+        # makes the spacing correct regardless of how many callers race.
+        self._delay_lock = asyncio.Lock()
+        self._client_lock = asyncio.Lock()
+        # Limit parallel HTTP requests across all KufarClient users
+        self._semaphore = asyncio.Semaphore(settings.kufar_parallel_semaphore)
+        # Simple circuit breaker: after 5 consecutive errors open the
+        # circuit for 30 seconds and return empty results.
+        #
+        # _circuit_lock serialises read-modify-write of _consecutive_errors
+        # / _circuit_open_until. Without it, two coroutines can each
+        # observe an old counter, both decide their failure is the
+        # 5th-in-a-row, and either step on each other (counter overshoots)
+        # or — worse — a success path resets the counter to 0 between
+        # a failure path's read and its compare, so the circuit never
+        # opens despite sustained errors.
+        self._circuit_lock = asyncio.Lock()
+        self._consecutive_errors = 0
+        self._circuit_open_until: float = 0.0
+        # SEC-06: half-open state. After _circuit_open_until elapses,
+        # the FIRST request to grab the lock transitions to half_open
+        # and is allowed through as a probe. Concurrent callers see
+        # half_open and short-circuit so the upstream isn't slammed
+        # with a "thundering herd" the moment the open window expires.
+        # Probe outcome decides the next state:
+        #   success → closed (counter reset)
+        #   failure → open again for another window
+        # State ∈ {"closed", "open", "half_open"}.
+        self._circuit_state: str = "closed"
 
     async def _get_client(self) -> httpx.AsyncClient:
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=self._settings.kufar_timeout)
+        if self._closed:
+            raise RuntimeError("KufarClient is closed")
+        if self._http_client is None or self._http_client.is_closed:
+            async with self._client_lock:
+                if self._closed:
+                    raise RuntimeError("KufarClient is closed")
+                if self._http_client is None or self._http_client.is_closed:
+                    # Bound the connection pool. Without limits a burst
+                    # (e.g. the parallel category-totals fan-out racing
+                    # with a watchlist refresh) can open hundreds of
+                    # TCP sockets, exhaust file descriptors and slow
+                    # everything down. The semaphore in this class
+                    # already caps concurrency, but the pool limit
+                    # protects us if anyone bypasses it (tests,
+                    # background tasks, or future callers).
+                    self._http_client = httpx.AsyncClient(
+                        timeout=self._settings.kufar_timeout,
+                        limits=httpx.Limits(
+                            max_connections=20,
+                            max_keepalive_connections=10,
+                        ),
+                    )
         return self._http_client
 
     async def aclose(self) -> None:
-        if self._owns_client and self._http_client is not None:
-            await self._http_client.aclose()
+        async with self._client_lock:
+            self._closed = True
+            if self._owns_client and self._http_client is not None:
+                await self._http_client.aclose()
 
     async def _enforce_delay(self) -> None:
-        loop = asyncio.get_running_loop()
-        elapsed = loop.time() - self._last_request_time
         delay = self._settings.kufar_request_delay
-        if elapsed < delay:
-            await asyncio.sleep(delay - elapsed)
-        self._last_request_time = loop.time()
+        if delay <= 0:
+            return
+        async with self._delay_lock:
+            loop = asyncio.get_running_loop()
+            elapsed = loop.time() - self._last_request_time
+            if elapsed < delay:
+                await asyncio.sleep(delay - elapsed)
+            self._last_request_time = loop.time()
 
     async def search(
         self,
@@ -52,9 +114,36 @@ class KufarClient:
         sort: str = "lst.d",
         cursor: str | None = None,
         region: int | None = None,
+        area: int | None = None,
         condition: str | None = None,
         seller_type: str | None = None,
+        price_range: str | None = None,
+        category: int | None = None,
+        bypass_delay: bool = False,
     ) -> dict[str, Any]:
+        # SEC-06: 3-state circuit breaker (closed / open / half_open).
+        # The state machine lives behind _circuit_lock so concurrent
+        # callers can't race through the half-open probe in lockstep.
+        async with self._circuit_lock:
+            now = asyncio.get_running_loop().time()
+            if self._circuit_state == "open":
+                if now < self._circuit_open_until:
+                    logger.warning(
+                        "Circuit breaker open for query=%s; returning empty stub",
+                        query,
+                    )
+                    return {"ads": [], "total": 0}
+                # Open window expired — this caller becomes the probe.
+                self._circuit_state = "half_open"
+                logger.info("Kufar circuit breaker → half_open (probing)")
+            elif self._circuit_state == "half_open":
+                # Another caller already owns the probe; don't pile on.
+                logger.warning(
+                    "Circuit breaker half_open for query=%s; returning empty stub",
+                    query,
+                )
+                return {"ads": [], "total": 0}
+
         params: dict[str, Any] = {
             "query": query,
             "size": size,
@@ -65,10 +154,18 @@ class KufarClient:
             params["cursor"] = cursor
         if region is not None:
             params["rgn"] = region
+        if area is not None:
+            params["ar"] = area
         if condition:
-            params["cnd"] = condition
+            params["cnd"] = KUFAR_CONDITION_VALUES.get(condition, condition)
         if seller_type:
-            params["otype"] = seller_type
+            seller_value = KUFAR_SELLER_VALUES.get(seller_type, seller_type)
+            if seller_value in {"0", "1"}:
+                params["cmp"] = seller_value
+        if price_range:
+            params["prc"] = price_range
+        if category is not None:
+            params["cat"] = category
 
         headers = {
             "User-Agent": USER_AGENT,
@@ -79,13 +176,51 @@ class KufarClient:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                await self._enforce_delay()
+                if not bypass_delay:
+                    await self._enforce_delay()
                 client = await self._get_client()
-                response = await client.get(KUFAR_BASE_URL, params=params, headers=headers)
+                async with self._semaphore:
+                    response = await client.get(KUFAR_BASE_URL, params=params, headers=headers)
                 response.raise_for_status()
+                # Success — reset error counter under the lock so a
+                # concurrent failure path can't observe an old (high)
+                # counter mid-update. SEC-06: also close the breaker
+                # if we were the half-open probe.
+                async with self._circuit_lock:
+                    self._consecutive_errors = 0
+                    if self._circuit_state != "closed":
+                        logger.info(
+                            "Kufar circuit breaker → closed (was %s)",
+                            self._circuit_state,
+                        )
+                    self._circuit_state = "closed"
+                    self._circuit_open_until = 0.0
                 return response.json()
             except (httpx.HTTPError, httpx.TimeoutException) as exc:
                 last_error = exc
+                # Read-modify-write of the error counter MUST be atomic
+                # vs. a concurrent success-reset; otherwise two failures
+                # racing with a success could either overshoot the
+                # threshold or never reach it.
+                async with self._circuit_lock:
+                    self._consecutive_errors += 1
+                    consecutive = self._consecutive_errors
+                    if self._circuit_state == "half_open":
+                        # SEC-06: half-open probe failed → re-open for
+                        # another full window so we don't immediately
+                        # send another probe.
+                        self._circuit_state = "open"
+                        self._circuit_open_until = (
+                            asyncio.get_running_loop().time() + 30.0
+                        )
+                        logger.warning(
+                            "Kufar circuit breaker → open (half_open probe failed)",
+                        )
+                    elif consecutive >= 5:
+                        self._circuit_state = "open"
+                        self._circuit_open_until = (
+                            asyncio.get_running_loop().time() + 30.0
+                        )
                 logger.warning(
                     "Kufar request failed on attempt %s/%s for query=%s: %s",
                     attempt + 1,
@@ -93,6 +228,9 @@ class KufarClient:
                     query,
                     exc,
                 )
+                if consecutive >= 5:
+                    logger.error("Circuit breaker opened after 5 consecutive errors")
+                    break
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(BACKOFF_BASE_SECONDS * (2**attempt))
 
@@ -107,8 +245,11 @@ class KufarClient:
         currency: str = "USD",
         sort: str = "lst.d",
         region: int | None = None,
+        area: int | None = None,
         condition: str | None = None,
         seller_type: str | None = None,
+        price_range: str | None = None,
+        category: int | None = None,
     ) -> dict[str, Any]:
         response = await self.search(
             query=query,
@@ -116,14 +257,20 @@ class KufarClient:
             currency=currency,
             sort=sort,
             region=region,
+            area=area,
             condition=condition,
             seller_type=seller_type,
+            price_range=price_range,
+            category=category,
         )
         ads = list(response.get("ads", []))
         total = self.extract_total(response) or len(ads)
         cursor = self.extract_next_cursor(response)
+        pages_fetched = 1
 
-        while cursor:
+        # Safety cap: max 25 pages or configured max ads (whichever comes first)
+        max_ads = self._settings.kufar_max_ads_per_query
+        while cursor and pages_fetched < 25 and len(ads) < max_ads:
             page = await self.search(
                 query=query,
                 size=size,
@@ -131,11 +278,15 @@ class KufarClient:
                 sort=sort,
                 cursor=cursor,
                 region=region,
+                area=area,
                 condition=condition,
                 seller_type=seller_type,
+                price_range=price_range,
+                category=category,
             )
             ads.extend(page.get("ads", []))
             cursor = self.extract_next_cursor(page)
+            pages_fetched += 1
             if total and len(ads) >= total:
                 break
 

@@ -2,43 +2,158 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8">
+    <!--
+      CSP notes (FE-H6):
+      * script-src does NOT include 'unsafe-inline'. All scripts are
+        external (<script src=...>), no inline handlers in HTML, so the
+        allowlist is enough. Reintroducing 'unsafe-inline' would undo
+        the XSS protection the policy exists for.
+      * style-src does NOT include 'unsafe-inline'. The app shell has
+        no inline <style> blocks or style="" attributes, so stylesheets
+        can stay on the explicit self allowlist. Fonts and Chart.js are
+        vendored locally to avoid third-party requests before consent.
+      * frame-ancestors locks us to web.telegram.org / webk.telegram.org /
+        webz.telegram.org (the legitimate Mini App embedders) — same
+        defence as X-Frame-Options DENY but expressed as policy. Stops
+        malicious sites from <iframe>-ing the Mini App to phish initData.
+      * upgrade-insecure-requests catches any forgotten http:// URL the
+        frontend might still try to load (asset typo, third-party
+        widget) and rewrites it to https:// before the request goes
+        out, instead of letting the browser fail open.
+    -->
+    <!-- OPUS-14 wave 75: the sha256 allowlisted below covers a tiny
+         inline script that the Telegram WebView injects into every
+         Mini-App page on first load (theme/viewport/keyboard hooks
+         that the native client controls, not us). Wave 62 dropped
+         it on the assumption the hash was dead — it isn't, the
+         injection lives outside our source tree so a `grep` of the
+         repo doesn't find it. Without the hash the browser logs
+         "CSP blocked an inline script" twice on every cold start
+         and Telegram's keyboard / theme integration silently
+         degrades. The hash pins exactly that one Telegram shim;
+         every other inline script still trips the policy. -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self' 'sha256-ieoeWczDHkReVBsRBqaal5AFMlBtNjMzgwKvLqi/tSU=';
+                   style-src 'self';
+                   font-src 'self';
+                   connect-src 'self';
+                   img-src 'self' https://rms.kufar.by https://*.kufar.by blob:;
+                   object-src 'none';
+                   base-uri 'self';
+                   form-action 'self';
+                   frame-ancestors https://web.telegram.org https://webk.telegram.org https://webz.telegram.org;
+                   upgrade-insecure-requests;">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
-    <title>Rafuks</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
-        rel="stylesheet"
-    >
-    <link rel="stylesheet" href="css/style.css">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-    <script defer src="js/app_core.js"></script>
-    <script defer src="js/app_renderers.js"></script>
-    <script defer src="js/app_actions.js"></script>
-    <script defer src="js/app.js"></script>
+    <meta name="theme-color" content="#0a0a0b">
+    <title>Rafuk</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20260523-98e26dc">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20260523-98e26dc">
+    <!-- Kufar CDN serves every listing thumbnail. preconnect fires
+         the TLS handshake during HTML parse so the first <img src>
+         doesn't pay for it — saves ~150-300ms on first card paint
+         depending on the user's network RTT. -->
+    <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
+    <link rel="dns-prefetch" href="https://rms.kufar.by">
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20260523-98e26dc">
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260523-98e26dc" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20260523-98e26dc" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
+    <!-- FE-M1: Preload the bundled stylesheet so the browser starts
+         fetching it during HTML parse, in parallel with the font
+         CSS request above. The subsequent ``<link rel="stylesheet">``
+         then resolves from the in-flight preload entry instead of
+         opening a fresh connection — saves one round-trip on the
+         render-blocking critical CSS. We deliberately stop short of
+         the ``media="print" onload="this.media='all'"`` async-load
+         trick: it requires an inline event handler that the
+         current ``script-src`` CSP (no ``'unsafe-inline'``) would
+         block, and splitting the bundle into critical + deferred
+         introduces FOUC risk that needs UX validation across all
+         modal/pipeline surfaces — a separate wave's worth of
+         careful testing. The preload alone is the safe-by-default
+         improvement. -->
+    <link rel="preload" as="style" href="css/style.css?v=20260523-98e26dc">
+    <link rel="stylesheet" href="css/style.css?v=20260523-98e26dc" integrity="sha384-dFcYCiPgissePOkDj5dYuhW1aVA42pAxiBHSTqojw53QcD8GsPvl6rdE9YAChs26" crossorigin>
+    <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
+         frontend/vendor/telegram-web-app.js so we can pin a SHA-384
+         hash via SRI. Loading the upstream CDN version directly is
+         insecure: the script is updated by Telegram without notice,
+         the CDN is shared infrastructure, and there is no public
+         release feed to subscribe to. Vendoring + SRI means a CDN
+         compromise can't ship arbitrary JS into a Mini App that
+         already has the user's initData. To refresh:
+             curl -fsSL https://telegram.org/js/telegram-web-app.js \
+                 -o frontend/vendor/telegram-web-app.js
+             openssl dgst -sha384 -binary \
+                 frontend/vendor/telegram-web-app.js \
+                 | openssl base64 -A
+         then bump the ?v= cache-buster (scripts/bump_static_version.sh)
+         and the integrity hash below in the same commit. -->
+    <script defer
+            src="vendor/telegram-web-app.js?v=20260523-98e26dc"
+            integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
+            crossorigin="anonymous"></script>
+    <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
+         on first paint of the price-distribution / price-history
+         charts. Keeps the initial bundle smaller for users who only
+         use the watchlist or trackers without leaking IP to a CDN. -->
+    <script defer src="js/app_bundle.js?v=20260523-98e26dc"></script>
 </head>
 <body>
+<div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
+<a href="#main-content" class="skip-link" aria-label="Перейти к основному содержимому">
+    Перейти к содержимому
+</a>
+<!-- Pull-to-refresh indicator. setupPullToRefresh translates this
+     element as the user pulls down at the top of the page; on commit
+     the spinner spins while the view's refresh loader runs. -->
+<div class="ptr-indicator" id="ptr-indicator" aria-hidden="true">
+    <div class="ptr-indicator-spinner">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <path d="M21 12a9 9 0 1 1-3-6.7"/>
+            <polyline points="21 4 21 12 13 12"/>
+        </svg>
+    </div>
+</div>
+
 <div class="app" id="app-root">
     <header class="header">
         <div class="header-inner">
-            <div class="logo">
-                <img class="logo-mark" src="/assets/logo.jpg" alt="Rafuks logo">
-                <span class="logo-name">Rafuks</span>
+            <a class="logo" href="/" aria-label="Rafuk — на главную">
+                <img class="logo-mark" src="/assets/logo.svg?v=20260523-98e26dc" alt="" width="28" height="28" decoding="async">
+                <span class="logo-name">Rafuk</span>
+            </a>
+            <div class="header-actions">
+                <button class="profile-chip profile-chip--loading" id="profile-chip" type="button" aria-label="Открыть профиль" aria-busy="true">
+                    <span class="profile-chip-dot" aria-hidden="true"></span>
+                    <span class="profile-chip-label" id="profile-chip-label">Профиль</span>
+                </button>
+                <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Сменить тему">
+                    <svg class="theme-icon theme-icon--sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"/>
+                        <line x1="12" y1="1" x2="12" y2="3"/>
+                        <line x1="12" y1="21" x2="12" y2="23"/>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                        <line x1="1" y1="12" x2="3" y2="12"/>
+                        <line x1="21" y1="12" x2="23" y2="12"/>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                    </svg>
+                    <svg class="theme-icon theme-icon--moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                    </svg>
+                </button>
+                <button class="ghost-btn small header-privacy-btn" id="privacy-btn" type="button" aria-label="Политика конфиденциальности" title="Политика конфиденциальности">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </button>
             </div>
-            <div class="currency-toggle">
-                <button class="cur-btn active" id="btn-byn" type="button">BYN</button>
-                <button class="cur-btn" id="btn-usd" type="button">USD</button>
-            </div>
-        </div>
-        <div class="rate-strip" id="rate-strip" hidden>
-            <span class="rate-label">Курс НБРБ</span>
-            <span class="rate-meta">1 USD =</span>
-            <span class="rate-value mono" id="usd-rate-value">—</span>
         </div>
     </header>
+
+    <main id="main-content" tabindex="-1">
+    <h1 class="sr-only">Rafuk — Анализ рынка Kufar</h1>
 
     <section class="search-section">
         <div class="search-wrap">
@@ -57,49 +172,62 @@
                 autocomplete="off"
                 autocorrect="off"
                 spellcheck="false"
+                inputmode="text"
+                enterkeyhint="search"
+                aria-label="Поиск по запросу"
             >
             <button class="search-btn" id="search-btn" type="button">
                 <span id="search-btn-label">Найти</span>
             </button>
         </div>
-        <label class="strict-toggle" for="strict-search-toggle">
-            <input id="strict-search-toggle" type="checkbox">
+        <label class="strict-toggle" for="strict-search-toggle" title="Точное совпадение запроса" hidden>
+            <input id="strict-search-toggle" type="checkbox" checked aria-label="Строгий поиск включён (точное совпадение)">
             <span class="strict-toggle-pill"></span>
-            <span class="strict-toggle-copy">Строгий поиск</span>
+            <span class="strict-toggle-copy ui-hint" data-hint="Искать только точное совпадение запроса">Строгий поиск</span>
         </label>
+
+        <section class="recent-strip" id="recent-section" hidden>
+            <span class="recent-kicker">Недавние</span>
+            <div class="recent-scroll" id="recent-scroll">
+                <div class="recent-list" id="recent-list"></div>
+            </div>
+            <button class="recent-clear" id="recent-clear-btn" type="button" aria-label="Очистить историю">✕</button>
+        </section>
     </section>
 
-    <section class="quick-section" aria-label="Быстрые запросы">
-        <button class="quick-chip" data-query="iphone 15" type="button">iPhone 15</button>
-        <button class="quick-chip" data-query="iphone 16" type="button">iPhone 16</button>
-        <button class="quick-chip" data-query="macbook air m1" type="button">MacBook Air M1</button>
-        <button class="quick-chip" data-query="playstation 5" type="button">PlayStation 5</button>
-    </section>
-
-    <nav class="view-nav" aria-label="Разделы Mini App">
-        <button class="view-tab active" data-view="overview" type="button">
-            <span class="view-tab-icon">📊</span>
+    <nav class="view-nav view-nav-grid" role="tablist" aria-label="Разделы Mini App">
+        <button class="view-tab active" data-view="overview" type="button" role="tab" aria-selected="true" aria-controls="overview-view" id="tab-overview">
+            <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 3v18h18"/>
+                <path d="M18 17V9"/>
+                <path d="M13 17V5"/>
+                <path d="M8 17v-3"/>
+            </svg>
             <span class="view-tab-label">Обзор</span>
         </button>
-        <button class="view-tab" data-view="ads" type="button">
-            <span class="view-tab-icon">📋</span>
+        <button class="view-tab" data-view="ads" type="button" role="tab" aria-selected="false" aria-controls="ads-view" id="tab-ads">
+            <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="7" height="7"/>
+                <rect x="14" y="3" width="7" height="7"/>
+                <rect x="14" y="14" width="7" height="7"/>
+                <rect x="3" y="14" width="7" height="7"/>
+            </svg>
             <span class="view-tab-label">Объявления</span>
         </button>
-        <button class="view-tab" data-view="tracking" type="button">
-            <span class="view-tab-icon">🔔</span>
+        <button class="view-tab" data-view="tracking" type="button" role="tab" aria-selected="false" aria-controls="tracking-view" id="tab-tracking">
+            <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
             <span class="view-tab-label">Автопоиск</span>
         </button>
-        <button class="view-tab" data-view="cheap" type="button">
-            <span class="view-tab-icon">🏷</span>
-            <span class="view-tab-label">Выгодно</span>
-        </button>
-        <button class="view-tab" data-view="monitoring" type="button">
-            <span class="view-tab-icon">⭐</span>
-            <span class="view-tab-label">Избранное</span>
-        </button>
-        <button class="view-tab" data-view="deals" type="button">
-            <span class="view-tab-icon">💰</span>
-            <span class="view-tab-label">Покупки</span>
+        <button class="view-tab view-tab--wide" data-view="deals" type="button" role="tab" aria-selected="false" aria-controls="deals-view" id="tab-deals">
+            <svg class="view-tab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"/>
+                <polyline points="9 11 12 8 15 11"/>
+                <line x1="12" y1="2" x2="12" y2="14"/>
+            </svg>
+            <span class="view-tab-label">Мои объявления</span>
         </button>
     </nav>
 
@@ -111,23 +239,27 @@
                 <p class="summary-signal" id="summary-signal">—</p>
             </div>
             <div class="summary-metrics">
-                <div class="summary-pill">
+                <div class="summary-pill summary-pill--hero">
                     <span class="summary-pill-label">Медиана</span>
                     <strong class="summary-pill-value mono" id="summary-median">—</strong>
                 </div>
                 <div class="summary-pill">
-                    <span class="summary-pill-label">На рынке</span>
-                    <strong class="summary-pill-value mono" id="summary-market-total">—</strong>
+                    <span class="summary-pill-label">Диапазон</span>
+                    <strong class="summary-pill-value mono" id="summary-range">—</strong>
                 </div>
                 <div class="summary-pill">
-                    <span class="summary-pill-label">Охват</span>
-                    <strong class="summary-pill-value mono" id="summary-coverage">—</strong>
+                    <span class="summary-pill-label ui-hint" data-hint="Цена в пределах 25-75 перцентиля рынка">Справедливо</span>
+                    <strong class="summary-pill-value mono" id="summary-fair">—</strong>
                 </div>
             </div>
         </div>
+        <div class="summary-refinements" id="summary-refinements" hidden>
+            <span class="summary-refinements-label">Уточнить:</span>
+            <div class="summary-refinements-chips" id="summary-refinements-chips"></div>
+        </div>
     </section>
 
-    <div class="err-bar" id="error-bar" hidden>
+    <div class="err-bar" id="error-bar" hidden role="status" aria-live="polite">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <circle cx="12" cy="12" r="10"></circle>
@@ -135,20 +267,66 @@
             <circle cx="12" cy="16" r="0.5" fill="currentColor"></circle>
         </svg>
         <span id="error-text"></span>
+        <button class="err-retry" id="error-retry" type="button">Повторить</button>
     </div>
 
     <div class="helper-panel" id="helper-panel">
-        Введите запрос или выберите быстрый сценарий выше.
+        <p class="helper-headline">С чего начать?</p>
+        <p class="helper-sub">Введи название товара — Rafuk покажет рынок, аналитику и AI-рекомендации.</p>
+        <div class="helper-examples" id="helper-examples" aria-label="Примеры запросов">
+            <span class="helper-examples-label">Примеры запросов</span>
+            <button class="helper-chip" type="button" data-recent-query="iPhone 14 Pro">iPhone 14 Pro</button>
+            <button class="helper-chip" type="button" data-recent-query="Volkswagen Polo">Volkswagen Polo</button>
+            <button class="helper-chip" type="button" data-recent-query="MacBook Air M2">MacBook Air M2</button>
+            <button class="helper-chip" type="button" data-recent-query="велосипед взрослый">велосипед взрослый</button>
+            <button class="helper-chip" type="button" data-recent-query="холодильник Atlant">холодильник Atlant</button>
+        </div>
+        <div class="helper-cta-row">
+            <button class="helper-cta" type="button" data-view-shortcut="deals">
+                <span class="helper-cta-kicker">Продаёшь?</span>
+                <span class="helper-cta-text">AI помощник продавцу — заголовок, цена, торг</span>
+            </button>
+        </div>
     </div>
 
-    <section class="view-panel" id="overview-view">
+    <section class="view-panel" id="overview-view" role="tabpanel" aria-labelledby="tab-overview">
+        <section class="overview-loading" id="overview-loading" role="status" aria-live="polite" aria-busy="true" hidden>
+            <span class="sr-only" id="overview-loading-query">Загружаю обзор</span>
+            <div class="overview-loading-grid" aria-hidden="true">
+                <div class="overview-skeleton-card">
+                    <span class="skel-bar overview-skeleton-label"></span>
+                    <span class="skel-bar overview-skeleton-value"></span>
+                    <span class="skel-bar overview-skeleton-sub"></span>
+                </div>
+                <div class="overview-skeleton-card">
+                    <span class="skel-bar overview-skeleton-label"></span>
+                    <span class="skel-bar overview-skeleton-value"></span>
+                    <span class="skel-bar overview-skeleton-sub"></span>
+                </div>
+                <div class="overview-skeleton-card wide">
+                    <span class="skel-bar overview-skeleton-label"></span>
+                    <span class="skel-bar overview-skeleton-value long"></span>
+                    <span class="skel-bar overview-skeleton-sub"></span>
+                </div>
+                <div class="overview-skeleton-card wide">
+                    <span class="skel-bar overview-skeleton-label"></span>
+                    <span class="skel-bar overview-skeleton-value long"></span>
+                    <span class="skel-bar overview-skeleton-sub"></span>
+                </div>
+            </div>
+            <div class="overview-skeleton-section" aria-hidden="true">
+                <span class="skel-bar overview-skeleton-heading"></span>
+                <span class="skel-bar overview-skeleton-line"></span>
+            </div>
+        </section>
+
         <section class="section" id="stats-section" hidden>
             <div class="sec-head">
                 <h2 class="sec-title">Статистика</h2>
                 <span class="badge" id="market-total-badge"></span>
             </div>
             <div class="stats-grid" id="stats-grid">
-                <div class="stat-card is-accent">
+                <div class="stat-card">
                     <span class="stat-lbl">Медиана</span>
                     <span class="stat-val mono" id="stat-median">—</span>
                     <span class="stat-sub"></span>
@@ -158,8 +336,8 @@
                     <span class="stat-val mono" id="stat-mean">—</span>
                     <span class="stat-sub"></span>
                 </div>
-                <div class="stat-card">
-                    <span class="stat-lbl">Справедливо</span>
+                <div class="stat-card wide">
+                    <span class="stat-lbl ui-hint" data-hint="25-75 перцентиль цен на рынке">Справедливо</span>
                     <span class="stat-val stat-range mono" id="stat-fair-range">—</span>
                     <span class="stat-sub">обычно в этих пределах</span>
                 </div>
@@ -200,7 +378,12 @@
             </div>
             <div class="section-body" id="distribution-body" hidden>
                 <div class="chart-box">
-                    <canvas id="priceChart"></canvas>
+                    <!-- FE-06: canvas exposes itself as an image with a
+                         summary label for screen readers; the chart's
+                         numeric summary is updated alongside the canvas
+                         redraw via app_charts.js so the announced text
+                         reflects the current data. -->
+                    <canvas id="priceChart" role="img" aria-label="Распределение цен — гистограмма"></canvas>
                 </div>
             </div>
         </section>
@@ -213,51 +396,18 @@
             </div>
             <div class="section-body" id="history-body">
                 <div class="sort-row history-range-row" id="history-range-row">
-                    <button class="s-tab active" data-history-days="7" type="button">7 дней</button>
-                    <button class="s-tab" data-history-days="30" type="button">30 дней</button>
-                    <button class="s-tab" data-history-days="90" type="button">90 дней</button>
+                    <button class="s-tab active" data-history-days="7" type="button" aria-pressed="true">7 дней</button>
+                    <button class="s-tab" data-history-days="30" type="button" aria-pressed="false">30 дней</button>
+                    <button class="s-tab" data-history-days="90" type="button" aria-pressed="false">90 дней</button>
                 </div>
                 <div class="history-summary" id="history-summary" hidden></div>
                 <div class="chart-box history-chart-box">
-                    <canvas id="historyChart"></canvas>
+                    <!-- FE-06: see priceChart above. -->
+                    <canvas id="historyChart" role="img" aria-label="Динамика медианы цен — линейный график"></canvas>
                 </div>
                 <p class="section-note" id="history-empty" hidden>
                     История для этого запроса ещё копится. Данные появляются после поиска и фоновых проверок.
                 </p>
-            </div>
-        </section>
-
-        <section class="section" id="comparison-section" hidden>
-            <div class="sec-head collapsible-head">
-                <h2 class="sec-title">Сравнение</h2>
-                <span class="badge">2 запроса</span>
-                <button class="section-toggle" data-panel-toggle="comparison" type="button">Показать</button>
-            </div>
-            <div class="section-body" id="comparison-body" hidden>
-                <div class="compare-bar">
-                    <input
-                        id="compare-input"
-                        type="search"
-                        class="compare-input"
-                        placeholder="Например: iphone 16 256, iphone 15 pro 256"
-                        autocomplete="off"
-                        autocorrect="off"
-                        spellcheck="false"
-                    >
-                    <button class="ghost-btn small" id="compare-btn" type="button">Сравнить</button>
-                    <button class="ghost-btn small" id="compare-swap-btn" type="button" aria-label="Поменять местами запросы">↔</button>
-                </div>
-                <div class="quick-section compare-quick-section" aria-label="Быстрое сравнение">
-                    <button class="quick-chip compare-chip" data-compare-query="iphone 15" type="button">iPhone 15</button>
-                    <button class="quick-chip compare-chip" data-compare-query="iphone 16" type="button">iPhone 16</button>
-                    <button class="quick-chip compare-chip" data-compare-query="macbook air m1" type="button">MacBook Air M1</button>
-                    <button class="quick-chip compare-chip" data-compare-query="playstation 5" type="button">PlayStation 5</button>
-                </div>
-                <p class="section-note" id="comparison-note">
-                    Сравните текущий запрос с другим товаром или другой конфигурацией.
-                </p>
-                <div class="compare-summary" id="comparison-summary" hidden></div>
-                <div class="compare-grid" id="comparison-grid"></div>
             </div>
         </section>
 
@@ -272,245 +422,370 @@
         </section>
     </section>
 
-    <section class="view-panel" id="ads-view" hidden>
+    <section class="view-panel" id="ads-view" hidden role="tabpanel" aria-labelledby="tab-ads">
         <section class="section" id="listings-section" hidden>
             <div class="sec-head listings-head">
                 <h2 class="sec-title">Объявления</h2>
+                <button class="ghost-btn small filter-btn" id="filter-btn" type="button" aria-label="Фильтры" aria-controls="filter-dropdown" aria-expanded="false">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                    <span class="filter-btn-label">Фильтры</span>
+                    <span class="filter-active-badge" id="filter-active-badge" hidden></span>
+                </button>
                 <span class="badge" id="listings-total-badge"></span>
+                <span class="badge badge--fallback" id="listings-fallback-badge" hidden>Показаны похожие</span>
             </div>
+
+            <div class="filter-dropdown" id="filter-dropdown" hidden>
+                <div class="filter-group">
+                    <span class="filter-group-label">Категории</span>
+                    <div class="filter-chips" id="filter-categories"></div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-group-label">Цена, BYN</span>
+                    <div class="filter-price-range">
+                        <label class="filter-price-field">
+                            <span>От</span>
+                            <input id="filter-min-price" type="number" min="0" step="1" placeholder="0" inputmode="numeric">
+                        </label>
+                        <label class="filter-price-field">
+                            <span>До</span>
+                            <input id="filter-max-price" type="number" min="0" step="1" placeholder="∞" inputmode="numeric">
+                        </label>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-group-label">Состояние</span>
+                    <div class="filter-chips" id="filter-conditions">
+                        <button class="filter-chip active" data-condition="" type="button" aria-pressed="true">Все</button>
+                        <button class="filter-chip" data-condition="new" type="button" aria-pressed="false">Новое</button>
+                        <button class="filter-chip" data-condition="used" type="button" aria-pressed="false">Б/у</button>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-group-label">Продавец</span>
+                    <div class="filter-chips" id="filter-sellers">
+                        <button class="filter-chip active" data-seller="" type="button" aria-pressed="true">Все</button>
+                        <button class="filter-chip" data-seller="private" type="button" aria-pressed="false">Частное</button>
+                        <button class="filter-chip" data-seller="shop" type="button" aria-pressed="false">Магазин</button>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-group-label">Регион и город</span>
+                    <div class="filter-region-select">
+                        <select id="filter-region" class="filter-select" aria-label="Регион и город">
+                            <option value="">Все регионы</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="filter-actions">
+                    <button class="filter-btn filter-btn--cancel" type="button">Отменить</button>
+                    <button class="filter-btn filter-btn--apply" type="button">Применить</button>
+                </div>
+            </div>
+
             <div class="sort-row">
-                <button class="s-tab active" data-sort="newest" type="button">Новые</button>
-                <button class="s-tab" data-sort="deal_score" type="button">Выгодные</button>
-                <button class="s-tab" data-sort="price_asc" type="button">Дешевле</button>
-                <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
-                <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
+                <button class="s-tab active" data-sort="newest" type="button" aria-pressed="true">Новые</button>
+                <button class="s-tab" data-sort="cheap" type="button" aria-pressed="false">Выгодные</button>
+                <button class="s-tab" data-sort="price_asc" type="button" aria-pressed="false">Дешевле</button>
+                <button class="s-tab" data-sort="price_desc" type="button" aria-pressed="false">Дороже</button>
+                <button class="s-tab" data-sort="near_median" type="button" aria-pressed="false">≈ Медиана</button>
             </div>
-            <div class="listings-list" id="listings-list"></div>
+            <!-- Discount-range controls — visible only when sort=cheap.
+                 Used to live in its own "Выгодно" tab; merged here so
+                 listings stay in one place. JS toggles `hidden` on the
+                 wrapper based on state.sort. -->
+            <div class="deals-controls" id="deals-controls" hidden>
+                <p class="section-note">
+                    Объявления ниже текущей рыночной медианы — выбирайте порог скидки.
+                </p>
+                <div class="deal-range-row">
+                    <label class="deal-range-field" for="deal-from-input">
+                        <span>От</span>
+                        <div class="deal-range-input-wrap">
+                            <input id="deal-from-input" type="number" min="0" step="1" inputmode="numeric" value="10">
+                            <span>%</span>
+                        </div>
+                    </label>
+                    <label class="deal-range-field" for="deal-to-input">
+                        <span>До</span>
+                        <div class="deal-range-input-wrap">
+                            <input id="deal-to-input" type="number" min="0" step="1" inputmode="numeric" value="30">
+                            <span>%</span>
+                        </div>
+                    </label>
+                    <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
+                </div>
+                <div class="sort-row" id="deal-threshold-row">
+                    <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button" aria-pressed="true">10-20%</button>
+                    <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button" aria-pressed="false">10-30%</button>
+                    <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button" aria-pressed="false">20-40%</button>
+                </div>
+            </div>
+            <div class="listings-list" id="listings-list" role="list"></div>
         </section>
     </section>
 
-    <section class="view-panel" id="tracking-view" hidden>
+    <section class="view-panel" id="tracking-view" hidden role="tabpanel" aria-labelledby="tab-tracking">
         <div class="view-hero tracking-hero">
-            <div class="view-hero-icon">🔔</div>
             <h2 class="view-hero-title">Автопоиск</h2>
             <p class="view-hero-desc">Создавайте трекеры для автоматического мониторинга новых лотов и падений цен по вашим запросам</p>
             <div class="view-hero-stats" id="tracking-hero-stats"></div>
         </div>
+        
         <section class="section" id="tracker-panel">
             <div class="sec-head sec-head--center">
-                <h2 class="sec-title">Детектор новинок</h2>
+                <h2 class="sec-title">Управление трекерами</h2>
             </div>
+            
             <div class="tracker-card">
-                <div class="tracker-actions">
-                    <button class="primary-btn" id="track-query-btn" type="button">Следить за текущим запросом</button>
-                </div>
-                <div class="deal-range-row tracker-filter-row">
-                    <label class="deal-range-field" for="tracker-min-discount-input">
-                        <span>Мин. скидка</span>
-                        <div class="deal-range-input-wrap">
-                            <input id="tracker-min-discount-input" type="number" min="0" step="1" inputmode="numeric" value="10">
-                            <span>%</span>
-                        </div>
-                    </label>
-                    <label class="deal-range-field" for="tracker-max-price-input">
-                        <span>Макс. цена</span>
-                        <div class="deal-range-input-wrap">
-                            <input id="tracker-max-price-input" type="number" min="0" step="1" inputmode="numeric" placeholder="необязательно">
-                            <span>BYN</span>
-                        </div>
-                    </label>
-                </div>
-                <div class="profile-grid">
-                    <label class="deal-range-field" for="tracker-seller-select">
-                        <span>Продавец</span>
-                        <div class="deal-range-input-wrap">
-                            <select id="tracker-seller-select" class="deal-select">
-                                <option value="">Любой</option>
-                                <option value="Частное лицо">Частник</option>
-                                <option value="Магазин">Магазин</option>
-                            </select>
-                        </div>
-                    </label>
-                    <label class="deal-range-field" for="tracker-condition-select">
-                        <span>Состояние</span>
-                        <div class="deal-range-input-wrap">
-                            <select id="tracker-condition-select" class="deal-select">
-                                <option value="">Любое</option>
-                                <option value="Новый">Новый</option>
-                                <option value="Б/у">Б/у</option>
-                            </select>
-                        </div>
-                    </label>
-                    <label class="deal-range-field" for="tracker-region-input">
-                        <span>Регион</span>
-                        <div class="deal-range-input-wrap">
-                            <input id="tracker-region-input" type="text" placeholder="Минск, Регион 6">
-                        </div>
-                    </label>
-                    <label class="deal-range-field" for="tracker-config-input">
-                        <span>Конфиг</span>
-                        <div class="deal-range-input-wrap">
-                            <input id="tracker-config-input" type="text" placeholder="pro max 256 / m1 8 256">
-                        </div>
-                    </label>
-                </div>
-                <label class="strict-toggle" for="tracker-exclude-duplicates-toggle">
-                    <input id="tracker-exclude-duplicates-toggle" type="checkbox">
-                    <span class="strict-toggle-pill"></span>
-                    <span class="strict-toggle-copy">Только без дублей</span>
-                </label>
-                <p class="tracker-form-hint">
-                    Профиль фильтров применяется к создаваемому трекеру.
-                </p>
-                <div class="tracker-status" id="tracker-status" hidden></div>
-                <div class="trackers-list" id="trackers-list"></div>
-                <div class="tracker-events-block">
-                    <div class="sec-head events-head sec-head--center">
-                        <h3 class="sec-title">Лента событий</h3>
+                <div class="tracker-composer">
+                    <!-- Create tracker section -->
+                    <div class="tracker-create-section">
+                        <button class="primary-btn" id="track-query-btn" type="button">
+                            <span class="btn-icon">+</span>
+                            Следить за текущим запросом
+                        </button>
                     </div>
-                    <div class="tracker-event-controls">
-                        <div class="sort-row" id="tracker-event-filter-row">
-                            <button class="s-tab active" data-event-filter="all" type="button">Все</button>
-                            <button class="s-tab" data-event-filter="price_drop" type="button">Упали в цене</button>
-                            <button class="s-tab" data-event-filter="new_listing" type="button">Новые лоты</button>
-                        </div>
-                        <button class="ghost-btn small tracker-clear-btn" id="clear-events-btn" type="button">Очистить</button>
+
+                    <!-- Tracker filters -->
+                    <div class="tracker-form-grid">
+                        <label class="deal-range-field" for="tracker-min-discount-input">
+                            <span>Мин. скидка</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="tracker-min-discount-input" type="number" min="0" step="1" inputmode="numeric" value="10">
+                                <span>%</span>
+                            </div>
+                        </label>
+                        <label class="deal-range-field" for="tracker-max-price-input">
+                            <span>Макс. цена</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="tracker-max-price-input" type="number" min="0" step="1" inputmode="numeric" placeholder="необязательно">
+                                <span id="tracker-max-price-currency">BYN</span>
+                            </div>
+                        </label>
+                        <label class="deal-range-field" for="tracker-seller-select">
+                            <span>Продавец</span>
+                            <div class="deal-range-input-wrap">
+                                <select id="tracker-seller-select" class="deal-select">
+                                    <option value="">Любой</option>
+                                    <option value="Частное лицо">Частник</option>
+                                    <option value="Магазин">Магазин</option>
+                                </select>
+                            </div>
+                        </label>
+                        <label class="deal-range-field" for="tracker-config-input">
+                            <span>Конфиг</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="tracker-config-input" type="text" placeholder="pro max 256 / m1 8 256">
+                            </div>
+                        </label>
+                        <label class="deal-range-field" for="tracker-region-select">
+                            <span>Регион и город</span>
+                            <div class="deal-range-input-wrap">
+                                <select id="tracker-region-select" class="deal-select">
+                                    <option value="">Любой</option>
+                                </select>
+                            </div>
+                        </label>
+                        <label class="deal-range-field" for="tracker-condition-select">
+                            <span>Состояние</span>
+                            <div class="deal-range-input-wrap">
+                                <select id="tracker-condition-select" class="deal-select">
+                                    <option value="">Любое</option>
+                                    <option value="Новый">Новый</option>
+                                    <option value="Б/у">Б/у</option>
+                                </select>
+                            </div>
+                        </label>
                     </div>
-                    <div class="tracker-events-list" id="tracker-events-list"></div>
+                    <p class="tracker-form-hint">
+                        Профиль фильтров применяется к создаваемому трекеру.
+                    </p>
+                    <div class="tracker-status" id="tracker-status" hidden></div>
+                </div>
+
+                <!-- Active trackers list -->
+                <div class="trackers-list" id="trackers-list" role="list"></div>
+            </div>
+        </section>
+        
+        <!-- Event feed section -->
+        <section class="section" id="tracker-events-section">
+            <div class="sec-head events-head listings-head">
+                <h3 class="sec-title sec-title--with-icon">
+                    <svg class="sec-title-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M4 7h3"/>
+                        <path d="M4 12h3"/>
+                        <path d="M4 17h3"/>
+                        <path d="M11 7h9"/>
+                        <path d="M11 12h9"/>
+                        <path d="M11 17h6"/>
+                    </svg>
+                    <span>Лента событий</span>
+                </h3>
+                <div class="lead-actions-wrap">
+                    <button class="ghost-btn small danger" id="clear-events-btn" type="button" aria-label="Очистить ленту событий">Очистить</button>
                 </div>
             </div>
+            
+            <div class="tracker-event-controls">
+                <div class="sort-row" id="tracker-event-filter-row">
+                    <button class="s-tab active" data-event-filter="all" type="button" aria-pressed="true">
+                        <span data-event-filter-label>Все</span>
+                        <span class="filter-count" data-event-filter-count="all" hidden>0</span>
+                    </button>
+                    <button class="s-tab" data-event-filter="price_drop" type="button" aria-pressed="false">
+                        <span data-event-filter-label>Упали в цене</span>
+                        <span class="filter-count" data-event-filter-count="price_drop" hidden>0</span>
+                    </button>
+                    <button class="s-tab" data-event-filter="new_listing" type="button" aria-pressed="false">
+                        <span data-event-filter-label>Новые лоты</span>
+                        <span class="filter-count" data-event-filter-count="new_listing" hidden>0</span>
+                    </button>
+                    <button class="s-tab" data-event-filter="price_threshold_alert" type="button" aria-pressed="false">
+                        <span data-event-filter-label>Порог цены</span>
+                        <span class="filter-count" data-event-filter-count="price_threshold_alert" hidden>0</span>
+                    </button>
+                    <button class="s-tab" data-event-filter="discount_alert" type="button" aria-pressed="false">
+                        <span data-event-filter-label>Скидка</span>
+                        <span class="filter-count" data-event-filter-count="discount_alert" hidden>0</span>
+                    </button>
+                </div>
+                <div class="tracker-event-tracker-filter">
+                    <select id="tracker-event-tracker-select" aria-label="Фильтр по трекеру">
+                        <option value="">Все трекеры</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="tracker-events-list" id="tracker-events-list" role="list"></div>
         </section>
     </section>
 
-    <section class="view-panel" id="cheap-view" hidden>
-        <div class="view-hero cheap-hero">
-            <div class="view-hero-icon">🏷</div>
-            <h2 class="view-hero-title">Выгодные предложения</h2>
-            <p class="view-hero-desc">Объявления ниже текущей рыночной медианы — выбирайте порог скидки</p>
-            <div class="view-hero-stats" id="cheap-hero-stats"></div>
-        </div>
-        <section class="section" id="deals-section" hidden>
-            <div class="sec-head listings-head">
-                <h2 class="sec-title">Фильтр скидки</h2>
-                <span class="badge" id="deals-total-badge"></span>
-            </div>
-            <p class="section-note">
-                Порог можно менять без нового полного поиска.
-            </p>
-            <div class="deal-range-row">
-                <label class="deal-range-field" for="deal-from-input">
-                    <span>От</span>
-                    <div class="deal-range-input-wrap">
-                        <input id="deal-from-input" type="number" min="0" step="1" inputmode="numeric" value="10">
-                        <span>%</span>
-                    </div>
-                </label>
-                <label class="deal-range-field" for="deal-to-input">
-                    <span>До</span>
-                    <div class="deal-range-input-wrap">
-                        <input id="deal-to-input" type="number" min="0" step="1" inputmode="numeric" value="30">
-                        <span>%</span>
-                    </div>
-                </label>
-                <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
-            </div>
-            <div class="sort-row" id="deal-threshold-row">
-                <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button">10-20%</button>
-                <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
-                <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
-            </div>
-            <div class="listings-list" id="deals-list"></div>
-        </section>
-    </section>
 
-    <section class="view-panel" id="monitoring-view" hidden>
-        <div class="view-hero monitoring-hero">
-            <div class="view-hero-icon">⭐</div>
-            <h2 class="view-hero-title">Избранное</h2>
-            <p class="view-hero-desc">Следите за конкретными объявлениями: падение цены, пропажа из выдачи, дубли</p>
-            <div class="view-hero-stats" id="monitoring-hero-stats"></div>
-        </div>
-        <section class="section" id="watchlist-section">
-            <div class="sec-head listings-head">
-                <h2 class="sec-title">Сохранённые лоты</h2>
-                <button class="ghost-btn small" id="refresh-watchlist-btn" type="button">Проверить цены</button>
-            </div>
-            <p class="section-note" id="watchlist-note">
-                Добавляйте объявления через кнопку «Следить» в карточке или списке.
-            </p>
-            <div class="sort-row workflow-filter-row" id="watch-filter-row">
-                <button class="s-tab" data-watch-filter="all" type="button">Все</button>
-                <button class="s-tab active" data-watch-filter="attention" type="button">Требуют внимания</button>
-                <button class="s-tab" data-watch-filter="watching" type="button">Слежу</button>
-                <button class="s-tab" data-watch-filter="risk" type="button">Риск/сигнал</button>
-            </div>
-            <div class="trackers-list" id="watchlist-list"></div>
-        </section>
-    </section>
 
-    <section class="view-panel" id="deals-view" hidden>
+    <section class="view-panel" id="deals-view" hidden role="tabpanel" aria-labelledby="tab-deals">
         <div class="view-hero deals-hero">
-            <div class="view-hero-icon">💰</div>
-            <h2 class="view-hero-title">Покупки</h2>
-            <p class="view-hero-desc">Управляйте сделками: отбор, покупка, продажа и лучшие возможности рынка</p>
+            <h2 class="view-hero-title">Мои объявления</h2>
+            <p class="view-hero-desc">Слежу, торгую, продаю — всё в одной воронке</p>
             <div class="view-hero-stats" id="deals-hero-stats"></div>
         </div>
-        <section class="section" id="lead-inbox-section">
+        <section class="section" id="profit-dashboard-section">
             <div class="sec-head listings-head">
-                <h2 class="sec-title">В работе</h2>
-                <button class="ghost-btn small" id="reload-leads-btn" type="button">Обновить</button>
+                <h2 class="sec-title">Финансы</h2>
             </div>
-            <p class="section-note" id="lead-inbox-note">
-                Лоты, которые вы взяли в работу или решили проверить позже.
-            </p>
-            <div class="sort-row workflow-filter-row" id="lead-filter-row">
-                <button class="s-tab" data-lead-filter="all" type="button">Все</button>
-                <button class="s-tab active" data-lead-filter="active" type="button">Активные</button>
-                <button class="s-tab" data-lead-filter="buy" type="button">Куплено/в продаже</button>
-                <button class="s-tab" data-lead-filter="done" type="button">Завершено</button>
-            </div>
-            <div class="trackers-list" id="lead-inbox-list"></div>
+            <div class="profit-cards" id="profit-cards"></div>
         </section>
-        <section class="section" id="opportunity-board-section">
-            <div class="sec-head listings-head">
-                <h2 class="sec-title">Что покупать сегодня</h2>
-                <button class="ghost-btn small" id="reload-opportunity-board-btn" type="button">Обновить</button>
+        <section class="section la-card" id="listing-assistant-section">
+            <div class="la-card-head">
+                <span class="la-card-kicker">AI · ПРОДАВЦУ</span>
+                <h2 class="la-card-title">Помощь с объявлением</h2>
+                <p class="la-card-text">
+                    Загрузи фото и опиши товар — AI подскажет заголовок, описание,
+                    цену по рынку и как отвечать на торг.
+                </p>
             </div>
-            <p class="section-note" id="opportunity-board-note">
-                Показываем лучшие дешёвые лоты по сохранённым поискам.
-            </p>
-            <div class="board-grid">
-                <section class="board-section">
-                    <div class="board-section-head">
-                        <h3 class="board-section-title">Лучшие сделки</h3>
-                        <span class="board-section-copy">Кандидаты на выкуп прямо сейчас</span>
-                    </div>
-                    <div class="listings-list" id="opportunity-board-list"></div>
-                </section>
-                <section class="board-section">
-                    <div class="board-section-head">
-                        <h3 class="board-section-title">Топ падений цены</h3>
-                        <span class="board-section-copy">Что заметно просело последним</span>
-                    </div>
-                    <div class="trackers-list" id="opportunity-board-drops"></div>
-                </section>
-                <section class="board-section">
-                    <div class="board-section-head">
-                        <h3 class="board-section-title">Редкие предложения</h3>
-                        <span class="board-section-copy">Тонкий рынок и низкая конкуренция</span>
-                    </div>
-                    <div class="listings-list" id="opportunity-board-rare"></div>
-                </section>
-                <section class="board-section">
-                    <div class="board-section-head">
-                        <h3 class="board-section-title">Сигналы рынка</h3>
-                        <span class="board-section-copy">Где сегодня есть дефицит или маржа</span>
-                    </div>
-                    <div class="trackers-list" id="opportunity-board-signals"></div>
-                </section>
+            <div class="la-card-cta-row">
+                <button class="primary-btn la-card-cta" id="listing-assistant-open-btn" type="button">
+                    Открыть помощника
+                </button>
+                <!-- History shortcut moved inside the modal — its tab in
+                     the assistant carries the count. Keeping the card CTA
+                     full-width and unobtrusive on the deals view. -->
+            </div>
+        </section>
+        <section class="section" id="lead-inbox-section">
+            <div class="items-tabs" id="items-filter-row" role="tablist" aria-label="Раздел">
+                <button class="items-tab" id="items-tab-watching" data-items-filter="watching" type="button" role="tab" aria-selected="false" aria-controls="lead-inbox-list" tabindex="-1">
+                    Избранное <span class="items-tab-count" data-items-count="watching" hidden>0</span>
+                </button>
+                <button class="items-tab is-active" id="items-tab-purchases" data-items-filter="purchases" type="button" role="tab" aria-selected="true" aria-controls="lead-inbox-list" tabindex="0">
+                    Покупки <span class="items-tab-count" data-items-count="purchases" hidden>0</span>
+                </button>
+            </div>
+            <div class="reminder-upcoming" id="reminder-upcoming" hidden>
+                <span class="reminder-upcoming-label">📅 Ближайшие напоминания</span>
+                <div class="reminder-upcoming-list" id="reminder-upcoming-list"></div>
+            </div>
+            <!-- Clear buttons live above the list, only one visible at a
+                 time depending on the active tab. Header placement keeps
+                 them in the user's reach without scrolling once the
+                 list grows long. -->
+            <div class="items-clear-header">
+                <button class="ghost-btn small danger items-clear-btn" id="clear-all-leads-btn" type="button" hidden>Очистить покупки</button>
+                <button class="ghost-btn small danger items-clear-btn" id="delete-all-watchlist-btn" type="button" hidden>Очистить избранное</button>
+            </div>
+            <div class="trackers-list" id="lead-inbox-list" role="tabpanel" aria-labelledby="items-tab-purchases"></div>
+        </section>
+        <section class="section" id="history-deals-section">
+            <div class="sec-head collapsible-head">
+                <h2 class="sec-title">История сделок</h2>
+                <span class="badge" id="history-deals-count">0</span>
+                <button class="section-toggle" data-panel-toggle="historyDeals" type="button">Показать</button>
+            </div>
+            <div class="section-body" id="history-deals-body" hidden>
+                <div class="history-deals-list" id="history-deals-list" role="list"></div>
             </div>
         </section>
     </section>
+
+    <section class="view-panel profile-view" id="profile-view" hidden role="region" aria-labelledby="profile-view-title">
+        <div class="profile-content" id="profile-content"></div>
+    </section>
+
+    <section class="view-panel admin-view" id="admin-view" hidden role="region" aria-labelledby="admin-view-title">
+        <div class="admin-shell" id="admin-content">
+            <div class="admin-hero">
+                <div>
+                    <span class="admin-kicker">Внутренняя админка</span>
+                    <h2 class="admin-title" id="admin-view-title">Пользователи и статусы</h2>
+                    <p class="admin-copy">Ручная выдача доступа и настройка дневных AI-лимитов.</p>
+                </div>
+                <button class="ghost-btn small" id="admin-back-profile-btn" type="button">Профиль</button>
+            </div>
+
+            <section class="admin-section" aria-labelledby="admin-users-title">
+                <div class="sec-head admin-section-head">
+                    <h3 class="sec-title" id="admin-users-title">Пользователи</h3>
+                    <button class="ghost-btn small" id="admin-users-refresh-btn" type="button">Обновить</button>
+                </div>
+                <div class="admin-toolbar">
+                    <label class="admin-field admin-field--search">
+                        <span class="admin-field-label">Поиск</span>
+                        <input id="admin-user-query" class="admin-input" type="search" placeholder="TG ID, username или имя" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="admin-field">
+                        <span class="admin-field-label">Статус</span>
+                        <select id="admin-status-filter" class="admin-input">
+                            <option value="">Все статусы</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="admin-status-line" id="admin-users-state" role="status" aria-live="polite"></div>
+                <div class="admin-users-list" id="admin-users-list" role="list"></div>
+            </section>
+
+            <section class="admin-section" aria-labelledby="admin-statuses-title">
+                <div class="sec-head admin-section-head">
+                    <h3 class="sec-title" id="admin-statuses-title">Статусы</h3>
+                    <button class="ghost-btn small" id="admin-statuses-refresh-btn" type="button">Обновить</button>
+                </div>
+                <div class="admin-status-line" id="admin-statuses-state" role="status" aria-live="polite"></div>
+                <div class="admin-statuses-list" id="admin-statuses-list" role="list"></div>
+            </section>
+
+            <section class="admin-section" aria-labelledby="admin-audit-title">
+                <div class="sec-head admin-section-head">
+                    <h3 class="sec-title" id="admin-audit-title">Аудит</h3>
+                    <button class="ghost-btn small" id="admin-audit-refresh-btn" type="button">Обновить</button>
+                </div>
+                <div class="admin-status-line" id="admin-audit-state" role="status" aria-live="polite"></div>
+                <div class="admin-audit-list" id="admin-audit-list"></div>
+            </section>
+        </div>
+    </section>
+
+    </main>
 
     <div class="detail-modal" id="detail-modal" hidden>
         <div class="detail-overlay" id="detail-overlay"></div>
@@ -518,56 +793,492 @@
             <div class="detail-top-bar">
                 <button class="detail-close" id="detail-close" type="button" aria-label="Закрыть">×</button>
             </div>
-            <div class="detail-media">
-                <img id="detail-main-image" alt="" hidden>
-                <div class="detail-no-image" id="detail-no-image">Нет фото</div>
-            </div>
-            <div class="detail-thumbs" id="detail-thumbs"></div>
-            <div class="detail-head">
-                <div class="detail-head-main">
-                    <h3 class="detail-title" id="detail-title"></h3>
-                    <div class="detail-price mono" id="detail-price"></div>
+            <div class="detail-sheet-content">
+                <div class="detail-media" id="detail-media" aria-label="Фото объявления 1 из 1">
+                    <img id="detail-main-image" alt="" hidden>
+                    <div class="detail-no-image" id="detail-no-image">Нет фото</div>
                 </div>
-            </div>
-            <div class="detail-meta" id="detail-meta"></div>
-            <p class="detail-description" id="detail-description" hidden></p>
-            <section class="detail-block" id="detail-profit-block" hidden>
-                <h4 class="detail-block-title">Перепродажа</h4>
-                <div class="detail-fields" id="detail-profit"></div>
-            </section>
-            <section class="detail-block" id="detail-liquidity-block" hidden>
-                <h4 class="detail-block-title">Ликвидность</h4>
-                <div class="detail-fields" id="detail-liquidity"></div>
-            </section>
-            <section class="detail-block" id="detail-params-block" hidden>
-                <h4 class="detail-block-title">Параметры</h4>
-                <div class="detail-fields" id="detail-params"></div>
-            </section>
-            <section class="detail-block" id="detail-seller-block" hidden>
-                <h4 class="detail-block-title">Продавец</h4>
-                <div class="detail-fields" id="detail-seller"></div>
-            </section>
-            <div class="listing-actions detail-bottom-actions">
-                <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
-                <button class="listing-btn" id="detail-add-watchlist-btn" type="button">Следить</button>
-                <a class="listing-btn listing-btn--accent" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
+                <div class="detail-thumbs" id="detail-thumbs"></div>
+                <div class="detail-head">
+                    <div class="detail-head-main">
+                        <h3 class="detail-title" id="detail-title"></h3>
+                        <div class="detail-price mono" id="detail-price"></div>
+                    </div>
+                </div>
+                <div class="detail-meta" id="detail-meta"></div>
+                <p class="detail-description" id="detail-description" hidden></p>
+                <section class="detail-block" id="detail-profit-block" hidden>
+                    <h4 class="detail-block-title">Оценка цены</h4>
+                    <div class="detail-fields" id="detail-profit"></div>
+                </section>
+                <section class="detail-block" id="detail-liquidity-block" hidden>
+                    <h4 class="detail-block-title">Ликвидность</h4>
+                    <div class="detail-fields" id="detail-liquidity"></div>
+                </section>
+                <section class="detail-block" id="detail-params-block" hidden>
+                    <h4 class="detail-block-title">Параметры</h4>
+                    <div class="detail-fields" id="detail-params"></div>
+                </section>
+                <section class="detail-block" id="detail-seller-block" hidden>
+                    <h4 class="detail-block-title">Продавец</h4>
+                    <div class="detail-fields" id="detail-seller"></div>
+                </section>
+                <section class="detail-block" id="detail-ai-block" hidden>
+                    <h4 class="detail-block-title">AI Анализ</h4>
+                    <div id="detail-ai-content"></div>
+                </section>
+                <section class="detail-block reminder-section" id="detail-reminder-block" hidden>
+                    <h4 class="detail-block-title">🔔 Напоминание</h4>
+                    <div class="reminder-form" id="reminder-form">
+                        <div class="reminder-form-row">
+                            <label class="workflow-field">
+                                <span class="workflow-field-label">Дата и время</span>
+                                <div class="deal-range-input-wrap workflow-input-wrap">
+                                    <input id="reminder-datetime-input" type="datetime-local">
+                                </div>
+                            </label>
+                        </div>
+                        <div class="reminder-chips" id="reminder-chips">
+                            <button class="reminder-chip" type="button" data-reminder-offset="1d">Завтра</button>
+                            <button class="reminder-chip" type="button" data-reminder-offset="3d">Через 3 дня</button>
+                            <button class="reminder-chip" type="button" data-reminder-offset="7d">Через неделю</button>
+                        </div>
+                        <div class="reminder-form-row">
+                            <label class="workflow-field workflow-field-wide">
+                                <span class="workflow-field-label">Сообщение</span>
+                                <div class="deal-range-input-wrap workflow-input-wrap">
+                                    <input id="reminder-message-input" type="text" placeholder="Проверить сделку" maxlength="255">
+                                </div>
+                            </label>
+                        </div>
+                        <div class="contact-form-actions">
+                            <button class="primary-btn small" id="save-reminder-btn" type="button">Добавить</button>
+                        </div>
+                    </div>
+                    <div class="reminder-list" id="reminder-list"></div>
+                </section>
+                <div class="listing-actions detail-bottom-actions">
+                    <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
+                    <button class="listing-btn" id="detail-add-watchlist-btn" type="button">В избранное</button>
+                    <button class="listing-btn listing-btn--ai" id="detail-ai-btn" type="button">Анализ</button>
+                    <a class="listing-btn listing-btn--accent" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
+                </div>
             </div>
         </div>
     </div>
 
-    <div class="toast-container" id="toast-container"></div>
+    <div class="detail-modal" id="expenses-modal" hidden>
+        <div class="detail-overlay" id="expenses-overlay"></div>
+        <div class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="expenses-title">
+            <div class="detail-top-bar">
+                <button class="detail-close" id="expenses-close" type="button" aria-label="Закрыть">×</button>
+            </div>
+            <div class="detail-sheet-content">
+                <h3 class="detail-title" id="expenses-title">Расходы</h3>
+                <p class="section-note" id="expenses-subtitle" hidden></p>
+                <div class="expenses-list" id="expenses-list"></div>
+                <div class="expense-form-wrap" id="expense-form-wrap">
+                    <div class="contact-form">
+                        <label class="workflow-field">
+                            <span class="workflow-field-label">Тип</span>
+                            <div class="deal-range-input-wrap workflow-input-wrap">
+                                <select id="expense-type-select" class="deal-select">
+                                    <option value="delivery">Доставка</option>
+                                    <option value="repair">Ремонт</option>
+                                    <option value="customs">Таможня</option>
+                                    <option value="packaging">Упаковка</option>
+                                    <option value="transport">Транспорт</option>
+                                    <option value="other">Другое</option>
+                                </select>
+                            </div>
+                        </label>
+                        <label class="workflow-field">
+                            <span class="workflow-field-label">Сумма</span>
+                            <div class="deal-range-input-wrap workflow-input-wrap">
+                                <input id="expense-amount-input" type="number" min="0" step="1" inputmode="numeric" placeholder="50">
+                                <span id="expense-currency-label">BYN</span>
+                            </div>
+                        </label>
+                        <label class="workflow-field workflow-field-wide">
+                            <span class="workflow-field-label">Заметка</span>
+                            <div class="deal-range-input-wrap workflow-input-wrap">
+                                <input id="expense-notes-input" type="text" placeholder="курьер, ремонт экрана">
+                            </div>
+                        </label>
+                        <div class="contact-form-actions">
+                            <button class="primary-btn small" id="save-expense-btn" type="button">Добавить</button>
+                            <button class="ghost-btn small" id="cancel-expense-btn" type="button">Отмена</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Analysis Modal -->
+    <div class="detail-modal ai-modal-overlay" id="ai-modal" hidden>
+        <div class="detail-overlay" id="ai-overlay"></div>
+        <div class="detail-sheet ai-sheet" role="dialog" aria-modal="true" aria-labelledby="ai-modal-title">
+            <div class="ai-header-bar">
+                <div class="ai-header-left">
+                    <div class="ai-header-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>
+                    </div>
+                    <div>
+                        <h3 class="ai-modal-title" id="ai-modal-title">AI Анализ</h3>
+                        <p class="ai-modal-subtitle" id="ai-modal-subtitle"></p>
+                    </div>
+                </div>
+                <div class="ai-header-actions">
+                    <button class="ai-action-btn ai-action-btn--close" id="ai-modal-close" type="button" aria-label="Закрыть">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="ai-modal-body" id="ai-modal-body">
+                <div class="ai-modal-loading" id="ai-modal-loading">
+                    <div class="ai-loader-wrap">
+                        <div class="ai-loader-ring"></div>
+                        <span class="ai-loader-icon">AI</span>
+                    </div>
+                    <p class="ai-loader-text" id="ai-loader-text">Проверяю данные объявления...</p>
+                    <div class="ai-progress">
+                        <div class="ai-progress-bar" id="ai-progress-bar"></div>
+                    </div>
+                    <span class="ai-progress-pct" id="ai-progress-pct">0%</span>
+                    <p class="ai-time-notice" id="ai-time-notice">Обычно 20–60 секунд, сложные объявления — дольше</p>
+                </div>
+                <div class="ai-modal-error" id="ai-modal-error" hidden></div>
+                <div class="ai-modal-result" id="ai-modal-result" hidden></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Tracker Modal -->
+    <div class="modal-overlay" id="edit-tracker-modal" hidden>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-tracker-title">
+            <div class="modal-header">
+                <h3 class="modal-title" id="edit-tracker-title">Редактировать трекер</h3>
+                <button class="modal-close" id="close-edit-modal" type="button" aria-label="Закрыть">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="edit-tracker-form">
+                    <div class="form-field">
+                        <label class="form-field-label" for="edit-tracker-query">Запрос</label>
+                        <input id="edit-tracker-query" type="text" disabled class="form-input-disabled">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label class="form-field-label" for="edit-strict-mode-toggle">Строгий режим</label>
+                            <label class="strict-toggle" for="edit-strict-mode-toggle">
+                                <input id="edit-strict-mode-toggle" type="checkbox">
+                                <span class="strict-toggle-pill" aria-hidden="true"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-field">
+                            <span class="form-field-label">Мин. скидка</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="edit-min-discount-input" type="number" min="0" step="1" inputmode="numeric" value="10">
+                                <span>%</span>
+                            </div>
+                        </label>
+                        <label class="form-field">
+                            <span class="form-field-label">Макс. цена</span>
+                            <div class="deal-range-input-wrap">
+                                <input id="edit-max-price-input" type="number" min="0" step="1" inputmode="numeric" placeholder="необязательно">
+                                <span id="edit-max-price-currency">BYN</span>
+                            </div>
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-field">
+                            <span class="form-field-label">Продавец</span>
+                            <select id="edit-seller-select" class="deal-select">
+                                <option value="">Любой</option>
+                                <option value="Частное лицо">Частник</option>
+                                <option value="Магазин">Магазин</option>
+                            </select>
+                        </label>
+                        <label class="form-field">
+                            <span class="form-field-label">Состояние</span>
+                            <select id="edit-condition-select" class="deal-select">
+                                <option value="">Любое</option>
+                                <option value="Новый">Новый</option>
+                                <option value="Б/у">Б/у</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-field">
+                            <span class="form-field-label">Регион и город</span>
+                            <select id="edit-region-select" class="deal-select">
+                                <option value="">Любой</option>
+                            </select>
+                        </label>
+                        <label class="form-field">
+                            <span class="form-field-label">Категория Kufar</span>
+                            <select id="edit-category-select" class="deal-select">
+                                <option value="">Любая категория</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-field">
+                            <span class="form-field-label">Конфиг</span>
+                            <input id="edit-config-input" type="text" class="form-text-input" placeholder="pro max 256">
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button class="primary-btn" id="save-tracker-btn" type="button">Сохранить</button>
+                        <button class="ghost-btn" id="cancel-edit-btn" type="button">Отмена</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Listing Assistant Modal -->
+    <div class="detail-modal ai-modal-overlay" id="la-modal" hidden>
+        <div class="detail-overlay" id="la-overlay"></div>
+        <div class="detail-sheet ai-sheet la-sheet" role="dialog" aria-modal="true" aria-labelledby="la-modal-title">
+            <div class="ai-header-bar">
+                <div class="ai-header-left">
+                    <div class="ai-header-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="ai-modal-title" id="la-modal-title">AI помощник продавцу</h3>
+                        <p class="ai-modal-subtitle" id="la-modal-subtitle">Заголовок, описание, цена и план торга</p>
+                    </div>
+                </div>
+                <div class="ai-header-actions">
+                    <button class="ai-action-btn ai-action-btn--close" id="la-modal-close" type="button" aria-label="Закрыть">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="ai-modal-body la-modal-body" id="la-modal-body">
+                <div class="la-tabs" role="tablist" aria-label="Разделы помощника">
+                    <button class="la-tab is-active" id="la-tab-form" data-la-tab="form" type="button" role="tab" aria-selected="true" aria-controls="la-pane-form" tabindex="0">Новый запрос</button>
+                    <button class="la-tab" id="la-tab-history" data-la-tab="history" type="button" role="tab" aria-selected="false" aria-controls="la-pane-history" tabindex="-1">История <span class="la-tab-count" id="la-tab-history-count" hidden>0</span></button>
+                </div>
+
+                <section class="la-pane" id="la-pane-form" role="tabpanel" aria-labelledby="la-tab-form">
+                    <form class="la-form la-form--modal" id="listing-assistant-form" autocomplete="off">
+                        <div class="la-photo-block">
+                            <div class="la-photo-block-head">
+                                <span class="la-field-label">Фото</span>
+                                <span class="la-field-help">до 4 шт · ужмём автоматически</span>
+                            </div>
+                            <div class="la-photo-upload" id="la-photo-upload">
+                                <div class="la-photo-grid" id="la-photo-grid"></div>
+                                <button class="la-photo-add" id="la-photo-add" type="button" aria-controls="la-photo-input">
+                                    <span class="la-photo-add-icon" aria-hidden="true">+</span>
+                                    <span class="la-photo-add-text">Добавить</span>
+                                </button>
+                                <input class="la-photo-input" id="la-photo-input" type="file"
+                                       accept="image/jpeg,image/png,image/webp" multiple hidden
+                                       aria-label="Добавить фото объявления">
+                            </div>
+                        </div>
+
+                        <label class="la-field la-field--wide">
+                            <span class="la-field-label">Что продаёшь</span>
+                            <input class="la-input" id="la-title-input" type="text"
+                                   placeholder="iPhone 14 Pro Max 256GB"
+                                   maxlength="200" required>
+                        </label>
+
+                        <div class="la-row">
+                            <label class="la-field">
+                                <span class="la-field-label">Цена, BYN</span>
+                                <input class="la-input" id="la-price-input" type="number" min="0"
+                                       inputmode="numeric" placeholder="2500">
+                            </label>
+                            <label class="la-field">
+                                <span class="la-field-label">Состояние</span>
+                                <select class="la-input" id="la-condition-select">
+                                    <option value="">—</option>
+                                    <option value="Отличное">Отличное</option>
+                                    <option value="Хорошее">Хорошее</option>
+                                    <option value="Удовлетворительное">Удовлетворительное</option>
+                                    <option value="Требует внимания">Требует внимания</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <label class="la-field la-field--checkbox">
+                            <input type="checkbox" id="la-negotiable-checkbox">
+                            <span>Не знаю цену (подбери цену)</span>
+                        </label>
+
+                        <label class="la-field la-field--checkbox">
+                            <input type="checkbox" id="la-save-history-checkbox">
+                            <span>Сохранять запросы в истории 30 дней</span>
+                        </label>
+                        <p class="la-field-help la-history-privacy-note">
+                            История с запросом и AI-ответом по умолчанию выключена; если вы включите сохранение, она хранится только в этом браузере или Telegram WebView до 30 дней. Можно отключить сохранение или очистить список.
+                        </p>
+
+                        <label class="la-field la-field--wide">
+                            <span class="la-field-label">Характеристики и нюансы</span>
+                            <span class="la-field-help">Чем подробнее напишешь — тем точнее цена.</span>
+                            <textarea class="la-input la-textarea" id="la-notes-input"
+                                      rows="4" maxlength="1200"
+                                      placeholder="Например: батарея 88%, лёгкая царапина на левом боку, оригинальная коробка и кабель, не вскрывался. Минск, Каменная Горка."></textarea>
+                            <span class="la-textarea-counter" id="la-notes-counter">0 / 1200</span>
+                        </label>
+
+                        <div class="la-actions">
+                            <button class="primary-btn la-submit" id="la-submit-btn" type="submit">
+                                <span id="la-submit-label">Подготовить объявление</span>
+                            </button>
+                        </div>
+                    </form>
+                </section>
+
+                <section class="la-pane la-pane--history" id="la-pane-history" role="tabpanel" aria-labelledby="la-tab-history" hidden>
+                    <div class="la-history-shell">
+                        <div class="la-history-hero">
+                            <span class="la-history-kicker">Локальная история</span>
+                            <h4 class="la-history-heading">Ответы, к которым можно вернуться</h4>
+                            <p class="la-history-copy">
+                                Сохраняем запрос и AI-ответ только на этом устройстве до 30 дней, когда включено сохранение истории.
+                            </p>
+                        </div>
+                        <div class="la-history-list" id="la-history-list"></div>
+                        <div class="la-history-empty" id="la-history-empty" hidden>
+                            <span class="la-history-empty-icon" aria-hidden="true">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 6v6l4 2"/>
+                                    <circle cx="12" cy="12" r="9"/>
+                                </svg>
+                            </span>
+                            <strong>История пока пустая</strong>
+                            <span>Включи сохранение в «Новый запрос» и подготовь первое объявление — ответ появится здесь.</span>
+                        </div>
+                        <div class="la-history-footer" id="la-history-footer" hidden>
+                            <span>Можно удалить все сохранённые ответы одним действием.</span>
+                            <button class="ghost-btn small danger" id="la-history-clear" type="button" disabled>
+                                Очистить
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="la-result-overlay" id="la-result-overlay" hidden>
+                <div class="la-result-header">
+                    <button class="ai-action-btn" id="la-result-back" type="button" aria-label="Назад">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                    </button>
+                    <span class="la-result-title">Результат анализа</span>
+                </div>
+                <div class="la-result-scroll" id="listing-assistant-result"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FE-NEW-6: aria-live container so SR announces toast feedback. -->
+    <div class="toast-container" id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
+
+    <!-- AI Consent Modal -->
+    <div class="modal-overlay" id="consent-modal" hidden>
+        <div class="modal-content consent-modal-content" role="dialog" aria-modal="true" aria-labelledby="consent-modal-title">
+            <div class="modal-header">
+                <h3 class="modal-title" id="consent-modal-title">Согласие на обработку данных и AI</h3>
+            </div>
+            <div class="modal-body consent-body">
+                <p class="consent-intro">AI-анализ выполняется внешним облачным AI-сервисом: <strong id="consent-ai-provider-label">провайдер AI настроен на сервере</strong>.</p>
+                <p class="consent-detail">Для анализа отправляются: текст объявления, фотографии, параметры товара, похожие объявления, рыночная статистика и введённые вами черновики/заметки помощника продавца.</p>
+                <p class="consent-highlight">Мы маскируем очевидные телефоны, e-mail, Telegram-ники и документные номера в тексте, но фотографии и свободный текст могут содержать персональные данные.</p>
+                <label class="consent-check">
+                    <input type="checkbox" id="consent-ai-checkbox">
+                    <span>Я понимаю и согласен на обработку данных AI-сервисом</span>
+                </label>
+                <label class="consent-check">
+                    <input type="checkbox" id="consent-cross-border-checkbox">
+                    <span>Я ознакомлен с трансграничной передачей и возможными рисками обработки данных за пределами Республики Беларусь</span>
+                </label>
+                <label class="consent-check">
+                    <input type="checkbox" id="consent-pd-checkbox">
+                    <span>Я ознакомился с <a href="#" id="consent-privacy-link">политикой конфиденциальности</a></span>
+                </label>
+                <div class="modal-actions consent-actions">
+                    <button class="primary-btn" id="consent-accept-btn" type="button" disabled>Согласен</button>
+                    <button class="ghost-btn" id="consent-cancel-btn" type="button">Отмена</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Privacy Policy Modal -->
+    <div class="detail-modal" id="privacy-modal" hidden>
+        <div class="detail-overlay" id="privacy-overlay"></div>
+        <div class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="privacy-modal-title">
+            <div class="modal-header">
+                <h3 class="modal-title" id="privacy-modal-title">Политика конфиденциальности</h3>
+                <button class="modal-close" id="privacy-modal-close" type="button" aria-label="Закрыть">&times;</button>
+            </div>
+            <div class="detail-sheet-content privacy-content" id="privacy-content">
+                <section class="privacy-section">
+                    <h4>1. Оператор персональных данных</h4>
+                    <p>Оператором персональных данных является разработчик приложения Rafuk. Контакты: через Telegram-бота @rafuk_bot.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>2. Какие данные мы собираем</h4>
+                    <table class="privacy-table">
+                        <thead><tr><th>Категория</th><th>Данные</th><th>Источник</th></tr></thead>
+                        <tbody>
+                            <tr><td>Идентификация</td><td>telegram_user_id, first_name, username</td><td>Telegram initData</td></tr>
+                            <tr><td>Поисковая активность</td><td>поисковые запросы, фильтры</td><td>Пользователь</td></tr>
+                            <tr><td>Финансовые</td><td>цены покупки/продажи, расходы</td><td>Пользователь</td></tr>
+                            <tr><td>Поведенческие</td><td>заметки к лидам, запросы трекеров</td><td>Пользователь</td></tr>
+                            <tr><td>Технические</td><td>IP-адрес при согласии, журнал AI-операций, ошибки доставки уведомлений</td><td>Сервер и Telegram</td></tr>
+                            <tr><td>Публичные данные объявлений</td><td>текст, параметры, цены, фото, регион и ссылки объявлений Kufar</td><td>Kufar</td></tr>
+                        </tbody>
+                    </table>
+                </section>
+                <section class="privacy-section">
+                    <h4>3. Цели обработки</h4>
+                    <p>Данные используются для: аналитики рынка Kufar, уведомлений о ценах, AI-рекомендаций по цене, управления сделками.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>4. Трансграничная передача</h4>
+                    <p>Данные могут передаваться за пределы Республики Беларусь: в Telegram для авторизации Mini App и доставки уведомлений; в Kufar при получении объявлений и изображений; во внешний AI-сервис для анализа объявлений. Если в стране получателя не обеспечивается надлежащий уровень защиты прав субъектов персональных данных, передача выполняется только при отдельном согласии с информированием о возможных рисках.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>5. AI-обработка</h4>
+                    <p>В AI-сервис отправляются: текст объявления, фотографии, параметры товара, рыночная статистика, похожие объявления и введённые пользователем черновики/заметки помощника продавца. Система маскирует очевидные телефоны, e-mail, Telegram-ники и документные номера в тексте, но фотографии и свободный текст могут содержать персональные данные. Возвращаются: оценка состояния, справедливая цена, рекомендации и риски.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>6. Хранение данных</h4>
+                    <p>Данные хранятся на сервере оператора и в локальном хранилище браузера/Telegram WebView. Данные аккаунта хранятся до удаления аккаунта, журнал AI-операций — до 365 дней, события трекеров и устаревшие снимки рынка — до 30–90 дней, техническая очередь ошибок Telegram — до 30 дней. AI-кэш задач и помощника продавцу хранится временно в привязке к пользователю и очищается при удалении аккаунта; общий кэш анализа публичного объявления может сохраняться без привязки к пользователю до истечения срока кэша. История AI-помощника продавцу по умолчанию выключена; если включена, хранится локально до 30 дней и очищается кнопкой в модальном окне; серверное удаление аккаунта её не удаляет.</p>
+                </section>
+                <section class="privacy-section">
+                    <h4>7. Ваши права</h4>
+                    <ul>
+                        <li><strong>Доступ</strong> — вы можете экспортировать свои данные</li>
+                        <li><strong>Информация о передаче</strong> — вы можете запросить сведения о предоставлении данных третьим лицам</li>
+                        <li><strong>Исправление</strong> — вы можете изменить неточные данные в интерфейсе или обратиться к оператору</li>
+                        <li><strong>Удаление</strong> — вы можете удалить аккаунт и серверные данные</li>
+                        <li><strong>Отзыв согласия</strong> — вы можете отозвать согласие на AI-обработку и трансграничную передачу</li>
+                    </ul>
+                </section>
+                <section class="privacy-section">
+                    <h4>8. Изменения политики</h4>
+                    <p>При изменении политики мы запросим повторное согласие. Версия: 2026.2</p>
+                </section>
+            </div>
+        </div>
+    </div>
 
     <div class="bottom-spacer"></div>
-
-    <div hidden>
-        <span x-text="stats.mean"></span>
-        <span x-text="stats.median"></span>
-        <span x-text="stats.min"></span>
-        <span x-text="stats.max"></span>
-        <template x-for="item in listings">
-            <span x-text="item.title"></span>
-        </template>
-    </div>
 </div>
 </body>
 </html>

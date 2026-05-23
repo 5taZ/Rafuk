@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+*.egg-info/
+
+# Secrets — NEVER bundle .env into Docker images.
+# Pass values via environment variables / docker-compose env_file at runtime.
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Local DB / dev files
+*.db
+bot.db
+*.sqlite
+*.sqlite3
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Build artefacts
+dist/
+build/
+*.tar.gz
+*.zip
+
+# IDE / editor
+.idea/
+.vscode/
+.run/
+
+# Git
+.git/
+.gitignore
+
+# Project-internal docs and audit reports
+*.audit.md
+FULL_PROJECT_AUDIT.md
+FRONTEND_OPTIMIZATION_REPORT.md
+AUDIT_FIX_VERIFICATION.md
+FINAL_AUDIT_VERIFICATION.md
+DEEP_DIVE_REVIEW*.md
+AGENT_SWARM*.md
+
+# Repo / CI / planning
+.github/
+LICENSE
+docker-compose.yml
+.dockerignore
+.planning/
+*.md
+!README.md

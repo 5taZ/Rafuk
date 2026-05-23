@@ -1,0 +1,18 @@
+# PR-18: local-dev override. ``docker compose up`` (no ``-f`` flags)
+# automatically merges this on top of docker-compose.yml; production
+# deploys that pass ``-f docker-compose.yml`` explicitly do not see
+# it. The split keeps dev ergonomics (the host can reach Redis on
+# :6380 for ``start-local.sh``) while shipping a clean compose file
+# to production where the port stays internal to ``kufar-net``.
+#
+# To opt OUT of this override locally (e.g. to mirror a prod-shaped
+# deploy on your dev box), use ``docker compose -f docker-compose.yml up``.
+
+services:
+  redis:
+    # 127.0.0.1 binding only — never expose the cache on a public
+    # interface even from the local override. Anyone reaching :6380
+    # from the host still needs REDIS_PASSWORD because the redis
+    # server is started with ``--requirepass`` in the base compose.
+    ports:
+      - "127.0.0.1:6380:6379"

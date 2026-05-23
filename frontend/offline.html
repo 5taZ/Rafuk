@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <!--
+      FE-M8: minimal offline fallback served by the Service Worker
+      when both network and the runtime cache miss for a navigation
+      request. CSP-safe: no inline scripts, no inline styles, no inline
+      event handlers — the only interactivity is a vanilla <a href>
+      back to "/" which the SW can route to the cached shell.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; img-src 'self' data:; style-src 'self'; base-uri 'self'; form-action 'none'; object-src 'none'; frame-ancestors 'none';">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="dark light">
+    <title>Rafuk — Нет связи</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
+    <link rel="stylesheet" href="/offline.css">
+</head>
+<body>
+<main class="card" role="main">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M1 1l22 22"/>
+        <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/>
+        <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/>
+        <path d="M10.71 5.05A16 16 0 0 1 22.58 9"/>
+        <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/>
+        <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+        <line x1="12" y1="20" x2="12.01" y2="20"/>
+    </svg>
+    <h1>Нет связи с интернетом</h1>
+    <p>
+        Похоже, ваш телефон сейчас офлайн. Откроем приложение,
+        как только сеть появится снова.
+    </p>
+    <a class="retry" href="/" aria-label="Повторить попытку">Повторить</a>
+</main>
+</body>
+</html>

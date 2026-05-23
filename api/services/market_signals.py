@@ -1,41 +1,79 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Any
 
 from api.services.aggregator import (
     PriceStats,
-    get_param,
     normalize_price_byn,
-    normalize_search_text,
 )
 
 
 def region_label(ad: dict[str, Any]) -> str | None:
+    # Top-level fields first
     for key in ("region_name", "location_name", "area_name", "locality_name"):
         value = ad.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    # Fallback: extract from ad_parameters where p="region" (use vl for text label)
+    for param in ad.get("ad_parameters", []):
+        if param.get("p") == "region":
+            vl = param.get("vl")
+            if isinstance(vl, str) and vl.strip():
+                return vl.strip()
     region_id = ad.get("region_id")
     if region_id in (None, "", 0):
         return None
     return f"Регион {region_id}"
 
 
+def area_label(ad: dict[str, Any]) -> str | None:
+    """Return city/district-level location, distinct from region."""
+    # Top-level fields first
+    for key in ("area_name", "locality_name", "location_name"):
+        value = ad.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    # Fallback: extract from ad_parameters where p="area" (use vl for text label)
+    for param in ad.get("ad_parameters", []):
+        if param.get("p") == "area":
+            vl = param.get("vl")
+            if isinstance(vl, str) and vl.strip():
+                return vl.strip()
+    return None
+
+
+# Symmetric thresholds for the fair-price band classification. Numbers are
+# percent deviation of the listing's price from its reference median
+# (per-category if the category has ≥ 3 ads, otherwise the whole query —
+# see resolve_price_reference in aggregator.py).
+#   < -25%   → too cheap (often a flag for scams, but also rare deals)
+#   -25..-10 → below market (genuine discount worth checking)
+#   -10..+10 → at market (fair)
+#   +10..+25 → above market (overpaying a bit)
+#   > +25%   → strongly above market (overpriced)
+FAIR_BAND_DEEP_DISCOUNT = -25.0
+FAIR_BAND_BELOW = -10.0
+FAIR_BAND_ABOVE = 10.0
+FAIR_BAND_DEEP_OVERPRICED = 25.0
+
+
 def fair_price_band(price_vs_median: float | None) -> str | None:
     if price_vs_median is None:
         return None
-    if price_vs_median <= -15:
+    if price_vs_median < FAIR_BAND_DEEP_DISCOUNT:
+        return "deep_discount"
+    if price_vs_median < FAIR_BAND_BELOW:
         return "below_market"
-    if price_vs_median <= 12:
+    if price_vs_median <= FAIR_BAND_ABOVE:
         return "fair"
-    if price_vs_median <= 30:
+    if price_vs_median <= FAIR_BAND_DEEP_OVERPRICED:
         return "above_market"
     return "high"
 
 
 def fair_price_label(band: str | None) -> str | None:
     labels = {
+        "deep_discount": "Сильно ниже рынка",
         "below_market": "Ниже рынка",
         "fair": "По рынку",
         "above_market": "Выше рынка",
@@ -55,43 +93,6 @@ def detect_anomaly_flags(ad: dict[str, Any], stats: PriceStats) -> list[str]:
     if price_byn > max(stats.q3 * 1.35, stats.median * 1.45):
         flags.append("too_expensive")
     return flags
-
-
-def duplicate_counts(ads: list[dict[str, Any]]) -> dict[int, int]:
-    grouped: dict[tuple[str, str, int | None], list[tuple[int, float | None]]] = defaultdict(list)
-
-    for ad in ads:
-        ad_id = int(ad.get("ad_id", 0))
-        if ad_id <= 0:
-            continue
-        title = normalize_search_text(str(ad.get("subject", "")))
-        if not title:
-            continue
-        seller_type = get_param(ad, "seller_type") or ""
-        region_id = ad.get("region_id") if isinstance(ad.get("region_id"), int) else None
-        grouped[(title, seller_type, region_id)].append(
-            (ad_id, normalize_price_byn(ad.get("price_byn")))
-        )
-
-    counts: dict[int, int] = {}
-    for items in grouped.values():
-        if len(items) < 2:
-            continue
-        for ad_id, price in items:
-            similar = 0
-            for other_id, other_price in items:
-                if other_id == ad_id:
-                    continue
-                if price is None or other_price is None:
-                    similar += 1
-                    continue
-                if price == 0:
-                    continue
-                if abs(other_price - price) / price <= 0.08:
-                    similar += 1
-            if similar:
-                counts[ad_id] = similar
-    return counts
 
 
 def anomaly_labels(flags: list[str]) -> list[str]:

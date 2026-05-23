@@ -1,15 +1,39 @@
 from __future__ import annotations
 
+import statistics
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models import QueryListingState, QuerySnapshot
-from api.services.aggregator import compute_price_stats, extract_prices, normalize_price_byn
+from api.services.aggregator import (
+    compute_price_stats,
+    extract_prices,
+    normalize_price_byn,
+)
+
+
+@dataclass(slots=True, frozen=True)
+class TrendReversal:
+    """Median-price trend reversal signal: price was falling, now rising again.
+
+    All prices are in BYN. ``decline_pct`` is the size of the original
+    drop, ``rebound_pct`` is how far the latest median has bounced back
+    above the recent low. ``low_at`` is the date the recent low was
+    observed. Use these values to compose the user-facing message.
+    """
+    low_byn: float
+    today_byn: float
+    pre_high_byn: float
+    decline_pct: float
+    rebound_pct: float
+    low_at: date
 
 
 @dataclass(slots=True)
@@ -50,7 +74,8 @@ async def upsert_query_snapshot(
     total_results: int,
     bucket_at: datetime,
 ) -> QuerySnapshot:
-    stats = compute_price_stats(extract_prices(ads))
+    prices = extract_prices(ads)
+    stats = compute_price_stats(prices)
     existing = await session.scalar(
         select(QuerySnapshot).where(
             QuerySnapshot.query == query,
@@ -60,14 +85,110 @@ async def upsert_query_snapshot(
     if existing is None:
         existing = QuerySnapshot(query=query, snapshot_at=bucket_at)
         session.add(existing)
+        try:
+            async with session.begin_nested():
+                # BE-01: passing the list-of-objects to Session.flush()
+                # is deprecated since SQLAlchemy 1.4 and slated for
+                # removal. begin_nested() above already scopes the
+                # write to the savepoint, so an unparameterised flush()
+                # is equivalent (the only pending change inside this
+                # savepoint is `existing`).
+                await session.flush()
+        except IntegrityError:
+            # begin_nested() already rolled back the savepoint —
+            # no session.rollback() needed (that would kill the outer tx).
+            existing = await session.scalar(
+                select(QuerySnapshot).where(
+                    QuerySnapshot.query == query,
+                    QuerySnapshot.snapshot_at == bucket_at,
+                )
+            )
+            if existing is None:
+                raise
 
     existing.total_results = total_results
     existing.analyzed_count = stats.count
     existing.mean_byn = stats.mean
     existing.median_byn = stats.median
+    existing.q1_byn = stats.q1
+    existing.q3_byn = stats.q3
     existing.min_byn = stats.min
     existing.max_byn = stats.max
+    # B-10: raw pre-outlier sample size.
+    existing.fetched_count = len(prices)
     return existing
+
+
+def detect_trend_reversal_up(
+    snapshots: list[QuerySnapshot],
+    *,
+    min_days: int = 5,
+    window_days: int = 7,
+    min_decline_pct: float = 3.0,
+    min_rebound_pct: float = 3.0,
+) -> TrendReversal | None:
+    """Detect a "price was falling, now bouncing back up" reversal.
+
+    Buckets snapshots by UTC day, takes the median of each day's
+    snapshots, then looks for the recent-low day in the last 4 buckets.
+    The latest day must have rebounded ``min_rebound_pct`` above the
+    low, and the pre-low high must be at least ``min_decline_pct``
+    above the low. Returns ``None`` when there's not enough data or
+    the trend isn't a reversal — caller can suppress a false alarm by
+    checking for ``None``.
+
+    Why median-of-medians per day: tracker ticks may run every 5-30
+    min, so a single day yields multiple snapshots. We collapse them
+    so a noisy one-off snapshot doesn't drive the signal.
+    """
+    if not snapshots:
+        return None
+    by_date: dict[date, list[float]] = {}
+    for snap in snapshots:
+        if snap.median_byn is None or snap.median_byn <= 0:
+            continue
+        day = snap.snapshot_at.astimezone(UTC).date()
+        by_date.setdefault(day, []).append(float(snap.median_byn))
+    if len(by_date) < min_days:
+        return None
+    # M13: truncate to the analysis window AFTER confirming the full dataset
+    # has enough days. If window_days is small (7) and some days lack data,
+    # the truncated window may have fewer days than min_days — but the
+    # function intentionally analyses only recent data. Callers that need a
+    # wider window should increase window_days accordingly.
+    daily = sorted(by_date.items())[-window_days:]
+    if len(daily) < min(min_days, len(by_date)):
+        return None
+    series = [statistics.median(values) for _, values in daily]
+    low_idx = min(range(len(series)), key=lambda i: series[i])
+    if low_idx >= len(series) - 1:
+        return None
+    if low_idx < len(series) - 4:
+        return None
+    today = series[-1]
+    low = series[low_idx]
+    if today <= low or low <= 0:
+        return None
+    rebound_pct = (today - low) / low * 100.0
+    if rebound_pct < min_rebound_pct:
+        return None
+    pre_low = series[: low_idx + 1]
+    if len(pre_low) < 2:
+        return None
+    pre_high = max(pre_low[:-1])
+    if pre_high <= low:
+        return None
+    decline_pct = (pre_high - low) / pre_high * 100.0
+    if decline_pct < min_decline_pct:
+        return None
+    return TrendReversal(
+        low_byn=round(low, 2),
+        today_byn=round(today, 2),
+        pre_high_byn=round(pre_high, 2),
+        decline_pct=round(decline_pct, 1),
+        rebound_pct=round(rebound_pct, 1),
+        low_at=daily[low_idx][0],
+    )
 
 
 async def load_listing_states(
@@ -75,8 +196,23 @@ async def load_listing_states(
     *,
     query: str,
 ) -> dict[int, QueryListingState]:
+    # BE-05: A popular query like "iphone" can accumulate tens of
+    # thousands of QueryListingState rows over time as listings cycle
+    # in and out of Kufar. The scheduler reaches for this map every
+    # sync cycle — without a bound we end up materialising hundreds
+    # of MB into memory just to diff a single page (~200 ads).
+    #
+    # 5000 most-recent rows is enough headroom for any realistic
+    # query: the active sync window is "currently listed on Kufar"
+    # (at most a few thousand ads per page-walk) plus a tail of
+    # recently-deactivated ones used for re-activation detection.
+    # Older states are stale and will be re-populated naturally on
+    # next observation.
     result = await session.execute(
-        select(QueryListingState).where(QueryListingState.query == query)
+        select(QueryListingState)
+        .where(QueryListingState.query == query)
+        .order_by(QueryListingState.last_seen_at.desc())
+        .limit(5000)
     )
     rows = list(result.scalars())
     return {row.ad_id: row for row in rows}
@@ -109,7 +245,17 @@ async def sync_query_listing_states(
     for ad in listing_candidates(ads):
         ad_id = int(ad.get("ad_id", 0))
         seen_ids.add(ad_id)
-        price_byn = normalize_price_byn(ad.get("price_byn"))
+        # Pass the raw ad so detect_price_type can distinguish "free"
+        # (price=0, giveaway phrasing) from "negotiable" (price unknown).
+        # Without this, both are stored as last_price_byn=NULL and the
+        # bot announces free items as "договорная" instead of "бесплатно".
+        price_byn = normalize_price_byn(ad.get("price_byn"), ad)
+        if price_byn is None:
+            price_type = "negotiable"
+        elif price_byn == 0.0:
+            price_type = "free"
+        else:
+            price_type = "fixed"
         title = str(ad.get("subject", ""))
         link = str(ad.get("ad_link", ""))
         list_time = ad.get("list_time")
@@ -122,27 +268,64 @@ async def sync_query_listing_states(
                 title=title,
                 link=link,
                 last_price_byn=price_byn,
+                price_type=price_type,
                 list_time=list_time,
                 active=True,
                 first_seen_at=observed_at,
                 last_seen_at=observed_at,
             )
             session.add(existing)
+            try:
+                async with session.begin_nested():
+                    # BE-01: see note on QuerySnapshot insert above — drop
+                    # the deprecated flush([obj]) shape.
+                    await session.flush()
+            except IntegrityError:
+                # begin_nested() already rolled back the savepoint —
+                # no session.rollback() needed (that would kill the outer tx).
+                existing = await session.scalar(
+                    select(QueryListingState).where(
+                        QueryListingState.query == query,
+                        QueryListingState.ad_id == ad_id,
+                    )
+                )
+                if existing is None:
+                    raise
             existing_by_id[ad_id] = existing
             new_listings.append(existing)
             continue
 
-        if (
-            existing.last_price_byn is not None
-            and price_byn is not None
-            and price_byn < existing.last_price_byn
-        ):
-            price_drops.append((existing, existing.last_price_byn - price_byn))
+        # BE-M11: ``existing.last_price_byn`` comes back as ``Decimal`` from
+        # the Numeric(12,2) column under PostgreSQL, while ``price_byn`` is
+        # a ``float`` from ``normalize_price_byn``. Mixing them raises
+        # ``TypeError: unsupported operand type(s) for -: 'Decimal' and
+        # 'float'`` at runtime — SQLite happens to dodge it because the
+        # NUMERIC affinity returns the value as the type it was inserted
+        # with, hiding the bug from the test-suite. Coerce both to Decimal
+        # for the comparison and the delta we hand back.
+        if existing.last_price_byn is not None and price_byn is not None:
+            last_dec = (
+                existing.last_price_byn
+                if isinstance(existing.last_price_byn, Decimal)
+                else Decimal(str(existing.last_price_byn))
+            )
+            price_dec = Decimal(str(price_byn))
+            # E-FIND-05: an absolute 0.50 BYN threshold meant a 5000 BYN
+            # listing fired a price_drop event on a 0.50 BYN flicker —
+            # 0.01% noise. Floor the threshold at the larger of 0.50 BYN
+            # (kopecks-rounding noise) and 0.5% of the previous price
+            # (relative noise on expensive items). The Decimal arithmetic
+            # keeps this exact across SQLite/Postgres.
+            relative_floor = (last_dec * Decimal("0.005")).quantize(Decimal("0.01"))
+            min_drop = max(Decimal("0.5"), relative_floor)
+            if price_dec < last_dec and (last_dec - price_dec) >= min_drop:
+                price_drops.append((existing, last_dec - price_dec))
 
         existing.title = title
         existing.link = link
         existing.list_time = list_time
         existing.last_price_byn = price_byn
+        existing.price_type = price_type
         existing.last_seen_at = observed_at
         existing.active = True
 

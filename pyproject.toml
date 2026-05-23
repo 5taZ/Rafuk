@@ -3,6 +3,14 @@ name = "kufar-analytics"
 version = "0.1.0"
 description = "Telegram Mini App for analyzing the kufar.by marketplace"
 readme = "README.md"
+# INF-LOW (issues §9.7): README declares the project as "Private — not
+# yet open-sourced", so we attach an explicit proprietary license tag
+# rather than letting build tooling default to "no licence" (which some
+# package indexes treat as MIT-permissive).
+license = "LicenseRef-Proprietary"
+authors = [
+    { name = "Kufar Analytics maintainers" },
+]
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
@@ -12,22 +20,44 @@ dependencies = [
     "alembic>=1.14.0",
     "redis[hiredis]>=5.2.0",
     "httpx>=0.27.0",
-    "beautifulsoup4>=4.12.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
     "python-dotenv>=1.0.1",
     "aiogram>=3.15.0",
     "apscheduler>=3.10.4",
     "slowapi>=0.1.9",
+    "pillow>=10.0.0",
+    "openpyxl>=3.1.0",
 ]
 
+# CON-MEDIUM / INF-LOW (issues §9.7, §12.3): single dev-deps mechanism.
+# The previous file declared dev-deps via both
+# ``[project.optional-dependencies] dev`` (pytest>=8.3.0) and
+# ``[dependency-groups] dev`` (pytest>=9.0.3), so ``--extra dev`` and
+# ``--group dev`` produced different versions. Consolidating to one
+# canonical extra ([project.optional-dependencies]) and pinning
+# pytest to >=9.0.3 to match the actually-installed venv.
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.3.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "aiosqlite>=0.20.0",
     "ruff>=0.8.0",
+    "beautifulsoup4>=4.12.0",
+    # OPUS-13: build-pipeline minifiers (pure Python, no Node).
+    # rjsmin/rcssmin strip whitespace + comments only — no
+    # identifier renaming, so behaviour is byte-identical to the
+    # source modules and ``node --check`` continues to validate
+    # the minified bundle.
+    "rjsmin>=1.2.0",
+    "rcssmin>=1.1.2",
+]
+# G-12: browser-level E2E via Playwright + axe-core. Gated behind
+# KUFAR_E2E=1 so the default test run doesn't need Chromium installed.
+e2e = [
+    "playwright>=1.50,<2.0",
+    "pytest-playwright>=0.6,<1.0",
 ]
 
 [tool.ruff]

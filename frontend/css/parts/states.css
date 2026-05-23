@@ -1,0 +1,760 @@
+/* ===== Responsive: 420px (common phone width) ===== */
+@media (max-width: 420px) {
+    .view-nav {
+        gap: 2px;
+    }
+
+    .view-tab {
+        padding: 10px 6px;
+        font-size: var(--text-sm);
+    }
+
+    .view-tab-icon {
+        font-size: var(--text-sub);
+    }
+
+    .s-tab {
+        padding: 10px 12px;
+        font-size: var(--text-sm);
+        min-height: 44px;
+    }
+
+    .section-toggle {
+        padding: 10px 12px;
+        min-height: 44px;
+    }
+
+    .quick-chip {
+        padding: 10px 14px;
+        min-height: 44px;
+        font-size: var(--text-sm);
+    }
+
+    .deal-range-chip {
+        padding: 10px 12px;
+        min-height: 44px;
+    }
+
+    .listing-btn {
+        padding: 12px 16px;
+        min-height: 44px;
+    }
+
+    .wl-btn {
+        padding: 10px 14px;
+        min-height: 44px;
+    }
+
+    .lead-btn {
+        padding: 10px 14px;
+        min-height: 44px;
+    }
+
+    .stat-card {
+        padding: 12px 14px;
+    }
+
+    .chart-box {
+        min-height: 160px;
+        height: auto;
+    }
+
+    .history-chart-box {
+        min-height: 170px;
+        height: auto;
+    }
+
+}
+
+/* ===== Loading / Error / Skeleton States ===== */
+.is-loading {
+    opacity: 0.6;
+    cursor: not-allowed;
+    pointer-events: none;
+    position: relative;
+}
+
+.is-loading::after {
+    content: '';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    margin-top: -7px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
+.render-error {
+    padding: 12px 14px;
+    color: var(--red);
+    font-size: var(--text-sm);
+    text-align: center;
+    background: var(--red-soft);
+    border-radius: var(--r-md);
+    margin: 8px 0;
+}
+
+.overview-loading {
+    margin: var(--space-3) 0 var(--space-4);
+}
+
+.overview-loading-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+}
+
+.overview-loading .skel-bar {
+    display: block;
+}
+
+.overview-skeleton-card {
+    min-height: 112px;
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-card);
+}
+
+.overview-skeleton-card.wide {
+    grid-column: span 2;
+}
+
+.overview-skeleton-label {
+    width: 38%;
+}
+
+.overview-skeleton-value {
+    width: 64%;
+    height: 20px;
+    margin-top: 18px;
+}
+
+.overview-skeleton-value.long {
+    width: 76%;
+}
+
+.overview-skeleton-sub {
+    width: 52%;
+    margin-top: 18px;
+}
+
+.overview-skeleton-section {
+    margin-top: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-card);
+}
+
+.overview-skeleton-heading {
+    width: 42%;
+    height: 16px;
+}
+
+.overview-skeleton-line {
+    width: 82%;
+    margin-top: var(--space-3);
+}
+
+/* Recent searches — minimal strip, not a card section */
+.recent-strip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0;
+    margin: var(--space-2) 0 0;
+    transition: opacity var(--t-base) ease-out, transform 0.2s ease-out;
+    transform: translateY(0);
+    overflow: hidden;
+    max-height: 60px;
+}
+
+/* Override [hidden] to allow transition animation — must use !important to beat global [hidden] rule */
+.recent-strip[hidden] {
+    display: flex !important;
+    opacity: 0;
+    transform: translateY(-4px);
+    max-height: 0;
+    pointer-events: none;
+}
+
+.recent-kicker {
+    font-size: var(--text-xs);
+    font-weight: 700;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.recent-scroll {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.recent-scroll::-webkit-scrollbar {
+    display: none;
+}
+
+.recent-list {
+    display: flex;
+    align-items: center;
+    gap: 4px 12px;
+    min-width: 0;
+}
+
+.recent-chip {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color var(--tr-fast);
+    flex-shrink: 0;
+    padding: 12px 0;
+    min-height: 44px;
+    min-width: 44px;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+}
+
+.recent-chip:hover {
+    color: var(--text);
+    border-bottom-color: var(--text-dim);
+}
+
+.recent-chip:active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.recent-clear {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: var(--text-base);
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: var(--r-xs);
+    transition: background var(--tr-fast), color var(--tr-fast), border-color var(--tr-fast), transform var(--tr-fast);
+    line-height: 1;
+    flex-shrink: 0;
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.recent-clear:hover {
+    color: var(--text);
+}
+
+.recent-clear:active {
+    color: var(--red);
+}
+
+/* ===== Skeleton Loading Animations ===== */
+
+@keyframes skeleton-shimmer {
+    0%, 100% { opacity: 0.62; }
+    50% { opacity: 1; }
+}
+
+.skeleton {
+    background: color-mix(in srgb, var(--bg-elevated) 88%, var(--text) 5%);
+    animation: skeleton-shimmer 1.35s ease-in-out infinite;
+    border-radius: var(--r-sm);
+}
+
+.skeleton-card {
+    height: 80px;
+    margin-bottom: 12px;
+    border-radius: var(--r-md);
+}
+
+.skeleton-text {
+    height: 14px;
+    margin-bottom: 8px;
+    width: 100%;
+}
+
+.skeleton-text:last-child {
+    width: 60%;
+}
+
+.skeleton-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+}
+
+/* NOTE: Skeleton CSS kept for future use — implement skeleton cards in JS
+   by adding .skeleton / .skeleton-card / .skeleton-text classes during loading states. */
+
+/* ===== Button Disabled / Loading States ===== */
+
+.primary-btn:disabled,
+.ghost-btn:disabled,
+.search-btn:disabled,
+.listing-btn:disabled,
+.wl-btn:disabled,
+.lead-btn:disabled,
+.lp-menu-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.primary-btn.loading::after,
+.primary-btn.is-loading::after {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-left: 8px;
+}
+
+/* ===== Typography: Letter Spacing for Small Text ===== */
+
+.caption, .metadata, .label, .rate-label, .rate-meta {
+    letter-spacing: 0.01em;
+}
+
+/* ===== Ads View: Category Row & Recent Searches ===== */
+
+/* Filter button in listings header */
+.listings-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+#filter-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-1_5);
+    min-width: 44px;
+    min-height: 44px;
+}
+
+/* Filter dropdown */
+.filter-dropdown {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin-bottom: var(--space-3);
+    box-shadow: var(--shadow-lg);
+    animation: dropdownSlideIn 0.2s ease-out;
+}
+
+.filter-dropdown.closing {
+    animation: dropdownSlideOut var(--t-base) ease-in forwards;
+}
+
+@keyframes dropdownSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes dropdownSlideOut {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+}
+
+/* [hidden] override moved to global rule at top */
+
+.filter-group {
+    margin-bottom: var(--space-3);
+}
+
+.filter-group:last-child {
+    margin-bottom: 0;
+}
+
+.filter-group-label {
+    display: block;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--space-2);
+}
+
+.filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.filter-chip {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--bg-subtle);
+    color: var(--text-dim);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    transition: background var(--tr-fast), color var(--tr-fast), border-color var(--tr-fast);
+    white-space: nowrap;
+    min-height: 44px;
+    min-width: 44px;
+}
+
+.filter-chip:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.filter-empty {
+    font-size: var(--text-sm);
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+/* Price range inputs */
+.filter-price-range {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
+}
+
+.filter-price-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.filter-price-field span {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.filter-price-field input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-subtle);
+    color: var(--text);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    font-family: inherit;
+    transition: background var(--tr-fast), color var(--tr-fast), border-color var(--tr-fast);
+    min-height: 40px;
+}
+
+.filter-price-field input::placeholder {
+    color: var(--text-dim);
+    opacity: 0.6;
+}
+
+.filter-price-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--bg-elevated);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.filter-price-field input::-webkit-outer-spin-button,
+.filter-price-field input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.filter-price-field input[type=number] {
+    -moz-appearance: textfield;
+}
+
+/* Region select */
+.filter-region-select {
+    margin-top: var(--space-1);
+}
+
+.filter-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-subtle);
+    color: var(--text);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    font-family: inherit;
+    transition: background var(--tr-fast), color var(--tr-fast), border-color var(--tr-fast);
+    min-height: 40px;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+}
+
+.filter-select:hover {
+    border-color: var(--accent);
+}
+
+.filter-select:focus {
+    outline: none;
+    border-color: var(--accent);
+    background-color: var(--bg-elevated);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.filter-select option {
+    background: var(--bg-elevated);
+    color: var(--text);
+}
+
+/* Filter group divider enhancement */
+.filter-group {
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border);
+}
+
+.filter-group:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+/* Filter chip - simple hover effect without blocking clicks */
+.filter-chip {
+    position: relative;
+    overflow: hidden;
+}
+
+.filter-chip:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.filter-chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-foreground);
+    font-weight: 600;
+    transform: scale(0.97);
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+
+/* Filter action buttons */
+.filter-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+}
+
+.filter-btn {
+    flex: 1;
+    padding: 10px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background var(--t-base) ease, color var(--t-base) ease, border-color var(--t-base) ease;
+    min-height: 44px;
+}
+
+.filter-btn--cancel {
+    background: var(--bg-subtle);
+    color: var(--text-dim);
+}
+
+.filter-btn--cancel:hover {
+    background: var(--bg-elevated);
+    color: var(--text);
+    border-color: var(--text-dim);
+}
+
+.filter-btn--apply {
+    background: var(--accent);
+    color: var(--accent-foreground);
+    border-color: var(--accent);
+}
+
+.filter-btn--apply:hover {
+    background: var(--accent-dark);
+    border-color: var(--accent-dark);
+}
+
+.filter-btn:active {
+    transform: scale(0.98);
+}
+
+/* ===== Skeleton Loading Animation ===== */
+@keyframes shimmer {
+    0% {
+        background-position: -1000px 0;
+    }
+    100% {
+        background-position: 1000px 0;
+    }
+}
+
+.skeleton-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin-bottom: var(--space-3);
+    display: flex;
+    gap: var(--space-3);
+    min-height: 120px;
+    overflow: hidden;
+}
+
+/* Apply shimmer to all skeleton elements */
+.skeleton-card .skeleton-text,
+.skeleton-card .skeleton-image {
+    background: var(--bg-elevated);
+    background-size: 2000px 100%;
+    animation: shimmer 2s ease-in-out infinite;
+}
+
+.skeleton-image {
+    width: 80px;
+    height: 80px;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+}
+
+.skeleton-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.skeleton-text {
+    height: 12px;
+    border-radius: var(--r-sm);
+    opacity: 0.7;
+}
+
+/* skel-bar used by inline skeleton builders in render_cards.js and render_trackers.js */
+.skel-bar {
+    height: 12px;
+    border-radius: var(--r-sm);
+    background: var(--bg-elevated);
+    background-size: 2000px 100%;
+    animation: shimmer 2s ease-in-out infinite;
+    margin-bottom: var(--space-2);
+    opacity: 0.7;
+}
+
+.skeleton-title {
+    width: 70%;
+    height: 14px;
+}
+
+.skeleton-subtitle {
+    width: 45%;
+    height: 12px;
+    opacity: 0.5;
+}
+
+.skeleton-price {
+    width: 40%;
+    height: 16px;
+    margin-top: auto;
+    opacity: 0.6;
+}
+
+/* Loading dots animation */
+@keyframes loadingDots {
+    0%, 80%, 100% {
+        transform: scale(0.6);
+        opacity: 0.55;
+    }
+    40% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.loading-dots {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    padding: var(--space-4);
+}
+
+.loading-dots span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: loadingDots 1.4s ease-in-out infinite;
+}
+
+.loading-dots span:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.loading-dots span:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+.loading-dots span:nth-child(3) {
+    animation-delay: 0s;
+}
+
+/* ── AI Analysis Block ───────────────────────────────────────────────── */
+
+.listing-btn--ai {
+    color: color-mix(in srgb, var(--accent) 84%, var(--text));
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+}
+
+.listing-btn--ai:hover {
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    color: color-mix(in srgb, var(--accent) 90%, var(--text));
+}

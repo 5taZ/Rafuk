@@ -1,238 +1,323 @@
+const _loadPromises = new Map();
+
 function createAppCore() {
     const state = {
-        query: "",
-        strictSearch: false,
-        comparisonQuery: "",
-        comparisonStats: null,
-        comparisonItems: [],
-        comparisonLoading: false,
-        historyDays: 7,
-        currency: "BYN",
-        searchRequestId: 0,
-        sort: "newest",
-        discountFromPercent: 10,
-        discountToPercent: 30,
-        loading: false,
-        error: null,
-        stats: null,
-        listings: [],
-        dealListings: [],
-        segments: null,
-        geography: [],
-        chart: null,
-        history: [],
-        historyChart: null,
-        usdRateByn: null,
-        leads: [],
-        leadFilter: "active",
-        watchlist: [],
-        watchlistFilter: "attention",
-        opportunityBoard: {
-            items: [],
-            top_price_drops: [],
-            rare_opportunities: [],
-            market_signals: [],
+        ui: {
+            loading: false,
+            error: null,
+            activeView: "overview",
+            dirtyViews: new Set(),
+            _allDirty: true,
         },
-        trackers: [],
-        trackerEvents: [],
-        trackerEventFilter: "all",
-        trackerStatus: "",
-        trackerStatusKind: "info",
-        trackerMinDiscountPercent: 10,
-        trackerMaxPriceByn: null,
-        trackerExcludeDuplicates: false,
-        trackerSellerType: "",
-        trackerCondition: "",
-        trackerRegionName: "",
-        trackerConfigKeyword: "",
-        detail: null,
-        detailImageIndex: 0,
-        activeView: "overview",
+        search: {
+            query: "",
+            strictSearch: true,
+            searchRequestId: 0,
+            sort: "newest",
+            recentSearches: [],
+            searchAbortController: null,
+        },
+        filters: {
+            category: null, // selected category id (int or null)
+            categories: [], // category distribution from last search [{id, label, count}]
+            condition: "", // filter by condition: "", "new", "used"
+            sellerType: "", // filter by seller: "", "private", "shop"
+            minPrice: null, // filter by min price (number or null)
+            maxPrice: null, // filter by max price (number or null)
+            regionName: "", // filter by region name
+            // Pending filter values (before Apply is clicked)
+            pendingCategory: null,
+            pendingCondition: "",
+            pendingSellerType: "",
+            pendingMinPrice: null,
+            pendingMaxPrice: null,
+            pendingRegionName: "",
+            filterDropdownOpen: false,
+            discountFromPercent: 10,
+            discountToPercent: 30,
+        },
+        listings: {
+            items: [],
+            _loadedAt: 0,
+            _loadedSort: null,
+            total: 0,
+            hasMore: false,
+            loading: false,
+            loadingMore: false,
+            _requestId: 0,
+            _pending: false,
+            fallbackUsed: false,
+            resultCap: 0,
+            datasetCount: 0,
+            servedCap: 0,
+            isLimited: false,
+        },
+        trackers: {
+            items: [],
+            events: [],
+            eventFilter: "all",
+            eventFilterTrackerId: null,
+            status: "",
+            statusKind: "info",
+            editingId: null,
+            creating: false,
+            minDiscountPercent: 10,
+            maxPriceByn: null,
+            sellerType: "",
+            condition: "",
+            regionName: "",
+            configKeyword: "",
+        },
+        leads: {
+            items: [],
+            filter: "all",
+            _requestId: 0,
+            pipelineStep: "active",
+            itemsFilter: "purchases",
+        },
+        watchlist: {
+            items: [],
+            filter: "all",
+            _requestId: 0,
+        },
+        detail: {
+            data: null,
+            imageIndex: 0,
+            fromWatchlist: false,
+            _requestId: 0,
+            ai: {
+                adId: null,
+                loading: false,
+                result: null,
+                error: "",
+                source: "",
+            },
+            aiLoadingTimer: null,
+        },
+        expenses: {
+            items: [],
+            loading: false,
+            currentLeadId: null,
+        },
+        analytics: {
+            dashboard: null,
+            loading: false,
+        },
         panels: {
             distribution: false,
             history: true,
-            comparison: false,
             segments: false,
             geography: false,
+            historyDeals: false,
+            listingAssistant: false,
+        },
+        profile: {
+            data: null,
+            loading: false,
+            error: "",
+        },
+        admin: {
+            users: [],
+            statuses: [],
+            query: "",
+            selectedStatus: "",
+            loading: false,
+            statusesLoading: false,
+            error: "",
+            statusesError: "",
+            editingUserId: null,
+            savingUserIds: new Set(),
+            savingStatusCodes: new Set(),
+            auditEntries: [],
+            auditLoading: false,
+            auditError: "",
+            auditOffset: 0,
+            auditHasMore: false,
+        },
+        charts: {
+            distribution: null,
+            history: null,
+            historyData: [],
+            _historyRequestId: 0,
+        },
+        misc: {
+            historyDays: 7,
+            currency: "BYN",
+            segments: null,
+            geography: [],
+            listingAssistantResult: null,
+            modalCleanup: null,
+            stats: null,
+
         },
     };
 
     const elements = {};
 
     function cacheElements() {
-        elements.searchInput = document.getElementById("search-input");
-        elements.searchButton = document.getElementById("search-btn");
-        elements.searchButtonLabel = document.getElementById("search-btn-label");
-        elements.strictSearchToggle = document.getElementById("strict-search-toggle");
-        elements.errorBar = document.getElementById("error-bar");
-        elements.errorText = document.getElementById("error-text");
-        elements.helperPanel = document.getElementById("helper-panel");
-        elements.summaryStrip = document.getElementById("summary-strip");
-        elements.summaryQuery = document.getElementById("summary-query");
-        elements.summarySignal = document.getElementById("summary-signal");
-        elements.summaryMedian = document.getElementById("summary-median");
-        elements.summaryMarketTotal = document.getElementById("summary-market-total");
-        elements.summaryCoverage = document.getElementById("summary-coverage");
-        elements.viewTabs = Array.from(document.querySelectorAll("[data-view]"));
-        elements.views = {
-            overview: document.getElementById("overview-view"),
-            ads: document.getElementById("ads-view"),
-            tracking: document.getElementById("tracking-view"),
-            cheap: document.getElementById("cheap-view"),
-            monitoring: document.getElementById("monitoring-view"),
-            deals: document.getElementById("deals-view"),
-        };
-        elements.statsSection = document.getElementById("stats-section");
-        elements.chartSection = document.getElementById("chart-section");
-        elements.historySection = document.getElementById("history-section");
-        elements.historyEmpty = document.getElementById("history-empty");
-        elements.historyBadge = document.getElementById("history-badge");
-        elements.historySummary = document.getElementById("history-summary");
-        elements.historyRangeButtons = Array.from(document.querySelectorAll("[data-history-days]"));
-        elements.comparisonSection = document.getElementById("comparison-section");
-        elements.compareInput = document.getElementById("compare-input");
-        elements.compareButton = document.getElementById("compare-btn");
-        elements.compareSwapButton = document.getElementById("compare-swap-btn");
-        elements.comparisonNote = document.getElementById("comparison-note");
-        elements.comparisonSummary = document.getElementById("comparison-summary");
-        elements.comparisonGrid = document.getElementById("comparison-grid");
-        elements.compareQuickChips = Array.from(document.querySelectorAll("[data-compare-query]"));
-        elements.segmentsSection = document.getElementById("segments-section");
-        elements.geographySection = document.getElementById("geography-section");
-        elements.geographyGrid = document.getElementById("geography-grid");
-        elements.geographyNote = document.getElementById("geography-note");
-        elements.listingsSection = document.getElementById("listings-section");
-        elements.dealsSection = document.getElementById("deals-section");
-        elements.marketTotalBadge = document.getElementById("market-total-badge");
-        elements.listingsTotalBadge = document.getElementById("listings-total-badge");
-        elements.dealsTotalBadge = document.getElementById("deals-total-badge");
-        elements.stats = {
-            median: document.getElementById("stat-median"),
-            mean: document.getElementById("stat-mean"),
-            min: document.getElementById("stat-min"),
-            max: document.getElementById("stat-max"),
-            coverage: document.getElementById("stat-coverage"),
-            fairRange: document.getElementById("stat-fair-range"),
-        };
-        elements.rateStrip = document.getElementById("rate-strip");
-        elements.usdRateValue = document.getElementById("usd-rate-value");
-        elements.segmentsGrid = document.getElementById("segments-grid");
-        elements.listingsList = document.getElementById("listings-list");
-        elements.dealsList = document.getElementById("deals-list");
-        elements.sortButtons = Array.from(document.querySelectorAll("[data-sort]"));
-        elements.discountButtons = Array.from(document.querySelectorAll("[data-discount-from]"));
-        elements.trackerEventFilterButtons = Array.from(
-            document.querySelectorAll("[data-event-filter]")
-        );
-        elements.dealFromInput = document.getElementById("deal-from-input");
-        elements.dealToInput = document.getElementById("deal-to-input");
-        elements.dealApplyButton = document.getElementById("deal-apply-btn");
-        elements.quickChips = Array.from(document.querySelectorAll("[data-query]"));
-        elements.trackerPanel = document.getElementById("tracker-panel");
-        elements.trackQueryButton = document.getElementById("track-query-btn");
-        elements.trackerMinDiscountInput = document.getElementById("tracker-min-discount-input");
-        elements.trackerMaxPriceInput = document.getElementById("tracker-max-price-input");
-        elements.trackerExcludeDuplicatesToggle = document.getElementById("tracker-exclude-duplicates-toggle");
-        elements.trackerSellerSelect = document.getElementById("tracker-seller-select");
-        elements.trackerConditionSelect = document.getElementById("tracker-condition-select");
-        elements.trackerRegionInput = document.getElementById("tracker-region-input");
-        elements.trackerConfigInput = document.getElementById("tracker-config-input");
-        elements.trackerStatus = document.getElementById("tracker-status");
-        elements.trackersList = document.getElementById("trackers-list");
-        elements.trackerEventsList = document.getElementById("tracker-events-list");
-        elements.clearEventsButton = document.getElementById("clear-events-btn");
-        elements.leadInboxSection = document.getElementById("lead-inbox-section");
-        elements.reloadLeadsButton = document.getElementById("reload-leads-btn");
-        elements.leadInboxNote = document.getElementById("lead-inbox-note");
-        elements.leadFilterButtons = Array.from(document.querySelectorAll("[data-lead-filter]"));
-        elements.leadInboxList = document.getElementById("lead-inbox-list");
-        elements.watchlistSection = document.getElementById("watchlist-section");
-        elements.refreshWatchlistButton = document.getElementById("refresh-watchlist-btn");
-        elements.watchlistNote = document.getElementById("watchlist-note");
-        elements.watchlistFilterButtons = Array.from(document.querySelectorAll("[data-watch-filter]"));
-        elements.watchlistList = document.getElementById("watchlist-list");
-        elements.opportunityBoardSection = document.getElementById("opportunity-board-section");
-        elements.reloadOpportunityBoardButton = document.getElementById("reload-opportunity-board-btn");
-        elements.opportunityBoardNote = document.getElementById("opportunity-board-note");
-        elements.opportunityBoardList = document.getElementById("opportunity-board-list");
-        elements.opportunityBoardDrops = document.getElementById("opportunity-board-drops");
-        elements.opportunityBoardRare = document.getElementById("opportunity-board-rare");
-        elements.opportunityBoardSignals = document.getElementById("opportunity-board-signals");
-        elements.trackingHeroStats = document.getElementById("tracking-hero-stats");
-        elements.cheapHeroStats = document.getElementById("cheap-hero-stats");
-        elements.monitoringHeroStats = document.getElementById("monitoring-hero-stats");
-        elements.dealsHeroStats = document.getElementById("deals-hero-stats");
-        elements.detailModal = document.getElementById("detail-modal");
-        elements.detailOverlay = document.getElementById("detail-overlay");
-        elements.detailClose = document.getElementById("detail-close");
-        elements.detailMainImage = document.getElementById("detail-main-image");
-        elements.detailNoImage = document.getElementById("detail-no-image");
-        elements.detailThumbs = document.getElementById("detail-thumbs");
-        elements.detailTitle = document.getElementById("detail-title");
-        elements.detailPrice = document.getElementById("detail-price");
-        elements.detailMeta = document.getElementById("detail-meta");
-        elements.detailDescription = document.getElementById("detail-description");
-        elements.detailProfitBlock = document.getElementById("detail-profit-block");
-        elements.detailProfit = document.getElementById("detail-profit");
-        elements.detailLiquidityBlock = document.getElementById("detail-liquidity-block");
-        elements.detailLiquidity = document.getElementById("detail-liquidity");
-        elements.detailAddLeadButton = document.getElementById("detail-add-lead-btn");
-        elements.detailAddWatchlistButton = document.getElementById("detail-add-watchlist-btn");
-        elements.detailLink = document.getElementById("detail-link");
-        elements.detailParamsBlock = document.getElementById("detail-params-block");
-        elements.detailParams = document.getElementById("detail-params");
-        elements.detailSellerBlock = document.getElementById("detail-seller-block");
-        elements.detailSeller = document.getElementById("detail-seller");
-        elements.toastContainer = document.getElementById("toast-container");
-        elements.currencyButtons = {
-            BYN: document.getElementById("btn-byn"),
-            USD: document.getElementById("btn-usd"),
-        };
-        elements.panelToggles = Array.from(document.querySelectorAll("[data-panel-toggle]"));
-        elements.panelBodies = {
-            distribution: document.getElementById("distribution-body"),
-            history: document.getElementById("history-body"),
-            comparison: document.getElementById("comparison-body"),
-            segments: document.getElementById("segments-body"),
-            geography: document.getElementById("geography-body"),
-        };
+        cacheAppElements(elements);
     }
 
+    const THEME_CHROME_COLORS = {
+        dark: "#0a0a0b",
+        light: "#ffffff",
+    };
+
+    function normalizeTheme(value) {
+        return value === "light" ? "light" : "dark";
+    }
+
+    function setThemeColorMeta(color) {
+        let meta = document.querySelector('meta[name="theme-color"]');
+        if (!meta) {
+            meta = document.createElement("meta");
+            meta.name = "theme-color";
+            document.head.appendChild(meta);
+        }
+        meta.setAttribute("content", color);
+    }
+
+    function compareTelegramVersions(version, minVersion) {
+        const left = String(version || "").trim().split(".");
+        const right = String(minVersion || "").trim().split(".");
+        const length = Math.max(left.length, right.length);
+        for (let i = 0; i < length; i++) {
+            const a = parseInt(left[i] || "0", 10);
+            const b = parseInt(right[i] || "0", 10);
+            if (a > b) return 1;
+            if (a < b) return -1;
+        }
+        return 0;
+    }
+
+    function telegramVersionAtLeast(tg, minVersion) {
+        try {
+            if (typeof tg?.isVersionAtLeast === "function") {
+                return tg.isVersionAtLeast(minVersion);
+            }
+        } catch (_) {}
+        return compareTelegramVersions(tg?.version, minVersion) >= 0;
+    }
+
+    function callTelegramChromeMethod(tg, method, color) {
+        try {
+            if (typeof tg?.[method] === "function") tg[method](color);
+        } catch (_) {}
+    }
+
+    function syncTelegramChromeTheme(theme) {
+        const next = normalizeTheme(theme || document.documentElement.getAttribute("data-theme"));
+        const bg = THEME_CHROME_COLORS[next];
+        document.body.style.backgroundColor = bg;
+        setThemeColorMeta(bg);
+        const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+        if (!tg) return;
+        // Telegram paints native top/bottom chrome outside our DOM; keep it on our palette.
+        if (telegramVersionAtLeast(tg, "6.1")) {
+            callTelegramChromeMethod(tg, "setBackgroundColor", bg);
+            callTelegramChromeMethod(tg, "setHeaderColor", bg);
+        }
+        if (telegramVersionAtLeast(tg, "7.10")) {
+            callTelegramChromeMethod(tg, "setBottomBarColor", bg);
+        }
+    }
+
+    // FE-NEW-3: single themeChanged listener with stored ref so re-init / pagehide can deregister.
+    let _themeChangedRef = null;
+    let _themeChangedRegistered = false;
+    // FE-NEW-5: callbacks invoked after any theme change (toggle or Telegram event).
+    const _themeChangeCallbacks = [];
+
+    const _TG_THEME_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
+    function _applyTelegramThemeVars() {
+        const tp = window.Telegram?.WebApp?.themeParams || {};
+        const root = document.documentElement;
+        const map = [
+            ["bg_color", "--tg-theme-bg-color"],
+            ["text_color", "--tg-theme-text-color"],
+            ["hint_color", "--tg-theme-hint-color"],
+            ["link_color", "--tg-theme-link-color"],
+            ["button_color", "--tg-theme-button-color"],
+            ["button_text_color", "--tg-theme-button-color-text"],
+            ["secondary_bg_color", "--tg-theme-secondary-bg-color"],
+            ["destructive_text_color", "--tg-theme-destructive-text-color"],
+        ];
+        for (const [tgKey, cssVar] of map) {
+            const value = tp[tgKey];
+            if (typeof value === "string" && value.length > 0 && value.length <= 16 && _TG_THEME_COLOR_RE.test(value.trim())) {
+                root.style.setProperty(cssVar, value.trim());
+            }
+        }
+    }
+
+    /**
+     * Pick a starting theme. We mirror Telegram's coarse dark/light
+     * preference (so a user who has Telegram in light mode opens the
+     * Mini App in light mode by default), but we DO NOT inherit
+     * Telegram's individual theme colours — the Mini App keeps its
+     * own palette so the brand stays consistent across clients.
+     *
+     * Manual `localStorage.theme` always wins over the heuristic so a
+     * user who explicitly toggled the theme keeps their choice.
+     */
     function initTelegramTheme() {
-        if (window.Telegram && window.Telegram.WebApp) {
-            window.Telegram.WebApp.expand();
-            window.Telegram.WebApp.ready();
-            const scheme = window.Telegram.WebApp.colorScheme;
-            document.documentElement.setAttribute(
-                "data-theme",
-                scheme === "light" ? "light" : "dark"
-            );
-        } else {
-            document.documentElement.setAttribute("data-theme", "dark");
+        const saved = localStorage.getItem("theme");
+        const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+        const initialTheme = saved === "light" || saved === "dark"
+            ? saved
+            : (tg?.colorScheme === "light" ? "light" : "dark");
+        document.documentElement.setAttribute("data-theme", initialTheme);
+        if (tg) {
+            try {
+                tg.expand();
+                tg.ready();
+            } catch (_) {
+                // ready/expand can throw outside a real Telegram client
+            }
+            syncTelegramChromeTheme(initialTheme);
+            // FE-NEW-3: single themeChanged listener with stored ref so re-init / pagehide can deregister.
+            if (!_themeChangedRegistered) {
+                _themeChangedRef = () => {
+                    if (localStorage.getItem("theme")) {
+                        syncTelegramChromeTheme();
+                        return;
+                    }
+                    const s = tg.colorScheme;
+                    const next = s === "light" ? "light" : "dark";
+                    document.documentElement.setAttribute("data-theme", next);
+                    syncTelegramChromeTheme(next);
+                    // Also sync Telegram CSS custom properties (app.js palette).
+                    _applyTelegramThemeVars();
+                    // FE-NEW-5: re-paint charts with fresh CSS tokens.
+                    for (const cb of _themeChangeCallbacks) cb();
+                };
+                try {
+                    tg.onEvent?.("themeChanged", _themeChangedRef);
+                    _themeChangedRegistered = true;
+                } catch (_) {
+                    // onEvent missing on older WebApp builds — non-fatal
+                }
+            }
+            return;
         }
+        syncTelegramChromeTheme(initialTheme);
     }
 
-    function formatPrice(value) {
-        if (value == null || value === 0) return "—";
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute("data-theme");
+        const next = current === "light" ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", next);
+        localStorage.setItem("theme", next);
+        syncTelegramChromeTheme(next);
+        for (const cb of _themeChangeCallbacks) cb();
+    }
+
+    function formatPrice(value, priceType) {
+        if (priceType === "negotiable" || (value == null && priceType !== "free")) return "Договорная";
+        if (priceType === "free" || value === 0) return "Бесплатно";
         const numeric = Number(value);
-        if (Number.isNaN(numeric)) return "—";
-
-        if (state.currency === "BYN") {
-            if (numeric >= 10000) {
-                return `${(numeric / 1000).toFixed(1).replace(/\.0$/, "")} тыс. р.`;
-            }
-            if (numeric >= 1000) {
-                return `${(numeric / 1000).toFixed(2).replace(/0+$/, "").replace(/\.$/, "")} тыс. р.`;
-            }
-            return `${Math.round(numeric)} р.`;
-        }
-
-        return `$${numeric.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
-    }
-
-    function formatRate(value) {
-        if (!value) return "—";
-        return `${Number(value).toFixed(4)} BYN`;
+        if (Number.isNaN(numeric)) return "Договорная";
+        return `${Math.round(numeric)} BYN`;
     }
 
     function formatCondition(condition) {
@@ -244,7 +329,7 @@ function createAppCore() {
             "1": "Б/у",
             "2": "Новый",
         };
-        return map[condition] || condition || "";
+        return map[condition] || "";
     }
 
     function formatSeller(seller) {
@@ -254,7 +339,7 @@ function createAppCore() {
             private: "Частное",
             shop: "Магазин",
         };
-        return map[seller] || seller || "";
+        return map[seller] || "";
     }
 
     function formatDelta(delta) {
@@ -268,16 +353,18 @@ function createAppCore() {
         return delta > 0 ? "over" : "under";
     }
 
+    const _dateFormatter = new Intl.DateTimeFormat("ru-BY", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+
     function formatDate(value) {
         if (!value) return "";
         const date = new Date(value);
         if (Number.isNaN(date.getTime())) return "";
-        return new Intl.DateTimeFormat("ru-BY", {
-            day: "2-digit",
-            month: "short",
-            hour: "2-digit",
-            minute: "2-digit",
-        }).format(date);
+        return _dateFormatter.format(date);
     }
 
     function hasTelegramInitData() {
@@ -288,18 +375,165 @@ function createAppCore() {
         );
     }
 
+    function loadRecentSearches() {
+        try {
+            const stored = localStorage.getItem("recentSearches");
+            if (stored) {
+                state.search.recentSearches = JSON.parse(stored).slice(0, 10);
+            }
+        } catch (_) {
+            state.search.recentSearches = [];
+        }
+    }
+
+    function saveRecentSearches() {
+        try {
+            localStorage.setItem("recentSearches", JSON.stringify(state.search.recentSearches));
+        } catch (e) {
+            if (e.name === "QuotaExceededError" && state.search.recentSearches.length > 1) {
+                state.search.recentSearches = state.search.recentSearches.slice(0, Math.ceil(state.search.recentSearches.length / 2));
+                try {
+                    localStorage.setItem("recentSearches", JSON.stringify(state.search.recentSearches));
+                } catch (_) {
+                    // Give up after retry
+                }
+            }
+        }
+    }
+
+    function addRecentSearch(query) {
+        if (!query || query.trim().length < 2) return;
+        const trimmed = query.trim();
+        // Remove if already exists
+        state.search.recentSearches = state.search.recentSearches.filter((q) => q !== trimmed);
+        // Add to front
+        state.search.recentSearches.unshift(trimmed);
+        // Keep only last 10
+        state.search.recentSearches = state.search.recentSearches.slice(0, 10);
+        saveRecentSearches();
+    }
+
+    function clearRecentSearches() {
+        state.search.recentSearches = [];
+        saveRecentSearches();
+    }
+
+    /**
+     * Performance monitoring utility — measures render time in development.
+     * Returns elapsed ms when the cleanup function is called.
+     *
+     * @param {string} name - Human-readable operation name
+     * @param {number} [thresholdMs=100] - Warn threshold for console.warn
+     * @returns {Function} Cleanup function that returns elapsed ms
+     */
+    function measureRender(name, thresholdMs = 100) {
+        const start = performance.now();
+        return function () {
+            const elapsed = performance.now() - start;
+            // Slow-render diagnostic is available via the returned elapsed
+            // value; console.warn removed to avoid noise on weak devices.
+            return elapsed;
+        };
+    }
+
+    /**
+     * Mark one or more views as needing re-render.
+     * Views: 'error','loading','currency','strict','tabs','panels','summary',
+     * 'helper','views','trackingHero','dealsHero',
+     * 'sort','discount','eventFilters','dealInputs','trackerInputs','stats',
+     * 'history','segments','geography','recent','listings','deals',
+     * 'rates','trackerStatus','trackers','trackerEvents','leads','watchlist',
+     * 'profit','profile','adminUsers','adminStatuses','adminAudit'.
+     * Call without args or with 'all' to mark everything dirty.
+     */
+    function markDirty() {
+        const args = Array.prototype.slice.call(arguments);
+        if (args.length === 0 || args.includes('all')) {
+            // Mark all known views dirty
+            state.ui._allDirty = true;
+            state.ui.dirtyViews.clear();
+        } else {
+            state.ui._allDirty = false;
+            for (const v of args) {
+                state.ui.dirtyViews.add(v);
+            }
+        }
+    }
+
+    function isDirty(view) {
+        if (state.ui._allDirty) return true;
+        return state.ui.dirtyViews.has(view);
+    }
+
+    function clearDirty() {
+        state.ui._allDirty = false;
+        state.ui.dirtyViews.clear();
+    }
+
+    function populateRegionSelect(selectEl, currentValue) {
+        populateRegionSelectOptions(selectEl, currentValue);
+    }
+
+    const _loadedScripts = new Set();
+    // FE-NEW-1: SRI on lazy-loaded modules. Map is generated by
+    // scripts/build_frontend_bundle.sh and embedded in the bundle.
+    function _loadScript(src, integrity) {
+        if (_loadedScripts.has(src)) return Promise.resolve();
+        if (!integrity && typeof __LAZY_INTEGRITY !== "undefined") {
+            const basename = src.split("/").pop().split("?")[0];
+            integrity = __LAZY_INTEGRITY[basename];
+        }
+        return new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = src;
+            if (integrity) {
+                s.integrity = integrity;
+                s.crossOrigin = "anonymous";
+            }
+            s.onload = () => { _loadedScripts.add(src); resolve(); };
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
     return {
         state,
         elements,
         cacheElements,
+        REGIONS: APP_REGIONS,
         initTelegramTheme,
+        toggleTheme,
+        onThemeChange: (cb) => _themeChangeCallbacks.push(cb),
+        syncTelegramChromeTheme,
         formatPrice,
-        formatRate,
         formatCondition,
         formatSeller,
         formatDelta,
         deltaClass,
         formatDate,
+        trapFocus,
         hasTelegramInitData,
+        loadRecentSearches,
+        saveRecentSearches,
+        addRecentSearch,
+        clearRecentSearches,
+        measureRender,
+        markDirty,
+        isDirty,
+        clearDirty,
+        populateRegionSelect,
+        // M10: shared filter helper — single source of truth for lazy modules
+        hasActiveListingFilters: function () {
+            return (
+                state.filters.category != null
+                || Boolean(state.filters.condition)
+                || Boolean(state.filters.sellerType)
+                || state.filters.minPrice != null
+                || state.filters.maxPrice != null
+                || Boolean(state.filters.regionName)
+            );
+        },
+        logClientError,
+        _loadScript,
     };
 }

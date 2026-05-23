@@ -30,7 +30,7 @@ else
     print_status "frontend" "stopped"
 fi
 
-if curl -fsS http://127.0.0.1:8010/api/v1/currency-rates >/dev/null 2>&1; then
+if curl -fsS --noproxy '*' http://127.0.0.1:8010/api/v1/health >/dev/null 2>&1; then
     print_status "api" "running on http://127.0.0.1:8010"
 else
     print_status "api" "stopped"

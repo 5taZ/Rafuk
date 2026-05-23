@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from api.dependencies import get_session_factory_dependency, get_telegram_user
+from api.limiter import limiter
+from api.middleware.telegram_auth import TelegramInitData
+from api.models import DealExpense, LeadItem
+from api.schemas import DealExpenseCreate, DealExpenseRead, DealExpenseUpdate
+from api.services.workflow_store import ensure_user, resolve_user_id
+
+router = APIRouter(tags=["expenses"])
+
+
+@router.post(
+    "/leads/{lead_id}/expenses",
+    response_model=DealExpenseRead,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit("20/minute")
+async def create_expense(
+    request: Request,
+    lead_id: int,
+    payload: DealExpenseCreate,
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> DealExpenseRead:
+    """Add an expense to a lead (delivery, repair, etc.)."""
+    async with session_factory() as session:
+        user_id = await ensure_user(
+            session,
+            telegram_user_id=telegram_user.user_id,
+            first_name=telegram_user.first_name,
+        )
+        # Verify lead exists and belongs to user
+        lead = await session.get(LeadItem, lead_id)
+        if lead is None or lead.user_id != user_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+        expense = DealExpense(
+            lead_id=lead_id,
+            user_id=user_id,
+            expense_type=payload.expense_type.value,
+            amount_byn=payload.amount_byn,
+            notes=payload.notes,
+            expense_date=payload.expense_date or datetime.now(UTC),
+        )
+        session.add(expense)
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Failed to create expense",
+            ) from exc
+        await session.refresh(expense)
+        return DealExpenseRead.model_validate(expense)
+
+
+@router.get("/leads/{lead_id}/expenses", response_model=list[DealExpenseRead])
+@limiter.limit("30/minute")
+async def get_expenses(
+    request: Request,
+    lead_id: int,
+    # BE-M2: cap and paginate. The previous unbounded SELECT was fine for
+    # a freshly-onboarded user but a power-user with hundreds of expense
+    # rows on a single lead would feel the per-request size growth (and
+    # the response would balloon past the typical 256 KB Mini-App
+    # tolerance for chunky JSON). Default page is 100 — plenty for the
+    # detail view; ``limit=500`` is the hard ceiling.
+    limit: int = Query(100, ge=1, le=500, description="Max expenses to return"),
+    offset: int = Query(0, ge=0, description="Number of expenses to skip"),
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> list[DealExpenseRead]:
+    """List expenses for a lead (paginated, newest first)."""
+    async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user.user_id)
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        # Verify lead exists and belongs to user
+        lead = await session.get(LeadItem, lead_id)
+        if lead is None or lead.user_id != user_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+        result = await session.execute(
+            select(DealExpense)
+            .where(DealExpense.lead_id == lead_id, DealExpense.user_id == user_id)
+            .order_by(DealExpense.expense_date.desc(), DealExpense.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [DealExpenseRead.model_validate(e) for e in result.scalars()]
+
+
+@router.patch("/leads/{lead_id}/expenses/{expense_id}", response_model=DealExpenseRead)
+@limiter.limit("20/minute")
+async def update_expense(
+    request: Request,
+    lead_id: int,
+    expense_id: int,
+    payload: DealExpenseUpdate,
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> DealExpenseRead:
+    """Update an expense."""
+    async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user.user_id)
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
+        expense = await session.get(DealExpense, expense_id)
+        if expense is None or expense.user_id != user_id or expense.lead_id != lead_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
+
+        if payload.expense_type is not None:
+            expense.expense_type = payload.expense_type.value
+        if payload.amount_byn is not None:
+            expense.amount_byn = payload.amount_byn
+        # A-2: ``notes`` is the only nullable text field on
+        # DealExpense — a client sending ``{"notes": null}``
+        # legitimately wants to clear it, so we have to
+        # distinguish "field absent" from "field set to None".
+        # The other fields keep ``is not None`` because the
+        # underlying columns are NOT NULL (expense_type and
+        # amount_byn via DB CHECK; expense_date has a
+        # server_default but no nullable=True).
+        if "notes" in payload.model_fields_set:
+            expense.notes = payload.notes
+        if payload.expense_date is not None:
+            expense.expense_date = payload.expense_date
+
+        await session.commit()
+        await session.refresh(expense)
+        return DealExpenseRead.model_validate(expense)
+
+
+@router.delete("/leads/{lead_id}/expenses/{expense_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
+async def delete_expense(
+    request: Request,
+    lead_id: int,
+    expense_id: int,
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+) -> Response:
+    """Delete an expense."""
+    async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user.user_id)
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
+        expense = await session.get(DealExpense, expense_id)
+        if expense is None or expense.user_id != user_id or expense.lead_id != lead_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found")
+
+        await session.delete(expense)
+        await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -1,8 +1,74 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
+from enum import StrEnum
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+AI_LISTING_PHOTO_MAX_CHARS = 1_500_000
+AI_LISTING_PHOTO_MAX_COUNT = 4
+REMINDER_MAX_HORIZON_DAYS = 366
+
+
+class LeadStatusEnum(StrEnum):
+    """Allowed lead statuses.
+
+    `watching` is the merged-in watchlist state — items the user is
+    monitoring but hasn't promoted to active deal pipeline yet.
+    """
+
+    watching = "watching"
+    new = "new"
+    reviewing = "reviewing"
+    in_progress = "in_progress"
+    researching = "researching"
+    negotiating = "negotiating"
+    deferred = "deferred"
+    closed = "closed"
+    abandoned = "abandoned"
+    bought = "bought"
+    sold = "sold"
+    skipped = "skipped"
+
+
+class WatchlistStatusEnum(StrEnum):
+    """Allowed watchlist workflow statuses.
+
+    Watchlist priorities used by the mini-app dropdown
+    (default / important / very_important) plus pipeline-style
+    states the frontend filter and sort code references
+    (watching / reviewing / interested / contacted / passed / skipped).
+    Keep this list aligned with frontend/js/render_card_builders.js
+    and frontend/js/render_cards.js.
+    """
+
+    default = "default"
+    important = "important"
+    very_important = "very_important"
+    watching = "watching"
+    reviewing = "reviewing"
+    interested = "interested"
+    contacted = "contacted"
+    passed = "passed"
+    skipped = "skipped"
+
+
+class ExpenseTypeEnum(StrEnum):
+    """Allowed expense types."""
+
+    delivery = "delivery"
+    repair = "repair"
+    customs = "customs"
+    packaging = "packaging"
+    transport = "transport"
+    other = "other"
+
+
+class CategoryBucket(BaseModel):
+    id: int
+    label: str
+    count: int
 
 
 class PriceStatsResponse(BaseModel):
@@ -23,6 +89,15 @@ class PriceStatsResponse(BaseModel):
     analyzed_count: int = 0
     fair_price_from: float | None = None
     fair_price_to: float | None = None
+    categories: list[CategoryBucket] = Field(default_factory=list)
+    categories_limited: bool = False
+    category_total_limit: int = 0
+    category_total_candidates: int = 0
+    # 3-5 short refinements pulled from the result-set titles —
+    # tokens / phrases that appear most often in the listings'
+    # `subject` but aren't already part of the user's query. The
+    # frontend renders them as tap-to-append chips.
+    suggested_refinements: list[str] = Field(default_factory=list)
 
 
 class FlipEstimate(BaseModel):
@@ -43,22 +118,25 @@ class ListingItem(BaseModel):
 
     ad_id: int
     title: str = Field(validation_alias="subject")
-    price: float
+    price: float | None = None
+    price_type: str | None = None  # "fixed" | "negotiable" | "free"
     currency: str
     link: str = Field(validation_alias="ad_link")
     list_time: str | None = None
     region_id: int | None = None
     condition: str | None = None
     seller_type: str | None = None
+    company_ad: bool = False
     price_vs_median: float | None = None
+    price_reference_scope: str = "query"
+    price_reference_label: str | None = None
     region_name: str | None = None
+    area_name: str | None = None
     config_summary: str | None = None
     fair_price_band: str | None = None
     fair_price_label: str | None = None
     anomaly_flags: list[str] = Field(default_factory=list)
     anomaly_labels: list[str] = Field(default_factory=list)
-    is_duplicate: bool = False
-    duplicate_count: int = 0
     deal_score: float = 0.0
     deal_verdict: str | None = None
     deal_reasons: list[str] = Field(default_factory=list)
@@ -66,6 +144,8 @@ class ListingItem(BaseModel):
     liquidity: LiquidityInsight | None = None
     flip_estimates: list[FlipEstimate] = Field(default_factory=list)
     thumbnail: str | None = None
+    seller_rating: float | None = None
+    risk_factors: list[dict] = Field(default_factory=list)
 
 
 class ListingField(BaseModel):
@@ -81,7 +161,8 @@ class ListingDetailResponse(BaseModel):
     ram_gb: int | None = None
     ad_id: int
     title: str
-    price: float
+    price: float | None = None
+    price_type: str | None = None  # "fixed" | "negotiable" | "free"
     currency: str
     link: str
     list_time: str | None = None
@@ -90,13 +171,14 @@ class ListingDetailResponse(BaseModel):
     condition: str | None = None
     seller_type: str | None = None
     price_vs_median: float | None = None
+    price_reference_scope: str = "query"
+    price_reference_label: str | None = None
     region_name: str | None = None
+    area_name: str | None = None
     fair_price_band: str | None = None
     fair_price_label: str | None = None
     anomaly_flags: list[str] = Field(default_factory=list)
     anomaly_labels: list[str] = Field(default_factory=list)
-    is_duplicate: bool = False
-    duplicate_count: int = 0
     deal_score: float = 0.0
     deal_verdict: str | None = None
     deal_reasons: list[str] = Field(default_factory=list)
@@ -109,6 +191,9 @@ class ListingDetailResponse(BaseModel):
     images: list[str] = Field(default_factory=list)
     parameters: list[ListingField] = Field(default_factory=list)
     seller_fields: list[ListingField] = Field(default_factory=list)
+    seller_rating: float | None = None
+    risk_score: str | None = None  # "low", "medium", "high"
+    risk_factors: list[dict] = Field(default_factory=list)
 
 
 class ListingsResponse(BaseModel):
@@ -121,9 +206,21 @@ class ListingsResponse(BaseModel):
     sort: str
     total: int
     returned: int = 0
+    # Pagination cursor — frontend keeps appending pages by raising
+    # ``offset`` until ``offset + returned >= total`` (or the server
+    # cap, whichever comes first). ``limit`` mirrors what was asked
+    # for so the client can detect server-side downsizing.
+    offset: int = 0
+    limit: int = 0
+    has_more: bool = False
     discount_percent: float | None = None
     discount_from_percent: float | None = None
     discount_to_percent: float | None = None
+    fallback_used: bool = False
+    result_cap: int = 0
+    dataset_count: int = 0
+    served_cap: int = 0
+    is_limited: bool = False
     listings: list[ListingItem]
 
 
@@ -146,21 +243,26 @@ class SegmentsResponse(BaseModel):
     used_shop: SegmentStats
 
 
-class CurrencyRatesResponse(BaseModel):
-    base: str = "BYN"
-    rates: dict[str, float]
-    source: str
-    fetched_at: datetime
-
-
 class PriceHistoryPoint(BaseModel):
+    """A single snapshot in the price-history series.
+
+    - total_results: Kufar's reported total for the query.
+    - fetched_count: raw pre-outlier sample (prices extracted from ads).
+    - analyzed_count: post-outlier sample used for stats.
+    - q1/q3: 25th/75th percentile — defines the fair-price band.
+    """
+
     snapshot_at: datetime
     mean: float
     median: float
+    q1: float | None = None
+    q3: float | None = None
     min: float
     max: float
     analyzed_count: int
     total_results: int
+    # B-10: raw pre-outlier sample count.
+    fetched_count: int | None = None
 
 
 class PriceHistoryResponse(BaseModel):
@@ -168,6 +270,12 @@ class PriceHistoryResponse(BaseModel):
     currency: str
     days: int
     points: list[PriceHistoryPoint]
+    # LOGIC-NEW-7: surface the current-rate caveat in the API contract;
+    # historical-rate per-snapshot is a separate feature.
+    rate_source: str = Field(
+        default="current_nbrb",
+        description="Conversion uses the current NBRB rate, not the historical rate per-snapshot.",
+    )
 
 
 class GeographyRegionPoint(BaseModel):
@@ -189,36 +297,73 @@ class GeographyResponse(BaseModel):
 
 
 class TrackerCreate(BaseModel):
-    query: str
+    query: str = Field(min_length=1, max_length=255)
     strict_mode: bool = False
-    interval_min: int = 15
-    min_discount_percent: float | None = None
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
-    exclude_duplicates: bool = False
+    interval_min: int = Field(default=15, ge=1, le=1440)
+    category_id: int | None = Field(default=None, ge=1)
+    category_label: str | None = Field(default=None, max_length=128)
+    min_discount_percent: float | None = Field(default=None, ge=0, le=100)
+    max_price_byn: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
+    seller_type: str | None = Field(default=None, max_length=32)
+    condition: str | None = Field(default=None, max_length=32)
+    region_name: str | None = Field(default=None, max_length=64)
+    config_keyword: str | None = Field(default=None, max_length=128)
+    alert_price_threshold: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
+    alert_discount_percent: float | None = Field(default=None, ge=0, le=100)
+
+
+class TrackerUpdate(BaseModel):
+    """Schema for updating an existing tracker."""
+
+    strict_mode: bool | None = None
+    interval_min: int | None = Field(default=None, ge=1, le=1440)
+    category_id: int | None = Field(default=None, ge=1)
+    category_label: str | None = Field(default=None, max_length=128)
+    min_discount_percent: float | None = Field(default=None, ge=0, le=100)
+    max_price_byn: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
+    seller_type: str | None = Field(default=None, max_length=32)
+    condition: str | None = Field(default=None, max_length=32)
+    region_name: str | None = Field(default=None, max_length=64)
+    config_keyword: str | None = Field(default=None, max_length=128)
+    alert_price_threshold: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
+    alert_discount_percent: float | None = Field(default=None, ge=0, le=100)
 
 
 class TrackerRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
+    # BE-HIGH (issues §2.2): internal autoincrement users.id was leaked
+    # to clients in TrackerRead/TrackerEventRead/LeadRead/WatchlistRead/
+    # DealExpenseRead. Telegram clients only know their own
+    # telegram_user_id; the internal id has no client-side use and
+    # exposing it is an information leak. Removed across the five
+    # schemas the audit named.
     query: str
     strict_mode: bool = False
     interval_min: int
+    category_id: int | None = None
+    category_label: str | None = None
     min_discount_percent: float | None = None
     max_price_byn: float | None = None
     seller_type: str | None = None
     condition: str | None = None
     region_name: str | None = None
     config_keyword: str | None = None
-    exclude_duplicates: bool = False
+    alert_price_threshold: float | None = None
+    alert_discount_percent: float | None = None
     last_seen_ad_id: int | None = None
     last_seen_price_byn: float | None = None
     last_checked_at: datetime | None = None
+    # Pause support
+    paused: bool = False
+    paused_at: datetime | None = None
+    # Computed stats (not stored in DB, added by API)
+    event_count: int = 0
+    new_listings_count: int = 0
+    price_drops_count: int = 0
+    last_event_at: datetime | None = None
+    avg_events_per_day: float = 0.0
     active: bool
     created_at: datetime
 
@@ -228,7 +373,6 @@ class TrackerEventRead(BaseModel):
 
     id: int
     tracker_id: int
-    user_id: int
     ad_id: int | None = None
     query: str
     strict_mode: bool
@@ -237,170 +381,632 @@ class TrackerEventRead(BaseModel):
     link: str
     price_byn: float | None = None
     delta_byn: float | None = None
+    # Enriched metadata
+    thumbnail: str | None = None
+    parameters: dict | None = None
+    seller_type: str | None = None
+    region_name: str | None = None
     created_at: datetime
 
 
 class LeadCreate(BaseModel):
-    query: str
-    ad_id: int
-    title: str
-    link: str
-    price_byn: float | None = None
-    target_resale_byn: float | None = None
-    status: str = "new"
-    source: str = "manual"
-    notes: str | None = None
+    query: str = Field(min_length=1, max_length=255)
+    # OPUS-4: ad_id is a Kufar listing identifier — always positive.
+    # ``ge=1`` rejects 0 / negatives at the schema layer instead of
+    # letting them reach the DB and surface as a 500 / Integrity.
+    ad_id: int = Field(ge=1)
+    title: str = Field(max_length=255)
+    link: str = Field(max_length=2048)
+    price_byn: float | None = Field(default=None, ge=0)
+    thumbnail: str | None = Field(default=None, max_length=512)
+    target_resale_byn: float | None = Field(default=None, ge=0)
+    market_median_byn: float | None = Field(default=None, ge=0)
+    notes: str | None = Field(default=None, max_length=512)
+    status: LeadStatusEnum = LeadStatusEnum.new
+    source: str = Field(default="manual", max_length=32)
 
 
 class LeadUpdate(BaseModel):
-    status: str | None = None
-    target_resale_byn: float | None = None
-    notes: str | None = None
+    version: int | None = Field(default=None, ge=1)
+    status: LeadStatusEnum | None = None
+    target_resale_byn: float | None = Field(default=None, ge=0)
+    buy_price_byn: float | None = Field(default=None, ge=0)
+    sold_price_byn: float | None = Field(default=None, ge=0)
+    notes: str | None = Field(default=None, max_length=512)
 
 
 class LeadRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
     ad_id: int
     query: str
     title: str
     link: str
     price_byn: float | None = None
+    buy_price_byn: float | None = None
+    sold_price_byn: float | None = None
+    thumbnail: str | None = None
     target_resale_byn: float | None = None
     status: str
     source: str
+    bought_at: datetime | None = None
+    sold_at: datetime | None = None
+    market_status: str = Field(default="active")
+    missing_since_at: datetime | None = None
+    # Watchlist-merged fields
+    initial_price_byn: float | None = None
+    market_median_byn: float | None = None
+    duplicate_count: int = Field(default=0)
+    last_seen_at: datetime | None = None
     notes: str | None = None
+    version: int
+    # Computed fields (not in DB)
+    total_expenses: float = Field(default=0.0)
+    actual_profit: float | None = None
+    roi_percent: float | None = None
+    # E-FIND-01: projected profit for watching/bought leads using target_resale_byn.
+    projected_profit_byn: float | None = None
+    # LOGIC-NEW-8: refuse to project profit when the buy-price basis is unknown.
+    incomplete_projection: bool = False
+    # E-FIND-09: True when sold_price_byn is set but buy_price_byn is missing,
+    # meaning profit/ROI cannot be reliably computed.
+    incomplete_cost_basis: bool = False
+    # E-FIND-02: integer days between bought_at and sold_at (or now()
+    # if still held). NULL when bought_at is missing — old rows that
+    # never went through the explicit * → bought transition. Computed
+    # in the handler, not in the model, so it stays in sync with the
+    # current request time.
+    hold_time_days: int | None = None
+    # LOGIC-NEW-3: disambiguate hold_time_days=0 between same-day-sold and bought-today.
+    is_sold: bool = False
+    price_delta_byn: float | None = None
+    price_delta_percent: float | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class WatchlistCreate(BaseModel):
-    query: str
-    ad_id: int
-    title: str
-    link: str
-    price_byn: float | None = None
-    notes: str | None = None
+    # OPUS-4: bring watchlist input under the same validation contract
+    # as LeadCreate. Without these caps a malicious payload (or a
+    # broken client) reaches the DB and trips a 500/Integrity instead
+    # of the intended 422.
+    query: str = Field(min_length=1, max_length=255)
+    ad_id: int = Field(ge=1)
+    title: str = Field(max_length=255)
+    link: str = Field(max_length=2048)
+    thumbnail: str | None = Field(default=None, max_length=512)
+    price_byn: float | None = Field(default=None, ge=0)
+    market_median_byn: float | None = Field(default=None, ge=0)
+    notes: str | None = Field(default=None, max_length=512)
 
 
 class WatchlistUpdate(BaseModel):
-    workflow_status: str | None = None
-    notes: str | None = None
+    version: int | None = Field(default=None, ge=1)
+    workflow_status: WatchlistStatusEnum | None = None
+    notes: str | None = Field(default=None, max_length=512)
+
+
+class PriceSnapshotPoint(BaseModel):
+    """A single (timestamp, price) pair for the watchlist sparkline."""
+
+    model_config = ConfigDict(from_attributes=True)
+    snapped_at: datetime
+    price_byn: float
 
 
 class WatchlistRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
     ad_id: int
     query: str
     title: str
     link: str
+    thumbnail: str | None = None
     initial_price_byn: float | None = None
     current_price_byn: float | None = None
     price_delta_byn: float | None = None
     price_delta_percent: float | None = None
     workflow_status: str
     market_status: str
-    duplicate_count: int = 0
+    market_median_byn: float | None = None
     notes: str | None = None
     created_at: datetime
     last_seen_at: datetime | None = None
+    missing_since_at: datetime | None = None
     updated_at: datetime
+    version: int
+    # Compact 30-day price trend (newest last) so the watchlist card
+    # can render a sparkline without a per-row round-trip. Empty list
+    # means "no movement recorded yet" — frontend renders a flat line.
+    price_history: list[PriceSnapshotPoint] = Field(default_factory=list)
 
 
 class WatchlistRefreshResponse(BaseModel):
     updated: int
     missing: int
     price_drops: int
+    auto_removed: int = 0
 
 
-class SavedSearchCreate(BaseModel):
-    name: str | None = None
-    group_name: str | None = None
-    query: str
-    strict_mode: bool = False
-    target_discount_percent: float = 10.0
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
-    exclude_duplicates: bool = False
+class LeadsRefreshResponse(BaseModel):
+    checked: int
+    active: int
+    missing: int
 
 
-class SavedSearchRead(BaseModel):
+class LeadFunnelStage(BaseModel):
+    """One bar in the lead-pipeline funnel chart."""
+
+    status: str
+    label: str
+    count: int
+
+
+class LeadAnalyticsResponse(BaseModel):
+    """Aggregated lead-pipeline analytics for the deals dashboard."""
+
+    total_leads: int
+    pursued_leads: int
+    sold_leads: int
+    skipped_leads: int
+    active_leads: int
+    total_revenue_byn: float
+    total_cost_byn: float
+    total_profit_byn: float
+    total_expenses_byn: float
+    total_projected_profit_byn: float = 0.0  # E-FIND-01: unsold leads aggregate
+    average_roi_percent: float
+    funnel: list[LeadFunnelStage]
+
+
+# Deal Expenses schemas
+class DealExpenseCreate(BaseModel):
+    expense_type: ExpenseTypeEnum
+    amount_byn: float = Field(gt=0, description="Expense amount in BYN (must be positive)")
+    notes: str | None = None
+    expense_date: datetime | None = None
+
+
+class DealExpenseUpdate(BaseModel):
+    expense_type: ExpenseTypeEnum | None = None
+    amount_byn: float | None = Field(default=None, gt=0)
+    notes: str | None = None
+    expense_date: datetime | None = None
+
+
+class DealExpenseRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lead_id: int
+    expense_type: str
+    amount_byn: float
+    notes: str | None = None
+    expense_date: datetime
+    created_at: datetime
+
+
+# ── Lead Reminders ──────────────────────────────────────────────────────────
+
+
+class ReminderCreate(BaseModel):
+    remind_at: datetime
+    message: str | None = Field(default=None, max_length=255)
+
+    @field_validator("remind_at")
+    @classmethod
+    def validate_remind_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("remind_at must include a timezone")
+        now = datetime.now(UTC)
+        if value <= now:
+            raise ValueError("remind_at must be in the future")
+        if value > now + timedelta(days=REMINDER_MAX_HORIZON_DAYS):
+            raise ValueError(f"remind_at must be within {REMINDER_MAX_HORIZON_DAYS} days")
+        return value
+
+
+class ReminderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lead_id: int
+    remind_at: datetime
+    message: str | None = None
+    sent: bool
+    created_at: datetime
+
+
+# ── User Consent ──────────────────────────────────────────────────────────
+
+
+class ConsentStatusResponse(BaseModel):
+    """Whether the user has granted a specific consent type."""
+
+    consent_type: str
+    granted: bool
+    version: str = ""
+    granted_at: datetime | None = None
+
+
+class ConsentGrantRequest(BaseModel):
+    # A-6: Literal validates at schema level; OpenAPI/422 reflects allowed values.
+    consent_type: Literal["ai_analysis", "pd_processing", "cross_border"]
+    version: str = "2026.2"
+
+
+class AIConsentInfoResponse(BaseModel):
+    provider_name: str
+    provider_region: str
+    provider_host: str
+    model: str
+    policy_version: str
+    display_label: str
+
+
+class ConsentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     user_id: int
-    name: str
-    group_name: str | None = None
-    query: str
-    normalized_query: str = ""
-    config_summary: str | None = None
-    storage_gb: int | None = None
-    ram_gb: int | None = None
-    strict_mode: bool = False
-    target_discount_percent: float
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
-    exclude_duplicates: bool = False
-    active: bool
+    consent_type: str
+    version: str
+    granted_at: datetime
+    revoked_at: datetime | None = None
+
+
+# BE-M3: explicit confirmation payload for the right-to-erasure endpoint.
+# DELETE /api/v1/account requires the user to type their displayed
+# Telegram first name (case-insensitive, stripped) so a stray click on
+# the confirm button can't wipe data; the confirmation is also verified
+# server-side, never trusted from the frontend alone.
+class AccountDeletionConfirmation(BaseModel):
+    confirmation: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Must match the user's Telegram first_name (case-insensitive)",
+    )
+
+
+class AccountStatusRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    display_name: str
+    tagline: str
+    accent: str
+    sort_order: int
+    ai_daily_limit: int
+    assistant_daily_limit: int
+    updated_at: datetime
+
+
+class QuotaBucketRead(BaseModel):
+    used: int = Field(ge=0)
+    limit: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+    resets_at: datetime
+
+
+class ProfileUserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    telegram_user_id: int
+    first_name: str
+    username: str | None = None
+    created_at: datetime
+    last_seen_at: datetime | None = None
+
+
+class ProfileStatusRead(BaseModel):
+    code: str
+    display_name: str
+    tagline: str
+    accent: str
+    granted_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class ProfileLimitsRead(BaseModel):
+    ai: QuotaBucketRead
+    assistant: QuotaBucketRead
+
+
+class ProfilePermissionsRead(BaseModel):
+    can_use_ai: bool
+    can_use_assistant: bool
+    is_admin: bool
+
+
+class ProfileRead(BaseModel):
+    user: ProfileUserRead
+    status: ProfileStatusRead
+    limits: ProfileLimitsRead
+    permissions: ProfilePermissionsRead
+
+
+class AdminUserRead(BaseModel):
+    telegram_user_id: int
+    first_name: str
+    username: str | None = None
+    created_at: datetime
+    last_seen_at: datetime | None = None
+    status: ProfileStatusRead
+    limits: ProfileLimitsRead
+    status_note: str | None = None
+
+
+class AdminUserStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status_code: str = Field(min_length=1, max_length=32)
+    expires_at: datetime | None = None
+    note: str | None = Field(default=None, max_length=512)
+
+
+class AdminStatusLimitUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ai_daily_limit: int = Field(ge=0, le=10_000, strict=True)
+    assistant_daily_limit: int = Field(ge=0, le=10_000, strict=True)
+
+
+class AdminAuditRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    actor_user_id: int | None = None
+    target_user_id: int | None = None
+    action: str
+    payload: dict[str, object]
+    ip_address: str | None = None
     created_at: datetime
 
 
-class OpportunityItem(BaseModel):
-    saved_search_id: int
-    saved_search_name: str
-    query: str
-    normalized_query: str = ""
-    config_summary: str | None = None
-    strict_mode: bool = False
-    target_discount_percent: float = 10.0
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
-    exclude_duplicates: bool = False
-    signal_label: str | None = None
-    listing: ListingItem
+# ── AI Analysis ──────────────────────────────────────────────────────────
 
 
-class OpportunitySignal(BaseModel):
+AIAnalysisUserGoal = Literal["balanced", "safe_buy", "resale"]
+AIListingSellerGoal = Literal["balanced", "sell_fast", "maximize_price"]
+AIFeedbackEndpoint = Literal["analyze", "listing_assistant"]
+AIFeedbackRating = Literal["helpful", "not_helpful"]
+AIFeedbackReason = Literal["too_generic", "wrong_category", "bad_price", "good"]
+
+
+class AIAnalysisRequest(BaseModel):
+    # OPUS-4: positive Kufar ad_id only.
+    ad_id: int = Field(ge=1)
+    query: str = Field(min_length=1, max_length=200)
+    category: int | None = None
+    user_goal: AIAnalysisUserGoal | None = None
+
+
+class AIFeedbackRequest(BaseModel):
+    endpoint: AIFeedbackEndpoint
+    rating: AIFeedbackRating
+    reason: AIFeedbackReason
+
+
+class AIConditionAssessment(BaseModel):
+    label: str = ""
+    confidence: float = 0.0
+    notes: list[str] = Field(default_factory=list)
+
+
+class AIFairPrice(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    from_price: float | None = Field(None, alias="from")
+    to_price: float | None = Field(None, alias="to")
+    reasoning: str = ""
+
+
+class AIResalePrice(BaseModel):
+    label: str = ""
+    price_byn: float = 0.0
+    reasoning: str = ""
+
+
+class AIResalePotential(BaseModel):
+    fast_price: AIResalePrice | None = None
+    market_price: AIResalePrice | None = None
+    optimal_price: AIResalePrice | None = None
+    reasoning: str = ""
+
+
+class AIWatchOutItem(BaseModel):
+    point: str = ""
+    why: str = ""
+
+
+class AIRecommendation(BaseModel):
+    verdict: str = ""  # worth_it, think_twice, overpriced
+    text: str = ""
+
+
+class AISimilarListing(BaseModel):
+    ad_id: int
     title: str
-    subtitle: str
-    query: str
-    metric: str
+    price_byn: float
+    image_url: str | None = None
+    link: str = ""
+    deal_score: float = 0.0
+    condition: str | None = None
+    ai_note: str = ""
 
 
-class OpportunityBoardResponse(BaseModel):
-    currency: str
-    items: list[OpportunityItem]
-    top_price_drops: list[OpportunitySignal] = Field(default_factory=list)
-    rare_opportunities: list[OpportunityItem] = Field(default_factory=list)
-    market_signals: list[OpportunitySignal] = Field(default_factory=list)
+class AIScamAnalysis(BaseModel):
+    """AI scam/fraud detection result."""
+
+    risk_level: str = ""  # "low" | "medium" | "high"
+    indicators: list[str] = Field(default_factory=list)
+    photo_issues: list[str] = Field(default_factory=list)
+    seller_warnings: list[str] = Field(default_factory=list)
+    advice: str = ""
 
 
-class CompareRequestItem(BaseModel):
-    query: str
-    normalized_query: str = ""
-    config_summary: str | None = None
-    median: float
-    cheap_count: int
-    total_results: int
-    trend_percent: float | None = None
-    best_listing: ListingItem | None = None
+class AIPhotoAuthenticity(BaseModel):
+    """AI photo authenticity check result."""
+
+    stock_photo_detected: bool = False
+    duplicate_image_detected: bool = False
+    watermark_detected: bool = False
+    screenshot_detected: bool = False
+    issues: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
 
 
-class CompareResponse(BaseModel):
-    currency: str
-    base_query: str
-    items: list[CompareRequestItem]
+class AINegotiateRequest(BaseModel):
+    """Buyer negotiation request — generate counter-offer text."""
+
+    # OPUS-4: positive Kufar ad_id only.
+    ad_id: int = Field(ge=1)
+    asking_price_byn: float = Field(gt=0)
+    my_offer_byn: float = Field(gt=0)
+    query: str = Field(min_length=1, max_length=200)
+    condition: str | None = None
+    market_context: str | None = None
+
+
+class AINegotiateResponse(BaseModel):
+    """AI-generated negotiation text for buyer."""
+
+    opening_line: str = ""
+    counter_offer_text: str = ""
+    fallback_text: str = ""
+    tips: list[str] = Field(default_factory=list)
+    disclaimer: str = (
+        "Сгенерированный текст носит информационный характер. "
+        "Решение о цене и условиях сделки пользователь принимает самостоятельно. "
+        "AI не является представителем покупателя и не гарантирует результат переговоров."
+    )
+
+
+class AIPriceAdviceRequest(BaseModel):
+    """Price monitoring advice request — should I buy now or wait?"""
+
+    query: str = Field(min_length=1, max_length=200)
+    current_price_byn: float = Field(gt=0)
+    category: int | None = None
+
+
+class AIPriceAdviceResponse(BaseModel):
+    """AI price timing advice — not an investment recommendation."""
+
+    advice: str = ""  # "buy_now" | "wait" | "neutral"
+    reasoning: str = ""
+    market_context: str = ""
+    confidence: float = 0.0
+    disclaimer: str = (
+        "Данная оценка НЕ является инвестиционной или финансовой рекомендацией. "
+        "Она основана на текущем срезе объявлений, а не на историческом тренде. "
+        "Рыночные цены могут изменяться непредсказуемо. Решение о покупке "
+        "пользователь принимает самостоятельно на свой страх и риск."
+    )
+
+
+class AIAnalysisResponse(BaseModel):
+    ad_id: int
+    condition: AIConditionAssessment | None = None
+    fair_price: AIFairPrice | None = None
+    resale_potential: AIResalePotential | None = None
+    watch_out: list[AIWatchOutItem] = Field(default_factory=list)
+    recommendation: AIRecommendation | None = None
+    similar_listings: list[AISimilarListing] = Field(default_factory=list)
+    best_alternative: AISimilarListing | None = None
+    meeting_checklist: list[str] = Field(default_factory=list)
+    negotiation_tips: list[str] = Field(default_factory=list)
+    red_flags: list[str] = Field(default_factory=list)
+    scam_analysis: AIScamAnalysis | None = None
+    photo_authenticity: AIPhotoAuthenticity | None = None
+    market_context: str = ""
+    price_reference_scope: str = "query"
+    price_reference_label: str | None = None
+    best_pick_reason: str = ""
+    summary: str = ""
+    disclaimer: str = (
+        "AI-анализ носит исключительно информационно-справочный характер и не является "
+        "финансовой, инвестиционной или юридической консультацией; гарантией прибыли, "
+        "рыночной стоимости или ликвидности товара; рекомендацией к совершению или отказу "
+        "от сделки; профессиональной оценкой товара. Все решения пользователь принимает "
+        "самостоятельно на свой страх и риск. Рыночные данные основаны на открытых "
+        "объявлениях kufar.by и могут не отражать реальные цены сделок."
+    )
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))  # noqa: UP017
+
+
+# ─── Listing Assistant (seller side) ──────────────────────────────────────
+
+
+class AIListingAssistantRequest(BaseModel):
+    """Draft of an item the user wants to list on Kufar.
+
+    `title` is required — we use it both for the search context and for the
+    generated improved title. `category` is optional but improves market
+    targeting. `draft_price_byn` is what the user *thinks* of asking; the
+    model uses it only as one anchor among several. `photos` is a list of
+    `data:image/...;base64,...` URLs (already compressed on the frontend).
+    """
+
+    title: str = Field(min_length=3, max_length=200)
+    category: int | None = None
+    condition: str | None = Field(None, max_length=64)
+    draft_price_byn: float | None = Field(None, ge=0, le=10_000_000)
+    is_negotiable: bool = False
+    extra_notes: str | None = Field(None, max_length=1200)
+    seller_goal: AIListingSellerGoal | None = None
+    photos: list[Annotated[str, Field(max_length=AI_LISTING_PHOTO_MAX_CHARS)]] = Field(
+        default_factory=list,
+        max_length=AI_LISTING_PHOTO_MAX_COUNT,
+    )
+
+
+class AIListingPriceTier(BaseModel):
+    label: str = ""
+    price_byn: float = 0.0
+    weeks_to_sell: str = ""
+    reasoning: str = ""
+
+
+class AIListingPricing(BaseModel):
+    fast: AIListingPriceTier | None = None
+    market: AIListingPriceTier | None = None
+    patient: AIListingPriceTier | None = None
+    floor_byn: float | None = None
+    market_median_byn: float | None = None
+    market_q1_byn: float | None = None
+    market_q3_byn: float | None = None
+    competing_count: int = 0
+
+
+class AINegotiationCounter(BaseModel):
+    scenario: str = ""
+    response: str = ""
+
+
+class AIListingCompetitor(BaseModel):
+    title: str = ""
+    price_byn: float | None = None
+    advantage: str = ""
+    image_url: str | None = None
+    link: str = ""
+
+
+class AIListingAssistantResponse(BaseModel):
+    title_suggestion: str = ""
+    description: str = ""
+    description_short: str = ""
+    selling_points: list[str] = Field(default_factory=list)
+    pricing: AIListingPricing = Field(default_factory=AIListingPricing)
+    negotiation_playbook: list[AINegotiationCounter] = Field(default_factory=list)
+    photo_tips: list[str] = Field(default_factory=list)
+    competitors: list[AIListingCompetitor] = Field(default_factory=list)
+    market_summary: str = ""
+    disclaimer: str = (
+        "Рекомендации AI носят информационно-справочный характер и не являются "
+        "гарантией продажи или рыночной стоимости. Финальное решение по цене и тексту "
+        "остаётся за продавцом. Рыночные данные основаны на открытых объявлениях kufar.by "
+        "и могут не отражать реальные цены сделок."
+    )
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))  # noqa: UP017

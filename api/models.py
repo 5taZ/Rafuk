@@ -3,15 +3,20 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
-    Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
+    Text,
     UniqueConstraint,
+    column,
+    event,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -21,17 +26,109 @@ class Base(DeclarativeBase):
     """Base declarative model."""
 
 
+ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
+    {
+        "code": "bare_search",
+        "display_name": "Голый Поиск",
+        "tagline": "базовый режим: ищешь руками, без магии",
+        "accent": "gray",
+        "sort_order": 10,
+        "ai_daily_limit": 0,
+        "assistant_daily_limit": 0,
+    },
+    {
+        "code": "scout",
+        "display_name": "Скаут Барахолки",
+        "tagline": "попробовать AI, понять ценность",
+        "accent": "blue",
+        "sort_order": 20,
+        "ai_daily_limit": 10,
+        "assistant_daily_limit": 3,
+    },
+    {
+        "code": "flipper",
+        "display_name": "Флиппер",
+        "tagline": "регулярный поиск выгодных лотов",
+        "accent": "violet",
+        "sort_order": 30,
+        "ai_daily_limit": 40,
+        "assistant_daily_limit": 12,
+    },
+    {
+        "code": "shark",
+        "display_name": "Куфарная Акула",
+        "tagline": "активный ресейл / постоянные сделки",
+        "accent": "amber",
+        "sort_order": 40,
+        "ai_daily_limit": 120,
+        "assistant_daily_limit": 35,
+    },
+    {
+        "code": "market_maker",
+        "display_name": "Имба Маркетмейкер",
+        "tagline": "почти “god mode”, высокий лимит",
+        "accent": "red",
+        "sort_order": 50,
+        "ai_daily_limit": 300,
+        "assistant_daily_limit": 100,
+    },
+)
+
+
+class AccountStatus(Base):
+    __tablename__ = "account_statuses"
+
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    tagline: Mapped[str] = mapped_column(String(255), nullable=False)
+    accent: Mapped[str] = mapped_column(String(32), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    ai_daily_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    assistant_daily_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    users = relationship("User", back_populates="account_status")
+
+    __table_args__ = (
+        CheckConstraint(
+            "ai_daily_limit >= 0 AND ai_daily_limit <= 10000",
+            name="chk_account_statuses_ai_daily_limit_bounds",
+        ),
+        CheckConstraint(
+            "assistant_daily_limit >= 0 AND assistant_daily_limit <= 10000",
+            name="chk_account_statuses_assistant_daily_limit_bounds",
+        ),
+        Index("idx_account_statuses_sort_order", "sort_order"),
+    )
+
+
+@event.listens_for(AccountStatus.__table__, "after_create")
+def _seed_account_statuses(_target, connection, **_kw) -> None:
+    connection.execute(
+        AccountStatus.__table__.insert(),
+        [dict(row) for row in ACCOUNT_STATUS_SEED_ROWS],
+    )
+
+
 class User(Base):
     """Telegram users registered in the system."""
 
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     telegram_user_id: Mapped[int] = mapped_column(
         BigInteger,
         unique=True,
         nullable=False,
-        index=True,
     )
     first_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     username: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -47,16 +144,69 @@ class User(Base):
         server_default=func.now(),
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    account_status_code: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("account_statuses.code"),
+        nullable=False,
+        default="bare_search",
+        server_default="bare_search",
+    )
+    status_granted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    status_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    status_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     # Relationships
+    account_status = relationship("AccountStatus", back_populates="users")
     trackers = relationship("Tracker", back_populates="user", cascade="all, delete-orphan")
-    saved_searches = relationship("SavedSearch", back_populates="user", cascade="all, delete-orphan")
-    tracker_events = relationship("TrackerEvent", back_populates="user", cascade="all, delete-orphan")
+    tracker_events = relationship(
+        "TrackerEvent", back_populates="user", cascade="all, delete-orphan"
+    )
     lead_items = relationship("LeadItem", back_populates="user", cascade="all, delete-orphan")
-    watchlist_items = relationship("WatchlistItem", back_populates="user", cascade="all, delete-orphan")
+    consents = relationship("UserConsent", back_populates="user", cascade="all, delete-orphan")
+    reminders = relationship("LeadReminder", back_populates="user", cascade="all, delete-orphan")
+    ai_audit_logs = relationship("AIAuditLog", back_populates="user", cascade="all, delete-orphan")
+    saved_searches = relationship(
+        "SavedSearch", back_populates="user", cascade="all, delete-orphan"
+    )
+    contacts = relationship("Contact", back_populates="user", cascade="all, delete-orphan")
+
+    __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
+
+
+class AdminAuditLog(Base):
+    __tablename__ = "admin_audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    target_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    actor = relationship("User", foreign_keys=[actor_user_id])
+    target = relationship("User", foreign_keys=[target_user_id])
 
     __table_args__ = (
-        Index("idx_users_telegram_id", "telegram_user_id"),
+        Index("idx_admin_audit_actor", "actor_user_id"),
+        Index("idx_admin_audit_target", "target_user_id"),
+        Index("idx_admin_audit_created", "created_at"),
     )
 
 
@@ -67,7 +217,6 @@ class UserIDMixin:
         BigInteger,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
 
@@ -89,7 +238,9 @@ class ActiveMixin:
 class TimestampMixin:
     """Mixin for models that have created_at timestamp."""
 
-    created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class QueryTrackingMixin:
@@ -107,18 +258,25 @@ class QueryTrackingMixin:
 class TrackerFiltersMixin:
     """Mixin for tracker filtering configuration."""
 
-    min_discount_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
-    max_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    category_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    category_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    min_discount_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    max_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     condition: Mapped[str | None] = mapped_column(String(32), nullable=True)
     region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     config_keyword: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # C-09: field exists but is never read by collector/reseller_tools/query_pipeline.
+    # Kept for schema stability; removing requires a destructive migration.
+    # Intended for a future duplicate-detection feature.
     exclude_duplicates: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         default=False,
         server_default="false",
-    )
+    )  # G-08: reserved schema, no runtime path consumes this flag yet.
+    alert_price_threshold: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    alert_discount_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
 
 
 class Tracker(
@@ -132,6 +290,15 @@ class Tracker(
     __tablename__ = "trackers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # NOTE: onupdate only fires on ORM-level attribute changes.
+    # Bulk updates via session.execute(update(...)) will NOT trigger this.
+    # For bulk updates, set updated_at=datetime.now(UTC) explicitly.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
     interval_min: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -139,11 +306,20 @@ class Tracker(
         server_default="15",
     )
     last_seen_ad_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    last_seen_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_seen_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
+    # Pause support
+    paused: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    pause_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="trackers")
@@ -151,48 +327,24 @@ class Tracker(
 
     __table_args__ = (
         Index("idx_trackers_user", "user_id"),
-        Index("idx_trackers_active", "active"),
+        Index("idx_trackers_paused", "paused"),
+        Index("idx_trackers_user_active", "user_id", "active"),
+        Index(
+            "idx_trackers_user_active_partial",
+            "user_id",
+            "active",
+            postgresql_where=column("active", Boolean).is_(True),
+        ),
+        Index("idx_trackers_last_checked", "last_checked_at"),
+        Index("idx_trackers_active_paused", "active", "paused"),
+        Index("idx_trackers_query_category", "query", "strict_mode", "category_id"),
     )
 
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("interval_min", 15)
         kwargs.setdefault("active", True)
         kwargs.setdefault("strict_mode", False)
-        super().__init__(**kwargs)
-
-
-class SavedSearch(
-    Base,
-    UserIDMixin,
-    QueryTrackingMixin,
-    TrackerFiltersMixin,
-    ActiveMixin,
-    TimestampMixin,
-):
-    __tablename__ = "saved_searches"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
-    group_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    target_discount_percent: Mapped[float] = mapped_column(
-        Float,
-        nullable=False,
-        default=10.0,
-        server_default="10",
-    )
-
-    # Relationships
-    user = relationship("User", back_populates="saved_searches")
-
-    __table_args__ = (
-        Index("idx_saved_searches_user", "user_id"),
-        Index("idx_saved_searches_active", "active"),
-    )
-
-    def __init__(self, **kwargs: object) -> None:
-        kwargs.setdefault("strict_mode", False)
-        kwargs.setdefault("target_discount_percent", 10.0)
-        kwargs.setdefault("active", True)
+        kwargs.setdefault("paused", False)
         super().__init__(**kwargs)
 
 
@@ -204,14 +356,20 @@ class QuerySnapshot(Base, TimestampMixin):
     snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     total_results: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     analyzed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    mean_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    median_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    min_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    max_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mean_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    median_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    # B-06: q1/q3 persisted so /price-history can render the fair-price band.
+    q1_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    q3_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # B-10: raw pre-outlier sample size (len(extract_prices(ads))).
+    fetched_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    max_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
 
     __table_args__ = (
         UniqueConstraint("query", "snapshot_at", name="uq_query_snapshot_bucket"),
         Index("idx_query_snapshots_query", "query"),
+        Index("idx_query_snapshots_snapshot_at", "snapshot_at"),
     )
 
 
@@ -222,8 +380,12 @@ class QueryListingState(Base):
     query: Mapped[str] = mapped_column(String(255), nullable=False)
     ad_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    link: Mapped[str] = mapped_column(String(512), nullable=False)
-    last_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # DB-M9: widened from 512 → 2048 in migration 20260510_0006. Kufar
+    # sometimes appends recommender/tracking params to the canonical
+    # ad URL which can push the full link past 512 bytes.
+    link: Mapped[str] = mapped_column(String(2048), nullable=False)
+    last_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     list_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
     active: Mapped[bool] = mapped_column(
         Boolean,
@@ -234,6 +396,7 @@ class QueryListingState(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
@@ -242,7 +405,24 @@ class QueryListingState(Base):
     __table_args__ = (
         UniqueConstraint("query", "ad_id", name="uq_query_listing_state"),
         Index("idx_query_listing_states_query", "query"),
-        Index("idx_query_listing_states_active", "active"),
+        # DB-M4: idx_query_listing_states_active dropped in migration
+        # 20260510_0006 — standalone boolean index was wasteful, the
+        # compound idx_query_listing_states_query_active below covers
+        # every query that actually filters by ``active``.
+        Index("idx_query_listing_states_query_active", "query", "active"),
+        # BE-06 / Wave 29: partial index for the nightly cleanup
+        # ``WHERE active=false AND last_seen_at < cutoff``. Created in
+        # migration 20260511_0007 as a partial index keyed on
+        # last_seen_at with ``WHERE active = false`` — the model-level
+        # declaration here uses the same ``postgresql_where`` pattern
+        # as ``idx_trackers_user_active_partial`` so autogenerate
+        # diff stays clean.
+        Index(
+            "idx_query_listing_states_cleanup",
+            "last_seen_at",
+            postgresql_where=column("active", Boolean).is_(False),
+            sqlite_where=column("active", Boolean).is_(False),
+        ),
     )
 
 
@@ -254,7 +434,6 @@ class TrackerEvent(Base, UserIDMixin):
         Integer,
         ForeignKey("trackers.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     ad_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     query: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -266,9 +445,15 @@ class TrackerEvent(Base, UserIDMixin):
     )
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    link: Mapped[str] = mapped_column(String(512), nullable=False)
-    price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
-    delta_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    link: Mapped[str] = mapped_column(String(2048), nullable=False)
+    price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    delta_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # Enriched metadata
+    thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -282,6 +467,14 @@ class TrackerEvent(Base, UserIDMixin):
     __table_args__ = (
         Index("idx_tracker_events_user", "user_id"),
         Index("idx_tracker_events_created", "created_at"),
+        Index("idx_tracker_events_tracker_created", "tracker_id", column("created_at").desc()),
+        # PERF-NEW-1: covers WHERE user_id=? ORDER BY created_at DESC, id DESC.
+        Index("idx_tracker_events_user_created", "user_id", column("created_at").desc(), "id"),
+        CheckConstraint(
+            "event_type IN ('new_listing', 'price_drop', 'trend_reversal', "
+            "'price_threshold_alert', 'discount_alert')",
+            name="chk_tracker_events_event_type",
+        ),
     )
 
 
@@ -292,9 +485,13 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     ad_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     query: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    link: Mapped[str] = mapped_column(String(512), nullable=False)
-    price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
-    target_resale_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # DB-M9: widened from 512 → 2048 in migration 20260510_0006; see
+    # QueryListingState.link for the rationale.
+    link: Mapped[str] = mapped_column(String(2048), nullable=False)
+    price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    buy_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    sold_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    target_resale_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -307,8 +504,46 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         default="manual",
         server_default="manual",
     )
+    thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # E-FIND-02: timestamp of the * → bought transition. NULL until
+    # the user marks the lead as bought; populated by ``update_lead``
+    # in the same handler that sets ``status = 'bought'``. Used by
+    # the read schema to compute hold-time days.
+    bought_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    market_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="active",
+        server_default="active",
+    )
+    missing_since_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Watchlist-merged columns (status='watching' uses these)
+    initial_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    market_median_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    duplicate_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    # NOTE: onupdate only fires on ORM-level attribute changes.
+    # Bulk updates via session.execute(update(...)) will NOT trigger this.
+    # For bulk updates, set updated_at=datetime.now(UTC) explicitly.
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
@@ -316,55 +551,404 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
 
     # Relationships
     user = relationship("User", back_populates="lead_items")
+    expenses = relationship("DealExpense", back_populates="lead", cascade="all, delete-orphan")
+    reminders = relationship("LeadReminder", back_populates="lead", cascade="all, delete-orphan")
+    price_snapshots = relationship(
+        "LeadItemPriceSnapshot",
+        back_populates="lead_item",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         UniqueConstraint("user_id", "ad_id", name="uq_lead_items_user_ad"),
+        CheckConstraint(
+            "status IN ('watching', 'new', 'reviewing', 'in_progress', "
+            "'researching', 'negotiating', 'deferred', 'closed', "
+            "'abandoned', 'bought', 'sold', 'skipped')",
+            name="chk_lead_items_status",
+        ),
+        CheckConstraint("version >= 1", name="chk_lead_items_version_positive"),
         Index("idx_lead_items_user", "user_id"),
-        Index("idx_lead_items_status", "status"),
+        # DB-M4: idx_lead_items_status and idx_lead_items_market_status
+        # were dropped in migration 20260510_0006. The former was
+        # redundant with the compound (user_id, status) index below
+        # for per-user queries (every user-scoped query combines the
+        # two); the latter indexed a 2-3 value column that Postgres
+        # would never pick over a seq scan.
+        Index("idx_lead_items_user_status", "user_id", "status"),
+        # PERF-NEW-2: covers WHERE user_id=? AND status=? ORDER BY updated_at DESC.
+        Index(
+            "idx_lead_items_user_status_updated",
+            "user_id", "status", column("updated_at").desc(),
+        ),
     )
 
 
-class WatchlistItem(Base, UserIDMixin, TimestampMixin):
-    __tablename__ = "watchlist_items"
+class LeadItemPriceSnapshot(Base):
+    """Per-row price history for lead_items (covers both watchlist and
+    active leads). One row is appended every time a price refresh sees
+    a change vs. the most recent snapshot, capped to a rolling window
+    so the table stays small and queries cheap.
+
+    Used by the watchlist sparkline in the Mini App and by future
+    price-trend charts on the deal-detail screen."""
+
+    __tablename__ = "lead_item_price_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    ad_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    query: Mapped[str] = mapped_column(String(255), nullable=False)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    link: Mapped[str] = mapped_column(String(512), nullable=False)
-    initial_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
-    current_price_byn: Mapped[float | None] = mapped_column(Float, nullable=True)
-    workflow_status: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="watching",
-        server_default="watching",
-    )
-    market_status: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="active",
-        server_default="active",
-    )
-    duplicate_count: Mapped[int] = mapped_column(
+    lead_item_id: Mapped[int] = mapped_column(
         Integer,
+        ForeignKey("lead_items.id", ondelete="CASCADE"),
         nullable=False,
-        default=0,
-        server_default="0",
+        index=True,
     )
-    notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(
+    price_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    snapped_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
-        onupdate=func.now(),
     )
 
     # Relationships
-    user = relationship("User", back_populates="watchlist_items")
+    lead_item = relationship("LeadItem", back_populates="price_snapshots")
 
     __table_args__ = (
-        UniqueConstraint("user_id", "ad_id", name="uq_watchlist_items_user_ad"),
-        Index("idx_watchlist_items_user", "user_id"),
-        Index("idx_watchlist_items_market_status", "market_status"),
+        Index("idx_lead_item_price_snapshots_lookup", "lead_item_id", "snapped_at"),
+    )
+
+
+class DealExpense(Base):
+    """Expense tracking for deals (delivery, repair, etc.)."""
+
+    __tablename__ = "deal_expenses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lead_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("lead_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    expense_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount_byn: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    expense_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    lead = relationship("LeadItem", back_populates="expenses")
+    user = relationship("User")
+
+    __table_args__ = (
+        CheckConstraint(
+            "expense_type IN ('delivery', 'repair', 'customs', 'packaging', 'transport', 'other')",
+            name="chk_deal_expenses_expense_type",
+        ),
+        # DB-MEDIUM (issues §4.1): defence-in-depth alongside the
+        # Pydantic gt=0 validator; raw SQL / CLI inserts can't bypass
+        # the storage layer.
+        CheckConstraint(
+            "amount_byn > 0",
+            name="chk_deal_expenses_amount_positive",
+        ),
+        Index("idx_deal_expenses_lead", "lead_id"),
+        Index("idx_deal_expenses_user", "user_id"),
+    )
+
+
+class LeadReminder(Base):
+    """Reminder for a lead — notifies the user at a scheduled time."""
+
+    __tablename__ = "lead_reminders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lead_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("lead_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    remind_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+    message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sent: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    lead = relationship("LeadItem", back_populates="reminders")
+    user = relationship("User", back_populates="reminders")
+
+    __table_args__ = (
+        Index("idx_reminders_due", "remind_at", "sent"),
+    )
+
+
+class TelegramNotificationDLQ(Base):
+    __tablename__ = "telegram_notification_dlq"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    message: Mapped[str] = mapped_column(String(4096), nullable=False)
+    error_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    retry_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # OPUS-2: retry pump uses these. Without retry_count rows pile
+    # up forever and never get re-attempted; ``next_retry_at`` is
+    # how the pump cheaply finds work without re-evaluating
+    # backoff arithmetic on every tick.
+    retry_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    # AUDIT-LOW (audit follow-up): inline keyboard payload preserved
+    # across retries. Stored as the JSON produced by aiogram's
+    # ``InlineKeyboardMarkup.model_dump_json()`` so the retry pump
+    # can rebuild the exact buttons the original send carried.
+    # Nullable: notifications without a keyboard (some DLQ ingress
+    # paths don't bother) leave this as NULL and fall back to a
+    # plain text retry, matching pre-fix behaviour.
+    reply_markup_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_telegram_notification_dlq_created", "created_at"),
+        Index("idx_telegram_notification_dlq_user", "user_id"),
+        Index("idx_telegram_notification_dlq_pump", "next_retry_at", "retry_count"),
+        # DB-MEDIUM (issues §4.1): hard ceiling so a runaway retry pump
+        # cannot push the counter unboundedly. C-07: the collector
+        # enforces ``_DLQ_MAX_RETRIES = 5`` in code; this DB constraint
+        # is a wider fail-safe (10) so a future bump of the code
+        # constant doesn't require a CHECK migration. The comment used
+        # to read "10 in code" which mismatched reality and confused
+        # operators tuning retry behaviour.
+        CheckConstraint(
+            "retry_count >= 0 AND retry_count <= 10",
+            name="chk_telegram_notification_dlq_retry_count_bounds",
+        ),
+    )
+
+
+class UserConsent(Base):
+    """User consent records for PD processing and AI analysis."""
+
+    __tablename__ = "user_consents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    consent_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        comment="ai_analysis | pd_processing | cross_border",
+    )
+    version: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="2026.2",
+        server_default="2026.2",
+    )
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    user = relationship("User", back_populates="consents")
+
+    __table_args__ = (
+        CheckConstraint(
+            "version IN ('2026.1', '2026.2')",
+            name="chk_user_consents_version_known",
+        ),
+        Index("idx_user_consents_user", "user_id"),
+        Index("idx_user_consents_type", "consent_type"),
+        # DB-M6: UNIQUE partial index. Enforces "at most one active
+        # consent per (user_id, consent_type)" at the storage layer,
+        # belt-and-suspenders over the application-level "revoke old
+        # before insert new" pattern in routers/consent.grant_consent.
+        # Without it, two concurrent grant_consent requests could
+        # race past the SELECT and end up with duplicate active
+        # rows. Router handles the IntegrityError and returns the
+        # surviving row. Migration 20260510_0006 replaces the old
+        # non-unique partial index.
+        Index(
+            "idx_user_consents_user_type_active",
+            "user_id", "consent_type",
+            unique=True,
+            postgresql_where=column("revoked_at").is_(None),
+            sqlite_where=column("revoked_at").is_(None),
+        ),
+    )
+
+
+class AIAuditLog(Base):
+    """Audit trail for AI-assisted decisions (Belarus Law No. 99-З requirement)."""
+
+    __tablename__ = "ai_audit_log"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    endpoint: Mapped[str] = mapped_column(String(64), nullable=False)
+    ad_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    query: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    query_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    result_summary_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # OPUS-17: capture the trusted client IP at decision time so the
+    # audit row matches what the consent row already records. 45 chars
+    # covers an IPv6 address with optional zone id; same shape as
+    # UserConsent.ip_address.
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    user = relationship("User", back_populates="ai_audit_logs")
+
+    __table_args__ = (
+        Index("idx_ai_audit_user", "user_id"),
+        Index("idx_ai_audit_created", "created_at"),
+    )
+
+
+# G-07: SavedSearch is reserved schema. The persistence layer is in place
+# (UNIQUE/indexes wired, GDPR export already exports rows) but no CRUD
+# endpoint creates or updates these rows in the current product. Keep
+# the table for forward compatibility — dropping it requires a
+# destructive migration; building the feature requires a UX decision.
+# See konechno.md Wave 182 entry.
+class SavedSearch(Base, UserIDMixin, TimestampMixin):
+    """User-saved search queries with optional alert filters."""
+
+    __tablename__ = "saved_searches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    group_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    query: Mapped[str] = mapped_column(String(255), nullable=False)
+    strict_mode: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    target_discount_percent: Mapped[float] = mapped_column(
+        Numeric(5, 2),
+        nullable=False,
+        default=10.0,
+        server_default="10",
+    )
+    max_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    condition: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    config_keyword: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # C-09: unused — see Tracker.exclude_duplicates comment.
+    exclude_duplicates: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )  # G-08: reserved schema, no runtime path consumes this flag yet.
+    active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+
+    # Relationships
+    user = relationship("User", back_populates="saved_searches")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "query", "strict_mode", name="uq_saved_searches_user_query"),
+        Index("idx_saved_searches_user", "user_id"),
+        Index("idx_saved_searches_active", "active"),
+    )
+
+
+class Contact(Base):
+    """Saved seller contacts for a user."""
+
+    __tablename__ = "contacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    seller_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    kufar_profile: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    saved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    user = relationship("User", back_populates="contacts")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "phone", name="uq_contacts_user_phone"),
+        Index("idx_contacts_user", "user_id"),
     )

@@ -1,0 +1,408 @@
+"""AI Tools router — negotiate price and price advice endpoints."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import ValidationError
+
+from api.config import get_settings
+from api.dependencies import get_cache, get_kufar_client, get_telegram_user
+from api.limiter import limiter
+from api.routers.ai_analysis import (
+    _check_ai_available,
+    _check_ai_consent,
+    _check_ai_entitlement,
+    _check_rate_limit,
+    _coerce_string_list,
+    _log_ai_audit,
+)
+from api.schemas import (
+    AINegotiateRequest,
+    AINegotiateResponse,
+    AIPriceAdviceRequest,
+    AIPriceAdviceResponse,
+)
+from api.services.ai_sanitize import strip_html_in_payload
+from api.services.ai_service import sanitize_user_text
+from api.services.cache import digest_cache_key
+from api.services.client_ip import get_client_ip
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/ai", tags=["ai"])
+
+
+# ── System prompts ────────────────────────────────────────────────────────
+
+
+_NEGOTIATE_SYSTEM = """\
+Ты — Rafuk AI, помощник покупателя на белорусском Kufar. Ты помогаешь
+сформулировать текст для торга с продавцом.
+
+Правила:
+- Аудитория — Беларусь, Kufar. Все цены в BYN.
+- Будь вежлив, но настойчив. Цель — получить скидку или обосновать цену.
+- Упоминай конкретные аргументы: рыночную цену, состояние, аналоги.
+- Не выдумывай факты — опирайся только на предоставленные данные.
+- Генерируй текст на русском, готовый для копирования в чат Kufar.
+
+Ответь строго JSON:
+{
+  "opening_line": "приветствие с указанием интереса к товару",
+  "counter_offer_text": "текст предложения со скидкой и обоснованием",
+  "fallback_text": "текст если продавец отказал — компромисс",
+  "tips": ["конкретный совет по переговорам"]
+}
+"""
+
+_PRICE_ADVICE_SYSTEM = """\
+Ты — Rafuk AI, аналитик цен на белорусском Kufar. Ты помогаешь покупателю
+решить: купить сейчас или подождать другого объявления.
+
+КРИТИЧЕСКИ ВАЖНО: Твоя оценка НЕ является инвестиционной рекомендацией.
+Ты анализируешь только текущий рыночный срез объявлений Kufar.
+Рыночные цены могут изменяться непредсказуемо.
+
+Правила:
+- Аудитория — Беларусь, Kufar. Все цены в BYN.
+- Опирайся на предоставленные рыночные данные (медиана, квартиль, количество).
+- Не утверждай, что цены растут, падают или стабильны во времени: временного ряда нет.
+- Если данных недостаточно для вывода — честно скажи "neutral".
+- advice — строго одно из: "buy_now" (цена выгодная, редкий товар),
+  "wait" (текущая цена выше сопоставимого среза), "neutral" (недостаточно данных).
+- Будь конкретен: указывай суммы и проценты относительно текущего среза.
+- НЕ гарантируй снижение или рост цены и не делай выводов о динамике рынка.
+
+Ответь строго JSON:
+{
+  "advice": "buy_now или wait или neutral",
+  "reasoning": "обоснование с конкретными данными",
+  "market_context": "1-2 предложения о текущем рыночном срезе без динамики во времени",
+  "confidence": 0.0-1.0
+}
+"""
+
+
+def _ai_price_advice_cache_key(payload: AIPriceAdviceRequest) -> str:
+    return digest_cache_key(
+        "ai_price_advice",
+        {
+            "contract": "current-market-v2",
+            "query": payload.query,
+            "current_price_byn": payload.current_price_byn,
+            "category": payload.category,
+        },
+    )
+
+
+def _price_advice_stats_usable(stats: object | None) -> bool:
+    return (
+        stats is not None
+        and float(getattr(stats, "median", 0) or 0) > 0
+        and int(getattr(stats, "count", 0) or 0) >= 3
+    )
+
+
+def _clamp_confidence(value: object) -> float:
+    try:
+        confidence = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, confidence))
+
+
+def _prefix_reason(prefix: str, original: str, *, limit: int = 500) -> str:
+    original = original.strip()
+    if not original:
+        return prefix[:limit]
+    return f"{prefix} {original}"[:limit]
+
+
+def _ground_price_advice(
+    *,
+    advice: str,
+    reasoning: str,
+    confidence: float,
+    current_price_byn: float,
+    stats: object | None,
+) -> tuple[str, str, float]:
+    if not _price_advice_stats_usable(stats):
+        return (
+            "neutral",
+            _prefix_reason(
+                "Недостаточно текущих объявлений для уверенного вывода; "
+                "поэтому совет скорректирован в нейтральный.",
+                reasoning,
+            ),
+            min(confidence, 0.35),
+        )
+
+    median = float(getattr(stats, "median", 0) or 0)
+    q1 = float(getattr(stats, "q1", 0) or 0)
+    q3 = float(getattr(stats, "q3", 0) or 0)
+    if q3 > 0 and current_price_byn > q3 and advice == "buy_now":
+        return (
+            "wait",
+            _prefix_reason(
+                f"Серверная проверка: текущая цена {current_price_byn:.0f} BYN "
+                f"выше Q3 {q3:.0f} BYN и медианы {median:.0f} BYN; "
+                "совет скорректирован по текущему срезу.",
+                reasoning,
+            ),
+            min(confidence, 0.75),
+        )
+    if q1 > 0 and current_price_byn <= q1 and advice == "wait":
+        return (
+            "buy_now",
+            _prefix_reason(
+                f"Серверная проверка: текущая цена {current_price_byn:.0f} BYN "
+                f"не выше Q1 {q1:.0f} BYN; "
+                "совет скорректирован по текущему срезу.",
+                reasoning,
+            ),
+            min(max(confidence, 0.55), 0.85),
+        )
+    return advice, reasoning, confidence
+
+
+# ── Negotiate ─────────────────────────────────────────────────────────────
+
+
+@router.post("/negotiate", response_model=AINegotiateResponse)
+# PR-02: edge cap on top of _check_rate_limit (per-user quota).
+# Same shape as /ai/analyze and /ai/listing-assistant — the heavy
+# chat path can't be slow-drained at burst, and a cached hit
+# (after PR-03's user-scoped cache key) costs nothing here anyway.
+@limiter.limit("10/minute")
+async def negotiate_price(
+    payload: AINegotiateRequest,
+    request: Request,
+    _user=Depends(get_telegram_user),
+):
+    """Generate negotiation text for a buyer — counter-offer and tips."""
+    ai = _check_ai_available()
+    await _check_ai_consent(request, _user.user_id)
+    await _check_ai_entitlement(request, _user.user_id, endpoint="negotiate")
+    client_ip = get_client_ip(request)
+
+    cache = get_cache(request)
+    # PR-03: namespace the cache key by user_id. The earlier shape
+    # ``ai_negotiate:{ad}:{offer}:{asking}`` had no per-user
+    # component, so two users supplying the same triple were served
+    # the same AI response — a small but real cross-user data leak
+    # (the reply text quotes the buyer's offer back at them, plus
+    # the optional condition/market_context strings the previous
+    # user supplied). Mirrors the ``ai_listing:u{uid}:...`` shape
+    # already used by the listing assistant.
+    cache_key = digest_cache_key(
+        "ai_negotiate",
+        {
+            "u": int(_user.user_id),
+            "ad_id": payload.ad_id,
+            "my_offer_byn": payload.my_offer_byn,
+            "asking_price_byn": payload.asking_price_byn,
+            "query": payload.query,
+            "condition": payload.condition,
+        },
+    )
+    cached = await cache.get_json(cache_key)
+    if isinstance(cached, dict):
+        try:
+            response = AINegotiateResponse.model_validate(cached)
+        except ValidationError:
+            pass
+        else:
+            await _log_ai_audit(
+                request.app.state.session_factory,
+                telegram_user_id=_user.user_id,
+                endpoint="negotiate",
+                ad_id=str(payload.ad_id),
+                query=payload.query,
+                model=get_settings().ai_model,
+                cached=True,
+                ip_address=client_ip,
+            )
+            return response
+
+    await _check_rate_limit(request, _user.user_id, endpoint="negotiate")
+
+    # AI audit trail (OPUS-17: capture client IP).
+    await _log_ai_audit(
+        request.app.state.session_factory,
+        telegram_user_id=_user.user_id,
+        endpoint="negotiate",
+        ad_id=str(payload.ad_id),
+        query=payload.query,
+        model=get_settings().ai_model,
+        ip_address=client_ip,
+    )
+
+    # Build context
+    safe_query = sanitize_user_text(payload.query) or ""
+    safe_condition = sanitize_user_text(payload.condition) or ""
+    safe_market = sanitize_user_text(payload.market_context) or ""
+    user_content = (
+        f"Товар: {safe_query}\n"
+        f"Цена продавца: {payload.asking_price_byn} BYN\n"
+        f"Моя цена: {payload.my_offer_byn} BYN\n"
+    )
+    if safe_condition:
+        user_content += f"Состояние: {safe_condition}\n"
+    if safe_market:
+        user_content += f"Рыночный контекст: {safe_market}\n"
+
+    try:
+        result = await asyncio.wait_for(
+            ai.chat_json(
+                system=_NEGOTIATE_SYSTEM,
+                content=user_content,
+                max_tokens=800,
+            ),
+            timeout=60,
+        )
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="AI перегружен, попробуйте позже") from None
+
+    response = AINegotiateResponse(
+        opening_line=str(result.get("opening_line") or "")[:300],
+        counter_offer_text=str(result.get("counter_offer_text") or "")[:600],
+        fallback_text=str(result.get("fallback_text") or "")[:400],
+        tips=_coerce_string_list(result.get("tips"), limit=4, max_len=140),
+    )
+
+    # SEC-NEW-4: defence-in-depth strip of HTML tags in AI output before cache/return.
+    serialized = strip_html_in_payload(response.model_dump(mode="json"))
+    await cache.set_json(cache_key, serialized, ttl=1800)
+    return AINegotiateResponse.model_validate(serialized)
+
+
+# ── Price Advice ──────────────────────────────────────────────────────────
+
+
+@router.post("/price-advice", response_model=AIPriceAdviceResponse)
+# PR-02: edge cap on top of _check_rate_limit (per-user quota).
+# Price advice is anonymous-keyed (current-market-v1) so the
+# cache is shared across users — the edge limit only protects
+# the cold-cache fan-out, which Kufar+AI cost roughly $0.01 each.
+@limiter.limit("10/minute")
+async def price_advice(
+    payload: AIPriceAdviceRequest,
+    request: Request,
+    _user=Depends(get_telegram_user),
+):
+    """Price timing advice — should I buy now or wait? NOT an investment recommendation."""
+    ai = _check_ai_available()
+    await _check_ai_consent(request, _user.user_id)
+    await _check_ai_entitlement(request, _user.user_id, endpoint="price_advice")
+    client_ip = get_client_ip(request)
+
+    cache = get_cache(request)
+    cache_key = _ai_price_advice_cache_key(payload)
+    cached = await cache.get_json(cache_key)
+    if isinstance(cached, dict):
+        try:
+            response = AIPriceAdviceResponse.model_validate(cached)
+        except ValidationError:
+            pass
+        else:
+            await _log_ai_audit(
+                request.app.state.session_factory,
+                telegram_user_id=_user.user_id,
+                endpoint="price_advice",
+                query=payload.query,
+                model=get_settings().ai_model,
+                cached=True,
+                ip_address=client_ip,
+            )
+            return response
+
+    await _check_rate_limit(request, _user.user_id, endpoint="price_advice")
+
+    # AI audit trail (OPUS-17: capture client IP).
+    await _log_ai_audit(
+        request.app.state.session_factory,
+        telegram_user_id=_user.user_id,
+        endpoint="price_advice",
+        query=payload.query,
+        model=get_settings().ai_model,
+        ip_address=client_ip,
+    )
+
+    # Fetch market data for context
+    kufar_client = get_kufar_client(request)
+    from api.services.query_pipeline import load_query_dataset
+
+    dataset = await load_query_dataset(
+        query=payload.query,
+        currency="byn",
+        strict_search=True,
+        settings=get_settings(),
+        client=kufar_client,
+        category=payload.category,
+    )
+
+    # Build context with market data
+    stats = dataset.price_stats if dataset else None
+    market_info = ""
+    current_market_context = "Недостаточно текущих рыночных данных для уверенного сравнения."
+    if _price_advice_stats_usable(stats):
+        market_info = (
+            f"Медиана рынка: {stats.median:.0f} BYN\n"
+            f"Q1 (25%): {stats.q1:.0f} BYN\n"
+            f"Q3 (75%): {stats.q3:.0f} BYN\n"
+            f"Количество объявлений: {stats.count}\n"
+            f"Минимальная цена: {stats.min:.0f} BYN\n"
+            f"Максимальная цена: {stats.max:.0f} BYN\n"
+        )
+        current_market_context = (
+            f"Текущий рыночный срез: медиана {stats.median:.0f} BYN, "
+            f"межквартильный диапазон {stats.q1:.0f}–{stats.q3:.0f} BYN, "
+            f"выборка {stats.count} объявлений."
+        )
+
+    safe_query = sanitize_user_text(payload.query) or ""
+    user_content = (
+        f"Запрос: {safe_query}\n"
+        f"Текущая цена: {payload.current_price_byn} BYN\n"
+    )
+    if market_info:
+        user_content += f"\nРыночные данные:\n{market_info}"
+
+    try:
+        result = await asyncio.wait_for(
+            ai.chat_json(
+                system=_PRICE_ADVICE_SYSTEM,
+                content=user_content,
+                max_tokens=800,
+            ),
+            timeout=60,
+        )
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="AI перегружен, попробуйте позже") from None
+
+    valid_advice_values = {"buy_now", "wait", "neutral"}
+    raw_advice = str(result.get("advice") or "neutral")[:20]
+    advice = raw_advice if raw_advice in valid_advice_values else "neutral"
+    confidence = _clamp_confidence(result.get("confidence"))
+    advice, reasoning, confidence = _ground_price_advice(
+        advice=advice,
+        reasoning=str(result.get("reasoning") or "")[:500],
+        confidence=confidence,
+        current_price_byn=payload.current_price_byn,
+        stats=stats,
+    )
+
+    response = AIPriceAdviceResponse(
+        advice=advice,
+        reasoning=reasoning[:500],
+        market_context=current_market_context[:400],
+        confidence=confidence,
+    )
+
+    # SEC-NEW-4: defence-in-depth strip of HTML tags in AI output before cache/return.
+    serialized = strip_html_in_payload(response.model_dump(mode="json"))
+    await cache.set_json(cache_key, serialized, ttl=3600)
+    return AIPriceAdviceResponse.model_validate(serialized)

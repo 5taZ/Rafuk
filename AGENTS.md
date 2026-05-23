@@ -1,0 +1,205 @@
+# Working on this repo
+
+This file is the canonical reference for anyone — human or AI — working
+on the Kufar Analytics codebase. It supersedes the historical
+`claude.md` / `mybad.md` session-handoff snapshots; for the live
+audit-fix plan see `konechno.md` and the source-of-truth audit log
+`issues.md`.
+
+## TL;DR
+
+```bash
+# install
+uv sync --extra dev
+
+# tests must stay green before any commit
+uv run pytest --tb=short
+
+# lint (CI matches this — `ruff format` is NOT enforced; see Code style)
+uv run ruff check .
+
+# bump frontend cache-busting tags after touching frontend/js or frontend/css
+# CI enforces this via the frontend-version-gate job; see .github/workflows/ci.yml.
+scripts/bump_static_version.sh
+
+# alembic head revision
+uv run alembic -c migrations/alembic.ini current
+```
+
+If the test suite goes red, fix the code or roll back the change.
+Do **not** commit a red suite.
+
+## Project shape
+
+| Folder | Role |
+|--------|------|
+| `api/` | FastAPI backend (PostgreSQL + Redis) |
+| `bot/` | Aiogram 3 Telegram bot, long-polling |
+| `scheduler/` | APScheduler — periodic Kufar scrape + alerts |
+| `frontend/` | Vanilla JS Mini-App (no bundler, no JSX) |
+| `migrations/` | Alembic migrations |
+| `tests/` | pytest suite against aiosqlite locally / Postgres in CI |
+| `nginx/` | Reverse-proxy config, CSP/headers |
+| `docker-compose.yml` | api / bot / scheduler / frontend / redis / cloudflared |
+
+A more detailed file map lives at the bottom of `konechno.md`. Update it
+there when you reshape the layout.
+
+## Conventions
+
+### Atomic waves
+
+Every meaningful change set is a **single atomic commit** named a
+"wave". The body of the commit message names every audit ID it closes
+(e.g. `BE-M11: Decimal vs float in history_service`). The trailer is:
+
+```
+Generated with [Devin](https://cli.devin.ai/docs)
+
+Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+```
+
+This lets `git log --grep="BE-M11"` find the wave that closed a given
+audit item, in either direction.
+
+### Audit ID comments
+
+When a fix is non-obvious, anchor it inline:
+
+```python
+# BE-M11: Numeric(12,2) gives Decimal on Postgres but float on SQLite —
+# coerce both sides so the production path doesn't TypeError.
+```
+
+The IDs come from `DEEP_DIVE_REVIEW_COMPREHENSIVE.md` (gitignored).
+
+### Backward-compat re-exports
+
+When you split a module (e.g. Wave 10 split `ai_analysis.py` into four
+services), keep the old import surface working via re-exports rather
+than rewriting every caller. Document the re-exports inline with the
+list of importers so removing them is a deliberate decision.
+
+### Code style
+
+* Compact, dense, idiomatic. Avoid excessive `try`/`except`.
+* **Comments explain *why*, not *what*.** Don't add comments unless
+  asked or unless the code is genuinely subtle.
+* Don't add or remove comments accidentally during refactors.
+* Follow the existing patterns — read neighbouring files before
+  reaching for a new abstraction or library.
+* **`ruff format` is intentionally NOT enforced.** The project
+  uses single-line trailing-comma argument lists (`f(a, b, c,)`)
+  which the ruff formatter would explode into multi-line form
+  (`f(\n    a,\n    b,\n    c,\n)`). CI runs `ruff check` (real
+  correctness issues) but skips the formatter. If you find yourself
+  wanting to bulk-reformat, don't — make the change you actually
+  came for instead.
+
+### Tests
+
+* Async tests use the `_CSRFTestClient` shim in `tests/conftest.py`
+  which auto-injects `Origin` and `X-Requested-With` headers (CSRF
+  middleware needs both — see Wave 6/FE-H7).
+* Async tests using `httpx.AsyncClient` directly (e.g.
+  `tests/test_consent.py`) must set both headers manually.
+* Pytest is async-mode auto (`asyncio_mode = "auto"`).
+* Coverage runs in CI via `pytest-cov`; local runs don't need it.
+* E2E smoke lives in `tests/e2e/`, gated by `KUFAR_E2E=1`; CI runs it on the `e2e` PR label or via `workflow_dispatch`.
+
+## Hard constraints from the user
+
+1. **Do not rotate secrets.** The user has accepted the risk that the
+   bot token, AI API key, DB credentials and proxy credentials in
+   `.env` are unrotated. `.env` is gitignored — that's the only line
+   of defence and that's intentional.
+2. **Local Redis on `:6380` is dev-only.** The host port mapping
+   lives in `docker-compose.override.yml` (auto-loaded by
+   `docker compose up`); production deploys use
+   `docker compose -f docker-compose.yml up` and the port stays
+   internal to `kufar-net`. `REDIS_URL` for host processes still
+   points at `localhost:6380`; `DOCKER_REDIS_URL` carries the
+   `REDIS_PASSWORD` env var for in-cluster traffic.
+3. **The full pytest suite must stay green.** Verify with
+   `uv run pytest --tb=short -q` before commits that touch runtime
+   code or tests. If a refactor breaks tests, either update the test
+   (with audit-ID comments) or roll back. Never commit a red suite.
+4. **Never commit `.env`, `DEEP_DIVE_REVIEW_COMPREHENSIVE.md`, or
+   `notmyfault.md`.** They're gitignored — keep them that way.
+
+## Operational items deferred by user policy
+
+| ID    | Item | Disposition |
+|-------|------|-------------|
+| SEC-C1 | Secret rotation | Skip — user policy |
+| INF-C2 | HTTPS/TLS | Cloudflared already proxies, deeper TLS is deployment-side |
+| INF-C3 | `pkill -f` in scripts | Local dev scripts only |
+| SEC-H2 | Docker Secrets | Needs Compose Spec migration + secret-store decision |
+| INF-H1 | `pg_dump` cron | Needs off-host backup target |
+| INF-H2 | Monitoring | Needs Prometheus / UptimeRobot decision |
+| INF-H3 | Push image to registry | Needs CD pipeline first |
+| INF-H4 | `deploy.yml` | CD pipeline — needs deployment target |
+| DB-H3  | `ai_audit_log` partitioning | Cleanup function works; true range-partitioning postponed |
+| INF-H5 | IaC (Terraform/Pulumi) | Needs deployment target + cloud-provider decision |
+| SEC-H3 | Secret management (Vault/K8s secrets) | Needs secret-store decision (see SEC-H2) |
+
+### Recurring ops chores
+
+* **Cloudflare IP allowlist** (`api/services/client_ip.py`,
+  `nginx/default.conf`). The list is hard-coded so direct-peer
+  trust stays predictable, but CF adds ranges every few months.
+  Refresh the union of IPv4 + IPv6 lists at least once a year:
+
+  ```bash
+  curl -s https://www.cloudflare.com/ips-v4
+  curl -s https://www.cloudflare.com/ips-v6
+  ```
+
+  Update both sites in the same commit (audit ID `OPUS-15`).
+
+If you cross one of these "ops decision" lines (introducing a new
+external service, secret rotation, destructive migration), **ping the
+user first**.
+
+## Where to look first
+
+* **Adding an endpoint** → `api/routers/` mirrors HTTP shapes,
+  `api/services/` holds the business logic. Look at how
+  `routers/workflow.py` calls into `services/workflow_store.py` for
+  the canonical pattern.
+* **Adding a migration** → `uv run alembic -c migrations/alembic.ini
+  revision -m "<name>" --autogenerate`, then verify the diff and
+  remove anything you didn't intend.
+
+  For new indexes on large tables (`tracker_events`, `lead_items`,
+  `query_snapshots`, `lead_item_price_snapshots`, `ai_audit_log`), prefer
+  `op.execute("CREATE INDEX CONCURRENTLY ...")` inside an autocommit-only
+  migration so a deploy doesn't take an ACCESS EXCLUSIVE lock for the
+  duration of the build. The migration must declare
+  `def with_autocommit() -> bool: return True` (or the equivalent Alembic
+  `op_kwargs` setup). For small tables this is unnecessary; default
+  `op.create_index` is fine. (BE-DEEP-11)
+* **Adding a frontend feature** → vanilla JS, no bundler. Read the
+  `frontend/js/api_*.js` and `frontend/js/render_*.js` files and
+  follow the existing module split. CSS uses `frontend/css/parts/`.
+* **Touching the AI pipeline** → it lives across
+  `api/services/ai_analysis_pipeline.py`,
+  `api/services/ai_service.py`,
+  `api/services/ai_marketplace.py`,
+  `api/services/ai_guards.py`,
+  `api/services/ai_shadow_store.py`,
+  `api/services/ai_privacy.py`,
+  `api/services/ai_audit.py`. Wave 10 split the original god-file —
+  the seams are documented in `konechno.md`.
+
+## Current open work
+
+Historical audit context lives in `issues.md` (latest deep-dive log)
+and the wave plan at `konechno.md`; treat older `claude.md` / `mybad.md`
+mentions as superseded snapshots, not live source of truth. Use
+`git log --oneline` and current test/lint output to establish what is
+still open. Keep waves themed and atomic.
+
+## License
+
+Private. Do not redistribute without permission.

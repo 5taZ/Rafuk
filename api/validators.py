@@ -1,31 +1,16 @@
+"""Input-validation constants used by API routers.
+
+Historically this module also exported `validate_*` helpers, but they
+were never wired into the routers (FastAPI's pydantic + Query() handles
+validation). Only the constants below are imported elsewhere; the
+helpers were removed to avoid dead code drift.
+
+If you ever want stricter validation than pydantic's defaults, create
+a `Annotated[str, AfterValidator(...)]` type alias next to the model
+so the contract lives with the schema.
+"""
+
 from __future__ import annotations
 
-from fastapi import Query
-
+# ── Query constraints ──────────────────────────────────────────────────────
 MAX_QUERY_LENGTH = 255
-
-
-def validate_query(value: str) -> str:
-    """Validate and sanitize query parameter."""
-    if not value or not value.strip():
-        raise ValueError("Query cannot be empty")
-    if len(value) > MAX_QUERY_LENGTH:
-        raise ValueError(f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters")
-    return value.strip()
-
-
-def query_param(
-    default: str = ...,
-    *,
-    description: str = "Search query string",
-    max_length: int = MAX_QUERY_LENGTH,
-    **kwargs,
-) -> str:
-    """Create a validated query parameter for FastAPI endpoints."""
-    return Query(
-        default=default,
-        min_length=1,
-        max_length=max_length,
-        description=description,
-        **kwargs,
-    )
