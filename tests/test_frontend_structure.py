@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 from pathlib import Path
 
@@ -301,6 +302,19 @@ def test_css_bundle_matches_parts_sources() -> None:
     )
 
 
+def test_index_style_sri_matches_css_bundle(soup: BeautifulSoup) -> None:
+    style_link = soup.find(
+        "link",
+        attrs={
+            "rel": "stylesheet",
+            "href": lambda value: value and value.startswith("css/style.css"),
+        },
+    )
+    assert style_link is not None
+    digest = base64.b64encode(hashlib.sha384(CSS_FILE.read_bytes()).digest()).decode("ascii")
+    assert style_link.get("integrity") == f"sha384-{digest}"
+
+
 def test_lazy_ai_modules_register_on_app_namespace() -> None:
     registrations = {
         "api_ai_modal.js": "createAiModal",
@@ -382,6 +396,39 @@ def test_ai_consent_provider_copy_is_config_driven() -> None:
     assert 'id="consent-ai-provider-label"' in index_text
     assert "/api/v1/account/ai-consent-info" in actions
     assert "display_label" in actions
+
+
+def test_ai_adaptive_intent_controls_are_wired(css_text: str) -> None:
+    index_text = HTML_FILE.read_text(encoding="utf-8")
+    ai_js = (JS_DIR / "api_ai.js").read_text(encoding="utf-8")
+    la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+
+    assert 'name="ai-user-goal"' in index_text
+    assert 'value="balanced"' in index_text
+    assert 'value="safe_buy"' in index_text
+    assert 'value="resale"' in index_text
+    assert 'name="la-seller-goal"' in index_text
+    assert 'value="sell_fast"' in index_text
+    assert 'value="maximize_price"' in index_text
+    assert "getAiUserGoal()" in ai_js
+    assert "user_goal: getAiUserGoal()" in ai_js
+    assert "getSellerGoal()" in la_js
+    assert "seller_goal: getSellerGoal()" in la_js
+    assert ".ai-intent-option" in css_text
+    assert "min-height: 44px" in css_text
+
+
+def test_ai_feedback_controls_are_wired() -> None:
+    ai_render_js = (JS_DIR / "api_ai_render.js").read_text(encoding="utf-8")
+    la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+
+    assert "/api/v1/ai/feedback" in ai_render_js
+    assert "/api/v1/ai/feedback" in la_js
+    assert 'endpoint: "analyze"' in ai_render_js
+    assert 'endpoint: "listing_assistant"' in la_js
+    assert "too_generic" in ai_render_js
+    assert "wrong_category" in ai_render_js
+    assert "bad_price" in ai_render_js
 
 
 def test_frontend_composition_clones_mutable_contexts() -> None:

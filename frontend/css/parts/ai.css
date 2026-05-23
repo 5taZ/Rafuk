@@ -998,6 +998,42 @@
     line-height: 1.6;
 }
 
+/* ── AI: Feedback controls ── */
+.ai-section--feedback {
+    padding-top: 14px;
+}
+
+.ai-feedback-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.ai-feedback-btn {
+    appearance: none;
+    min-height: 44px;
+    min-width: 44px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font: 700 var(--text-xs) var(--font);
+    cursor: pointer;
+    transition: background var(--tr-base), color var(--tr-base), border-color var(--tr-base);
+}
+
+.ai-feedback-btn:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--border-hover);
+}
+
+.ai-feedback-btn:disabled {
+    opacity: 0.58;
+    cursor: default;
+}
+
 /* ── AI: Disclaimer ── */
 .ai-disclaimer {
     padding: 14px 0 0;

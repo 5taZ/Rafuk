@@ -14,7 +14,15 @@
 const { domEl, domFragment } = app;
 
 function createAiRender(context, aiCtx) {
-    const { elements, safeKufarUrl, safeImageUrl, formatPrice } = context;
+    const {
+        elements,
+        safeKufarUrl,
+        safeImageUrl,
+        formatPrice,
+        postJson,
+        showToast,
+        logClientError = () => {},
+    } = context;
 
     // Section IDs for scroll navigation
     const SECTION_IDS = {
@@ -90,6 +98,51 @@ function createAiRender(context, aiCtx) {
             className: `ai-meta-pill${extraClass ? ` ${extraClass}` : ""}`,
             text,
         });
+    }
+
+    async function _sendAiFeedback(rating, reason, sourceBtn) {
+        if (typeof postJson !== "function") return;
+        const group = sourceBtn?.closest(".ai-feedback");
+        const buttons = group ? Array.from(group.querySelectorAll("button")) : [];
+        buttons.forEach((btn) => { btn.disabled = true; });
+        try {
+            await postJson("/api/v1/ai/feedback", { endpoint: "analyze", rating, reason });
+            if (typeof showToast === "function") {
+                showToast("Спасибо, учту качество ответа", "success", 1500);
+            }
+        } catch (err) {
+            buttons.forEach((btn) => { btn.disabled = false; });
+            logClientError("[AI] Feedback failed:", err, "warn");
+            if (typeof showToast === "function") {
+                showToast(err?.message || "Не удалось отправить отзыв", "error");
+            }
+        }
+    }
+
+    function _buildAiFeedbackControls() {
+        const row = domEl("div", { className: "ai-feedback-row" });
+        const options = [
+            ["helpful", "good", "Полезно"],
+            ["not_helpful", "too_generic", "Слишком общо"],
+            ["not_helpful", "wrong_category", "Не та категория"],
+            ["not_helpful", "bad_price", "Цена мимо"],
+        ];
+        for (const [rating, reason, label] of options) {
+            const btn = domEl("button", {
+                className: "ai-feedback-btn",
+                attrs: { type: "button" },
+                text: label,
+            });
+            btn.addEventListener("click", () => {
+                void _sendAiFeedback(rating, reason, btn);
+            });
+            row.appendChild(btn);
+        }
+        return _buildAiSection(
+            "Оценить ответ",
+            row,
+            "ai-section--feedback ai-feedback",
+        );
     }
 
     function _formatAiWarning(raw) {
@@ -507,6 +560,7 @@ function createAiRender(context, aiCtx) {
                 text: data.disclaimer || "AI-анализ носит информационно-справочный характер и не является финансовой или инвестиционной консультацией.",
             })
         );
+        nodes.push(_buildAiFeedbackControls());
         return nodes;
     }
 

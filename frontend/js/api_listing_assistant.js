@@ -61,6 +61,7 @@ function createApiListingAssistant(context) {
     const historyFooter = document.getElementById("la-history-footer");
     const historyClearBtn = document.getElementById("la-history-clear");
     const saveHistoryCheckbox = document.getElementById("la-save-history-checkbox");
+    const sellerGoalInputs = modal ? Array.from(modal.querySelectorAll('input[name="la-seller-goal"]')) : [];
 
     if (!modal || !form || !resultBox) {
         return { destroy() {} };
@@ -185,6 +186,9 @@ function createApiListingAssistant(context) {
         priceInput.value = "";
         conditionSelect.value = "";
         negotiableCheckbox.checked = false;
+        for (const input of sellerGoalInputs) {
+            input.checked = input.value === "balanced";
+        }
         notesInput.value = "";
         photos.length = 0;
         renderPhotoGrid();
@@ -385,6 +389,51 @@ function createApiListingAssistant(context) {
             fallback();
             finalize();
         }
+    }
+
+    function getSellerGoal() {
+        const checked = modal?.querySelector('input[name="la-seller-goal"]:checked');
+        return checked?.value || "balanced";
+    }
+
+    async function sendAiFeedback(rating, reason, sourceBtn) {
+        if (!postJson) return;
+        const buttons = sourceBtn?.closest(".ai-feedback")?.querySelectorAll("button") || [];
+        buttons.forEach((btn) => { btn.disabled = true; });
+        try {
+            await postJson("/api/v1/ai/feedback", { endpoint: "listing_assistant", rating, reason });
+            showToast("Спасибо, учту качество ответа", "success", 1500);
+        } catch (err) {
+            buttons.forEach((btn) => { btn.disabled = false; });
+            showToast(err?.message || "Не удалось отправить отзыв", "error");
+        }
+    }
+
+    function buildFeedbackControls() {
+        const wrap = el(
+            "section",
+            { className: "la-section ai-feedback", attrs: { "data-ai-feedback": "listing_assistant" } },
+            el("span", { className: "la-section-title", text: "Оценить ответ" }),
+        );
+        const row = el("div", { className: "ai-feedback-row" });
+        const options = [
+            ["helpful", "good", "Полезно"],
+            ["not_helpful", "too_generic", "Слишком общо"],
+            ["not_helpful", "bad_price", "Цена мимо"],
+        ];
+        for (const [rating, reason, label] of options) {
+            const btn = el("button", {
+                className: "ai-feedback-btn",
+                attrs: { type: "button" },
+                text: label,
+            });
+            btn.addEventListener("click", () => {
+                void sendAiFeedback(rating, reason, btn);
+            });
+            row.appendChild(btn);
+        }
+        wrap.appendChild(row);
+        return wrap;
     }
 
     function buildCopyBlock(label, value) {
@@ -827,6 +876,7 @@ function createApiListingAssistant(context) {
                 el("p", { className: "la-disclaimer", text: data.disclaimer }),
             );
         }
+        resultBox.appendChild(buildFeedbackControls());
 
         showResultOverlay();
     }
@@ -957,6 +1007,7 @@ function createApiListingAssistant(context) {
             condition: conditionSelect.value || null,
             draft_price_byn: draftPriceByn,
             is_negotiable: !!negotiableCheckbox.checked,
+            seller_goal: getSellerGoal(),
             extra_notes: (notesInput.value || "").trim() || null,
             photos: photos.map((p) => p.data),
         };
@@ -998,6 +1049,7 @@ function createApiListingAssistant(context) {
                     draft_price_byn: payload.draft_price_byn,
                     condition: payload.condition,
                     is_negotiable: payload.is_negotiable,
+                    seller_goal: payload.seller_goal,
                     extra_notes: payload.extra_notes,
                 },
                 photos_count: photos.length,

@@ -41,13 +41,26 @@ function createApiAi(context) {
     const modal = app.createAiModal(context, aiCtx);
     const render = app.createAiRender(context, aiCtx);
 
+    function getAiUserGoal() {
+        if (typeof document === "undefined") return "balanced";
+        const checked = document.querySelector('input[name="ai-user-goal"]:checked');
+        return checked?.value || "balanced";
+    }
+
     async function loadAIAnalysis(adId) {
         const query = (state.detail.data?.query || state.search.query || "").trim();
         if (!adId || !query) return;
         if (typeof context.canUseAiFeature === "function" && !context.canUseAiFeature("ai")) return;
+        const userGoal = getAiUserGoal();
 
         const cached = state.detail.ai;
-        if (cached && cached.adId === adId && cached.result && !cached.error) {
+        if (
+            cached &&
+            cached.adId === adId &&
+            (cached.userGoal || "balanced") === userGoal &&
+            cached.result &&
+            !cached.error
+        ) {
             modal.openAIModal(state.detail.data?.title || "", { startLoading: false });
             render.renderAIModalResult(cached.result);
             return;
@@ -77,6 +90,7 @@ function createApiAi(context) {
             result: null,
             error: "",
             source: "ai",
+            userGoal,
         };
 
         modal.openAIModal(state.detail.data?.title || "");
@@ -87,13 +101,14 @@ function createApiAi(context) {
                 ad_id: adId,
                 query,
                 category: state.filters.category || undefined,
+                user_goal: getAiUserGoal(),
             });
             if (isCancelled()) return;
 
             // Cached result returned immediately
             if (startResp.cached && startResp.result) {
                 const result = startResp.result;
-                state.detail.ai = { adId, loading: false, result, error: "", source: "ai" };
+                state.detail.ai = { adId, loading: false, result, error: "", source: "ai", userGoal };
                 modal.stopLoadingAnimation(false);
                 render.renderAIModalResult(result);
                 return;
@@ -168,7 +183,7 @@ function createApiAi(context) {
             });
 
             if (isCancelled() || result == null) return;
-            state.detail.ai = { adId, loading: false, result, error: "", source: "ai" };
+            state.detail.ai = { adId, loading: false, result, error: "", source: "ai", userGoal };
             modal.showCompletionThen(() => {
                 if (isCancelled()) return;
                 render.renderAIModalResult(result);
@@ -191,6 +206,7 @@ function createApiAi(context) {
                 result: null,
                 error: message,
                 source: "ai",
+                userGoal,
             };
             _showAIError(message, adId);
         } finally {
