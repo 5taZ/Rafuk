@@ -856,6 +856,32 @@ def test_filter_controls_have_accessible_state_and_labels(soup: BeautifulSoup) -
     assert 'setAttribute("aria-pressed", String(allActive))' in render_views
 
 
+def test_sort_tabs_keep_behavior_with_minimal_chrome(
+    soup: BeautifulSoup, css_text: str
+) -> None:
+    sort_buttons = soup.select(".sort-row [data-sort]")
+    assert [button.get("data-sort") for button in sort_buttons] == [
+        "newest",
+        "cheap",
+        "price_asc",
+        "price_desc",
+        "near_median",
+    ]
+    assert [button.get_text(" ", strip=True) for button in sort_buttons] == [
+        "Новые",
+        "Выгодные",
+        "Дешевле",
+        "Дороже",
+        "≈ Медиана",
+    ]
+    assert all(button.get("type") == "button" for button in sort_buttons)
+    assert all(button.get("aria-pressed") in {"true", "false"} for button in sort_buttons)
+
+    assert ".sort-row .s-tab {" in css_text
+    assert ".sort-row .s-tab.active {" in css_text
+    assert ".sort-row .s-tab.active::after" in css_text
+
+
 def test_summary_refinement_chips_are_compact_scroll_row(css_text: str) -> None:
     assert ".summary-refinement-chip" in css_text
     assert ".summary-refinements-chips" in css_text
