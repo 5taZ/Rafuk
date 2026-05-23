@@ -1856,6 +1856,168 @@
  * Tracker card action buttons — clean SVG icons + text, no emoji blocks.
  * ===================================================================== */
 
+#tracking-view .view-hero {
+    padding-bottom: var(--space-3);
+}
+
+#tracker-panel .sec-head--center {
+    justify-content: flex-start;
+    text-align: left;
+}
+
+#tracking-view .tracker-card {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+#tracking-view .tracker-composer {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-surface-subtle);
+}
+
+[data-theme="light"] #tracking-view .tracker-composer {
+    border-color: var(--border-surface-subtle);
+    background: var(--bg-card);
+}
+
+#tracking-view .tracker-create-section {
+    margin: 0;
+}
+
+#tracking-view .tracker-create-section .primary-btn {
+    min-height: 44px;
+    border-radius: var(--radius-full);
+    box-shadow: none;
+}
+
+#tracking-view .tracker-form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+    gap: 8px;
+    margin: 0;
+}
+
+#tracking-view .deal-range-field {
+    min-width: 0;
+    gap: 5px;
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+#tracking-view .deal-range-input-wrap {
+    min-height: 44px;
+    height: auto;
+    border-radius: var(--r-md);
+    background: var(--bg-input);
+    box-shadow: none;
+}
+
+#tracking-view .deal-range-input-wrap:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+#tracking-view .deal-select {
+    min-height: 42px;
+    padding-right: 24px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2393a4b3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 4px center;
+    background-size: 14px;
+}
+
+#tracking-view .tracker-form-hint {
+    margin: -2px 0 0;
+    color: var(--text-dim);
+    font-size: var(--text-xs);
+}
+
+#tracking-view .tracker-status {
+    margin-top: 0;
+}
+
+#tracking-view .trackers-list {
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.tracker-card-enhanced {
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-surface-subtle);
+}
+
+.tracker-card-enhanced:hover {
+    box-shadow: var(--shadow-card);
+}
+
+.tracker-filter-tag {
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--bg-elevated) 76%, transparent);
+    color: var(--text-secondary);
+}
+
+.tracker-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tracker-stat {
+    background: color-mix(in srgb, var(--bg-elevated) 74%, transparent);
+    box-shadow: none;
+}
+
+#tracking-view .tracker-event-controls {
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+#tracker-event-filter-row {
+    margin-bottom: 0;
+}
+
+#tracker-event-filter-row .s-tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: max-content;
+}
+
+#tracking-view .tracker-event-tracker-filter select {
+    min-height: 44px;
+    border-radius: var(--radius-full);
+    background-color: var(--bg-card);
+    border-color: var(--border);
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 700;
+    box-shadow: var(--shadow-surface-subtle);
+}
+
+#tracking-view .tracker-event-card {
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-surface-subtle);
+}
+
+#tracking-view .tracker-event-card::before {
+    display: none;
+}
+
+[data-theme="light"] #tracking-view .tracker-event-tracker-filter select,
+[data-theme="light"] #tracking-view .tracker-event-card,
+[data-theme="light"] .tracker-card-enhanced {
+    border-color: var(--border-surface-subtle);
+}
+
 .tracker-card-actions {
     display: flex;
     gap: 6px;

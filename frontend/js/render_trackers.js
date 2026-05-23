@@ -476,8 +476,18 @@ function createRenderTrackers(context) {
             const filter = button.dataset.eventFilter;
             const count = FILTER_COUNTS[filter] ?? 0;
             const label = FILTER_LABELS[filter] ?? filter;
-            button.textContent = count > 0 ? `${label} (${count})` : label;
-            button.classList.toggle("active", filter === state.trackers.eventFilter);
+            const active = filter === state.trackers.eventFilter;
+            const labelNode = button.querySelector("[data-event-filter-label]");
+            const badge = button.querySelector("[data-event-filter-count]");
+            if (labelNode) {
+                labelNode.textContent = label;
+            }
+            if (badge) {
+                badge.textContent = String(count);
+                badge.hidden = count === 0;
+            }
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-pressed", String(active));
         }
 
         // Populate tracker dropdown filter
@@ -786,7 +796,9 @@ function createRenderTrackers(context) {
         };
 
         for (const button of elements.trackerEventFilterButtons) {
-            button.classList.toggle("active", button.dataset.eventFilter === state.trackers.eventFilter);
+            const active = button.dataset.eventFilter === state.trackers.eventFilter;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-pressed", String(active));
         }
         const badges = elements.trackerEventFilterCounts || {};
         for (const [key, badge] of Object.entries(badges)) {

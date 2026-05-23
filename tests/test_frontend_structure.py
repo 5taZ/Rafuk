@@ -520,6 +520,42 @@ def test_edit_tracker_strict_toggle_has_no_nested_labels(soup: BeautifulSoup) ->
     assert any("strict-toggle" in (label.get("class") or []) for label in strict_labels)
 
 
+def test_autosearch_surface_uses_flat_composer_and_accessible_filters(
+    soup: BeautifulSoup, css_text: str
+) -> None:
+    tracking = soup.find(id="tracking-view")
+    assert tracking is not None
+    composer = tracking.select_one(".tracker-composer")
+    assert composer is not None
+    assert composer.find(id="track-query-btn") is not None
+
+    trackers_list = tracking.find(id="trackers-list")
+    assert trackers_list is not None
+    assert composer.find(id="trackers-list") is None
+
+    event_buttons = tracking.select("#tracker-event-filter-row [data-event-filter]")
+    assert [button.get("data-event-filter") for button in event_buttons] == [
+        "all",
+        "price_drop",
+        "new_listing",
+        "price_threshold_alert",
+        "discount_alert",
+    ]
+    assert all(button.get("type") == "button" for button in event_buttons)
+    assert all(button.get("aria-pressed") in {"true", "false"} for button in event_buttons)
+    assert all(button.select_one("[data-event-filter-label]") for button in event_buttons)
+    assert all(button.select_one("[data-event-filter-count]") for button in event_buttons)
+
+    render_trackers = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
+    assert 'button.querySelector("[data-event-filter-label]")' in render_trackers
+    assert 'button.setAttribute("aria-pressed", String(active));' in render_trackers
+    assert "button.textContent = count > 0" not in render_trackers
+
+    assert "#tracking-view .tracker-composer" in css_text
+    assert "#tracking-view .tracker-form-grid" in css_text
+    assert "#tracker-event-filter-row .s-tab" in css_text
+
+
 def test_ai_loading_states_use_minimal_status_visuals(soup: BeautifulSoup, css_text: str) -> None:
     loader = soup.find(id="ai-modal-loading")
     assert loader is not None
