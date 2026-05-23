@@ -574,6 +574,136 @@ def test_stage_extract_classifies_three_price_states_correctly() -> None:
     assert c.price_byn == 1500.0  # 150000 kopecks -> 1500 BYN
 
 
+def test_stage_extract_keeps_query_market_anchor_when_exact_title_cluster_is_noisy() -> None:
+    from api.services.aggregator import PriceStats
+    from api.services.ai_analysis_pipeline import _AC, _stage_extract
+
+    target = {
+        "ad_id": 101,
+        "subject": "iPhone 14 Pro 128 Deep Purple",
+        "body": "Минимальное описание",
+        "price_byn": 114000,
+        "ad_parameters": [],
+        "images": [],
+    }
+    same_title_expensive = [
+        {
+            "ad_id": 102 + idx,
+            "subject": "iPhone 14 Pro 128 Deep Purple",
+            "body": "Похожее объявление",
+            "price_byn": price,
+            "ad_parameters": [],
+            "images": [],
+        }
+        for idx, price in enumerate((245000, 249900))
+    ]
+    broad_market = [
+        {
+            "ad_id": 201 + idx,
+            "subject": f"iPhone 14 Pro {storage}",
+            "body": "Обычное объявление",
+            "price_byn": price,
+            "ad_parameters": [],
+            "images": [],
+        }
+        for idx, (storage, price) in enumerate(
+            (("128", 139000), ("256", 155000), ("128", 170000))
+        )
+    ]
+
+    broad_stats = PriceStats(
+        mean=1560.0,
+        median=1550.0,
+        q1=1390.0,
+        q3=1700.0,
+        min=1140.0,
+        max=2499.0,
+        count=133,
+    )
+    c = _AC()
+    c.target_ad = target
+    c.payload = SimpleNamespace(ad_id=101, query="iPhone 14 Pro", category=None)
+    c.dataset = SimpleNamespace(
+        ads=[target, *same_title_expensive, *broad_market],
+        price_stats=broad_stats,
+    )
+    c.datasets_by_cohort = [("strict_category", c.dataset)]
+
+    _stage_extract(c)
+
+    assert c.median == 1550.0
+    assert c.q1 == 1390.0
+    assert c.q3 == 1700.0
+    assert c.count == 133
+
+
+def test_stage_extract_keeps_product_type_cluster_for_mixed_parts_market() -> None:
+    from api.services.aggregator import PriceStats
+    from api.services.ai_analysis_pipeline import _AC, _stage_extract
+
+    ads = [
+        {
+            "ad_id": 301,
+            "subject": "Двигатель Volkswagen Polo",
+            "body": "Контрактный мотор",
+            "price_byn": 190000,
+            "ad_parameters": [],
+            "images": [],
+        },
+        {
+            "ad_id": 302,
+            "subject": "Двигатель Volkswagen Polo CFNA",
+            "body": "Мотор",
+            "price_byn": 205000,
+            "ad_parameters": [],
+            "images": [],
+        },
+        {
+            "ad_id": 303,
+            "subject": "Двигатель Volkswagen Polo CFN",
+            "body": "В сборе",
+            "price_byn": 210000,
+            "ad_parameters": [],
+            "images": [],
+        },
+        {
+            "ad_id": 304,
+            "subject": "Зеркало Volkswagen Polo",
+            "body": "Левое",
+            "price_byn": 12000,
+            "ad_parameters": [],
+            "images": [],
+        },
+        {
+            "ad_id": 305,
+            "subject": "Фара Volkswagen Polo",
+            "body": "Правая",
+            "price_byn": 18000,
+            "ad_parameters": [],
+            "images": [],
+        },
+    ]
+    mixed_parts_stats = PriceStats(
+        mean=900.0,
+        median=180.0,
+        q1=120.0,
+        q3=1900.0,
+        min=120.0,
+        max=2100.0,
+        count=5,
+    )
+    c = _AC()
+    c.target_ad = ads[0]
+    c.payload = SimpleNamespace(ad_id=301, query="Volkswagen Polo", category=None)
+    c.dataset = SimpleNamespace(ads=ads, price_stats=mixed_parts_stats)
+    c.datasets_by_cohort = [("strict_category", c.dataset)]
+
+    _stage_extract(c)
+
+    assert c.median == 2050.0
+    assert c.count == 3
+
+
 @pytest.mark.asyncio
 async def test_stage_photo_skips_optional_precheck_when_disabled() -> None:
     from api.services.ai_analysis_pipeline import _AC, _stage_photo

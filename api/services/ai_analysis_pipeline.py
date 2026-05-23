@@ -26,6 +26,7 @@ from api.services.aggregator import (
     extract_prices,
     filter_ads_for_accessory_category,
     normalize_price_byn,
+    product_cluster_key,
     resolve_price_reference,
 )
 from api.services.ai_guardrails import apply_ai_market_guardrails
@@ -65,6 +66,7 @@ from api.services.reseller_tools import compute_deal_score
 # key stays readable in Redis CLI.
 def _compute_ai_cache_version() -> str:
     sources = (
+        Path(__file__),
         Path(__file__).parent / "ai_prompts.py",
         Path(__file__).parent.parent / "schemas.py",
     )
@@ -431,6 +433,48 @@ def _init_analysis_state(
     return c
 
 
+def _cluster_stats_usable_for_ai(
+    *,
+    target_title: str,
+    query: str,
+    reference_stats: Any,
+    cluster_stats: Any,
+) -> bool:
+    """Decide whether exact-title stats are stable enough to replace query stats."""
+    if cluster_stats is None or not getattr(cluster_stats, "median", 0):
+        return False
+    if getattr(cluster_stats, "count", 0) < 3:
+        return False
+
+    if product_cluster_key(target_title, query):
+        return True
+
+    ref_median = float(getattr(reference_stats, "median", 0) or 0)
+    if ref_median <= 0:
+        return True
+
+    cluster_median = float(cluster_stats.median)
+    ref_q1 = float(getattr(reference_stats, "q1", 0) or ref_median * 0.85)
+    ref_q3 = float(getattr(reference_stats, "q3", 0) or ref_median * 1.15)
+    cluster_count = int(getattr(cluster_stats, "count", 0) or 0)
+
+    outside_reference = (
+        (ref_q1 > 0 and cluster_median < ref_q1 * 0.75)
+        or (ref_q3 > 0 and cluster_median > ref_q3 * 1.25)
+    )
+    if outside_reference and cluster_count < 10:
+        return False
+
+    cluster_q1 = float(getattr(cluster_stats, "q1", 0) or 0)
+    cluster_q3 = float(getattr(cluster_stats, "q3", 0) or 0)
+    spread = (
+        (cluster_q3 - cluster_q1) / cluster_median
+        if cluster_median > 0 and cluster_q3 >= cluster_q1
+        else float("inf")
+    )
+    return not (cluster_count < 5 and spread > 0.35)
+
+
 async def _analysis_fallback(c: _AC, exc: BaseException | None = None) -> None:
     """Deliver a fallback result on timeout or AI errors."""
     if isinstance(exc, TimeoutError):
@@ -662,7 +706,12 @@ def _stage_extract(c: _AC) -> None:
     cluster_stats = cluster_price_stats(
         str(c.target_ad.get("subject", "")), filtered_ads,
     )
-    if cluster_stats is not None:
+    if _cluster_stats_usable_for_ai(
+        target_title=str(c.target_ad.get("subject", "")),
+        query=c.payload.query,
+        reference_stats=effective_stats,
+        cluster_stats=cluster_stats,
+    ):
         effective_stats = cluster_stats
     c.effective_stats = effective_stats
     c.median = effective_stats.median if effective_stats else None

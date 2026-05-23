@@ -405,6 +405,14 @@ def _product_cluster_key(tokens: list[str], query_tokens: set[str]) -> tuple[str
     return tuple(sorted(aliases))
 
 
+def product_cluster_key(title: str, query: str | None = None) -> tuple[str, ...]:
+    """Return the product-type cluster key for a title/query pair."""
+    return _product_cluster_key(
+        tokenize_search_text(title),
+        set(tokenize_search_text(query or "")),
+    )
+
+
 def _precompute_cluster_stats_sync(
     all_ads: list[dict[str, Any]],
     query: str | None = None,
