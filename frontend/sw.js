@@ -26,7 +26,7 @@
 // max-age check; v7 added the offline-fallback page; v8 moves that
 // fallback's CSS out of inline <style>; v9 evicts stale frontend
 // bundles after the lead-version compatibility fix.
-const CACHE_VERSION = "rafuk-cache-20260523-5b2fd7a";
+const CACHE_VERSION = "rafuk-cache-20260523-d0ba0f1";
 const OFFLINE_FALLBACK_URL = "/offline.html";
 const OFFLINE_FALLBACK_ASSETS = [OFFLINE_FALLBACK_URL, "/offline.css"];
 const STATIC_CACHE = `${CACHE_VERSION}-static`;

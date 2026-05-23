@@ -49,6 +49,9 @@ function createRenderViews(context) {
 
             // Toggle visibility
             elements.filterDropdown.hidden = !state.filters.filterDropdownOpen;
+            if (elements.filterBtn) {
+                elements.filterBtn.setAttribute("aria-expanded", String(state.filters.filterDropdownOpen));
+            }
 
             // Render category chips
             domClear(elements.filterCategories);

@@ -826,6 +826,11 @@ def test_client_side_price_filter_uses_byn_against_filter_byn() -> None:
 
 
 def test_filter_controls_have_accessible_state_and_labels(soup: BeautifulSoup) -> None:
+    filter_btn = soup.find(id="filter-btn")
+    assert filter_btn is not None
+    assert filter_btn.get("aria-controls") == "filter-dropdown"
+    assert filter_btn.get("aria-expanded") in {"true", "false"}
+
     region = soup.find(id="filter-region")
     assert region is not None
     assert region.get("aria-label") == "Регион и город"
@@ -854,6 +859,26 @@ def test_filter_controls_have_accessible_state_and_labels(soup: BeautifulSoup) -
     render_views = (JS_DIR / "render_views.js").read_text(encoding="utf-8")
     assert 'setAttribute("aria-pressed", String(active))' in render_views
     assert 'setAttribute("aria-pressed", String(allActive))' in render_views
+
+
+def test_filter_controls_keep_behavior_with_minimal_chrome(
+    soup: BeautifulSoup, css_text: str
+) -> None:
+    condition_buttons = soup.select("#filter-conditions .filter-chip")
+    seller_buttons = soup.select("#filter-sellers .filter-chip")
+    assert [button.get("data-condition") for button in condition_buttons] == ["", "new", "used"]
+    assert [button.get("data-seller") for button in seller_buttons] == ["", "private", "shop"]
+    assert all(button.get("type") == "button" for button in [*condition_buttons, *seller_buttons])
+    assert all(
+        button.get("aria-pressed") in {"true", "false"}
+        for button in [*condition_buttons, *seller_buttons]
+    )
+
+    assert "#filter-btn[aria-expanded=\"true\"]" in css_text
+    assert ".filter-dropdown .filter-chip {" in css_text
+    assert ".filter-dropdown .filter-chip.active {" in css_text
+    assert ".filter-dropdown .filter-chip.active::after" in css_text
+    assert ".filter-actions .filter-btn--apply" in css_text
 
 
 def test_sort_tabs_keep_behavior_with_minimal_chrome(
