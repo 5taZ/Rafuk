@@ -286,7 +286,7 @@ def build_marketplace_risk_context(ad: dict[str, Any]) -> MarketplaceRiskContext
             flags.append("В тексте есть явный маркер автохауса или дилерской площадки.")
         else:
             flags.append(
-                "В тексте есть признаки перепродажи или площадки: "
+                "В тексте есть признаки профессиональной продажи или площадки: "
                 + ", ".join(reseller_words[:3])
                 + "."
             )
@@ -351,7 +351,7 @@ def merge_marketplace_red_flags(
         )
     elif any(word in risk_context.hot_words for word in _HOT_WORD_GROUPS["reseller"]):
         synthesized = (
-            "В объявлении есть признаки перепродажи или площадки; проверяйте "
+            "В объявлении есть признаки профессиональной продажи или площадки; проверяйте "
             "происхождение товара и прозрачность истории."
         )
     elif any(word in risk_context.hot_words for word in _HOT_WORD_GROUPS["finance"]):
@@ -605,7 +605,7 @@ def _build_fallback_watch_out(
             {
                 "point": "Профиль продавца",
                 "why": risk_context.summary
-                or "Есть сигналы площадки или перепродажи, поэтому важна дополнительная проверка.",
+                or "Есть сигналы площадки, поэтому важна дополнительная проверка.",
             }
         )
     if best_alternative and float(best_alternative.get("price_byn") or 0) > 0:
@@ -1046,7 +1046,7 @@ def _fallback_resale_potential(
             f"Ближайший аналог около {int(round(float(best_alternative['price_byn'])))} BYN."
         )
     reasoning_parts.append(
-        "Перепродажа оценивается по текущей выборке без учёта возможных скрытых дефектов."
+        "Ориентиры рассчитаны по текущей выборке без учёта возможных скрытых дефектов."
     )
 
     return {

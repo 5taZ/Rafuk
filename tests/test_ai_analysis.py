@@ -383,7 +383,7 @@ def test_ai_negotiable_price_context_does_not_use_zero_as_real_price() -> None:
 
 def test_ai_free_price_context_distinguishes_giveaway_from_negotiable() -> None:
     """Free items (price=0, is_negotiable_price=False) must NOT be treated
-    as договорная in the AI prompt — that wrecks resale guidance and
+    as договорная in the AI prompt — that wrecks price guidance and
     misleads the user. The previous bug labelled both as договорная.
     """
     service = AIService()
@@ -408,9 +408,9 @@ def test_ai_free_price_context_distinguishes_giveaway_from_negotiable() -> None:
     # Must explicitly call out "БЕСПЛАТНО" — never "договорная"
     assert "БЕСПЛАТНО" in context
     assert "договорная" not in context.lower() or "не договорная" in context.lower()
-    # Resale section must run for free items (was previously skipped because
+    # Price-guidance section must run for free items (was previously skipped because
     # `elif price_byn:` treated 0 as falsy)
-    assert "ПЕРЕПРОДАЖА" in context
+    assert "ЦЕНОВЫЕ ОРИЕНТИРЫ" in context
     assert "достаётся бесплатно" in context
     # Must NOT pretend the price is unknown
     assert "цена не указана" not in context.lower()
@@ -469,10 +469,10 @@ def test_listing_assistant_context_includes_clothing_specific_guidance() -> None
     assert "imei" not in lowered
 
 
-def test_ai_context_adapts_to_safe_buy_goal() -> None:
+def test_ai_context_ignores_removed_buyer_goals() -> None:
     service = AIService()
 
-    context = service._build_listing_context(
+    base_kwargs = dict(
         title="iPhone 14 Pro",
         description="В хорошем состоянии",
         price_byn=1500,
@@ -481,40 +481,24 @@ def test_ai_context_adapts_to_safe_buy_goal() -> None:
         parameters=[],
         market_median=1550,
         market_count=20,
-        user_goal="safe_buy",
     )
+    balanced = service._build_listing_context(**base_kwargs, user_goal=None)
+    safe = service._build_listing_context(**base_kwargs, user_goal="safe_buy")
+    resale = service._build_listing_context(**base_kwargs, user_goal="resale")
 
-    lowered = context.lower()
-    assert "цель пользователя" in lowered
-    assert "мошеннич" in lowered
-    assert "скрытые дефекты" in lowered
+    assert safe == balanced
+    assert resale == balanced
+    lowered = resale.lower()
+    assert "цель пользователя" not in lowered
+    assert "маржа" not in lowered
+    assert "ликвидность" not in lowered
+    assert "перепродаж" not in lowered
 
 
-def test_ai_context_adapts_to_resale_goal() -> None:
+def test_listing_assistant_context_ignores_removed_seller_goals() -> None:
     service = AIService()
 
-    context = service._build_listing_context(
-        title="MacBook Air M2",
-        description="Полный комплект",
-        price_byn=2200,
-        is_negotiable_price=False,
-        condition="Хорошее",
-        parameters=[],
-        market_median=2400,
-        market_count=18,
-        user_goal="resale",
-    )
-
-    lowered = context.lower()
-    assert "маржа" in lowered
-    assert "ликвидность" in lowered
-    assert "цена входа" in lowered
-
-
-def test_listing_assistant_context_adapts_to_seller_goal() -> None:
-    service = AIService()
-
-    fast_context = service._build_listing_assistant_context(
+    base_kwargs = dict(
         title="Стул кухонный деревянный",
         condition="Б/у",
         is_negotiable=False,
@@ -529,30 +513,19 @@ def test_listing_assistant_context_adapts_to_seller_goal() -> None:
         similar_listings=[],
         category_hint=None,
         category_bargain_hint=None,
-        seller_goal="sell_fast",
+    )
+    balanced = service._build_listing_assistant_context(**base_kwargs, seller_goal=None)
+    fast_context = service._build_listing_assistant_context(
+        **base_kwargs, seller_goal="sell_fast",
     )
     max_context = service._build_listing_assistant_context(
-        title="Стул кухонный деревянный",
-        condition="Б/у",
-        is_negotiable=False,
-        draft_price_byn=80,
-        extra_notes=None,
-        market_median=90,
-        market_q1=70,
-        market_q3=110,
-        market_min=50,
-        market_max=130,
-        market_count=9,
-        similar_listings=[],
-        category_hint=None,
-        category_bargain_hint=None,
-        seller_goal="maximize_price",
+        **base_kwargs, seller_goal="maximize_price",
     )
 
-    assert "быструю продажу" in fast_context.lower()
-    assert "минимум трения" in fast_context.lower()
-    assert "максимальную цену" in max_context.lower()
-    assert "терпеливую продажу" in max_context.lower()
+    assert fast_context == balanced
+    assert max_context == balanced
+    assert "быструю продажу" not in fast_context.lower()
+    assert "максимальную цену" not in max_context.lower()
 
 
 def test_stage_extract_classifies_three_price_states_correctly() -> None:
@@ -1142,6 +1115,38 @@ def test_complete_analysis_sections_repairs_generic_advice() -> None:
         + result["negotiation_tips"]
     ).lower()
     assert "батар" in joined or "imei" in joined or "экран" in joined
+
+
+def test_public_ai_text_strips_internal_listing_ids() -> None:
+    from api.services.ai_quality import sanitize_public_ai_payload
+
+    payload = {
+        "summary": (
+            "Аналогичные объявления от того же продавца (ad_id 1069855031 "
+            "и 1069735212) стоят 1650 BYN."
+        ),
+        "market_context": "Объявление 1069855031 предлагает такой же iPhone дешевле.",
+        "negotiation_tips": [
+            "Скиньте 100 BYN, так как есть аналоги (ad_id [phone], ad_id [phone]).",
+        ],
+        "best_alternative": {
+            "ad_id": 1069855031,
+            "link": "https://www.kufar.by/item/1069855031",
+        },
+    }
+
+    cleaned = sanitize_public_ai_payload(payload)
+    visible_text = " ".join([
+        cleaned["summary"],
+        cleaned["market_context"],
+        *cleaned["negotiation_tips"],
+    ])
+    assert "ad_id" not in visible_text
+    assert "1069855031" not in visible_text
+    assert "[phone]" not in visible_text
+    assert "Другое объявление предлагает" in cleaned["market_context"]
+    assert cleaned["best_alternative"]["ad_id"] == 1069855031
+    assert cleaned["best_alternative"]["link"].endswith("/1069855031")
 
 
 def test_dedupe_analysis_payload_collapses_paraphrase_after_photo_merge() -> None:
@@ -2423,24 +2428,30 @@ def test_listing_assistant_cache_key_is_user_scoped() -> None:
     assert key_one != key_two
 
 
-def test_listing_assistant_cache_key_includes_seller_goal() -> None:
+def test_listing_assistant_cache_key_ignores_removed_seller_goal() -> None:
     from api.routers.ai_listing_assistant import _listing_assistant_cache_key
     from api.schemas import AIListingAssistantRequest
 
+    balanced = AIListingAssistantRequest(title="Phone")
     fast = AIListingAssistantRequest(title="Phone", seller_goal="sell_fast")
     patient = AIListingAssistantRequest(title="Phone", seller_goal="maximize_price")
-    assert _listing_assistant_cache_key(fast, [], user_id=111) != _listing_assistant_cache_key(
-        patient, [], user_id=111
+    assert _listing_assistant_cache_key(fast, [], user_id=111) == _listing_assistant_cache_key(
+        balanced, [], user_id=111
+    )
+    assert _listing_assistant_cache_key(patient, [], user_id=111) == _listing_assistant_cache_key(
+        balanced, [], user_id=111
     )
 
 
-def test_analysis_cache_key_includes_user_goal() -> None:
+def test_analysis_cache_key_ignores_removed_user_goal() -> None:
     from api.schemas import AIAnalysisRequest
     from api.services.ai_analysis_pipeline import _analysis_cache_key
 
+    balanced = AIAnalysisRequest(ad_id=1, query="iphone")
     safe = AIAnalysisRequest(ad_id=1, query="iphone", user_goal="safe_buy")
     resale = AIAnalysisRequest(ad_id=1, query="iphone", user_goal="resale")
-    assert _analysis_cache_key(safe) != _analysis_cache_key(resale)
+    assert _analysis_cache_key(safe) == _analysis_cache_key(balanced)
+    assert _analysis_cache_key(resale) == _analysis_cache_key(balanced)
 
 
 def test_cache_key_differentiates_zero_price_from_none() -> None:

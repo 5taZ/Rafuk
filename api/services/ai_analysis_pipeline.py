@@ -40,6 +40,7 @@ from api.services.ai_marketplace import (
     complete_analysis_sections,
     finalize_red_flags,
 )
+from api.services.ai_quality import sanitize_public_ai_payload
 from api.services.ai_sanitize import strip_html_in_payload
 from api.services.ai_service import (
     dedupe_analysis_payload,
@@ -89,10 +90,9 @@ logger = logging.getLogger(__name__)
 
 
 def _analysis_cache_key(payload: AIAnalysisRequest) -> str:
-    goal = payload.user_goal or ""
     return (
         f"ai_analysis:{_AI_CACHE_VERSION}:{payload.ad_id}:"
-        f"{payload.query}:cat={payload.category}:goal={goal}"
+        f"{payload.query}:cat={payload.category}"
     )
 
 
@@ -291,7 +291,9 @@ async def _deliver_fallback_result(
             parameters=parameters,
         )
         cache_key = _analysis_cache_key(payload)
-        fallback_serialized = response.model_dump(by_alias=True)
+        fallback_serialized = sanitize_public_ai_payload(
+            strip_html_in_payload(response.model_dump(by_alias=True))
+        )
         if warning:
             fallback_serialized["_ai_warning"] = warning
         await cache.set_json(cache_key, fallback_serialized, ttl=fallback_cache_ttl)
@@ -592,7 +594,7 @@ def _stage_extract(c: _AC) -> None:
     # (genuine giveaway, normalize -> 0.0) from "negotiable" (unknown
     # price, normalize -> None). Conflating them was a silent bug:
     # genuine free items were being announced to the AI as "цена не
-    # указана", which wrecked resale guidance and red-flag analysis.
+    # указана", which wrecked price guidance and red-flag analysis.
     raw_normalized = normalize_price_byn(c.target_ad.get("price_byn"), c.target_ad)
     c.is_negotiable_price = raw_normalized is None
     c.is_free_price = raw_normalized == 0.0
@@ -841,7 +843,7 @@ async def _stage_ai(c: _AC) -> None:
                 photo_condition_label=c.photo_condition_label or None,
                 photo_condition_notes=c.photo_condition_notes or None,
                 image_urls=c.images,
-                user_goal=c.payload.user_goal,
+                user_goal=None,
             )
         finally:
             pump_task.cancel()
@@ -986,7 +988,9 @@ async def _stage_response(c: _AC) -> None:
 
     # Cache result (use cache passed from endpoint)
     cache_key = _analysis_cache_key(c.payload)
-    serialized = response.model_dump(by_alias=True)
+    serialized = sanitize_public_ai_payload(
+        strip_html_in_payload(response.model_dump(by_alias=True))
+    )
     await c.cache.set_json(cache_key, serialized, ttl=_task_ttl())
 
     await _update_task(

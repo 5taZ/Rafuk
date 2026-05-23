@@ -398,24 +398,24 @@ def test_ai_consent_provider_copy_is_config_driven() -> None:
     assert "display_label" in actions
 
 
-def test_ai_adaptive_intent_controls_are_wired(css_text: str) -> None:
+def test_ai_goal_segmented_controls_are_removed(css_text: str) -> None:
     index_text = HTML_FILE.read_text(encoding="utf-8")
     ai_js = (JS_DIR / "api_ai.js").read_text(encoding="utf-8")
     la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
 
-    assert 'name="ai-user-goal"' in index_text
-    assert 'value="balanced"' in index_text
-    assert 'value="safe_buy"' in index_text
-    assert 'value="resale"' in index_text
-    assert 'name="la-seller-goal"' in index_text
-    assert 'value="sell_fast"' in index_text
-    assert 'value="maximize_price"' in index_text
-    assert "getAiUserGoal()" in ai_js
-    assert "user_goal: getAiUserGoal()" in ai_js
-    assert "getSellerGoal()" in la_js
-    assert "seller_goal: getSellerGoal()" in la_js
-    assert ".ai-intent-option" in css_text
-    assert "min-height: 44px" in css_text
+    assert 'name="ai-user-goal"' not in index_text
+    assert 'value="safe_buy"' not in index_text
+    assert 'value="resale"' not in index_text
+    assert "Перепродажа" not in index_text
+    assert 'name="la-seller-goal"' not in index_text
+    assert 'value="sell_fast"' not in index_text
+    assert 'value="maximize_price"' not in index_text
+    assert "getAiUserGoal()" not in ai_js
+    assert "user_goal:" not in ai_js
+    assert "getSellerGoal()" not in la_js
+    assert "seller_goal:" not in la_js
+    assert ".ai-intent-control" not in css_text
+    assert ".ai-intent-option" not in css_text
 
 
 def test_ai_feedback_controls_are_wired() -> None:

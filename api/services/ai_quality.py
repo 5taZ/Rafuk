@@ -8,6 +8,24 @@ from collections.abc import Iterable
 from api.services.ai_sanitize import sanitize_user_text
 
 _WORD_RE = re.compile(r"[0-9a-zа-яё]+", re.IGNORECASE)
+_PUBLIC_LISTING_ID_TOKEN = r"(?:\[[a-zа-я_ -]+\]|\d{6,})"
+_PUBLIC_AD_ID_LABEL = r"(?:ad[_\s-]?id|id объявления|идентификатор объявления)"
+_PUBLIC_AD_ID_PARENS_RE = re.compile(
+    rf"\s*\([^)]*\b{_PUBLIC_AD_ID_LABEL}\b[^)]*\)",
+    re.IGNORECASE,
+)
+_PUBLIC_AD_ID_LABEL_RE = re.compile(
+    rf"\b{_PUBLIC_AD_ID_LABEL}\s*[:#№-]?\s*{_PUBLIC_LISTING_ID_TOKEN}"
+    rf"(?:\s*(?:,|и|/)\s*(?:{_PUBLIC_AD_ID_LABEL}\s*[:#№-]?\s*)?"
+    rf"{_PUBLIC_LISTING_ID_TOKEN})*",
+    re.IGNORECASE,
+)
+_PUBLIC_LISTING_ID_REF_RE = re.compile(
+    rf"\b([Оо]бъявлени[ея])\s+{_PUBLIC_LISTING_ID_TOKEN}\b"
+)
+_PUBLIC_EMPTY_PARENS_RE = re.compile(r"\s*\(\s*\)")
+_SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([,.;:!?])")
+_MULTISPACE_RE = re.compile(r"[ \t]{2,}")
 
 _GENERIC_PHRASES = (
     "обратите внимание",
@@ -125,6 +143,39 @@ def is_generic_ai_advice(value: str | None) -> bool:
     if len(tokens) <= 4 and not has_anchor:
         return True
     return bool(tokens) and not has_anchor and all(token in _GENERIC_TOKENS for token in tokens)
+
+
+def strip_public_listing_ids(value: str | None) -> str:
+    """Remove internal Kufar listing ids from user-facing AI prose."""
+    text = str(value or "")
+    if not text:
+        return ""
+    text = _PUBLIC_AD_ID_PARENS_RE.sub("", text)
+    text = _PUBLIC_LISTING_ID_REF_RE.sub(
+        lambda match: "Другое объявление" if match.group(1)[0].isupper()
+        else "другое объявление",
+        text,
+    )
+    text = _PUBLIC_AD_ID_LABEL_RE.sub("", text)
+    text = _PUBLIC_EMPTY_PARENS_RE.sub("", text)
+    text = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", text)
+    text = _MULTISPACE_RE.sub(" ", text)
+    return text.strip()
+
+
+def sanitize_public_ai_payload(value):
+    """Recursively clean AI output strings before returning them to users.
+
+    Numeric ``ad_id`` fields and listing links stay intact for app logic; only
+    prose strings lose internal identifiers such as ``ad_id 1069855031``.
+    """
+    if isinstance(value, str):
+        return strip_public_listing_ids(value)
+    if isinstance(value, list):
+        return [sanitize_public_ai_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitize_public_ai_payload(item) for key, item in value.items()}
+    return value
 
 
 def filter_specific_advice(items: Iterable[str], *, limit: int, max_len: int) -> list[str]:

@@ -342,7 +342,7 @@ function createAiRender(context, aiCtx) {
             if (prices.length) {
                 nodes.push(
                     _buildAiSection(
-                        "Потенциал перепродажи",
+                        "Ценовые ориентиры",
                         domFragment(
                             domEl(
                                 "div",

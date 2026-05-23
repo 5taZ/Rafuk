@@ -1330,24 +1330,24 @@ class AIService:
                     "рабочий ориентир цены входа, если нет более сильных аналогов."
                 )
 
-            # Resale instruction
+            # Price-scenario instruction
             if is_negotiable_price:
                 parts.append(
-                    "\nПЕРЕПРОДАЖА: цена покупки ещё не согласована. "
-                    "Оцени resale_potential по рынку и укажи, при какой цене входа "
-                    "сделка выглядит разумной."
+                    "\nЦЕНОВЫЕ ОРИЕНТИРЫ: цена покупки ещё не согласована. "
+                    "Оцени resale_potential как рыночные ориентиры и укажи, "
+                    "при какой цене входа сделка выглядит разумной."
                 )
             elif is_free_price:
                 parts.append(
-                    "\nПЕРЕПРОДАЖА: товар достаётся бесплатно (0 BYN). "
-                    "Любая ненулевая цена перепродажи — это чистая прибыль; "
-                    "оцени resale_potential по рынку и обрати внимание прежде "
-                    "всего на состояние и логистику самовывоза."
+                    "\nЦЕНОВЫЕ ОРИЕНТИРЫ: товар достаётся бесплатно (0 BYN). "
+                    "Оцени resale_potential как рыночные ориентиры и обрати "
+                    "внимание прежде всего на состояние и логистику самовывоза."
                 )
             elif price_byn:
                 parts.append(
-                    f"\nПЕРЕПРОДАЖА: цена покупки {price_byn:.0f} BYN. "
-                    f"Оцени resale_potential — за сколько потенциально можно перепродать."
+                    f"\nЦЕНОВЫЕ ОРИЕНТИРЫ: текущая цена {price_byn:.0f} BYN. "
+                    "Оцени resale_potential как нижний, рыночный и верхний "
+                    "ориентиры по текущей выборке."
                 )
 
         # Anomaly flags
@@ -1419,8 +1419,7 @@ class AIService:
                     context="similar_listing_title",
                 ) or ""
                 parts.append(
-                    f"  {i}. [{sl.get('ad_id')}] "
-                    f"{safe_sl_title} — "
+                    f"  {i}. {safe_sl_title} — "
                     f"{sl.get('price_byn', 0):.0f} BYN ({diff_str}), "
                     f"{sl.get('condition') or 'не указано'}, "
                     f"{sl.get('seller_type', '?')}{age_str}{deal_str}"

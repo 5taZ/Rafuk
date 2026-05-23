@@ -42,7 +42,7 @@ from api.services.ai_listing_guardrails import (
     normalize_listing_pricing,
     thin_market_warning,
 )
-from api.services.ai_quality import repair_seller_advice
+from api.services.ai_quality import repair_seller_advice, sanitize_public_ai_payload
 from api.services.ai_sanitize import strip_html_in_payload
 from api.services.ai_service import (
     CATEGORY_HINTS,
@@ -235,7 +235,7 @@ def _listing_assistant_cache_key(
     canonical_notes = " ".join((payload.extra_notes or "").lower().split())
     photo_hashes = [hashlib.sha256(p.encode("utf-8")).hexdigest()[:16] for p in photos]
     parts = [
-        ("v", "3"),
+        ("v", "4"),
         ("title", canonical_title),
         ("category", str(payload.category or "")),
         ("condition", (payload.condition or "").strip().lower()),
@@ -245,7 +245,6 @@ def _listing_assistant_cache_key(
             if payload.draft_price_byn is not None else "",
         ),
         ("negot", "1" if payload.is_negotiable else "0"),
-        ("seller_goal", payload.seller_goal or ""),
         ("notes", canonical_notes),
         ("photos", ",".join(photo_hashes)),
     ]
@@ -611,7 +610,7 @@ async def listing_assistant(
                 category_hint=category_meta.get("category_hints"),
                 category_bargain_hint=category_meta.get("bargain_hint"),
                 photo_data_urls=photos or None,
-                seller_goal=payload.seller_goal,
+                seller_goal=None,
             ),
             timeout=timeout_s,
         )
@@ -663,7 +662,9 @@ async def listing_assistant(
     )
 
     # SEC-NEW-4: defence-in-depth strip of HTML tags in AI output before cache/return.
-    serialized = strip_html_in_payload(response.model_dump(mode="json"))
+    serialized = sanitize_public_ai_payload(
+        strip_html_in_payload(response.model_dump(mode="json"))
+    )
     cache_ttl = int(getattr(settings, "ai_listing_assistant_cache_ttl", 3600) or 3600)
     await cache.set_json(cache_key, serialized, ttl=cache_ttl)
     return AIListingAssistantResponse.model_validate(serialized)
