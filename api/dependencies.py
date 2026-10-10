@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -9,6 +11,8 @@ from api.database import get_session_factory as build_session_factory
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
 from api.services.cache import CacheBackend, RedisCache
 from api.services.currency_service import CurrencyService
+
+logger = logging.getLogger(__name__)
 
 
 def get_settings_dependency() -> Settings:
@@ -42,12 +46,18 @@ def get_telegram_user(
     if not x_telegram_init_data:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Telegram initData header",
+            detail="Нет данных авторизации Telegram. Откройте приложение из Telegram.",
         )
+    settings = get_settings()
     try:
-        return verify_telegram_init_data(x_telegram_init_data, get_settings().bot_token)
+        return verify_telegram_init_data(
+            x_telegram_init_data,
+            settings.bot_token,
+            max_age_seconds=settings.init_data_max_age_seconds,
+        )
     except ValueError as exc:
+        logger.info("Rejected Telegram initData: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
+            detail="Сессия Telegram недействительна или устарела. Перезапустите приложение.",
         ) from exc

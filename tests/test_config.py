@@ -1,74 +1,67 @@
 from __future__ import annotations
 
-import importlib
-import os
-from unittest.mock import patch
-
 import pytest
 from pydantic import ValidationError
 
+from api.config import Settings, get_settings
 
-def test_settings_loads_from_env_vars() -> None:
-    env = {
-        "BOT_TOKEN": "7123456789:AAFtesttoken",
-        "DATABASE_URL": "postgresql+asyncpg://user:pass@db:5432/kufar",
-        "REDIS_URL": "redis://redis:6379/0",
-        "API_BASE_URL": "https://kufar-analytics.example.com",
-        "MINI_APP_URL": "https://kufar-analytics.example.com/app",
-    }
-    with patch.dict(os.environ, env, clear=False):
-        from api import config
-
-        config.get_settings.cache_clear()
-        importlib.reload(config)
-        s = config.Settings()
-        assert s.bot_token == "7123456789:AAFtesttoken"
-        assert s.database_url == "postgresql+asyncpg://user:pass@db:5432/kufar"
-        assert s.redis_url == "redis://redis:6379/0"
-        assert s.api_base_url == "https://kufar-analytics.example.com"
-        assert s.mini_app_url == "https://kufar-analytics.example.com/app"
+REQUIRED_ENV = ("BOT_TOKEN", "DATABASE_URL", "REDIS_URL", "API_BASE_URL", "MINI_APP_URL")
+OPTIONAL_ENV = (
+    "KUFAR_REQUEST_DELAY",
+    "KUFAR_PARALLEL_SEMAPHORE",
+    "KUFAR_TIMEOUT",
+    "ALERT_CHECK_INTERVAL",
+    "CACHE_TTL_SECONDS",
+    "INIT_DATA_MAX_AGE_SECONDS",
+)
 
 
-def test_settings_applies_defaults() -> None:
-    # Save original env vars
-    import os
+def test_settings_loads_from_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BOT_TOKEN", "7123456789:AAFtesttoken")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@db:5432/kufar")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setenv("API_BASE_URL", "https://kufar-analytics.example.com")
+    monkeypatch.setenv("MINI_APP_URL", "https://kufar-analytics.example.com/app")
+    monkeypatch.setenv("INIT_DATA_MAX_AGE_SECONDS", "3600")
 
-    original_env = {}
-    for key in ["KUFAR_REQUEST_DELAY", "KUFAR_PARALLEL_SEMAPHORE", "SCHEDULER_SNAPSHOT_HOUR", "ALERT_CHECK_INTERVAL"]:
-        if key in os.environ:
-            original_env[key] = os.environ[key]
-            del os.environ[key]
+    s = Settings(_env_file=None)
 
+    assert s.bot_token == "7123456789:AAFtesttoken"
+    assert s.database_url == "postgresql+asyncpg://user:pass@db:5432/kufar"
+    assert s.redis_url == "redis://redis:6379/0"
+    assert s.api_base_url == "https://kufar-analytics.example.com"
+    assert s.mini_app_url == "https://kufar-analytics.example.com/app"
+    assert s.init_data_max_age_seconds == 3600
+
+
+def test_settings_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in OPTIONAL_ENV:
+        monkeypatch.delenv(key, raising=False)
+
+    s = Settings(_env_file=None)
+
+    assert s.kufar_request_delay == 1.0
+    assert s.kufar_parallel_semaphore == 3
+    assert s.alert_check_interval == 30
+    assert s.init_data_max_age_seconds == 86400
+    assert not hasattr(s, "scheduler_snapshot_hour")
+
+
+def test_settings_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in REQUIRED_ENV:
+        monkeypatch.delenv(key, raising=False)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_get_settings_is_cached_until_cleared(monkeypatch: pytest.MonkeyPatch) -> None:
+    first = get_settings()
+    assert get_settings() is first
+
+    monkeypatch.setenv("CACHE_TTL_SECONDS", "42")
+    get_settings.cache_clear()
     try:
-        env = {
-            "BOT_TOKEN": "test",
-            "DATABASE_URL": "sqlite+aiosqlite:///test.db",
-            "REDIS_URL": "redis://localhost:6379/0",
-            "API_BASE_URL": "https://example.com",
-            "MINI_APP_URL": "https://example.com/app",
-        }
-        with patch.dict(os.environ, env, clear=False):
-            # Clear any existing .env file influence
-            from api import config
-
-            config.get_settings.cache_clear()
-            importlib.reload(config)
-            s = config.Settings(_env_file=None)  # Ignore .env file
-            assert s.kufar_request_delay == 1.0
-            assert s.kufar_parallel_semaphore == 3
-            assert s.scheduler_snapshot_hour == 9
-            assert s.alert_check_interval == 30
+        assert get_settings().cache_ttl_seconds == 42
     finally:
-        # Restore original env vars
-        for key, value in original_env.items():
-            os.environ[key] = value
-
-
-def test_settings_missing_required_raises() -> None:
-    with patch.dict(os.environ, {}, clear=True):
-        from api import config
-
-        config.get_settings.cache_clear()
-        importlib.reload(config)
-        with pytest.raises(ValidationError):
-            config.Settings(_env_file=None)
+        get_settings.cache_clear()

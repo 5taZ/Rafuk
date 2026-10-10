@@ -21,9 +21,10 @@ class Settings(BaseSettings):
     kufar_request_delay: float = 1.0
     kufar_parallel_semaphore: int = 3
     kufar_timeout: float = 15.0
-    scheduler_snapshot_hour: int = 9
     alert_check_interval: int = 30
     cache_ttl_seconds: int = 300
+    # Maximum age of Telegram initData (auth_date) in seconds; 0 disables the age check.
+    init_data_max_age_seconds: int = 86400
 
 
 @lru_cache(maxsize=1)
