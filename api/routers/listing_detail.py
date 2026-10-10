@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.config import Settings
 from api.dependencies import get_cache, get_currency_service, get_settings_dependency
 from api.schemas import ListingDetailResponse
+from api.services.aggregator import DATASET_CURRENCY, coerce_ad_id, response_cache_key
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.deal_workflow import compute_liquidity_insight
@@ -12,7 +13,7 @@ from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_detail
 from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
-from api.validators import MAX_QUERY_LENGTH
+from api.validators import DEFAULT_CURRENCY, CurrencyCode, SearchQuery
 
 router = APIRouter(tags=["analytics"])
 
@@ -20,30 +21,30 @@ router = APIRouter(tags=["analytics"])
 @router.get("/listing-detail", response_model=ListingDetailResponse)
 async def get_listing_detail(
     ad_id: int,
-    query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
-    currency: str = "BYN",
+    query: SearchQuery,
+    currency: CurrencyCode = DEFAULT_CURRENCY,
     strict_search: bool = False,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
 ) -> ListingDetailResponse:
-    cache_key = f"listing-detail:{query}:{ad_id}:{currency}:{strict_search}"
+    cache_key = response_cache_key("listing-detail", query, strict_search, ad_id, currency)
     cached = await cache.get_json(cache_key)
     if cached:
-        return ListingDetailResponse(**cached)
+        return ListingDetailResponse(**{**cached, "query": query})
 
     dataset = await load_query_dataset(
         query=query,
-        currency=currency,
+        currency=DATASET_CURRENCY,
         strict_search=strict_search,
         settings=settings,
         client_factory=KufarClient,
     )
-    ad = next((item for item in dataset.ads if int(item.get("ad_id", 0)) == ad_id), None)
+    ad = next((item for item in dataset.ads if coerce_ad_id(item.get("ad_id")) == ad_id), None)
     if ad is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Listing not found for this query",
+            detail="Объявление не найдено в выдаче по этому запросу",
         )
 
     median_byn = dataset.price_stats.median

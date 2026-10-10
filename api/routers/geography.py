@@ -2,47 +2,52 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from api.config import Settings
 from api.dependencies import get_cache, get_currency_service, get_settings_dependency
 from api.schemas import GeographyRegionPoint, GeographyResponse
-from api.services.aggregator import compute_price_stats, extract_prices
+from api.services.aggregator import (
+    DATASET_CURRENCY,
+    compute_price_stats,
+    extract_prices,
+    response_cache_key,
+)
 from api.services.cache import CacheBackend
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
-from api.services.market_signals import region_label
+from api.services.market_signals import ad_region_id, region_label
 from api.services.query_pipeline import load_query_dataset
-from api.validators import MAX_QUERY_LENGTH
+from api.validators import DEFAULT_CURRENCY, CurrencyCode, SearchQuery
 
 router = APIRouter(tags=["analytics"])
 
 
 @router.get("/geography", response_model=GeographyResponse)
 async def get_geography(
-    query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
-    currency: str = "BYN",
+    query: SearchQuery,
+    currency: CurrencyCode = DEFAULT_CURRENCY,
     strict_search: bool = False,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
 ) -> GeographyResponse:
-    cache_key = f"geography:{query}:{currency}:{strict_search}"
+    cache_key = response_cache_key("geography", query, strict_search, currency)
     cached = await cache.get_json(cache_key)
     if cached:
-        return GeographyResponse(**cached)
+        return GeographyResponse(**{**cached, "query": query})
 
     dataset = await load_query_dataset(
         query=query,
-        currency=currency,
+        currency=DATASET_CURRENCY,
         strict_search=strict_search,
         settings=settings,
         client_factory=KufarClient,
     )
     grouped: dict[int, list[dict]] = defaultdict(list)
     for ad in dataset.ads:
-        region_id = ad.get("region_id")
-        if not isinstance(region_id, int) or region_id <= 0:
+        region_id = ad_region_id(ad)
+        if region_id is None:
             continue
         grouped[region_id].append(ad)
 

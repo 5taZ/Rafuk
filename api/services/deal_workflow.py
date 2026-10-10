@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 from api.schemas import FlipEstimate, LiquidityInsight
-from api.services.aggregator import PriceStats, filter_deal_ads, normalize_price_byn
+from api.services.aggregator import (
+    PriceStats,
+    ad_price_byn,
+    filter_deal_ads,
+    is_low_price_outlier,
+    listing_age_hours,
+)
 
 
-def _age_hours(list_time: str | None) -> float | None:
-    if not list_time:
-        return None
-    try:
-        parsed = datetime.fromisoformat(list_time)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return (datetime.now(UTC) - parsed.astimezone(UTC)).total_seconds() / 3600
+def _age_hours(list_time: Any) -> float | None:
+    return listing_age_hours(list_time)
 
 
 def compute_liquidity_insight(
@@ -24,7 +21,9 @@ def compute_liquidity_insight(
     market_stats: PriceStats,
 ) -> LiquidityInsight:
     total = len(ads)
-    fresh_count = sum(1 for ad in ads if (_age := _age_hours(ad.get("list_time"))) is not None and _age <= 72)
+    fresh_count = sum(
+        1 for ad in ads if (age := _age_hours(ad.get("list_time"))) is not None and age <= 72
+    )
     deal_count = len(filter_deal_ads(ads, market_stats.median, 8.0)) if market_stats.median else 0
     score = 35.0
     reasons: list[str] = []
@@ -74,8 +73,11 @@ def compute_flip_estimates(
     ad: dict[str, Any],
     market_stats: PriceStats,
 ) -> list[FlipEstimate]:
-    price_byn = normalize_price_byn(ad.get("price_byn"))
+    price_byn = ad_price_byn(ad)
     if price_byn is None or market_stats.count == 0:
+        return []
+    if is_low_price_outlier(price_byn, market_stats.median):
+        # A placeholder price would promise an absurd profit.
         return []
 
     def build(label: str, target: float) -> FlipEstimate:

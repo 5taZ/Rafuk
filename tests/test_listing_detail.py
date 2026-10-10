@@ -4,7 +4,10 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from api.services import aggregator
 from api.services.cache import MemoryCache
+
+FROZEN_NOW = datetime(2026, 4, 1, 12, tzinfo=UTC)
 
 
 class FakeCurrencyService:
@@ -65,6 +68,7 @@ def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
     from api.main import create_app
     from api.routers import listing_detail
 
+    monkeypatch.setattr(aggregator, "utc_now", lambda: FROZEN_NOW)
     monkeypatch.setattr(listing_detail, "KufarClient", FakeKufarClient)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
@@ -85,7 +89,12 @@ def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
     assert payload["fair_price_label"] is not None
     assert payload["region_name"] == "Регион 6"
     assert payload["normalized_query"] == "iphone"
-    assert payload["deal_verdict"] in {"Забирать", "Смотреть", "Норм", "Мимо"}
+    # 55 base + 8 private seller + 12 fresh (2 h old) + 6 model match.
+    assert payload["deal_score"] == 81.0
+    assert payload["deal_verdict"] == "Забирать"
+    assert payload["deal_reasons"] == ["частник", "свежий лот"]
+    assert payload["seller_type"] == "Частное лицо"
+    assert payload["condition"] == "Новый"
     assert payload["price_byn"] == 2000
     assert payload["liquidity"] is not None
     assert payload["flip_estimates"]
@@ -107,3 +116,54 @@ def test_listing_detail_not_found(monkeypatch) -> None:
         )
 
     assert response.status_code == 404
+    assert response.json()["detail"] == "Объявление не найдено в выдаче по этому запросу"
+
+
+def test_listing_detail_handles_unpriced_and_malformed_ads(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+    from api.routers import listing_detail
+
+    class OddClient(FakeKufarClient):
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            return {
+                "ads": [
+                    {"ad_id": None, "subject": "broken"},
+                    {
+                        "ad_id": "7",
+                        "subject": "iPhone 15",
+                        "price_byn": None,
+                        "list_time": None,
+                        "region_id": "abc",
+                        "images": [None, "oops", {"path": "adim1/7.jpg"}],
+                        "ad_parameters": None,
+                        "account_parameters": ["oops"],
+                        "company_ad": True,
+                    },
+                    {"ad_id": 8, "subject": "iPhone 15", "price_byn": 200000},
+                ],
+            }
+
+    monkeypatch.setattr(listing_detail, "KufarClient", OddClient)
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/listing-detail", params={"query": "iphone", "ad_id": 7})
+        blank = client.get("/api/v1/listing-detail", params={"query": " ", "ad_id": 7})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["currency"] == "BYN"
+    assert payload["price_byn"] is None
+    assert payload["price_vs_median"] is None
+    assert payload["fair_price_band"] is None
+    assert payload["deal_verdict"] == "Нет цены"
+    assert payload["flip_estimates"] == []
+    assert payload["region_id"] is None
+    assert payload["images"] == ["https://rms.kufar.by/v1/gallery/adim1/7.jpg"]
+    assert payload["parameters"] == []
+    assert payload["seller_fields"] == []
+    assert payload["seller_type"] == "Магазин"
+    assert blank.status_code == 422

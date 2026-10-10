@@ -1,25 +1,83 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from typing import Any
 
 from api.services.aggregator import (
     PriceStats,
-    get_param,
-    normalize_price_byn,
+    ad_price_byn,
+    ad_seller_type,
+    coerce_ad_id,
+    coerce_region_id,
+    get_param_values,
     normalize_search_text,
 )
 
+DUPLICATE_PRICE_TOLERANCE = 0.08
+_REGION_NAME_KEYS = ("region_name", "location_name", "area_name", "locality_name")
+_REGION_PARAMETER_KEYS = ("region", "area")
+_SELLER_ID_KEYS = ("account_id", "user_id", "seller_id")
+
+
+def ad_region_id(ad: dict[str, Any]) -> int | None:
+    """Region id from the top-level ``region_id`` or the ``region`` ad parameter."""
+    region_id = coerce_region_id(ad.get("region_id"))
+    if region_id is not None:
+        return region_id
+    for value in get_param_values(ad, "region"):
+        region_id = coerce_region_id(value)
+        if region_id is not None:
+            return region_id
+    return None
+
+
+def _region_parameter_labels(ad: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for value in get_param_values(ad, *_REGION_PARAMETER_KEYS):
+        if not value.isdigit():
+            labels.append(value)
+    return labels
+
 
 def region_label(ad: dict[str, Any]) -> str | None:
-    for key in ("region_name", "location_name", "area_name", "locality_name"):
-        value = ad.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    region_id = ad.get("region_id")
-    if region_id in (None, "", 0):
+    names = region_names(ad)
+    if names:
+        return names[0]
+    region_id = ad_region_id(ad)
+    if region_id is None:
         return None
     return f"Регион {region_id}"
+
+
+def region_names(ad: dict[str, Any]) -> list[str]:
+    """Human-readable region names of an ad (top-level fields and parameter labels)."""
+    names = [
+        value.strip()
+        for key in _REGION_NAME_KEYS
+        if isinstance(value := ad.get(key), str) and value.strip()
+    ]
+    return names + _region_parameter_labels(ad)
+
+
+def region_candidates(ad: dict[str, Any]) -> list[str]:
+    """Every name or code an ad's region can be referred to by."""
+    candidates = region_names(ad)
+    candidates.extend(value for value in get_param_values(ad, "region") if value.isdigit())
+    region_id = ad_region_id(ad)
+    if region_id is not None:
+        candidates.extend([f"Регион {region_id}", str(region_id)])
+    return candidates
+
+
+def ad_seller_id(ad: dict[str, Any]) -> str | None:
+    for key in _SELLER_ID_KEYS:
+        value = ad.get(key)
+        if isinstance(value, bool) or value in (None, ""):
+            continue
+        if isinstance(value, str | int):
+            return str(value).strip() or None
+    return None
 
 
 def fair_price_band(price_vs_median: float | None) -> str | None:
@@ -45,7 +103,7 @@ def fair_price_label(band: str | None) -> str | None:
 
 
 def detect_anomaly_flags(ad: dict[str, Any], stats: PriceStats) -> list[str]:
-    price_byn = normalize_price_byn(ad.get("price_byn"))
+    price_byn = ad_price_byn(ad)
     if price_byn is None or stats.count < 4:
         return []
 
@@ -58,38 +116,43 @@ def detect_anomaly_flags(ad: dict[str, Any], stats: PriceStats) -> list[str]:
 
 
 def duplicate_counts(ads: list[dict[str, Any]]) -> dict[int, int]:
-    grouped: dict[tuple[str, str, int | None], list[tuple[int, float | None]]] = defaultdict(list)
+    """Count likely reposts of each ad: same title, seller and region, price within 8%.
+
+    Groups are keyed by (normalized title, seller type, region, seller account id when
+    Kufar provides it). Inside a group prices are sorted and each ad counts its
+    neighbours with binary search, so the whole pass is O(n log n).
+    """
+    grouped: dict[tuple[str, str, int | None, str], dict[int, float | None]] = defaultdict(
+        dict
+    )
 
     for ad in ads:
-        ad_id = int(ad.get("ad_id", 0))
-        if ad_id <= 0:
+        if not isinstance(ad, dict):
             continue
-        title = normalize_search_text(str(ad.get("subject", "")))
+        ad_id = coerce_ad_id(ad.get("ad_id"))
+        if ad_id is None:
+            continue
+        title = normalize_search_text(str(ad.get("subject") or ""))
         if not title:
             continue
-        seller_type = get_param(ad, "seller_type") or ""
-        region_id = ad.get("region_id") if isinstance(ad.get("region_id"), int) else None
-        grouped[(title, seller_type, region_id)].append(
-            (ad_id, normalize_price_byn(ad.get("price_byn")))
-        )
+        key = (title, ad_seller_type(ad) or "", ad_region_id(ad), ad_seller_id(ad) or "")
+        grouped[key].setdefault(ad_id, ad_price_byn(ad))
 
     counts: dict[int, int] = {}
     for items in grouped.values():
         if len(items) < 2:
             continue
-        for ad_id, price in items:
-            similar = 0
-            for other_id, other_price in items:
-                if other_id == ad_id:
-                    continue
-                if price is None or other_price is None:
-                    similar += 1
-                    continue
-                if price == 0:
-                    continue
-                if abs(other_price - price) / price <= 0.08:
-                    similar += 1
-            if similar:
+        unpriced_count = sum(1 for price in items.values() if price is None)
+        sorted_prices = sorted(price for price in items.values() if price is not None)
+        for ad_id, price in items.items():
+            if price is None:
+                # Without a price we cannot tell reposts apart: every peer counts.
+                similar = len(items) - 1
+            else:
+                low = bisect_left(sorted_prices, price * (1 - DUPLICATE_PRICE_TOLERANCE))
+                high = bisect_right(sorted_prices, price * (1 + DUPLICATE_PRICE_TOLERANCE))
+                similar = (high - low - 1) + unpriced_count
+            if similar > 0:
                 counts[ad_id] = similar
     return counts
 

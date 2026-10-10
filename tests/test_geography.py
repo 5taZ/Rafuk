@@ -85,3 +85,47 @@ def test_geography_endpoint_returns_region_stats(monkeypatch) -> None:
     assert len(payload["regions"]) == 2
     assert payload["regions"][0]["region_name"] == "Регион 6"
     assert payload["regions"][0]["count"] == 2
+
+
+def test_geography_reads_region_from_strings_and_parameters(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+    from api.routers import geography
+
+    calls: list[dict] = []
+
+    class ParameterRegionClient(FakeKufarClient):
+        async def search_all_ads(self, **kwargs) -> dict:
+            calls.append(kwargs)
+            region_param = {"p": "region", "pl": "Область", "v": "7", "vl": "Минск"}
+            return {
+                "ads": [
+                    {"ad_id": 1, "price_byn": 200000, "region_id": "6"},
+                    {"ad_id": 2, "price_byn": 210000, "ad_parameters": [region_param]},
+                    {"ad_id": 3, "price_byn": 220000, "ad_parameters": [region_param]},
+                    {"ad_id": 4, "price_byn": 230000, "region_id": "abc"},
+                    {"ad_id": 5, "price_byn": 240000, "ad_parameters": None},
+                ],
+            }
+
+    monkeypatch.setattr(geography, "KufarClient", ParameterRegionClient)
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/geography", params={"query": "iphone", "currency": "USD"})
+        blank = client.get("/api/v1/geography", params={"query": " "})
+        euro = client.get("/api/v1/geography", params={"query": "iphone", "currency": "EUR"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_analyzed"] == 5
+    assert [(region["region_id"], region["region_name"]) for region in payload["regions"]] == [
+        (7, "Минск"),
+        (6, "Регион 6"),
+    ]
+    assert payload["regions"][0]["median"] == 716.67
+    assert calls[0]["currency"] == "BYN"
+    assert blank.status_code == 422
+    assert euro.status_code == 422
