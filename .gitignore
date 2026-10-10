@@ -7,9 +7,14 @@ __pycache__/
 .pytest_cache/
 htmlcov/
 .coverage
+coverage.xml
 dist/
 build/
 .run/
+
+# Local databases (may contain real Telegram user ids) are never committed.
 bot.db
 *.db
-*.md
+*.db-journal
+*.db-shm
+*.db-wal

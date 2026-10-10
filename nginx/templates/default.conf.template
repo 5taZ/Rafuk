@@ -1,0 +1,85 @@
+# Rendered by the official nginx image at container start: every file in
+# /etc/nginx/templates/*.template is passed through envsubst into /etc/nginx/conf.d/.
+# Only ${API_UPSTREAM} is substituted (see NGINX_ENVSUBST_FILTER in docker-compose.yml):
+#   - compose stack:   api:8000                   (default)
+#   - start-local.sh:  host.docker.internal:8010  (API running on the host)
+
+upstream kufar_api {
+    server ${API_UPSTREAM};
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    server_name _;
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Requests arrive either directly or through a local reverse proxy / tunnel
+    # (cloudflared, Docker port forwarding). Trust X-Forwarded-For only from private
+    # addresses, so the client address below is the real one and cannot be spoofed
+    # by public clients.
+    set_real_ip_from 127.0.0.1;
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    # Security headers. add_header is not inherited by a location that declares its
+    # own add_header, so every such location repeats them. No X-Frame-Options:
+    # Telegram Web renders the Mini App inside an iframe.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # API. CORS is handled by the application (CORSMiddleware); nginx must not add
+    # its own Access-Control-* headers.
+    location ^~ /api/ {
+        proxy_pass http://kufar_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # A single, already validated address: uvicorn (--proxy-headers) uses it as
+        # the client address for rate limiting.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 60s;
+    }
+
+    location ^~ /assets/ {
+        alias /usr/share/nginx/assets/;
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=86400" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    # Unversioned JS/CSS modules: always revalidate (ETag / Last-Modified) so a deploy
+    # never mixes old and new modules. A missing file is a 404, not index.html.
+    location ~* \.(?:js|mjs|css|map)$ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=0, must-revalidate" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    # Other static files (images, fonts, icons): short cache, 404 when missing.
+    location ~* \.(?:png|jpe?g|gif|svg|webp|ico|woff2?|ttf|txt|json)$ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=3600" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    # index.html and SPA navigation: never served from cache without revalidation.
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+}

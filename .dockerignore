@@ -1,0 +1,46 @@
+# Keep secrets, local data and development files out of the build context and image.
+.env
+.env.*
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+bot.db
+
+# VCS, CI and editor/agent state
+.git
+.gitignore
+.gitattributes
+.github
+.claude
+.codex
+.idea
+.vscode
+
+# Local runtime state, virtualenvs and caches
+.run
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+htmlcov
+.coverage
+coverage.xml
+
+# Not needed by the Python services (nginx mounts frontend/, assets/ and nginx/)
+tests
+docs
+frontend
+assets
+nginx
+scripts
+docker-compose*.yml
+Dockerfile
+.dockerignore
+*.sh
+
+# Documentation. README.md stays: pyproject.toml declares it as the package readme.
+*.md
+!README.md

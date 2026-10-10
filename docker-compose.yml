@@ -1,71 +1,109 @@
+# Two ways to use this file:
+#   - full stack:  docker compose up -d --build
+#                  (db, redis, one-shot migrate, api, bot, scheduler, frontend on :8081)
+#   - host mode:   ./start-local.sh starts only db, redis and frontend from here and runs
+#                  the API, bot and scheduler on the host (see README.md).
+
+# One environment for every Python service, so api, bot, scheduler and migrate always
+# see the same settings. Containers reach Postgres and Redis by service name: the
+# host-mode DATABASE_URL / REDIS_URL from .env (localhost:5433 / localhost:6380) are
+# deliberately not used here. Override with COMPOSE_DATABASE_URL / COMPOSE_REDIS_URL.
+x-app-env: &app-env
+  BOT_TOKEN: ${BOT_TOKEN:-}
+  DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@db:5432/${POSTGRES_DB:-kufar}}
+  REDIS_URL: ${COMPOSE_REDIS_URL:-redis://redis:6379/0}
+  API_BASE_URL: ${API_BASE_URL:-}
+  MINI_APP_URL: ${MINI_APP_URL:-}
+  KUFAR_REQUEST_DELAY: ${KUFAR_REQUEST_DELAY:-1.0}
+  KUFAR_PARALLEL_SEMAPHORE: ${KUFAR_PARALLEL_SEMAPHORE:-3}
+  KUFAR_TIMEOUT: ${KUFAR_TIMEOUT:-15.0}
+  ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
+  CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-300}
+  INIT_DATA_MAX_AGE_SECONDS: ${INIT_DATA_MAX_AGE_SECONDS:-86400}
+
+# Every Python service runs the same image; each one may build it (layers are cached).
+x-app-image: &app-image
+  build: .
+  image: kufar-analytics:local
+
+x-app-depends: &app-depends
+  db:
+    condition: service_healthy
+  migrate:
+    condition: service_completed_successfully
+
 services:
-  api:
-    build: .
+  migrate:
+    <<: *app-image
+    command: ["alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
     environment:
-      SERVICE: api
-      BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
-      KUFAR_REQUEST_DELAY: ${KUFAR_REQUEST_DELAY:-1.0}
-      KUFAR_PARALLEL_SEMAPHORE: ${KUFAR_PARALLEL_SEMAPHORE:-3}
-      ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
+      <<: *app-env
+      SERVICE: migrate
     depends_on:
       db:
         condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app-image
+    environment:
+      <<: *app-env
+      SERVICE: api
+    depends_on:
+      <<: *app-depends
       redis:
         condition: service_healthy
+    restart: unless-stopped
+    # Any HTTP response means uvicorn is serving (it binds only after startup finished);
+    # independent of /docs and of external services.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
-      interval: 30s
-      timeout: 10s
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import http.client as h; c = h.HTTPConnection('127.0.0.1', 8000, timeout=3); c.request('HEAD', '/'); c.getresponse()"
+      interval: 15s
+      timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
   bot:
-    build: .
+    <<: *app-image
     environment:
+      <<: *app-env
       SERVICE: bot
-      BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
-    depends_on:
-      api:
-        condition: service_healthy
-      db:
-        condition: service_healthy
+    depends_on: *app-depends
+    restart: unless-stopped
 
   scheduler:
-    build: .
+    <<: *app-image
     environment:
+      <<: *app-env
       SERVICE: scheduler
-      BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
-      ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
-    depends_on:
-      api:
-        condition: service_healthy
-      db:
-        condition: service_healthy
+    depends_on: *app-depends
+    restart: unless-stopped
 
   frontend:
     image: nginx:1.27-alpine
+    environment:
+      # host:port the /api/ location proxies to; start-local.sh passes
+      # NGINX_API_UPSTREAM=host.docker.internal:8010 for the API running on the host.
+      API_UPSTREAM: ${NGINX_API_UPSTREAM:-api:8000}
+      NGINX_ENVSUBST_FILTER: "^API_UPSTREAM$$"
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./assets:/usr/share/nginx/assets:ro
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "8081:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -77,10 +115,12 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-kufar}
       POSTGRES_USER: ${POSTGRES_USER:-user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pass}
+    # Published for host mode only, and only on the loopback interface.
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -90,8 +130,10 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Published for host mode only, and only on the loopback interface.
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
