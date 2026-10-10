@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -13,8 +14,34 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column, relationship
+
+# Canonical status vocabularies shared by the DB, the API, the bot and the Mini App.
+# The CHECK constraints below and migration 20261011_0010 hard-code the same lists.
+LEAD_STATUSES = (
+    "new",
+    "reviewing",
+    "in_progress",
+    "negotiating",
+    "deferred",
+    "bought",
+    "reselling",
+    "sold",
+    "skipped",
+)
+WATCHLIST_STATUSES = ("watching", "reviewing", "in_progress", "deferred", "skipped")
+MARKET_STATUSES = ("active", "missing", "price_drop", "duplicate")
+TRACKER_EVENT_TYPES = ("new_listing", "price_drop")
+
+# Partial indexes on Postgres; SQLite ignores the predicate and builds a full index.
+ACTIVE_ONLY = text("active = true")
+
+
+def _in_list(column: str, values: tuple[str, ...]) -> str:
+    quoted = ", ".join(f"'{value}'" for value in values)
+    return f"{column} IN ({quoted})"
 
 
 class Base(DeclarativeBase):
@@ -22,18 +49,30 @@ class Base(DeclarativeBase):
 
 
 class User(Base):
-    """Telegram users registered in the system."""
+    """Telegram users registered in the system.
+
+    User-scoped tables reference ``telegram_user_id`` (not ``id``): their ``user_id``
+    columns store the raw Telegram user ID.
+    """
 
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # unique + index -> a single unique index "ix_users_telegram_user_id", which also
+    # backs the foreign keys from the user-scoped tables.
     telegram_user_id: Mapped[int] = mapped_column(
         BigInteger,
         unique=True,
         nullable=False,
         index=True,
     )
-    first_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    first_name: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        default="",
+        # text("''") rather than "": alembic cannot compare an empty string default.
+        server_default=text("''"),
+    )
     username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     is_bot: Mapped[bool] = mapped_column(
         Boolean,
@@ -48,27 +87,21 @@ class User(Base):
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Relationships
-    trackers = relationship("Tracker", back_populates="user", cascade="all, delete-orphan")
-    saved_searches = relationship("SavedSearch", back_populates="user", cascade="all, delete-orphan")
-    tracker_events = relationship("TrackerEvent", back_populates="user", cascade="all, delete-orphan")
-    lead_items = relationship("LeadItem", back_populates="user", cascade="all, delete-orphan")
-    watchlist_items = relationship("WatchlistItem", back_populates="user", cascade="all, delete-orphan")
-
-    __table_args__ = (
-        Index("idx_users_telegram_id", "telegram_user_id"),
-    )
-
 
 class UserIDMixin:
-    """Mixin for models that have a user_id field with FK to users table."""
+    """Mixin for user-scoped models: user_id holds the Telegram user ID."""
 
-    user_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    @declared_attr
+    def user_id(cls) -> Mapped[int]:  # noqa: N805 - declared_attr receives the class
+        return mapped_column(
+            BigInteger,
+            ForeignKey(
+                "users.telegram_user_id",
+                ondelete="CASCADE",
+                name=f"fk_{cls.__tablename__}_user_id",
+            ),
+            nullable=False,
+        )
 
 
 class ActiveMixin:
@@ -146,12 +179,13 @@ class Tracker(
     )
 
     # Relationships
-    user = relationship("User", back_populates="trackers")
     events = relationship("TrackerEvent", back_populates="tracker", cascade="all, delete-orphan")
 
     __table_args__ = (
+        # Full user_id index: FK cascades and lookups that include inactive rows.
         Index("idx_trackers_user", "user_id"),
         Index("idx_trackers_active", "active"),
+        Index("idx_trackers_user_active", "user_id", "active", postgresql_where=ACTIVE_ONLY),
     )
 
     def __init__(self, **kwargs: object) -> None:
@@ -181,12 +215,15 @@ class SavedSearch(
         server_default="10",
     )
 
-    # Relationships
-    user = relationship("User", back_populates="saved_searches")
-
     __table_args__ = (
         Index("idx_saved_searches_user", "user_id"),
         Index("idx_saved_searches_active", "active"),
+        Index(
+            "idx_saved_searches_user_active",
+            "user_id",
+            "active",
+            postgresql_where=ACTIVE_ONLY,
+        ),
     )
 
     def __init__(self, **kwargs: object) -> None:
@@ -202,16 +239,22 @@ class QuerySnapshot(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     query: Mapped[str] = mapped_column(String(255), nullable=False)
     snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    total_results: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    analyzed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    mean_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    median_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    min_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    max_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_results: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    analyzed_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    mean_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
+    median_byn: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0"
+    )
+    min_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
+    max_byn: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
 
     __table_args__ = (
+        # The unique index also serves lookups by query and by (query, snapshot_at).
         UniqueConstraint("query", "snapshot_at", name="uq_query_snapshot_bucket"),
-        Index("idx_query_snapshots_query", "query"),
     )
 
 
@@ -240,8 +283,8 @@ class QueryListingState(Base):
     )
 
     __table_args__ = (
+        # The unique index also serves lookups by query alone (they never filter on active).
         UniqueConstraint("query", "ad_id", name="uq_query_listing_state"),
-        Index("idx_query_listing_states_query", "query"),
         Index("idx_query_listing_states_active", "active"),
     )
 
@@ -252,9 +295,8 @@ class TrackerEvent(Base, UserIDMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tracker_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("trackers.id", ondelete="CASCADE"),
+        ForeignKey("trackers.id", ondelete="CASCADE", name="fk_tracker_events_tracker_id"),
         nullable=False,
-        index=True,
     )
     ad_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     query: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -276,12 +318,16 @@ class TrackerEvent(Base, UserIDMixin):
     )
 
     # Relationships
-    user = relationship("User", back_populates="tracker_events")
     tracker = relationship("Tracker", back_populates="events")
 
     __table_args__ = (
-        Index("idx_tracker_events_user", "user_id"),
+        CheckConstraint(
+            _in_list("event_type", TRACKER_EVENT_TYPES),
+            name="chk_tracker_events_event_type",
+        ),
         Index("idx_tracker_events_created", "created_at"),
+        Index("idx_tracker_events_user_created", "user_id", "created_at"),
+        Index("idx_tracker_events_tracker_id", "tracker_id"),
     )
 
 
@@ -314,13 +360,12 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         onupdate=func.now(),
     )
 
-    # Relationships
-    user = relationship("User", back_populates="lead_items")
-
     __table_args__ = (
+        # The unique index also serves lookups by user_id alone.
         UniqueConstraint("user_id", "ad_id", name="uq_lead_items_user_ad"),
-        Index("idx_lead_items_user", "user_id"),
+        CheckConstraint(_in_list("status", LEAD_STATUSES), name="chk_lead_items_status"),
         Index("idx_lead_items_status", "status"),
+        Index("idx_lead_items_user_status", "user_id", "status"),
     )
 
 
@@ -360,11 +405,17 @@ class WatchlistItem(Base, UserIDMixin, TimestampMixin):
         onupdate=func.now(),
     )
 
-    # Relationships
-    user = relationship("User", back_populates="watchlist_items")
-
     __table_args__ = (
+        # The unique index also serves lookups by user_id alone.
         UniqueConstraint("user_id", "ad_id", name="uq_watchlist_items_user_ad"),
-        Index("idx_watchlist_items_user", "user_id"),
+        CheckConstraint(
+            _in_list("workflow_status", WATCHLIST_STATUSES),
+            name="chk_watchlist_items_workflow_status",
+        ),
+        CheckConstraint(
+            _in_list("market_status", MARKET_STATUSES),
+            name="chk_watchlist_items_market_status",
+        ),
         Index("idx_watchlist_items_market_status", "market_status"),
+        Index("idx_watchlist_items_user_market", "user_id", "market_status"),
     )

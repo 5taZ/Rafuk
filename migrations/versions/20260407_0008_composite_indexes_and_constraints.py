@@ -186,59 +186,48 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
-    tables = inspector.get_table_names()
+    tables = set(inspector.get_table_names())
     is_sqlite = bind.dialect.name == "sqlite"
+
+    # Every drop is guarded: the objects may be missing on databases created with
+    # create_all, or already dropped by a later revision.
 
     # Drop CHECK constraints (PostgreSQL only)
     if not is_sqlite:
-        if "tracker_events" in tables:
-            op.drop_constraint(
-                "chk_tracker_events_event_type",
-                "tracker_events",
-                type_="check",
-            )
-
-        if "lead_items" in tables:
-            op.drop_constraint(
-                "chk_lead_items_status",
-                "lead_items",
-                type_="check",
-            )
-
-        if "watchlist_items" in tables:
-            op.drop_constraint(
+        checks = {
+            "tracker_events": ("chk_tracker_events_event_type",),
+            "lead_items": ("chk_lead_items_status",),
+            "watchlist_items": (
                 "chk_watchlist_items_workflow_status",
-                "watchlist_items",
-                type_="check",
-            )
-            op.drop_constraint(
                 "chk_watchlist_items_market_status",
-                "watchlist_items",
-                type_="check",
-            )
+            ),
+        }
+        for table_name, names in checks.items():
+            if table_name not in tables:
+                continue
+            existing = {
+                constraint["name"]
+                for constraint in inspector.get_check_constraints(table_name)
+                if constraint["name"]
+            }
+            for name in names:
+                if name in existing:
+                    op.drop_constraint(name, table_name, type_="check")
 
     # Drop composite indexes
-    if "tracker_events" in tables:
-        op.drop_index("idx_tracker_events_user_created", table_name="tracker_events")
-        op.drop_index("idx_tracker_events_tracker_id", table_name="tracker_events")
-
-    if "trackers" in tables:
-        op.drop_index("idx_trackers_user_active", table_name="trackers")
-
-    if "saved_searches" in tables:
-        op.drop_index("idx_saved_searches_user_active", table_name="saved_searches")
-
-    if "lead_items" in tables:
-        op.drop_index("idx_lead_items_user_status", table_name="lead_items")
-
-    if "watchlist_items" in tables:
-        op.drop_index("idx_watchlist_items_user_market", table_name="watchlist_items")
-
-    if "query_listing_states" in tables:
-        op.drop_index(
-            "idx_query_listing_states_query_active",
-            table_name="query_listing_states",
-        )
-
-    if "query_snapshots" in tables:
-        op.drop_index("idx_query_snapshots_query_time", table_name="query_snapshots")
+    composite_indexes = {
+        "tracker_events": ("idx_tracker_events_user_created", "idx_tracker_events_tracker_id"),
+        "trackers": ("idx_trackers_user_active",),
+        "saved_searches": ("idx_saved_searches_user_active",),
+        "lead_items": ("idx_lead_items_user_status",),
+        "watchlist_items": ("idx_watchlist_items_user_market",),
+        "query_listing_states": ("idx_query_listing_states_query_active",),
+        "query_snapshots": ("idx_query_snapshots_query_time",),
+    }
+    for table_name, names in composite_indexes.items():
+        if table_name not in tables:
+            continue
+        existing = {index["name"] for index in inspector.get_indexes(table_name)}
+        for name in names:
+            if name in existing:
+                op.drop_index(name, table_name=table_name)

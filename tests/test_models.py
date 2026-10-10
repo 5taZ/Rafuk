@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import pytest
+from sqlalchemy import CheckConstraint, UniqueConstraint
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import IntegrityError
+
 from api.models import Base
 
 
@@ -63,13 +68,13 @@ def test_history_tables_have_indexes() -> None:
     state_constraints = {constraint.name for constraint in states.constraints}
     state_indexes = {index.name for index in states.indexes}
     assert "uq_query_listing_state" in state_constraints
-    assert "idx_query_listing_states_query" in state_indexes
     assert "idx_query_listing_states_active" in state_indexes
 
     tracker_events = Base.metadata.tables["tracker_events"]
     tracker_event_indexes = {index.name for index in tracker_events.indexes}
-    assert "idx_tracker_events_user" in tracker_event_indexes
+    assert "idx_tracker_events_user_created" in tracker_event_indexes
     assert "idx_tracker_events_created" in tracker_event_indexes
+    assert "idx_tracker_events_tracker_id" in tracker_event_indexes
     tracker_event_columns = {column.name for column in tracker_events.columns}
     assert "ad_id" in tracker_event_columns
 
@@ -77,23 +82,138 @@ def test_history_tables_have_indexes() -> None:
     saved_search_indexes = {index.name for index in saved_searches.indexes}
     assert "idx_saved_searches_user" in saved_search_indexes
     assert "idx_saved_searches_active" in saved_search_indexes
+    assert "idx_saved_searches_user_active" in saved_search_indexes
     saved_search_columns = {column.name for column in saved_searches.columns}
     assert "group_name" in saved_search_columns
     assert "exclude_duplicates" in saved_search_columns
+    assert "min_discount_percent" in saved_search_columns
 
     lead_items = Base.metadata.tables["lead_items"]
     lead_item_indexes = {index.name for index in lead_items.indexes}
     lead_item_constraints = {constraint.name for constraint in lead_items.constraints}
-    assert "idx_lead_items_user" in lead_item_indexes
+    assert "idx_lead_items_user_status" in lead_item_indexes
     assert "idx_lead_items_status" in lead_item_indexes
     assert "uq_lead_items_user_ad" in lead_item_constraints
 
     watchlist_items = Base.metadata.tables["watchlist_items"]
     watchlist_item_indexes = {index.name for index in watchlist_items.indexes}
     watchlist_item_constraints = {constraint.name for constraint in watchlist_items.constraints}
-    assert "idx_watchlist_items_user" in watchlist_item_indexes
+    assert "idx_watchlist_items_user_market" in watchlist_item_indexes
     assert "idx_watchlist_items_market_status" in watchlist_item_indexes
     assert "uq_watchlist_items_user_ad" in watchlist_item_constraints
+
+
+def test_no_redundant_indexes() -> None:
+    # Each index must not be a duplicate or a column prefix of a unique constraint or of
+    # another full (non-partial) index on the same table.
+    for table in Base.metadata.tables.values():
+        covering: list[tuple[str | None, list[str]]] = [
+            (constraint.name, [column.name for column in constraint.columns])
+            for constraint in table.constraints
+            if isinstance(constraint, UniqueConstraint)
+        ]
+        covering += [
+            (index.name, [column.name for column in index.columns])
+            for index in table.indexes
+            if index.dialect_options["postgresql"].get("where") is None
+        ]
+        for index in table.indexes:
+            columns = [column.name for column in index.columns]
+            for name, candidate in covering:
+                if name == index.name:
+                    continue
+                assert candidate[: len(columns)] != columns, (
+                    f"{table.name}.{index.name} is covered by {name}"
+                )
+
+
+def test_users_have_a_single_unique_telegram_id_index() -> None:
+    users = Base.metadata.tables["users"]
+    indexes = [index for index in users.indexes if "telegram_user_id" in index.columns]
+    assert [(index.name, index.unique) for index in indexes] == [
+        ("ix_users_telegram_user_id", True)
+    ]
+
+
+@pytest.mark.parametrize(
+    "table_name",
+    ["trackers", "saved_searches", "tracker_events", "lead_items", "watchlist_items"],
+)
+def test_user_id_references_telegram_user_id(table_name: str) -> None:
+    table = Base.metadata.tables[table_name]
+    foreign_keys = list(table.columns["user_id"].foreign_keys)
+    assert len(foreign_keys) == 1
+    foreign_key = foreign_keys[0]
+    assert foreign_key.target_fullname == "users.telegram_user_id"
+    assert foreign_key.ondelete == "CASCADE"
+    assert foreign_key.constraint.name == f"fk_{table_name}_user_id"
+    # Plain index=True would add an ix_* duplicate of the named indexes.
+    assert not table.columns["user_id"].index
+
+
+def test_user_model_has_no_orm_relationships() -> None:
+    from api.models import User
+
+    assert list(sa_inspect(User).relationships) == []
+
+
+def test_status_check_constraints_use_canonical_lists() -> None:
+    from api.models import LEAD_STATUSES, MARKET_STATUSES, WATCHLIST_STATUSES
+
+    assert LEAD_STATUSES == (
+        "new",
+        "reviewing",
+        "in_progress",
+        "negotiating",
+        "deferred",
+        "bought",
+        "reselling",
+        "sold",
+        "skipped",
+    )
+    assert WATCHLIST_STATUSES == ("watching", "reviewing", "in_progress", "deferred", "skipped")
+    assert MARKET_STATUSES == ("active", "missing", "price_drop", "duplicate")
+
+    def checks(table_name: str) -> dict[str, str]:
+        return {
+            constraint.name: str(constraint.sqltext)
+            for constraint in Base.metadata.tables[table_name].constraints
+            if isinstance(constraint, CheckConstraint)
+        }
+
+    lead_checks = checks("lead_items")
+    assert lead_checks["chk_lead_items_status"] == (
+        "status IN (" + ", ".join(f"'{value}'" for value in LEAD_STATUSES) + ")"
+    )
+    watchlist_checks = checks("watchlist_items")
+    assert "'skipped'" in watchlist_checks["chk_watchlist_items_workflow_status"]
+    assert "'lead'" not in watchlist_checks["chk_watchlist_items_workflow_status"]
+    assert "'duplicate'" in watchlist_checks["chk_watchlist_items_market_status"]
+    assert "chk_tracker_events_event_type" in checks("tracker_events")
+
+
+async def test_status_check_rejects_legacy_values() -> None:
+    from api.database import get_engine, get_session_factory
+    from api.models import LeadItem, WatchlistItem
+
+    session_factory = get_session_factory(get_engine())
+    async with session_factory() as session:
+        session.add(
+            LeadItem(user_id=1, ad_id=1, query="q", title="t", link="l", status="bought")
+        )
+        session.add(
+            WatchlistItem(
+                user_id=1, ad_id=1, query="q", title="t", link="l", workflow_status="in_progress"
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        session.add(
+            LeadItem(user_id=1, ad_id=2, query="q", title="t", link="l", status="closed")
+        )
+        with pytest.raises(IntegrityError):
+            await session.commit()
 
 
 def test_get_engine_returns_async_engine() -> None:

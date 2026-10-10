@@ -142,27 +142,25 @@ def downgrade() -> None:
     tables = set(inspector.get_table_names())
     is_sqlite = bind.dialect.name == "sqlite"
 
-    # Drop FK constraints (PostgreSQL only)
+    # Drop FK constraints (PostgreSQL only), only those that still exist.
     if not is_sqlite:
-        if "tracker_events" in tables:
-            op.drop_constraint("fk_tracker_events_tracker_id", "tracker_events", type_="foreignkey")
-            op.drop_constraint("fk_tracker_events_user_id", "tracker_events", type_="foreignkey")
+        fk_names = {
+            "tracker_events": ("fk_tracker_events_tracker_id", "fk_tracker_events_user_id"),
+            "trackers": ("fk_trackers_user_id",),
+            "saved_searches": ("fk_saved_searches_user_id",),
+            "lead_items": ("fk_lead_items_user_id",),
+            "watchlist_items": ("fk_watchlist_items_user_id",),
+        }
+        for table_name, names in fk_names.items():
+            if table_name not in tables:
+                continue
+            existing = {fk["name"] for fk in inspector.get_foreign_keys(table_name) if fk["name"]}
+            for name in names:
+                if name in existing:
+                    op.drop_constraint(name, table_name, type_="foreignkey")
 
-        if "trackers" in tables:
-            op.drop_constraint("fk_trackers_user_id", "trackers", type_="foreignkey")
-
-        if "saved_searches" in tables:
-            op.drop_constraint("fk_saved_searches_user_id", "saved_searches", type_="foreignkey")
-
-        if "lead_items" in tables:
-            op.drop_constraint("fk_lead_items_user_id", "lead_items", type_="foreignkey")
-
-        if "watchlist_items" in tables:
-            op.drop_constraint("fk_watchlist_items_user_id", "watchlist_items", type_="foreignkey")
-
-    # Drop indexes
-    if "tracker_events" in tables:
-        op.drop_index("idx_tracker_events_tracker_id", table_name="tracker_events")
+    # idx_tracker_events_tracker_id is owned by 0008 (step 4 only backfills it), so the
+    # 0008 downgrade drops it. Dropping it here too made 0008 -> 0007 fail.
 
     # Drop deleted_at columns
     for table_name in ["trackers", "saved_searches"]:
@@ -173,5 +171,7 @@ def downgrade() -> None:
 
     # Drop users table
     if "users" in tables:
-        op.drop_index("idx_users_telegram_id", table_name="users")
+        indexes = {index["name"] for index in inspector.get_indexes("users")}
+        if "idx_users_telegram_id" in indexes:
+            op.drop_index("idx_users_telegram_id", table_name="users")
         op.drop_table("users")

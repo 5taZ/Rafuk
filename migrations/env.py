@@ -3,6 +3,7 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
+from alembic.util import CommandError
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
@@ -10,24 +11,40 @@ from api.config import get_settings
 from api.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# ConfigParser treats "%" as interpolation syntax, so URL-encoded passwords
+# (p%40ss) must be escaped before they go into the config.
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Callers that already configured logging (tests, scripts) can opt out with
+# Config.attributes["configure_logger"] = False.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
-
-    with context.begin_transaction():
-        context.run_migrations()
+    # The revisions inspect the live schema (tables, columns, indexes, constraints)
+    # to stay idempotent, which needs a database connection.
+    raise CommandError(
+        "Offline mode (alembic --sql) is not supported: the migrations inspect the live "
+        "schema to stay idempotent. Run them online against the target database."
+    )
 
 
 def do_run_migrations(connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    is_sqlite = connection.dialect.name == "sqlite"
+
+    def include_object(obj, name, type_, reflected, compare_to) -> bool:
+        # Foreign keys are created only on non-SQLite databases (SQLite cannot add
+        # constraints to existing tables), so autogenerate must not report them there.
+        return not (is_sqlite and type_ == "foreign_key_constraint")
+
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

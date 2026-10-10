@@ -41,6 +41,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("idx_trackers_active", table_name="trackers")
-    op.drop_index("idx_trackers_user", table_name="trackers")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "trackers" not in set(inspector.get_table_names()):
+        return
+    indexes = {index["name"] for index in inspector.get_indexes("trackers")}
+    for name in ("idx_trackers_active", "idx_trackers_user"):
+        if name in indexes:
+            op.drop_index(name, table_name="trackers")
     op.drop_table("trackers")
