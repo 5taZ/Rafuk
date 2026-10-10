@@ -1,6 +1,9 @@
 function createAppCore() {
     const state = {
+        // Mirrors the search input; activeQuery is the last submitted query and
+        // is the one every API call, tracker and summary works with.
         query: "",
+        activeQuery: "",
         strictSearch: false,
         comparisonQuery: "",
         comparisonStats: null,
@@ -13,7 +16,17 @@ function createAppCore() {
         discountFromPercent: 10,
         discountToPercent: 30,
         loading: false,
+        listingsLoading: false,
         error: null,
+        // Per-section load errors shown by the renderers instead of empty states.
+        loadErrors: {
+            listings: null,
+            deals: null,
+            leads: null,
+            watchlist: null,
+            board: null,
+            events: null,
+        },
         stats: null,
         listings: [],
         dealListings: [],
@@ -23,11 +36,13 @@ function createAppCore() {
         history: [],
         historyChart: null,
         usdRateByn: null,
+        rateSource: null,
         leads: [],
         leadFilter: "active",
         watchlist: [],
-        watchlistFilter: "attention",
+        watchlistFilter: "all",
         opportunityBoard: {
+            currency: null,
             items: [],
             top_price_drops: [],
             rare_opportunities: [],
@@ -198,26 +213,70 @@ function createAppCore() {
         };
     }
 
-    function initTelegramTheme() {
-        if (window.Telegram && window.Telegram.WebApp) {
-            window.Telegram.WebApp.expand();
-            window.Telegram.WebApp.ready();
-            const scheme = window.Telegram.WebApp.colorScheme;
-            document.documentElement.setAttribute(
-                "data-theme",
-                scheme === "light" ? "light" : "dark"
-            );
-        } else {
-            document.documentElement.setAttribute("data-theme", "dark");
+    function telegramWebApp() {
+        return window.Telegram?.WebApp || null;
+    }
+
+    function supportsTelegramVersion(version) {
+        const webApp = telegramWebApp();
+        try {
+            return Boolean(webApp?.isVersionAtLeast?.(version));
+        } catch (_) {
+            return false;
         }
     }
 
-    function formatPrice(value) {
-        if (value == null || value === 0) return "—";
-        const numeric = Number(value);
-        if (Number.isNaN(numeric)) return "—";
+    function syncTelegramChrome() {
+        const webApp = telegramWebApp();
+        if (!webApp || !supportsTelegramVersion("6.1")) {
+            return;
+        }
+        const background = getComputedStyle(document.documentElement)
+            .getPropertyValue("--bg")
+            .trim();
+        if (!/^#[0-9a-f]{6}$/i.test(background)) {
+            return;
+        }
+        try {
+            webApp.setHeaderColor?.(background);
+            webApp.setBackgroundColor?.(background);
+        } catch (_) {
+            // Older clients reject custom colors; the default chrome is fine.
+        }
+    }
 
-        if (state.currency === "BYN") {
+    function applyTelegramTheme() {
+        const scheme = telegramWebApp()?.colorScheme;
+        document.documentElement.setAttribute(
+            "data-theme",
+            scheme === "light" ? "light" : "dark"
+        );
+        syncTelegramChrome();
+    }
+
+    function initTelegramTheme(onThemeChanged = null) {
+        const webApp = telegramWebApp();
+        if (webApp) {
+            webApp.expand?.();
+            webApp.ready?.();
+        }
+        applyTelegramTheme();
+        if (webApp?.onEvent) {
+            webApp.onEvent("themeChanged", () => {
+                applyTelegramTheme();
+                if (typeof onThemeChanged === "function") {
+                    onThemeChanged();
+                }
+            });
+        }
+    }
+
+    function formatPrice(value, currency = null) {
+        if (value == null || value === "") return "—";
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return "—";
+
+        if ((currency || state.currency) === "BYN") {
             if (numeric >= 10000) {
                 return `${(numeric / 1000).toFixed(1).replace(/\.0$/, "")} тыс. р.`;
             }
@@ -293,6 +352,7 @@ function createAppCore() {
         elements,
         cacheElements,
         initTelegramTheme,
+        supportsTelegramVersion,
         formatPrice,
         formatRate,
         formatCondition,
