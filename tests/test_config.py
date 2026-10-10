@@ -40,7 +40,7 @@ def test_settings_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     s = Settings(_env_file=None)
 
-    assert s.kufar_request_delay == 1.0
+    assert s.kufar_request_delay == 0.5
     assert s.kufar_parallel_semaphore == 3
     assert s.alert_check_interval == 30
     assert s.init_data_max_age_seconds == 86400

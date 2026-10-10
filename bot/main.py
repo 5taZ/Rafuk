@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand, ErrorEvent
 
 from api.config import get_settings
+from api.services.query_pipeline import DatasetCache, configure_dataset_cache
 from bot.database import close_bot_engine, init_bot_engine
 from bot.handlers.price import router as price_router
 from bot.handlers.start import router as start_router
@@ -50,6 +51,8 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
     await init_bot_engine()
+    # Repeated /price and /top for the same query reuse one Kufar pagination.
+    configure_dataset_cache(DatasetCache(max_entries=8))
     bot = Bot(settings.bot_token)
     await bot.set_my_commands(
         [

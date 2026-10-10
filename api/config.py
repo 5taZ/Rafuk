@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     redis_url: str
     api_base_url: str
     mini_app_url: str
-    kufar_request_delay: float = 1.0
+    kufar_request_delay: float = 0.5
     kufar_parallel_semaphore: int = 3
     kufar_timeout: float = 15.0
     alert_check_interval: int = 30

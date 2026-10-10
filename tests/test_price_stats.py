@@ -107,7 +107,9 @@ def test_price_stats_cache_key_ignores_case_and_spacing(monkeypatch) -> None:
     assert first.status_code == second.status_code == usd.status_code == 200
     assert second.json()["query"] == "iphone   15"
     assert usd.json()["median"] == 625.0
-    assert [call["currency"] for call in CountingKufarClient.calls] == ["BYN", "BYN"]
+    # The USD response is a separate response-cache entry, but the dataset cache serves it
+    # without another Kufar pagination.
+    assert [call["currency"] for call in CountingKufarClient.calls] == ["BYN"]
 
 
 def test_price_stats_survives_snapshot_write_failure(monkeypatch) -> None:

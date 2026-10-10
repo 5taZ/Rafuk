@@ -35,13 +35,20 @@ def test_segments_endpoint_returns_all_groups(monkeypatch) -> None:
     from api.main import create_app
     from api.routers import segments
 
+    segment_prices = {
+        ("new", "search_owner"): 200000,
+        ("new", "search_business"): 250000,
+        ("used", "search_owner"): 180000,
+        ("used", "search_business"): 220000,
+    }
+
     async def fake_parallel_search_all(client, tasks, settings):
-        del client, tasks, settings
+        # Like the real helper: one response per task (the dataset cache loads segments
+        # one task at a time).
+        del client, settings
         return [
-            {"ads": [{"price_byn": 200000}]},
-            {"ads": [{"price_byn": 250000}]},
-            {"ads": [{"price_byn": 180000}]},
-            {"ads": [{"price_byn": 220000}]},
+            {"ads": [{"price_byn": segment_prices[(task["condition"], task["seller_type"])]}]}
+            for task in tasks
         ]
 
     monkeypatch.setattr(segments, "KufarClient", FakeKufarClient)

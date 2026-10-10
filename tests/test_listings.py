@@ -304,9 +304,9 @@ def test_listings_defaults_to_byn_and_caches_by_normalized_query(monkeypatch) ->
     assert second.json()["query"] == "iphone 15"
     assert usd.json()["currency"] == "USD"
     assert usd.json()["listings"][0]["price"] == 625.0
-    # The second BYN request is a cache hit; the USD response is a separate cache entry,
-    # but Kufar is still queried in BYN.
-    assert [call["currency"] for call in calls] == ["BYN", "BYN"]
+    # The second BYN request is a cache hit; the USD response is a separate response-cache
+    # entry served from the cached dataset, so Kufar is queried once, in BYN.
+    assert [call["currency"] for call in calls] == ["BYN"]
     assert calls[0]["query"] == "iPhone 15"
 
 

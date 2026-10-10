@@ -411,6 +411,7 @@ async def _process_group(
                     query=primary_event.query,
                     listing_url=primary_event.link,
                     event_id=primary_event.id,
+                    strict_mode=primary_event.strict_mode,
                 )
                 if primary_event is not None
                 else None

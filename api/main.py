@@ -33,10 +33,13 @@ from api.routers import (
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarAPIError
+from api.services.query_pipeline import DatasetCache, configure_dataset_cache
 
 logger = logging.getLogger(__name__)
 
 KUFAR_UNAVAILABLE_DETAIL = "Kufar временно недоступен, попробуйте позже."
+# Datasets can hold thousands of ads, so the API keeps only a handful in memory.
+API_DATASET_CACHE_ENTRIES = 16
 
 
 async def kufar_api_error_handler(request: Request, exc: KufarAPIError) -> JSONResponse:
@@ -113,10 +116,13 @@ async def lifespan(app: FastAPI):
     app.state.session_factory = session_factory
     app.state.cache = cache
     app.state.currency_service = currency_service
+    # One Kufar pagination per query serves every market endpoint of a search.
+    configure_dataset_cache(DatasetCache(max_entries=API_DATASET_CACHE_ENTRIES))
 
     try:
         yield
     finally:
+        configure_dataset_cache(None)
         await currency_service.aclose()
         await _close_cache(cache)
         await engine.dispose()
