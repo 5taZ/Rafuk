@@ -102,6 +102,82 @@ def test_links_must_be_http_urls_within_column(link: str) -> None:
         WatchlistCreate(**{**LEAD_PAYLOAD, "link": link})
 
 
+@pytest.mark.parametrize("link", ["", "   ", None])
+def test_empty_link_is_allowed_for_listings_without_ad_link(link: str | None) -> None:
+    # Listings without ad_link carry link=""; the router fills the canonical item URL.
+    assert LeadCreate(**{**LEAD_PAYLOAD, "link": link}).link == ""
+    assert WatchlistCreate(**{**LEAD_PAYLOAD, "link": link}).link == ""
+
+
+def test_missing_link_defaults_to_empty() -> None:
+    payload = {key: value for key, value in LEAD_PAYLOAD.items() if key != "link"}
+    assert LeadCreate(**payload).link == ""
+    assert WatchlistCreate(**payload).link == ""
+
+
+def test_link_is_stripped() -> None:
+    lead = LeadCreate(**{**LEAD_PAYLOAD, "link": "  https://www.kufar.by/item/101  "})
+    assert lead.link == "https://www.kufar.by/item/101"
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (TrackerCreate, {"query": "iphone\x00"}),
+        (TrackerCreate, {"query": "iphone", "region_name": "Минск\x00"}),
+        (TrackerCreate, {"query": "iphone", "config_keyword": "a\x00b"}),
+        (TrackerCreate, {"query": "iphone", "seller_type": "\x00"}),
+        (SavedSearchCreate, {"query": "iphone", "name": "x\x00"}),
+        (SavedSearchCreate, {"query": "iphone", "group_name": "x\x00"}),
+        (LeadCreate, {**LEAD_PAYLOAD, "title": "iPhone\x00"}),
+        (LeadCreate, {**LEAD_PAYLOAD, "link": "https://www.kufar.by/item/1\x00"}),
+        (LeadCreate, {**LEAD_PAYLOAD, "notes": "a\x00b"}),
+        (LeadCreate, {**LEAD_PAYLOAD, "source": "bot\x00"}),
+        (LeadUpdate, {"notes": "a\x00b"}),
+        (WatchlistCreate, {**LEAD_PAYLOAD, "query": "x\x00y"}),
+        (WatchlistUpdate, {"notes": "\x00"}),
+    ],
+)
+def test_nul_characters_are_rejected(model: type, payload: dict[str, object]) -> None:
+    # Postgres text columns cannot store 0x00: reject it as a 422 instead of a 500 (r3-core-3).
+    with pytest.raises(ValidationError, match="NUL"):
+        model.model_validate(payload)
+
+
+def test_search_query_validator_rejects_nul() -> None:
+    from api.validators import NUL_CHARACTER_MESSAGE, validate_query
+
+    with pytest.raises(ValueError, match=NUL_CHARACTER_MESSAGE):
+        validate_query("iphone\x00")
+    assert validate_query("  iphone  ") == "iphone"
+
+
+def test_response_schemas_expose_partial_result_flags() -> None:
+    from api.schemas import (
+        ListingsResponse,
+        OpportunityBoardResponse,
+        PriceStatsResponse,
+        WatchlistRefreshResponse,
+    )
+
+    stats = {"query": "q", "currency": "BYN", "count": 0}
+    stats.update(dict.fromkeys(("mean", "median", "q1", "q3", "min", "max"), 0.0))
+    assert PriceStatsResponse(**stats).truncated is False
+    assert PriceStatsResponse(**stats, truncated=True).truncated is True
+
+    listings = {"query": "q", "currency": "BYN", "sort": "newest", "total": 0, "listings": []}
+    assert ListingsResponse(**listings).truncated is False
+    assert ListingsResponse(**listings, truncated=True).model_dump()["truncated"] is True
+
+    refresh = WatchlistRefreshResponse(updated=1, missing=0, price_drops=0)
+    assert refresh.skipped == 0
+    assert WatchlistRefreshResponse(updated=1, missing=0, price_drops=0, skipped=2).skipped == 2
+
+    board = OpportunityBoardResponse(currency="BYN", items=[])
+    assert board.partial is False
+    assert OpportunityBoardResponse(currency="BYN", items=[], partial=True).partial is True
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -236,6 +312,23 @@ def test_api_rejects_invalid_bodies_with_422(client: TestClient) -> None:
 
     blank_query = client.post("/api/v1/watchlist", json={**LEAD_PAYLOAD, "query": "   "})
     assert blank_query.status_code == 422
+
+
+def test_api_rejects_nul_characters_in_bodies_with_422(client: TestClient) -> None:
+    tracker = client.post("/api/v1/trackers", json={"query": "iphone\u0000"})
+    assert tracker.status_code == 422
+    assert tracker.json()["detail"][0]["loc"] == ["body", "query"]
+
+    created = client.post("/api/v1/leads", json=LEAD_PAYLOAD)
+    assert created.status_code == 201
+    notes = client.patch(f"/api/v1/leads/{created.json()['id']}", json={"notes": "a\u0000b"})
+    assert notes.status_code == 422
+
+
+def test_api_accepts_lead_and_watchlist_without_link(client: TestClient) -> None:
+    payload = {**LEAD_PAYLOAD, "link": ""}
+    assert client.post("/api/v1/leads", json=payload).status_code == 201
+    assert client.post("/api/v1/watchlist", json=payload).status_code == 201
 
 
 def test_api_lead_round_trip_uses_defaults_and_utc_datetimes(client: TestClient) -> None:

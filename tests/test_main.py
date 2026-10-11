@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -71,6 +72,72 @@ def test_cors_origins_are_normalized_without_path() -> None:
         "https://kufar-analytics.example.com",
         None,
     ) == ["https://kufar-analytics.example.com"]
+
+
+@pytest.mark.parametrize(
+    ("url", "origin"),
+    [
+        ("https://app.example.com:443/", "https://app.example.com"),
+        ("http://app.example.com:80/app", "http://app.example.com"),
+        ("https://app.example.com:8443/app", "https://app.example.com:8443"),
+        ("http://app.example.com:443/", "http://app.example.com:443"),
+        ("HTTPS://App.Example.com/", "https://app.example.com"),
+        ("http://[::1]:8081/app", "http://[::1]:8081"),
+        ("https://[2001:DB8::1]/", "https://[2001:db8::1]"),
+        ("https://[2001:db8::1]:443/", "https://[2001:db8::1]"),
+        ("https://user:secret@app.example.com/", "https://app.example.com"),
+        ("https://app.example.com:99999/", None),
+        ("ftp://app.example.com/", None),
+    ],
+)
+def test_normalize_origin_matches_browser_origin(url: str, origin: str | None) -> None:
+    # Browsers omit the scheme's default port and keep IPv6 hosts in brackets (r3-core-5).
+    from api.main import normalize_origin
+
+    assert normalize_origin(url) == origin
+
+
+def test_cors_allows_origin_configured_with_default_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.config import get_settings
+    from api.main import create_app
+
+    monkeypatch.setenv("MINI_APP_URL", "https://app.example.com:443/")
+    get_settings.cache_clear()
+    response = TestClient(create_app()).options(
+        "/api/v1/listings",
+        headers={"Origin": "https://app.example.com", "Access-Control-Request-Method": "GET"},
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://app.example.com"
+
+
+@pytest.mark.parametrize(
+    "query_string",
+    [
+        "query=iphone%00",
+        "query=iphone&sort=newest%00",
+        "query=iphone&bad%00name=1",
+    ],
+)
+def test_nul_in_query_parameters_is_rejected_with_422(query_string: str) -> None:
+    # Any query string, not only the validated search query, is rejected (r3-core-3).
+    from api.main import create_app
+
+    response = TestClient(create_app()).get(f"/api/v1/listings?{query_string}")
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail[0]["loc"][0] == "query"
+    assert "NUL" in detail[0]["msg"]
+
+
+def test_nul_in_compare_queries_is_rejected_with_422() -> None:
+    from api.main import create_app
+
+    response = TestClient(create_app()).get(
+        "/api/v1/compare?base_query=iphone&compare_query=pixel%00"
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["query", "compare_query"]
 
 
 def test_cors_preflight_accepts_mini_app_origin() -> None:

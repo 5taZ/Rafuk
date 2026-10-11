@@ -13,6 +13,7 @@ OPTIONAL_ENV = (
     "ALERT_CHECK_INTERVAL",
     "CACHE_TTL_SECONDS",
     "INIT_DATA_MAX_AGE_SECONDS",
+    "API_RATE_LIMIT_PER_MINUTE",
 )
 
 
@@ -44,7 +45,18 @@ def test_settings_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.kufar_parallel_semaphore == 3
     assert s.alert_check_interval == 30
     assert s.init_data_max_age_seconds == 86400
+    # 0: the application-wide request budget follows KUFAR_REQUEST_DELAY.
+    assert s.api_rate_limit_per_minute == 0
     assert not hasattr(s, "scheduler_snapshot_hour")
+
+
+def test_api_rate_limit_setting_is_read_and_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_RATE_LIMIT_PER_MINUTE", "45")
+    assert Settings(_env_file=None).api_rate_limit_per_minute == 45
+
+    monkeypatch.setenv("API_RATE_LIMIT_PER_MINUTE", "-1")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
 
 
 def test_settings_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> None:

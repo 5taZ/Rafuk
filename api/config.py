@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +28,9 @@ class Settings(BaseSettings):
     init_data_max_age_seconds: int = 86400
     # Serve /docs, /redoc and /openapi.json; compose turns them off for the containerized API.
     api_docs_enabled: bool = True
+    # Requests per minute one client (Telegram user or address) may send to /api/ in total,
+    # across all routes. 0 derives it from KUFAR_REQUEST_DELAY (see api/rate_limit.py).
+    api_rate_limit_per_minute: int = Field(default=0, ge=0)
 
 
 @lru_cache(maxsize=1)

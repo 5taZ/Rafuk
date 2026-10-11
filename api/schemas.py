@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from api.statuses import LeadStatus, WatchlistStatus
+from api.validators import reject_nul
 
 # Upper bounds that keep values inside the DB column types (BIGINT ids, sane BYN prices).
 MAX_BIGINT = 2**63 - 1
@@ -43,6 +44,15 @@ def _check_http_url(value: str) -> str:
     return value
 
 
+def _check_optional_http_url(value: str) -> str:
+    # An empty link is allowed: the router fills the canonical kufar.by item URL from ad_id.
+    return _check_http_url(value) if value else value
+
+
+def _none_to_empty(value: Any) -> Any:
+    return "" if value is None else value
+
+
 def _drop_null_fields(data: Any, *fields: str) -> Any:
     """Treat an explicit null as "unchanged" for NOT NULL columns updated via PATCH."""
     if isinstance(data, dict):
@@ -59,14 +69,22 @@ UtcDatetime = Annotated[
     PlainSerializer(lambda value: _to_utc(value).isoformat(), return_type=str, when_used="json"),
 ]
 
-QueryText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
-TitleText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)]
-LinkUrl = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=512),
-    AfterValidator(_check_http_url),
+# Request strings reject NUL characters (422) because Postgres text columns cannot store 0x00.
+NoNul = AfterValidator(reject_nul)
+
+QueryText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255), NoNul
 ]
-NotesText = Annotated[str, StringConstraints(max_length=512)]
+TitleText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=255), NoNul]
+# Listings without ad_link carry an empty link; null and a missing field mean empty too.
+OptionalLinkUrl = Annotated[
+    str,
+    BeforeValidator(_none_to_empty),
+    StringConstraints(strip_whitespace=True, max_length=512),
+    NoNul,
+    AfterValidator(_check_optional_http_url),
+]
+NotesText = Annotated[str, StringConstraints(max_length=512), NoNul]
 AdId = Annotated[int, Field(ge=1, le=MAX_BIGINT)]
 PercentValue = Annotated[float, Field(ge=0.0, le=100.0, allow_inf_nan=False)]
 PositivePrice = Annotated[float, Field(gt=0.0, le=MAX_PRICE_BYN, allow_inf_nan=False)]
@@ -75,13 +93,16 @@ ListingPrice = Annotated[float, Field(ge=0.0, le=MAX_PRICE_BYN, allow_inf_nan=Fa
 
 # Optional filter texts: stripped, blank -> None, bounded by the DB column size.
 OptionalText128 = Annotated[
-    Annotated[str, StringConstraints(max_length=128)] | None, BeforeValidator(_blank_to_none)
+    Annotated[str, StringConstraints(max_length=128), NoNul] | None,
+    BeforeValidator(_blank_to_none),
 ]
 OptionalText32 = Annotated[
-    Annotated[str, StringConstraints(max_length=32)] | None, BeforeValidator(_blank_to_none)
+    Annotated[str, StringConstraints(max_length=32), NoNul] | None,
+    BeforeValidator(_blank_to_none),
 ]
 OptionalText64 = Annotated[
-    Annotated[str, StringConstraints(max_length=64)] | None, BeforeValidator(_blank_to_none)
+    Annotated[str, StringConstraints(max_length=64), NoNul] | None,
+    BeforeValidator(_blank_to_none),
 ]
 
 
@@ -103,6 +124,8 @@ class PriceStatsResponse(BaseModel):
     analyzed_count: int = 0
     fair_price_from: float | None = None
     fair_price_to: float | None = None
+    # True when Kufar pagination stopped early (page limit, deadline or a failed later page).
+    truncated: bool = False
 
 
 class FlipEstimate(BaseModel):
@@ -205,6 +228,8 @@ class ListingsResponse(BaseModel):
     discount_from_percent: float | None = None
     discount_to_percent: float | None = None
     listings: list[ListingItem]
+    # True when Kufar pagination stopped early (page limit, deadline or a failed later page).
+    truncated: bool = False
 
 
 class SegmentStats(BaseModel):
@@ -324,7 +349,7 @@ class LeadCreate(BaseModel):
     query: QueryText
     ad_id: AdId
     title: TitleText
-    link: LinkUrl
+    link: OptionalLinkUrl = ""
     price_byn: ListingPrice | None = None
     target_resale_byn: PositivePrice | None = None
     # None keeps the status of an existing lead; new leads default to "new".
@@ -367,7 +392,7 @@ class WatchlistCreate(BaseModel):
     query: QueryText
     ad_id: AdId
     title: TitleText
-    link: LinkUrl
+    link: OptionalLinkUrl = ""
     price_byn: ListingPrice | None = None
     notes: NotesText | None = None
 
@@ -408,6 +433,8 @@ class WatchlistRefreshResponse(BaseModel):
     updated: int
     missing: int
     price_drops: int
+    # Items not refreshed this time (deadline or Kufar errors); a later refresh retries them.
+    skipped: int = 0
 
 
 class SavedSearchCreate(BaseModel):
@@ -480,6 +507,8 @@ class OpportunityBoardResponse(BaseModel):
     top_price_drops: list[OpportunitySignal] = Field(default_factory=list)
     rare_opportunities: list[OpportunityItem] = Field(default_factory=list)
     market_signals: list[OpportunitySignal] = Field(default_factory=list)
+    # True when some saved searches were not evaluated (deadline or Kufar errors).
+    partial: bool = False
 
 
 class CompareRequestItem(BaseModel):

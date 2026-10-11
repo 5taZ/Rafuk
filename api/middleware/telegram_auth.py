@@ -40,15 +40,6 @@ def verify_telegram_signature(init_data: str, bot_token: str) -> dict[str, str]:
     return parsed
 
 
-def parse_init_data_user_id(parsed: dict[str, str]) -> int:
-    """Extract the Telegram user id from already verified initData fields."""
-    try:
-        user_data = json.loads(parsed.get("user", "{}"))
-        return int(user_data["id"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"Failed to parse initData user: {exc}") from exc
-
-
 def _check_auth_date(raw_auth_date: str | None, max_age_seconds: int, now: float) -> int:
     if not raw_auth_date:
         raise ValueError("initData missing auth_date")

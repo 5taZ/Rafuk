@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +16,11 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from api.config import get_settings
 from api.database import get_engine, get_session_factory
-from api.rate_limit import limiter, rate_limit_exceeded_handler
+from api.rate_limit import (
+    ApplicationRateLimitMiddleware,
+    limiter,
+    rate_limit_exceeded_handler,
+)
 from api.routers import (
     compare,
     currency,
@@ -34,6 +38,7 @@ from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarAPIError
 from api.services.query_pipeline import DatasetCache, configure_dataset_cache
+from api.validators import reject_nul_in_request
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +79,30 @@ async def request_validation_error_handler(
     )
 
 
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
 def normalize_origin(url: str | None) -> str | None:
-    """Reduce a configured URL to a browser origin: scheme://host[:port], no path."""
+    """Reduce a configured URL to the Origin a browser sends: scheme://host[:port], no path.
+
+    Like browsers, it drops the scheme's default port and keeps IPv6 hosts in brackets.
+    """
     if not url:
         return None
     parts = urlsplit(url.strip())
-    if parts.scheme not in {"http", "https"} or not parts.hostname:
+    scheme = parts.scheme.lower()
+    if scheme not in DEFAULT_PORTS or not parts.hostname:
         return None
-    origin = f"{parts.scheme}://{parts.hostname.lower()}"
-    if parts.port is not None:
-        origin += f":{parts.port}"
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    host = parts.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    origin = f"{scheme}://{host}"
+    if port is not None and port != DEFAULT_PORTS[scheme]:
+        origin += f":{port}"
     return origin
 
 
@@ -143,12 +162,16 @@ def create_app() -> FastAPI:
         docs_url="/docs" if docs_enabled else None,
         redoc_url="/redoc" if docs_enabled else None,
         openapi_url="/openapi.json" if docs_enabled else None,
+        # NUL in a query or path parameter is a 422, not a Postgres error (bodies: schemas).
+        dependencies=[Depends(reject_nul_in_request)],
     )
 
     # One shared limiter: default limits for every route via the middleware,
     # stricter per-route limits via @limiter.limit (see api/rate_limit.py).
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
+    # Outside SlowAPIMiddleware: one per-key budget for all /api/ routes, decorated ones too.
+    app.add_middleware(ApplicationRateLimitMiddleware)
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
     app.add_exception_handler(KufarAPIError, kufar_api_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
