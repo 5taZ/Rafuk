@@ -301,7 +301,8 @@ async def test_concurrent_creation_of_same_tracker_creates_one(monkeypatch) -> N
         (61, 60),
         (90, 90),
         (91, 90),
-        (95, 120),
+        (95, 90),
+        (105, 120),
     ],
 )
 def test_real_check_interval_follows_the_scheduler(stored: int | None, shown: int) -> None:
@@ -316,7 +317,6 @@ def test_real_check_interval_matches_simulated_scheduler_runs(monkeypatch, check
     from api.services import tracker_service
     from scheduler import collector
 
-    assert tracker_service.DUE_SLACK_MINUTES == collector.DUE_SLACK_MINUTES
     monkeypatch.setenv("ALERT_CHECK_INTERVAL", str(check_interval))
     get_settings.cache_clear()
     start = datetime(2026, 1, 1, tzinfo=UTC)

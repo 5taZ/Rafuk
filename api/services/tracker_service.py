@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -22,8 +21,6 @@ if TYPE_CHECKING:
 MAX_DB_ID = 2_147_483_647
 # Interval stored when the caller does not ask for one (matches the column default).
 DEFAULT_TRACKER_INTERVAL_MIN = 15
-# Mirrors scheduler.collector.DUE_SLACK_MINUTES (the API never imports the scheduler).
-DUE_SLACK_MINUTES = 1
 _DB_ID_PATTERN = re.compile(r"#?([0-9]{1,10})")
 
 
@@ -148,19 +145,26 @@ def effective_interval_min(requested: int | None) -> int:
     return max(value, get_settings().alert_check_interval)
 
 
-def real_check_interval_min(interval_min: int | None) -> int:
-    """How often the scheduler really checks a tracker with this stored interval.
+def rounded_interval_min(interval_min: int, check_interval_min: int) -> int:
+    """The cadence a tracker really gets: checks happen only every ``check_interval_min``.
 
-    The scheduler runs every ``ALERT_CHECK_INTERVAL`` minutes and checks a tracker once its
-    interval minus ``DUE_SLACK_MINUTES`` has passed (see ``scheduler.collector.tracker_is_due``),
-    so the real cadence is the first multiple of the global interval that reaches it: with
-    a 30-minute check, 45 becomes 60. This is what the Mini App shows.
+    The interval is rounded to the nearest multiple of the global interval (halves round
+    up, never below one interval): at a 30-minute check 45 and 50 minutes mean every
+    hour, while 40 minutes means every run. The scheduler's ``tracker_is_due`` uses this
+    same rule, so what the Mini App shows is what the scheduler does.
     """
+    if check_interval_min <= 0:
+        return interval_min
+    multiple = max(1, (2 * interval_min + check_interval_min) // (2 * check_interval_min))
+    return multiple * check_interval_min
+
+
+def real_check_interval_min(interval_min: int | None) -> int:
+    """How often the scheduler really checks a tracker with this stored interval."""
     check_interval = max(1, int(get_settings().alert_check_interval))
     if interval_min is None or interval_min <= check_interval:
         return check_interval
-    runs = max(1, math.ceil((interval_min - DUE_SLACK_MINUTES) / check_interval))
-    return runs * check_interval
+    return rounded_interval_min(interval_min, check_interval)
 
 
 async def list_active_trackers(session: AsyncSession, user_id: int) -> list[Tracker]:

@@ -47,6 +47,7 @@ from api.services.kufar_client import KufarClient
 from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import normalize_ads
 from api.services.reseller_tools import matches_tracker_filters
+from api.services.tracker_service import rounded_interval_min
 from bot.keyboards import tracker_alert_keyboard
 
 logger = logging.getLogger(__name__)
@@ -92,19 +93,6 @@ async def _sleep(seconds: float) -> None:
 def _as_utc(value: datetime) -> datetime:
     # SQLite drops the timezone; the columns always store UTC.
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value
-
-
-def rounded_interval_min(interval_min: int, check_interval_min: int) -> int:
-    """The cadence a tracker really gets: checks happen only every ``check_interval_min``.
-
-    The interval is rounded to the nearest multiple of the global interval (halves round
-    up, never below one interval): at a 30-minute check 45 and 50 minutes mean every
-    hour, while 40 minutes means every run.
-    """
-    if check_interval_min <= 0:
-        return interval_min
-    multiple = max(1, (2 * interval_min + check_interval_min) // (2 * check_interval_min))
-    return multiple * check_interval_min
 
 
 def tracker_is_due(
