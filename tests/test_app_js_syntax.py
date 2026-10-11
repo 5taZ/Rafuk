@@ -89,6 +89,11 @@ def test_node_syntax_check() -> None:
         pytest.skip("node is not installed")
     for script in JS_MODULES:
         result = subprocess.run(
-            [node, "--check", str(script)], capture_output=True, text=True, check=False
+            [node, "--check", str(script)],
+            capture_output=True,
+            # node's diagnostics are UTF-8 (they quote the Russian source lines).
+            encoding="utf-8",
+            check=False,
+            timeout=60,
         )
         assert result.returncode == 0, f"{script.name}: {result.stderr}"

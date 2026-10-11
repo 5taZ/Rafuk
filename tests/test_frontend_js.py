@@ -125,7 +125,8 @@ def node_runtime(tmp_path_factory: pytest.TempPathFactory) -> dict:
     result = subprocess.run(
         [node, str(harness), *(str(path) for path in JS_MODULES)],
         capture_output=True,
-        text=True,
+        # node writes UTF-8; the locale default (cp1251 on Windows) would mangle "р." and "—".
+        encoding="utf-8",
         check=False,
         timeout=60,
     )
