@@ -60,6 +60,22 @@ def test_kufar_api_error_maps_to_502_with_russian_detail() -> None:
     assert response.json() == {"detail": "Kufar временно недоступен, попробуйте позже."}
 
 
+def test_full_kufar_queue_maps_to_503_with_retry_after() -> None:
+    from api.main import create_app
+    from api.services.kufar_client import KufarBusyError
+
+    app = create_app()
+
+    @app.get("/kufar-busy")
+    async def kufar_busy() -> None:
+        raise KufarBusyError("Too many Kufar requests are queued (12), try again later")
+
+    response = TestClient(app).get("/kufar-busy")
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "30"
+    assert "перегружен" in response.json()["detail"]
+
+
 def test_cors_origins_are_normalized_without_path() -> None:
     from api.main import build_cors_origins, normalize_origin
 

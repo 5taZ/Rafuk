@@ -2,7 +2,7 @@
 
 - user_id FKs reference users.telegram_user_id; users is backfilled first.
 - saved_searches.min_discount_percent, declared by the model but never migrated.
-- legacy lead/watchlist statuses are normalized and the Postgres CHECKs recreated.
+- legacy lead/watchlist statuses are normalized and the Postgres status CHECKs created.
 - indexes covered by a unique constraint or a composite index are dropped.
 
 Revision ID: 20261011_0010
@@ -44,35 +44,10 @@ LEAD_STATUSES = (
 WATCHLIST_STATUSES = ("watching", "reviewing", "in_progress", "deferred", "skipped")
 MARKET_STATUSES = ("active", "missing", "price_drop", "duplicate")
 
-# Vocabularies of revision 20260407_0008, restored by downgrade().
-LEGACY_LEAD_STATUSES = (
-    "new",
-    "reviewing",
-    "in_progress",
-    "negotiating",
-    "deferred",
-    "closed",
-    "abandoned",
-)
-LEGACY_WATCHLIST_STATUSES = ("watching", "lead", "deferred", "archived")
-
-# Legacy value -> canonical value; anything else outside the canonical list gets the default.
+# Value of the CHECK lists 0008 used to add -> canonical value; anything else outside the
+# canonical list gets the default.
 LEAD_STATUS_MAP = {"closed": "sold", "abandoned": "skipped"}
 WATCHLIST_STATUS_MAP = {"lead": "in_progress", "archived": "skipped"}
-
-# Canonical value -> legacy value, applied by downgrade() so every row satisfies the
-# restored 0008 CHECKs (Postgres checks them on any later UPDATE of the row, NOT VALID or not).
-DOWNGRADE_LEAD_STATUS_MAP = {
-    "sold": "closed",
-    "skipped": "abandoned",
-    "bought": "in_progress",
-    "reselling": "in_progress",
-}
-DOWNGRADE_WATCHLIST_STATUS_MAP = {
-    "in_progress": "lead",
-    "skipped": "archived",
-    "reviewing": "watching",
-}
 
 LEAD_STATUS_CHECK = "chk_lead_items_status"
 WATCHLIST_STATUS_CHECK = "chk_watchlist_items_workflow_status"
@@ -343,37 +318,13 @@ def downgrade() -> None:
         else:
             op.create_index(index_name, table, list(columns))
 
-    # Restore the 0008 CHECK lists. The rows are mapped back to the 0008 vocabulary first: a
-    # NOT VALID CHECK over canonical rows would still fail every later UPDATE of those rows.
-    # Canonical statuses without a 0008 twin (bought, reselling, reviewing) are coarsened.
+    # Drop the status CHECKs and keep the rows: 0008 no longer adds status CHECKs, and the
+    # code before this revision already wrote the canonical statuses (bought, sold, skipped...).
+    # The market status CHECK stays, 0008 adds the same list.
     if "lead_items" in tables:
-        _replace_status_checks(
-            bind,
-            "lead_items",
-            {LEAD_STATUS_CHECK: _in_list("status", LEGACY_LEAD_STATUSES)},
-            lambda: _normalize(
-                bind,
-                "lead_items",
-                "status",
-                DOWNGRADE_LEAD_STATUS_MAP,
-                LEGACY_LEAD_STATUSES,
-                "new",
-            ),
-        )
+        _drop_checks(bind, "lead_items", (LEAD_STATUS_CHECK,))
     if "watchlist_items" in tables:
-        _replace_status_checks(
-            bind,
-            "watchlist_items",
-            {WATCHLIST_STATUS_CHECK: _in_list("workflow_status", LEGACY_WATCHLIST_STATUSES)},
-            lambda: _normalize(
-                bind,
-                "watchlist_items",
-                "workflow_status",
-                DOWNGRADE_WATCHLIST_STATUS_MAP,
-                LEGACY_WATCHLIST_STATUSES,
-                "watching",
-            ),
-        )
+        _drop_checks(bind, "watchlist_items", (WATCHLIST_STATUS_CHECK,))
 
     if "saved_searches" in tables:
         columns = {column["name"] for column in sa.inspect(bind).get_columns("saved_searches")}

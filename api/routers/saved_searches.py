@@ -233,6 +233,7 @@ async def _load_saved_search_opportunities(
         dataset.ads,
         dataset.price_stats.median,
         saved_search.target_discount_percent,
+        low_cutoff=dataset.price_stats.low_cutoff,
     )
     candidate_ads = [
         ad

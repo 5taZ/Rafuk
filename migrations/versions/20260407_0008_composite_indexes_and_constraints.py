@@ -131,6 +131,10 @@ def upgrade() -> None:
 
     # Add CHECK constraints for status/enum columns (PostgreSQL only)
     # SQLite doesn't support adding constraints via ALTER TABLE
+    # No CHECKs on lead_items.status and watchlist_items.workflow_status here: the lists this
+    # revision used to add rejected statuses the app already wrote (bought, sold, skipped...),
+    # so upgrading such a database failed here. 20261011_0010 adds the canonical CHECKs after
+    # rewriting the rows.
     if not is_sqlite:
         # Tracker events: event_type
         if "tracker_events" in tables:
@@ -146,36 +150,13 @@ def upgrade() -> None:
                     "event_type IN ('new_listing', 'price_drop')",
                 )
 
-        # Lead items: status
-        if "lead_items" in tables:
-            constraints = [
-                constraint["name"]
-                for constraint in inspector.get_check_constraints("lead_items")
-                if constraint["name"]
-            ]
-            if "chk_lead_items_status" not in constraints:
-                op.create_check_constraint(
-                    "chk_lead_items_status",
-                    "lead_items",
-                    "status IN ('new', 'reviewing', 'in_progress', 'negotiating', 'deferred', "
-                    "'closed', 'abandoned')",
-                )
-
-        # Watchlist items: workflow_status
+        # Watchlist items: market_status
         if "watchlist_items" in tables:
             constraints = [
                 constraint["name"]
                 for constraint in inspector.get_check_constraints("watchlist_items")
                 if constraint["name"]
             ]
-            if "chk_watchlist_items_workflow_status" not in constraints:
-                op.create_check_constraint(
-                    "chk_watchlist_items_workflow_status",
-                    "watchlist_items",
-                    "workflow_status IN ('watching', 'lead', 'deferred', 'archived')",
-                )
-
-            # Watchlist items: market_status
             if "chk_watchlist_items_market_status" not in constraints:
                 op.create_check_constraint(
                     "chk_watchlist_items_market_status",
@@ -191,7 +172,8 @@ def downgrade() -> None:
     is_sqlite = bind.dialect.name == "sqlite"
 
     # Every drop is guarded: the objects may be missing on databases created with
-    # create_all, or already dropped by a later revision.
+    # create_all, or already dropped by a later revision. The two status CHECKs exist only on
+    # databases migrated before upgrade() stopped adding them.
 
     # Drop CHECK constraints (PostgreSQL only)
     if not is_sqlite:

@@ -19,7 +19,8 @@ from api.models import Base
 ROOT = Path(__file__).resolve().parents[1]
 VERSIONS = ROOT / "migrations" / "versions"
 
-# The status CHECKs that 20260407_0008 creates on Postgres (migrations skip them on SQLite).
+# The CHECKs 20260407_0008 used to create on Postgres (migrations skip them on SQLite). It no
+# longer adds the two status lists, but databases migrated before that still have them.
 LEGACY_CHECKS = {
     "lead_items": {
         "chk_lead_items_status": "status IN ('new', 'reviewing', 'in_progress', 'negotiating', "
@@ -388,6 +389,17 @@ def test_upgrade_from_0008_with_user_rows_and_legacy_checks(
         )
 
 
+def test_0008_adds_no_status_checks_on_postgres(migrated_db: tuple[Config, sa.Engine]) -> None:
+    """Its status lists rejected statuses the app wrote (sold, skipped...): upgrades failed."""
+    config, engine = migrated_db
+    command.upgrade(config, "20260406_0007")
+
+    calls = _run_as_postgres(engine, _load_revision("20260407_0008"), "upgrade")
+
+    created = [args[0] for name, args, _ in calls if name == "create_check_constraint"]
+    assert created == ["chk_tracker_events_event_type", "chk_watchlist_items_market_status"]
+
+
 def test_0009_creates_no_user_fk_on_postgres(migrated_db: tuple[Config, sa.Engine]) -> None:
     """On Postgres 0009 used to add user_id -> users.id while users was still empty."""
     config, engine = migrated_db
@@ -460,17 +472,11 @@ def _insert_canonical_statuses(engine: sa.Engine) -> None:
             )
 
 
-LEGACY_LEAD_AFTER_DOWNGRADE = [
-    ("closed",),
-    ("abandoned",),
-    ("in_progress",),
-    ("in_progress",),
-    ("reviewing",),
-]
-LEGACY_WATCHLIST_AFTER_DOWNGRADE = [("lead",), ("archived",), ("watching",), ("deferred",)]
+CANONICAL_LEADS = [("sold",), ("skipped",), ("bought",), ("reselling",), ("reviewing",)]
+CANONICAL_WATCHLIST = [("in_progress",), ("skipped",), ("reviewing",), ("deferred",)]
 
 
-def test_downgrade_0010_rewrites_rows_for_the_restored_checks(
+def test_downgrade_0010_drops_status_checks_and_keeps_rows(
     migrated_db: tuple[Config, sa.Engine],
 ) -> None:
     config, engine = migrated_db
@@ -490,29 +496,31 @@ def test_downgrade_0010_rewrites_rows_for_the_restored_checks(
 
     command.downgrade(config, "20260407_0009")
 
-    assert _rows(engine, "SELECT status FROM lead_items ORDER BY ad_id") == (
-        LEGACY_LEAD_AFTER_DOWNGRADE
-    )
+    # The code before 0010 already wrote these statuses, so they are kept as they are.
+    assert _rows(engine, "SELECT status FROM lead_items ORDER BY ad_id") == CANONICAL_LEADS
     assert _rows(engine, "SELECT workflow_status FROM watchlist_items ORDER BY ad_id") == (
-        LEGACY_WATCHLIST_AFTER_DOWNGRADE
+        CANONICAL_WATCHLIST
     )
-    assert "'closed'" in _checks(engine, "lead_items")["chk_lead_items_status"]
-    assert "'lead'" in _checks(engine, "watchlist_items")["chk_watchlist_items_workflow_status"]
-    # Every row satisfies the restored CHECKs, so ordinary updates keep working.
+    assert "chk_lead_items_status" not in _checks(engine, "lead_items")
+    watchlist_checks = _checks(engine, "watchlist_items")
+    assert "chk_watchlist_items_workflow_status" not in watchlist_checks
+    assert "chk_watchlist_items_market_status" in watchlist_checks
     with engine.begin() as connection:
-        connection.execute(sa.text("UPDATE lead_items SET notes = 'n'"))
-        connection.execute(sa.text("UPDATE watchlist_items SET current_price_byn = 1"))
+        connection.execute(sa.text("UPDATE lead_items SET status = 'bought' WHERE ad_id = 1"))
+        connection.execute(
+            sa.text("UPDATE watchlist_items SET workflow_status = 'reviewing' WHERE ad_id = 1")
+        )
     with engine.begin() as connection, pytest.raises(sa.exc.IntegrityError):
-        connection.execute(sa.text("UPDATE lead_items SET status = 'sold' WHERE ad_id = 1"))
+        connection.execute(sa.text("UPDATE watchlist_items SET market_status = 'gone'"))
 
     command.upgrade(config, "head")
     assert _rows(engine, "SELECT status FROM lead_items ORDER BY ad_id")[:2] == [
-        ("sold",),
+        ("bought",),
         ("skipped",),
     ]
 
 
-def test_downgrade_0010_postgres_restores_validated_legacy_checks(
+def test_downgrade_0010_postgres_drops_only_the_status_checks(
     migrated_db: tuple[Config, sa.Engine],
 ) -> None:
     config, engine = migrated_db
@@ -528,20 +536,22 @@ def test_downgrade_0010_postgres_restores_validated_legacy_checks(
 
     calls = _run_as_postgres(engine, _load_revision("20261011_0010"), "downgrade", present)
 
-    for table, check in (
-        ("lead_items", "chk_lead_items_status"),
-        ("watchlist_items", "chk_watchlist_items_workflow_status"),
-    ):
-        dropped = _position(calls, "drop_constraint", check)
-        rewritten = _position(calls, "execute", f"UPDATE {table}")
-        created = _position(calls, "create_check_constraint", check)
-        assert dropped < rewritten < created, (table, check)
-    assert not [args for name, args, _ in calls if "NOT VALID" in str(args)]
-    assert _rows(engine, "SELECT status FROM lead_items ORDER BY ad_id") == (
-        LEGACY_LEAD_AFTER_DOWNGRADE
-    )
+    dropped = [
+        args[:2] for name, args, _ in calls if name == "drop_constraint" and "chk_" in args[0]
+    ]
+    assert dropped == [
+        ("chk_lead_items_status", "lead_items"),
+        ("chk_watchlist_items_workflow_status", "watchlist_items"),
+    ]
+    assert not [args for name, args, _ in calls if name == "create_check_constraint"]
+    assert not [
+        args
+        for name, args, _ in calls
+        if name == "execute" and ("UPDATE lead_items" in args[0] or "UPDATE watchlist" in args[0])
+    ]
+    assert _rows(engine, "SELECT status FROM lead_items ORDER BY ad_id") == CANONICAL_LEADS
     assert _rows(engine, "SELECT workflow_status FROM watchlist_items ORDER BY ad_id") == (
-        LEGACY_WATCHLIST_AFTER_DOWNGRADE
+        CANONICAL_WATCHLIST
     )
 
 

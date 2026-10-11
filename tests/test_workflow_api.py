@@ -409,6 +409,9 @@ async def test_upsert_lead_status_transitions() -> None:
 
     assert (await upsert(None, None)).status == "new"
     assert (await upsert("deferred")).status == "deferred"
+    # Early statuses set in the Mini App stay open to an explicit alert button.
+    assert (await upsert("skipped")).status == "skipped"
+    assert (await upsert("reviewing")).status == "reviewing"
     lead = await upsert("in_progress")
     assert (lead.status, lead.source) == ("in_progress", "telegram_alert")
     # Once in work, alert buttons and repeated adds keep the status.

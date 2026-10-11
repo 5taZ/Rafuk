@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 
 DEFAULT_LEAD_STATUS = "new"
 DEFAULT_LEAD_SOURCE = "manual"
-# A repeated "add" (Mini App button, alert button) may move a lead out of these statuses only;
-# it must never downgrade a lead that is already in work, bought or sold.
-LEAD_STATUSES_OPEN_TO_UPSERT = frozenset({"new", "deferred"})
+# A repeated "add" (Mini App button, alert button) may move a lead out of these early statuses
+# only; it must never downgrade a lead that is already in work, bought or sold.
+LEAD_STATUSES_OPEN_TO_UPSERT = frozenset({"new", "reviewing", "deferred", "skipped"})
 KUFAR_ITEM_URL = "https://www.kufar.by/item/{ad_id}"
 
 
@@ -71,10 +71,10 @@ async def upsert_lead(
 
     A new lead gets ``status`` (default "new") and ``source`` (default "manual"). For an
     existing lead the listing data is refreshed, but status and source change only when an
-    explicit non-default status is given and the lead is still "new" or "deferred". What the
-    user entered (target resale price, notes) is only filled in when still empty: the Mini
-    App sends its market estimate as ``target_resale_byn`` on every "add". An empty ``link``
-    becomes the ad's Kufar page.
+    explicit non-default status is given and the lead is still in an early status
+    (``LEAD_STATUSES_OPEN_TO_UPSERT``). What the user entered (target resale price, notes) is
+    only filled in when still empty: the Mini App sends its market estimate as
+    ``target_resale_byn`` on every "add". An empty ``link`` becomes the ad's Kufar page.
     """
     existing = await _get_lead(session, user_id, ad_id)
     if existing is None:
