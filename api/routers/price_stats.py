@@ -80,6 +80,7 @@ async def get_price_stats(
         analyzed_count=stats.count,
         fair_price_from=converted.get("q1"),
         fair_price_to=converted.get("q3"),
+        truncated=getattr(dataset, "truncated", False),
         **converted,
     )
     await _record_snapshot(

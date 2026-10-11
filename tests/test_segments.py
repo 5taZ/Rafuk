@@ -97,3 +97,32 @@ def test_segments_validates_input_and_queries_kufar_in_byn(monkeypatch) -> None:
     assert {task["query"] for task in seen_tasks} == {"iPhone"}
     assert blank.status_code == 422
     assert euro.status_code == 422
+
+
+def test_segments_has_a_strict_per_route_limit(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+    from api.rate_limit import limiter
+    from api.routers import segments
+
+    route_limits = limiter._route_limits["api.routers.segments.get_segments"]
+    assert [str(item.limit) for item in route_limits] == ["10 per 1 minute"]
+
+    async def fake_parallel_search_all(client, tasks, settings):
+        del client, settings
+        return [{"ads": [{"price_byn": 200000}]} for _ in tasks]
+
+    monkeypatch.setattr(segments, "KufarClient", FakeKufarClient)
+    monkeypatch.setattr(segments, "parallel_search_all", fake_parallel_search_all)
+    app = create_app()
+    cache = MemoryCache()
+    app.dependency_overrides[get_cache] = lambda: cache
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        statuses = [
+            client.get("/api/v1/segments", params={"query": "iphone"}).status_code
+            for _ in range(11)
+        ]
+    # Cached responses count too: the limit protects the API, not only Kufar.
+    assert statuses[:10] == [200] * 10
+    assert statuses[10] == 429

@@ -167,3 +167,26 @@ def test_listing_detail_handles_unpriced_and_malformed_ads(monkeypatch) -> None:
     assert payload["seller_fields"] == []
     assert payload["seller_type"] == "Магазин"
     assert blank.status_code == 422
+
+
+def test_listing_detail_has_a_per_route_limit(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+    from api.rate_limit import limiter
+    from api.routers import listing_detail
+
+    route_limits = limiter._route_limits["api.routers.listing_detail.get_listing_detail"]
+    assert [str(item.limit) for item in route_limits] == ["30 per 1 minute"]
+
+    monkeypatch.setattr(listing_detail, "KufarClient", FakeKufarClient)
+    app = create_app()
+    cache = MemoryCache()
+    app.dependency_overrides[get_cache] = lambda: cache
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    params = {"ad_id": 1, "query": "iphone"}
+    with TestClient(app) as client:
+        statuses = [
+            client.get("/api/v1/listing-detail", params=params).status_code for _ in range(31)
+        ]
+    assert statuses[:30] == [200] * 30
+    assert statuses[30] == 429

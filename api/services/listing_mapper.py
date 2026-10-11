@@ -152,6 +152,7 @@ def build_listing_detail(
             query=query,
             market_stats=market_stats,
             duplicate_count=duplicate_count,
+            query_profile=query_insights,
         )
 
     return ListingDetailResponse(

@@ -211,3 +211,33 @@ def test_trend_ignores_empty_snapshots() -> None:
     naive = _snapshot(48, 1000)
     naive.snapshot_at = naive.snapshot_at.replace(tzinfo=None)
     assert compute_trend_percent([naive, _snapshot(1, 900)]) == -10.0
+
+
+def test_trend_compares_only_comparable_samples() -> None:
+    snapshots = [
+        # Old partial samples (a few pages of the newest lots) are not compared.
+        _snapshot(28 * 24, 800, analyzed=150),
+        _snapshot(20 * 24, 1000, analyzed=900),
+        _snapshot(10 * 24, 820, analyzed=200),
+        _snapshot(2, 1100, analyzed=1000),
+    ]
+    assert compute_trend_percent(snapshots) == 10.0
+    # Without a second comparable point there is no trend.
+    assert compute_trend_percent([_snapshot(48, 800, analyzed=100), _snapshot(1, 900)]) is None
+    assert compute_trend_percent([_snapshot(48, 0, analyzed=0)]) is None
+
+
+def test_compare_has_a_strict_per_route_limit(monkeypatch) -> None:
+    from api.rate_limit import limiter
+
+    route_limits = limiter._route_limits["api.routers.compare.compare_queries"]
+    assert [str(item.limit) for item in route_limits] == ["10 per 1 minute"]
+
+    app = make_app(monkeypatch)
+    with TestClient(app) as client:
+        statuses = [
+            client.get("/api/v1/compare", params={"base_query": "iphone 15"}).status_code
+            for _ in range(11)
+        ]
+    assert statuses[:10] == [200] * 10
+    assert statuses[10] == 429

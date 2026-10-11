@@ -17,6 +17,7 @@ from api.services.aggregator import (
     extract_prices,
     filter_deal_ads,
     get_param,
+    is_placeholder_price,
     is_strict_match,
     listing_age_hours,
     normalize_search_text,
@@ -243,3 +244,82 @@ def test_compute_segments_understands_kufar_codes() -> None:
     segments = compute_segments(ads)
     assert segments["new_private"]["count"] == 1
     assert segments["used_shop"]["count"] == 1
+
+
+def test_concatenated_playstation_generation_is_recognized() -> None:
+    assert normalize_search_text("Sony PlayStation5 825GB") == "sony ps5 825"
+    assert normalize_search_text("Плейстейшен4 slim") == "ps4 slim"
+    assert is_strict_match("Sony PlayStation5 825GB", "ps5") is True
+    assert is_strict_match("Playstation4 Slim 500gb", "ps4 slim") is True
+    assert is_strict_match("Sony PlayStation5", "playstation 5") is True
+    assert build_query_key("PlayStation5", False) == build_query_key("ps5", False) == "broad::ps5"
+
+
+def test_normalization_keeps_yo_and_belarusian_letters() -> None:
+    assert normalize_search_text("Чёрный") == "черный"
+    assert normalize_search_text("Ёлка") == "елка"
+    assert normalize_search_text("Мінск, Ўзор") == "минск узор"
+    assert is_strict_match("Елка искусственная", "ёлка") is True
+    assert is_strict_match("iPhone 13 черный", "iphone 13 чёрный") is True
+    assert build_query_key("ёлка", True) == build_query_key("елка", True) == "strict::елка"
+
+
+def test_plus_suffix_is_a_variant_in_strict_mode() -> None:
+    assert normalize_search_text("Galaxy S23+ 256") == "galaxy s23 plus 256"
+    assert is_strict_match("Galaxy S23+ 256", "galaxy s23") is False
+    assert is_strict_match("Galaxy S23+ 256", "galaxy s23+") is True
+    assert is_strict_match("Galaxy S23 Plus", "galaxy s23+") is True
+    assert is_strict_match("Galaxy Note 10+", "galaxy note 10") is False
+    # A "+" between digits is a RAM+storage config, not the plus model.
+    assert normalize_search_text("Redmi Note 12 8+256") == "redmi note 12 8 256"
+    assert is_strict_match("Redmi Note 12 8+256", "redmi note 12") is True
+
+
+def test_response_cache_key_keeps_raw_query_differences() -> None:
+    def key(query: str) -> str:
+        return response_cache_key("listings", query, False, "BYN")
+
+    assert key("Galaxy S23+") != key("Galaxy S23")
+    assert key("айфон 13") != key("iphone 13")
+    assert key("iphone 13 128gb") != key("iphone 13 128")
+    assert key("  Galaxy   S23+ ") == key("galaxy s23+")
+    # Parts are encoded unambiguously, so a ":" inside the query cannot fake another part.
+    assert response_cache_key("listings", "x:a", False, "b") != response_cache_key(
+        "listings", "x", False, "a:b"
+    )
+
+
+def test_placeholder_cutoff_matches_the_stats() -> None:
+    prices = [1.0, 1.0, 1.0, 1.0, 22.0, 100.0, 100.0, 100.0, 100.0]
+    stats = compute_price_stats(prices)
+    # 22 BYN is below a quarter of the median of the real prices: it is dropped from the
+    # stats and every placeholder check agrees.
+    assert stats.count == 4
+    assert stats.min == 100.0
+    assert stats.low_cutoff == 25.0
+    for price in prices:
+        assert is_placeholder_price(price, stats) is (price < stats.min)
+    ads = [
+        {"ad_id": index + 1, "price_byn": int(price * 100)} for index, price in enumerate(prices)
+    ]
+    assert filter_deal_ads(ads, stats.median, 1.0, low_cutoff=stats.low_cutoff) == []
+    # The cutoff is internal: it never leaks into serialized stats.
+    assert "low_cutoff" not in stats.model_dump()
+
+
+def test_placeholder_cutoff_is_zero_for_small_samples() -> None:
+    stats = compute_price_stats([1.0, 1500.0, 1600.0])
+    assert stats.low_cutoff == 0.0
+    assert is_placeholder_price(1.0, stats) is False
+    # Hand-built stats without a cutoff fall back to a share of the median.
+    manual = PriceStats(mean=100, median=100, q1=100, q3=100, min=100, max=100, count=5)
+    assert is_placeholder_price(20.0, manual) is True
+    assert is_placeholder_price(30.0, manual) is False
+
+
+def test_compute_price_stats_can_skip_placeholder_dropping() -> None:
+    prices = [1.0] + [1000.0] * 5
+    assert compute_price_stats(prices).count == 5
+    raw = compute_price_stats(prices, drop_placeholders=False)
+    assert raw.count == 6
+    assert raw.min == 1.0

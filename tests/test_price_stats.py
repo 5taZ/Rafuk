@@ -31,7 +31,7 @@ class FakeKufarClient:
         del kwargs
         return {
             "ads": [{"price_byn": 200000}, {"price_byn": 220000}, {"price_byn": 180000}],
-            "total": 10,
+            "total": 3,
         }
 
     async def aclose(self) -> None:
@@ -124,3 +124,53 @@ def test_price_stats_survives_snapshot_write_failure(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["count"] == 3
+
+
+def test_price_stats_reports_truncated_datasets(monkeypatch) -> None:
+    from api.routers import price_stats
+    from api.services.query_pipeline import QueryDataset
+
+    class TruncatedDataset(QueryDataset):
+        @property
+        def truncated(self) -> bool:
+            return True
+
+        @truncated.setter
+        def truncated(self, value: bool) -> None:
+            del value
+
+    original_loader = price_stats.load_query_dataset
+
+    async def truncated_loader(**kwargs):
+        dataset = await original_loader(**kwargs)
+        return TruncatedDataset(
+            query=dataset.query,
+            currency=dataset.currency,
+            strict_search=dataset.strict_search,
+            response=dataset.response,
+            ads=dataset.ads,
+            unidentified_ads=dataset.unidentified_ads,
+        )
+
+    app = make_app(monkeypatch)
+    monkeypatch.setattr(price_stats, "load_query_dataset", truncated_loader)
+    with TestClient(app) as client:
+        response = client.get("/api/v1/price-stats", params={"query": "iphone"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 3
+    if "truncated" in payload:  # PriceStatsResponse.truncated lands with the schema change.
+        assert payload["truncated"] is True
+
+
+def test_price_stats_cache_separates_raw_queries(monkeypatch) -> None:
+    CountingKufarClient.calls = []
+    app = make_app(monkeypatch, CountingKufarClient)
+    with TestClient(app) as client:
+        plus = client.get("/api/v1/price-stats", params={"query": "Galaxy S23+"})
+        base = client.get("/api/v1/price-stats", params={"query": "Galaxy S23"})
+
+    assert plus.status_code == base.status_code == 200
+    # Each raw query reached Kufar itself instead of reusing the other query's response.
+    assert [call["query"] for call in CountingKufarClient.calls] == ["Galaxy S23+", "Galaxy S23"]

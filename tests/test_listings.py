@@ -31,7 +31,7 @@ class FakeKufarClient:
 
     async def search_all_ads(self, **kwargs) -> dict:
         return {
-            "total": 7,
+            "total": 3,
             "ads": [
                 {
                     "ad_id": 1,
@@ -395,3 +395,83 @@ def test_listings_survives_malformed_ads(monkeypatch) -> None:
     region_ids = {item["ad_id"]: item["region_id"] for item in newest}
     assert region_ids[6] is None
     assert region_ids[7] is None
+
+
+def test_listings_ranks_large_datasets_off_the_event_loop(monkeypatch) -> None:
+    import threading
+
+    from api.routers import listings
+
+    monkeypatch.setattr(aggregator, "utc_now", lambda: FROZEN_NOW)
+    threads: list[str] = []
+    original = listings._rank_listings
+
+    def recording_rank(*args, **kwargs):
+        threads.append(threading.current_thread().name)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(listings, "_rank_listings", recording_rank)
+    ads = [
+        {"ad_id": index, "subject": "iPhone 15", "price_byn": 100000 + index * 100}
+        for index in range(1, listings.OFFLOAD_MIN_ADS + 1)
+    ]
+    small = [{"ad_id": 1, "subject": "iPhone 15", "price_byn": 100000}]
+    app = make_app(monkeypatch, static_client(ads))
+    with TestClient(app) as client:
+        large = client.get("/api/v1/listings", params={"query": "iphone", "sort": "deal_score"})
+    small_app = make_app(monkeypatch, static_client(small))
+    with TestClient(small_app) as client:
+        tiny = client.get("/api/v1/listings", params={"query": "iphone 15", "sort": "deal_score"})
+
+    assert large.status_code == tiny.status_code == 200
+    assert large.json()["returned"] == listings.MAX_LISTINGS
+    assert large.json()["total"] == listings.OFFLOAD_MIN_ADS
+    # The large dataset was ranked in a worker thread, the tiny one inline on the loop.
+    assert len(threads) == 2
+    assert len(set(threads)) == 2
+    assert tiny.json()["returned"] == 1
+
+
+def test_listings_reports_truncated_datasets(monkeypatch) -> None:
+    from api.routers import listings
+
+    original_loader = listings.load_query_dataset
+
+    async def truncated_loader(**kwargs):
+        dataset = await original_loader(**kwargs)
+        return _as_truncated(dataset)
+
+    monkeypatch.setattr(listings, "load_query_dataset", truncated_loader)
+    ads = [{"ad_id": 1, "subject": "iPhone 15", "price_byn": 200000}]
+    app = make_app(monkeypatch, static_client(ads))
+    with TestClient(app) as client:
+        response = client.get("/api/v1/listings", params={"query": "iphone"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["returned"] == 1
+    if "truncated" in payload:  # ListingsResponse.truncated lands with the schema change.
+        assert payload["truncated"] is True
+
+
+def _as_truncated(dataset):
+    """A copy of a QueryDataset whose pagination stopped early."""
+    from api.services.query_pipeline import QueryDataset
+
+    class TruncatedDataset(QueryDataset):
+        @property
+        def truncated(self) -> bool:
+            return True
+
+        @truncated.setter
+        def truncated(self, value: bool) -> None:
+            del value
+
+    return TruncatedDataset(
+        query=dataset.query,
+        currency=dataset.currency,
+        strict_search=dataset.strict_search,
+        response=dataset.response,
+        ads=dataset.ads,
+        unidentified_ads=dataset.unidentified_ads,
+    )

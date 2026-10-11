@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -15,6 +15,7 @@ from api.dependencies import (
     get_settings_dependency,
 )
 from api.models import QuerySnapshot
+from api.rate_limit import limiter
 from api.schemas import CompareRequestItem, CompareResponse
 from api.services.aggregator import (
     DATASET_CURRENCY,
@@ -43,6 +44,10 @@ MAX_COMPARE_QUERIES = 2
 TREND_WINDOW_DAYS = 30
 # Two points closer than this measure noise, not a market trend.
 MIN_TREND_SPAN = timedelta(hours=24)
+# A snapshot built from far fewer prices than the fullest one in the window is a partial
+# sample (older scheduler snapshots held only the newest few pages, a deadline can cut a
+# search short): its median describes fresh lots, not the market, so it is not compared.
+MIN_COMPARABLE_SAMPLE_RATIO = 0.5
 
 
 def _split_compare_queries(
@@ -82,15 +87,25 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def compute_trend_percent(snapshots: Sequence[QuerySnapshot]) -> float | None:
-    """Median change between the oldest and newest non-empty snapshots.
+    """Median change between the oldest and newest comparable snapshots.
 
-    Empty snapshots (analyzed_count == 0 or median 0) are ignored, and the two points
-    must be at least MIN_TREND_SPAN apart; otherwise there is no trend to report.
+    Empty snapshots (analyzed_count == 0 or median 0) are ignored, and so are partial
+    samples: only snapshots with at least MIN_COMPARABLE_SAMPLE_RATIO of the largest
+    analyzed_count in the window are compared. The two points must be at least
+    MIN_TREND_SPAN apart; otherwise there is no trend to report.
     """
-    usable = [
+    non_empty = [
         snapshot
         for snapshot in snapshots
         if (snapshot.analyzed_count or 0) > 0 and (snapshot.median_byn or 0) > 0
+    ]
+    if not non_empty:
+        return None
+    fullest = max(int(snapshot.analyzed_count) for snapshot in non_empty)
+    usable = [
+        snapshot
+        for snapshot in non_empty
+        if int(snapshot.analyzed_count) >= fullest * MIN_COMPARABLE_SAMPLE_RATIO
     ]
     if len(usable) < 2:
         return None
@@ -121,7 +136,12 @@ async def _build_compare_item(
     )
     duplicate_index = duplicate_counts(dataset.ads)
     rates_payload = await currency_service.get_rates()
-    deal_ads = filter_deal_ads(dataset.ads, dataset.price_stats.median, 5.0)
+    deal_ads = filter_deal_ads(
+        dataset.ads,
+        dataset.price_stats.median,
+        5.0,
+        low_cutoff=dataset.price_stats.low_cutoff,
+    )
     source_ads = deal_ads or dataset.ads[:20]
     listing_items = [
         item
@@ -174,7 +194,9 @@ async def _build_compare_item(
 
 
 @router.get("/compare", response_model=CompareResponse)
+@limiter.limit("10/minute")
 async def compare_queries(
+    request: Request,
     base_query: BaseSearchQuery,
     compare_query: Annotated[
         list[str] | None,

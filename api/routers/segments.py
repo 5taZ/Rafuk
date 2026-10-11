@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from api.config import Settings
 from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.rate_limit import limiter
 from api.schemas import SegmentsResponse
 from api.services.aggregator import DATASET_CURRENCY, response_cache_key
 from api.services.cache import CacheBackend
@@ -17,7 +18,9 @@ router = APIRouter(tags=["analytics"])
 
 
 @router.get("/segments", response_model=SegmentsResponse)
+@limiter.limit("10/minute")
 async def get_segments(
+    request: Request,
     query: SearchQuery,
     currency: CurrencyCode = DEFAULT_CURRENCY,
     strict_search: bool = False,

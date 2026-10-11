@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from api.config import Settings
 from api.dependencies import get_cache, get_currency_service, get_settings_dependency
+from api.rate_limit import limiter
 from api.schemas import ListingDetailResponse
 from api.services.aggregator import DATASET_CURRENCY, coerce_ad_id, response_cache_key
 from api.services.cache import CacheBackend
@@ -19,7 +20,9 @@ router = APIRouter(tags=["analytics"])
 
 
 @router.get("/listing-detail", response_model=ListingDetailResponse)
+@limiter.limit("30/minute")
 async def get_listing_detail(
+    request: Request,
     ad_id: int,
     query: SearchQuery,
     currency: CurrencyCode = DEFAULT_CURRENCY,

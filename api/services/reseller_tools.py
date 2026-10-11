@@ -13,7 +13,7 @@ from api.services.aggregator import (
     canonical_seller_type,
     compute_price_vs_median,
     get_param_values,
-    is_low_price_outlier,
+    is_placeholder_price,
     listing_age_hours,
     normalize_search_text,
     tokenize_search_text,
@@ -191,8 +191,15 @@ def config_keyword_matches(title: str, keyword: str | None) -> bool:
     return all(token in title_tokens for token in keyword_tokens)
 
 
-def profile_match_bonus(query: str, title: str) -> tuple[int, str | None, str | None]:
-    query_profile = analyze_query_text(query)
+def profile_match_bonus(
+    query: str,
+    title: str,
+    *,
+    query_profile: QueryInsights | None = None,
+) -> tuple[int, str | None, str | None]:
+    """Config bonus of a title for a query; pass ``query_profile`` when scoring many titles."""
+    if query_profile is None:
+        query_profile = analyze_query_text(query)
     title_profile = analyze_query_text(title)
     if not query_profile.normalized_query:
         return 0, title_profile.config_summary, None
@@ -236,12 +243,18 @@ def compute_deal_score(
     query: str,
     market_stats: PriceStats,
     duplicate_count: int = 0,
+    query_profile: QueryInsights | None = None,
 ) -> DealScore:
+    """Score an ad as a deal against the market stats.
+
+    Pass ``query_profile`` (analyze_query_text(query)) when scoring many ads for one query,
+    so the query is not re-parsed for every ad.
+    """
     title = str(ad.get("subject") or "")
     price_byn = ad_price_byn(ad)
     if price_byn is None:
         # No price: no discount or freshness bonuses, a neutral verdict and the lowest rank.
-        _, config_summary, _ = profile_match_bonus(query, title)
+        _, config_summary, _ = profile_match_bonus(query, title, query_profile=query_profile)
         return DealScore(
             score=0.0,
             verdict=NO_PRICE_VERDICT,
@@ -251,7 +264,7 @@ def compute_deal_score(
 
     score = 55.0
     reasons: list[str] = []
-    placeholder_price = is_low_price_outlier(price_byn, market_stats.median)
+    placeholder_price = is_placeholder_price(price_byn, market_stats)
     delta = compute_price_vs_median(ad, market_stats.median)
     if placeholder_price:
         reasons.append("цена-заглушка")
@@ -275,7 +288,9 @@ def compute_deal_score(
     if freshness_reason:
         reasons.append(freshness_reason)
 
-    config_bonus, config_summary, config_reason = profile_match_bonus(query, title)
+    config_bonus, config_summary, config_reason = profile_match_bonus(
+        query, title, query_profile=query_profile
+    )
     score += config_bonus
     if config_reason:
         reasons.append(config_reason)
@@ -387,7 +402,7 @@ def matches_tracker_filters(
     if exclude_duplicates and duplicate_count > 0:
         return False
     if min_discount_percent is not None:
-        if is_low_price_outlier(price_byn, market_stats.median):
+        if is_placeholder_price(price_byn, market_stats):
             return False
         delta = compute_price_vs_median(ad, market_stats.median)
         if abs(min(delta, 0.0)) < min_discount_percent:

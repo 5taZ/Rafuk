@@ -209,3 +209,32 @@ def test_duplicate_counts_scales_to_large_groups() -> None:
     counts = duplicate_counts(ads)
     assert time.perf_counter() - started < 5
     assert len(counts) == len(ads)
+
+
+def test_placeholder_checks_use_the_stats_cutoff(frozen_now: datetime) -> None:
+    del frozen_now
+    stats = compute_price_stats([1.0, 1.0, 1.0, 1.0, 22.0, 100.0, 100.0, 100.0, 100.0])
+    # 22 BYN was dropped from the stats as a placeholder, so it is one everywhere.
+    placeholder = kufar_ad(price_byn=2200)
+    score = compute_deal_score(placeholder, query="iphone", market_stats=stats)
+    assert "цена-заглушка" in score.reasons
+    assert (
+        matches_tracker_filters(placeholder, market_stats=stats, min_discount_percent=1) is False
+    )
+    real = kufar_ad(price_byn=9000)
+    assert (
+        "цена-заглушка" not in compute_deal_score(real, query="iphone", market_stats=stats).reasons
+    )
+
+
+def test_compute_deal_score_accepts_a_precomputed_query_profile(frozen_now: datetime) -> None:
+    del frozen_now
+    query = "iphone 13 128"
+    plain = compute_deal_score(kufar_ad(), query=query, market_stats=MARKET)
+    reused = compute_deal_score(
+        kufar_ad(),
+        query=query,
+        market_stats=MARKET,
+        query_profile=analyze_query_text(query),
+    )
+    assert reused == plain

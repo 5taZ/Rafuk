@@ -129,3 +129,35 @@ def test_geography_reads_region_from_strings_and_parameters(monkeypatch) -> None
     assert calls[0]["currency"] == "BYN"
     assert blank.status_code == 422
     assert euro.status_code == 422
+
+
+def test_geography_drops_placeholders_before_grouping(monkeypatch) -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+    from api.routers import geography
+
+    class PlaceholderClient(FakeKufarClient):
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            ads = [{"ad_id": index, "price_byn": 100000, "region_id": 7} for index in range(1, 11)]
+            ads.append({"ad_id": 11, "price_byn": 100, "region_id": 1})
+            ads.append({"ad_id": 12, "price_byn": 120000, "region_id": 5})
+            ads.append({"ad_id": 13, "price_byn": 110000})
+            return {"ads": ads}
+
+    monkeypatch.setattr(geography, "KufarClient", PlaceholderClient)
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/geography", params={"query": "iphone"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    # The 1 BYN lot is a placeholder market-wide: it is in no region, not even its own.
+    assert [region["region_id"] for region in payload["regions"]] == [7, 5]
+    assert payload["total_analyzed"] == 12
+    # Shares are of the lots with a known region and add up to 100%.
+    assert [region["share_percent"] for region in payload["regions"]] == [90.9, 9.1]
+    assert all(region["min"] >= 1000.0 for region in payload["regions"])

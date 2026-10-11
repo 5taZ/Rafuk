@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 import statistics
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 KOPECKS = 100
 MAX_PRICE_BYN = 100_000.0
@@ -67,7 +68,16 @@ PLAYSTATION_CONTEXT_ALIASES = {
     "обычный": "fat",
 }
 
-_WORD_CHARS = "0-9a-zа-яё"
+_WORD_CHARS = "0-9a-zа-я"
+# "ё" is spelled "е" just as often; Belarusian "і"/"ў" match their Russian twins.
+_LETTER_EQUIVALENTS = str.maketrans({"ё": "е", "і": "и", "ў": "у"})
+# "PlayStation5" / "Плейстейшен 4" written without a space before the generation.
+_PLAYSTATION_GENERATION_RE = re.compile(
+    rf"(?<![{_WORD_CHARS}])(?:play\s*station|плейстейшен)\s*([345])(?![{_WORD_CHARS}])"
+)
+# "S23+" / "Note 10+": a trailing "+" is the plus variant, not punctuation. A "+" between
+# digits ("8+256") is a RAM+storage config and stays a separator.
+_PLUS_SUFFIX_RE = re.compile(rf"([{_WORD_CHARS}])\++(?![0-9])")
 _ALIAS_PATTERNS = [
     (re.compile(rf"(?<![{_WORD_CHARS}]){re.escape(source)}(?![{_WORD_CHARS}])"), target)
     for source, target in SEARCH_ALIASES.items()
@@ -103,6 +113,9 @@ class PriceStats(BaseModel):
     min: float
     max: float
     count: int
+    # Prices strictly below this value (BYN) were dropped as placeholders. None means
+    # "unknown" (stats built by hand): checks then fall back to a share of the median.
+    low_cutoff: float | None = Field(default=None, exclude=True)
 
 
 def utc_now() -> datetime:
@@ -111,7 +124,9 @@ def utc_now() -> datetime:
 
 
 def normalize_search_text(value: str) -> str:
-    text = str(value or "").casefold()
+    text = str(value or "").casefold().translate(_LETTER_EQUIVALENTS)
+    text = _PLUS_SUFFIX_RE.sub(r"\1 plus ", text)
+    text = _PLAYSTATION_GENERATION_RE.sub(r"ps\1", text)
     for pattern, target in _ALIAS_PATTERNS:
         text = pattern.sub(target, text)
     if _PLAYSTATION_TOKEN_RE.search(text):
@@ -146,9 +161,28 @@ def build_query_key(query: str, strict_search: bool) -> str:
     return f"{prefix}{normalized[:room].rstrip()}#{digest}"
 
 
+def canonical_raw_query(query: str) -> str:
+    """Light normalization of the text sent to Kufar: casefold and collapsed whitespace.
+
+    Unlike normalize_search_text it keeps aliases and punctuation ("S23+" vs "S23",
+    "айфон" vs "iphone"), because Kufar may answer such queries differently.
+    """
+    return " ".join(str(query or "").casefold().split())
+
+
 def response_cache_key(endpoint: str, query: str, strict_search: bool, *parts: object) -> str:
-    """Cache key for a market response: the normalized query key plus response-shaping params."""
-    return ":".join([endpoint, build_query_key(query, strict_search), *map(str, parts)])
+    """Cache key for a market response.
+
+    Built from the lightly normalized raw query (what Kufar actually receives), the search
+    mode and the response-shaping params; JSON encoding keeps the parts unambiguous.
+    """
+    mode = "strict" if strict_search else "broad"
+    body = json.dumps(
+        [mode, canonical_raw_query(query), *map(str, parts)],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"{endpoint}:{body}"
 
 
 def is_strict_match(title: str, query: str) -> bool:
@@ -260,16 +294,52 @@ def low_price_cutoff(median: float) -> float:
     return median * LOW_OUTLIER_MEDIAN_RATIO if median and median > 0 else 0.0
 
 
-def is_low_price_outlier(price_byn: float | None, median: float) -> bool:
-    return price_byn is not None and price_byn < low_price_cutoff(median)
+def stats_low_cutoff(stats: PriceStats) -> float:
+    """The placeholder cutoff the stats were computed with (the same one every check uses)."""
+    if stats.low_cutoff is not None:
+        return stats.low_cutoff
+    return low_price_cutoff(stats.median)
+
+
+def is_low_price_outlier(
+    price_byn: float | None,
+    median: float,
+    *,
+    cutoff: float | None = None,
+) -> bool:
+    """True for a placeholder price; pass ``cutoff`` (PriceStats.low_cutoff) when known."""
+    if price_byn is None:
+        return False
+    return price_byn < (cutoff if cutoff is not None else low_price_cutoff(median))
+
+
+def is_placeholder_price(price_byn: float | None, stats: PriceStats) -> bool:
+    return is_low_price_outlier(price_byn, stats.median, cutoff=stats_low_cutoff(stats))
+
+
+def split_low_outliers(prices: list[float]) -> tuple[list[float], float]:
+    """Return the prices without placeholders and the cutoff used to drop them.
+
+    The cutoff is a share of the median of the *kept* prices: dropping placeholders raises
+    the median, so the cutoff is recomputed until nothing else falls below it. Every
+    dropped price is then below the final cutoff and every kept one is at or above it, so
+    checks against the resulting stats agree with what the stats excluded. Samples that
+    are too small to tell a placeholder from a real price are kept intact (cutoff 0).
+    """
+    kept = list(prices)
+    if len(kept) < MIN_PRICES_FOR_LOW_CUTOFF:
+        return kept, 0.0
+    while True:
+        cutoff = low_price_cutoff(statistics.median(kept))
+        remaining = [price for price in kept if price >= cutoff]
+        if len(remaining) == len(kept):
+            return kept, cutoff
+        kept = remaining
 
 
 def drop_low_outliers(prices: list[float]) -> list[float]:
     """Drop placeholder prices far below the median of a large enough sample."""
-    if len(prices) < MIN_PRICES_FOR_LOW_CUTOFF:
-        return list(prices)
-    cutoff = low_price_cutoff(statistics.median(prices))
-    return [price for price in prices if price >= cutoff]
+    return split_low_outliers(prices)[0]
 
 
 def _percentile(data: list[float], percentile: float) -> float:
@@ -283,10 +353,17 @@ def _percentile(data: list[float], percentile: float) -> float:
     return data[floor_idx] + (k - floor_idx) * (data[ceil_idx] - data[floor_idx])
 
 
-def compute_price_stats(prices: list[float]) -> PriceStats:
-    sorted_prices = sorted(drop_low_outliers(prices))
+def compute_price_stats(prices: list[float], *, drop_placeholders: bool = True) -> PriceStats:
+    """Price statistics; ``drop_placeholders=False`` for prices already filtered elsewhere."""
+    if drop_placeholders:
+        kept, cutoff = split_low_outliers(prices)
+    else:
+        kept, cutoff = list(prices), 0.0
+    sorted_prices = sorted(kept)
     if not sorted_prices:
-        return PriceStats(mean=0.0, median=0.0, q1=0.0, q3=0.0, min=0.0, max=0.0, count=0)
+        return PriceStats(
+            mean=0.0, median=0.0, q1=0.0, q3=0.0, min=0.0, max=0.0, count=0, low_cutoff=0.0
+        )
     return PriceStats(
         mean=round(statistics.mean(sorted_prices), 2),
         median=round(statistics.median(sorted_prices), 2),
@@ -295,6 +372,7 @@ def compute_price_stats(prices: list[float]) -> PriceStats:
         min=round(sorted_prices[0], 2),
         max=round(sorted_prices[-1], 2),
         count=len(sorted_prices),
+        low_cutoff=cutoff,
     )
 
 
@@ -312,7 +390,13 @@ def filter_deal_ads(
     median: float,
     discount_from_percent: float,
     discount_to_percent: float | None = None,
+    *,
+    low_cutoff: float | None = None,
 ) -> list[dict[str, Any]]:
+    """Ads cheaper than the median by the given discount range, placeholders excluded.
+
+    Pass ``low_cutoff`` (PriceStats.low_cutoff) so the placeholder check matches the stats.
+    """
     if not median:
         return []
 
@@ -324,7 +408,7 @@ def filter_deal_ads(
     filtered = []
     for ad in ads:
         price_byn = ad_price_byn(ad)
-        if price_byn is None or is_low_price_outlier(price_byn, median):
+        if price_byn is None or is_low_price_outlier(price_byn, median, cutoff=low_cutoff):
             continue
         delta = compute_price_vs_median(ad, median)
         if delta >= 0:

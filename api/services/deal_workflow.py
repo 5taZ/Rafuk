@@ -7,7 +7,7 @@ from api.services.aggregator import (
     PriceStats,
     ad_price_byn,
     filter_deal_ads,
-    is_low_price_outlier,
+    is_placeholder_price,
     listing_age_hours,
 )
 
@@ -24,7 +24,11 @@ def compute_liquidity_insight(
     fresh_count = sum(
         1 for ad in ads if (age := _age_hours(ad.get("list_time"))) is not None and age <= 72
     )
-    deal_count = len(filter_deal_ads(ads, market_stats.median, 8.0)) if market_stats.median else 0
+    deal_count = (
+        len(filter_deal_ads(ads, market_stats.median, 8.0, low_cutoff=market_stats.low_cutoff))
+        if market_stats.median
+        else 0
+    )
     score = 35.0
     reasons: list[str] = []
 
@@ -76,7 +80,7 @@ def compute_flip_estimates(
     price_byn = ad_price_byn(ad)
     if price_byn is None or market_stats.count == 0:
         return []
-    if is_low_price_outlier(price_byn, market_stats.median):
+    if is_placeholder_price(price_byn, market_stats):
         # A placeholder price would promise an absurd profit.
         return []
 
