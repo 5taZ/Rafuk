@@ -6,8 +6,14 @@ from sqlalchemy import func, select
 
 from api.database import get_engine, get_session_factory
 from api.models import QueryListingState, QuerySnapshot
+from api.services import history_service
 from api.services.history_service import (
+    BASELINE_MARKER_AD_ID,
+    has_listing_states,
     is_significant_price_drop,
+    load_known_ad_ids,
+    load_listing_states,
+    mark_query_baseline,
     snapshot_bucket,
     sync_query_listing_states,
     upsert_query_snapshot,
@@ -275,4 +281,125 @@ async def test_sync_query_listing_states_truncates_long_values() -> None:
     assert len(result.new_listings) == 1
     assert len(result.new_listings[0].title) == 255
     assert len(result.new_listings[0].list_time or "") == 64
+    await engine.dispose()
+
+
+async def add_state(
+    session_factory, query: str, ad_id: int, *, active: bool = True, price: float = 100
+) -> None:
+    seen_at = datetime(2026, 10, 1, tzinfo=UTC)
+    async with session_factory() as session:
+        session.add(
+            QueryListingState(
+                query=query,
+                ad_id=ad_id,
+                title="t",
+                link="",
+                last_price_byn=price,
+                active=active,
+                first_seen_at=seen_at,
+                last_seen_at=seen_at,
+            )
+        )
+        await session.commit()
+
+
+async def test_known_ids_and_states_are_loaded_only_for_requested_listings() -> None:
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    for ad_id in range(1, 6):
+        await add_state(session_factory, "broad::x", ad_id, active=ad_id % 2 == 0)
+    await add_state(session_factory, "broad::other", 7)
+
+    async with session_factory() as session:
+        assert await load_known_ad_ids(session, query="broad::x") == {1, 2, 3, 4, 5}
+        assert await load_known_ad_ids(session, query="broad::x", ad_ids=[2, 5, 7, 9]) == {2, 5}
+        assert await load_known_ad_ids(session, query="broad::x", ad_ids=[]) == set()
+        states = await load_listing_states(session, query="broad::x", ad_ids=[1, 4, 7])
+        assert sorted(states) == [1, 4]
+        assert await has_listing_states(session, query="broad::x")
+        assert not await has_listing_states(session, query="broad::missing")
+    await engine.dispose()
+
+
+async def test_known_id_lookup_is_chunked(monkeypatch) -> None:
+    monkeypatch.setattr(history_service, "AD_ID_LOOKUP_CHUNK", 3)
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    for ad_id in range(1, 11):
+        await add_state(session_factory, "broad::x", ad_id)
+
+    async with session_factory() as session:
+        requested = list(range(0, 25))
+        assert await load_known_ad_ids(session, query="broad::x", ad_ids=requested) == set(
+            range(1, 11)
+        )
+        states = await load_listing_states(session, query="broad::x", ad_ids=requested)
+        assert sorted(states) == list(range(1, 11))
+    await engine.dispose()
+
+
+async def test_sync_loads_only_sample_states_and_deactivates_the_rest(monkeypatch) -> None:
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    for ad_id in range(1, 21):
+        await add_state(session_factory, "broad::x", ad_id, price=1000)
+    await add_state(session_factory, "broad::other", 1)
+
+    loaded: list[int] = []
+    original_load = history_service.load_listing_states
+
+    async def spy_load(session, **kwargs):
+        states = await original_load(session, **kwargs)
+        loaded.append(len(states))
+        return states
+
+    monkeypatch.setattr(history_service, "load_listing_states", spy_load)
+    observed_at = datetime(2026, 10, 11, 10, 0, tzinfo=UTC)
+    async with session_factory() as session:
+        result = await sync_query_listing_states(
+            session,
+            query="broad::x",
+            ads=[make_ad(3, 900), make_ad(30, 500)],
+            observed_at=observed_at,
+            total_results=2,
+        )
+        await session.commit()
+    # Only the state of ad 3 was loaded, not all twenty of the key.
+    assert loaded == [1]
+    assert [state.ad_id for state in result.new_listings] == [30]
+    assert [(state.ad_id, round(delta)) for state, delta in result.price_drops] == [(3, 100)]
+
+    async with session_factory() as session:
+        rows = list((await session.execute(select(QueryListingState))).scalars())
+    active = sorted((row.query, row.ad_id) for row in rows if row.active)
+    assert active == [("broad::other", 1), ("broad::x", 3), ("broad::x", 30)]
+    assert len(rows) == 22
+    await engine.dispose()
+
+
+async def test_mark_query_baseline_is_idempotent_and_never_a_listing() -> None:
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    observed_at = datetime(2026, 10, 11, 10, 0, tzinfo=UTC)
+
+    for _ in range(2):
+        async with session_factory() as session:
+            await mark_query_baseline(session, query="broad::x", observed_at=observed_at)
+            await session.commit()
+
+    async with session_factory() as session:
+        assert await has_listing_states(session, query="broad::x")
+        rows = list((await session.execute(select(QueryListingState))).scalars())
+        assert [(row.ad_id, row.active) for row in rows] == [(BASELINE_MARKER_AD_ID, False)]
+
+        result = await sync_query_listing_states(
+            session,
+            query="broad::x",
+            ads=[make_ad(5, 100)],
+            observed_at=observed_at + timedelta(minutes=30),
+            total_results=1,
+        )
+        await session.commit()
+    assert [state.ad_id for state in result.new_listings] == [5]
     await engine.dispose()

@@ -2,12 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import zlib
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramEntityTooLarge,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+    TelegramServerError,
+)
 from aiogram.types import InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import delete, select, text, update
@@ -24,14 +33,15 @@ from api.services.aggregator import (
     extract_prices,
     normalize_price_byn,
     normalize_search_text,
+    parse_list_time,
 )
 from api.services.history_service import (
     QuerySyncResult,
+    has_listing_states,
     listing_ad_id,
     load_known_ad_ids,
-    snapshot_bucket,
+    mark_query_baseline,
     sync_query_listing_states,
-    upsert_query_snapshot,
 )
 from api.services.kufar_client import KufarClient
 from api.services.market_signals import duplicate_counts
@@ -41,15 +51,30 @@ from bot.keyboards import tracker_alert_keyboard
 
 logger = logging.getLogger(__name__)
 
-# Kufar paging for one tracker group: follow the cursor until a page brings no
-# unknown listings or this many pages were fetched.
+# Kufar paging for one tracker group: follow the cursor while a page brings unknown
+# listings or listings newer than the group's previous check, up to this many pages.
 PAGE_SIZE = 100
 MAX_PAGES_PER_GROUP = 3
+# Kufar's list_time and our clock may disagree a little; a page whose oldest listing
+# is this close to the previous check still counts as possibly new.
+LIST_TIME_SLACK_MINUTES = 5
+
+# Once per window of this length every group pages deeper than its recent listings, so
+# price drops of older active listings are noticed too. Listings first seen beyond the
+# regular window are recorded silently: they are old, not new.
+DEEP_SCAN_INTERVAL_HOURS = 6
+DEEP_SCAN_MAX_PAGES = 10
 
 # Telegram allows about 30 messages per second per bot; stay well below it.
 SEND_MIN_INTERVAL_SECONDS = 1 / 20
 # A longer flood-control wait is not worth blocking the whole run for.
 MAX_RETRY_AFTER_SECONDS = 60
+# Attempts per alert for flood control and transient network or server errors.
+MAX_SEND_ATTEMPTS = 3
+SEND_BACKOFF_BASE_SECONDS = 2.0
+# After this many alerts in a row were lost to transient errors Telegram is probably
+# down: the remaining alerts of the run get one attempt each instead of a backoff.
+MAX_CONSECUTIVE_TRANSIENT_FAILURES = 3
 
 SNAPSHOT_RETENTION_DAYS = 120
 UNTRACKED_LISTING_STATE_RETENTION_DAYS = 90
@@ -58,10 +83,28 @@ TRACKED_LISTING_STATE_RETENTION_DAYS = 365
 DB_HEALTH_CHECK_INTERVAL_SECONDS = 300
 DB_STARTUP_MAX_BACKOFF_SECONDS = 60.0
 
-# A tracker with a longer interval than the global check is due once this much less than
-# its interval has passed since its last check: the job and the Kufar fetches drift by a
-# few seconds from run to run, and missing by a second would delay it by a whole cycle.
-DUE_SLACK_MINUTES = 1
+
+async def _sleep(seconds: float) -> None:
+    # Separate hook so tests can skip send backoff without patching asyncio.sleep globally.
+    await asyncio.sleep(seconds)
+
+
+def _as_utc(value: datetime) -> datetime:
+    # SQLite drops the timezone; the columns always store UTC.
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+def rounded_interval_min(interval_min: int, check_interval_min: int) -> int:
+    """The cadence a tracker really gets: checks happen only every ``check_interval_min``.
+
+    The interval is rounded to the nearest multiple of the global interval (halves round
+    up, never below one interval): at a 30-minute check 45 and 50 minutes mean every
+    hour, while 40 minutes means every run.
+    """
+    if check_interval_min <= 0:
+        return interval_min
+    multiple = max(1, (2 * interval_min + check_interval_min) // (2 * check_interval_min))
+    return multiple * check_interval_min
 
 
 def tracker_is_due(
@@ -74,15 +117,44 @@ def tracker_is_due(
     """Whether a tracker wants a check in the run that starts at ``now``.
 
     Trackers whose interval is not longer than the global check interval run every time;
-    others run when they were never checked or their interval (minus a minute of slack)
-    has passed since the last check.
+    others run when they were never checked or their rounded interval (see
+    ``rounded_interval_min``) has passed since the last check. ``last_checked_at`` holds
+    the start of the run that checked the tracker, and half a check interval of slack
+    absorbs job jitter, so a late run never shifts the cadence by a whole cycle.
     """
     if interval_min is None or interval_min <= check_interval_min or last_checked_at is None:
         return True
-    if last_checked_at.tzinfo is None:
-        # SQLite drops the timezone; the column always stores UTC.
-        last_checked_at = last_checked_at.replace(tzinfo=UTC)
-    return now - last_checked_at >= timedelta(minutes=interval_min - DUE_SLACK_MINUTES)
+    cadence = rounded_interval_min(interval_min, check_interval_min)
+    elapsed = now - _as_utc(last_checked_at)
+    return elapsed >= timedelta(minutes=cadence - check_interval_min / 2)
+
+
+def deep_scan_is_due(
+    key: str,
+    previous_check: datetime | None,
+    now: datetime,
+    *,
+    interval: timedelta | None = None,
+) -> bool:
+    """Whether this run of a group should page deeper than its recent listings.
+
+    Time is cut into windows of ``interval`` shifted per key by a stable hash, so the deep
+    scans of different groups spread over the window instead of piling up in one run. A
+    group scans deeply on its first run in each window. The decision depends only on the
+    previous check time, so it survives restarts. A group that was never checked records
+    its baseline with the regular paging first.
+    """
+    if previous_check is None:
+        return False
+    if interval is None:
+        interval = timedelta(hours=DEEP_SCAN_INTERVAL_HOURS)
+    seconds = max(int(interval.total_seconds()), 1)
+    offset = zlib.crc32(key.encode("utf-8")) % seconds
+
+    def window(moment: datetime) -> int:
+        return (int(_as_utc(moment).timestamp()) + offset) // seconds
+
+    return window(now) != window(previous_check)
 
 
 @dataclass(slots=True)
@@ -114,12 +186,21 @@ class TrackerGroup:
             for interval_min, last_checked_at in self.schedules
         )
 
+    @property
+    def last_checked_at(self) -> datetime | None:
+        """Start of the group's previous run: the latest check of its trackers."""
+        checks = [_as_utc(checked) for _, checked in self.schedules if checked is not None]
+        return max(checks) if checks else None
+
 
 @dataclass(slots=True)
 class FetchedSample:
     ads: list[dict[str, Any]]
     total_results: int
     pages: int
+    # Listings first fetched beyond the regular window during a deep scan: recorded
+    # without a "new listing" alert, because they are old.
+    silent_ad_ids: set[int] = field(default_factory=set)
 
 
 @dataclass(slots=True)
@@ -323,46 +404,92 @@ async def _load_tracker_groups(
     return list(groups.values())
 
 
+KnownIdsLookup = Callable[[Iterable[int]], Awaitable[set[int]]]
+
+
+def _page_reaches_since(raw_ads: list[dict[str, Any]], since: datetime | None) -> bool:
+    """Whether even the oldest listing of a raw page is newer than the previous check.
+
+    Results are sorted by date, so the next page may then hold listings that appeared
+    after the previous check too, even if this page had nothing unknown (for example a
+    strict query whose fresh listings are all "Pro" and "Max").
+    """
+    if since is None:
+        return False
+    times = [parse_list_time(ad.get("list_time")) for ad in raw_ads]
+    parsed = [moment for moment in times if moment is not None]
+    if not parsed:
+        return False
+    return min(parsed) >= since - timedelta(minutes=LIST_TIME_SLACK_MINUTES)
+
+
 async def _fetch_group_sample(
     client: KufarClient,
     group: TrackerGroup,
-    known_ad_ids: set[int],
+    lookup_known: KnownIdsLookup,
+    *,
+    since: datetime | None = None,
+    deep: bool = False,
 ) -> FetchedSample:
     """Fetch recent listings of a group, following the cursor for a few pages.
 
-    Paging stops early once a page contains only listings that were already seen
-    for this query (results are sorted by date, so older pages are known too).
+    The regular window ends after a page whose listings are all known for this query
+    and whose raw listings (before the strict filter) are all older than ``since``, the
+    group's previous check, or after ``MAX_PAGES_PER_GROUP`` pages. ``lookup_known``
+    answers which of the given ad_ids were seen before, one page at a time.
+
+    A ``deep`` scan keeps paging up to ``DEEP_SCAN_MAX_PAGES`` to refresh the prices of
+    older listings. Listings first seen beyond the regular window go to
+    ``silent_ad_ids``, and a failing page beyond it ends the scan instead of the group.
     """
     ads: list[dict[str, Any]] = []
     seen_ids: set[int] = set()
+    silent_ids: set[int] = set()
     kufar_total: int | None = None
     cursor: str | None = None
     pages = 0
+    in_window = True
+    max_pages = max(DEEP_SCAN_MAX_PAGES, MAX_PAGES_PER_GROUP) if deep else MAX_PAGES_PER_GROUP
 
-    for _ in range(MAX_PAGES_PER_GROUP):
-        payload = await client.search(
-            query=group.query,
-            currency="BYN",
-            size=PAGE_SIZE,
-            cursor=cursor,
-        )
+    while pages < max_pages:
+        try:
+            payload = await client.search(
+                query=group.query,
+                currency="BYN",
+                size=PAGE_SIZE,
+                cursor=cursor,
+            )
+        except Exception:
+            if in_window:
+                raise
+            logger.warning(
+                "Deep scan of %s stopped after %d pages", group.key, pages, exc_info=True
+            )
+            break
         pages += 1
         if kufar_total is None:
             kufar_total = KufarClient.extract_total(payload)
         # Normalized ads have an integer ad_id and well-typed fields, so one malformed
         # listing cannot break the sync, the filters or the alert of the whole group.
-        raw_ads = payload.get("ads") if isinstance(payload, dict) else None
-        page_ads = apply_search_mode(normalize_ads(raw_ads), group.query, group.strict_mode)
-        has_unknown = False
+        raw_ads = normalize_ads(payload.get("ads") if isinstance(payload, dict) else None)
+        page_ads = apply_search_mode(raw_ads, group.query, group.strict_mode)
+        page_ids: list[int] = []
         for ad in page_ads:
             ad_id = listing_ad_id(ad)
             if ad_id <= 0 or ad_id in seen_ids:
                 continue
             seen_ids.add(ad_id)
             ads.append(ad)
-            if ad_id not in known_ad_ids:
-                has_unknown = True
-        if not has_unknown:
+            page_ids.append(ad_id)
+        if in_window:
+            known = await lookup_known(page_ids) if page_ids else set()
+            has_unknown = any(ad_id not in known for ad_id in page_ids)
+            in_window = pages < MAX_PAGES_PER_GROUP and (
+                has_unknown or _page_reaches_since(raw_ads, since)
+            )
+        else:
+            silent_ids.update(page_ids)
+        if not in_window and not deep:
             break
         cursor = KufarClient.extract_next_cursor(payload)
         if not cursor:
@@ -373,7 +500,12 @@ async def _fetch_group_sample(
         total_results = len(ads)
     else:
         total_results = max(kufar_total, len(ads))
-    return FetchedSample(ads=ads, total_results=total_results, pages=pages)
+    return FetchedSample(
+        ads=ads,
+        total_results=total_results,
+        pages=pages,
+        silent_ad_ids=silent_ids,
+    )
 
 
 async def _process_group(
@@ -382,18 +514,35 @@ async def _process_group(
     client: KufarClient,
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
+    checked_at: datetime | None = None,
 ) -> list[OutgoingAlert]:
     """Fetch, sync and persist one group in its own transaction; return alerts to send.
 
     The transaction is committed before anything is sent, so a failure later in the
     run never rolls back state for which users were already notified.
-    """
-    async with session_factory() as session:
-        known_ad_ids = await load_known_ad_ids(session, query=group.key)
-        # Do not keep a transaction open while talking to Kufar.
-        await session.rollback()
 
-    sample = await _fetch_group_sample(client, group, known_ad_ids)
+    A key without any remembered listing (a new query, or a key renamed by a change of
+    the query normalization) only records a baseline: every listing would look new.
+    ``checked_at`` is the start of the run and becomes the trackers' ``last_checked_at``.
+    The scheduler never writes query snapshots: its sample of recent pages is not
+    comparable with the full scans behind /price-stats.
+    """
+    if checked_at is None:
+        checked_at = datetime.now(UTC)
+    since = group.last_checked_at
+
+    # Short sessions: no transaction stays open while talking to Kufar.
+    async with session_factory() as session:
+        baseline = not await has_listing_states(session, query=group.key)
+
+    async def lookup_known(ad_ids: Iterable[int]) -> set[int]:
+        if baseline:
+            return set()
+        async with session_factory() as session:
+            return await load_known_ad_ids(session, query=group.key, ad_ids=ad_ids)
+
+    deep = not baseline and deep_scan_is_due(group.key, since, checked_at)
+    sample = await _fetch_group_sample(client, group, lookup_known, since=since, deep=deep)
     observed_at = datetime.now(UTC)
 
     async with session_factory() as session:
@@ -409,16 +558,6 @@ async def _process_group(
         if not trackers:
             return []
 
-        # The scheduler's sample covers only a few recent pages, so it never
-        # replaces a snapshot written from a full API scan.
-        await upsert_query_snapshot(
-            session,
-            query=group.key,
-            ads=sample.ads,
-            total_results=sample.total_results,
-            bucket_at=snapshot_bucket(observed_at),
-            only_if_missing=True,
-        )
         sync_result = await sync_query_listing_states(
             session,
             query=group.key,
@@ -426,6 +565,16 @@ async def _process_group(
             observed_at=observed_at,
             total_results=sample.total_results,
         )
+        if baseline and not sample.ads:
+            # Remember that the key was initialized, so the first listing of a query
+            # that has no results yet still produces an alert.
+            await mark_query_baseline(session, query=group.key, observed_at=observed_at)
+        if sample.silent_ad_ids:
+            sync_result.new_listings = [
+                state
+                for state in sync_result.new_listings
+                if state.ad_id not in sample.silent_ad_ids
+            ]
         ads_by_id = {listing_ad_id(ad): ad for ad in sample.ads}
         duplicate_index = duplicate_counts(sample.ads)
         market_stats = compute_price_stats(extract_prices(sample.ads))
@@ -438,7 +587,8 @@ async def _process_group(
 
         drafts: list[tuple[Tracker, QuerySyncResult, list[TrackerEvent]]] = []
         for tracker in trackers:
-            if tracker.last_checked_at is not None:
+            # The first check of a tracker, or of a key, only records a baseline.
+            if not baseline and tracker.last_checked_at is not None:
                 tracker_sync_result = _filter_sync_result_for_tracker(
                     tracker,
                     sync_result,
@@ -449,10 +599,9 @@ async def _process_group(
                 if tracker_sync_result.new_listings or tracker_sync_result.price_drops:
                     events = persist_tracker_events(session, tracker, tracker_sync_result)
                     drafts.append((tracker, tracker_sync_result, events))
-            # The first check of a tracker only records a baseline.
             tracker.last_seen_ad_id = newest_id
             tracker.last_seen_price_byn = newest_price_byn
-            tracker.last_checked_at = observed_at
+            tracker.last_checked_at = checked_at
 
         await session.flush()
 
@@ -490,8 +639,9 @@ async def _process_group(
         await session.commit()
 
     logger.info(
-        "Checked %s: %d trackers, %d listings from %d pages, %d new, %d price drops",
+        "Checked %s%s: %d trackers, %d listings from %d pages, %d new, %d price drops",
         group.key,
+        " (baseline)" if baseline else " (deep scan)" if deep else "",
         len(trackers),
         len(sample.ads),
         sample.pages,
@@ -531,6 +681,8 @@ class AlertSender:
         self._min_interval = SEND_MIN_INTERVAL_SECONDS if min_interval is None else min_interval
         self._last_sent_at: float | None = None
         self._blocked_users: set[int] = set()
+        # Alerts dropped in a row because of transient errors.
+        self._transient_failures = 0
 
     async def _throttle(self) -> None:
         loop = asyncio.get_running_loop()
@@ -541,9 +693,22 @@ class AlertSender:
         self._last_sent_at = loop.time()
 
     async def send(self, alert: OutgoingAlert) -> bool:
+        """Send one alert; return whether it was delivered.
+
+        Flood control (up to ``MAX_RETRY_AFTER_SECONDS``) and transient network or server
+        errors are retried up to ``MAX_SEND_ATTEMPTS`` times with exponential backoff:
+        the listing states are already committed, so a dropped alert is not repeated by
+        the next run (its events stay visible in the Mini App). While Telegram looks
+        down, alerts get a single attempt each so the run is not stalled by backoffs.
+        """
         if alert.user_id in self._blocked_users:
             return False
-        for attempt in range(2):
+        max_attempts = (
+            1
+            if self._transient_failures >= MAX_CONSECUTIVE_TRANSIENT_FAILURES
+            else max(MAX_SEND_ATTEMPTS, 1)
+        )
+        for attempt in range(1, max_attempts + 1):
             await self._throttle()
             try:
                 await self._bot.send_message(
@@ -551,16 +716,18 @@ class AlertSender:
                     alert.text,
                     reply_markup=alert.reply_markup,
                 )
+                self._transient_failures = 0
                 return True
             except TelegramRetryAfter as exc:
-                if attempt == 0 and exc.retry_after <= MAX_RETRY_AFTER_SECONDS:
+                if attempt < max_attempts and exc.retry_after <= MAX_RETRY_AFTER_SECONDS:
                     logger.warning(
                         "Telegram flood control for user %s: retrying in %s s",
                         alert.user_id,
                         exc.retry_after,
                     )
-                    await asyncio.sleep(exc.retry_after)
+                    await _sleep(exc.retry_after)
                     continue
+                self._transient_failures += 1
                 logger.warning(
                     "Dropped alert of tracker %s for user %s: flood control (retry after %s s)",
                     alert.tracker_id,
@@ -571,6 +738,38 @@ class AlertSender:
             except TelegramForbiddenError:
                 self._blocked_users.add(alert.user_id)
                 await self._deactivate(alert)
+                return False
+            except TelegramEntityTooLarge as exc:
+                # A network-error subclass, but resending the same message cannot help.
+                logger.warning(
+                    "Failed to send alert of tracker %s to user %s: %s",
+                    alert.tracker_id,
+                    alert.user_id,
+                    exc,
+                )
+                return False
+            except (TelegramNetworkError, TelegramServerError) as exc:
+                if attempt < max_attempts:
+                    delay = SEND_BACKOFF_BASE_SECONDS * 2 ** (attempt - 1)
+                    logger.warning(
+                        "Transient Telegram error for user %s (attempt %d of %d), "
+                        "retrying in %.0f s: %s",
+                        alert.user_id,
+                        attempt,
+                        max_attempts,
+                        delay,
+                        exc,
+                    )
+                    await _sleep(delay)
+                    continue
+                self._transient_failures += 1
+                logger.warning(
+                    "Dropped alert of tracker %s for user %s after %d attempts: %s",
+                    alert.tracker_id,
+                    alert.user_id,
+                    attempt,
+                    exc,
+                )
                 return False
             except TelegramAPIError as exc:
                 logger.warning(
@@ -621,17 +820,19 @@ async def check_trackers(
     if not groups:
         return
 
+    # Every due check is measured from the start of the run and recorded as the trackers'
+    # last_checked_at, so neither a long run nor slow Kufar fetches shift the cadence of
+    # the groups processed late in it.
+    run_started_at = datetime.now(UTC)
     client = KufarClient(settings)
     sender = AlertSender(bot, session_factory)
     failed = 0
     skipped = 0
     try:
         for group in groups:
-            # Evaluated right before the group runs, so a long run does not shift the
-            # cadence of the groups processed late in it.
             if not group.is_due(
                 check_interval_min=settings.alert_check_interval,
-                now=datetime.now(UTC),
+                now=run_started_at,
             ):
                 skipped += 1
                 continue
@@ -641,6 +842,7 @@ async def check_trackers(
                     client=client,
                     session_factory=session_factory,
                     settings=settings,
+                    checked_at=run_started_at,
                 )
             except Exception:
                 failed += 1
@@ -661,7 +863,15 @@ def create_scheduler(
     bot: Bot,
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
+    *,
+    first_run_at: datetime | None = None,
 ) -> AsyncIOScheduler:
+    """Build the scheduler; the first tracker check runs at ``first_run_at`` (default: now).
+
+    A run that starts late (the scheduler was started after a slow database wait, or the
+    event loop was busy) still happens instead of being dropped as misfired, and missed
+    runs are coalesced into one.
+    """
     scheduler = AsyncIOScheduler(timezone="Europe/Minsk")
     scheduler.add_job(
         check_trackers,
@@ -671,7 +881,10 @@ def create_scheduler(
         id="tracker-check",
         replace_existing=True,
         # Run the first check right after start instead of one interval later.
-        next_run_time=datetime.now(UTC),
+        next_run_time=first_run_at or datetime.now(UTC),
+        misfire_grace_time=None,
+        coalesce=True,
+        max_instances=1,
     )
     # Daily cleanup of old events, snapshots and listing states
     scheduler.add_job(
@@ -682,6 +895,8 @@ def create_scheduler(
         kwargs={"session_factory": session_factory},
         id="daily-cleanup",
         replace_existing=True,
+        misfire_grace_time=None,
+        coalesce=True,
     )
     return scheduler
 
@@ -799,10 +1014,13 @@ async def main() -> None:
     engine = get_engine()
     session_factory = get_session_factory(engine)
     bot = Bot(settings.bot_token)
-    scheduler = create_scheduler(bot, session_factory, settings)
+    scheduler: AsyncIOScheduler | None = None
 
     try:
         await wait_for_database(engine)
+        # Created after the wait, so the first check is scheduled for now, not for the
+        # moment the process started.
+        scheduler = create_scheduler(bot, session_factory, settings)
         scheduler.start()
         logger.info("Scheduler started")
         while True:
@@ -812,7 +1030,7 @@ async def main() -> None:
             if not await check_db_health(engine):
                 logger.warning("Database is unavailable; jobs will fail until it recovers")
     finally:
-        if scheduler.running:
+        if scheduler is not None and scheduler.running:
             scheduler.shutdown(wait=False)
         await engine.dispose()
         await bot.session.close()

@@ -116,9 +116,18 @@ async def run_check(bot: FakeBot, session_factory) -> None:
         (None, NOW, True),
         (60, None, True),  # never checked
         (60, NOW - timedelta(minutes=30), False),
-        (60, NOW - timedelta(minutes=58, seconds=59), False),
-        (60, NOW - timedelta(minutes=59), True),  # one minute of slack for job drift
+        (60, NOW - timedelta(minutes=44, seconds=59), False),
+        # Half a check interval of slack: a run that starts late, or a previous run whose
+        # fetches took minutes, never pushes the check a whole cycle later.
+        (60, NOW - timedelta(minutes=45), True),
+        (60, NOW - timedelta(minutes=58), True),
         (60, NOW - timedelta(hours=3), True),
+        # Not a multiple of the global interval: rounded to the nearest multiple.
+        (45, NOW - timedelta(minutes=30), False),  # 45 -> every 60 minutes
+        (45, NOW - timedelta(minutes=60), True),
+        (40, NOW - timedelta(minutes=30), True),  # 40 -> every run
+        (75, NOW - timedelta(minutes=60), False),  # 75 -> every 90 minutes
+        (75, NOW - timedelta(minutes=90), True),
         # SQLite returns naive datetimes; they are UTC.
         (60, (NOW - timedelta(minutes=10)).replace(tzinfo=None), False),
         (60, (NOW - timedelta(minutes=90)).replace(tzinfo=None), True),
@@ -131,6 +140,39 @@ def test_tracker_is_due(
         collector.tracker_is_due(interval_min, last_checked_at, check_interval_min=30, now=NOW)
         is expected
     )
+
+
+@pytest.mark.parametrize(
+    ("interval_min", "check_interval", "expected"),
+    [
+        (30, 30, 30),
+        (40, 30, 30),
+        (45, 30, 60),
+        (50, 30, 60),
+        (60, 30, 60),
+        (74, 30, 60),
+        (75, 30, 90),
+        (120, 30, 120),
+        (5, 30, 30),
+        (25, 10, 30),
+    ],
+)
+def test_rounded_interval_min(interval_min: int, check_interval: int, expected: int) -> None:
+    assert collector.rounded_interval_min(interval_min, check_interval) == expected
+
+
+def test_hourly_tracker_keeps_its_cadence_over_a_day() -> None:
+    # Runs every 30 minutes, each starting up to 3 minutes late; the hourly tracker
+    # must be checked every second run, not every third.
+    start = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
+    last_checked: datetime | None = None
+    checks = 0
+    for step in range(48):
+        run_started_at = start + timedelta(minutes=30 * step, seconds=(step * 37) % 180)
+        if collector.tracker_is_due(60, last_checked, check_interval_min=30, now=run_started_at):
+            last_checked = run_started_at
+            checks += 1
+    assert checks == 24
 
 
 def test_group_is_due_when_any_tracker_is_due() -> None:
@@ -224,3 +266,27 @@ async def test_running_group_processes_all_its_trackers(kufar, session_factory) 
     every_run_tracker = await load_tracker(session_factory, every_run)
     assert hourly_tracker.last_checked_at == every_run_tracker.last_checked_at
     assert (await load_tracker(session_factory, other_query)).last_checked_at is not None
+
+
+async def test_last_checked_at_is_the_start_of_the_run(
+    kufar, session_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The due check compares with the run start, so the stored time must be the run start
+    # too and not the moment the (possibly slow) Kufar fetch of the group finished.
+    kufar.catalog["iphone 15"] = [make_ad(1, 2000)]
+    tracker_id = await add_tracker(session_factory, 111, "iphone 15", interval_min=60)
+    fetched_at: list[datetime] = []
+    original_search = FakeKufarClient.search
+
+    async def slow_search(self: FakeKufarClient, query: str, **kwargs: Any) -> dict[str, Any]:
+        fetched_at.append(datetime.now(UTC))
+        return await original_search(self, query, **kwargs)
+
+    monkeypatch.setattr(FakeKufarClient, "search", slow_search)
+    before = datetime.now(UTC)
+    await run_check(FakeBot(), session_factory)
+
+    last_checked_at = (await load_tracker(session_factory, tracker_id)).last_checked_at
+    assert last_checked_at is not None
+    last_checked_at = last_checked_at.replace(tzinfo=UTC)
+    assert before <= last_checked_at <= fetched_at[0]
