@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -97,7 +96,7 @@ def test_price_history_endpoint_returns_snapshots() -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        asyncio.run(seed_history(app.state.session_factory, query="iphone 16 history"))
+        client.portal.call(seed_history, app.state.session_factory, "iphone 16 history")
         response = client.get(
             "/api/v1/price-history",
             params={"query": "iphone 16 history", "currency": "USD", "days": 7},
@@ -120,7 +119,7 @@ def test_price_history_caps_days_at_ninety() -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        asyncio.run(seed_history(app.state.session_factory, query="iphone 16 caps"))
+        client.portal.call(seed_history, app.state.session_factory, "iphone 16 caps")
         response = client.get(
             "/api/v1/price-history",
             params={"query": "iphone 16 caps", "currency": "BYN", "days": 365},
@@ -141,7 +140,7 @@ def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        asyncio.run(seed_history(app.state.session_factory, query="iphone 16 persist-old"))
+        client.portal.call(seed_history, app.state.session_factory, "iphone 16 persist-old")
         stats_response = client.get(
             "/api/v1/price-stats",
             params={"query": "iphone 16 fresh", "currency": "BYN"},
@@ -156,3 +155,28 @@ def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
     payload = history_response.json()
     assert len(payload["points"]) == 1
     assert payload["points"][0]["median"] == 2500
+
+
+def test_price_history_validates_query_and_currency() -> None:
+    from api.dependencies import get_cache, get_currency_service
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_cache] = lambda: MemoryCache()
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+
+    with TestClient(app) as client:
+        blank = client.get("/api/v1/price-history", params={"query": "   "})
+        euro = client.get(
+            "/api/v1/price-history", params={"query": "iphone 16", "currency": "EUR"}
+        )
+        client.portal.call(seed_history, app.state.session_factory, "iphone 16 spaced")
+        spaced = client.get("/api/v1/price-history", params={"query": "  iPhone 16 Spaced "})
+
+    assert blank.status_code == 422
+    assert euro.status_code == 422
+    assert spaced.status_code == 200
+    payload = spaced.json()
+    assert payload["query"] == "iPhone 16 Spaced"
+    assert payload["currency"] == "BYN"
+    assert len(payload["points"]) == 2

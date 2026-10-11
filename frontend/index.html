@@ -11,40 +11,71 @@
         href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
         rel="stylesheet"
     >
-    <link rel="stylesheet" href="css/style.css">
+    <!--
+        Asset version: bump ?v= on css/ and js/ URLs (all five, same value) in every
+        release that changes them, so Telegram's WebView never mixes cached and new modules.
+    -->
+    <link rel="stylesheet" href="css/style.css?v=20261011b">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script>
+        // Set the theme before the first paint so a light Telegram theme does not flash
+        // dark while the deferred scripts load. app_core.js keeps it in sync afterwards.
+        // telegram-web-app.js reports colorScheme "light" in any browser, so it is trusted
+        // only inside a Telegram client (initData or a known platform, as in app_core.js).
+        (function () {
+            var scheme = null;
+            try {
+                var webApp = window.Telegram && window.Telegram.WebApp;
+                var platform = webApp && typeof webApp.platform === "string"
+                    ? webApp.platform
+                    : "unknown";
+                var insideTelegram = Boolean(webApp)
+                    && (Boolean(webApp.initData) || (Boolean(platform) && platform !== "unknown"));
+                scheme = insideTelegram ? webApp.colorScheme : null;
+            } catch (_) {
+                scheme = null;
+            }
+            if (scheme !== "light" && scheme !== "dark") {
+                var prefersLight = window.matchMedia
+                    && window.matchMedia("(prefers-color-scheme: light)").matches;
+                scheme = prefersLight ? "light" : "dark";
+            }
+            document.documentElement.dataset.theme = scheme;
+        })();
+    </script>
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-    <script defer src="js/app_core.js"></script>
-    <script defer src="js/app_renderers.js"></script>
-    <script defer src="js/app_actions.js"></script>
-    <script defer src="js/app.js"></script>
+    <script defer src="js/app_core.js?v=20261011b"></script>
+    <script defer src="js/app_renderers.js?v=20261011b"></script>
+    <script defer src="js/app_actions.js?v=20261011b"></script>
+    <script defer src="js/app.js?v=20261011b"></script>
 </head>
 <body>
 <div class="app" id="app-root">
+    <h1 class="visually-hidden">Rafuks: аналитика цен на Kufar</h1>
     <header class="header">
         <div class="header-inner">
             <div class="logo">
-                <img class="logo-mark" src="/assets/logo.jpg" alt="Rafuks logo">
+                <img class="logo-mark" src="/assets/logo.jpg" alt="">
                 <span class="logo-name">Rafuks</span>
             </div>
-            <div class="currency-toggle">
-                <button class="cur-btn active" id="btn-byn" type="button">BYN</button>
-                <button class="cur-btn" id="btn-usd" type="button">USD</button>
+            <div class="currency-toggle" role="group" aria-label="Валюта цен">
+                <button class="cur-btn active" id="btn-byn" type="button" aria-pressed="true">BYN</button>
+                <button class="cur-btn" id="btn-usd" type="button" aria-pressed="false">USD</button>
             </div>
         </div>
-        <div class="rate-strip" id="rate-strip" hidden>
+        <div class="rate-strip" id="rate-strip" aria-live="polite" hidden>
             <span class="rate-label">Курс НБРБ</span>
             <span class="rate-meta">1 USD =</span>
             <span class="rate-value mono" id="usd-rate-value">—</span>
         </div>
     </header>
 
-    <section class="search-section">
+    <section class="search-section" role="search">
+        <label class="visually-hidden" for="search-input">Поиск объявлений на Kufar</label>
         <div class="search-wrap">
             <div class="search-icon-wrap">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                     stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                     focusable="false" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                     <circle cx="11" cy="11" r="8"></circle>
                     <path d="m21 21-4.35-4.35"></path>
                 </svg>
@@ -77,28 +108,28 @@
     </section>
 
     <nav class="view-nav" aria-label="Разделы Mini App">
-        <button class="view-tab active" data-view="overview" type="button">
-            <span class="view-tab-icon">📊</span>
+        <button class="view-tab active" data-view="overview" type="button" aria-controls="overview-view" aria-current="page">
+            <span class="view-tab-icon" aria-hidden="true">📊</span>
             <span class="view-tab-label">Обзор</span>
         </button>
-        <button class="view-tab" data-view="ads" type="button">
-            <span class="view-tab-icon">📋</span>
+        <button class="view-tab" data-view="ads" type="button" aria-controls="ads-view" aria-current="false">
+            <span class="view-tab-icon" aria-hidden="true">📋</span>
             <span class="view-tab-label">Объявления</span>
         </button>
-        <button class="view-tab" data-view="tracking" type="button">
-            <span class="view-tab-icon">🔔</span>
+        <button class="view-tab" data-view="tracking" type="button" aria-controls="tracking-view" aria-current="false">
+            <span class="view-tab-icon" aria-hidden="true">🔔</span>
             <span class="view-tab-label">Автопоиск</span>
         </button>
-        <button class="view-tab" data-view="cheap" type="button">
-            <span class="view-tab-icon">🏷</span>
+        <button class="view-tab" data-view="cheap" type="button" aria-controls="cheap-view" aria-current="false">
+            <span class="view-tab-icon" aria-hidden="true">🏷</span>
             <span class="view-tab-label">Выгодно</span>
         </button>
-        <button class="view-tab" data-view="monitoring" type="button">
-            <span class="view-tab-icon">⭐</span>
+        <button class="view-tab" data-view="monitoring" type="button" aria-controls="monitoring-view" aria-current="false">
+            <span class="view-tab-icon" aria-hidden="true">⭐</span>
             <span class="view-tab-label">Избранное</span>
         </button>
-        <button class="view-tab" data-view="deals" type="button">
-            <span class="view-tab-icon">💰</span>
+        <button class="view-tab" data-view="deals" type="button" aria-controls="deals-view" aria-current="false">
+            <span class="view-tab-icon" aria-hidden="true">💰</span>
             <span class="view-tab-label">Покупки</span>
         </button>
     </nav>
@@ -127,9 +158,9 @@
         </div>
     </section>
 
-    <div class="err-bar" id="error-bar" hidden>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-             stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <div class="err-bar" id="error-bar" role="alert" hidden>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+             focusable="false" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <circle cx="12" cy="12" r="10"></circle>
             <line x1="12" y1="8" x2="12" y2="12"></line>
             <circle cx="12" cy="16" r="0.5" fill="currentColor"></circle>
@@ -178,12 +209,15 @@
                     <span class="stat-sub"><span class="mono" id="stat-coverage">—</span> с ценой / всего на рынке</span>
                 </div>
             </div>
+            <p class="section-note is-warning" id="stats-truncated-note" hidden>
+                Kufar отдал не все объявления: статистика посчитана по самым свежим из них.
+            </p>
         </section>
 
         <section class="section" id="geography-section" hidden>
             <div class="sec-head collapsible-head">
                 <h2 class="sec-title">География</h2>
-                <button class="section-toggle" data-panel-toggle="geography" type="button">Показать</button>
+                <button class="section-toggle" data-panel-toggle="geography" type="button" aria-controls="geography-body" aria-expanded="false">Показать</button>
             </div>
             <div class="section-body" id="geography-body" hidden>
                 <p class="section-note" id="geography-note">
@@ -196,7 +230,7 @@
         <section class="section" id="chart-section" hidden>
             <div class="sec-head collapsible-head">
                 <h2 class="sec-title">Распределение цен</h2>
-                <button class="section-toggle" data-panel-toggle="distribution" type="button">Показать</button>
+                <button class="section-toggle" data-panel-toggle="distribution" type="button" aria-controls="distribution-body" aria-expanded="false">Показать</button>
             </div>
             <div class="section-body" id="distribution-body" hidden>
                 <div class="chart-box">
@@ -209,10 +243,10 @@
             <div class="sec-head collapsible-head">
                 <h2 class="sec-title">Динамика медианы</h2>
                 <span class="badge" id="history-badge">7 дней</span>
-                <button class="section-toggle" data-panel-toggle="history" type="button">Свернуть</button>
+                <button class="section-toggle" data-panel-toggle="history" type="button" aria-controls="history-body" aria-expanded="true">Свернуть</button>
             </div>
             <div class="section-body" id="history-body">
-                <div class="sort-row history-range-row" id="history-range-row">
+                <div class="sort-row history-range-row" id="history-range-row" role="group" aria-label="Период истории">
                     <button class="s-tab active" data-history-days="7" type="button">7 дней</button>
                     <button class="s-tab" data-history-days="30" type="button">30 дней</button>
                     <button class="s-tab" data-history-days="90" type="button">90 дней</button>
@@ -231,10 +265,11 @@
             <div class="sec-head collapsible-head">
                 <h2 class="sec-title">Сравнение</h2>
                 <span class="badge">2 запроса</span>
-                <button class="section-toggle" data-panel-toggle="comparison" type="button">Показать</button>
+                <button class="section-toggle" data-panel-toggle="comparison" type="button" aria-controls="comparison-body" aria-expanded="false">Показать</button>
             </div>
             <div class="section-body" id="comparison-body" hidden>
                 <div class="compare-bar">
+                    <label class="visually-hidden" for="compare-input">Запросы для сравнения через запятую</label>
                     <input
                         id="compare-input"
                         type="search"
@@ -264,7 +299,7 @@
         <section class="section" id="segments-section" hidden>
             <div class="sec-head collapsible-head">
                 <h2 class="sec-title">По сегментам</h2>
-                <button class="section-toggle" data-panel-toggle="segments" type="button">Показать</button>
+                <button class="section-toggle" data-panel-toggle="segments" type="button" aria-controls="segments-body" aria-expanded="false">Показать</button>
             </div>
             <div class="section-body" id="segments-body" hidden>
                 <div class="segs-grid" id="segments-grid"></div>
@@ -278,20 +313,23 @@
                 <h2 class="sec-title">Объявления</h2>
                 <span class="badge" id="listings-total-badge"></span>
             </div>
-            <div class="sort-row">
+            <div class="sort-row" role="group" aria-label="Сортировка объявлений">
                 <button class="s-tab active" data-sort="newest" type="button">Новые</button>
                 <button class="s-tab" data-sort="deal_score" type="button">Выгодные</button>
                 <button class="s-tab" data-sort="price_asc" type="button">Дешевле</button>
                 <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
                 <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
             </div>
+            <p class="section-note is-warning" id="listings-truncated-note" hidden>
+                Kufar отдал не все объявления: список собран из самых свежих.
+            </p>
             <div class="listings-list" id="listings-list"></div>
         </section>
     </section>
 
     <section class="view-panel" id="tracking-view" hidden>
         <div class="view-hero tracking-hero">
-            <div class="view-hero-icon">🔔</div>
+            <div class="view-hero-icon" aria-hidden="true">🔔</div>
             <h2 class="view-hero-title">Автопоиск</h2>
             <p class="view-hero-desc">Создавайте трекеры для автоматического мониторинга новых лотов и падений цен по вашим запросам</p>
             <div class="view-hero-stats" id="tracking-hero-stats"></div>
@@ -369,7 +407,7 @@
                         <h3 class="sec-title">Лента событий</h3>
                     </div>
                     <div class="tracker-event-controls">
-                        <div class="sort-row" id="tracker-event-filter-row">
+                        <div class="sort-row" id="tracker-event-filter-row" role="group" aria-label="Фильтр событий">
                             <button class="s-tab active" data-event-filter="all" type="button">Все</button>
                             <button class="s-tab" data-event-filter="price_drop" type="button">Упали в цене</button>
                             <button class="s-tab" data-event-filter="new_listing" type="button">Новые лоты</button>
@@ -384,7 +422,7 @@
 
     <section class="view-panel" id="cheap-view" hidden>
         <div class="view-hero cheap-hero">
-            <div class="view-hero-icon">🏷</div>
+            <div class="view-hero-icon" aria-hidden="true">🏷</div>
             <h2 class="view-hero-title">Выгодные предложения</h2>
             <p class="view-hero-desc">Объявления ниже текущей рыночной медианы — выбирайте порог скидки</p>
             <div class="view-hero-stats" id="cheap-hero-stats"></div>
@@ -414,18 +452,21 @@
                 </label>
                 <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
             </div>
-            <div class="sort-row" id="deal-threshold-row">
+            <div class="sort-row" id="deal-threshold-row" role="group" aria-label="Готовые пороги скидки">
                 <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button">10-20%</button>
                 <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
                 <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
             </div>
+            <p class="section-note is-warning" id="deals-truncated-note" hidden>
+                Kufar отдал не все объявления: подборка собрана из самых свежих.
+            </p>
             <div class="listings-list" id="deals-list"></div>
         </section>
     </section>
 
     <section class="view-panel" id="monitoring-view" hidden>
         <div class="view-hero monitoring-hero">
-            <div class="view-hero-icon">⭐</div>
+            <div class="view-hero-icon" aria-hidden="true">⭐</div>
             <h2 class="view-hero-title">Избранное</h2>
             <p class="view-hero-desc">Следите за конкретными объявлениями: падение цены, пропажа из выдачи, дубли</p>
             <div class="view-hero-stats" id="monitoring-hero-stats"></div>
@@ -438,7 +479,7 @@
             <p class="section-note" id="watchlist-note">
                 Добавляйте объявления через кнопку «Следить» в карточке или списке.
             </p>
-            <div class="sort-row workflow-filter-row" id="watch-filter-row">
+            <div class="sort-row workflow-filter-row" id="watch-filter-row" role="group" aria-label="Фильтр избранного">
                 <button class="s-tab" data-watch-filter="all" type="button">Все</button>
                 <button class="s-tab active" data-watch-filter="attention" type="button">Требуют внимания</button>
                 <button class="s-tab" data-watch-filter="watching" type="button">Слежу</button>
@@ -450,7 +491,7 @@
 
     <section class="view-panel" id="deals-view" hidden>
         <div class="view-hero deals-hero">
-            <div class="view-hero-icon">💰</div>
+            <div class="view-hero-icon" aria-hidden="true">💰</div>
             <h2 class="view-hero-title">Покупки</h2>
             <p class="view-hero-desc">Управляйте сделками: отбор, покупка, продажа и лучшие возможности рынка</p>
             <div class="view-hero-stats" id="deals-hero-stats"></div>
@@ -463,7 +504,7 @@
             <p class="section-note" id="lead-inbox-note">
                 Лоты, которые вы взяли в работу или решили проверить позже.
             </p>
-            <div class="sort-row workflow-filter-row" id="lead-filter-row">
+            <div class="sort-row workflow-filter-row" id="lead-filter-row" role="group" aria-label="Фильтр покупок">
                 <button class="s-tab" data-lead-filter="all" type="button">Все</button>
                 <button class="s-tab active" data-lead-filter="active" type="button">Активные</button>
                 <button class="s-tab" data-lead-filter="buy" type="button">Куплено/в продаже</button>
@@ -513,7 +554,7 @@
     </section>
 
     <div class="detail-modal" id="detail-modal" hidden>
-        <div class="detail-overlay" id="detail-overlay"></div>
+        <div class="detail-overlay" id="detail-overlay" aria-hidden="true"></div>
         <div class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detail-title">
             <div class="detail-top-bar">
                 <button class="detail-close" id="detail-close" type="button" aria-label="Закрыть">×</button>
@@ -555,19 +596,9 @@
         </div>
     </div>
 
-    <div class="toast-container" id="toast-container"></div>
+    <div class="toast-container" id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-    <div class="bottom-spacer"></div>
-
-    <div hidden>
-        <span x-text="stats.mean"></span>
-        <span x-text="stats.median"></span>
-        <span x-text="stats.min"></span>
-        <span x-text="stats.max"></span>
-        <template x-for="item in listings">
-            <span x-text="item.title"></span>
-        </template>
-    </div>
+    <div class="bottom-spacer" aria-hidden="true"></div>
 </div>
 </body>
 </html>

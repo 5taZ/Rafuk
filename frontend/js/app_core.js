@@ -1,6 +1,9 @@
 function createAppCore() {
     const state = {
+        // Mirrors the search input; activeQuery is the last submitted query and
+        // is the one every API call, tracker and summary works with.
         query: "",
+        activeQuery: "",
         strictSearch: false,
         comparisonQuery: "",
         comparisonStats: null,
@@ -13,21 +16,51 @@ function createAppCore() {
         discountFromPercent: 10,
         discountToPercent: 30,
         loading: false,
+        // In-flight flags per request kind, so each section shows its own loading state
+        // instead of a final "empty" result while its request is still running.
+        pending: {
+            listings: false,
+            deals: false,
+            history: false,
+            leads: false,
+            watchlist: false,
+            board: false,
+            trackers: false,
+            refresh: false,
+        },
         error: null,
+        // Message of a failed /price-stats call; unlike state.error it is not cleared by
+        // unrelated actions, so the listing tabs keep showing the failure and retry the search.
+        searchError: null,
+        // Per-section load errors shown by the renderers instead of empty states.
+        loadErrors: {
+            listings: null,
+            deals: null,
+            leads: null,
+            watchlist: null,
+            board: null,
+            events: null,
+        },
         stats: null,
         listings: [],
         dealListings: [],
+        // True when the API stopped paginating Kufar early (page limit or deadline).
+        listingsTruncated: false,
+        dealsTruncated: false,
         segments: null,
         geography: [],
         chart: null,
         history: [],
         historyChart: null,
         usdRateByn: null,
+        rateSource: null,
         leads: [],
         leadFilter: "active",
         watchlist: [],
-        watchlistFilter: "attention",
+        watchlistFilter: "all",
         opportunityBoard: {
+            currency: null,
+            partial: false,
             items: [],
             top_price_drops: [],
             rare_opportunities: [],
@@ -103,6 +136,10 @@ function createAppCore() {
         elements.geographyNote = document.getElementById("geography-note");
         elements.listingsSection = document.getElementById("listings-section");
         elements.dealsSection = document.getElementById("deals-section");
+        elements.appRoot = document.getElementById("app-root");
+        elements.statsTruncatedNote = document.getElementById("stats-truncated-note");
+        elements.listingsTruncatedNote = document.getElementById("listings-truncated-note");
+        elements.dealsTruncatedNote = document.getElementById("deals-truncated-note");
         elements.marketTotalBadge = document.getElementById("market-total-badge");
         elements.listingsTotalBadge = document.getElementById("listings-total-badge");
         elements.dealsTotalBadge = document.getElementById("deals-total-badge");
@@ -198,26 +235,104 @@ function createAppCore() {
         };
     }
 
-    function initTelegramTheme() {
-        if (window.Telegram && window.Telegram.WebApp) {
-            window.Telegram.WebApp.expand();
-            window.Telegram.WebApp.ready();
-            const scheme = window.Telegram.WebApp.colorScheme;
-            document.documentElement.setAttribute(
-                "data-theme",
-                scheme === "light" ? "light" : "dark"
-            );
-        } else {
-            document.documentElement.setAttribute("data-theme", "dark");
+    function telegramWebApp() {
+        return window.Telegram?.WebApp || null;
+    }
+
+    function supportsTelegramVersion(version) {
+        const webApp = telegramWebApp();
+        try {
+            return Boolean(webApp?.isVersionAtLeast?.(version));
+        } catch (_) {
+            return false;
         }
     }
 
-    function formatPrice(value) {
-        if (value == null || value === 0) return "—";
-        const numeric = Number(value);
-        if (Number.isNaN(numeric)) return "—";
+    function syncTelegramChrome() {
+        const webApp = telegramWebApp();
+        if (!webApp || !supportsTelegramVersion("6.1")) {
+            return;
+        }
+        const background = getComputedStyle(document.documentElement)
+            .getPropertyValue("--bg")
+            .trim();
+        if (!/^#[0-9a-f]{6}$/i.test(background)) {
+            return;
+        }
+        try {
+            webApp.setHeaderColor?.(background);
+            webApp.setBackgroundColor?.(background);
+        } catch (_) {
+            // Older clients reject custom colors; the default chrome is fine.
+        }
+    }
 
-        if (state.currency === "BYN") {
+    // telegram-web-app.js creates Telegram.WebApp in any browser and reports
+    // colorScheme "light" there, so its scheme is trusted only inside a Telegram client.
+    // Keep this check in sync with the inline theme script in index.html.
+    function isInsideTelegram() {
+        const webApp = telegramWebApp();
+        if (!webApp) {
+            return false;
+        }
+        const platform = typeof webApp.platform === "string" ? webApp.platform : "unknown";
+        return Boolean(webApp.initData) || (Boolean(platform) && platform !== "unknown");
+    }
+
+    function systemColorScheme() {
+        try {
+            return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        } catch (_) {
+            return "dark";
+        }
+    }
+
+    function applyTelegramTheme() {
+        const scheme = isInsideTelegram() ? telegramWebApp()?.colorScheme : null;
+        document.documentElement.setAttribute(
+            "data-theme",
+            scheme === "light" || scheme === "dark" ? scheme : systemColorScheme()
+        );
+        syncTelegramChrome();
+    }
+
+    function initTelegramTheme(onThemeChanged = null) {
+        const webApp = telegramWebApp();
+        if (webApp) {
+            webApp.expand?.();
+            webApp.ready?.();
+        }
+        applyTelegramTheme();
+        const handleThemeChange = () => {
+            applyTelegramTheme();
+            if (typeof onThemeChanged === "function") {
+                onThemeChanged();
+            }
+        };
+        if (webApp?.onEvent) {
+            webApp.onEvent("themeChanged", handleThemeChange);
+        }
+        // Outside Telegram follow the system theme when the user switches it.
+        if (!isInsideTelegram()) {
+            try {
+                const query = window.matchMedia?.("(prefers-color-scheme: light)");
+                if (query?.addEventListener) {
+                    query.addEventListener("change", handleThemeChange);
+                } else {
+                    query?.addListener?.(handleThemeChange);
+                }
+            } catch (_) {
+                // Without matchMedia the theme chosen at startup stays.
+            }
+        }
+    }
+
+    function formatPrice(value, currency = null) {
+        if (value == null || value === "") return "—";
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return "—";
+
+        if ((currency || state.currency) === "BYN") {
             if (numeric >= 10000) {
                 return `${(numeric / 1000).toFixed(1).replace(/\.0$/, "")} тыс. р.`;
             }
@@ -293,6 +408,7 @@ function createAppCore() {
         elements,
         cacheElements,
         initTelegramTheme,
+        supportsTelegramVersion,
         formatPrice,
         formatRate,
         formatCondition,

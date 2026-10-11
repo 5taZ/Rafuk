@@ -2,18 +2,27 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from api.services.aggregator import (
     PriceStats,
+    ad_condition,
+    ad_price_byn,
+    ad_seller_type,
+    canonical_condition,
+    canonical_seller_type,
     compute_price_vs_median,
-    get_param,
-    normalize_price_byn,
+    get_param_values,
+    is_placeholder_price,
+    listing_age_hours,
     normalize_search_text,
     tokenize_search_text,
 )
-from api.services.market_signals import detect_anomaly_flags, region_label
+from api.services.market_signals import detect_anomaly_flags, region_candidates, region_names
+
+NO_PRICE_VERDICT = "Нет цены"
+# Placeholder prices ("1 BYN", "обмен") are never good deals.
+PLACEHOLDER_PRICE_MAX_SCORE = 40.0
 
 _RAM_STORAGE_RE = re.compile(r"\b(4|6|8|12|16|18|24)\s*/\s*(64|128|256|512|1024)\b")
 _RAM_STORAGE_GB_RE = re.compile(
@@ -24,10 +33,6 @@ _RAM_RE = re.compile(r"\b(4|6|8|12|16|18|24)\s*(?:gb|гб)?\s*ram\b")
 _GB_RE = re.compile(r"\b(16|32|64|128|256|512|1024|2048)\s*(?:gb|гб)\b")
 _TB_RE = re.compile(r"\b([12])\s*(?:tb|тб)\b")
 _STORAGE_TOKEN_RE = re.compile(r"\b(64|128|256|512|1024|2048)\b")
-_FRESHNESS_FORMATS = (
-    "%Y-%m-%dT%H:%M:%S",
-    "%Y-%m-%dT%H:%M:%S%z",
-)
 _CONFIG_TOKENS = {
     "pro",
     "max",
@@ -125,7 +130,11 @@ def _model_tokens(tokens: list[str], storage_gb: int | None, ram_gb: int | None)
     ]
 
 
-def _format_config_summary(storage_gb: int | None, ram_gb: int | None, tokens: list[str]) -> str | None:
+def _format_config_summary(
+    storage_gb: int | None,
+    ram_gb: int | None,
+    tokens: list[str],
+) -> str | None:
     parts: list[str] = []
     variants = [token.title() for token in tokens if token in _CONFIG_TOKENS]
     if variants:
@@ -163,17 +172,34 @@ def default_saved_search_name(query: str) -> str:
 
 
 def default_config_keyword(query: str) -> str:
+    """Normalized query trimmed to the column size.
+
+    Kept for callers that want an explicit keyword; trackers and saved searches no
+    longer apply it by default (config_keyword None means no keyword filter).
+    """
     return analyze_query_text(query).normalized_query[:128]
 
 
 def config_keyword_matches(title: str, keyword: str | None) -> bool:
+    """Every keyword token appears in the normalized title, in any order."""
     if not keyword:
         return True
-    return normalize_search_text(keyword) in normalize_search_text(title)
+    keyword_tokens = tokenize_search_text(keyword)
+    if not keyword_tokens:
+        return True
+    title_tokens = set(tokenize_search_text(title))
+    return all(token in title_tokens for token in keyword_tokens)
 
 
-def profile_match_bonus(query: str, title: str) -> tuple[int, str | None, str | None]:
-    query_profile = analyze_query_text(query)
+def profile_match_bonus(
+    query: str,
+    title: str,
+    *,
+    query_profile: QueryInsights | None = None,
+) -> tuple[int, str | None, str | None]:
+    """Config bonus of a title for a query; pass ``query_profile`` when scoring many titles."""
+    if query_profile is None:
+        query_profile = analyze_query_text(query)
     title_profile = analyze_query_text(title)
     if not query_profile.normalized_query:
         return 0, title_profile.config_summary, None
@@ -198,24 +224,10 @@ def profile_match_bonus(query: str, title: str) -> tuple[int, str | None, str | 
     return bonus, title_profile.config_summary, reason
 
 
-def _freshness_bonus(list_time: str | None) -> tuple[int, str | None]:
-    if not list_time:
+def _freshness_bonus(list_time: Any) -> tuple[int, str | None]:
+    age_hours = listing_age_hours(list_time)
+    if age_hours is None:
         return 0, None
-    parsed = None
-    for fmt in _FRESHNESS_FORMATS:
-        try:
-            parsed = datetime.strptime(list_time, fmt)
-            break
-        except ValueError:
-            continue
-    if parsed is None:
-        try:
-            parsed = datetime.fromisoformat(list_time)
-        except ValueError:
-            return 0, None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    age_hours = (datetime.now(UTC) - parsed.astimezone(UTC)).total_seconds() / 3600
     if age_hours <= 6:
         return 12, "свежий лот"
     if age_hours <= 24:
@@ -231,11 +243,32 @@ def compute_deal_score(
     query: str,
     market_stats: PriceStats,
     duplicate_count: int = 0,
+    query_profile: QueryInsights | None = None,
 ) -> DealScore:
+    """Score an ad as a deal against the market stats.
+
+    Pass ``query_profile`` (analyze_query_text(query)) when scoring many ads for one query,
+    so the query is not re-parsed for every ad.
+    """
+    title = str(ad.get("subject") or "")
+    price_byn = ad_price_byn(ad)
+    if price_byn is None:
+        # No price: no discount or freshness bonuses, a neutral verdict and the lowest rank.
+        _, config_summary, _ = profile_match_bonus(query, title, query_profile=query_profile)
+        return DealScore(
+            score=0.0,
+            verdict=NO_PRICE_VERDICT,
+            reasons=["нет цены"],
+            config_summary=config_summary,
+        )
+
     score = 55.0
     reasons: list[str] = []
+    placeholder_price = is_placeholder_price(price_byn, market_stats)
     delta = compute_price_vs_median(ad, market_stats.median)
-    if delta < 0:
+    if placeholder_price:
+        reasons.append("цена-заглушка")
+    elif delta < 0:
         discount = abs(delta)
         score += min(discount * 1.5, 30)
         reasons.append(f"-{discount:.0f}% к медиане")
@@ -243,11 +276,11 @@ def compute_deal_score(
         score -= min(delta * 1.2, 24)
         reasons.append(f"+{delta:.0f}% к медиане")
 
-    seller_type = get_param(ad, "seller_type")
-    if seller_type == "Частное лицо":
+    seller_type = ad_seller_type(ad)
+    if seller_type == "private":
         score += 8
         reasons.append("частник")
-    elif seller_type == "Магазин":
+    elif seller_type == "shop":
         score -= 2
 
     freshness_score, freshness_reason = _freshness_bonus(ad.get("list_time"))
@@ -255,7 +288,9 @@ def compute_deal_score(
     if freshness_reason:
         reasons.append(freshness_reason)
 
-    config_bonus, config_summary, config_reason = profile_match_bonus(query, str(ad.get("subject", "")))
+    config_bonus, config_summary, config_reason = profile_match_bonus(
+        query, title, query_profile=query_profile
+    )
     score += config_bonus
     if config_reason:
         reasons.append(config_reason)
@@ -269,6 +304,8 @@ def compute_deal_score(
         score -= min(len(anomaly_flags) * 12, 24)
         reasons.append("есть аномалии")
 
+    if placeholder_price:
+        score = min(score, PLACEHOLDER_PRICE_MAX_SCORE)
     score = round(max(0.0, min(100.0, score)), 1)
     if score >= 78:
         verdict = "Забирать"
@@ -288,6 +325,56 @@ def compute_deal_score(
     )
 
 
+def _raw_value_matches(expected: str, values: list[str]) -> bool | None:
+    if not values:
+        return None
+    needle = expected.strip().casefold()
+    return any(value.casefold() == needle for value in values)
+
+
+def condition_matches(ad: dict[str, Any], expected: str) -> bool | None:
+    """Compare a condition filter with the ad's code ("v") and label ("vl").
+
+    Returns None when the ad carries no condition at all, so callers can keep it
+    instead of silently dropping every listing.
+    """
+    wanted = canonical_condition(expected)
+    actual = ad_condition(ad)
+    if wanted and actual:
+        return wanted == actual
+    return _raw_value_matches(expected, get_param_values(ad, "condition", "cnd"))
+
+
+def seller_type_matches(ad: dict[str, Any], expected: str) -> bool | None:
+    """Compare a seller filter with the parameter code/label or ``company_ad``."""
+    wanted = canonical_seller_type(expected)
+    actual = ad_seller_type(ad)
+    if wanted and actual:
+        return wanted == actual
+    return _raw_value_matches(expected, get_param_values(ad, "seller_type"))
+
+
+def region_matches(ad: dict[str, Any], expected: str) -> bool | None:
+    """Match a region filter against region names, parameter labels and codes.
+
+    A name filter ("Минск") cannot be checked against an ad that only carries a
+    numeric region id, so such ads are reported as unknown (None) rather than rejected.
+    """
+    wanted_tokens = tokenize_search_text(expected)
+    if not wanted_tokens:
+        return True
+    candidates = region_candidates(ad)
+    if not candidates:
+        return None
+    if not region_names(ad) and not any(token.isdigit() for token in wanted_tokens):
+        return None
+    for candidate in candidates:
+        candidate_tokens = set(tokenize_search_text(candidate))
+        if all(token in candidate_tokens for token in wanted_tokens):
+            return True
+    return False
+
+
 def matches_tracker_filters(
     ad: dict[str, Any],
     *,
@@ -301,20 +388,22 @@ def matches_tracker_filters(
     config_keyword: str | None = None,
     exclude_duplicates: bool = False,
 ) -> bool:
-    price_byn = normalize_price_byn(ad.get("price_byn"))
+    price_byn = ad_price_byn(ad)
     if max_price_byn is not None and price_byn is not None and price_byn > max_price_byn:
         return False
-    if seller_type and get_param(ad, "seller_type") != seller_type:
+    if seller_type and seller_type_matches(ad, seller_type) is False:
         return False
-    if condition and get_param(ad, "condition") != condition:
+    if condition and condition_matches(ad, condition) is False:
         return False
-    if region_name and region_label(ad) != region_name:
+    if region_name and region_matches(ad, region_name) is False:
         return False
-    if config_keyword and not config_keyword_matches(str(ad.get("subject", "")), config_keyword):
+    if config_keyword and not config_keyword_matches(str(ad.get("subject") or ""), config_keyword):
         return False
     if exclude_duplicates and duplicate_count > 0:
         return False
     if min_discount_percent is not None:
+        if is_placeholder_price(price_byn, market_stats):
+            return False
         delta = compute_price_vs_median(ad, market_stats.median)
         if abs(min(delta, 0.0)) < min_discount_percent:
             return False

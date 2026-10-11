@@ -4,18 +4,19 @@ function analyticsApp() {
     const renderers = createAppRenderers({ ...core, actions });
     Object.assign(actions, createAppActions({ ...core, ...renderers }));
 
-    // Compatibility markers for smoke tests and static checks.
-    const runtimeMarkers = {
-        telegramWebApp: "Telegram.WebApp",
-        priceStats: "/api/v1/price-stats",
-        priceHistory: "/api/v1/price-history",
-        listings: "/api/v1/listings",
-    };
-    void runtimeMarkers;
+    function rerenderCharts() {
+        // Charts read theme colors when drawn, so redraw them after a theme switch.
+        try {
+            renderers.renderChart();
+            renderers.renderHistoryChart();
+        } catch (_) {
+            // A missing Chart.js must not break the theme switch.
+        }
+    }
 
     function init() {
         core.cacheElements();
-        core.initTelegramTheme();
+        core.initTelegramTheme(rerenderCharts);
         actions.bindEvents();
         core.state.query = core.elements.searchInput.value.trim();
         renderers.renderAll();
@@ -23,7 +24,7 @@ function analyticsApp() {
         void actions.loadTrackers();
         void actions.loadLeads();
         void actions.loadWatchlist();
-        void actions.loadOpportunityBoard();
+        // The opportunity board is loaded lazily when the deals view is shown.
         void actions.applyLaunchParams();
     }
 

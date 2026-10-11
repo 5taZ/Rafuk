@@ -1,4 +1,4 @@
-"""add users table and FK constraints for referential integrity
+"""add users table, deleted_at columns and the tracker_events.tracker_id FK
 
 Revision ID: 20260407_0009
 Revises: 20260407_0008
@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text, text
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy import BigInteger, DateTime, Integer, String
 
 revision = "20260407_0009"
 down_revision = "20260407_0008"
@@ -33,7 +32,9 @@ def upgrade() -> None:
             sa.Column("first_name", String(128), nullable=False, server_default=""),
             sa.Column("username", String(128), nullable=True),
             sa.Column("is_bot", sa.Boolean, nullable=False, server_default="false"),
-            sa.Column("created_at", DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column(
+                "created_at", DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            ),
             sa.Column("last_seen_at", DateTime(timezone=True), nullable=True),
         )
         op.create_index("idx_users_telegram_id", "users", ["telegram_user_id"])
@@ -49,85 +50,22 @@ def upgrade() -> None:
                     sa.Column("deleted_at", DateTime(timezone=True), nullable=True),
                 )
 
-    # Step 3: Add FK constraints (PostgreSQL only - SQLite doesn't support ALTER TABLE ADD CONSTRAINT)
-    if not is_sqlite:
-        # TrackerEvent.tracker_id -> Tracker.id
-        if "tracker_events" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("tracker_events") if fk["name"]]
-            if "fk_tracker_events_tracker_id" not in fks:
-                op.create_foreign_key(
-                    "fk_tracker_events_tracker_id",
-                    "tracker_events",
-                    "trackers",
-                    ["tracker_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # Tracker.user_id -> User.id
-        if "trackers" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("trackers") if fk["name"]]
-            if "fk_trackers_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_trackers_user_id",
-                    "trackers",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # SavedSearch.user_id -> User.id
-        if "saved_searches" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("saved_searches") if fk["name"]]
-            if "fk_saved_searches_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_saved_searches_user_id",
-                    "saved_searches",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # TrackerEvent.user_id -> User.id
-        if "tracker_events" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("tracker_events") if fk["name"]]
-            if "fk_tracker_events_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_tracker_events_user_id",
-                    "tracker_events",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # LeadItem.user_id -> User.id
-        if "lead_items" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("lead_items") if fk["name"]]
-            if "fk_lead_items_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_lead_items_user_id",
-                    "lead_items",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # WatchlistItem.user_id -> User.id
-        if "watchlist_items" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("watchlist_items") if fk["name"]]
-            if "fk_watchlist_items_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_watchlist_items_user_id",
-                    "watchlist_items",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
+    # Step 3: TrackerEvent.tracker_id -> Tracker.id (PostgreSQL only: SQLite has no
+    # ALTER TABLE ADD CONSTRAINT). The user_id FKs are not created here: user_id holds the
+    # Telegram ID and users is still empty, so an FK to users.id rejected every existing row
+    # and failed the upgrade. 20261011_0010 backfills users and adds FKs to
+    # users.telegram_user_id instead.
+    if not is_sqlite and "tracker_events" in tables:
+        fks = [fk["name"] for fk in inspector.get_foreign_keys("tracker_events") if fk["name"]]
+        if "fk_tracker_events_tracker_id" not in fks:
+            op.create_foreign_key(
+                "fk_tracker_events_tracker_id",
+                "tracker_events",
+                "trackers",
+                ["tracker_id"],
+                ["id"],
+                ondelete="CASCADE",
+            )
 
     # Step 4: Add indexes for FK columns (helpful for CASCADE delete performance)
     if "tracker_events" in tables:
@@ -142,27 +80,26 @@ def downgrade() -> None:
     tables = set(inspector.get_table_names())
     is_sqlite = bind.dialect.name == "sqlite"
 
-    # Drop FK constraints (PostgreSQL only)
+    # Drop FK constraints (PostgreSQL only), only those that still exist. The user_id FKs
+    # exist only on databases migrated by an earlier version of this revision.
     if not is_sqlite:
-        if "tracker_events" in tables:
-            op.drop_constraint("fk_tracker_events_tracker_id", "tracker_events", type_="foreignkey")
-            op.drop_constraint("fk_tracker_events_user_id", "tracker_events", type_="foreignkey")
+        fk_names = {
+            "tracker_events": ("fk_tracker_events_tracker_id", "fk_tracker_events_user_id"),
+            "trackers": ("fk_trackers_user_id",),
+            "saved_searches": ("fk_saved_searches_user_id",),
+            "lead_items": ("fk_lead_items_user_id",),
+            "watchlist_items": ("fk_watchlist_items_user_id",),
+        }
+        for table_name, names in fk_names.items():
+            if table_name not in tables:
+                continue
+            existing = {fk["name"] for fk in inspector.get_foreign_keys(table_name) if fk["name"]}
+            for name in names:
+                if name in existing:
+                    op.drop_constraint(name, table_name, type_="foreignkey")
 
-        if "trackers" in tables:
-            op.drop_constraint("fk_trackers_user_id", "trackers", type_="foreignkey")
-
-        if "saved_searches" in tables:
-            op.drop_constraint("fk_saved_searches_user_id", "saved_searches", type_="foreignkey")
-
-        if "lead_items" in tables:
-            op.drop_constraint("fk_lead_items_user_id", "lead_items", type_="foreignkey")
-
-        if "watchlist_items" in tables:
-            op.drop_constraint("fk_watchlist_items_user_id", "watchlist_items", type_="foreignkey")
-
-    # Drop indexes
-    if "tracker_events" in tables:
-        op.drop_index("idx_tracker_events_tracker_id", table_name="tracker_events")
+    # idx_tracker_events_tracker_id is owned by 0008 (step 4 only backfills it), so the
+    # 0008 downgrade drops it. Dropping it here too made 0008 -> 0007 fail.
 
     # Drop deleted_at columns
     for table_name in ["trackers", "saved_searches"]:
@@ -173,5 +110,7 @@ def downgrade() -> None:
 
     # Drop users table
     if "users" in tables:
-        op.drop_index("idx_users_telegram_id", table_name="users")
+        indexes = {index["name"] for index in inspector.get_indexes("users")}
+        if "idx_users_telegram_id" in indexes:
+            op.drop_index("idx_users_telegram_id", table_name="users")
         op.drop_table("users")

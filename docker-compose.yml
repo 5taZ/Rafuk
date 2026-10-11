@@ -1,71 +1,132 @@
+# Two ways to use this file:
+#   - full stack:  docker compose up -d --build
+#                  (db, redis, one-shot migrate, api, bot, scheduler, frontend on :8081)
+#   - host mode:   ./start-local.sh starts only db, redis and frontend from here and runs
+#                  the API, bot and scheduler on the host (see README.md); it stops the
+#                  api, bot and scheduler containers of the full stack first.
+
+# One environment for every Python service, so api, bot, scheduler and migrate always
+# see the same settings. Containers reach Postgres and Redis by service name: the
+# host-mode DATABASE_URL / REDIS_URL from .env (localhost:5433 / localhost:6380) are
+# deliberately not used here. Override with COMPOSE_DATABASE_URL / COMPOSE_REDIS_URL.
+# REDIS_URL carries REDIS_PASSWORD when it is set; with an empty password the URL has an
+# empty userinfo (redis://:@redis:6379/0), which the Redis client treats as no password.
+# POSTGRES_USER, POSTGRES_PASSWORD and REDIS_PASSWORD are inserted into the URLs verbatim
+# (compose cannot percent-encode them), so they must be URL-safe: letters, digits, "-",
+# "_", "." and "~" (e.g. openssl rand -hex 24). Otherwise set COMPOSE_DATABASE_URL /
+# COMPOSE_REDIS_URL with a percent-encoded password.
+x-app-env: &app-env
+  BOT_TOKEN: ${BOT_TOKEN:-}
+  DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@db:5432/${POSTGRES_DB:-kufar}}
+  REDIS_URL: ${COMPOSE_REDIS_URL:-redis://:${REDIS_PASSWORD:-}@redis:6379/0}
+  API_BASE_URL: ${API_BASE_URL:-}
+  MINI_APP_URL: ${MINI_APP_URL:-}
+  KUFAR_REQUEST_DELAY: ${KUFAR_REQUEST_DELAY:-0.5}
+  KUFAR_PARALLEL_SEMAPHORE: ${KUFAR_PARALLEL_SEMAPHORE:-3}
+  KUFAR_TIMEOUT: ${KUFAR_TIMEOUT:-15.0}
+  ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
+  CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-300}
+  INIT_DATA_MAX_AGE_SECONDS: ${INIT_DATA_MAX_AGE_SECONDS:-86400}
+  # Only the api service reads it: no /docs, /redoc or /openapi.json in containers. The
+  # host-mode API_DOCS_ENABLED from .env is deliberately not used here.
+  API_DOCS_ENABLED: ${COMPOSE_API_DOCS_ENABLED:-false}
+
+# Every Python service runs the same image; each one may build it (layers are cached).
+x-app-image: &app-image
+  build: .
+  image: kufar-analytics:local
+
+x-app-depends: &app-depends
+  db:
+    condition: service_healthy
+  migrate:
+    condition: service_completed_successfully
+
 services:
-  api:
-    build: .
+  migrate:
+    <<: *app-image
+    command: ["alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
     environment:
-      SERVICE: api
-      BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
-      KUFAR_REQUEST_DELAY: ${KUFAR_REQUEST_DELAY:-1.0}
-      KUFAR_PARALLEL_SEMAPHORE: ${KUFAR_PARALLEL_SEMAPHORE:-3}
-      ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
+      <<: *app-env
+      SERVICE: migrate
     depends_on:
       db:
         condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app-image
+    environment:
+      <<: *app-env
+      SERVICE: api
+    depends_on:
+      <<: *app-depends
       redis:
         condition: service_healthy
+    restart: unless-stopped
+    # /healthz answers 200 once uvicorn has finished startup; it touches no database,
+    # cache or Kufar and is exempt from rate limiting.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
-      interval: 30s
-      timeout: 10s
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import http.client as h, sys; c = h.HTTPConnection('127.0.0.1', 8000, timeout=3); c.request('GET', '/healthz'); sys.exit(c.getresponse().status != 200)"
+      interval: 15s
+      timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
   bot:
-    build: .
+    <<: *app-image
     environment:
+      <<: *app-env
       SERVICE: bot
-      BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
-    depends_on:
-      api:
-        condition: service_healthy
-      db:
-        condition: service_healthy
+    depends_on: *app-depends
+    restart: unless-stopped
 
   scheduler:
-    build: .
+    <<: *app-image
     environment:
+      <<: *app-env
       SERVICE: scheduler
-      BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
-      ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
-    depends_on:
-      api:
-        condition: service_healthy
-      db:
-        condition: service_healthy
+    depends_on: *app-depends
+    restart: unless-stopped
 
   frontend:
-    image: nginx:1.27-alpine
+    # 1.28 or newer: the template uses "resolve" in its upstream block (nginx >= 1.27.3).
+    image: nginx:1.28-alpine
+    environment:
+      # host:port the /api/ location proxies to; start-local.sh passes
+      # NGINX_API_UPSTREAM=host.docker.internal:8010 for the API running on the host.
+      API_UPSTREAM: ${NGINX_API_UPSTREAM:-api:8000}
+      # Parameters of that upstream server. "resolve" makes nginx follow the address of a
+      # recreated api container; start-local.sh passes an empty value, because
+      # host.docker.internal exists only in /etc/hosts, which nginx's resolver ignores.
+      # No ":" in the default on purpose: an explicitly empty value must stay empty.
+      API_UPSTREAM_PARAMS: ${NGINX_API_UPSTREAM_PARAMS-resolve}
+      NGINX_ENVSUBST_FILTER: "^API_UPSTREAM(_PARAMS)?$$"
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./assets:/usr/share/nginx/assets:ro
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Loopback only by default: nginx trusts X-Forwarded-For from Docker's private
+    # addresses (see the template), which is safe only while every client is a local
+    # process such as cloudflared or a TLS reverse proxy. Do not set FRONTEND_BIND_ADDRESS
+    # to a public interface.
     ports:
-      - "8081:80"
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:8081:80"
+    depends_on:
+      api:
+        condition: service_healthy
+        # Restart nginx whenever compose recreates or restarts api (Compose >= 2.17), in
+        # addition to "resolve" above.
+        restart: true
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -77,10 +138,12 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-kufar}
       POSTGRES_USER: ${POSTGRES_USER:-user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pass}
+    # Published for host mode only, and only on the loopback interface.
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -90,10 +153,24 @@ services:
 
   redis:
     image: redis:7-alpine
+    environment:
+      # Optional: when set, Redis requires it (--requirepass) and REDIS_URL above uses it.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    # The image entrypoint still drops root and starts redis-server; --requirepass is
+    # added only when a password is set.
+    command:
+      - "sh"
+      - "-c"
+      - 'if [ -n "$$REDIS_PASSWORD" ]; then set -- --requirepass "$$REDIS_PASSWORD"; fi; exec docker-entrypoint.sh redis-server "$$@"'
+    # Published for host mode only, and only on the loopback interface.
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # redis-cli reads the password from REDISCLI_AUTH; an empty one would fail AUTH.
+      test:
+        - "CMD-SHELL"
+        - 'if [ -n "$$REDIS_PASSWORD" ]; then export REDISCLI_AUTH="$$REDIS_PASSWORD"; fi; redis-cli ping | grep -q PONG'
       interval: 10s
       timeout: 5s
       retries: 3

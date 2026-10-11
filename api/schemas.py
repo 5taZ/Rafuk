@@ -1,8 +1,109 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Annotated, Any
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    StringConstraints,
+    model_validator,
+)
+
+from api.statuses import LeadStatus, WatchlistStatus
+from api.validators import reject_nul
+
+# Upper bounds that keep values inside the DB column types (BIGINT ids, sane BYN prices).
+MAX_BIGINT = 2**63 - 1
+MAX_PRICE_BYN = 1_000_000_000.0
+
+
+def _to_utc(value: datetime) -> datetime:
+    """Naive datetimes are stored as UTC (SQLite drops tzinfo); always expose an offset."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _blank_to_none(value: Any) -> Any:
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return value
+
+
+def _check_http_url(value: str) -> str:
+    parts = urlsplit(value)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ValueError("link must be an http(s) URL")
+    return value
+
+
+def _check_optional_http_url(value: str) -> str:
+    # An empty link is allowed: the router fills the canonical kufar.by item URL from ad_id.
+    return _check_http_url(value) if value else value
+
+
+def _none_to_empty(value: Any) -> Any:
+    return "" if value is None else value
+
+
+def _drop_null_fields(data: Any, *fields: str) -> Any:
+    """Treat an explicit null as "unchanged" for NOT NULL columns updated via PATCH."""
+    if isinstance(data, dict):
+        return {
+            key: value for key, value in data.items() if key not in fields or value is not None
+        }
+    return data
+
+
+# Response datetimes are serialized with a UTC offset so the Mini App never reads them as local.
+UtcDatetime = Annotated[
+    datetime,
+    AfterValidator(_to_utc),
+    PlainSerializer(lambda value: _to_utc(value).isoformat(), return_type=str, when_used="json"),
+]
+
+# Request strings reject NUL characters (422) because Postgres text columns cannot store 0x00.
+NoNul = AfterValidator(reject_nul)
+
+QueryText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255), NoNul
+]
+TitleText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=255), NoNul]
+# Listings without ad_link carry an empty link; null and a missing field mean empty too.
+OptionalLinkUrl = Annotated[
+    str,
+    BeforeValidator(_none_to_empty),
+    StringConstraints(strip_whitespace=True, max_length=512),
+    NoNul,
+    AfterValidator(_check_optional_http_url),
+]
+NotesText = Annotated[str, StringConstraints(max_length=512), NoNul]
+AdId = Annotated[int, Field(ge=1, le=MAX_BIGINT)]
+PercentValue = Annotated[float, Field(ge=0.0, le=100.0, allow_inf_nan=False)]
+PositivePrice = Annotated[float, Field(gt=0.0, le=MAX_PRICE_BYN, allow_inf_nan=False)]
+# Observed listing prices may legitimately be 0 ("price on request").
+ListingPrice = Annotated[float, Field(ge=0.0, le=MAX_PRICE_BYN, allow_inf_nan=False)]
+
+# Optional filter texts: stripped, blank -> None, bounded by the DB column size.
+OptionalText128 = Annotated[
+    Annotated[str, StringConstraints(max_length=128), NoNul] | None,
+    BeforeValidator(_blank_to_none),
+]
+OptionalText32 = Annotated[
+    Annotated[str, StringConstraints(max_length=32), NoNul] | None,
+    BeforeValidator(_blank_to_none),
+]
+OptionalText64 = Annotated[
+    Annotated[str, StringConstraints(max_length=64), NoNul] | None,
+    BeforeValidator(_blank_to_none),
+]
 
 
 class PriceStatsResponse(BaseModel):
@@ -23,6 +124,8 @@ class PriceStatsResponse(BaseModel):
     analyzed_count: int = 0
     fair_price_from: float | None = None
     fair_price_to: float | None = None
+    # True when Kufar pagination stopped early (page limit, deadline or a failed later page).
+    truncated: bool = False
 
 
 class FlipEstimate(BaseModel):
@@ -125,6 +228,8 @@ class ListingsResponse(BaseModel):
     discount_from_percent: float | None = None
     discount_to_percent: float | None = None
     listings: list[ListingItem]
+    # True when Kufar pagination stopped early (page limit, deadline or a failed later page).
+    truncated: bool = False
 
 
 class SegmentStats(BaseModel):
@@ -150,11 +255,11 @@ class CurrencyRatesResponse(BaseModel):
     base: str = "BYN"
     rates: dict[str, float]
     source: str
-    fetched_at: datetime
+    fetched_at: UtcDatetime
 
 
 class PriceHistoryPoint(BaseModel):
-    snapshot_at: datetime
+    snapshot_at: UtcDatetime
     mean: float
     median: float
     min: float
@@ -189,15 +294,15 @@ class GeographyResponse(BaseModel):
 
 
 class TrackerCreate(BaseModel):
-    query: str
+    query: QueryText
     strict_mode: bool = False
-    interval_min: int = 15
-    min_discount_percent: float | None = None
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
+    interval_min: int = Field(default=15, ge=1, le=1440)
+    min_discount_percent: PercentValue | None = None
+    max_price_byn: PositivePrice | None = None
+    seller_type: OptionalText32 = None
+    condition: OptionalText32 = None
+    region_name: OptionalText64 = None
+    config_keyword: OptionalText128 = None
     exclude_duplicates: bool = False
 
 
@@ -218,9 +323,9 @@ class TrackerRead(BaseModel):
     exclude_duplicates: bool = False
     last_seen_ad_id: int | None = None
     last_seen_price_byn: float | None = None
-    last_checked_at: datetime | None = None
+    last_checked_at: UtcDatetime | None = None
     active: bool
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class TrackerEventRead(BaseModel):
@@ -237,25 +342,32 @@ class TrackerEventRead(BaseModel):
     link: str
     price_byn: float | None = None
     delta_byn: float | None = None
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class LeadCreate(BaseModel):
-    query: str
-    ad_id: int
-    title: str
-    link: str
-    price_byn: float | None = None
-    target_resale_byn: float | None = None
-    status: str = "new"
-    source: str = "manual"
-    notes: str | None = None
+    query: QueryText
+    ad_id: AdId
+    title: TitleText
+    link: OptionalLinkUrl = ""
+    price_byn: ListingPrice | None = None
+    target_resale_byn: PositivePrice | None = None
+    # None keeps the status of an existing lead; new leads default to "new".
+    status: LeadStatus | None = None
+    # None keeps the source of an existing lead; new leads default to "manual".
+    source: OptionalText32 = None
+    notes: NotesText | None = None
 
 
 class LeadUpdate(BaseModel):
-    status: str | None = None
-    target_resale_byn: float | None = None
-    notes: str | None = None
+    status: LeadStatus | None = None
+    target_resale_byn: PositivePrice | None = None
+    notes: NotesText | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_status_is_unchanged(cls, data: Any) -> Any:
+        return _drop_null_fields(data, "status")
 
 
 class LeadRead(BaseModel):
@@ -272,22 +384,27 @@ class LeadRead(BaseModel):
     status: str
     source: str
     notes: str | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class WatchlistCreate(BaseModel):
-    query: str
-    ad_id: int
-    title: str
-    link: str
-    price_byn: float | None = None
-    notes: str | None = None
+    query: QueryText
+    ad_id: AdId
+    title: TitleText
+    link: OptionalLinkUrl = ""
+    price_byn: ListingPrice | None = None
+    notes: NotesText | None = None
 
 
 class WatchlistUpdate(BaseModel):
-    workflow_status: str | None = None
-    notes: str | None = None
+    workflow_status: WatchlistStatus | None = None
+    notes: NotesText | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_status_is_unchanged(cls, data: Any) -> Any:
+        return _drop_null_fields(data, "workflow_status")
 
 
 class WatchlistRead(BaseModel):
@@ -307,28 +424,30 @@ class WatchlistRead(BaseModel):
     market_status: str
     duplicate_count: int = 0
     notes: str | None = None
-    created_at: datetime
-    last_seen_at: datetime | None = None
-    updated_at: datetime
+    created_at: UtcDatetime
+    last_seen_at: UtcDatetime | None = None
+    updated_at: UtcDatetime
 
 
 class WatchlistRefreshResponse(BaseModel):
     updated: int
     missing: int
     price_drops: int
+    # Items not refreshed this time (deadline or Kufar errors); a later refresh retries them.
+    skipped: int = 0
 
 
 class SavedSearchCreate(BaseModel):
-    name: str | None = None
-    group_name: str | None = None
-    query: str
+    name: OptionalText128 = None
+    group_name: OptionalText128 = None
+    query: QueryText
     strict_mode: bool = False
-    target_discount_percent: float = 10.0
-    max_price_byn: float | None = None
-    seller_type: str | None = None
-    condition: str | None = None
-    region_name: str | None = None
-    config_keyword: str | None = None
+    target_discount_percent: PercentValue = 10.0
+    max_price_byn: PositivePrice | None = None
+    seller_type: OptionalText32 = None
+    condition: OptionalText32 = None
+    region_name: OptionalText64 = None
+    config_keyword: OptionalText128 = None
     exclude_duplicates: bool = False
 
 
@@ -353,7 +472,7 @@ class SavedSearchRead(BaseModel):
     config_keyword: str | None = None
     exclude_duplicates: bool = False
     active: bool
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class OpportunityItem(BaseModel):
@@ -379,6 +498,7 @@ class OpportunitySignal(BaseModel):
     subtitle: str
     query: str
     metric: str
+    strict_mode: bool = False
 
 
 class OpportunityBoardResponse(BaseModel):
@@ -387,6 +507,8 @@ class OpportunityBoardResponse(BaseModel):
     top_price_drops: list[OpportunitySignal] = Field(default_factory=list)
     rare_opportunities: list[OpportunityItem] = Field(default_factory=list)
     market_signals: list[OpportunitySignal] = Field(default_factory=list)
+    # True when some saved searches were not evaluated (deadline or Kufar errors).
+    partial: bool = False
 
 
 class CompareRequestItem(BaseModel):

@@ -75,12 +75,25 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("idx_query_listing_states_active", table_name="query_listing_states")
-    op.drop_index("idx_query_listing_states_query", table_name="query_listing_states")
-    op.drop_table("query_listing_states")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    tables = set(inspector.get_table_names())
 
-    op.drop_index("idx_query_snapshots_query", table_name="query_snapshots")
-    op.drop_table("query_snapshots")
+    # Guarded: 20261011_0010 drops some of these indexes as redundant.
+    if "query_listing_states" in tables:
+        indexes = {index["name"] for index in inspector.get_indexes("query_listing_states")}
+        for name in ("idx_query_listing_states_active", "idx_query_listing_states_query"):
+            if name in indexes:
+                op.drop_index(name, table_name="query_listing_states")
+        op.drop_table("query_listing_states")
 
-    op.drop_column("trackers", "last_checked_at")
-    op.drop_column("trackers", "last_seen_price_byn")
+    if "query_snapshots" in tables:
+        indexes = {index["name"] for index in inspector.get_indexes("query_snapshots")}
+        if "idx_query_snapshots_query" in indexes:
+            op.drop_index("idx_query_snapshots_query", table_name="query_snapshots")
+        op.drop_table("query_snapshots")
+
+    tracker_columns = {column["name"] for column in inspector.get_columns("trackers")}
+    for name in ("last_checked_at", "last_seen_price_byn"):
+        if name in tracker_columns:
+            op.drop_column("trackers", name)

@@ -7,8 +7,9 @@ on:
     branches: [main]
 
 jobs:
+  # lint and test run independently: a red lint must not hide test or migration failures.
   lint:
-    name: Lint & Type Check
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,18 +25,39 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        # --locked: fail when uv.lock is out of date with pyproject.toml (no silent re-lock).
+        run: uv sync --locked --extra dev
 
       - name: Run ruff linter
         run: uv run ruff check .
 
       - name: Run ruff formatter check
+        if: ${{ !cancelled() }}
         run: uv run ruff format --check .
+
+      - name: Validate docker-compose.yml
+        if: ${{ !cancelled() }}
+        run: docker compose config --quiet
+
+      - name: Check frontend JavaScript syntax
+        if: ${{ !cancelled() }}
+        # node --check takes one file; extra arguments would be passed to the script.
+        run: |
+          for file in frontend/js/*.js; do
+            node --check "$file"
+          done
 
   test:
     name: Tests
     runs-on: ubuntu-latest
-    needs: lint
+    # Settings for the alembic steps. tests/conftest.py overrides them for every test (a fresh
+    # SQLite file with foreign keys enforced), so pytest never touches this Postgres.
+    env:
+      DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost:5432/kufar_test
+      BOT_TOKEN: test_token
+      REDIS_URL: redis://localhost:6379/0
+      API_BASE_URL: https://example.com
+      MINI_APP_URL: https://example.com/app
     services:
       postgres:
         image: postgres:16-alpine
@@ -65,36 +87,36 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        # --locked: fail when uv.lock is out of date with pyproject.toml (no silent re-lock).
+        run: uv sync --locked --extra dev
 
+      # The migrations run against real Postgres: up, all the way down, and up again.
       - name: Run migrations
-        env:
-          DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost:5432/kufar_test
-          BOT_TOKEN: test_token
-          REDIS_URL: redis://localhost:6379/0
-          API_BASE_URL: https://example.com
-          MINI_APP_URL: https://example.com/app
         run: uv run alembic -c migrations/alembic.ini upgrade head
 
+      - name: Downgrade migrations to base
+        run: uv run alembic -c migrations/alembic.ini downgrade base
+
+      - name: Upgrade migrations again
+        run: uv run alembic -c migrations/alembic.ini upgrade head
+
+      # Runs even when a migration step failed. The coverage floor lives in pyproject.toml.
       - name: Run tests
-        env:
-          DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost:5432/kufar_test
-          BOT_TOKEN: test_token
-          REDIS_URL: redis://localhost:6379/0
-          API_BASE_URL: https://example.com
-          MINI_APP_URL: https://example.com/app
-        run: uv run pytest tests/ -v --cov=api --cov=bot --cov=scheduler --cov-report=xml
+        if: ${{ !cancelled() }}
+        run: uv run pytest -v --cov --cov-report=term --cov-report=xml
 
       - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v4
         with:
-          file: ./coverage.xml
+          files: ./coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest
-    needs: test
+    needs: [lint, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4

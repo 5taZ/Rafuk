@@ -15,15 +15,383 @@ function createAppRenderers(context) {
         hasTelegramInitData,
     } = context;
 
+    // Canonical workflow vocabularies, shared with the API, the bot and the database.
+    const LEAD_STATUS_OPTIONS = [
+        ["new", "Новый"],
+        ["reviewing", "Смотреть"],
+        ["in_progress", "В работе"],
+        ["negotiating", "Торг"],
+        ["deferred", "Позже"],
+        ["bought", "Купил"],
+        ["reselling", "В продаже"],
+        ["sold", "Продано"],
+        ["skipped", "Пропустить"],
+    ];
+    const WATCHLIST_STATUS_OPTIONS = [
+        ["watching", "Слежу"],
+        ["reviewing", "Смотреть"],
+        ["in_progress", "В работе"],
+        ["deferred", "Позже"],
+        ["skipped", "Пропустить"],
+    ];
+    // Same limit as NotesText in api/schemas.py.
+    const NOTES_MAX_LENGTH = 512;
+    const ACTIVE_LEAD_STATUSES = ["new", "reviewing", "in_progress", "negotiating", "deferred"];
+    const MARKET_RISK_STATUSES = ["price_drop", "missing", "duplicate"];
+    const LEAD_FILTER_LABELS = {
+        all: "Все",
+        active: "Активные",
+        buy: "Куплено/в продаже",
+        done: "Завершено",
+    };
+    const WATCHLIST_FILTER_LABELS = {
+        all: "Все",
+        attention: "Требуют внимания",
+        watching: "Слежу",
+        risk: "Риск/сигнал",
+    };
+
+    // ---- Safe markup helpers ------------------------------------------------
+
+    const HTML_ESCAPES = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+        "`": "&#96;",
+    };
+
+    function escapeHtml(value) {
+        if (value == null) {
+            return "";
+        }
+        return String(value).replace(/[&<>"'`]/g, (char) => HTML_ESCAPES[char]);
+    }
+
+    // Only absolute http(s) URLs are allowed in href/src; anything else yields "".
+    function safeUrl(value) {
+        const raw = typeof value === "string" ? value.trim() : "";
+        if (!raw) {
+            return "";
+        }
+        try {
+            const url = new URL(raw);
+            return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+        } catch (_) {
+            return "";
+        }
+    }
+
+    // Markup produced by the html`` tag: every interpolated value is escaped unless it is
+    // itself a SafeMarkup (nested html`` result) or an array of such values.
+    class SafeMarkup {
+        constructor(value) {
+            this.value = value;
+        }
+
+        toString() {
+            return this.value;
+        }
+    }
+
+    function interpolate(value) {
+        if (value instanceof SafeMarkup) {
+            return value.value;
+        }
+        if (Array.isArray(value)) {
+            return value.map(interpolate).join("");
+        }
+        return escapeHtml(value);
+    }
+
+    function html(strings, ...values) {
+        let markup = strings[0];
+        values.forEach((value, index) => {
+            markup += interpolate(value) + strings[index + 1];
+        });
+        return new SafeMarkup(markup);
+    }
+
+    function setHtml(element, markup) {
+        element.innerHTML = interpolate(markup);
+    }
+
+    function externalLink(url, className, label) {
+        const href = safeUrl(url);
+        if (!href) {
+            return html``;
+        }
+        return html`<a class="${className}" href="${href}" target="_blank" rel="noreferrer noopener">${label}</a>`;
+    }
+
+    // ---- Formatting helpers -------------------------------------------------
+
+    function hasPrice(value) {
+        if (value == null || value === "") {
+            return false;
+        }
+        const numeric = Number(value);
+        return Number.isFinite(numeric) && numeric > 0;
+    }
+
+    // formatPrice() reads state.currency; data loaded in another currency (the opportunity
+    // board) is formatted by switching it synchronously for the duration of the call.
+    function formatPriceIn(value, currency) {
+        if (!currency || currency === state.currency) {
+            return formatPrice(value);
+        }
+        const previousCurrency = state.currency;
+        state.currency = currency;
+        try {
+            return formatPrice(value);
+        } finally {
+            state.currency = previousCurrency;
+        }
+    }
+
+    function formatListingPrice(value, currency = null) {
+        return hasPrice(value) ? formatPriceIn(value, currency) : "без цены";
+    }
+
+    function formatByn(value) {
+        const numeric = Number(value);
+        if (value == null || value === "" || !Number.isFinite(numeric)) {
+            return "—";
+        }
+        return `${Math.round(numeric)} BYN`;
+    }
+
+    function currentQuery() {
+        const value = typeof state.activeQuery === "string" ? state.activeQuery : state.query;
+        return String(value || "").trim();
+    }
+
+    function loadError(key) {
+        const message = (state.loadErrors || {})[key];
+        return typeof message === "string" && message.trim() ? message.trim() : null;
+    }
+
+    function isPending(kind) {
+        return Boolean((state.pending || {})[kind]);
+    }
+
+    // Each collection follows only its own request ("listings" or "deals"), so reloading
+    // one tab never blanks the other; while the stats load, both count as loading.
+    function isCollectionLoading(kind) {
+        const items = kind === "deals" ? state.dealListings : state.listings;
+        return isPending(kind) || (Boolean(state.loading) && !items.length);
+    }
+
+    // The board in another currency is about to be replaced, so it counts as loading too.
+    function isBoardLoading() {
+        if (!isPending("board")) {
+            return false;
+        }
+        const board = state.opportunityBoard || {};
+        return (
+            Boolean(loadError("board")) ||
+            board.currency !== state.currency ||
+            !(board.items || []).length
+        );
+    }
+
+    function isTrackersLoading() {
+        return isPending("trackers") && !state.trackers.length && !state.trackerEvents.length;
+    }
+
+    function setBusy(container, busy) {
+        if (busy) {
+            container.setAttribute("aria-busy", "true");
+        } else {
+            container.removeAttribute("aria-busy");
+        }
+    }
+
+    // Replaces a list's content with a pulsing loading note (see [aria-busy] in the CSS).
+    function showListLoading(container, text) {
+        container.innerHTML = "";
+        setBusy(container, true);
+        container.appendChild(buildEmptyNote(text));
+    }
+
+    function buildEmptyNote(text, className = "tracker-empty") {
+        const note = document.createElement("p");
+        note.className = className;
+        note.textContent = text;
+        return note;
+    }
+
+    function buildErrorNote(message, retry = null) {
+        const note = document.createElement("div");
+        note.className = "tracker-status is-visible error";
+        note.setAttribute("role", "alert");
+        const text = document.createElement("span");
+        text.textContent = message;
+        note.appendChild(text);
+        if (typeof retry === "function") {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "ghost-btn small";
+            button.textContent = "Повторить";
+            button.addEventListener("click", () => {
+                void retry();
+            });
+            note.appendChild(document.createTextNode(" "));
+            note.appendChild(button);
+        }
+        return note;
+    }
+
+    // ---- Input preservation (re-rendering must not eat what the user is typing) --
+
+    function isEditing(element) {
+        return Boolean(element) && document.activeElement === element;
+    }
+
+    function setFieldValue(element, value) {
+        if (!element || isEditing(element)) {
+            return;
+        }
+        element.value = value;
+    }
+
+    function captureFocusedField(container) {
+        const active = document.activeElement;
+        if (!container || !active || !container.contains(active)) {
+            return null;
+        }
+        if (!active.matches("input, textarea, select") || !active.dataset.role) {
+            return null;
+        }
+        const row = active.closest("[data-row-id]");
+        if (!row) {
+            return null;
+        }
+        let selectionStart = null;
+        let selectionEnd = null;
+        try {
+            selectionStart = active.selectionStart;
+            selectionEnd = active.selectionEnd;
+        } catch (_) {
+            // Some input types (number) do not expose a selection.
+        }
+        return {
+            rowId: row.dataset.rowId,
+            role: active.dataset.role,
+            isSelect: active.tagName === "SELECT",
+            value: active.value,
+            selectionStart,
+            selectionEnd,
+        };
+    }
+
+    function restoreFocusedField(container, snapshot) {
+        if (!container || !snapshot) {
+            return;
+        }
+        const row = Array.from(container.querySelectorAll("[data-row-id]"))
+            .find((candidate) => candidate.dataset.rowId === snapshot.rowId);
+        const field = row
+            ? Array.from(row.querySelectorAll("[data-role]"))
+                .find((candidate) => candidate.dataset.role === snapshot.role)
+            : null;
+        if (!field) {
+            return;
+        }
+        if (!snapshot.isSelect) {
+            field.value = snapshot.value;
+        }
+        field.focus({ preventScroll: true });
+        if (snapshot.selectionStart != null && snapshot.selectionEnd != null) {
+            try {
+                field.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+            } catch (_) {
+                // Not supported for this input type.
+            }
+        }
+    }
+
+    // Commits an edited value on change and on blur, but only when it differs from the
+    // last saved value, so a value restored after a re-render is still saved on blur.
+    // commit() resolves to true when the server saved the value; otherwise the field
+    // shows the last saved value again, so it never looks saved when it was rejected.
+    function bindCommittedInput(input, savedValue, parse, commit, format = (value) => value ?? "") {
+        let committed = savedValue;
+        let inFlight = null;
+        const flush = () => {
+            const nextValue = parse(input.value);
+            if (nextValue === committed || nextValue === inFlight) {
+                return;
+            }
+            inFlight = nextValue;
+            Promise.resolve(commit(nextValue))
+                .catch(() => false)
+                .then((saved) => {
+                    if (inFlight === nextValue) {
+                        inFlight = null;
+                    }
+                    if (saved) {
+                        committed = nextValue;
+                    } else if (parse(input.value) === nextValue) {
+                        input.value = format(committed);
+                    }
+                });
+        };
+        input.addEventListener("change", flush);
+        input.addEventListener("blur", flush);
+    }
+
+    // Selects work the same way: a rejected status change puts the saved status back.
+    function bindCommittedSelect(select, savedValue, commit) {
+        let committed = savedValue;
+        select.value = savedValue;
+        select.addEventListener("change", () => {
+            const nextValue = select.value;
+            if (nextValue === committed) {
+                return;
+            }
+            Promise.resolve(commit(nextValue))
+                .catch(() => false)
+                .then((saved) => {
+                    if (saved) {
+                        committed = nextValue;
+                    } else if (select.value === nextValue) {
+                        select.value = committed;
+                    }
+                });
+        });
+    }
+
+    // The API takes only positive prices; an empty field or 0 clears the value.
+    function parseMoneyInput(rawValue) {
+        const trimmed = String(rawValue ?? "").trim();
+        if (!trimmed) {
+            return null;
+        }
+        const numeric = Math.abs(Number(trimmed));
+        return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+    }
+
+    function parseNotesInput(rawValue) {
+        return String(rawValue || "").trim() || null;
+    }
+
+    // ---- Basic UI -----------------------------------------------------------
+
     function showToast(message) {
         if (!elements.toastContainer) return;
         const toast = document.createElement("div");
         toast.className = "toast";
+        toast.setAttribute("role", "status");
         toast.textContent = message;
         elements.toastContainer.appendChild(toast);
+        const duration = Math.min(4000, 1600 + String(message || "").length * 30);
+        // Start the CSS fade-out (0.2 s) so it ends exactly when the toast is removed.
+        toast.style.setProperty("--toast-fade-delay", `${Math.max(0, duration - 200)}ms`);
         setTimeout(() => {
             toast.remove();
-        }, 1400);
+        }, duration);
     }
 
     function renderRates() {
@@ -31,6 +399,22 @@ function createAppRenderers(context) {
             elements.rateStrip.hidden = true;
             return;
         }
+        const source = typeof state.rateSource === "string" ? state.rateSource : null;
+        const isReserve = Boolean(source) && source !== "nbrb";
+        const label = elements.rateStrip.querySelector(".rate-label");
+        if (label) {
+            if (!isReserve) {
+                label.textContent = "Курс НБРБ";
+            } else if (source === "stale") {
+                label.textContent = "Резервный курс (последний НБРБ)";
+            } else {
+                label.textContent = "Резервный курс";
+            }
+        }
+        elements.rateStrip.classList.toggle("is-reserve", isReserve);
+        elements.rateStrip.title = isReserve
+            ? "НБРБ сейчас недоступен: цены в USD пересчитаны по резервному курсу."
+            : "";
         elements.usdRateValue.textContent = formatRate(state.usdRateByn);
         elements.rateStrip.hidden = false;
     }
@@ -51,6 +435,7 @@ function createAppRenderers(context) {
     function renderLoading() {
         elements.searchButton.disabled = state.loading || !state.query.trim();
         elements.searchInput.disabled = state.loading;
+        elements.searchButton.setAttribute("aria-busy", String(Boolean(state.loading)));
         if (state.loading) {
             elements.searchButtonLabel.innerHTML = '<span class="spin"></span>';
         } else {
@@ -61,6 +446,7 @@ function createAppRenderers(context) {
     function renderCurrencyButtons() {
         for (const [currency, button] of Object.entries(elements.currencyButtons)) {
             button.classList.toggle("active", state.currency === currency);
+            button.setAttribute("aria-pressed", String(state.currency === currency));
             button.disabled = state.loading;
         }
     }
@@ -73,7 +459,9 @@ function createAppRenderers(context) {
 
     function renderViewTabs() {
         for (const button of elements.viewTabs) {
-            button.classList.toggle("active", button.dataset.view === state.activeView);
+            const isActive = button.dataset.view === state.activeView;
+            button.classList.toggle("active", isActive);
+            button.setAttribute("aria-current", isActive ? "page" : "false");
         }
     }
 
@@ -119,7 +507,8 @@ function createAppRenderers(context) {
     }
 
     function renderSummary() {
-        if (!state.stats || !state.query) {
+        const query = currentQuery();
+        if (!state.stats || !query) {
             elements.summaryStrip.hidden = true;
             elements.summaryQuery.textContent = "—";
             elements.summarySignal.textContent = "—";
@@ -146,7 +535,7 @@ function createAppRenderers(context) {
             signal = "Часть рынка без цены, ориентируйтесь на медиану и полный список объявлений.";
         }
 
-        elements.summaryQuery.textContent = state.query;
+        elements.summaryQuery.textContent = query;
         elements.summarySignal.textContent = signal;
         elements.summaryMedian.textContent = formatPrice(state.stats.median);
         elements.summaryMarketTotal.textContent = String(totalResults || 0);
@@ -159,6 +548,7 @@ function createAppRenderers(context) {
         const shouldShow =
             !state.loading &&
             !state.error &&
+            !state.searchError &&
             !state.stats &&
             state.activeView !== "tracking" &&
             state.activeView !== "monitoring" &&
@@ -172,47 +562,61 @@ function createAppRenderers(context) {
         }
     }
 
+    function heroStat(value, suffix) {
+        return html`<span class="hero-stat"><span class="hero-stat-val mono">${value}</span> ${suffix}</span>`;
+    }
+
     function renderTrackingHeroStats() {
         if (!elements.trackingHeroStats) return;
-        const trackerCount = state.trackers.length;
-        const eventCount = state.trackerEvents.length;
-        elements.trackingHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${trackerCount}</span> трекеров</span>`,
-            `<span class="hero-stat"><span class="hero-stat-val mono">${eventCount}</span> событий</span>`,
-        ].join("");
+        const loading = isTrackersLoading();
+        setHtml(elements.trackingHeroStats, [
+            heroStat(loading ? "…" : state.trackers.length, "трекеров"),
+            heroStat(loading ? "…" : state.trackerEvents.length, "событий"),
+        ]);
     }
 
     function renderCheapHeroStats() {
         if (!elements.cheapHeroStats) return;
-        const cheapCount = state.dealListings.length;
+        let cheapCount = state.dealListings.length;
+        if (isCollectionLoading("deals")) {
+            cheapCount = "…";
+        } else if (loadError("deals") || searchFailure()) {
+            cheapCount = "—";
+        }
         const range = state.discountFromPercent === state.discountToPercent
             ? `${state.discountFromPercent}%`
             : `${state.discountFromPercent}-${state.discountToPercent}%`;
-        elements.cheapHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${cheapCount}</span> лотов дешевле рынка</span>`,
-            `<span class="hero-stat">диапазон <span class="hero-stat-val mono">${range}</span></span>`,
-        ].join("");
+        setHtml(elements.cheapHeroStats, [
+            heroStat(cheapCount, "лотов дешевле рынка"),
+            html`<span class="hero-stat">диапазон <span class="hero-stat-val mono">${range}</span></span>`,
+        ]);
     }
 
     function renderMonitoringHeroStats() {
         if (!elements.monitoringHeroStats) return;
-        const watchCount = state.watchlist.length;
-        const riskCount = state.watchlist.filter((item) => ["price_drop", "missing", "duplicate"].includes(item.market_status)).length;
-        elements.monitoringHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${watchCount}</span> объявлений</span>`,
-            `<span class="hero-stat"><span class="hero-stat-val mono">${riskCount}</span> сигналов</span>`,
-        ].join("");
+        const loading = isPending("watchlist") && !state.watchlist.length;
+        const watchCount = loading ? "…" : state.watchlist.length;
+        const riskCount = loading
+            ? "…"
+            : state.watchlist.filter((item) => MARKET_RISK_STATUSES.includes(item.market_status)).length;
+        setHtml(elements.monitoringHeroStats, [
+            heroStat(watchCount, "объявлений"),
+            heroStat(riskCount, "сигналов"),
+        ]);
     }
 
     function renderDealsHeroStats() {
         if (!elements.dealsHeroStats) return;
-        const activeLeads = state.leads.filter((l) => ["new", "reviewing", "in_progress", "negotiating", "deferred"].includes(l.status)).length;
-        const totalLeads = state.leads.length;
-        const oppCount = (state.opportunityBoard.items || []).length;
-        elements.dealsHeroStats.innerHTML = [
-            `<span class="hero-stat"><span class="hero-stat-val mono">${activeLeads}</span> активных из ${totalLeads}</span>`,
-            `<span class="hero-stat"><span class="hero-stat-val mono">${oppCount}</span> кандидатов</span>`,
-        ].join("");
+        const leadsLoading = isPending("leads") && !state.leads.length;
+        const activeLeads = leadsLoading
+            ? "…"
+            : state.leads.filter((lead) => ACTIVE_LEAD_STATUSES.includes(lead.status)).length;
+        const totalLeads = leadsLoading ? "…" : state.leads.length;
+        const oppCount = isBoardLoading() ? "…" : (state.opportunityBoard.items || []).length;
+        setHtml(elements.dealsHeroStats, [
+            heroStat(activeLeads, `активных из ${totalLeads}`),
+            heroStat(oppCount, "кандидатов"),
+        ]);
     }
 
     function renderSortButtons() {
@@ -253,36 +657,20 @@ function createAppRenderers(context) {
     }
 
     function renderDealInputs() {
-        if (elements.dealFromInput) {
-            elements.dealFromInput.value = String(state.discountFromPercent);
-        }
-        if (elements.dealToInput) {
-            elements.dealToInput.value = String(state.discountToPercent);
-        }
+        setFieldValue(elements.dealFromInput, String(state.discountFromPercent));
+        setFieldValue(elements.dealToInput, String(state.discountToPercent));
     }
 
     function renderTrackerInputs() {
-        if (elements.trackerMinDiscountInput) {
-            elements.trackerMinDiscountInput.value = String(state.trackerMinDiscountPercent ?? 10);
-        }
-        if (elements.trackerMaxPriceInput) {
-            elements.trackerMaxPriceInput.value = state.trackerMaxPriceByn ?? "";
-        }
+        setFieldValue(elements.trackerMinDiscountInput, String(state.trackerMinDiscountPercent ?? 10));
+        setFieldValue(elements.trackerMaxPriceInput, state.trackerMaxPriceByn ?? "");
         if (elements.trackerExcludeDuplicatesToggle) {
             elements.trackerExcludeDuplicatesToggle.checked = Boolean(state.trackerExcludeDuplicates);
         }
-        if (elements.trackerSellerSelect) {
-            elements.trackerSellerSelect.value = state.trackerSellerType || "";
-        }
-        if (elements.trackerConditionSelect) {
-            elements.trackerConditionSelect.value = state.trackerCondition || "";
-        }
-        if (elements.trackerRegionInput) {
-            elements.trackerRegionInput.value = state.trackerRegionName || "";
-        }
-        if (elements.trackerConfigInput) {
-            elements.trackerConfigInput.value = state.trackerConfigKeyword || "";
-        }
+        setFieldValue(elements.trackerSellerSelect, state.trackerSellerType || "");
+        setFieldValue(elements.trackerConditionSelect, state.trackerCondition || "");
+        setFieldValue(elements.trackerRegionInput, state.trackerRegionName || "");
+        setFieldValue(elements.trackerConfigInput, state.trackerConfigKeyword || "");
     }
 
     function verdictClassName(verdict) {
@@ -309,43 +697,42 @@ function createAppRenderers(context) {
         };
     }
 
+    function clearComparisonOutput() {
+        elements.comparisonSummary.hidden = true;
+        elements.comparisonSummary.innerHTML = "";
+        elements.comparisonGrid.innerHTML = "";
+    }
+
     function renderComparison() {
-        if (!state.query) {
+        const query = currentQuery();
+        if (!query) {
             elements.comparisonSection.hidden = true;
-            elements.comparisonGrid.innerHTML = "";
-            elements.comparisonSummary.hidden = true;
-            elements.comparisonSummary.innerHTML = "";
+            clearComparisonOutput();
             return;
         }
 
         elements.comparisonSection.hidden = false;
-        elements.compareInput.value = state.comparisonQuery;
+        setFieldValue(elements.compareInput, state.comparisonQuery);
         elements.compareButton.disabled =
-            state.comparisonLoading || !state.comparisonQuery.trim() || !state.query.trim();
+            state.comparisonLoading || !state.comparisonQuery.trim() || !query;
 
         if (state.comparisonLoading) {
             elements.comparisonNote.textContent = "Сравниваю запросы...";
-            elements.comparisonSummary.hidden = true;
-            elements.comparisonSummary.innerHTML = "";
-            elements.comparisonGrid.innerHTML = "";
+            clearComparisonOutput();
             return;
         }
 
         if (!state.comparisonQuery.trim()) {
             elements.comparisonNote.textContent =
                 "Сравните текущий запрос с другим товаром или другой конфигурацией.";
-            elements.comparisonSummary.hidden = true;
-            elements.comparisonSummary.innerHTML = "";
-            elements.comparisonGrid.innerHTML = "";
+            clearComparisonOutput();
             return;
         }
 
         if (!state.comparisonItems.length) {
             elements.comparisonNote.textContent =
                 "Введите до двух дополнительных запросов через запятую и нажмите «Сравнить».";
-            elements.comparisonSummary.hidden = true;
-            elements.comparisonSummary.innerHTML = "";
-            elements.comparisonGrid.innerHTML = "";
+            clearComparisonOutput();
             return;
         }
 
@@ -372,55 +759,61 @@ function createAppRenderers(context) {
             `${otherItems.reduce((sum, item) => sum + Number(item.cheap_count || 0), 0)} дешёвых лотов в сравнении`,
             `рынок ${state.comparisonItems.map((item) => item.total_results || 0).join(" / ")}`,
         ];
-        elements.comparisonSummary.innerHTML = compareSummaryItems
-            .map((item) => `<span class="compare-summary-chip">${item}</span>`)
-            .join("");
+        setHtml(
+            elements.comparisonSummary,
+            compareSummaryItems.map((item) => html`<span class="compare-summary-chip">${item}</span>`)
+        );
         elements.comparisonSummary.hidden = false;
 
-        elements.comparisonGrid.innerHTML = state.comparisonItems
-            .map((item, index) => {
-                const isBase = index === 0;
-                const bestListing = item.best_listing || null;
-                const medianDelta = isBase
-                    ? { text: "база", className: "" }
-                    : comparisonDelta(Number(item.median || 0), Number(baseItem?.median || 0));
-                const trend = item.trend_percent == null
-                    ? "нет истории"
-                    : `${item.trend_percent > 0 ? "+" : ""}${item.trend_percent.toFixed(1)}%`;
-                return `
-                    <article class="compare-card">
-                        <span class="compare-kicker">${isBase ? "База" : "Сравнение"}</span>
-                        <strong class="compare-query">${item.query}</strong>
-                        <div class="compare-deltas">
-                            <span class="compare-delta-chip ${medianDelta?.className || ""}">
-                                медиана ${medianDelta?.text || "—"}
-                            </span>
-                            <span class="compare-delta-chip">
-                                тренд ${trend}
-                            </span>
+        setHtml(elements.comparisonGrid, state.comparisonItems.map((item, index) => {
+            const isBase = index === 0;
+            const bestListing = item.best_listing || null;
+            const medianDelta = isBase
+                ? { text: "база", className: "" }
+                : comparisonDelta(Number(item.median || 0), baseMedian);
+            const trendPercent = Number(item.trend_percent);
+            const trend = item.trend_percent == null || !Number.isFinite(trendPercent)
+                ? "нет истории"
+                : `${trendPercent > 0 ? "+" : ""}${trendPercent.toFixed(1)}%`;
+            const bestText = bestListing
+                ? `${bestListing.title} · ${formatListingPrice(bestListing.price)}`
+                : "Лучший оффер пока не найден";
+            return html`
+                <article class="compare-card">
+                    <span class="compare-kicker">${isBase ? "База" : "Сравнение"}</span>
+                    <strong class="compare-query">${item.query}</strong>
+                    <div class="compare-deltas">
+                        <span class="compare-delta-chip ${medianDelta?.className || ""}">
+                            медиана ${medianDelta?.text || "—"}
+                        </span>
+                        <span class="compare-delta-chip">
+                            тренд ${trend}
+                        </span>
+                    </div>
+                    <div class="compare-metrics">
+                        <div class="compare-metric">
+                            <span class="compare-label">Медиана</span>
+                            <strong class="compare-value mono">${formatPrice(item.median)}</strong>
                         </div>
-                        <div class="compare-metrics">
-                            <div class="compare-metric">
-                                <span class="compare-label">Медиана</span>
-                                <strong class="compare-value mono">${formatPrice(item.median)}</strong>
-                            </div>
-                            <div class="compare-metric">
-                                <span class="compare-label">Дешёвые лоты</span>
-                                <strong class="compare-value mono">${item.cheap_count || 0}</strong>
-                            </div>
-                            <div class="compare-metric wide">
-                                <span class="compare-label">Размер рынка</span>
-                                <strong class="compare-value mono">${item.total_results || 0}</strong>
-                                <span class="compare-meta">${bestListing ? `${bestListing.title} · ${formatPrice(bestListing.price)}` : "Лучший оффер пока не найден"}</span>
-                            </div>
+                        <div class="compare-metric">
+                            <span class="compare-label">Дешёвые лоты</span>
+                            <strong class="compare-value mono">${item.cheap_count || 0}</strong>
                         </div>
-                    </article>
-                `;
-            })
-            .join("");
+                        <div class="compare-metric wide">
+                            <span class="compare-label">Размер рынка</span>
+                            <strong class="compare-value mono">${item.total_results || 0}</strong>
+                            <span class="compare-meta">${bestText}</span>
+                        </div>
+                    </div>
+                </article>
+            `;
+        }));
     }
 
     function renderStats() {
+        if (elements.statsTruncatedNote) {
+            elements.statsTruncatedNote.hidden = !state.stats?.truncated;
+        }
         if (!state.stats) {
             elements.statsSection.hidden = true;
             elements.chartSection.hidden = true;
@@ -433,11 +826,11 @@ function createAppRenderers(context) {
         elements.stats.min.textContent = formatPrice(state.stats.min);
         elements.stats.max.textContent = formatPrice(state.stats.max);
         if (state.stats.fair_price_from != null && state.stats.fair_price_to != null) {
-            elements.stats.fairRange.innerHTML = `
+            setHtml(elements.stats.fairRange, html`
                 <span class="stat-range-item">${formatPrice(state.stats.fair_price_from)}</span>
                 <span class="stat-range-sep">-</span>
                 <span class="stat-range-item">${formatPrice(state.stats.fair_price_to)}</span>
-            `;
+            `);
         } else {
             elements.stats.fairRange.textContent = "—";
         }
@@ -445,9 +838,12 @@ function createAppRenderers(context) {
             `${state.stats.analyzed_count || state.stats.count || 0} / ${state.stats.total_results || 0}`;
         elements.marketTotalBadge.textContent = `${state.stats.total_results || 0} на рынке`;
         elements.statsSection.hidden = false;
-        elements.chartSection.hidden = state.stats.count <= 0;
+        elements.chartSection.hidden = !(Number(state.stats.count) > 0);
         if (elements.chartSection.hidden || !state.panels.distribution) {
             destroyChart();
+        } else {
+            // Re-draws the distribution only when the stats (or currency/theme) changed.
+            renderChart();
         }
     }
 
@@ -506,7 +902,7 @@ function createAppRenderers(context) {
                 : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}% к рынку`;
             const card = document.createElement("div");
             card.className = "seg-card";
-            card.innerHTML = `
+            setHtml(card, html`
                 <div class="seg-head">
                     <span class="seg-pill ${segment.type}">${segment.typeLabel}</span>
                     <span class="seg-seller">${segment.sellerLabel}</span>
@@ -517,7 +913,7 @@ function createAppRenderers(context) {
                     <span class="seg-share">${share}% выборки</span>
                 </div>
                 <span class="seg-delta ${deltaClassName}">${deltaText}</span>
-            `;
+            `);
             elements.segmentsGrid.appendChild(card);
         }
 
@@ -534,7 +930,7 @@ function createAppRenderers(context) {
         for (const region of state.geography) {
             const card = document.createElement("div");
             card.className = "geo-card";
-            card.innerHTML = `
+            setHtml(card, html`
                 <div class="geo-head">
                     <strong class="geo-name">${region.region_name}</strong>
                     <span class="geo-share">${region.share_percent}% выборки</span>
@@ -544,7 +940,7 @@ function createAppRenderers(context) {
                     <span>${region.count} с ценой</span>
                     <span>ср. ${formatPrice(region.mean)}</span>
                 </div>
-            `;
+            `);
             elements.geographyGrid.appendChild(card);
         }
 
@@ -555,49 +951,54 @@ function createAppRenderers(context) {
         const listing = document.createElement("article");
         listing.className = "listing";
 
-        const condition = item.condition ? `<span class="tag">${formatCondition(item.condition)}</span>` : "";
-        const seller = item.seller_type ? `<span class="tag">${formatSeller(item.seller_type)}</span>` : "";
+        const condition = item.condition
+            ? html`<span class="tag">${formatCondition(item.condition)}</span>`
+            : "";
+        const seller = item.seller_type
+            ? html`<span class="tag">${formatSeller(item.seller_type)}</span>`
+            : "";
         const delta = formatDelta(item.price_vs_median);
         const deltaMarkup = delta
-            ? `<span class="listing-badge ${deltaClass(item.price_vs_median)}">${delta}</span>`
+            ? html`<span class="listing-badge ${deltaClass(item.price_vs_median)}">${delta}</span>`
             : "";
         const fairMarkup = item.fair_price_label
-            ? `<span class="listing-badge ${item.fair_price_band || "neutral"}">${item.fair_price_label}</span>`
+            ? html`<span class="listing-badge ${item.fair_price_band || "neutral"}">${item.fair_price_label}</span>`
             : "";
         const verdictMarkup = item.deal_verdict
-            ? `<span class="listing-badge verdict-${verdictClassName(item.deal_verdict)}">${item.deal_verdict}</span>`
+            ? html`<span class="listing-badge verdict-${verdictClassName(item.deal_verdict)}">${item.deal_verdict}</span>`
             : "";
         const duplicateMarkup = item.is_duplicate
-            ? `<span class="listing-badge warn">Дубль${item.duplicate_count > 1 ? ` ×${item.duplicate_count + 1}` : ""}</span>`
+            ? html`<span class="listing-badge warn">Дубль${item.duplicate_count > 1 ? ` ×${item.duplicate_count + 1}` : ""}</span>`
             : "";
         const anomalyMarkup = (item.anomaly_labels || [])
-            .map((label) => `<span class="listing-badge warn">${label}</span>`)
-            .join("");
-        const thumbMarkup = item.thumbnail
-            ? `<img class="listing-thumb" src="${item.thumbnail}" alt="" loading="lazy">`
-            : `<div class="listing-thumb placeholder">Нет фото</div>`;
-        const badgesMarkup = [verdictMarkup, deltaMarkup, fairMarkup, duplicateMarkup, anomalyMarkup].filter(Boolean).join("");
+            .map((label) => html`<span class="listing-badge warn">${label}</span>`);
+        const thumbnail = safeUrl(item.thumbnail);
+        const thumbMarkup = thumbnail
+            ? html`<img class="listing-thumb" src="${thumbnail}" alt="" loading="lazy">`
+            : html`<div class="listing-thumb placeholder">Нет фото</div>`;
+        const badges = [verdictMarkup, deltaMarkup, fairMarkup, duplicateMarkup, ...anomalyMarkup]
+            .filter(Boolean);
 
-        listing.innerHTML = `
+        setHtml(listing, html`
             <div class="listing-top">
                 ${thumbMarkup}
                 <div class="listing-body">
                     <span class="listing-name">${item.title}</span>
                     <div class="listing-tags">${condition}${seller}</div>
-                    <span class="listing-price mono">${formatPrice(item.price)}</span>
+                    <span class="listing-price mono">${formatListingPrice(item.price)}</span>
                 </div>
             </div>
-            ${badgesMarkup ? `<div class="listing-badges">${badgesMarkup}</div>` : ""}
+            ${badges.length ? html`<div class="listing-badges">${badges}</div>` : ""}
             <div class="listing-actions">
-                <button class="listing-btn" type="button">Подробнее</button>
+                <button class="listing-btn" data-role="detail" data-ad-id="${item.ad_id ?? ""}" type="button">Подробнее</button>
                 <button class="listing-btn" data-role="lead" type="button">В покупки</button>
                 <button class="listing-btn" data-role="watch" type="button">Следить</button>
-                <a class="listing-btn listing-btn--accent" href="${item.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                ${externalLink(item.link, "listing-btn listing-btn--accent", "Kufar")}
             </div>
-        `;
+        `);
 
-        const detailButton = listing.querySelector("button");
-        detailButton?.addEventListener("click", () => {
+        listing.querySelector('[data-role="detail"]')?.addEventListener("click", (event) => {
+            noteDetailTrigger(event.currentTarget);
             void actions.openListingDetail(item);
         });
         listing.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
@@ -611,11 +1012,9 @@ function createAppRenderers(context) {
 
     function renderListingsCollection(items, container, badge, emptyText, totalOverride = null) {
         container.innerHTML = "";
+        container.removeAttribute("aria-busy");
         if (!items.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = emptyText;
-            container.appendChild(note);
+            container.appendChild(buildEmptyNote(emptyText));
             if (badge) {
                 badge.textContent = "0";
             }
@@ -633,29 +1032,140 @@ function createAppRenderers(context) {
         return true;
     }
 
+    // Draws the loading or error state of a listings collection; returns true when drawn.
+    function renderCollectionStatus(container, badge, { loading, error, loadingText, retry }) {
+        if (loading) {
+            container.innerHTML = "";
+            container.setAttribute("aria-busy", "true");
+            container.appendChild(buildEmptyNote(loadingText));
+            if (badge) {
+                badge.textContent = "…";
+            }
+            return true;
+        }
+        if (error) {
+            container.innerHTML = "";
+            container.removeAttribute("aria-busy");
+            container.appendChild(buildErrorNote(error, retry));
+            if (badge) {
+                badge.textContent = "—";
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // The failure of the whole search (/price-stats), kept apart from state.error, which
+    // unrelated actions (opening a card, comparing) clear.
+    function searchFailure() {
+        return !state.stats && typeof state.searchError === "string" && state.searchError.trim()
+            ? state.searchError.trim()
+            : null;
+    }
+
+    // Status of one listings collection: a failed search wins (its retry reruns the search),
+    // then the collection's own loading and error states.
+    function collectionStatus(kind, loadingText, retryList) {
+        const failure = searchFailure();
+        if (failure) {
+            return {
+                loading: false,
+                error: failure,
+                loadingText,
+                retry: () => actions.retrySearch(),
+            };
+        }
+        return {
+            loading: isCollectionLoading(kind),
+            error: loadError(kind),
+            loadingText,
+            retry: retryList,
+        };
+    }
+
     function renderListings() {
-        const hasContent = renderListingsCollection(
+        const query = currentQuery();
+        elements.listingsSection.hidden = !query;
+        if (elements.listingsTruncatedNote) {
+            elements.listingsTruncatedNote.hidden = true;
+        }
+        if (!query) {
+            elements.listingsList.innerHTML = "";
+            elements.listingsTotalBadge.textContent = "";
+            return;
+        }
+        const handled = renderCollectionStatus(
+            elements.listingsList,
+            elements.listingsTotalBadge,
+            collectionStatus("listings", "Загружаю объявления…", () => actions.loadListings())
+        );
+        if (handled) {
+            return;
+        }
+        if (elements.listingsTruncatedNote) {
+            elements.listingsTruncatedNote.hidden = !state.listingsTruncated;
+        }
+        renderListingsCollection(
             state.listings,
             elements.listingsList,
             elements.listingsTotalBadge,
-            "По этому запросу пока нечего показать."
+            state.strictSearch
+                ? "По этому запросу объявлений нет. Попробуйте отключить строгий поиск."
+                : "По этому запросу объявлений нет."
         );
-        elements.listingsSection.hidden = !hasContent;
     }
 
     function renderDeals() {
+        const query = currentQuery();
+        elements.dealsSection.hidden = !query;
+        renderCheapHeroStats();
+        if (elements.dealsTruncatedNote) {
+            elements.dealsTruncatedNote.hidden = true;
+        }
+        if (!query) {
+            elements.dealsList.innerHTML = "";
+            elements.dealsTotalBadge.textContent = "";
+            return;
+        }
+        const handled = renderCollectionStatus(
+            elements.dealsList,
+            elements.dealsTotalBadge,
+            collectionStatus("deals", "Ищу лоты дешевле рынка…", () => actions.loadDeals())
+        );
+        if (handled) {
+            return;
+        }
+        if (elements.dealsTruncatedNote) {
+            elements.dealsTruncatedNote.hidden = !state.dealsTruncated;
+        }
         const rangeLabel = `${state.discountFromPercent}-${state.discountToPercent}`;
-        const hasContent = renderListingsCollection(
+        renderListingsCollection(
             state.dealListings,
             elements.dealsList,
             elements.dealsTotalBadge,
             `Нет лотов в диапазоне ${rangeLabel}% ниже медианы. Попробуйте расширить диапазон или другой запрос.`,
             state.stats?.total_results || state.listings.length || state.dealListings.length
         );
-        elements.dealsSection.hidden = !state.query;
-        if (!hasContent && state.query) {
-            elements.dealsSection.hidden = false;
+    }
+
+    function buildSignalRow(signal, onOpen = null) {
+        const row = document.createElement("div");
+        row.className = "tracker-row signal-row";
+        setHtml(row, html`
+            <div class="tracker-row-main">
+                <strong class="tracker-query">${signal.title}</strong>
+                <span class="tracker-meta mono">${signal.subtitle} • ${signal.metric}</span>
+            </div>
+            ${onOpen ? html`
+                <div class="tracker-row-actions">
+                    <button class="ghost-btn small" data-role="open" type="button">Открыть</button>
+                </div>
+            ` : ""}
+        `);
+        if (onOpen) {
+            row.querySelector('[data-role="open"]')?.addEventListener("click", onOpen);
         }
+        return row;
     }
 
     function renderOpportunityBoard() {
@@ -663,59 +1173,103 @@ function createAppRenderers(context) {
         elements.opportunityBoardDrops.innerHTML = "";
         elements.opportunityBoardRare.innerHTML = "";
         elements.opportunityBoardSignals.innerHTML = "";
+        setBusy(elements.opportunityBoardList, false);
+        renderDealsHeroStats();
         if (elements.opportunityBoardNote) {
-            elements.opportunityBoardNote.textContent =
-                "Показываем лучшие дешёвые лоты по сохранённым поискам.";
+            elements.opportunityBoardNote.classList.remove("is-warning");
+        }
+        if (elements.reloadOpportunityBoardButton) {
+            const busy = isPending("board");
+            elements.reloadOpportunityBoardButton.disabled = busy;
+            elements.reloadOpportunityBoardButton.setAttribute("aria-busy", String(busy));
         }
 
         if (!hasTelegramInitData()) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Доска возможностей доступна внутри Telegram Mini App.";
-            elements.opportunityBoardList.appendChild(note);
+            if (elements.opportunityBoardNote) {
+                elements.opportunityBoardNote.textContent =
+                    "Показываем лучшие дешёвые лоты по сохранённым поискам.";
+            }
+            elements.opportunityBoardList.appendChild(
+                buildEmptyNote("Доска возможностей доступна внутри Telegram Mini App.")
+            );
             return;
         }
 
-        if (!(state.opportunityBoard.items || []).length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Добавьте сохранённые поиски, чтобы увидеть лучшие лоты.";
-            elements.opportunityBoardList.appendChild(note);
+        if (isBoardLoading()) {
+            if (elements.opportunityBoardNote) {
+                elements.opportunityBoardNote.textContent =
+                    "Собираю подборку по сохранённым поискам, это может занять до минуты.";
+            }
+            showListLoading(elements.opportunityBoardList, "Загружаю лучшие лоты…");
             return;
         }
 
-        elements.opportunityBoardNote.textContent = `${(state.opportunityBoard.items || []).length} кандидатов на выкуп, ${(state.opportunityBoard.top_price_drops || []).length} падений цены, ${(state.opportunityBoard.rare_opportunities || []).length} редких офферов.`;
+        const boardError = loadError("board");
+        if (boardError) {
+            if (elements.opportunityBoardNote) {
+                elements.opportunityBoardNote.textContent = "Не удалось загрузить доску возможностей.";
+            }
+            elements.opportunityBoardList.appendChild(
+                buildErrorNote(boardError, () => actions.loadOpportunityBoard())
+            );
+            return;
+        }
+
+        const board = state.opportunityBoard || {};
+        const items = board.items || [];
+        const drops = board.top_price_drops || [];
+        const rare = board.rare_opportunities || [];
+        const marketSignals = board.market_signals || [];
+        const boardCurrency = board.currency || state.currency;
+
+        if (elements.opportunityBoardNote) {
+            let note = items.length || drops.length || rare.length
+                ? `${items.length} кандидатов на выкуп, ${drops.length} падений цены, ${rare.length} редких офферов.`
+                : "Показываем лучшие дешёвые лоты по сохранённым поискам.";
+            if (board.partial) {
+                note += " Подборка неполная: не все сохранённые поиски успели загрузиться, обновите позже.";
+            }
+            if (isPending("board")) {
+                note += " Обновляю…";
+            }
+            elements.opportunityBoardNote.textContent = note;
+            elements.opportunityBoardNote.classList.toggle("is-warning", Boolean(board.partial));
+        }
+        setBusy(elements.opportunityBoardList, isPending("board"));
 
         function buildOpportunityCard(item, extraBadge = "") {
             const card = document.createElement("article");
             card.className = "opportunity-card";
-            const reasons = (item.listing.deal_reasons || []).join(" · ");
+            const listing = item.listing || {};
+            const reasons = (listing.deal_reasons || []).join(" · ");
             const badge = item.signal_label || extraBadge;
-            card.innerHTML = `
+            const verdict = listing.deal_verdict || "Смотреть";
+            setHtml(card, html`
                 <div class="opportunity-top">
                     <span class="badge">${item.saved_search_name}</span>
-                    <span class="listing-signal verdict verdict-${verdictClassName(item.listing.deal_verdict || "Смотреть")}">${item.listing.deal_verdict || "Смотреть"} · ${Math.round(item.listing.deal_score || 0)}</span>
+                    <span class="listing-signal verdict verdict-${verdictClassName(verdict)}">${verdict} · ${Math.round(listing.deal_score || 0)}</span>
                 </div>
-                <strong class="opportunity-title">${item.listing.title}</strong>
+                <strong class="opportunity-title">${listing.title}</strong>
                 <div class="opportunity-meta">
-                    <span class="mono">${formatPrice(item.listing.price)}</span>
-                    <span>${item.listing.region_name || "Без региона"}</span>
-                    ${badge ? `<span class="board-inline-flag">${badge}</span>` : ""}
+                    <span class="mono">${formatListingPrice(listing.price, boardCurrency)}</span>
+                    <span>${listing.region_name || "Без региона"}</span>
+                    ${badge ? html`<span class="board-inline-flag">${badge}</span>` : ""}
                 </div>
-                ${reasons ? `<p class="opportunity-copy">${reasons}</p>` : ""}
+                ${reasons ? html`<p class="opportunity-copy">${reasons}</p>` : ""}
                 <div class="listing-actions">
                     <button class="ghost-btn small" data-role="open-query" type="button">Открыть запрос</button>
-                    <button class="ghost-btn small" data-role="open-detail" type="button">Подробнее</button>
+                    <button class="ghost-btn small" data-role="open-detail" data-ad-id="${listing.ad_id ?? ""}" type="button">Подробнее</button>
                     <button class="ghost-btn small" data-role="lead" type="button">В покупки</button>
                     <button class="ghost-btn small" data-role="watch" type="button">Следить</button>
-                    <a class="primary-link small" href="${item.listing.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
+                    ${externalLink(listing.link, "primary-link small", "Kufar")}
                 </div>
-            `;
+            `);
             card.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
                 showToast("Загружаю...");
                 void actions.openOpportunityQuery(item);
             });
-            card.querySelector('[data-role="open-detail"]')?.addEventListener("click", () => {
+            card.querySelector('[data-role="open-detail"]')?.addEventListener("click", (event) => {
+                noteDetailTrigger(event.currentTarget);
                 showToast("Открываю...");
                 void actions.openOpportunityDetail(item);
             });
@@ -728,65 +1282,45 @@ function createAppRenderers(context) {
             return card;
         }
 
-        for (const item of state.opportunityBoard.items || []) {
-            elements.opportunityBoardList.appendChild(buildOpportunityCard(item));
+        if (!items.length) {
+            elements.opportunityBoardList.appendChild(
+                buildEmptyNote("Добавьте сохранённые поиски, чтобы увидеть лучшие лоты.")
+            );
+        } else {
+            for (const item of items) {
+                elements.opportunityBoardList.appendChild(buildOpportunityCard(item));
+            }
         }
 
-        if (!(state.opportunityBoard.rare_opportunities || []).length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Редких офферов пока нет.";
-            elements.opportunityBoardRare.appendChild(note);
+        if (!rare.length) {
+            elements.opportunityBoardRare.appendChild(buildEmptyNote("Редких офферов пока нет."));
         } else {
-            for (const item of state.opportunityBoard.rare_opportunities || []) {
+            for (const item of rare) {
                 elements.opportunityBoardRare.appendChild(buildOpportunityCard(item, "Редкий оффер"));
             }
         }
 
-        if (!(state.opportunityBoard.top_price_drops || []).length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Пока нет свежих падений цены.";
-            elements.opportunityBoardDrops.appendChild(note);
+        if (!drops.length) {
+            elements.opportunityBoardDrops.appendChild(buildEmptyNote("Пока нет свежих падений цены."));
         } else {
-            for (const signal of state.opportunityBoard.top_price_drops || []) {
-                const row = document.createElement("div");
-                row.className = "tracker-row signal-row";
-                row.innerHTML = `
-                    <div class="tracker-row-main">
-                        <strong class="tracker-query">${signal.title}</strong>
-                        <span class="tracker-meta mono">${signal.subtitle} • ${signal.metric}</span>
-                    </div>
-                    <div class="tracker-row-actions">
-                        <button class="ghost-btn small" type="button">Открыть</button>
-                    </div>
-                `;
-                row.querySelector("button")?.addEventListener("click", () => {
+            for (const signal of drops) {
+                elements.opportunityBoardDrops.appendChild(buildSignalRow(signal, () => {
                     showToast("Загружаю...");
-                    elements.searchInput.value = signal.query;
-                    state.query = signal.query;
-                    void actions.search("overview");
-                });
-                elements.opportunityBoardDrops.appendChild(row);
+                    void actions.searchFor(signal.query, {
+                        strictSearch: Boolean(signal.strict_mode),
+                        view: "overview",
+                    });
+                }));
             }
         }
 
-        if (!(state.opportunityBoard.market_signals || []).length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Сигналы рынка появятся, когда накопится больше сохранённых поисков и истории.";
-            elements.opportunityBoardSignals.appendChild(note);
+        if (!marketSignals.length) {
+            elements.opportunityBoardSignals.appendChild(buildEmptyNote(
+                "Сигналы рынка появятся, когда накопится больше сохранённых поисков и истории."
+            ));
         } else {
-            for (const signal of state.opportunityBoard.market_signals || []) {
-                const row = document.createElement("div");
-                row.className = "tracker-row signal-row";
-                row.innerHTML = `
-                    <div class="tracker-row-main">
-                        <strong class="tracker-query">${signal.title}</strong>
-                        <span class="tracker-meta mono">${signal.subtitle} • ${signal.metric}</span>
-                    </div>
-                `;
-                elements.opportunityBoardSignals.appendChild(row);
+            for (const signal of marketSignals) {
+                elements.opportunityBoardSignals.appendChild(buildSignalRow(signal));
             }
         }
     }
@@ -817,20 +1351,10 @@ function createAppRenderers(context) {
         }
     }
 
+    const WORKFLOW_LABELS = Object.fromEntries([...LEAD_STATUS_OPTIONS, ...WATCHLIST_STATUS_OPTIONS]);
+
     function workflowLabel(value) {
-        const labels = {
-            new: "Новый",
-            reviewing: "Смотреть",
-            in_progress: "В работе",
-            negotiating: "Торг",
-            bought: "Купил",
-            reselling: "В продаже",
-            sold: "Продано",
-            skipped: "Пропустить",
-            deferred: "Позже",
-            watching: "Слежу",
-        };
-        return labels[value] || value || "Без статуса";
+        return WORKFLOW_LABELS[value] || value || "Без статуса";
     }
 
     function marketLabel(value) {
@@ -843,12 +1367,24 @@ function createAppRenderers(context) {
         return labels[value] || value || "Без сигнала";
     }
 
+    function statusSelect(options, currentValue, ariaLabel) {
+        const known = options.some(([value]) => value === currentValue);
+        const allOptions = known || !currentValue
+            ? options
+            : [...options, [currentValue, workflowLabel(currentValue)]];
+        return html`
+            <select class="deal-select" data-role="status" aria-label="${ariaLabel}">
+                ${allOptions.map(([value, label]) => html`<option value="${value}">${label}</option>`)}
+            </select>
+        `;
+    }
+
     function leadMatchesFilter(lead) {
         if (state.leadFilter === "all") {
             return true;
         }
         if (state.leadFilter === "active") {
-            return ["new", "reviewing", "in_progress", "negotiating", "deferred"].includes(lead.status);
+            return ACTIVE_LEAD_STATUSES.includes(lead.status);
         }
         if (state.leadFilter === "buy") {
             return ["bought", "reselling"].includes(lead.status);
@@ -864,14 +1400,14 @@ function createAppRenderers(context) {
             return true;
         }
         if (state.watchlistFilter === "attention") {
-            return ["price_drop", "missing", "duplicate"].includes(item.market_status) ||
+            return MARKET_RISK_STATUSES.includes(item.market_status) ||
                 ["reviewing", "in_progress"].includes(item.workflow_status);
         }
         if (state.watchlistFilter === "watching") {
             return item.workflow_status === "watching";
         }
         if (state.watchlistFilter === "risk") {
-            return ["price_drop", "missing", "duplicate"].includes(item.market_status);
+            return MARKET_RISK_STATUSES.includes(item.market_status);
         }
         return true;
     }
@@ -902,19 +1438,91 @@ function createAppRenderers(context) {
             in_progress: 0,
             reviewing: 1,
             watching: 2,
-            skipped: 3,
+            deferred: 3,
+            skipped: 4,
         };
         return `${marketOrder[item.market_status] ?? 9}:${workflowOrder[item.workflow_status] ?? 9}`;
     }
 
+    function buildLeadRow(lead) {
+        const row = document.createElement("div");
+        row.className = "tracker-row workflow-row";
+        row.dataset.rowId = String(lead.id);
+        const priceText = hasPrice(lead.price_byn) ? formatByn(lead.price_byn) : "без цены";
+        const targetText = hasPrice(lead.target_resale_byn) ? ` • цель ${formatByn(lead.target_resale_byn)}` : "";
+        setHtml(row, html`
+            <div class="tracker-row-main">
+                <strong class="tracker-query">${lead.title}</strong>
+                <span class="tracker-meta mono">${workflowLabel(lead.status)} • ${priceText}${targetText}</span>
+            </div>
+            <div class="tracker-row-actions">
+                ${statusSelect(LEAD_STATUS_OPTIONS, lead.status || "new", "Статус сделки")}
+                ${externalLink(lead.link, "primary-link small", "Kufar")}
+            </div>
+            <div class="workflow-fields">
+                <label class="workflow-field">
+                    <span class="workflow-field-label">Цель</span>
+                    <div class="deal-range-input-wrap workflow-input-wrap">
+                        <input data-role="target" type="number" min="1" step="1" inputmode="numeric" placeholder="цена продажи">
+                        <span>BYN</span>
+                    </div>
+                </label>
+                <label class="workflow-field workflow-field-wide">
+                    <span class="workflow-field-label">Заметка</span>
+                    <div class="deal-range-input-wrap workflow-input-wrap">
+                        <input data-role="notes" type="text" maxlength="${NOTES_MAX_LENGTH}" placeholder="позвонил, торг, забрать вечером">
+                    </div>
+                </label>
+            </div>
+        `);
+        const select = row.querySelector('[data-role="status"]');
+        if (select) {
+            bindCommittedSelect(select, lead.status || "new", (nextValue) =>
+                actions.updateLeadStatus(lead.id, nextValue)
+            );
+        }
+        const targetInput = row.querySelector('[data-role="target"]');
+        if (targetInput) {
+            const savedTarget = parseMoneyInput(lead.target_resale_byn ?? "");
+            targetInput.value = savedTarget ?? "";
+            bindCommittedInput(targetInput, savedTarget, parseMoneyInput, (nextValue) =>
+                actions.updateLeadMeta(lead.id, { target_resale_byn: nextValue })
+            );
+        }
+        const notesInput = row.querySelector('[data-role="notes"]');
+        if (notesInput) {
+            const savedNotes = parseNotesInput(lead.notes);
+            notesInput.value = lead.notes || "";
+            bindCommittedInput(notesInput, savedNotes, parseNotesInput, (nextValue) =>
+                actions.updateLeadMeta(lead.id, { notes: nextValue })
+            );
+        }
+        return row;
+    }
+
     function renderLeads() {
+        const focused = captureFocusedField(elements.leadInboxList);
         elements.leadInboxList.innerHTML = "";
+        setBusy(elements.leadInboxList, false);
         renderLeadFilters();
+        renderDealsHeroStats();
         if (!hasTelegramInitData()) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Сделки доступны внутри Telegram Mini App.";
-            elements.leadInboxList.appendChild(note);
+            elements.leadInboxNote.textContent = "Лоты, которые вы взяли в работу или решили проверить позже.";
+            elements.leadInboxList.appendChild(buildEmptyNote("Сделки доступны внутри Telegram Mini App."));
+            return;
+        }
+        // Loaded rows stay visible during a reload (it follows every edit); only a list
+        // with nothing to show yet, or a failed one being retried, shows the loading note.
+        if (isPending("leads") && (!state.leads.length || loadError("leads"))) {
+            elements.leadInboxNote.textContent = "Лоты, которые вы взяли в работу или решили проверить позже.";
+            showListLoading(elements.leadInboxList, "Загружаю сделки…");
+            return;
+        }
+        const leadsError = loadError("leads");
+        setBusy(elements.leadInboxList, isPending("leads"));
+        if (leadsError) {
+            elements.leadInboxNote.textContent = "Не удалось загрузить сделки.";
+            elements.leadInboxList.appendChild(buildErrorNote(leadsError, () => actions.loadLeads()));
             return;
         }
         const filteredLeads = [...state.leads]
@@ -926,91 +1534,121 @@ function createAppRenderers(context) {
                 }
                 return String(right.updated_at || "").localeCompare(String(left.updated_at || ""));
             });
-        if (!filteredLeads.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Нет сделок в работе. Добавьте лот через поиск или раздел «Дешевле рынка».";
-            elements.leadInboxList.appendChild(note);
+        const activeCount = state.leads.filter((lead) => ACTIVE_LEAD_STATUSES.includes(lead.status)).length;
+        if (!state.leads.length) {
+            elements.leadInboxNote.textContent = "Лоты, которые вы взяли в работу или решили проверить позже.";
+            elements.leadInboxList.appendChild(buildEmptyNote(
+                "Сделок пока нет. Добавьте лот через поиск или раздел «Дешевле рынка»."
+            ));
             return;
         }
-        const activeCount = state.leads.filter((lead) => ["new", "reviewing", "in_progress", "negotiating", "deferred"].includes(lead.status)).length;
-        elements.leadInboxNote.textContent = `${filteredLeads.length} из ${state.leads.length} лотов в фильтре · ${activeCount} активных`;
-        for (const lead of filteredLeads) {
-            const row = document.createElement("div");
-            row.className = "tracker-row workflow-row";
-            row.innerHTML = `
-                <div class="tracker-row-main">
-                    <strong class="tracker-query">${lead.title}</strong>
-                    <span class="tracker-meta mono">${workflowLabel(lead.status)} • ${lead.price_byn ? `${Math.round(lead.price_byn)} BYN` : "без цены"}${lead.target_resale_byn ? ` • цель ${Math.round(lead.target_resale_byn)} BYN` : ""}</span>
-                </div>
-                <div class="tracker-row-actions">
-                    <select class="deal-select" data-role="status">
-                        <option value="new">Новый</option>
-                        <option value="reviewing">Смотреть</option>
-                        <option value="in_progress">В работе</option>
-                        <option value="negotiating">Торг</option>
-                        <option value="bought">Купил</option>
-                        <option value="reselling">В продаже</option>
-                        <option value="sold">Продано</option>
-                        <option value="skipped">Пропустить</option>
-                    </select>
-                    <a class="primary-link small" href="${lead.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
-                </div>
-                <div class="workflow-fields">
-                    <label class="workflow-field">
-                        <span class="workflow-field-label">Цель</span>
-                        <div class="deal-range-input-wrap workflow-input-wrap">
-                            <input data-role="target" type="number" min="0" step="1" inputmode="numeric" placeholder="цена продажи">
-                            <span>BYN</span>
-                        </div>
-                    </label>
-                    <label class="workflow-field workflow-field-wide">
-                        <span class="workflow-field-label">Заметка</span>
-                        <div class="deal-range-input-wrap workflow-input-wrap">
-                            <input data-role="notes" type="text" placeholder="позвонил, торг, забрать вечером">
-                        </div>
-                    </label>
-                </div>
-            `;
-            const select = row.querySelector('[data-role="status"]');
-            if (select) {
-                select.value = lead.status || "new";
-                select.addEventListener("change", () => {
-                    void actions.updateLeadStatus(lead.id, select.value);
-                });
-            }
-            const targetInput = row.querySelector('[data-role="target"]');
-            if (targetInput) {
-                targetInput.value = lead.target_resale_byn ?? "";
-                targetInput.addEventListener("change", () => {
-                    const rawValue = targetInput.value.trim();
-                    const nextValue = rawValue ? Math.abs(Number(rawValue)) : null;
-                    void actions.updateLeadMeta(lead.id, {
-                        target_resale_byn: Number.isFinite(nextValue) ? nextValue : null,
-                    });
-                });
-            }
-            const notesInput = row.querySelector('[data-role="notes"]');
-            if (notesInput) {
-                notesInput.value = lead.notes || "";
-                notesInput.addEventListener("change", () => {
-                    void actions.updateLeadMeta(lead.id, {
-                        notes: notesInput.value.trim() || null,
-                    });
-                });
-            }
-            elements.leadInboxList.appendChild(row);
+        elements.leadInboxNote.textContent =
+            `${filteredLeads.length} из ${state.leads.length} лотов в фильтре · ${activeCount} активных`;
+        if (!filteredLeads.length) {
+            const filterLabel = LEAD_FILTER_LABELS[state.leadFilter] || state.leadFilter;
+            elements.leadInboxList.appendChild(buildEmptyNote(
+                `В фильтре «${filterLabel}» сделок нет. Всего сделок: ${state.leads.length}, выберите «Все», чтобы увидеть их.`
+            ));
+            return;
         }
+        for (const lead of filteredLeads) {
+            elements.leadInboxList.appendChild(buildLeadRow(lead));
+        }
+        restoreFocusedField(elements.leadInboxList, focused);
+    }
+
+    function buildWatchlistRow(item) {
+        const row = document.createElement("div");
+        row.className = "tracker-row workflow-row";
+        row.dataset.rowId = String(item.id);
+        const priceDelta = Number(item.price_delta_byn);
+        const delta = item.price_delta_byn == null || !Number.isFinite(priceDelta)
+            ? "без изменений"
+            : `${priceDelta > 0 ? "+" : ""}${Math.round(priceDelta)} BYN`;
+        setHtml(row, html`
+            <div class="tracker-row-main">
+                <strong class="tracker-query">${item.title}</strong>
+                <span class="tracker-meta mono">${workflowLabel(item.workflow_status)} • ${marketLabel(item.market_status)} • ${delta}</span>
+            </div>
+            <div class="tracker-row-actions">
+                ${statusSelect(WATCHLIST_STATUS_OPTIONS, item.workflow_status || "watching", "Статус лота")}
+                <button class="ghost-btn small" data-role="lead" type="button">В покупки</button>
+                <button class="ghost-btn small danger" data-role="delete" type="button">Удалить</button>
+            </div>
+            <div class="workflow-fields">
+                <label class="workflow-field workflow-field-wide">
+                    <span class="workflow-field-label">Заметка</span>
+                    <div class="deal-range-input-wrap workflow-input-wrap">
+                        <input data-role="notes" type="text" maxlength="${NOTES_MAX_LENGTH}" placeholder="что проверить при следующем созвоне">
+                    </div>
+                </label>
+            </div>
+        `);
+        const select = row.querySelector('[data-role="status"]');
+        if (select) {
+            bindCommittedSelect(select, item.workflow_status || "watching", (nextValue) =>
+                actions.updateWatchlistStatus(item.id, nextValue)
+            );
+        }
+        row.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
+            void actions.promoteWatchlistToLead(item);
+        });
+        row.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
+            void actions.deleteWatchlistItem(item.id);
+        });
+        const notesInput = row.querySelector('[data-role="notes"]');
+        if (notesInput) {
+            const savedNotes = parseNotesInput(item.notes);
+            notesInput.value = item.notes || "";
+            bindCommittedInput(notesInput, savedNotes, parseNotesInput, (nextValue) =>
+                actions.updateWatchlistMeta(item.id, { notes: nextValue })
+            );
+        }
+        return row;
+    }
+
+    // "Проверить цены" may take up to a minute: block repeats and say it is working.
+    function renderRefreshWatchlistButton() {
+        const button = elements.refreshWatchlistButton;
+        if (!button) {
+            return;
+        }
+        const busy = isPending("refresh");
+        button.disabled = busy;
+        button.setAttribute("aria-busy", String(busy));
+        button.textContent = busy ? "Проверяю цены…" : "Проверить цены";
     }
 
     function renderWatchlist() {
+        const focused = captureFocusedField(elements.watchlistList);
         elements.watchlistList.innerHTML = "";
+        setBusy(elements.watchlistList, false);
         renderWatchlistFilters();
+        renderMonitoringHeroStats();
+        renderRefreshWatchlistButton();
+        const defaultNote = "Добавляйте объявления через кнопку «Следить» в карточке или списке.";
         if (!hasTelegramInitData()) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Отслеживание лотов доступно внутри Telegram Mini App.";
-            elements.watchlistList.appendChild(note);
+            elements.watchlistNote.textContent = defaultNote;
+            elements.watchlistList.appendChild(
+                buildEmptyNote("Отслеживание лотов доступно внутри Telegram Mini App.")
+            );
+            return;
+        }
+        if (isPending("watchlist") && (!state.watchlist.length || loadError("watchlist"))) {
+            elements.watchlistNote.textContent = defaultNote;
+            showListLoading(elements.watchlistList, "Загружаю избранное…");
+            return;
+        }
+        const watchlistError = loadError("watchlist");
+        setBusy(elements.watchlistList, isPending("watchlist") || isPending("refresh"));
+        if (watchlistError) {
+            elements.watchlistNote.textContent = "Не удалось загрузить избранное.";
+            elements.watchlistList.appendChild(buildErrorNote(watchlistError, () => actions.loadWatchlist()));
+            return;
+        }
+        if (!state.watchlist.length) {
+            elements.watchlistNote.textContent = defaultNote;
+            elements.watchlistList.appendChild(buildEmptyNote("Сохранённых лотов пока нет."));
             return;
         }
         const filteredWatchlist = [...state.watchlist]
@@ -1022,87 +1660,42 @@ function createAppRenderers(context) {
                 }
                 return String(right.updated_at || "").localeCompare(String(left.updated_at || ""));
             });
+        const riskCount = state.watchlist
+            .filter((item) => MARKET_RISK_STATUSES.includes(item.market_status)).length;
+        elements.watchlistNote.textContent =
+            `${filteredWatchlist.length} из ${state.watchlist.length} объявлений в фильтре. Сигналов: ${riskCount}.`;
         if (!filteredWatchlist.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Сохранённых лотов по текущему фильтру нет.";
-            elements.watchlistList.appendChild(note);
+            const filterLabel = WATCHLIST_FILTER_LABELS[state.watchlistFilter] || state.watchlistFilter;
+            elements.watchlistList.appendChild(buildEmptyNote(
+                `В фильтре «${filterLabel}» лотов нет. Всего сохранено: ${state.watchlist.length}, выберите «Все», чтобы увидеть их.`
+            ));
             return;
         }
-        const riskCount = state.watchlist.filter((item) => ["price_drop", "missing", "duplicate"].includes(item.market_status)).length;
-        elements.watchlistNote.textContent = `${filteredWatchlist.length} из ${state.watchlist.length} объявлений в фильтре. Сигналов: ${riskCount}.`;
         for (const item of filteredWatchlist) {
-            const row = document.createElement("div");
-            row.className = "tracker-row workflow-row";
-            const delta = item.price_delta_byn == null
-                ? "без изменений"
-                : `${item.price_delta_byn > 0 ? "+" : ""}${Math.round(item.price_delta_byn)} BYN`;
-            row.innerHTML = `
-                <div class="tracker-row-main">
-                    <strong class="tracker-query">${item.title}</strong>
-                    <span class="tracker-meta mono">${workflowLabel(item.workflow_status)} • ${marketLabel(item.market_status)} • ${delta}</span>
-                </div>
-                <div class="tracker-row-actions">
-                    <select class="deal-select" data-role="status">
-                        <option value="watching">Слежу</option>
-                        <option value="reviewing">Смотреть</option>
-                        <option value="in_progress">В работе</option>
-                        <option value="skipped">Пропустить</option>
-                    </select>
-                    <button class="ghost-btn small" data-role="lead" type="button">В покупки</button>
-                    <button class="ghost-btn small danger" data-role="delete" type="button">Удалить</button>
-                </div>
-                <div class="workflow-fields">
-                    <label class="workflow-field workflow-field-wide">
-                        <span class="workflow-field-label">Заметка</span>
-                        <div class="deal-range-input-wrap workflow-input-wrap">
-                            <input data-role="notes" type="text" placeholder="что проверить при следующем созвоне">
-                        </div>
-                    </label>
-                </div>
-            `;
-            const select = row.querySelector('[data-role="status"]');
-            if (select) {
-                select.value = item.workflow_status || "watching";
-                select.addEventListener("change", () => {
-                    void actions.updateWatchlistStatus(item.id, select.value);
-                });
-            }
-            row.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
-                void actions.promoteWatchlistToLead(item);
-            });
-            row.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
-                void actions.deleteWatchlistItem(item.id);
-            });
-            const notesInput = row.querySelector('[data-role="notes"]');
-            if (notesInput) {
-                notesInput.value = item.notes || "";
-                notesInput.addEventListener("change", () => {
-                    void actions.updateWatchlistMeta(item.id, {
-                        notes: notesInput.value.trim() || null,
-                    });
-                });
-            }
-            elements.watchlistList.appendChild(row);
+            elements.watchlistList.appendChild(buildWatchlistRow(item));
         }
+        restoreFocusedField(elements.watchlistList, focused);
     }
 
     function renderTrackers() {
         elements.trackersList.innerHTML = "";
+        setBusy(elements.trackersList, false);
+        renderTrackingHeroStats();
 
         if (!hasTelegramInitData()) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Откройте Mini App внутри Telegram, чтобы управлять трекерами.";
-            elements.trackersList.appendChild(note);
+            elements.trackersList.appendChild(
+                buildEmptyNote("Откройте Mini App внутри Telegram, чтобы управлять трекерами.")
+            );
+            return;
+        }
+
+        if (isPending("trackers") && !state.trackers.length) {
+            showListLoading(elements.trackersList, "Загружаю трекеры…");
             return;
         }
 
         if (!state.trackers.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Активных трекеров пока нет.";
-            elements.trackersList.appendChild(note);
+            elements.trackersList.appendChild(buildEmptyNote("Активных трекеров пока нет."));
             return;
         }
 
@@ -1117,7 +1710,7 @@ function createAppRenderers(context) {
                 tracker.exclude_duplicates ? "без дублей" : "",
                 tracker.seller_type === "Частное лицо" ? "частники" : "",
             ].filter(Boolean);
-            row.innerHTML = `
+            setHtml(row, html`
                 <div class="tracker-row-main">
                     <strong class="tracker-query">${tracker.query}</strong>
                     <span class="tracker-meta mono">${trackerMeta.join(" • ")}</span>
@@ -1126,23 +1719,18 @@ function createAppRenderers(context) {
                     <button class="ghost-btn small" data-role="open" type="button">Открыть</button>
                     <button class="ghost-btn small danger" data-role="delete" type="button">Удалить</button>
                 </div>
-            `;
+            `);
             row.querySelector('[data-role="open"]')?.addEventListener("click", () => {
                 showToast("Загружаю...");
-                elements.searchInput.value = tracker.query;
-                state.query = tracker.query;
-                state.strictSearch = Boolean(tracker.strict_mode);
-                state.trackerMinDiscountPercent = Math.round(tracker.min_discount_percent || 10);
+                state.trackerMinDiscountPercent = Math.round(tracker.min_discount_percent ?? 10);
                 state.trackerMaxPriceByn = tracker.max_price_byn ?? null;
                 state.trackerExcludeDuplicates = Boolean(tracker.exclude_duplicates);
                 state.trackerSellerType = tracker.seller_type || "";
                 state.trackerCondition = tracker.condition || "";
                 state.trackerRegionName = tracker.region_name || "";
                 state.trackerConfigKeyword = tracker.config_keyword || "";
-                renderStrictSearch();
                 renderTrackerInputs();
-                renderLoading();
-                void actions.search();
+                void actions.searchFor(tracker.query, { strictSearch: Boolean(tracker.strict_mode) });
             });
             row.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
                 void actions.deleteTracker(tracker.id);
@@ -1151,14 +1739,77 @@ function createAppRenderers(context) {
         }
     }
 
+    function buildTrackerEventRow(event) {
+        const row = document.createElement("article");
+        const isPriceDrop = event.event_type === "price_drop";
+        row.className = `tracker-event-row${isPriceDrop ? " price-drop" : ""}`;
+        const typeLabel = isPriceDrop ? "Падение цены" : "Новый лот";
+        const typeClass = isPriceDrop ? "drop" : "new";
+        const meta = [];
+        if (event.query) {
+            meta.push(event.strict_mode ? `${event.query} • строгий` : event.query);
+        }
+        if (event.price_byn) {
+            meta.push(`${Math.round(event.price_byn)} р.`);
+        }
+        if (event.delta_byn) {
+            meta.push(`-${Math.round(event.delta_byn)} р.`);
+        }
+        setHtml(row, html`
+            <div class="tracker-event-top">
+                <span class="tracker-event-type ${typeClass}">${typeLabel}</span>
+                <span class="tracker-event-time mono">${formatDate(event.created_at)}</span>
+            </div>
+            <strong class="tracker-event-title">${event.title}</strong>
+            <div class="tracker-event-meta">${meta.map((item) => html`<span>${item}</span>`)}</div>
+            <div class="listing-actions">
+                <button class="listing-btn" data-role="open-query" data-ad-id="${event.ad_id ?? ""}" type="button">Открыть</button>
+                <button class="listing-btn" data-role="lead" type="button">В покупки</button>
+                ${externalLink(event.link, "listing-btn listing-btn--accent", "Kufar")}
+            </div>
+        `);
+        row.querySelector('[data-role="open-query"]')?.addEventListener("click", (clickEvent) => {
+            noteDetailTrigger(clickEvent.currentTarget);
+            showToast("Открываю...");
+            // The event carries its own query and strict mode; the global search stays untouched.
+            void actions.openListingDetail(
+                {
+                    ad_id: event.ad_id,
+                    title: event.title,
+                    link: event.link,
+                    price_byn: event.price_byn,
+                },
+                {
+                    query: event.query || currentQuery(),
+                    strictSearch: Boolean(event.strict_mode),
+                }
+            );
+        });
+        row.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
+            void actions.addLeadFromListing(
+                {
+                    ad_id: event.ad_id,
+                    title: event.title,
+                    link: event.link,
+                    price_byn: event.price_byn,
+                    flip_estimates: [],
+                },
+                "tracker_event",
+                event.query
+            );
+        });
+        return row;
+    }
+
     function renderTrackerEvents() {
         elements.trackerEventsList.innerHTML = "";
+        renderTrackingHeroStats();
 
         if (!hasTelegramInitData()) {
-            const note = document.createElement("p");
-            note.className = "tracker-event-empty";
-            note.textContent = "Откройте Mini App внутри Telegram, чтобы видеть события.";
-            elements.trackerEventsList.appendChild(note);
+            elements.trackerEventsList.appendChild(buildEmptyNote(
+                "Откройте Mini App внутри Telegram, чтобы видеть события.",
+                "tracker-event-empty"
+            ));
             return;
         }
 
@@ -1166,16 +1817,26 @@ function createAppRenderers(context) {
         const newCount = state.trackerEvents.filter((e) => e.event_type === "new_listing").length;
         const totalCount = state.trackerEvents.length;
 
-        if (elements.trackerEventsBadge) {
-            elements.trackerEventsBadge.textContent = totalCount > 0 ? `${totalCount} событий` : "чат + Mini App";
-        }
-
         for (const button of elements.trackerEventFilterButtons) {
             const filter = button.dataset.eventFilter;
             const count = filter === "all" ? totalCount : filter === "price_drop" ? dropCount : newCount;
             const label = filter === "all" ? "Все" : filter === "price_drop" ? "Упали в цене" : "Новые лоты";
             button.textContent = count > 0 ? `${label} (${count})` : label;
             button.classList.toggle("active", filter === state.trackerEventFilter);
+        }
+
+        const eventsError = loadError("events");
+        setBusy(elements.trackerEventsList, false);
+        if (isPending("trackers") && (!totalCount || eventsError)) {
+            setBusy(elements.trackerEventsList, true);
+            elements.trackerEventsList.appendChild(
+                buildEmptyNote("Загружаю события…", "tracker-event-empty")
+            );
+            return;
+        }
+        if (eventsError) {
+            elements.trackerEventsList.appendChild(buildErrorNote(eventsError, () => actions.loadTrackers()));
+            return;
         }
 
         const filteredEvents = state.trackerEvents.filter((event) => {
@@ -1186,127 +1847,191 @@ function createAppRenderers(context) {
         });
 
         if (!filteredEvents.length) {
-            const note = document.createElement("p");
-            note.className = "tracker-event-empty";
-            note.textContent = state.trackerEventFilter === "all"
-                ? "Событий пока нет. Они появятся после первой проверки планировщика."
-                : "По этому фильтру событий пока нет.";
-            elements.trackerEventsList.appendChild(note);
+            elements.trackerEventsList.appendChild(buildEmptyNote(
+                state.trackerEventFilter === "all" || !totalCount
+                    ? "Событий пока нет. Они появятся после первой проверки планировщика."
+                    : "По этому фильтру событий пока нет.",
+                "tracker-event-empty"
+            ));
             return;
         }
 
         for (const event of filteredEvents) {
-            const row = document.createElement("article");
-            const isPriceDrop = event.event_type === "price_drop";
-            row.className = `tracker-event-row${isPriceDrop ? " price-drop" : ""}`;
-            const typeLabel = isPriceDrop ? "Падение цены" : "Новый лот";
-            const typeClass = isPriceDrop ? "drop" : "new";
-            const meta = [];
-            if (event.query) {
-                meta.push(event.strict_mode ? `${event.query} • строгий` : event.query);
-            }
-            if (event.price_byn) {
-                meta.push(`${Math.round(event.price_byn)} р.`);
-            }
-            if (event.delta_byn) {
-                meta.push(`-${Math.round(event.delta_byn)} р.`);
-            }
-            row.innerHTML = `
-                <div class="tracker-event-top">
-                    <span class="tracker-event-type ${typeClass}">${typeLabel}</span>
-                    <span class="tracker-event-time mono">${formatDate(event.created_at)}</span>
-                </div>
-                <strong class="tracker-event-title">${event.title}</strong>
-                <div class="tracker-event-meta">${meta.map((item) => `<span>${item}</span>`).join("")}</div>
-                <div class="listing-actions">
-                    <button class="listing-btn" data-role="open-query" type="button">Открыть</button>
-                    <button class="listing-btn" data-role="lead" type="button">В покупки</button>
-                    <a class="listing-btn listing-btn--accent" href="${event.link}" target="_blank" rel="noreferrer noopener">Kufar</a>
-                </div>
-            `;
-            row.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
-                showToast("Открываю...");
-                if (event.query) {
-                    elements.searchInput.value = event.query;
-                    state.query = event.query;
-                }
-                state.strictSearch = Boolean(event.strict_mode);
-                renderStrictSearch();
-                void actions.openListingDetail({
-                    ad_id: event.ad_id,
-                    title: event.title,
-                    link: event.link,
-                    price_byn: event.price_byn,
-                });
-            });
-            row.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
-                void actions.addLeadFromListing(
-                    {
-                        ad_id: event.ad_id,
-                        title: event.title,
-                        link: event.link,
-                        price_byn: event.price_byn,
-                        flip_estimates: [],
-                    },
-                    "tracker_event",
-                    event.query
-                );
-            });
-            elements.trackerEventsList.appendChild(row);
+            elements.trackerEventsList.appendChild(buildTrackerEventRow(event));
         }
     }
 
-    function destroyChart() {
-        if (state.chart) {
-            state.chart.destroy();
-            state.chart = null;
+    // ---- Detail modal -------------------------------------------------------
+
+    // Where focus goes back when the card closes: the button that opened it, or, when
+    // a re-render replaced that button meanwhile, the new button for the same listing.
+    let detailReturnFocus = null;
+    let pendingDetailTrigger = null;
+    // Background nodes made inert while the modal is open, to restore them exactly.
+    let inertNodes = [];
+
+    function describeTrigger(element) {
+        if (!element || element === document.body || typeof element.focus !== "function") {
+            return null;
+        }
+        return {
+            element,
+            role: element.dataset?.role || "",
+            adId: element.dataset?.adId || "",
+        };
+    }
+
+    // Called by the buttons that open a card, before the (slow) detail request starts.
+    function noteDetailTrigger(element) {
+        pendingDetailTrigger = describeTrigger(element);
+    }
+
+    function isVisibleElement(element) {
+        return Boolean(element?.isConnected) && element.getClientRects().length > 0;
+    }
+
+    function findTriggerReplacement(trigger) {
+        if (!trigger?.role || !trigger.adId) {
+            return null;
+        }
+        const candidates = Array.from(document.querySelectorAll("[data-ad-id]")).filter(
+            (candidate) =>
+                candidate.dataset.role === trigger.role && candidate.dataset.adId === trigger.adId
+        );
+        return candidates.find(isVisibleElement) || null;
+    }
+
+    function setBackgroundInert(isInert) {
+        for (const node of inertNodes) {
+            node.removeAttribute("inert");
+            node.removeAttribute("aria-hidden");
+        }
+        inertNodes = [];
+        if (!isInert) {
+            return;
+        }
+        const root = elements.appRoot || elements.detailModal.parentElement;
+        for (const node of Array.from(root?.children || [])) {
+            // Toasts stay live so confirmations from the modal buttons are announced.
+            if (node === elements.detailModal || node === elements.toastContainer) {
+                continue;
+            }
+            if (node.hasAttribute("inert") || node.getAttribute("aria-hidden") === "true") {
+                continue;
+            }
+            node.setAttribute("inert", "");
+            // aria-hidden too for WebViews without inert support.
+            node.setAttribute("aria-hidden", "true");
+            inertNodes.push(node);
         }
     }
 
-    function destroyHistoryChart() {
-        if (state.historyChart) {
-            state.historyChart.destroy();
-            state.historyChart = null;
+    function focusableInDetail() {
+        const sheet = elements.detailModal.querySelector(".detail-sheet") || elements.detailModal;
+        return Array.from(
+            sheet.querySelectorAll(
+                'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )
+        ).filter(isVisibleElement);
+    }
+
+    // Keeps Tab inside the open card even where inert is not supported.
+    function trapDetailFocus(event) {
+        if (event.key !== "Tab" || elements.detailModal.hidden) {
+            return;
         }
+        const focusable = focusableInDetail();
+        if (!focusable.length) {
+            event.preventDefault();
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        const inside = elements.detailModal.contains(active);
+        if (event.shiftKey && (active === first || !inside)) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && (active === last || !inside)) {
+            event.preventDefault();
+            first.focus();
+        }
+    }
+
+    let focusTrapBound = false;
+
+    function buildDetailField(label, value) {
+        const item = document.createElement("div");
+        item.className = "detail-field";
+        const labelNode = document.createElement("span");
+        labelNode.className = "detail-field-label";
+        labelNode.textContent = label == null ? "" : String(label);
+        const valueNode = document.createElement("span");
+        valueNode.className = "detail-field-value";
+        valueNode.textContent = value == null ? "" : String(value);
+        item.append(labelNode, valueNode);
+        return item;
+    }
+
+    function restoreDetailFocus() {
+        const trigger = detailReturnFocus;
+        detailReturnFocus = null;
+        if (!trigger) {
+            return;
+        }
+        const target = isVisibleElement(trigger.element)
+            ? trigger.element
+            : findTriggerReplacement(trigger);
+        target?.focus({ preventScroll: true });
     }
 
     function renderDetailModal() {
+        const wasOpen = !elements.detailModal.hidden;
         if (!state.detail) {
             elements.detailModal.hidden = true;
+            if (wasOpen) {
+                setBackgroundInert(false);
+                restoreDetailFocus();
+            }
             return;
         }
 
         const detail = state.detail;
-        const images = detail.images || [];
+        const images = (detail.images || []).map(safeUrl).filter(Boolean);
         const hasImages = images.length > 0;
         const currentImage = hasImages ? images[state.detailImageIndex] || images[0] : null;
 
         elements.detailTitle.textContent = detail.title || "Объявление";
-        elements.detailPrice.textContent = formatPrice(detail.price);
-        elements.detailLink.href = detail.link || "#";
+        elements.detailPrice.textContent = formatListingPrice(detail.price);
+        const link = safeUrl(detail.link);
+        if (link) {
+            elements.detailLink.href = link;
+        } else {
+            elements.detailLink.removeAttribute("href");
+        }
+        // .listing-btn sets display:flex, so the hidden attribute alone does not hide it.
+        elements.detailLink.hidden = !link;
+        elements.detailLink.style.display = link ? "" : "none";
         elements.detailDescription.textContent = detail.description || "";
         elements.detailDescription.hidden = !detail.description;
+
         elements.detailProfit.innerHTML = "";
         for (const estimate of detail.flip_estimates || []) {
-            const item = document.createElement("div");
-            item.className = "detail-field";
-            item.innerHTML = `
-                <span class="detail-field-label">${estimate.label}</span>
-                <span class="detail-field-value">${formatPrice(estimate.target_price)} • ${Math.round(estimate.profit_byn)} BYN (${estimate.profit_percent > 0 ? "+" : ""}${estimate.profit_percent}%)</span>
-            `;
-            elements.detailProfit.appendChild(item);
+            // target_price is computed from BYN statistics regardless of the display currency.
+            const profitPercent = Number(estimate.profit_percent) || 0;
+            elements.detailProfit.appendChild(buildDetailField(
+                estimate.label,
+                `${formatByn(estimate.target_price)} • ${formatByn(estimate.profit_byn)} (${profitPercent > 0 ? "+" : ""}${profitPercent}%)`
+            ));
         }
         elements.detailProfitBlock.hidden = (detail.flip_estimates || []).length === 0;
 
         elements.detailLiquidity.innerHTML = "";
         if (detail.liquidity) {
-            const item = document.createElement("div");
-            item.className = "detail-field";
-            item.innerHTML = `
-                <span class="detail-field-label">${detail.liquidity.label}</span>
-                <span class="detail-field-value">${Math.round(detail.liquidity.score)} • ${(detail.liquidity.reasons || []).join(" · ")}</span>
-            `;
-            elements.detailLiquidity.appendChild(item);
+            elements.detailLiquidity.appendChild(buildDetailField(
+                detail.liquidity.label,
+                `${Math.round(detail.liquidity.score || 0)} • ${(detail.liquidity.reasons || []).join(" · ")}`
+            ));
         }
         elements.detailLiquidityBlock.hidden = !detail.liquidity;
 
@@ -1321,7 +2046,7 @@ function createAppRenderers(context) {
             ...(detail.anomaly_labels || []),
             formatDelta(detail.price_vs_median),
         ].filter(Boolean);
-        elements.detailMeta.innerHTML = metaItems.map((item) => `<span class="detail-pill">${item}</span>`).join("");
+        setHtml(elements.detailMeta, metaItems.map((item) => html`<span class="detail-pill">${item}</span>`));
 
         elements.detailMainImage.hidden = !hasImages;
         elements.detailNoImage.hidden = hasImages;
@@ -1334,13 +2059,20 @@ function createAppRenderers(context) {
 
         elements.detailThumbs.innerHTML = "";
         for (const [index, image] of images.entries()) {
+            const isActive = state.detailImageIndex === index;
             const button = document.createElement("button");
             button.type = "button";
-            button.className = `detail-thumb${state.detailImageIndex === index ? " active" : ""}`;
-            button.innerHTML = `<img src="${image}" alt="">`;
+            button.className = `detail-thumb${isActive ? " active" : ""}`;
+            button.setAttribute("aria-label", `Фото ${index + 1} из ${images.length}`);
+            button.setAttribute("aria-pressed", String(isActive));
+            const thumb = document.createElement("img");
+            thumb.src = image;
+            thumb.alt = "";
+            button.appendChild(thumb);
             button.addEventListener("click", () => {
                 state.detailImageIndex = index;
                 renderDetailModal();
+                elements.detailThumbs.children[index]?.focus({ preventScroll: true });
             });
             elements.detailThumbs.appendChild(button);
         }
@@ -1348,35 +2080,135 @@ function createAppRenderers(context) {
         elements.detailParams.innerHTML = "";
         const params = detail.parameters || [];
         for (const field of params) {
-            const item = document.createElement("div");
-            item.className = "detail-field";
-            item.innerHTML = `
-                <span class="detail-field-label">${field.label}</span>
-                <span class="detail-field-value">${field.value}</span>
-            `;
-            elements.detailParams.appendChild(item);
+            elements.detailParams.appendChild(buildDetailField(field.label, field.value));
         }
         elements.detailParamsBlock.hidden = params.length === 0;
 
         elements.detailSeller.innerHTML = "";
         const sellerFields = detail.seller_fields || [];
         for (const field of sellerFields) {
-            const item = document.createElement("div");
-            item.className = "detail-field";
-            item.innerHTML = `
-                <span class="detail-field-label">${field.label}</span>
-                <span class="detail-field-value">${field.value}</span>
-            `;
-            elements.detailSeller.appendChild(item);
+            elements.detailSeller.appendChild(buildDetailField(field.label, field.value));
         }
         elements.detailSellerBlock.hidden = sellerFields.length === 0;
         elements.detailModal.hidden = false;
+
+        if (!wasOpen) {
+            const active = document.activeElement;
+            const fromActive = active && !elements.detailModal.contains(active)
+                ? describeTrigger(active)
+                : null;
+            // The focused element is the opener unless a re-render dropped it meanwhile;
+            // then the button noted at click time still identifies the listing.
+            detailReturnFocus = fromActive?.role || !pendingDetailTrigger
+                ? fromActive
+                : pendingDetailTrigger;
+            pendingDetailTrigger = null;
+            if (!focusTrapBound) {
+                document.addEventListener("keydown", trapDetailFocus);
+                focusTrapBound = true;
+            }
+            setBackgroundInert(true);
+            elements.detailClose?.focus({ preventScroll: true });
+        }
+    }
+
+    // renderAll() keeps the modal's visibility in step with state.detail, so resetting
+    // state.detail anywhere closes the modal (with the background and focus restored).
+    function syncDetailModal() {
+        if (!state.detail && !elements.detailModal.hidden) {
+            renderDetailModal();
+        }
     }
 
     function closeDetailModal() {
         state.detail = null;
         state.detailImageIndex = 0;
         renderDetailModal();
+    }
+
+    // ---- Charts -------------------------------------------------------------
+
+    // What each chart was last drawn from, to avoid re-creating it on every renderAll().
+    const chartSources = {
+        distribution: null,
+        history: null,
+    };
+
+    function chartsAvailable() {
+        return typeof Chart !== "undefined";
+    }
+
+    function currentTheme() {
+        return document.documentElement.getAttribute("data-theme") || "dark";
+    }
+
+    function chartBox(canvas) {
+        return canvas.closest(".chart-box") || canvas.parentElement;
+    }
+
+    function chartFallbackNote(canvas, create) {
+        const box = chartBox(canvas);
+        const sibling = box?.nextElementSibling;
+        if (sibling && sibling.classList.contains("chart-fallback")) {
+            return sibling;
+        }
+        if (!create || !box) {
+            return null;
+        }
+        const note = document.createElement("p");
+        note.className = "section-note chart-fallback";
+        box.after(note);
+        return note;
+    }
+
+    function showChartFallback(canvas, text) {
+        const box = chartBox(canvas);
+        if (box) {
+            box.hidden = true;
+        }
+        const note = chartFallbackNote(canvas, true);
+        if (note) {
+            note.textContent = text;
+            note.hidden = false;
+        }
+    }
+
+    function hideChartFallback(canvas) {
+        const box = chartBox(canvas);
+        if (box) {
+            box.hidden = false;
+        }
+        const note = chartFallbackNote(canvas, false);
+        if (note) {
+            note.hidden = true;
+        }
+    }
+
+    // Releases a canvas still bound to a chart this module lost track of.
+    function releaseCanvas(canvas) {
+        const orphan = typeof Chart.getChart === "function" ? Chart.getChart(canvas) : null;
+        orphan?.destroy();
+    }
+
+    function describeCanvas(canvas, label) {
+        canvas.setAttribute("role", "img");
+        canvas.setAttribute("aria-label", label);
+    }
+
+    function destroyChart() {
+        if (state.chart) {
+            state.chart.destroy();
+            state.chart = null;
+        }
+        chartSources.distribution = null;
+    }
+
+    function destroyHistoryChart() {
+        if (state.historyChart) {
+            state.historyChart.destroy();
+            state.historyChart = null;
+        }
+        chartSources.history = null;
     }
 
     function renderChart(stats) {
@@ -1396,14 +2228,7 @@ function createAppRenderers(context) {
         const canvas = document.getElementById("priceChart");
         if (!canvas) return;
 
-        destroyChart();
-
-        const isDark = document.documentElement.getAttribute("data-theme") !== "light";
-        const muted = isDark ? "rgba(136,128,120,0.6)" : "rgba(114,105,94,0.6)";
-        const grid = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
-        const tooltipBackground = isDark ? "#1A1A1D" : "#FFFFFF";
-        const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
-        const amber = isDark ? "#F59E0B" : "#D97706";
+        const labels = ["Мин", "Q1", "Медиана", "Q3", "Макс"];
         const values = [
             state.stats.min,
             state.stats.q1,
@@ -1411,12 +2236,37 @@ function createAppRenderers(context) {
             state.stats.q3,
             state.stats.max,
         ];
+        const description = labels
+            .map((label, index) => `${label} ${formatPrice(values[index])}`)
+            .join(", ");
+        describeCanvas(canvas, `Распределение цен: ${description}`);
+
+        if (!chartsAvailable()) {
+            destroyChart();
+            showChartFallback(canvas, `График недоступен. ${description}`);
+            return;
+        }
+        hideChartFallback(canvas);
+
+        const sourceKey = JSON.stringify([values, state.currency, currentTheme()]);
+        if (state.chart && chartSources.distribution === sourceKey) {
+            return;
+        }
+        destroyChart();
+
+        const isDark = currentTheme() !== "light";
+        const muted = isDark ? "rgba(136,128,120,0.6)" : "rgba(114,105,94,0.6)";
+        const grid = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
+        const tooltipBackground = isDark ? "#1A1A1D" : "#FFFFFF";
+        const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
+        const amber = isDark ? "#F59E0B" : "#D97706";
         const alphas = [0.22, 0.4, 0.9, 0.4, 0.22];
 
+        releaseCanvas(canvas);
         state.chart = new Chart(canvas, {
             type: "bar",
             data: {
-                labels: ["Мин", "Q1", "Медиана", "Q3", "Макс"],
+                labels,
                 datasets: [
                     {
                         data: values,
@@ -1471,43 +2321,38 @@ function createAppRenderers(context) {
                 },
             },
         });
+        chartSources.distribution = sourceKey;
     }
 
-    function renderHistory() {
-        const hasHistory = state.history.length > 0;
-        elements.historySection.hidden = !state.query;
-        renderHistoryRangeButtons();
-        elements.historyEmpty.hidden = hasHistory;
-        elements.historySummary.hidden = !hasHistory;
-        elements.historySummary.innerHTML = "";
-        if (!state.query) {
-            destroyHistoryChart();
-            return;
-        }
-        if (!hasHistory || !state.panels.history) {
-            destroyHistoryChart();
-            return;
-        }
-        renderHistoryChart();
+    function historyPoints() {
+        return state.history
+            .map((point) => ({
+                x: new Date(point.snapshot_at).getTime(),
+                y: Number(point.median),
+            }))
+            .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y) && point.y > 0)
+            .sort((left, right) => left.x - right.x);
     }
 
-    function renderHistoryChart() {
-        const canvas = document.getElementById("historyChart");
-        if (!canvas || !state.history.length) {
-            destroyHistoryChart();
-            return;
-        }
+    const HISTORY_EMPTY_TEXT =
+        "История для этого запроса ещё копится. Данные появляются после поиска и фоновых проверок.";
+    const HISTORY_LOADING_TEXT = "Загружаю историю цен…";
 
-        const firstPoint = state.history[0];
-        const lastPoint = state.history[state.history.length - 1];
-        const delta = firstPoint && lastPoint && firstPoint.median
-            ? ((lastPoint.median - firstPoint.median) / firstPoint.median) * 100
+    const axisDayFormatter =new Intl.DateTimeFormat("ru-BY", { day: "2-digit", month: "short" });
+    const axisTimeFormatter = new Intl.DateTimeFormat("ru-BY", { hour: "2-digit", minute: "2-digit" });
+
+    function renderHistorySummary(points) {
+        const firstPoint = points[0];
+        const lastPoint = points[points.length - 1];
+        const delta = firstPoint && lastPoint && firstPoint.y
+            ? ((lastPoint.y - firstPoint.y) / firstPoint.y) * 100
             : 0;
+        const medians = points.map((point) => point.y);
         const summaryItems = [
             {
                 label: "Сейчас",
-                value: formatPrice(lastPoint?.median),
-                meta: `${state.history.length} точек`,
+                value: formatPrice(lastPoint?.y),
+                meta: `${points.length} точек`,
             },
             {
                 label: "Тренд",
@@ -1516,25 +2361,106 @@ function createAppRenderers(context) {
             },
             {
                 label: "Диапазон",
-                value: `${formatPrice(Math.min(...state.history.map((point) => point.median)))} - ${formatPrice(Math.max(...state.history.map((point) => point.median)))}`,
+                value: `${formatPrice(Math.min(...medians))} - ${formatPrice(Math.max(...medians))}`,
                 meta: "по медиане",
             },
         ];
-        elements.historySummary.innerHTML = summaryItems
-            .map(
-                (item) => `
-                    <div class="history-summary-card">
-                        <span class="history-summary-label">${item.label}</span>
-                        <strong class="history-summary-value mono">${item.value}</strong>
-                        <span class="history-summary-meta">${item.meta}</span>
-                    </div>
-                `
-            )
-            .join("");
+        setHtml(elements.historySummary, summaryItems.map((item) => html`
+            <div class="history-summary-card">
+                <span class="history-summary-label">${item.label}</span>
+                <strong class="history-summary-value mono">${item.value}</strong>
+                <span class="history-summary-meta">${item.meta}</span>
+            </div>
+        `));
         elements.historySummary.hidden = false;
+    }
 
+    function renderHistory() {
+        const query = currentQuery();
+        const points = query ? historyPoints() : [];
+        const hasHistory = points.length > 0;
+        const loading = Boolean(query) && (isPending("history") || Boolean(state.loading));
+        elements.historySection.hidden = !query;
+        renderHistoryRangeButtons();
+        elements.historyEmpty.hidden = hasHistory;
+        // Until /price-history answers, "still accumulating" would read as a final result.
+        elements.historyEmpty.textContent = loading ? HISTORY_LOADING_TEXT : HISTORY_EMPTY_TEXT;
+        setBusy(elements.historySection, loading);
+        if (!hasHistory) {
+            elements.historySummary.hidden = true;
+            elements.historySummary.innerHTML = "";
+            destroyHistoryChart();
+            const canvas = document.getElementById("historyChart");
+            if (canvas) {
+                hideChartFallback(canvas);
+                chartBox(canvas).hidden = true;
+            }
+            return;
+        }
+        renderHistorySummary(points);
+        if (!state.panels.history) {
+            destroyHistoryChart();
+            return;
+        }
+        renderHistoryChart(points);
+    }
+
+    function renderHistoryChart(points = historyPoints()) {
+        const canvas = document.getElementById("historyChart");
+        if (!canvas || !points.length) {
+            destroyHistoryChart();
+            return;
+        }
+
+        const firstPoint = points[0];
+        const lastPoint = points[points.length - 1];
+        const spanMs = lastPoint.x - firstPoint.x;
+        const showTime = spanMs <= 2 * 24 * 60 * 60 * 1000;
+        const formatAxisDate = (value) => {
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) {
+                return "";
+            }
+            return showTime
+                ? `${axisDayFormatter.format(date)} ${axisTimeFormatter.format(date)}`
+                : axisDayFormatter.format(date);
+        };
+        const medians = points.map((point) => point.y);
+        const description = [
+            `Динамика медианы: ${points.length} точек`,
+            `с ${formatDate(firstPoint.x)} по ${formatDate(lastPoint.x)}`,
+            `от ${formatPrice(Math.min(...medians))} до ${formatPrice(Math.max(...medians))}`,
+            `сейчас ${formatPrice(lastPoint.y)}`,
+        ].join(", ");
+        describeCanvas(canvas, description);
+
+        if (!chartsAvailable()) {
+            destroyHistoryChart();
+            const recent = points.slice(-5)
+                .map((point) => `${formatDate(point.x)}: ${formatPrice(point.y)}`)
+                .join("; ");
+            showChartFallback(canvas, `График недоступен. Последние точки: ${recent}`);
+            return;
+        }
+        hideChartFallback(canvas);
+
+        const source = state.historyChart ? chartSources.history : null;
+        if (
+            source &&
+            source.history === state.history &&
+            source.currency === state.currency &&
+            source.theme === currentTheme()
+        ) {
+            return;
+        }
+        if (state.activeView !== "overview") {
+            // Drawing into a hidden view wastes work; renderAll() redraws it on return.
+            destroyHistoryChart();
+            return;
+        }
         destroyHistoryChart();
-        const isDark = document.documentElement.getAttribute("data-theme") !== "light";
+
+        const isDark = currentTheme() !== "light";
         const lineColor = isDark ? "#F59E0B" : "#D97706";
         const fillColor = isDark ? "rgba(245,158,11,0.12)" : "rgba(217,119,6,0.12)";
         const muted = isDark ? "rgba(136,128,120,0.75)" : "rgba(114,105,94,0.75)";
@@ -1542,14 +2468,15 @@ function createAppRenderers(context) {
         const tooltipBackground = isDark ? "#1A1A1D" : "#FFFFFF";
         const tooltipText = isDark ? "#F2EFE8" : "#1A1917";
 
+        releaseCanvas(canvas);
         state.historyChart = new Chart(canvas, {
             type: "line",
             data: {
-                labels: state.history.map((point) => formatDate(point.snapshot_at) || ""),
                 datasets: [
                     {
                         label: "Медиана",
-                        data: state.history.map((point) => point.median),
+                        // A linear time axis keeps uneven gaps between snapshots visible.
+                        data: points,
                         borderColor: lineColor,
                         backgroundColor: fillColor,
                         fill: true,
@@ -1572,6 +2499,9 @@ function createAppRenderers(context) {
                         borderWidth: 1,
                         padding: 10,
                         callbacks: {
+                            title(items) {
+                                return items.length ? formatDate(items[0].parsed.x) : "";
+                            },
                             label(context) {
                                 return ` ${formatPrice(context.parsed.y)}`;
                             },
@@ -1580,12 +2510,19 @@ function createAppRenderers(context) {
                 },
                 scales: {
                     x: {
+                        type: "linear",
+                        min: firstPoint.x,
+                        max: spanMs > 0 ? lastPoint.x : firstPoint.x + 60 * 60 * 1000,
                         grid: { display: false },
                         border: { display: false },
                         ticks: {
                             color: muted,
                             font: { family: "'JetBrains Mono'", size: 9 },
                             maxTicksLimit: 6,
+                            maxRotation: 0,
+                            callback(value) {
+                                return formatAxisDate(value);
+                            },
                         },
                     },
                     y: {
@@ -1603,46 +2540,65 @@ function createAppRenderers(context) {
                 },
             },
         });
+        chartSources.history = {
+            history: state.history,
+            currency: state.currency,
+            theme: currentTheme(),
+        };
     }
 
+    // Each step is isolated: a failing renderer (e.g. Chart.js missing) must not
+    // leave the rest of the interface stale.
     function renderAll() {
-        renderLoading();
-        renderError();
-        renderHelper();
-        renderSummary();
-        renderCurrencyButtons();
-        renderStrictSearch();
-        renderViewTabs();
-        renderViews();
-        renderTrackingHeroStats();
-        renderCheapHeroStats();
-        renderMonitoringHeroStats();
-        renderDealsHeroStats();
-        renderSortButtons();
-        renderDiscountButtons();
-        renderTrackerEventFilters();
-        renderHistoryRangeButtons();
-        renderDealInputs();
-        renderTrackerInputs();
-        renderStats();
-        renderHistory();
-        renderComparison();
-        renderSegments();
-        renderGeography();
-        renderPanels();
-        renderListings();
-        renderDeals();
-        renderRates();
-        renderTrackerStatus();
-        renderTrackers();
-        renderTrackerEvents();
-        renderLeads();
-        renderWatchlist();
-        renderOpportunityBoard();
+        const steps = [
+            renderLoading,
+            renderError,
+            renderHelper,
+            renderSummary,
+            renderCurrencyButtons,
+            renderStrictSearch,
+            renderViewTabs,
+            renderViews,
+            renderTrackingHeroStats,
+            renderCheapHeroStats,
+            renderMonitoringHeroStats,
+            renderDealsHeroStats,
+            renderSortButtons,
+            renderDiscountButtons,
+            renderTrackerEventFilters,
+            renderHistoryRangeButtons,
+            renderDealInputs,
+            renderTrackerInputs,
+            renderPanels,
+            renderStats,
+            renderHistory,
+            renderComparison,
+            renderSegments,
+            renderGeography,
+            renderListings,
+            renderDeals,
+            renderRates,
+            renderTrackerStatus,
+            renderTrackers,
+            renderTrackerEvents,
+            renderLeads,
+            renderWatchlist,
+            renderOpportunityBoard,
+            syncDetailModal,
+        ];
+        for (const step of steps) {
+            try {
+                step();
+            } catch (error) {
+                console.error(`[renderAll] ${step.name} failed`, error);
+            }
+        }
     }
 
     return {
         showToast,
+        escapeHtml,
+        safeUrl,
         renderRates,
         renderError,
         renderLoading,
