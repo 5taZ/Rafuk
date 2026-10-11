@@ -1,5 +1,14 @@
 # AI Handoff: Kufar Analytics
 
+> [!WARNING]
+> **Исторический документ: состояние проекта на апрель 2026 года.** С тех пор код
+> существенно переработан, и многие утверждения ниже устарели или неверны (например,
+> что `/price` и `/top` работают, что тесты и `ruff` зелёные, что в Mini App четыре
+> вкладки, а также пороги скидок). Источник истины: [CLAUDE.md](CLAUDE.md) и сам код.
+> Документ сохранён как история решений и roadmap; содержимое ниже не обновляется.
+> Ссылки на файлы заменены на относительные; `nginx/default.conf` с тех пор заменён на
+> шаблон [nginx/templates/default.conf.template](nginx/templates/default.conf.template).
+
 ## 1. Контекст
 
 Этот файл нужен как handoff-документ для другого ИИ/разработчика. Он описывает:
@@ -157,53 +166,53 @@
 
 Ключевые файлы:
 
-- [api/main.py](/home/staz/Downloads/myProjetctKufar/api/main.py)
-- [api/config.py](/home/staz/Downloads/myProjetctKufar/api/config.py)
-- [api/dependencies.py](/home/staz/Downloads/myProjetctKufar/api/dependencies.py)
-- [api/models.py](/home/staz/Downloads/myProjetctKufar/api/models.py)
-- [api/schemas.py](/home/staz/Downloads/myProjetctKufar/api/schemas.py)
+- [api/main.py](api/main.py)
+- [api/config.py](api/config.py)
+- [api/dependencies.py](api/dependencies.py)
+- [api/models.py](api/models.py)
+- [api/schemas.py](api/schemas.py)
 
 ### API routers
 
 Роуты:
 
-- [price_stats.py](/home/staz/Downloads/myProjetctKufar/api/routers/price_stats.py)
-- [price_history.py](/home/staz/Downloads/myProjetctKufar/api/routers/price_history.py)
-- [listings.py](/home/staz/Downloads/myProjetctKufar/api/routers/listings.py)
-- [segments.py](/home/staz/Downloads/myProjetctKufar/api/routers/segments.py)
-- [listing_detail.py](/home/staz/Downloads/myProjetctKufar/api/routers/listing_detail.py)
-- [currency.py](/home/staz/Downloads/myProjetctKufar/api/routers/currency.py)
-- [trackers.py](/home/staz/Downloads/myProjetctKufar/api/routers/trackers.py)
+- [price_stats.py](api/routers/price_stats.py)
+- [price_history.py](api/routers/price_history.py)
+- [listings.py](api/routers/listings.py)
+- [segments.py](api/routers/segments.py)
+- [listing_detail.py](api/routers/listing_detail.py)
+- [currency.py](api/routers/currency.py)
+- [trackers.py](api/routers/trackers.py)
 
 ### Сервисы backend
 
 Ключевые сервисы:
 
-- [kufar_client.py](/home/staz/Downloads/myProjetctKufar/api/services/kufar_client.py)
+- [kufar_client.py](api/services/kufar_client.py)
   - полный поиск по рынку через пагинацию;
   - rate limit / retry / timeout.
 
-- [aggregator.py](/home/staz/Downloads/myProjetctKufar/api/services/aggregator.py)
+- [aggregator.py](api/services/aggregator.py)
   - нормализация цен;
   - вычисление статистики;
   - фильтр `Дёшево`;
   - сортировки.
 
-- [history_service.py](/home/staz/Downloads/myProjetctKufar/api/services/history_service.py)
+- [history_service.py](api/services/history_service.py)
   - bucket-снапшоты;
   - upsert `query_snapshots`;
   - sync `query_listing_states`;
   - чтение истории.
 
-- [currency_service.py](/home/staz/Downloads/myProjetctKufar/api/services/currency_service.py)
+- [currency_service.py](api/services/currency_service.py)
   - курс НБРБ;
   - конвертация `BYN -> USD`.
 
-- [cache.py](/home/staz/Downloads/myProjetctKufar/api/services/cache.py)
+- [cache.py](api/services/cache.py)
   - Redis cache;
   - fallback на `MemoryCache`.
 
-- [listing_mapper.py](/home/staz/Downloads/myProjetctKufar/api/services/listing_mapper.py)
+- [listing_mapper.py](api/services/listing_mapper.py)
   - сбор полной карточки объявления.
 
 ### База данных
@@ -218,7 +227,7 @@
 
 Ключевой файл:
 
-- [models.py](/home/staz/Downloads/myProjetctKufar/api/models.py)
+- [models.py](api/models.py)
 
 ### Scheduler
 
@@ -235,7 +244,7 @@ Scheduler:
 
 Ключевой файл:
 
-- [collector.py](/home/staz/Downloads/myProjetctKufar/scheduler/collector.py)
+- [collector.py](scheduler/collector.py)
 
 ### Telegram Bot
 
@@ -248,8 +257,8 @@ Scheduler:
 
 Ключевые файлы:
 
-- [bot/main.py](/home/staz/Downloads/myProjetctKufar/bot/main.py)
-- [bot/handlers](/home/staz/Downloads/myProjetctKufar/bot/handlers)
+- [bot/main.py](bot/main.py)
+- [bot/handlers](bot/handlers)
 
 ### Mini App frontend
 
@@ -268,9 +277,9 @@ Mini App ориентирован на компактный сценарий Tel
 
 Ключевые файлы:
 
-- [frontend/index.html](/home/staz/Downloads/myProjetctKufar/frontend/index.html)
-- [frontend/js/app.js](/home/staz/Downloads/myProjetctKufar/frontend/js/app.js)
-- [frontend/css/style.css](/home/staz/Downloads/myProjetctKufar/frontend/css/style.css)
+- [frontend/index.html](frontend/index.html)
+- [frontend/js/app.js](frontend/js/app.js)
+- [frontend/css/style.css](frontend/css/style.css)
 
 ---
 
@@ -389,9 +398,9 @@ Mini App ориентирован на компактный сценарий Tel
 
 Реализованы скрипты:
 
-- [start-local.sh](/home/staz/Downloads/myProjetctKufar/start-local.sh)
-- [stop-local.sh](/home/staz/Downloads/myProjetctKufar/stop-local.sh)
-- [status-local.sh](/home/staz/Downloads/myProjetctKufar/status-local.sh)
+- [start-local.sh](start-local.sh)
+- [stop-local.sh](stop-local.sh)
+- [status-local.sh](status-local.sh)
 
 Что умеет `start-local.sh`:
 
@@ -713,39 +722,39 @@ cd ~/Downloads/myProjetctKufar
 
 Backend:
 
-- [api/main.py](/home/staz/Downloads/myProjetctKufar/api/main.py)
-- [api/models.py](/home/staz/Downloads/myProjetctKufar/api/models.py)
-- [api/schemas.py](/home/staz/Downloads/myProjetctKufar/api/schemas.py)
-- [api/routers/price_stats.py](/home/staz/Downloads/myProjetctKufar/api/routers/price_stats.py)
-- [api/routers/price_history.py](/home/staz/Downloads/myProjetctKufar/api/routers/price_history.py)
-- [api/routers/listings.py](/home/staz/Downloads/myProjetctKufar/api/routers/listings.py)
-- [api/routers/trackers.py](/home/staz/Downloads/myProjetctKufar/api/routers/trackers.py)
-- [api/services/kufar_client.py](/home/staz/Downloads/myProjetctKufar/api/services/kufar_client.py)
-- [api/services/aggregator.py](/home/staz/Downloads/myProjetctKufar/api/services/aggregator.py)
-- [api/services/history_service.py](/home/staz/Downloads/myProjetctKufar/api/services/history_service.py)
+- [api/main.py](api/main.py)
+- [api/models.py](api/models.py)
+- [api/schemas.py](api/schemas.py)
+- [api/routers/price_stats.py](api/routers/price_stats.py)
+- [api/routers/price_history.py](api/routers/price_history.py)
+- [api/routers/listings.py](api/routers/listings.py)
+- [api/routers/trackers.py](api/routers/trackers.py)
+- [api/services/kufar_client.py](api/services/kufar_client.py)
+- [api/services/aggregator.py](api/services/aggregator.py)
+- [api/services/history_service.py](api/services/history_service.py)
 
 Scheduler:
 
-- [scheduler/collector.py](/home/staz/Downloads/myProjetctKufar/scheduler/collector.py)
+- [scheduler/collector.py](scheduler/collector.py)
 
 Frontend:
 
-- [frontend/index.html](/home/staz/Downloads/myProjetctKufar/frontend/index.html)
-- [frontend/js/app.js](/home/staz/Downloads/myProjetctKufar/frontend/js/app.js)
-- [frontend/css/style.css](/home/staz/Downloads/myProjetctKufar/frontend/css/style.css)
+- [frontend/index.html](frontend/index.html)
+- [frontend/js/app.js](frontend/js/app.js)
+- [frontend/css/style.css](frontend/css/style.css)
 
 Infra / local dev:
 
-- [start-local.sh](/home/staz/Downloads/myProjetctKufar/start-local.sh)
-- [stop-local.sh](/home/staz/Downloads/myProjetctKufar/stop-local.sh)
-- [status-local.sh](/home/staz/Downloads/myProjetctKufar/status-local.sh)
-- [docker-compose.yml](/home/staz/Downloads/myProjetctKufar/docker-compose.yml)
-- [nginx/default.conf](/home/staz/Downloads/myProjetctKufar/nginx/default.conf)
+- [start-local.sh](start-local.sh)
+- [stop-local.sh](stop-local.sh)
+- [status-local.sh](status-local.sh)
+- [docker-compose.yml](docker-compose.yml)
+- [nginx/default.conf](nginx/templates/default.conf.template)
 
 Migrations:
 
-- [20260405_0001_create_trackers.py](/home/staz/Downloads/myProjetctKufar/migrations/versions/20260405_0001_create_trackers.py)
-- [20260406_0002_history_and_price_tracking.py](/home/staz/Downloads/myProjetctKufar/migrations/versions/20260406_0002_history_and_price_tracking.py)
+- [20260405_0001_create_trackers.py](migrations/versions/20260405_0001_create_trackers.py)
+- [20260406_0002_history_and_price_tracking.py](migrations/versions/20260406_0002_history_and_price_tracking.py)
 
 ---
 
