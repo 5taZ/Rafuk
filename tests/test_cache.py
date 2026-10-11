@@ -267,3 +267,82 @@ async def test_dataset_cache_load_survives_cancelled_waiter() -> None:
     assert await second == {"ads": ["x"]}
     assert loads == 1
     assert cache.get("k") == {"ads": ["x"]}
+
+
+def _ads(count: int) -> list[dict]:
+    return [{"ad_id": index + 1} for index in range(count)]
+
+
+def test_dataset_cache_purges_expired_entries_on_access() -> None:
+    clock = FakeClock()
+    cache = DatasetCache(ttl_seconds=60, clock=clock)
+    cache.put("a", {"ads": _ads(100)})
+    cache.put("b", {"ads": _ads(50)})
+    assert cache.total_ads == 150
+
+    clock.now += 61
+    # Writing another key drops the stale datasets instead of keeping them until eviction.
+    cache.put("c", {"ads": _ads(10)})
+    assert len(cache) == 1
+    assert cache.total_ads == 10
+
+    clock.now += 61
+    assert cache.get("missing") is None
+    assert len(cache) == 0
+    assert cache.total_ads == 0
+
+
+@pytest.mark.asyncio
+async def test_dataset_cache_get_or_load_purges_expired_entries() -> None:
+    clock = FakeClock()
+    cache = DatasetCache(ttl_seconds=60, clock=clock)
+
+    async def loader() -> dict:
+        return {"ads": _ads(5)}
+
+    await cache.get_or_load("a", loader)
+    clock.now += 61
+    await cache.get_or_load("b", loader)
+    assert len(cache) == 1
+    assert cache.total_ads == 5
+
+
+def test_dataset_cache_is_bounded_by_total_ads() -> None:
+    cache = DatasetCache(max_entries=10, max_ads=100)
+    cache.put("a", {"ads": _ads(40)})
+    cache.put("b", {"ads": _ads(40)})
+    assert cache.get("a") is not None  # "b" is now the least recently used entry
+    cache.put("c", {"ads": _ads(40)})
+
+    assert cache.get("b") is None
+    assert cache.get("a") is not None
+    assert cache.get("c") is not None
+    assert cache.total_ads == 80
+
+    # A replaced entry is not counted twice.
+    cache.put("c", {"ads": _ads(20)})
+    assert cache.total_ads == 60
+
+
+def test_dataset_cache_skips_a_dataset_larger_than_the_bound() -> None:
+    cache = DatasetCache(max_ads=100)
+    cache.put("small", {"ads": _ads(10)})
+    cache.put("huge", {"ads": _ads(101)})
+    assert cache.get("huge") is None
+    assert cache.get("small") is not None
+    assert cache.total_ads == 10
+
+
+def test_dataset_cache_keeps_truncated_datasets_for_a_shorter_time() -> None:
+    clock = FakeClock()
+    cache = DatasetCache(ttl_seconds=120, truncated_ttl_seconds=30, clock=clock)
+    cache.put("full", {"ads": [], "truncated": False})
+    cache.put("partial", {"ads": [], "truncated": True})
+
+    clock.now += 31
+    assert cache.get("partial") is None
+    assert cache.get("full") is not None
+
+    # The truncated TTL never exceeds the normal one.
+    short = DatasetCache(ttl_seconds=10, truncated_ttl_seconds=30)
+    assert short.ttl_for({"truncated": True}) == 10

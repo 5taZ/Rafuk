@@ -57,7 +57,12 @@ def backoff_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     async def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
+    async def skip_pacer_sleep(seconds: float) -> None:
+        del seconds
+
     monkeypatch.setattr(kufar_client, "_backoff_sleep", fake_sleep)
+    # A 429 also pauses the shared pacer; skip that wait too.
+    monkeypatch.setattr(kufar_client, "_pacer_sleep", skip_pacer_sleep)
     return sleeps
 
 
@@ -646,17 +651,170 @@ async def test_load_query_dataset_shares_cached_dataset_across_currencies(
     assert results[1].currency == "USD"
     assert results[0].ads == results[1].ads
 
+    # The cache holds the response before the strict filter, so strict mode reuses it.
     strict = await load("iphone 15", "BYN", True)
-    assert len(pipeline_client.calls) == 2
+    assert len(pipeline_client.calls) == 1
     assert [ad["ad_id"] for ad in strict.ads] == [1]
 
     await load("iphone 15", "BYN", False, region=7)
-    assert len(pipeline_client.calls) == 3
+    assert len(pipeline_client.calls) == 2
     assert pipeline_client.calls[-1]["region"] == 7
 
 
 def test_dataset_cache_key_ignores_currency_and_none_filters() -> None:
     base = dataset_cache_key("iPhone 15", False, {})
     assert dataset_cache_key("iphone 15", False, {"currency": "USD", "region": None}) == base
-    assert dataset_cache_key("iphone 15", True, {}) != base
+    assert dataset_cache_key("iphone 15", True, {}) == base
     assert dataset_cache_key("iphone 15", False, {"region": 7}) != base
+
+
+# --- Later-page failures, shared 429 pause and bounded pacer queue -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_all_ads_keeps_pages_when_later_page_fails(
+    mock_settings: MagicMock,
+    backoff_sleeps: list[float],
+) -> None:
+    calls: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        cursor = request.url.params.get("cursor")
+        calls.append(cursor)
+        if cursor is None:
+            return httpx.Response(200, json=page([1, 2], next_token="c2", total=500))
+        if cursor == "c2":
+            return httpx.Response(200, json=page([3], next_token="c3", total=500))
+        return httpx.Response(503, text="unavailable")
+
+    result = await make_client(mock_settings, handler).search_all_ads(query="test")
+
+    assert calls == [None, "c2", "c3", "c3", "c3"]
+    assert [ad["ad_id"] for ad in result["ads"]] == [1, 2, 3]
+    assert result["fetched_count"] == 3
+    assert result["total"] == 500
+    assert result["truncated"] is True
+    assert backoff_sleeps == [1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_search_all_ads_keeps_pages_when_later_page_is_rejected(
+    mock_settings: MagicMock,
+    backoff_sleeps: list[float],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("cursor") is None:
+            return httpx.Response(200, json=page([1], next_token="c2"))
+        return httpx.Response(400, text="bad cursor")
+
+    result = await make_client(mock_settings, handler).search_all_ads(query="test")
+    assert [ad["ad_id"] for ad in result["ads"]] == [1]
+    assert result["truncated"] is True
+    assert backoff_sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_retry_after_pauses_every_request_of_the_process(
+    mock_settings: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_backoff(seconds: float) -> None:
+        del seconds
+
+    monkeypatch.setattr(kufar_client, "_backoff_sleep", no_backoff)
+    loop = asyncio.get_running_loop()
+    starts: list[float] = []
+    limited = asyncio.Event()
+    rate_limited_at = 0.0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal rate_limited_at
+        starts.append(loop.time())
+        if len(starts) == 1:
+            rate_limited_at = loop.time()
+            limited.set()
+            return httpx.Response(429, headers={"Retry-After": "0.2"})
+        return httpx.Response(200, json=page([len(starts)]))
+
+    first = asyncio.create_task(make_client(mock_settings, handler).search(query="a"))
+    await limited.wait()
+    # Another pagination of the same process asks after the 429: it waits for the pause too.
+    second = await make_client(mock_settings, handler).search(query="b")
+    await first
+
+    assert second["ads"]
+    assert len(starts) == 3
+    assert all(start - rate_limited_at >= 0.18 for start in starts[1:]), starts
+
+
+@pytest.mark.asyncio
+async def test_pacer_pause_delays_a_request_already_waiting_for_its_turn() -> None:
+    loop = asyncio.get_running_loop()
+    pacer = kufar_client._RequestPacer(1)
+    starts: list[float] = []
+
+    async def request() -> None:
+        async with pacer.slot(0.1):
+            starts.append(loop.time())
+
+    began = loop.time()
+    tasks = [asyncio.create_task(request()) for _ in range(2)]
+    await asyncio.sleep(0.03)  # the second request now sleeps until its reserved start
+    pacer.pause(0.3)
+    await asyncio.gather(*tasks)
+
+    assert starts[0] - began < 0.05
+    assert starts[1] - began >= 0.29
+
+
+def test_pacer_waiting_limit_follows_the_request_delay() -> None:
+    pacer = kufar_client._RequestPacer(3)
+    assert pacer.waiting_limit(0.0) == kufar_client.MAX_PACER_WAITERS
+    assert pacer.waiting_limit(0.5) == 60
+    assert pacer.waiting_limit(1.0) == 30
+    assert pacer.waiting_limit(100.0) == 1
+    assert kufar_client._RequestPacer(3, max_waiting=5).waiting_limit(1.0) == 5
+
+
+@pytest.mark.asyncio
+async def test_pacer_queue_is_bounded_and_fails_fast(
+    mock_settings: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    backoff_sleeps: list[float],
+) -> None:
+    monkeypatch.setattr(kufar_client, "MAX_PACER_WAITERS", 2)
+    mock_settings.kufar_parallel_semaphore = 1
+    release = asyncio.Event()
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        await release.wait()
+        return httpx.Response(200, json=page([calls]))
+
+    # One request in flight and two waiting fill the queue.
+    running = [
+        asyncio.create_task(make_client(mock_settings, handler).search(query=f"q{index}"))
+        for index in range(3)
+    ]
+    await asyncio.sleep(0.01)
+    pacer = kufar_client._get_pacer(1)
+    assert pacer.waiting == 2
+
+    with pytest.raises(kufar_client.KufarBusyError):
+        await make_client(mock_settings, handler).search(query="overflow")
+    # Rejected at once: no HTTP request and no retry backoff.
+    assert calls == 1
+    assert backoff_sleeps == []
+
+    # A waiter that gives up (deadline, client disconnect) leaves the queue.
+    running[2].cancel()
+    await asyncio.sleep(0)
+    assert pacer.waiting == 1
+
+    release.set()
+    results = await asyncio.gather(*running[:2])
+    assert all(result["ads"] for result in results)
+    assert pacer.waiting == 0
+    assert issubclass(kufar_client.KufarBusyError, KufarAPIError)

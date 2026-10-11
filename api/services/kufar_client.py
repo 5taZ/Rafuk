@@ -28,6 +28,11 @@ KUFAR_PRICE_CURRENCY = "BYN"
 # nginx's 60 s proxy timeout.
 DEFAULT_MAX_PAGES = 25
 DEFAULT_DEADLINE_SECONDS = 40.0
+# Bounded pacer queue: a request that would wait behind more than this many queued requests
+# (or behind more than MAX_PACER_BACKLOG_SECONDS of paced starts) fails at once instead of
+# piling up behind a backlog it cannot get through before its deadline.
+MAX_PACER_WAITERS = 64
+MAX_PACER_BACKLOG_SECONDS = 30.0
 
 
 async def _backoff_sleep(seconds: float) -> None:
@@ -35,32 +40,90 @@ async def _backoff_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
+async def _pacer_sleep(seconds: float) -> None:
+    # Separate hook so tests can skip a shared pause without patching asyncio.sleep globally.
+    await asyncio.sleep(seconds)
+
+
 class KufarAPIError(Exception):
     """Raised when Kufar API remains unavailable after retries."""
 
 
-class _RequestPacer:
-    """Process-wide pacing of Kufar requests: bounded concurrency plus a minimum start gap."""
+class KufarBusyError(KufarAPIError):
+    """Raised at once when too many Kufar requests are already queued in this process."""
 
-    def __init__(self, max_in_flight: int) -> None:
+
+class _RequestPacer:
+    """Process-wide pacing of Kufar requests.
+
+    Bounded concurrency, a minimum gap between request starts, a shared pause that every
+    request honours after Kufar answers 429 / Retry-After, and a bounded waiting queue.
+    """
+
+    def __init__(self, max_in_flight: int, *, max_waiting: int | None = None) -> None:
         self._semaphore = asyncio.Semaphore(max(1, max_in_flight))
         self._lock = asyncio.Lock()
         self._next_start = 0.0
+        self._paused_until = 0.0
+        self._waiting = 0
+        self._max_waiting = max_waiting
+
+    @property
+    def waiting(self) -> int:
+        """Requests that entered the pacer and have not started yet."""
+        return self._waiting
+
+    def waiting_limit(self, delay: float) -> int:
+        if self._max_waiting is not None:
+            return max(0, self._max_waiting)
+        if delay <= 0:
+            return MAX_PACER_WAITERS
+        return max(1, min(MAX_PACER_WAITERS, int(MAX_PACER_BACKLOG_SECONDS / delay)))
+
+    def pause(self, seconds: float) -> None:
+        """Hold back every request of this pacer for `seconds` (Kufar asked to slow down)."""
+        if not math.isfinite(seconds) or seconds <= 0:
+            return
+        until = asyncio.get_running_loop().time() + seconds
+        if until > self._paused_until:
+            self._paused_until = until
+            logger.warning("Pausing Kufar requests for %.1f s after a rate-limit answer", seconds)
 
     @asynccontextmanager
     async def slot(self, delay: float) -> AsyncIterator[None]:
-        async with self._semaphore:
-            loop = asyncio.get_running_loop()
+        if self._waiting >= self.waiting_limit(delay):
+            raise KufarBusyError(
+                f"Too many Kufar requests are queued ({self._waiting}), try again later"
+            )
+        self._waiting += 1
+        waiting = True
+        try:
+            async with self._semaphore:
+                try:
+                    await self._wait_for_start(max(0.0, delay))
+                finally:
+                    self._waiting -= 1
+                    waiting = False
+                yield
+        finally:
+            if waiting:
+                self._waiting -= 1
+
+    async def _wait_for_start(self, delay: float) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
             # Reserve the start time under the lock and sleep outside of it, so concurrent
             # callers queue up at `delay` intervals instead of passing the check together.
             async with self._lock:
                 now = loop.time()
-                start_at = max(now, self._next_start)
-                self._next_start = start_at + max(0.0, delay)
+                start_at = max(now, self._next_start, self._paused_until)
+                self._next_start = start_at + delay
             wait = start_at - now
             if wait > 0:
-                await asyncio.sleep(wait)
-            yield
+                await _pacer_sleep(wait)
+            # A pause that began while this request slept moves its start past the pause.
+            if self._paused_until <= start_at:
+                return
 
 
 # asyncio primitives are bound to one event loop, so the shared pacer is kept per running loop.
@@ -138,10 +201,12 @@ class KufarClient:
         if self._owns_client and self._http_client is not None:
             await self._http_client.aclose()
 
+    def _pacer(self) -> _RequestPacer:
+        return _get_pacer(int(self._settings.kufar_parallel_semaphore))
+
     @asynccontextmanager
     async def _request_slot(self) -> AsyncIterator[None]:
-        pacer = _get_pacer(int(self._settings.kufar_parallel_semaphore))
-        async with pacer.slot(float(self._settings.kufar_request_delay)):
+        async with self._pacer().slot(float(self._settings.kufar_request_delay)):
             yield
 
     async def search(
@@ -194,6 +259,12 @@ class KufarClient:
                 last_error = exc
                 retry_after = _retry_after_seconds(exc.response)
                 self._log_failure(attempt, query, exc)
+                # Kufar asked to slow down: every request of the process waits, not just this
+                # one, so parallel paginations do not burn their retries on the same limit.
+                if retry_after is not None:
+                    self._pacer().pause(retry_after)
+                elif status_code == 429:
+                    self._pacer().pause(BACKOFF_BASE_SECONDS * (2**attempt))
             except httpx.HTTPError as exc:
                 # Network errors and timeouts (httpx.TimeoutException is an HTTPError).
                 last_error = exc
@@ -246,9 +317,11 @@ class KufarClient:
     ) -> dict[str, Any]:
         """Follow the pagination cursor and collect unique ads.
 
-        The loop stops at `max_pages` pages or after `deadline_seconds`; in both cases the
-        result carries `truncated: True`. A repeated cursor or a page without new ads ends the
-        loop as well (protection against a cursor that never advances).
+        The loop stops at `max_pages` pages, after `deadline_seconds`, or when a later page
+        still fails after its retries; in all these cases the ads collected so far are
+        returned with `truncated: True` (only a failure of the first page raises). A repeated
+        cursor or a page without new ads ends the loop as well (protection against a cursor
+        that never advances).
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + deadline_seconds if deadline_seconds is not None else None
@@ -311,6 +384,17 @@ class KufarClient:
             try:
                 page = await self._search_before(deadline, cursor=cursor, **search_params)
             except TimeoutError:
+                truncated = True
+                break
+            except KufarAPIError as exc:
+                # The pages already fetched are still a useful (partial) sample.
+                logger.warning(
+                    "Kufar page %s failed for query=%s, keeping %s ads: %s",
+                    pages_fetched + 1,
+                    query,
+                    len(ads),
+                    exc,
+                )
                 truncated = True
                 break
             pages_fetched += 1
