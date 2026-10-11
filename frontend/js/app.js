@@ -4,15 +4,6 @@ function analyticsApp() {
     const renderers = createAppRenderers({ ...core, actions });
     Object.assign(actions, createAppActions({ ...core, ...renderers }));
 
-    // Compatibility markers for smoke tests and static checks.
-    const runtimeMarkers = {
-        telegramWebApp: "Telegram.WebApp",
-        priceStats: "/api/v1/price-stats",
-        priceHistory: "/api/v1/price-history",
-        listings: "/api/v1/listings",
-    };
-    void runtimeMarkers;
-
     function rerenderCharts() {
         // Charts read theme colors when drawn, so redraw them after a theme switch.
         try {
