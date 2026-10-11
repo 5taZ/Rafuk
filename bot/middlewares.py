@@ -33,6 +33,12 @@ class ThrottlingMiddleware(BaseMiddleware):
         self._warned: set[int] = set()
         self._semaphore: asyncio.Semaphore | None = None
 
+    def reset(self) -> None:
+        """Forget every throttling window and the loop-bound semaphore (used by tests)."""
+        self._last_call.clear()
+        self._warned.clear()
+        self._semaphore = None
+
     def _get_semaphore(self) -> asyncio.Semaphore | None:
         if self.max_concurrent is None:
             return None

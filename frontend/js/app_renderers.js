@@ -310,6 +310,8 @@ function createAppRenderers(context) {
         toast.textContent = message;
         elements.toastContainer.appendChild(toast);
         const duration = Math.min(4000, 1600 + String(message || "").length * 30);
+        // Start the CSS fade-out (0.2 s) so it ends exactly when the toast is removed.
+        toast.style.setProperty("--toast-fade-delay", `${Math.max(0, duration - 200)}ms`);
         setTimeout(() => {
             toast.remove();
         }, duration);

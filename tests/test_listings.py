@@ -60,7 +60,7 @@ class FakeKufarClient:
                     "region_id": 6,
                     "ad_parameters": [{"p": "condition", "v": "Б/у"}],
                 },
-            ]
+            ],
         }
 
     async def aclose(self) -> None:

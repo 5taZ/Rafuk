@@ -98,6 +98,4 @@ def test_rate_limited_response_keeps_cors_headers() -> None:
 
     limited = client.get("/api/v1/segments", headers=headers)
     assert limited.status_code == 429
-    assert (
-        limited.headers["access-control-allow-origin"] == "https://kufar-analytics.example.com"
-    )
+    assert limited.headers["access-control-allow-origin"] == "https://kufar-analytics.example.com"

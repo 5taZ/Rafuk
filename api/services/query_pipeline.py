@@ -142,8 +142,8 @@ def normalize_ad(ad: Any, *, require_ad_id: bool = True) -> dict[str, Any] | Non
         normalized["ad_id"] = ad_id
 
     list_time = ad.get("list_time")
-    normalized["list_time"] = list_time if isinstance(list_time, str) else (
-        "" if list_time is None else str(list_time)
+    normalized["list_time"] = (
+        list_time if isinstance(list_time, str) else ("" if list_time is None else str(list_time))
     )
     normalized["images"] = _dict_items(ad.get("images"))
     normalized["ad_parameters"] = _dict_items(ad.get("ad_parameters"))

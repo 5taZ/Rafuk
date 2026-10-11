@@ -76,7 +76,9 @@ def upgrade() -> None:
             sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         )
     else:
-        saved_search_columns = {column["name"] for column in inspector.get_columns("saved_searches")}
+        saved_search_columns = {
+            column["name"] for column in inspector.get_columns("saved_searches")
+        }
         saved_search_additions = {
             "group_name": sa.Column("group_name", sa.String(length=128), nullable=True),
             "exclude_duplicates": sa.Column(

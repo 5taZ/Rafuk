@@ -75,9 +75,7 @@ async def cmd_track(message: Message, command: CommandObject) -> None:
             await session.commit()
             tracker_id, query = tracker.id, tracker.query
     except DuplicateTrackerError as exc:
-        await message.answer(
-            f"Трекер #{exc.tracker.id} для «{exc.tracker.query}» уже существует."
-        )
+        await message.answer(f"Трекер #{exc.tracker.id} для «{exc.tracker.query}» уже существует.")
         return
     except TrackerServiceError as exc:
         await message.answer(exc.message)

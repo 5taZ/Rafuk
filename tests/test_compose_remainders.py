@@ -129,9 +129,12 @@ def test_compose_redis_command_and_healthcheck_scripts(tmp_path: Path) -> None:
     )
 
     assert _run_shell(healthcheck[1], {"REDIS_PASSWORD": ""}, tmp_path) == "0:"
-    assert _run_shell(
-        healthcheck[1], {"REDIS_PASSWORD": "s3cret", "STUB_PASSWORD": "s3cret"}, tmp_path
-    ) == "0:"
+    assert (
+        _run_shell(
+            healthcheck[1], {"REDIS_PASSWORD": "s3cret", "STUB_PASSWORD": "s3cret"}, tmp_path
+        )
+        == "0:"
+    )
     # A wrong password makes the healthcheck fail.
     assert _run_shell(
         healthcheck[1], {"REDIS_PASSWORD": "wrong", "STUB_PASSWORD": "s3cret"}, tmp_path

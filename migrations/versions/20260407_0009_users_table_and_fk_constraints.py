@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text, text
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy import BigInteger, DateTime, Integer, String
 
 revision = "20260407_0009"
 down_revision = "20260407_0008"
@@ -33,7 +32,9 @@ def upgrade() -> None:
             sa.Column("first_name", String(128), nullable=False, server_default=""),
             sa.Column("username", String(128), nullable=True),
             sa.Column("is_bot", sa.Boolean, nullable=False, server_default="false"),
-            sa.Column("created_at", DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column(
+                "created_at", DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            ),
             sa.Column("last_seen_at", DateTime(timezone=True), nullable=True),
         )
         op.create_index("idx_users_telegram_id", "users", ["telegram_user_id"])
@@ -49,7 +50,7 @@ def upgrade() -> None:
                     sa.Column("deleted_at", DateTime(timezone=True), nullable=True),
                 )
 
-    # Step 3: Add FK constraints (PostgreSQL only - SQLite doesn't support ALTER TABLE ADD CONSTRAINT)
+    # Step 3: Add FK constraints (PostgreSQL only: SQLite has no ALTER TABLE ADD CONSTRAINT)
     if not is_sqlite:
         # TrackerEvent.tracker_id -> Tracker.id
         if "tracker_events" in tables:
@@ -118,7 +119,9 @@ def upgrade() -> None:
 
         # WatchlistItem.user_id -> User.id
         if "watchlist_items" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("watchlist_items") if fk["name"]]
+            fks = [
+                fk["name"] for fk in inspector.get_foreign_keys("watchlist_items") if fk["name"]
+            ]
             if "fk_watchlist_items_user_id" not in fks:
                 op.create_foreign_key(
                     "fk_watchlist_items_user_id",

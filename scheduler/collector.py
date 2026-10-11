@@ -245,7 +245,7 @@ def _build_tracker_message(
 ) -> str | None:
     """Render an alert; ``action_title`` names the lot the action buttons refer to."""
     lines: list[str] = []
-    label = f'{query} [строгий]' if strict_mode else query
+    label = f"{query} [строгий]" if strict_mode else query
 
     if sync_result.new_listings:
         lines.append(f'Запрос "{label}"')
@@ -265,8 +265,7 @@ def _build_tracker_message(
         lines.append(f"Снижение цены: {len(sync_result.price_drops)}")
         for state, delta in sync_result.price_drops[:3]:
             lines.append(
-                f"• {state.title} - {_format_price_byn(state.last_price_byn)} "
-                f"(-{round(delta)} р.)"
+                f"• {state.title} - {_format_price_byn(state.last_price_byn)} (-{round(delta)} р.)"
             )
             if state.link:
                 lines.append(state.link)
@@ -704,9 +703,7 @@ async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None
 async def cleanup_old_events(session: AsyncSession, days: int = 30) -> int:
     """Delete tracker events older than specified days."""
     cutoff = datetime.now(UTC) - timedelta(days=days)
-    result = await session.execute(
-        delete(TrackerEvent).where(TrackerEvent.created_at < cutoff)
-    )
+    result = await session.execute(delete(TrackerEvent).where(TrackerEvent.created_at < cutoff))
     deleted_count = result.rowcount
     if deleted_count > 0:
         logger.info("Cleaned up %d old tracker events (older than %d days)", deleted_count, days)
@@ -719,9 +716,7 @@ async def cleanup_old_snapshots(
 ) -> int:
     """Delete hourly query snapshots older than specified days."""
     cutoff = datetime.now(UTC) - timedelta(days=days)
-    result = await session.execute(
-        delete(QuerySnapshot).where(QuerySnapshot.snapshot_at < cutoff)
-    )
+    result = await session.execute(delete(QuerySnapshot).where(QuerySnapshot.snapshot_at < cutoff))
     deleted_count = result.rowcount
     if deleted_count > 0:
         logger.info("Cleaned up %d query snapshots (older than %d days)", deleted_count, days)

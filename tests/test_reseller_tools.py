@@ -92,13 +92,16 @@ def test_tracker_filters_compare_codes_and_labels() -> None:
 
 def test_tracker_filters_keep_ads_without_filter_data() -> None:
     ad = {"ad_id": 1, "subject": "iPhone 13", "price_byn": 150000}
-    assert matches_tracker_filters(
-        ad,
-        market_stats=MARKET,
-        condition="Б/у",
-        seller_type="Частное лицо",
-        region_name="Минск",
-    ) is True
+    assert (
+        matches_tracker_filters(
+            ad,
+            market_stats=MARKET,
+            condition="Б/у",
+            seller_type="Частное лицо",
+            region_name="Минск",
+        )
+        is True
+    )
 
 
 def test_region_filter_by_name_keeps_ads_with_only_region_id() -> None:

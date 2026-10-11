@@ -171,9 +171,7 @@ def test_saved_searches_crud_and_board(client, monkeypatch) -> None:
     assert empty_board_response.json()["items"] == []
     assert empty_board_response.json()["rare_opportunities"] == []
 
-    stored = client.portal.call(
-        fetch_all, client.app.state.session_factory, select(SavedSearch)
-    )
+    stored = client.portal.call(fetch_all, client.app.state.session_factory, select(SavedSearch))
     assert stored[0].active is False
     assert stored[0].deleted_at is not None
 

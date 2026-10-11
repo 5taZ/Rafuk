@@ -19,20 +19,18 @@ def _reset_throttling_middlewares() -> None:
     for router in (price.router, start.router, tracker.router):
         for middleware in router.message.middleware:
             if isinstance(middleware, ThrottlingMiddleware):
-                middleware._last_call.clear()
-                middleware._warned.clear()
-                middleware._semaphore = None
+                middleware.reset()
 
 
 def _reset_process_state() -> None:
     """Reset every process-wide singleton the application keeps between requests."""
     from api.rate_limit import limiter
-    from api.services import kufar_client
+    from api.services.kufar_client import reset_request_pacers
     from api.services.query_pipeline import configure_dataset_cache
 
     limiter.reset()
     configure_dataset_cache(None)
-    kufar_client._PACERS.clear()
+    reset_request_pacers()
     _reset_throttling_middlewares()
 
 

@@ -69,6 +69,11 @@ _PACERS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[int, _Request
 )
 
 
+def reset_request_pacers() -> None:
+    """Drop every shared pacer, so the next request starts with no backlog (used by tests)."""
+    _PACERS.clear()
+
+
 def _get_pacer(max_in_flight: int) -> _RequestPacer:
     loop = asyncio.get_running_loop()
     pacers = _PACERS.setdefault(loop, {})
@@ -185,9 +190,7 @@ class KufarClient:
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code if exc.response is not None else None
                 if not _is_retryable_status(status_code):
-                    raise KufarAPIError(
-                        f"Kufar API responded with HTTP {status_code}"
-                    ) from exc
+                    raise KufarAPIError(f"Kufar API responded with HTTP {status_code}") from exc
                 last_error = exc
                 retry_after = _retry_after_seconds(exc.response)
                 self._log_failure(attempt, query, exc)

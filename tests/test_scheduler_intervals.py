@@ -128,9 +128,7 @@ def test_tracker_is_due(
     interval_min: int | None, last_checked_at: datetime | None, expected: bool
 ) -> None:
     assert (
-        collector.tracker_is_due(
-            interval_min, last_checked_at, check_interval_min=30, now=NOW
-        )
+        collector.tracker_is_due(interval_min, last_checked_at, check_interval_min=30, now=NOW)
         is expected
     )
 

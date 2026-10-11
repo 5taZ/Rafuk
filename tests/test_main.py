@@ -85,9 +85,7 @@ def test_cors_preflight_accepts_mini_app_origin() -> None:
         },
     )
     assert response.status_code == 200
-    assert (
-        response.headers["access-control-allow-origin"] == "https://kufar-analytics.example.com"
-    )
+    assert response.headers["access-control-allow-origin"] == "https://kufar-analytics.example.com"
 
 
 class ClosableCache:

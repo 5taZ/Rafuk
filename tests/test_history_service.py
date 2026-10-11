@@ -232,8 +232,7 @@ async def test_sync_query_listing_states_new_listings_and_price_drops() -> None:
 
     async with session_factory() as session:
         states = {
-            row.ad_id: row
-            for row in (await session.execute(select(QueryListingState))).scalars()
+            row.ad_id: row for row in (await session.execute(select(QueryListingState))).scalars()
         }
     assert states[2].active is False
     assert states[1].last_price_byn == 997
@@ -252,9 +251,7 @@ async def test_sync_query_listing_states_new_listings_and_price_drops() -> None:
     assert result.price_drops == []
 
     async with session_factory() as session:
-        state = await session.scalar(
-            select(QueryListingState).where(QueryListingState.ad_id == 2)
-        )
+        state = await session.scalar(select(QueryListingState).where(QueryListingState.ad_id == 2))
     assert state is not None
     assert state.active is True
     await engine.dispose()

@@ -125,9 +125,11 @@ def test_upgrade_normalizes_statuses_and_backfills_users(
     command.upgrade(config, "head")
 
     with engine.connect() as connection:
-        lead_statuses = connection.execute(
-            sa.text("SELECT status FROM lead_items ORDER BY ad_id")
-        ).scalars().all()
+        lead_statuses = (
+            connection.execute(sa.text("SELECT status FROM lead_items ORDER BY ad_id"))
+            .scalars()
+            .all()
+        )
         watchlist_rows = connection.execute(
             sa.text("SELECT workflow_status, market_status FROM watchlist_items ORDER BY ad_id")
         ).all()

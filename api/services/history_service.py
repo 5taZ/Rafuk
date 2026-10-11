@@ -219,7 +219,7 @@ async def sync_query_listing_states(
         seen_ids.add(ad_id)
         price_byn = normalize_price_byn(ad.get("price_byn"))
         # Truncate to the column sizes: Postgres rejects longer values.
-        title = str(ad.get("subject", ""))[:255]
+        title = str(ad.get("subject") or "")[:255]
         link = str(ad.get("ad_link", ""))[:512]
         raw_list_time = ad.get("list_time")
         list_time = str(raw_list_time)[:64] if raw_list_time is not None else None

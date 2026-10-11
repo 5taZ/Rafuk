@@ -122,9 +122,7 @@ def duplicate_counts(ads: list[dict[str, Any]]) -> dict[int, int]:
     Kufar provides it). Inside a group prices are sorted and each ad counts its
     neighbours with binary search, so the whole pass is O(n log n).
     """
-    grouped: dict[tuple[str, str, int | None, str], dict[int, float | None]] = defaultdict(
-        dict
-    )
+    grouped: dict[tuple[str, str, int | None, str], dict[int, float | None]] = defaultdict(dict)
 
     for ad in ads:
         if not isinstance(ad, dict):

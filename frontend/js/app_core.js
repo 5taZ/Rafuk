@@ -247,9 +247,14 @@ function createAppCore() {
 
     function applyTelegramTheme() {
         const scheme = telegramWebApp()?.colorScheme;
+        // Outside Telegram keep the theme the inline <head> script derived from
+        // prefers-color-scheme instead of forcing dark.
+        const fallback =
+            document.documentElement.getAttribute("data-theme") ||
+            (window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark");
         document.documentElement.setAttribute(
             "data-theme",
-            scheme === "light" ? "light" : "dark"
+            scheme === "light" || scheme === "dark" ? scheme : fallback
         );
         syncTelegramChrome();
     }
