@@ -1248,6 +1248,15 @@ a:focus:not(:focus-visible) {
     line-height: 1.6;
 }
 
+/* Partial data (truncated search, partial board): readable but noticeable. */
+.section-note.is-warning {
+    color: var(--amber);
+}
+
+.sort-row + .section-note.is-warning {
+    margin-bottom: 8px;
+}
+
 .history-range-row {
     margin-bottom: 10px;
 }

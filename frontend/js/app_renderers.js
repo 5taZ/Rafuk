@@ -34,6 +34,8 @@ function createAppRenderers(context) {
         ["deferred", "Позже"],
         ["skipped", "Пропустить"],
     ];
+    // Same limit as NotesText in api/schemas.py.
+    const NOTES_MAX_LENGTH = 512;
     const ACTIVE_LEAD_STATUSES = ["new", "reviewing", "in_progress", "negotiating", "deferred"];
     const MARKET_RISK_STATUSES = ["price_drop", "missing", "duplicate"];
     const LEAD_FILTER_LABELS = {
@@ -170,8 +172,47 @@ function createAppRenderers(context) {
         return typeof message === "string" && message.trim() ? message.trim() : null;
     }
 
-    function isListingsLoading() {
-        return Boolean(state.listingsLoading) || (Boolean(state.loading) && !state.listings.length);
+    function isPending(kind) {
+        return Boolean((state.pending || {})[kind]);
+    }
+
+    // Each collection follows only its own request ("listings" or "deals"), so reloading
+    // one tab never blanks the other; while the stats load, both count as loading.
+    function isCollectionLoading(kind) {
+        const items = kind === "deals" ? state.dealListings : state.listings;
+        return isPending(kind) || (Boolean(state.loading) && !items.length);
+    }
+
+    // The board in another currency is about to be replaced, so it counts as loading too.
+    function isBoardLoading() {
+        if (!isPending("board")) {
+            return false;
+        }
+        const board = state.opportunityBoard || {};
+        return (
+            Boolean(loadError("board")) ||
+            board.currency !== state.currency ||
+            !(board.items || []).length
+        );
+    }
+
+    function isTrackersLoading() {
+        return isPending("trackers") && !state.trackers.length && !state.trackerEvents.length;
+    }
+
+    function setBusy(container, busy) {
+        if (busy) {
+            container.setAttribute("aria-busy", "true");
+        } else {
+            container.removeAttribute("aria-busy");
+        }
+    }
+
+    // Replaces a list's content with a pulsing loading note (see [aria-busy] in the CSS).
+    function showListLoading(container, text) {
+        container.innerHTML = "";
+        setBusy(container, true);
+        container.appendChild(buildEmptyNote(text));
     }
 
     function buildEmptyNote(text, className = "tracker-empty") {
@@ -273,27 +314,63 @@ function createAppRenderers(context) {
 
     // Commits an edited value on change and on blur, but only when it differs from the
     // last saved value, so a value restored after a re-render is still saved on blur.
-    function bindCommittedInput(input, savedValue, parse, commit) {
+    // commit() resolves to true when the server saved the value; otherwise the field
+    // shows the last saved value again, so it never looks saved when it was rejected.
+    function bindCommittedInput(input, savedValue, parse, commit, format = (value) => value ?? "") {
         let committed = savedValue;
+        let inFlight = null;
         const flush = () => {
             const nextValue = parse(input.value);
-            if (nextValue === committed) {
+            if (nextValue === committed || nextValue === inFlight) {
                 return;
             }
-            committed = nextValue;
-            commit(nextValue);
+            inFlight = nextValue;
+            Promise.resolve(commit(nextValue))
+                .catch(() => false)
+                .then((saved) => {
+                    if (inFlight === nextValue) {
+                        inFlight = null;
+                    }
+                    if (saved) {
+                        committed = nextValue;
+                    } else if (parse(input.value) === nextValue) {
+                        input.value = format(committed);
+                    }
+                });
         };
         input.addEventListener("change", flush);
         input.addEventListener("blur", flush);
     }
 
+    // Selects work the same way: a rejected status change puts the saved status back.
+    function bindCommittedSelect(select, savedValue, commit) {
+        let committed = savedValue;
+        select.value = savedValue;
+        select.addEventListener("change", () => {
+            const nextValue = select.value;
+            if (nextValue === committed) {
+                return;
+            }
+            Promise.resolve(commit(nextValue))
+                .catch(() => false)
+                .then((saved) => {
+                    if (saved) {
+                        committed = nextValue;
+                    } else if (select.value === nextValue) {
+                        select.value = committed;
+                    }
+                });
+        });
+    }
+
+    // The API takes only positive prices; an empty field or 0 clears the value.
     function parseMoneyInput(rawValue) {
-        const trimmed = String(rawValue || "").trim();
+        const trimmed = String(rawValue ?? "").trim();
         if (!trimmed) {
             return null;
         }
         const numeric = Math.abs(Number(trimmed));
-        return Number.isFinite(numeric) ? numeric : null;
+        return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
     }
 
     function parseNotesInput(rawValue) {
@@ -471,6 +548,7 @@ function createAppRenderers(context) {
         const shouldShow =
             !state.loading &&
             !state.error &&
+            !state.searchError &&
             !state.stats &&
             state.activeView !== "tracking" &&
             state.activeView !== "monitoring" &&
@@ -490,18 +568,19 @@ function createAppRenderers(context) {
 
     function renderTrackingHeroStats() {
         if (!elements.trackingHeroStats) return;
+        const loading = isTrackersLoading();
         setHtml(elements.trackingHeroStats, [
-            heroStat(state.trackers.length, "трекеров"),
-            heroStat(state.trackerEvents.length, "событий"),
+            heroStat(loading ? "…" : state.trackers.length, "трекеров"),
+            heroStat(loading ? "…" : state.trackerEvents.length, "событий"),
         ]);
     }
 
     function renderCheapHeroStats() {
         if (!elements.cheapHeroStats) return;
         let cheapCount = state.dealListings.length;
-        if (isListingsLoading()) {
+        if (isCollectionLoading("deals")) {
             cheapCount = "…";
-        } else if (loadError("deals")) {
+        } else if (loadError("deals") || searchFailure()) {
             cheapCount = "—";
         }
         const range = state.discountFromPercent === state.discountToPercent
@@ -515,9 +594,11 @@ function createAppRenderers(context) {
 
     function renderMonitoringHeroStats() {
         if (!elements.monitoringHeroStats) return;
-        const watchCount = state.watchlist.length;
-        const riskCount = state.watchlist
-            .filter((item) => MARKET_RISK_STATUSES.includes(item.market_status)).length;
+        const loading = isPending("watchlist") && !state.watchlist.length;
+        const watchCount = loading ? "…" : state.watchlist.length;
+        const riskCount = loading
+            ? "…"
+            : state.watchlist.filter((item) => MARKET_RISK_STATUSES.includes(item.market_status)).length;
         setHtml(elements.monitoringHeroStats, [
             heroStat(watchCount, "объявлений"),
             heroStat(riskCount, "сигналов"),
@@ -526,9 +607,12 @@ function createAppRenderers(context) {
 
     function renderDealsHeroStats() {
         if (!elements.dealsHeroStats) return;
-        const activeLeads = state.leads.filter((lead) => ACTIVE_LEAD_STATUSES.includes(lead.status)).length;
-        const totalLeads = state.leads.length;
-        const oppCount = (state.opportunityBoard.items || []).length;
+        const leadsLoading = isPending("leads") && !state.leads.length;
+        const activeLeads = leadsLoading
+            ? "…"
+            : state.leads.filter((lead) => ACTIVE_LEAD_STATUSES.includes(lead.status)).length;
+        const totalLeads = leadsLoading ? "…" : state.leads.length;
+        const oppCount = isBoardLoading() ? "…" : (state.opportunityBoard.items || []).length;
         setHtml(elements.dealsHeroStats, [
             heroStat(activeLeads, `активных из ${totalLeads}`),
             heroStat(oppCount, "кандидатов"),
@@ -727,6 +811,9 @@ function createAppRenderers(context) {
     }
 
     function renderStats() {
+        if (elements.statsTruncatedNote) {
+            elements.statsTruncatedNote.hidden = !state.stats?.truncated;
+        }
         if (!state.stats) {
             elements.statsSection.hidden = true;
             elements.chartSection.hidden = true;
@@ -903,14 +990,15 @@ function createAppRenderers(context) {
             </div>
             ${badges.length ? html`<div class="listing-badges">${badges}</div>` : ""}
             <div class="listing-actions">
-                <button class="listing-btn" data-role="detail" type="button">Подробнее</button>
+                <button class="listing-btn" data-role="detail" data-ad-id="${item.ad_id ?? ""}" type="button">Подробнее</button>
                 <button class="listing-btn" data-role="lead" type="button">В покупки</button>
                 <button class="listing-btn" data-role="watch" type="button">Следить</button>
                 ${externalLink(item.link, "listing-btn listing-btn--accent", "Kufar")}
             </div>
         `);
 
-        listing.querySelector('[data-role="detail"]')?.addEventListener("click", () => {
+        listing.querySelector('[data-role="detail"]')?.addEventListener("click", (event) => {
+            noteDetailTrigger(event.currentTarget);
             void actions.openListingDetail(item);
         });
         listing.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
@@ -967,28 +1055,55 @@ function createAppRenderers(context) {
         return false;
     }
 
+    // The failure of the whole search (/price-stats), kept apart from state.error, which
+    // unrelated actions (opening a card, comparing) clear.
     function searchFailure() {
-        return !state.stats && typeof state.error === "string" && state.error.trim()
-            ? state.error.trim()
+        return !state.stats && typeof state.searchError === "string" && state.searchError.trim()
+            ? state.searchError.trim()
             : null;
+    }
+
+    // Status of one listings collection: a failed search wins (its retry reruns the search),
+    // then the collection's own loading and error states.
+    function collectionStatus(kind, loadingText, retryList) {
+        const failure = searchFailure();
+        if (failure) {
+            return {
+                loading: false,
+                error: failure,
+                loadingText,
+                retry: () => actions.retrySearch(),
+            };
+        }
+        return {
+            loading: isCollectionLoading(kind),
+            error: loadError(kind),
+            loadingText,
+            retry: retryList,
+        };
     }
 
     function renderListings() {
         const query = currentQuery();
         elements.listingsSection.hidden = !query;
+        if (elements.listingsTruncatedNote) {
+            elements.listingsTruncatedNote.hidden = true;
+        }
         if (!query) {
             elements.listingsList.innerHTML = "";
             elements.listingsTotalBadge.textContent = "";
             return;
         }
-        const handled = renderCollectionStatus(elements.listingsList, elements.listingsTotalBadge, {
-            loading: isListingsLoading(),
-            error: loadError("listings") || searchFailure(),
-            loadingText: "Загружаю объявления…",
-            retry: () => actions.loadListings(),
-        });
+        const handled = renderCollectionStatus(
+            elements.listingsList,
+            elements.listingsTotalBadge,
+            collectionStatus("listings", "Загружаю объявления…", () => actions.loadListings())
+        );
         if (handled) {
             return;
+        }
+        if (elements.listingsTruncatedNote) {
+            elements.listingsTruncatedNote.hidden = !state.listingsTruncated;
         }
         renderListingsCollection(
             state.listings,
@@ -1004,19 +1119,24 @@ function createAppRenderers(context) {
         const query = currentQuery();
         elements.dealsSection.hidden = !query;
         renderCheapHeroStats();
+        if (elements.dealsTruncatedNote) {
+            elements.dealsTruncatedNote.hidden = true;
+        }
         if (!query) {
             elements.dealsList.innerHTML = "";
             elements.dealsTotalBadge.textContent = "";
             return;
         }
-        const handled = renderCollectionStatus(elements.dealsList, elements.dealsTotalBadge, {
-            loading: isListingsLoading(),
-            error: loadError("deals") || searchFailure(),
-            loadingText: "Ищу лоты дешевле рынка…",
-            retry: () => actions.loadDeals(),
-        });
+        const handled = renderCollectionStatus(
+            elements.dealsList,
+            elements.dealsTotalBadge,
+            collectionStatus("deals", "Ищу лоты дешевле рынка…", () => actions.loadDeals())
+        );
         if (handled) {
             return;
+        }
+        if (elements.dealsTruncatedNote) {
+            elements.dealsTruncatedNote.hidden = !state.dealsTruncated;
         }
         const rangeLabel = `${state.discountFromPercent}-${state.discountToPercent}`;
         renderListingsCollection(
@@ -1053,7 +1173,16 @@ function createAppRenderers(context) {
         elements.opportunityBoardDrops.innerHTML = "";
         elements.opportunityBoardRare.innerHTML = "";
         elements.opportunityBoardSignals.innerHTML = "";
+        setBusy(elements.opportunityBoardList, false);
         renderDealsHeroStats();
+        if (elements.opportunityBoardNote) {
+            elements.opportunityBoardNote.classList.remove("is-warning");
+        }
+        if (elements.reloadOpportunityBoardButton) {
+            const busy = isPending("board");
+            elements.reloadOpportunityBoardButton.disabled = busy;
+            elements.reloadOpportunityBoardButton.setAttribute("aria-busy", String(busy));
+        }
 
         if (!hasTelegramInitData()) {
             if (elements.opportunityBoardNote) {
@@ -1063,6 +1192,15 @@ function createAppRenderers(context) {
             elements.opportunityBoardList.appendChild(
                 buildEmptyNote("Доска возможностей доступна внутри Telegram Mini App.")
             );
+            return;
+        }
+
+        if (isBoardLoading()) {
+            if (elements.opportunityBoardNote) {
+                elements.opportunityBoardNote.textContent =
+                    "Собираю подборку по сохранённым поискам, это может занять до минуты.";
+            }
+            showListLoading(elements.opportunityBoardList, "Загружаю лучшие лоты…");
             return;
         }
 
@@ -1085,10 +1223,19 @@ function createAppRenderers(context) {
         const boardCurrency = board.currency || state.currency;
 
         if (elements.opportunityBoardNote) {
-            elements.opportunityBoardNote.textContent = items.length || drops.length || rare.length
+            let note = items.length || drops.length || rare.length
                 ? `${items.length} кандидатов на выкуп, ${drops.length} падений цены, ${rare.length} редких офферов.`
                 : "Показываем лучшие дешёвые лоты по сохранённым поискам.";
+            if (board.partial) {
+                note += " Подборка неполная: не все сохранённые поиски успели загрузиться, обновите позже.";
+            }
+            if (isPending("board")) {
+                note += " Обновляю…";
+            }
+            elements.opportunityBoardNote.textContent = note;
+            elements.opportunityBoardNote.classList.toggle("is-warning", Boolean(board.partial));
         }
+        setBusy(elements.opportunityBoardList, isPending("board"));
 
         function buildOpportunityCard(item, extraBadge = "") {
             const card = document.createElement("article");
@@ -1111,7 +1258,7 @@ function createAppRenderers(context) {
                 ${reasons ? html`<p class="opportunity-copy">${reasons}</p>` : ""}
                 <div class="listing-actions">
                     <button class="ghost-btn small" data-role="open-query" type="button">Открыть запрос</button>
-                    <button class="ghost-btn small" data-role="open-detail" type="button">Подробнее</button>
+                    <button class="ghost-btn small" data-role="open-detail" data-ad-id="${listing.ad_id ?? ""}" type="button">Подробнее</button>
                     <button class="ghost-btn small" data-role="lead" type="button">В покупки</button>
                     <button class="ghost-btn small" data-role="watch" type="button">Следить</button>
                     ${externalLink(listing.link, "primary-link small", "Kufar")}
@@ -1121,7 +1268,8 @@ function createAppRenderers(context) {
                 showToast("Загружаю...");
                 void actions.openOpportunityQuery(item);
             });
-            card.querySelector('[data-role="open-detail"]')?.addEventListener("click", () => {
+            card.querySelector('[data-role="open-detail"]')?.addEventListener("click", (event) => {
+                noteDetailTrigger(event.currentTarget);
                 showToast("Открываю...");
                 void actions.openOpportunityDetail(item);
             });
@@ -1315,40 +1463,39 @@ function createAppRenderers(context) {
                 <label class="workflow-field">
                     <span class="workflow-field-label">Цель</span>
                     <div class="deal-range-input-wrap workflow-input-wrap">
-                        <input data-role="target" type="number" min="0" step="1" inputmode="numeric" placeholder="цена продажи">
+                        <input data-role="target" type="number" min="1" step="1" inputmode="numeric" placeholder="цена продажи">
                         <span>BYN</span>
                     </div>
                 </label>
                 <label class="workflow-field workflow-field-wide">
                     <span class="workflow-field-label">Заметка</span>
                     <div class="deal-range-input-wrap workflow-input-wrap">
-                        <input data-role="notes" type="text" placeholder="позвонил, торг, забрать вечером">
+                        <input data-role="notes" type="text" maxlength="${NOTES_MAX_LENGTH}" placeholder="позвонил, торг, забрать вечером">
                     </div>
                 </label>
             </div>
         `);
         const select = row.querySelector('[data-role="status"]');
         if (select) {
-            select.value = lead.status || "new";
-            select.addEventListener("change", () => {
-                void actions.updateLeadStatus(lead.id, select.value);
-            });
+            bindCommittedSelect(select, lead.status || "new", (nextValue) =>
+                actions.updateLeadStatus(lead.id, nextValue)
+            );
         }
         const targetInput = row.querySelector('[data-role="target"]');
         if (targetInput) {
             const savedTarget = parseMoneyInput(lead.target_resale_byn ?? "");
             targetInput.value = savedTarget ?? "";
-            bindCommittedInput(targetInput, savedTarget, parseMoneyInput, (nextValue) => {
-                void actions.updateLeadMeta(lead.id, { target_resale_byn: nextValue });
-            });
+            bindCommittedInput(targetInput, savedTarget, parseMoneyInput, (nextValue) =>
+                actions.updateLeadMeta(lead.id, { target_resale_byn: nextValue })
+            );
         }
         const notesInput = row.querySelector('[data-role="notes"]');
         if (notesInput) {
             const savedNotes = parseNotesInput(lead.notes);
             notesInput.value = lead.notes || "";
-            bindCommittedInput(notesInput, savedNotes, parseNotesInput, (nextValue) => {
-                void actions.updateLeadMeta(lead.id, { notes: nextValue });
-            });
+            bindCommittedInput(notesInput, savedNotes, parseNotesInput, (nextValue) =>
+                actions.updateLeadMeta(lead.id, { notes: nextValue })
+            );
         }
         return row;
     }
@@ -1356,6 +1503,7 @@ function createAppRenderers(context) {
     function renderLeads() {
         const focused = captureFocusedField(elements.leadInboxList);
         elements.leadInboxList.innerHTML = "";
+        setBusy(elements.leadInboxList, false);
         renderLeadFilters();
         renderDealsHeroStats();
         if (!hasTelegramInitData()) {
@@ -1363,7 +1511,15 @@ function createAppRenderers(context) {
             elements.leadInboxList.appendChild(buildEmptyNote("Сделки доступны внутри Telegram Mini App."));
             return;
         }
+        // Loaded rows stay visible during a reload (it follows every edit); only a list
+        // with nothing to show yet, or a failed one being retried, shows the loading note.
+        if (isPending("leads") && (!state.leads.length || loadError("leads"))) {
+            elements.leadInboxNote.textContent = "Лоты, которые вы взяли в работу или решили проверить позже.";
+            showListLoading(elements.leadInboxList, "Загружаю сделки…");
+            return;
+        }
         const leadsError = loadError("leads");
+        setBusy(elements.leadInboxList, isPending("leads"));
         if (leadsError) {
             elements.leadInboxNote.textContent = "Не удалось загрузить сделки.";
             elements.leadInboxList.appendChild(buildErrorNote(leadsError, () => actions.loadLeads()));
@@ -1423,17 +1579,16 @@ function createAppRenderers(context) {
                 <label class="workflow-field workflow-field-wide">
                     <span class="workflow-field-label">Заметка</span>
                     <div class="deal-range-input-wrap workflow-input-wrap">
-                        <input data-role="notes" type="text" placeholder="что проверить при следующем созвоне">
+                        <input data-role="notes" type="text" maxlength="${NOTES_MAX_LENGTH}" placeholder="что проверить при следующем созвоне">
                     </div>
                 </label>
             </div>
         `);
         const select = row.querySelector('[data-role="status"]');
         if (select) {
-            select.value = item.workflow_status || "watching";
-            select.addEventListener("change", () => {
-                void actions.updateWatchlistStatus(item.id, select.value);
-            });
+            bindCommittedSelect(select, item.workflow_status || "watching", (nextValue) =>
+                actions.updateWatchlistStatus(item.id, nextValue)
+            );
         }
         row.querySelector('[data-role="lead"]')?.addEventListener("click", () => {
             void actions.promoteWatchlistToLead(item);
@@ -1445,18 +1600,32 @@ function createAppRenderers(context) {
         if (notesInput) {
             const savedNotes = parseNotesInput(item.notes);
             notesInput.value = item.notes || "";
-            bindCommittedInput(notesInput, savedNotes, parseNotesInput, (nextValue) => {
-                void actions.updateWatchlistMeta(item.id, { notes: nextValue });
-            });
+            bindCommittedInput(notesInput, savedNotes, parseNotesInput, (nextValue) =>
+                actions.updateWatchlistMeta(item.id, { notes: nextValue })
+            );
         }
         return row;
+    }
+
+    // "Проверить цены" may take up to a minute: block repeats and say it is working.
+    function renderRefreshWatchlistButton() {
+        const button = elements.refreshWatchlistButton;
+        if (!button) {
+            return;
+        }
+        const busy = isPending("refresh");
+        button.disabled = busy;
+        button.setAttribute("aria-busy", String(busy));
+        button.textContent = busy ? "Проверяю цены…" : "Проверить цены";
     }
 
     function renderWatchlist() {
         const focused = captureFocusedField(elements.watchlistList);
         elements.watchlistList.innerHTML = "";
+        setBusy(elements.watchlistList, false);
         renderWatchlistFilters();
         renderMonitoringHeroStats();
+        renderRefreshWatchlistButton();
         const defaultNote = "Добавляйте объявления через кнопку «Следить» в карточке или списке.";
         if (!hasTelegramInitData()) {
             elements.watchlistNote.textContent = defaultNote;
@@ -1465,7 +1634,13 @@ function createAppRenderers(context) {
             );
             return;
         }
+        if (isPending("watchlist") && (!state.watchlist.length || loadError("watchlist"))) {
+            elements.watchlistNote.textContent = defaultNote;
+            showListLoading(elements.watchlistList, "Загружаю избранное…");
+            return;
+        }
         const watchlistError = loadError("watchlist");
+        setBusy(elements.watchlistList, isPending("watchlist") || isPending("refresh"));
         if (watchlistError) {
             elements.watchlistNote.textContent = "Не удалось загрузить избранное.";
             elements.watchlistList.appendChild(buildErrorNote(watchlistError, () => actions.loadWatchlist()));
@@ -1504,12 +1679,18 @@ function createAppRenderers(context) {
 
     function renderTrackers() {
         elements.trackersList.innerHTML = "";
+        setBusy(elements.trackersList, false);
         renderTrackingHeroStats();
 
         if (!hasTelegramInitData()) {
             elements.trackersList.appendChild(
                 buildEmptyNote("Откройте Mini App внутри Telegram, чтобы управлять трекерами.")
             );
+            return;
+        }
+
+        if (isPending("trackers") && !state.trackers.length) {
+            showListLoading(elements.trackersList, "Загружаю трекеры…");
             return;
         }
 
@@ -1582,12 +1763,13 @@ function createAppRenderers(context) {
             <strong class="tracker-event-title">${event.title}</strong>
             <div class="tracker-event-meta">${meta.map((item) => html`<span>${item}</span>`)}</div>
             <div class="listing-actions">
-                <button class="listing-btn" data-role="open-query" type="button">Открыть</button>
+                <button class="listing-btn" data-role="open-query" data-ad-id="${event.ad_id ?? ""}" type="button">Открыть</button>
                 <button class="listing-btn" data-role="lead" type="button">В покупки</button>
                 ${externalLink(event.link, "listing-btn listing-btn--accent", "Kufar")}
             </div>
         `);
-        row.querySelector('[data-role="open-query"]')?.addEventListener("click", () => {
+        row.querySelector('[data-role="open-query"]')?.addEventListener("click", (clickEvent) => {
+            noteDetailTrigger(clickEvent.currentTarget);
             showToast("Открываю...");
             // The event carries its own query and strict mode; the global search stays untouched.
             void actions.openListingDetail(
@@ -1644,6 +1826,14 @@ function createAppRenderers(context) {
         }
 
         const eventsError = loadError("events");
+        setBusy(elements.trackerEventsList, false);
+        if (isPending("trackers") && (!totalCount || eventsError)) {
+            setBusy(elements.trackerEventsList, true);
+            elements.trackerEventsList.appendChild(
+                buildEmptyNote("Загружаю события…", "tracker-event-empty")
+            );
+            return;
+        }
         if (eventsError) {
             elements.trackerEventsList.appendChild(buildErrorNote(eventsError, () => actions.loadTrackers()));
             return;
@@ -1673,7 +1863,102 @@ function createAppRenderers(context) {
 
     // ---- Detail modal -------------------------------------------------------
 
+    // Where focus goes back when the card closes: the button that opened it, or, when
+    // a re-render replaced that button meanwhile, the new button for the same listing.
     let detailReturnFocus = null;
+    let pendingDetailTrigger = null;
+    // Background nodes made inert while the modal is open, to restore them exactly.
+    let inertNodes = [];
+
+    function describeTrigger(element) {
+        if (!element || element === document.body || typeof element.focus !== "function") {
+            return null;
+        }
+        return {
+            element,
+            role: element.dataset?.role || "",
+            adId: element.dataset?.adId || "",
+        };
+    }
+
+    // Called by the buttons that open a card, before the (slow) detail request starts.
+    function noteDetailTrigger(element) {
+        pendingDetailTrigger = describeTrigger(element);
+    }
+
+    function isVisibleElement(element) {
+        return Boolean(element?.isConnected) && element.getClientRects().length > 0;
+    }
+
+    function findTriggerReplacement(trigger) {
+        if (!trigger?.role || !trigger.adId) {
+            return null;
+        }
+        const candidates = Array.from(document.querySelectorAll("[data-ad-id]")).filter(
+            (candidate) =>
+                candidate.dataset.role === trigger.role && candidate.dataset.adId === trigger.adId
+        );
+        return candidates.find(isVisibleElement) || null;
+    }
+
+    function setBackgroundInert(isInert) {
+        for (const node of inertNodes) {
+            node.removeAttribute("inert");
+            node.removeAttribute("aria-hidden");
+        }
+        inertNodes = [];
+        if (!isInert) {
+            return;
+        }
+        const root = elements.appRoot || elements.detailModal.parentElement;
+        for (const node of Array.from(root?.children || [])) {
+            // Toasts stay live so confirmations from the modal buttons are announced.
+            if (node === elements.detailModal || node === elements.toastContainer) {
+                continue;
+            }
+            if (node.hasAttribute("inert") || node.getAttribute("aria-hidden") === "true") {
+                continue;
+            }
+            node.setAttribute("inert", "");
+            // aria-hidden too for WebViews without inert support.
+            node.setAttribute("aria-hidden", "true");
+            inertNodes.push(node);
+        }
+    }
+
+    function focusableInDetail() {
+        const sheet = elements.detailModal.querySelector(".detail-sheet") || elements.detailModal;
+        return Array.from(
+            sheet.querySelectorAll(
+                'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )
+        ).filter(isVisibleElement);
+    }
+
+    // Keeps Tab inside the open card even where inert is not supported.
+    function trapDetailFocus(event) {
+        if (event.key !== "Tab" || elements.detailModal.hidden) {
+            return;
+        }
+        const focusable = focusableInDetail();
+        if (!focusable.length) {
+            event.preventDefault();
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        const inside = elements.detailModal.contains(active);
+        if (event.shiftKey && (active === first || !inside)) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && (active === last || !inside)) {
+            event.preventDefault();
+            first.focus();
+        }
+    }
+
+    let focusTrapBound = false;
 
     function buildDetailField(label, value) {
         const item = document.createElement("div");
@@ -1689,11 +1974,15 @@ function createAppRenderers(context) {
     }
 
     function restoreDetailFocus() {
-        const target = detailReturnFocus;
+        const trigger = detailReturnFocus;
         detailReturnFocus = null;
-        if (target && target.isConnected && typeof target.focus === "function") {
-            target.focus({ preventScroll: true });
+        if (!trigger) {
+            return;
         }
+        const target = isVisibleElement(trigger.element)
+            ? trigger.element
+            : findTriggerReplacement(trigger);
+        target?.focus({ preventScroll: true });
     }
 
     function renderDetailModal() {
@@ -1701,6 +1990,7 @@ function createAppRenderers(context) {
         if (!state.detail) {
             elements.detailModal.hidden = true;
             if (wasOpen) {
+                setBackgroundInert(false);
                 restoreDetailFocus();
             }
             return;
@@ -1804,10 +2094,29 @@ function createAppRenderers(context) {
 
         if (!wasOpen) {
             const active = document.activeElement;
-            detailReturnFocus = active && active !== document.body && !elements.detailModal.contains(active)
-                ? active
+            const fromActive = active && !elements.detailModal.contains(active)
+                ? describeTrigger(active)
                 : null;
+            // The focused element is the opener unless a re-render dropped it meanwhile;
+            // then the button noted at click time still identifies the listing.
+            detailReturnFocus = fromActive?.role || !pendingDetailTrigger
+                ? fromActive
+                : pendingDetailTrigger;
+            pendingDetailTrigger = null;
+            if (!focusTrapBound) {
+                document.addEventListener("keydown", trapDetailFocus);
+                focusTrapBound = true;
+            }
+            setBackgroundInert(true);
             elements.detailClose?.focus({ preventScroll: true });
+        }
+    }
+
+    // renderAll() keeps the modal's visibility in step with state.detail, so resetting
+    // state.detail anywhere closes the modal (with the background and focus restored).
+    function syncDetailModal() {
+        if (!state.detail && !elements.detailModal.hidden) {
+            renderDetailModal();
         }
     }
 
@@ -2025,7 +2334,11 @@ function createAppRenderers(context) {
             .sort((left, right) => left.x - right.x);
     }
 
-    const axisDayFormatter = new Intl.DateTimeFormat("ru-BY", { day: "2-digit", month: "short" });
+    const HISTORY_EMPTY_TEXT =
+        "История для этого запроса ещё копится. Данные появляются после поиска и фоновых проверок.";
+    const HISTORY_LOADING_TEXT = "Загружаю историю цен…";
+
+    const axisDayFormatter =new Intl.DateTimeFormat("ru-BY", { day: "2-digit", month: "short" });
     const axisTimeFormatter = new Intl.DateTimeFormat("ru-BY", { hour: "2-digit", minute: "2-digit" });
 
     function renderHistorySummary(points) {
@@ -2066,9 +2379,13 @@ function createAppRenderers(context) {
         const query = currentQuery();
         const points = query ? historyPoints() : [];
         const hasHistory = points.length > 0;
+        const loading = Boolean(query) && (isPending("history") || Boolean(state.loading));
         elements.historySection.hidden = !query;
         renderHistoryRangeButtons();
         elements.historyEmpty.hidden = hasHistory;
+        // Until /price-history answers, "still accumulating" would read as a final result.
+        elements.historyEmpty.textContent = loading ? HISTORY_LOADING_TEXT : HISTORY_EMPTY_TEXT;
+        setBusy(elements.historySection, loading);
         if (!hasHistory) {
             elements.historySummary.hidden = true;
             elements.historySummary.innerHTML = "";
@@ -2267,6 +2584,7 @@ function createAppRenderers(context) {
             renderLeads,
             renderWatchlist,
             renderOpportunityBoard,
+            syncDetailModal,
         ];
         for (const step of steps) {
             try {

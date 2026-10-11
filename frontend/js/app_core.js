@@ -16,8 +16,22 @@ function createAppCore() {
         discountFromPercent: 10,
         discountToPercent: 30,
         loading: false,
-        listingsLoading: false,
+        // In-flight flags per request kind, so each section shows its own loading state
+        // instead of a final "empty" result while its request is still running.
+        pending: {
+            listings: false,
+            deals: false,
+            history: false,
+            leads: false,
+            watchlist: false,
+            board: false,
+            trackers: false,
+            refresh: false,
+        },
         error: null,
+        // Message of a failed /price-stats call; unlike state.error it is not cleared by
+        // unrelated actions, so the listing tabs keep showing the failure and retry the search.
+        searchError: null,
         // Per-section load errors shown by the renderers instead of empty states.
         loadErrors: {
             listings: null,
@@ -30,6 +44,9 @@ function createAppCore() {
         stats: null,
         listings: [],
         dealListings: [],
+        // True when the API stopped paginating Kufar early (page limit or deadline).
+        listingsTruncated: false,
+        dealsTruncated: false,
         segments: null,
         geography: [],
         chart: null,
@@ -43,6 +60,7 @@ function createAppCore() {
         watchlistFilter: "all",
         opportunityBoard: {
             currency: null,
+            partial: false,
             items: [],
             top_price_drops: [],
             rare_opportunities: [],
@@ -118,6 +136,10 @@ function createAppCore() {
         elements.geographyNote = document.getElementById("geography-note");
         elements.listingsSection = document.getElementById("listings-section");
         elements.dealsSection = document.getElementById("deals-section");
+        elements.appRoot = document.getElementById("app-root");
+        elements.statsTruncatedNote = document.getElementById("stats-truncated-note");
+        elements.listingsTruncatedNote = document.getElementById("listings-truncated-note");
+        elements.dealsTruncatedNote = document.getElementById("deals-truncated-note");
         elements.marketTotalBadge = document.getElementById("market-total-badge");
         elements.listingsTotalBadge = document.getElementById("listings-total-badge");
         elements.dealsTotalBadge = document.getElementById("deals-total-badge");
@@ -245,16 +267,31 @@ function createAppCore() {
         }
     }
 
+    // telegram-web-app.js creates Telegram.WebApp in any browser and reports
+    // colorScheme "light" there, so its scheme is trusted only inside a Telegram client.
+    // Keep this check in sync with the inline theme script in index.html.
+    function isInsideTelegram() {
+        const webApp = telegramWebApp();
+        if (!webApp) {
+            return false;
+        }
+        const platform = typeof webApp.platform === "string" ? webApp.platform : "unknown";
+        return Boolean(webApp.initData) || (Boolean(platform) && platform !== "unknown");
+    }
+
+    function systemColorScheme() {
+        try {
+            return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        } catch (_) {
+            return "dark";
+        }
+    }
+
     function applyTelegramTheme() {
-        const scheme = telegramWebApp()?.colorScheme;
-        // Outside Telegram keep the theme the inline <head> script derived from
-        // prefers-color-scheme instead of forcing dark.
-        const fallback =
-            document.documentElement.getAttribute("data-theme") ||
-            (window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        const scheme = isInsideTelegram() ? telegramWebApp()?.colorScheme : null;
         document.documentElement.setAttribute(
             "data-theme",
-            scheme === "light" || scheme === "dark" ? scheme : fallback
+            scheme === "light" || scheme === "dark" ? scheme : systemColorScheme()
         );
         syncTelegramChrome();
     }
@@ -266,13 +303,27 @@ function createAppCore() {
             webApp.ready?.();
         }
         applyTelegramTheme();
+        const handleThemeChange = () => {
+            applyTelegramTheme();
+            if (typeof onThemeChanged === "function") {
+                onThemeChanged();
+            }
+        };
         if (webApp?.onEvent) {
-            webApp.onEvent("themeChanged", () => {
-                applyTelegramTheme();
-                if (typeof onThemeChanged === "function") {
-                    onThemeChanged();
+            webApp.onEvent("themeChanged", handleThemeChange);
+        }
+        // Outside Telegram follow the system theme when the user switches it.
+        if (!isInsideTelegram()) {
+            try {
+                const query = window.matchMedia?.("(prefers-color-scheme: light)");
+                if (query?.addEventListener) {
+                    query.addEventListener("change", handleThemeChange);
+                } else {
+                    query?.addListener?.(handleThemeChange);
                 }
-            });
+            } catch (_) {
+                // Without matchMedia the theme chosen at startup stays.
+            }
         }
     }
 

@@ -15,17 +15,23 @@
         Asset version: bump ?v= on css/ and js/ URLs (all five, same value) in every
         release that changes them, so Telegram's WebView never mixes cached and new modules.
     -->
-    <link rel="stylesheet" href="css/style.css?v=20261011">
+    <link rel="stylesheet" href="css/style.css?v=20261011b">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         // Set the theme before the first paint so a light Telegram theme does not flash
         // dark while the deferred scripts load. app_core.js keeps it in sync afterwards.
+        // telegram-web-app.js reports colorScheme "light" in any browser, so it is trusted
+        // only inside a Telegram client (initData or a known platform, as in app_core.js).
         (function () {
             var scheme = null;
             try {
-                scheme = window.Telegram && window.Telegram.WebApp
-                    ? window.Telegram.WebApp.colorScheme
-                    : null;
+                var webApp = window.Telegram && window.Telegram.WebApp;
+                var platform = webApp && typeof webApp.platform === "string"
+                    ? webApp.platform
+                    : "unknown";
+                var insideTelegram = Boolean(webApp)
+                    && (Boolean(webApp.initData) || (Boolean(platform) && platform !== "unknown"));
+                scheme = insideTelegram ? webApp.colorScheme : null;
             } catch (_) {
                 scheme = null;
             }
@@ -38,10 +44,10 @@
         })();
     </script>
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-    <script defer src="js/app_core.js?v=20261011"></script>
-    <script defer src="js/app_renderers.js?v=20261011"></script>
-    <script defer src="js/app_actions.js?v=20261011"></script>
-    <script defer src="js/app.js?v=20261011"></script>
+    <script defer src="js/app_core.js?v=20261011b"></script>
+    <script defer src="js/app_renderers.js?v=20261011b"></script>
+    <script defer src="js/app_actions.js?v=20261011b"></script>
+    <script defer src="js/app.js?v=20261011b"></script>
 </head>
 <body>
 <div class="app" id="app-root">
@@ -203,6 +209,9 @@
                     <span class="stat-sub"><span class="mono" id="stat-coverage">—</span> с ценой / всего на рынке</span>
                 </div>
             </div>
+            <p class="section-note is-warning" id="stats-truncated-note" hidden>
+                Kufar отдал не все объявления: статистика посчитана по самым свежим из них.
+            </p>
         </section>
 
         <section class="section" id="geography-section" hidden>
@@ -311,6 +320,9 @@
                 <button class="s-tab" data-sort="price_desc" type="button">Дороже</button>
                 <button class="s-tab" data-sort="near_median" type="button">≈ Медиана</button>
             </div>
+            <p class="section-note is-warning" id="listings-truncated-note" hidden>
+                Kufar отдал не все объявления: список собран из самых свежих.
+            </p>
             <div class="listings-list" id="listings-list"></div>
         </section>
     </section>
@@ -445,6 +457,9 @@
                 <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button">10-30%</button>
                 <button class="s-tab" data-discount-from="20" data-discount-to="40" type="button">20-40%</button>
             </div>
+            <p class="section-note is-warning" id="deals-truncated-note" hidden>
+                Kufar отдал не все объявления: подборка собрана из самых свежих.
+            </p>
             <div class="listings-list" id="deals-list"></div>
         </section>
     </section>

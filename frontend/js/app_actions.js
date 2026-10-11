@@ -29,8 +29,13 @@ function createAppActions(context) {
         showToast,
     } = context;
 
-    const DEFAULT_TIMEOUT_MS = 60000;
-    const LONG_TIMEOUT_MS = 90000;
+    // nginx closes the proxied request after 60 s (proxy_read_timeout), so waiting longer
+    // only turns into a 504. The client gives up first and shows its own message.
+    const DEFAULT_TIMEOUT_MS = 55000;
+    // Watchlist refresh and the opportunity board: the API bounds them with its own deadline
+    // and returns partial results (skipped / partial), so wait for that answer until just
+    // before nginx would cut the request.
+    const LONG_TIMEOUT_MS = 58000;
     const BOARD_TTL_MS = 60000;
     const DEFAULT_MIN_DISCOUNT_PERCENT = 10;
     const TELEGRAM_ONLY_MESSAGE = "Доступно только в Telegram";
@@ -79,9 +84,9 @@ function createAppActions(context) {
 
     // Per-kind request bookkeeping: a newer request of the same kind aborts the
     // previous one and only the latest token may write its response into state.
+    // Kinds listed in state.pending also flag their section as loading while in flight.
     const requestTokens = {};
     const requestControllers = {};
-    const listingsPending = { listings: false, deals: false };
     let boardInFlight = null;
     let boardLoadedAt = 0;
     let lastComparisonKey = "";
@@ -179,50 +184,72 @@ function createAppActions(context) {
             }
         }
 
-        let response;
-        try {
-            response = await fetch(url, {
-                ...fetchOptions,
-                headers,
-                signal: controller?.signal,
-            });
-        } catch (error) {
+        // Fetch and body errors share one translation: a timeout or an abort can also
+        // interrupt reading the body, and anything else there means the body is not JSON.
+        const transportError = (error, fallback) => {
             if (timedOut) {
-                throw createRequestError("Сервер не ответил вовремя. Попробуйте ещё раз.", {
+                return createRequestError("Сервер не ответил вовремя. Попробуйте ещё раз.", {
                     timeout: true,
                 });
             }
-            if (error?.name === "AbortError") {
-                throw createRequestError("Запрос отменён.", { aborted: true });
+            if (error?.name === "AbortError" || controller?.signal.aborted) {
+                return createRequestError("Запрос отменён.", { aborted: true });
             }
-            throw createRequestError(
-                "Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.",
-                { network: true }
-            );
+            return fallback;
+        };
+
+        try {
+            let response;
+            try {
+                response = await fetch(url, {
+                    ...fetchOptions,
+                    headers,
+                    signal: controller?.signal,
+                });
+            } catch (error) {
+                throw transportError(
+                    error,
+                    createRequestError(
+                        "Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.",
+                        { network: true }
+                    )
+                );
+            }
+
+            if (!response.ok) {
+                let payload = null;
+                try {
+                    payload = await response.json();
+                } catch (_) {
+                    payload = null;
+                }
+                throw createRequestError(errorMessageFor(response.status, payload), {
+                    status: response.status,
+                });
+            }
+
+            if (response.status === 204) {
+                return null;
+            }
+
+            try {
+                return await response.json();
+            } catch (error) {
+                // E.g. a proxy or captive portal answering 200 with an HTML page.
+                throw transportError(
+                    error,
+                    createRequestError("Сервер вернул некорректный ответ. Попробуйте позже.", {
+                        invalidJson: true,
+                        status: response.status,
+                    })
+                );
+            }
         } finally {
             if (timer) {
                 clearTimeout(timer);
             }
             externalSignal?.removeEventListener("abort", abortFromCaller);
         }
-
-        if (!response.ok) {
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (_) {
-                payload = null;
-            }
-            throw createRequestError(errorMessageFor(response.status, payload), {
-                status: response.status,
-            });
-        }
-
-        if (response.status === 204) {
-            return null;
-        }
-
-        return response.json();
     }
 
     function getJson(url, options = {}) {
@@ -247,9 +274,7 @@ function createAppActions(context) {
         const controller = typeof AbortController === "function" ? new AbortController() : null;
         requestControllers[kind] = controller;
         requestTokens[kind] = (requestTokens[kind] || 0) + 1;
-        if (kind in listingsPending) {
-            setListingsPending(kind, true);
-        }
+        setPending(kind, true);
         return { token: requestTokens[kind], signal: controller?.signal };
     }
 
@@ -262,23 +287,24 @@ function createAppActions(context) {
             return;
         }
         requestControllers[kind] = null;
-        if (kind in listingsPending) {
-            setListingsPending(kind, false);
-        }
+        setPending(kind, false);
     }
 
     function cancelRequest(kind) {
         requestControllers[kind]?.abort();
         requestControllers[kind] = null;
         requestTokens[kind] = (requestTokens[kind] || 0) + 1;
-        if (kind in listingsPending) {
-            setListingsPending(kind, false);
-        }
+        setPending(kind, false);
     }
 
-    function setListingsPending(kind, value) {
-        listingsPending[kind] = value;
-        state.listingsLoading = listingsPending.listings || listingsPending.deals;
+    function isPending(kind) {
+        return Boolean(state.pending[kind]);
+    }
+
+    function setPending(kind, value) {
+        if (kind in state.pending) {
+            state.pending[kind] = Boolean(value);
+        }
     }
 
     function buildCommonQuery(params = {}, overrides = {}) {
@@ -305,10 +331,23 @@ function createAppActions(context) {
         state.geography = [];
         state.listings = [];
         state.dealListings = [];
+        state.listingsTruncated = false;
+        state.dealsTruncated = false;
         state.comparisonStats = null;
         state.comparisonItems = [];
+        // An open card belongs to the previous search: close it properly (visibility,
+        // inert background, focus) instead of leaving a modal whose controls see no detail.
+        if (state.detail || !elements.detailModal?.hidden) {
+            cancelRequest("detail");
+            closeDetailModal();
+        }
         state.detail = null;
         state.detailImageIndex = 0;
+    }
+
+    // Kufar pagination may stop early; contract: responses carry truncated=true then.
+    function isTruncated(payload) {
+        return Boolean(payload?.truncated);
     }
 
     function isActiveRequest(requestId) {
@@ -327,9 +366,35 @@ function createAppActions(context) {
         })}`;
     }
 
+    function applyListings(payload) {
+        state.listings = payload?.listings || [];
+        state.listingsTruncated = isTruncated(payload);
+        state.loadErrors.listings = null;
+    }
+
+    function failListings(error) {
+        state.listings = [];
+        state.listingsTruncated = false;
+        state.loadErrors.listings = error.message || "Не удалось загрузить объявления.";
+    }
+
+    function applyDeals(payload) {
+        state.dealListings = payload?.listings || [];
+        state.dealsTruncated = isTruncated(payload);
+        state.loadErrors.deals = null;
+    }
+
+    function failDeals(error) {
+        state.dealListings = [];
+        state.dealsTruncated = false;
+        state.loadErrors.deals = error.message || "Не удалось загрузить дешёвые объявления.";
+    }
+
     // Runs one request of the given kind; apply/fail run only while it is the latest one.
-    async function runTrackedRequest(kind, url, { apply, fail, timeoutMs } = {}) {
+    // onStart runs right after the request is registered (and marked pending).
+    async function runTrackedRequest(kind, url, { apply, fail, timeoutMs, onStart } = {}) {
         const { token, signal } = beginRequest(kind);
+        onStart?.();
         let payload;
         try {
             payload = await getJson(url, { signal, timeoutMs });
@@ -384,26 +449,14 @@ function createAppActions(context) {
             {
                 kind: "listings",
                 url: listingsUrl(),
-                apply(payload) {
-                    state.listings = payload?.listings || [];
-                    state.loadErrors.listings = null;
-                },
-                fail(error) {
-                    state.listings = [];
-                    state.loadErrors.listings = error.message || "Не удалось загрузить объявления.";
-                },
+                apply: applyListings,
+                fail: failListings,
             },
             {
                 kind: "deals",
                 url: dealsUrl(),
-                apply(payload) {
-                    state.dealListings = payload?.listings || [];
-                    state.loadErrors.deals = null;
-                },
-                fail(error) {
-                    state.dealListings = [];
-                    state.loadErrors.deals = error.message || "Не удалось загрузить дешёвые объявления.";
-                },
+                apply: applyDeals,
+                fail: failDeals,
             },
         ];
 
@@ -528,6 +581,7 @@ function createAppActions(context) {
     function emptyOpportunityBoard() {
         return {
             currency: null,
+            partial: false,
             items: [],
             top_price_drops: [],
             rare_opportunities: [],
@@ -560,6 +614,7 @@ function createAppActions(context) {
             "history",
             `/api/v1/price-history?${buildCommonQuery({ days: state.historyDays })}`,
             {
+                onStart: renderHistory,
                 apply(payload) {
                     state.history = payload?.points || [];
                     renderHistory();
@@ -580,16 +635,19 @@ function createAppActions(context) {
             renderAll();
             return;
         }
+        if (state.searchError) {
+            // Without stats the list cannot be shown: rerun the whole search instead.
+            await retrySearch();
+            return;
+        }
 
         const request = runTrackedRequest("listings", listingsUrl(), {
             apply(payload) {
-                state.listings = payload?.listings || [];
-                state.loadErrors.listings = null;
+                applyListings(payload);
                 renderAll();
             },
             fail(error) {
-                state.listings = [];
-                state.loadErrors.listings = error.message || "Не удалось загрузить объявления.";
+                failListings(error);
                 renderAll();
             },
         });
@@ -606,16 +664,19 @@ function createAppActions(context) {
             renderAll();
             return;
         }
+        if (state.searchError) {
+            // Without stats the list cannot be shown: rerun the whole search instead.
+            await retrySearch();
+            return;
+        }
 
         const request = runTrackedRequest("deals", dealsUrl(), {
             apply(payload) {
-                state.dealListings = payload?.listings || [];
-                state.loadErrors.deals = null;
+                applyDeals(payload);
                 renderAll();
             },
             fail(error) {
-                state.dealListings = [];
-                state.loadErrors.deals = error.message || "Не удалось загрузить дешёвые объявления.";
+                failDeals(error);
                 renderAll();
             },
         });
@@ -762,8 +823,12 @@ function createAppActions(context) {
         sync();
     }
 
+    // Trackers and their events load as one "trackers" request: a newer load (after a
+    // create, delete or clear) aborts the older one, so a late stale answer cannot bring
+    // back a deleted tracker or cleared events.
     async function loadTrackers() {
         if (!hasTelegramInitData()) {
+            cancelRequest("trackers");
             state.trackers = [];
             state.trackerEvents = [];
             state.trackerStatus = "";
@@ -774,10 +839,17 @@ function createAppActions(context) {
             return;
         }
 
+        const { token, signal } = beginRequest("trackers");
+        renderTrackers();
+        renderTrackerEvents();
         const [trackersResult, eventsResult] = await Promise.allSettled([
-            getJson("/api/v1/trackers"),
-            getJson("/api/v1/tracker-events"),
+            getJson("/api/v1/trackers", { signal }),
+            getJson("/api/v1/tracker-events", { signal }),
         ]);
+        if (!isCurrentRequest("trackers", token)) {
+            return;
+        }
+        endRequest("trackers", token);
 
         if (trackersResult.status === "fulfilled") {
             state.trackers = trackersResult.value || [];
@@ -809,6 +881,7 @@ function createAppActions(context) {
             return;
         }
         await runTrackedRequest("leads", "/api/v1/leads", {
+            onStart: renderLeads,
             apply(payload) {
                 state.leads = payload || [];
                 state.loadErrors.leads = null;
@@ -829,6 +902,7 @@ function createAppActions(context) {
             return;
         }
         await runTrackedRequest("watchlist", "/api/v1/watchlist", {
+            onStart: renderWatchlist,
             apply(payload) {
                 state.watchlist = payload || [];
                 state.loadErrors.watchlist = null;
@@ -857,6 +931,9 @@ function createAppActions(context) {
         if (boardInFlight && boardInFlight.currency === currency) {
             return boardInFlight.promise;
         }
+        // A board still loading in another currency (BYN -> USD -> BYN) must not land
+        // after this call decided the stored board is fresh.
+        cancelStaleBoard(currency);
         const isFresh =
             state.opportunityBoard.currency === currency &&
             !state.loadErrors.board &&
@@ -871,10 +948,17 @@ function createAppActions(context) {
             `/api/v1/opportunity-board?currency=${encodeURIComponent(currency)}`,
             {
                 timeoutMs: LONG_TIMEOUT_MS,
+                onStart: renderOpportunityBoard,
                 apply(payload) {
-                    state.opportunityBoard = { ...emptyOpportunityBoard(), ...(payload || {}), currency };
+                    state.opportunityBoard = {
+                        ...emptyOpportunityBoard(),
+                        ...(payload || {}),
+                        partial: Boolean(payload?.partial),
+                        currency,
+                    };
                     state.loadErrors.board = null;
-                    boardLoadedAt = Date.now();
+                    // A partial board (the API hit its deadline) is not cached as fresh.
+                    boardLoadedAt = state.opportunityBoard.partial ? 0 : Date.now();
                     renderOpportunityBoard();
                 },
                 fail(error) {
@@ -891,6 +975,13 @@ function createAppActions(context) {
         return entry.promise;
     }
 
+    function cancelStaleBoard(currency) {
+        if (boardInFlight && boardInFlight.currency !== currency) {
+            cancelRequest("board");
+            boardInFlight = null;
+        }
+    }
+
     async function createTracker() {
         if (telegramOnly()) {
             return;
@@ -902,13 +993,10 @@ function createAppActions(context) {
             return;
         }
 
-        const normalized = normalizedQuery(query);
-        const duplicate = state.trackers.find((t) => normalizedQuery(t.query) === normalized);
-        if (duplicate) {
-            showToast("Такой трекер уже существует");
-            return;
-        }
-
+        // No client-side duplicate check: the API compares the query, the strict mode and
+        // every filter, and answers 409 with a Russian message shown in the tracker status.
+        state.trackerStatus = "";
+        renderTrackerStatus();
         try {
             await postJson("/api/v1/trackers", {
                 query,
@@ -929,6 +1017,7 @@ function createAppActions(context) {
             state.trackerStatus = error.message || "Не удалось создать трекер.";
             state.trackerStatusKind = "error";
             renderTrackerStatus();
+            showToast(state.trackerStatus);
         }
     }
 
@@ -979,8 +1068,10 @@ function createAppActions(context) {
         }
     }
 
-    async function updateLeadStatus(leadId, nextStatus) {
-        await updateLeadMeta(leadId, { status: nextStatus });
+    // The update helpers resolve to true only when the server saved the change, so the
+    // renderers can put a rejected value back into the field.
+    function updateLeadStatus(leadId, nextStatus) {
+        return updateLeadMeta(leadId, { status: nextStatus });
     }
 
     async function updateLeadMeta(leadId, payload) {
@@ -990,14 +1081,16 @@ function createAppActions(context) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
-            await loadLeads();
         } catch (error) {
             showToast(error.message || "Не удалось обновить");
+            return false;
         }
+        await loadLeads();
+        return true;
     }
 
-    async function updateWatchlistStatus(watchlistId, workflowStatus) {
-        await updateWatchlistMeta(watchlistId, { workflow_status: workflowStatus });
+    function updateWatchlistStatus(watchlistId, workflowStatus) {
+        return updateWatchlistMeta(watchlistId, { workflow_status: workflowStatus });
     }
 
     async function updateWatchlistMeta(watchlistId, payload) {
@@ -1007,10 +1100,12 @@ function createAppActions(context) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
-            await loadWatchlist();
         } catch (error) {
             showToast(error.message || "Не удалось обновить");
+            return false;
         }
+        await loadWatchlist();
+        return true;
     }
 
     async function promoteWatchlistToLead(item) {
@@ -1044,19 +1139,49 @@ function createAppActions(context) {
     }
 
     async function refreshWatchlist() {
-        if (telegramOnly()) {
+        if (telegramOnly() || isPending("refresh")) {
             return;
         }
+        const { token, signal } = beginRequest("refresh");
+        renderWatchlist();
+        let payload = null;
+        let failure = null;
         try {
-            const payload = await postJson("/api/v1/watchlist/refresh", {}, { timeoutMs: LONG_TIMEOUT_MS });
-            const updated = payload?.updated ?? 0;
-            const missing = payload?.missing ?? 0;
-            const drops = payload?.price_drops ?? 0;
-            showToast(`Проверено: ${updated}, пропало: ${missing}, падений цены: ${drops}`);
-            await loadWatchlist();
+            payload = await postJson(
+                "/api/v1/watchlist/refresh",
+                {},
+                { timeoutMs: LONG_TIMEOUT_MS, signal }
+            );
         } catch (error) {
-            showToast(error.message || "Не удалось обновить цены");
+            failure = error;
         }
+        if (!isCurrentRequest("refresh", token)) {
+            return;
+        }
+        endRequest("refresh", token);
+        renderWatchlist();
+
+        if (failure) {
+            if (failure.timeout || failure.status === 504) {
+                // The server may still finish and save part of the prices.
+                showToast("Проверка цен заняла слишком много времени. Часть цен могла обновиться.");
+                await loadWatchlist();
+            } else {
+                showToast(failure.message || "Не удалось обновить цены");
+            }
+            return;
+        }
+
+        const updated = payload?.updated ?? 0;
+        const missing = payload?.missing ?? 0;
+        const drops = payload?.price_drops ?? 0;
+        const skipped = Number(payload?.skipped) || 0;
+        let message = `Проверено: ${updated}, пропало: ${missing}, падений цены: ${drops}`;
+        if (skipped > 0) {
+            message += `. Не успели проверить: ${skipped}, повторите позже`;
+        }
+        showToast(message);
+        await loadWatchlist();
     }
 
     async function clearTrackerEvents() {
@@ -1084,6 +1209,11 @@ function createAppActions(context) {
         state.loadErrors.events = null;
         showToast("События очищены");
         renderTrackerEvents();
+        // A load started before the DELETE could still answer with the old events:
+        // restart it, which aborts the stale one.
+        if (isPending("trackers")) {
+            void loadTrackers();
+        }
     }
 
     function applySavedSearchSettings(item) {
@@ -1148,6 +1278,8 @@ function createAppActions(context) {
         }
 
         state.currency = currency;
+        // A board still loading in the old currency is dropped in every view.
+        cancelStaleBoard(currency);
         // The board is reloaded in the new currency right away only when it is
         // visible; otherwise its stored currency makes the next open reload it.
         const boardRequest = state.activeView === "deals" ? loadOpportunityBoard() : null;
@@ -1194,6 +1326,7 @@ function createAppActions(context) {
     async function runSearch(query, target = "overview") {
         state.activeQuery = query;
         state.error = null;
+        state.searchError = null;
         state.searchRequestId += 1;
         const requestId = state.searchRequestId;
         for (const kind of SEARCH_REQUEST_KINDS) {
@@ -1213,9 +1346,11 @@ function createAppActions(context) {
         }
 
         state.loading = true;
-        // Listings arrive only after the stats, so they count as loading from the start.
-        setListingsPending("listings", true);
-        setListingsPending("deals", true);
+        // Listings and history arrive only after the stats, so they count as loading
+        // from the start.
+        setPending("listings", true);
+        setPending("deals", true);
+        setPending("history", true);
         renderAll();
 
         const { token, signal } = beginRequest("stats");
@@ -1227,17 +1362,19 @@ function createAppActions(context) {
             endRequest("stats", token);
             state.stats = stats;
             state.loading = false;
-            renderAll();
             loadSearchDependencies(requestId);
+            renderAll();
         } catch (error) {
             if (!isActiveRequest(requestId) || !isCurrentRequest("stats", token)) {
                 return;
             }
             endRequest("stats", token);
             clearSearchData();
-            setListingsPending("listings", false);
-            setListingsPending("deals", false);
-            state.error = error.message || "Не удалось загрузить аналитику.";
+            setPending("listings", false);
+            setPending("deals", false);
+            setPending("history", false);
+            state.searchError = error.message || "Не удалось загрузить аналитику.";
+            state.error = state.searchError;
             state.loading = false;
             renderAll();
             return;
@@ -1246,6 +1383,15 @@ function createAppActions(context) {
         if (state.comparisonQuery.trim()) {
             await loadComparison();
         }
+    }
+
+    // "Повторить" after a failed /price-stats: the whole search failed, so reloading only
+    // one list would never clear the failure. Reruns it and stays on the current view.
+    async function retrySearch() {
+        if (!state.activeQuery) {
+            return;
+        }
+        await runSearch(state.activeQuery, state.activeView);
     }
 
     async function search(target = "overview") {
@@ -1276,7 +1422,8 @@ function createAppActions(context) {
             void loadLeads();
             void loadOpportunityBoard();
         }
-        if (view === "cheap" && state.activeQuery && !listingsPending.deals) {
+        // After a failed search the deals tab shows that failure with its own retry.
+        if (view === "cheap" && state.activeQuery && !isPending("deals") && !state.searchError) {
             void loadDeals();
         }
     }
@@ -1554,7 +1701,7 @@ function createAppActions(context) {
         });
 
         document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape" && state.detail) {
+            if (event.key === "Escape" && (state.detail || !elements.detailModal?.hidden)) {
                 closeDetail();
             }
         });
@@ -1582,6 +1729,7 @@ function createAppActions(context) {
     return {
         bindEvents,
         search,
+        retrySearch,
         searchFor,
         loadListings,
         loadDeals,
