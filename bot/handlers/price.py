@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
@@ -11,16 +11,23 @@ from httpx import HTTPError
 from api.config import get_settings
 from api.services.aggregator import normalize_price_byn
 from api.services.kufar_client import KufarAPIError, KufarClient
-from api.services.query_pipeline import load_query_dataset, normalize_ads
+from api.services.query_pipeline import (
+    dataset_cache_key,
+    get_dataset_cache,
+    load_query_dataset,
+    normalize_ads,
+)
 from bot.keyboards import is_http_url
 from bot.middlewares import ThrottlingMiddleware
+
+if TYPE_CHECKING:
+    from aiogram.types import TelegramObject
+
+    from api.services.query_pipeline import QueryDataset
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="price")
-# /price and /top hit Kufar directly: one command per user every few seconds and a
-# small process-wide cap on concurrent lookups keep the shared server IP off Kufar's radar.
-router.message.middleware(ThrottlingMiddleware(rate_seconds=3.0, max_concurrent=2))
 
 MAX_QUERY_LENGTH = 255
 # Telegram rejects messages longer than 4096 characters.
@@ -41,6 +48,23 @@ def _validate_query(command: CommandObject, usage: str) -> tuple[str | None, str
     return query, None
 
 
+def _is_kufar_lookup(_event: TelegramObject, data: dict[str, Any]) -> bool:
+    """True when the command will query Kufar; a usage hint is answered without limits."""
+    command = data.get("command")
+    if command is None:
+        return True
+    query, _ = _validate_query(command, "")
+    return query is not None
+
+
+# /price and /top hit Kufar: one command per user every few seconds, one command in flight per
+# user and a small process-wide cap on concurrent lookups (with no waiting queue: the user is
+# told the bot is busy) keep the shared server IP off Kufar's radar and the bot responsive.
+router.message.middleware(
+    ThrottlingMiddleware(rate_seconds=3.0, max_concurrent=2, applies_to=_is_kufar_lookup)
+)
+
+
 def _clip(text: str, limit: int = MAX_MESSAGE_LENGTH) -> str:
     if len(text) <= limit:
         return text
@@ -49,6 +73,15 @@ def _clip(text: str, limit: int = MAX_MESSAGE_LENGTH) -> str:
 
 def _format_byn(value: float) -> str:
     return f"{value:,.0f}".replace(",", " ") + f" {CURRENCY}"
+
+
+def _market_total(dataset: QueryDataset) -> int:
+    """Kufar's reported total when it exceeds the fetched sample (the search is not strict)."""
+    total = dataset.total_results
+    reported = dataset.response.get("total")
+    if isinstance(reported, int) and not isinstance(reported, bool) and reported > total:
+        return reported
+    return total
 
 
 async def fetch_price_stats(query: str) -> dict[str, Any]:
@@ -61,8 +94,11 @@ async def fetch_price_stats(query: str) -> dict[str, Any]:
         client_factory=KufarClient,
     )
     stats = dataset.price_stats
+    truncated = getattr(dataset, "truncated", False) or dataset.response.get("truncated")
     return {
-        "market_total": dataset.total_results,
+        "market_total": _market_total(dataset),
+        "fetched_count": len(dataset.ads) + len(dataset.unidentified_ads),
+        "truncated": bool(truncated),
         "analyzed_count": stats.count,
         "mean": stats.mean,
         "median": stats.median,
@@ -72,19 +108,37 @@ async def fetch_price_stats(query: str) -> dict[str, Any]:
     }
 
 
-async def fetch_listings(query: str, limit: int = TOP_LIMIT) -> list[dict[str, Any]]:
-    """Return the most recent listings as plain dicts: title, BYN price (or None), link."""
+async def _load_top_ads(query: str) -> list[dict[str, Any]]:
     client = KufarClient(get_settings())
     try:
         payload = await client.search(query=query, currency=CURRENCY, size=TOP_FETCH_SIZE)
     finally:
         await client.aclose()
-
     # /top needs no ad_id; normalization only guarantees field types, so one malformed
     # listing is dropped or cleaned up instead of failing the whole command.
     raw_ads = payload.get("ads") if isinstance(payload, dict) else None
+    return normalize_ads(raw_ads, require_ad_id=False)
+
+
+async def _load_top_page(query: str) -> dict[str, Any]:
+    return {"ads": await _load_top_ads(query)}
+
+
+async def fetch_listings(query: str, limit: int = TOP_LIMIT) -> list[dict[str, Any]]:
+    """Return the most recent listings as plain dicts: title, BYN price (or None), link.
+
+    Only the first page of the newest ads is requested. When the process-wide dataset cache
+    is enabled (the bot enables it), repeated /top for the same query reuse that one page.
+    """
+    cache = get_dataset_cache()
+    if cache is None:
+        ads = await _load_top_ads(query)
+    else:
+        key = "top|" + dataset_cache_key(query, False, {"size": TOP_FETCH_SIZE})
+        ads = (await cache.get_or_load(key, lambda: _load_top_page(query)))["ads"]
+
     listings: list[dict[str, Any]] = []
-    for ad in normalize_ads(raw_ads, require_ad_id=False):
+    for ad in ads:
         title = " ".join(str(ad.get("subject") or "").split())
         if not title:
             continue
@@ -99,6 +153,12 @@ async def fetch_listings(query: str, limit: int = TOP_LIMIT) -> list[dict[str, A
         if len(listings) >= limit:
             break
     return listings
+
+
+def _truncation_note(stats: dict[str, Any]) -> str:
+    if not stats.get("truncated"):
+        return ""
+    return f"\nNote: only the latest {stats['fetched_count']} listings were analyzed."
 
 
 @router.message(Command("price"))
@@ -117,7 +177,11 @@ async def cmd_price(message: Message, command: CommandObject) -> None:
 
     if not stats["analyzed_count"]:
         await message.answer(
-            _clip(f"No priced listings found for {query}.\nMarket total: {stats['market_total']}")
+            _clip(
+                f"No priced listings found for {query}.\n"
+                f"Market total: {stats['market_total']}"
+                f"{_truncation_note(stats)}"
+            )
         )
         return
 
@@ -129,6 +193,7 @@ async def cmd_price(message: Message, command: CommandObject) -> None:
             f"Mean: {_format_byn(stats['mean'])}\n"
             f"Median: {_format_byn(stats['median'])}\n"
             f"Range: {_format_byn(stats['min'])} - {_format_byn(stats['max'])}"
+            f"{_truncation_note(stats)}"
         )
     )
 

@@ -51,7 +51,8 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
     await init_bot_engine()
-    # Repeated /price and /top for the same query reuse one Kufar pagination.
+    # Repeated /price (full pagination) and /top (first page only) for the same query reuse
+    # one cached Kufar response each.
     configure_dataset_cache(DatasetCache(max_entries=8))
     bot = Bot(settings.bot_token)
     await bot.set_my_commands(

@@ -31,6 +31,19 @@ DB_ERROR_TEXT = "Не удалось выполнить команду. Попр
 # Telegram rejects messages longer than 4096 characters.
 MESSAGE_CHUNK_LIMIT = 4000
 CALLBACK_STATUSES = {"lead": "in_progress", "later": "deferred"}
+SAVED_TEXT = "Сохранено."
+# The same labels as the Mini App (LEAD_STATUS_OPTIONS in frontend/js/app_renderers.js).
+LEAD_STATUS_LABELS = {
+    "new": "Новый",
+    "reviewing": "Смотреть",
+    "in_progress": "В работе",
+    "negotiating": "Торг",
+    "deferred": "Позже",
+    "bought": "Купил",
+    "reselling": "В продаже",
+    "sold": "Продано",
+    "skipped": "Пропустить",
+}
 
 
 def _user_names(user: User) -> dict[str, str | None]:
@@ -153,8 +166,10 @@ async def _save_alert_lead(callback: CallbackQuery, action: str, event_id: int) 
             return "Сигнал уже недоступен."
 
         await ensure_user(session, callback.from_user.id, **_user_names(callback.from_user))
-        # upsert_lead never downgrades a lead that is already in work, bought or sold.
-        await upsert_lead(
+        requested_status = CALLBACK_STATUSES[action]
+        # upsert_lead moves an existing lead only out of an early status; it never downgrades
+        # a lead that is already in work, bought or sold. The reply says which one happened.
+        lead = await upsert_lead(
             session,
             user_id=callback.from_user.id,
             ad_id=int(event.ad_id or event.id),
@@ -162,11 +177,16 @@ async def _save_alert_lead(callback: CallbackQuery, action: str, event_id: int) 
             title=event.title,
             link=event.link,
             price_byn=event.price_byn,
-            status=CALLBACK_STATUSES[action],
+            status=requested_status,
             source="telegram_alert",
         )
+        # Read before the commit: expired attributes cannot be lazily loaded in async code.
+        lead_status = lead.status
         await session.commit()
-    return "Сохранено."
+    if lead_status != requested_status:
+        label = LEAD_STATUS_LABELS.get(lead_status, lead_status)
+        return f"Лид уже в статусе «{label}», статус не изменён."
+    return SAVED_TEXT
 
 
 @router.callback_query(lambda callback: (callback.data or "").startswith(("lead:", "later:")))
@@ -183,7 +203,7 @@ async def handle_tracker_action(callback: CallbackQuery) -> None:
             answer_text = "Некорректное действие."
             return
         answer_text = await _save_alert_lead(callback, action, event_id)
-        show_alert = answer_text != "Сохранено."
+        show_alert = answer_text != SAVED_TEXT
     except SQLAlchemyError:
         logger.exception("Failed to save lead from callback %r", callback.data)
     finally:

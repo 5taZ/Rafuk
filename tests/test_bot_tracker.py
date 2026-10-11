@@ -131,10 +131,52 @@ async def test_tracker_callback_never_downgrades_lead(session_factory) -> None:
     for data in (f"later:{event_id}", f"lead:{event_id}", f"later:{event_id}"):
         callback = make_callback(data)
         await handle_tracker_action(callback)  # type: ignore[arg-type]
-        callback.answer.assert_awaited_once()
+        # The reply tells the truth: nothing was changed.
+        callback.answer.assert_awaited_once_with(
+            "Лид уже в статусе «Продано», статус не изменён.", show_alert=True
+        )
 
     leads = await fetch_all(session_factory, select(LeadItem))
     assert [(lead.status, lead.source) for lead in leads] == [("sold", "manual")]
+
+
+@pytest.mark.parametrize("status", ["skipped", "reviewing", "in_progress", "bought"])
+async def test_tracker_callback_reply_matches_resulting_status(session_factory, status) -> None:
+    event_id = await seed_event(session_factory)
+    async with session_factory() as session:
+        session.add(
+            LeadItem(
+                user_id=USER_ID,
+                ad_id=101,
+                query="iphone 15 128",
+                title="iPhone 15 128GB",
+                link="https://www.kufar.by/item/101",
+                price_byn=1800,
+                status=status,
+                source="manual",
+            )
+        )
+        await session.commit()
+
+    callback = make_callback(f"lead:{event_id}")
+    await handle_tracker_action(callback)  # type: ignore[arg-type]
+
+    (lead,) = await fetch_all(session_factory, select(LeadItem))
+    # "Saved" only when the lead really is in work now; otherwise its actual status is named.
+    if lead.status == "in_progress":
+        callback.answer.assert_awaited_once_with("Сохранено.", show_alert=False)
+    else:
+        assert lead.status == status
+        label = tracker_handlers.LEAD_STATUS_LABELS[status]
+        callback.answer.assert_awaited_once_with(
+            f"Лид уже в статусе «{label}», статус не изменён.", show_alert=True
+        )
+
+
+def test_lead_status_labels_cover_every_status() -> None:
+    from api.statuses import LEAD_STATUSES
+
+    assert set(tracker_handlers.LEAD_STATUS_LABELS) == set(LEAD_STATUSES)
 
 
 async def test_tracker_callback_later_then_lead(session_factory) -> None:

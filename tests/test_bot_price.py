@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -7,14 +8,18 @@ from unittest.mock import AsyncMock
 import pytest
 
 from api.services.kufar_client import KufarAPIError
+from api.services.query_pipeline import DatasetCache, configure_dataset_cache
 from bot.handlers import price
-from bot.middlewares import THROTTLED_TEXT, ThrottlingMiddleware
+from bot.middlewares import BUSY_TEXT, THROTTLED_TEXT, USER_BUSY_TEXT, ThrottlingMiddleware
 
 
 class FakeKufarClient:
     """Stands in for KufarClient: records calls and serves canned ads."""
 
     ads: list[dict[str, Any]] = []
+    # Kufar's reported total (None: the number of served ads) and the pagination cut-off flag.
+    total: int | None = None
+    truncated = False
     error: Exception | None = None
     calls: list[tuple[str, dict[str, Any]]] = []
     closed = 0
@@ -32,7 +37,12 @@ class FakeKufarClient:
         type(self).calls.append(("search_all_ads", kwargs))
         if self.error is not None:
             raise self.error
-        return {"ads": list(self.ads), "total": 5000, "fetched_count": len(self.ads)}
+        return {
+            "ads": list(self.ads),
+            "total": len(self.ads) if self.total is None else self.total,
+            "fetched_count": len(self.ads),
+            "truncated": self.truncated,
+        }
 
     async def aclose(self) -> None:
         type(self).closed += 1
@@ -41,6 +51,8 @@ class FakeKufarClient:
 @pytest.fixture
 def fake_kufar(monkeypatch: pytest.MonkeyPatch, sample_ads) -> type[FakeKufarClient]:
     FakeKufarClient.ads = sample_ads
+    FakeKufarClient.total = None
+    FakeKufarClient.truncated = False
     FakeKufarClient.error = None
     FakeKufarClient.calls = []
     FakeKufarClient.closed = 0
@@ -70,6 +82,57 @@ async def test_fetch_price_stats_uses_byn_pipeline(fake_kufar) -> None:
     assert stats["max"] == 2500.0
     assert stats["median"] == 2100.0
     assert stats["currency"] == "BYN"
+    assert stats["fetched_count"] == 6
+    assert stats["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_cmd_price_shows_kufar_total_and_truncation(fake_kufar) -> None:
+    # A popular query: pagination stopped early, Kufar reports far more ads than were fetched.
+    fake_kufar.total = 20000
+    fake_kufar.truncated = True
+    message = _message()
+    await price.cmd_price(message, SimpleNamespace(args="iphone"))  # type: ignore[arg-type]
+
+    assert _reply_text(message) == (
+        "iphone\n"
+        "Market total: 20000\n"
+        "Analyzed: 4\n"
+        "Mean: 2 125 BYN\n"
+        "Median: 2 100 BYN\n"
+        "Range: 1 800 BYN - 2 500 BYN\n"
+        "Note: only the latest 6 listings were analyzed."
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_price_stats_reads_dataset_truncated_flag(fake_kufar, monkeypatch) -> None:
+    """The pipeline's QueryDataset.truncated (shared contract) is honored as well."""
+    original = price.load_query_dataset
+
+    async def load_with_flag(**kwargs: Any):
+        dataset = await original(**kwargs)
+        dataset.response.pop("truncated", None)
+        return SimpleNamespace(
+            total_results=dataset.total_results,
+            truncated=True,
+            response=dataset.response,
+            ads=dataset.ads,
+            unidentified_ads=dataset.unidentified_ads,
+            price_stats=dataset.price_stats,
+        )
+
+    monkeypatch.setattr(price, "load_query_dataset", load_with_flag)
+    stats = await price.fetch_price_stats("iphone")
+    assert stats["truncated"] is True
+    assert stats["market_total"] == 6
+
+
+@pytest.mark.asyncio
+async def test_market_total_never_below_fetched_sample(fake_kufar) -> None:
+    fake_kufar.total = 2
+    stats = await price.fetch_price_stats("iphone")
+    assert stats["market_total"] == 6
 
 
 @pytest.mark.asyncio
@@ -146,6 +209,29 @@ async def test_fetch_listings_builds_short_list_from_ads(fake_kufar) -> None:
         {"title": "iPhone 15 Pro", "price_byn": None, "link": None},
         {"title": "iPhone 15 Max", "price_byn": None, "link": None},
     ]
+
+
+@pytest.mark.asyncio
+async def test_repeated_top_reuses_the_dataset_cache(fake_kufar) -> None:
+    configure_dataset_cache(DatasetCache())
+    try:
+        first = await price.fetch_listings("iphone 13")
+        second = await price.fetch_listings("iphone 13")
+        await price.fetch_price_stats("iphone 13")
+        await price.fetch_listings("iphone 14")
+    finally:
+        configure_dataset_cache(None)
+
+    assert first == second
+    assert len(first) == price.TOP_LIMIT
+    # Two /top cost one Kufar page; /price paginates separately (a different cache entry),
+    # and another query gets its own page.
+    assert [(name, kwargs["query"]) for name, kwargs in fake_kufar.calls] == [
+        ("search", "iphone 13"),
+        ("search_all_ads", "iphone 13"),
+        ("search", "iphone 14"),
+    ]
+    assert fake_kufar.closed == 3
 
 
 @pytest.mark.asyncio
@@ -239,3 +325,136 @@ def test_price_router_is_throttled() -> None:
         isinstance(middleware, ThrottlingMiddleware)
         for middleware in price.router.message.middleware
     )
+
+
+def _user_message(user_id: int) -> SimpleNamespace:
+    return SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=user_id))
+
+
+class _BlockingHandler:
+    """A handler that stays in flight until `release` is set."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.started: list[int] = []
+
+    async def __call__(self, event: Any, data: dict[str, Any]) -> str:
+        self.started.append(event.from_user.id)
+        await self.release.wait()
+        return "handled"
+
+
+async def _settle() -> None:
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_throttling_allows_one_command_in_flight_per_user() -> None:
+    clock = _Clock()
+    middleware = ThrottlingMiddleware(rate_seconds=3.0, max_concurrent=2, clock=clock)
+    handler = _BlockingHandler()
+
+    running = asyncio.create_task(middleware(handler, _user_message(1), {}))
+    await _settle()
+    assert handler.started == [1]
+
+    # Outside the rate window, but the first command is still running: refused, not queued.
+    clock.now += 5.0
+    second = _user_message(1)
+    assert await middleware(handler, second, {}) is None
+    second.answer.assert_awaited_once_with(USER_BUSY_TEXT)
+    assert handler.started == [1]
+
+    handler.release.set()
+    assert await running == "handled"
+    clock.now += 5.0
+    assert await middleware(handler, _user_message(1), {}) == "handled"
+
+
+@pytest.mark.asyncio
+async def test_throttling_answers_busy_instead_of_queueing() -> None:
+    middleware = ThrottlingMiddleware(rate_seconds=3.0, max_concurrent=1, clock=_Clock())
+    handler = _BlockingHandler()
+
+    running = asyncio.create_task(middleware(handler, _user_message(1), {}))
+    await _settle()
+
+    other = _user_message(2)
+    assert await middleware(handler, other, {}) is None
+    other.answer.assert_awaited_once_with(BUSY_TEXT)
+    assert handler.started == [1]
+
+    handler.release.set()
+    assert await running == "handled"
+    # The slot is free again.
+    assert await middleware(handler, _user_message(3), {}) == "handled"
+
+
+@pytest.mark.asyncio
+async def test_throttling_bounded_waiting_queue() -> None:
+    middleware = ThrottlingMiddleware(
+        rate_seconds=3.0, max_concurrent=1, max_waiting=1, clock=_Clock()
+    )
+    handler = _BlockingHandler()
+
+    running = asyncio.create_task(middleware(handler, _user_message(1), {}))
+    await _settle()
+    waiting = asyncio.create_task(middleware(handler, _user_message(2), {}))
+    await _settle()
+    assert handler.started == [1]
+
+    third = _user_message(3)
+    assert await middleware(handler, third, {}) is None
+    third.answer.assert_awaited_once_with(BUSY_TEXT)
+
+    handler.release.set()
+    assert await running == "handled"
+    assert await waiting == "handled"
+    assert handler.started == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_throttling_skips_events_it_does_not_apply_to() -> None:
+    middleware = ThrottlingMiddleware(
+        rate_seconds=3.0,
+        max_concurrent=1,
+        applies_to=lambda _event, data: data.get("expensive", True),
+        clock=_Clock(),
+    )
+    handler = AsyncMock(return_value="handled")
+
+    assert await middleware(handler, _message(), {"expensive": False}) == "handled"
+    # The cheap command used up neither the window nor a slot.
+    assert await middleware(handler, _message(), {}) == "handled"
+    assert handler.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_price_usage_hint_does_not_consume_the_window(fake_kufar) -> None:
+    middleware = next(
+        middleware
+        for middleware in price.router.message.middleware
+        if isinstance(middleware, ThrottlingMiddleware)
+    )
+
+    async def handler(event: Any, data: dict[str, Any]) -> None:
+        await price.cmd_price(event, data["command"])
+
+    usage = _message()
+    await middleware(handler, usage, {"command": SimpleNamespace(args=None)})
+    assert _reply_text(usage) == "Usage: /price <query>"
+
+    too_long = _message()
+    await middleware(handler, too_long, {"command": SimpleNamespace(args="x" * 256)})
+    assert _reply_text(too_long) == "Query is too long (max 255 characters)."
+
+    # The corrected command right after the hints is served, not throttled.
+    corrected = _message()
+    await middleware(handler, corrected, {"command": SimpleNamespace(args="iphone")})
+    assert _reply_text(corrected).startswith("iphone\nMarket total: 6")
+
+    # A real lookup does use up the window.
+    again = _message()
+    await middleware(handler, again, {"command": SimpleNamespace(args="iphone")})
+    assert _reply_text(again) == THROTTLED_TEXT

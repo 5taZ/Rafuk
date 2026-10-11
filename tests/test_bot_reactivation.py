@@ -16,6 +16,7 @@ from api.models import Tracker, User
 from api.services import tracker_service
 from api.services.users import ensure_user
 from bot.handlers import start as start_handlers
+from bot.handlers import tracker as tracker_handlers
 from bot.handlers.start import cmd_start
 
 USER_ID = 424242
@@ -108,6 +109,36 @@ async def test_start_resumes_trackers_paused_by_a_block(session_factory) -> None
     message = make_message()
     await cmd_start(message)  # type: ignore[arg-type]
     assert "Resumed" not in message.answer.await_args.args[0]
+
+
+async def test_start_does_not_resume_deleted_trackers(session_factory) -> None:
+    """r3-bot-1: a tracker disabled by the user carries deleted_at and stays off.
+
+    Legacy rows (pre-refactor /untrack set only active=False) get deleted_at from
+    migration 20261011_0011; a tracker disabled with today's /untrack sets it directly.
+    """
+    legacy = await add_tracker(
+        session_factory,
+        USER_ID,
+        "iphone 13",
+        active=False,
+        deleted_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    await tracker_handlers.cmd_track(make_message(), SimpleNamespace(args="galaxy s24"))
+    async with session_factory() as session:
+        untracked = await session.scalar(select(Tracker.id).where(Tracker.query == "galaxy s24"))
+    untrack_reply = make_message()
+    await tracker_handlers.cmd_untrack(untrack_reply, SimpleNamespace(args=str(untracked)))
+    assert untrack_reply.answer.await_args.args[0] == f"Трекер #{untracked} отключён."
+
+    message = make_message()
+    await cmd_start(message)  # type: ignore[arg-type]
+
+    assert "Resumed" not in message.answer.await_args.args[0]
+    trackers = await trackers_by_id(session_factory)
+    for tracker_id in (legacy, untracked):
+        assert not trackers[tracker_id].active
+        assert trackers[tracker_id].deleted_at is not None
 
 
 async def test_start_reports_a_single_tracker(session_factory) -> None:
