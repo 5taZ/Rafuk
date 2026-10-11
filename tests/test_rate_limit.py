@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import urllib.parse
 
-import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -34,13 +33,6 @@ def _request(headers: dict[str, str] | None = None, client_host: str = "203.0.11
         "query_string": b"",
     }
     return Request(scope)
-
-
-@pytest.fixture(autouse=True)
-def reset_limiter():
-    limiter.reset()
-    yield
-    limiter.reset()
 
 
 def test_key_uses_telegram_user_for_signed_init_data() -> None:

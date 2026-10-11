@@ -574,10 +574,10 @@ def pipeline_client() -> type[PipelineFakeClient]:
 
 @pytest.fixture
 def dataset_cache() -> Any:
+    # conftest disables the process-wide dataset cache again after every test.
     cache = DatasetCache()
     configure_dataset_cache(cache)
-    yield cache
-    configure_dataset_cache(None)
+    return cache
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -9,6 +7,7 @@ from sqlalchemy import select
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import LeadItem, User, WatchlistItem
 from api.services.kufar_client import KufarAPIError
+from api.services.users import ensure_user
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -152,7 +151,7 @@ def test_leads_and_watchlist_workflow(client) -> None:
     assert delete_response.status_code == 204
     assert client.get("/api/v1/watchlist").json() == []
 
-    users = asyncio.run(fetch_all(client.app.state.session_factory, select(User)))
+    users = client.portal.call(fetch_all, client.app.state.session_factory, select(User))
     assert [(user.telegram_user_id, user.first_name) for user in users] == [(123456, "Test")]
 
 
@@ -207,12 +206,15 @@ def test_lead_defaults_without_status_and_source(client) -> None:
 def test_patch_with_null_status_keeps_value(client) -> None:
     lead = client.post("/api/v1/leads", json=LEAD_PAYLOAD).json()
     response = client.patch(f"/api/v1/leads/{lead['id']}", json={"status": None})
-    assert response.status_code in {200, 422}
+    # A null status means "unchanged", it is neither stored nor rejected.
+    assert response.status_code == 200
+    assert response.json()["status"] == "new"
     assert client.get("/api/v1/leads").json()[0]["status"] == "new"
 
     item = client.post("/api/v1/watchlist", json=LEAD_PAYLOAD).json()
     response = client.patch(f"/api/v1/watchlist/{item['id']}", json={"workflow_status": None})
-    assert response.status_code in {200, 422}
+    assert response.status_code == 200
+    assert response.json()["workflow_status"] == "watching"
     assert client.get("/api/v1/watchlist").json()[0]["workflow_status"] == "watching"
 
 
@@ -260,7 +262,9 @@ def test_refresh_skips_empty_queries_and_isolates_failures(client) -> None:
     client.post("/api/v1/watchlist", json={**LEAD_PAYLOAD, "query": "iphone 15 128"})
     client.post("/api/v1/watchlist", json={**LEAD_PAYLOAD, "ad_id": 102, "query": "broken"})
     # An empty query (legacy row) must never be sent to Kufar as a catalogue-wide search.
-    asyncio.run(insert_watchlist_item(client.app.state.session_factory, ad_id=103, query="   "))
+    client.portal.call(
+        lambda: insert_watchlist_item(client.app.state.session_factory, ad_id=103, query="   ")
+    )
     FakeKufarClient.failing_queries = {"broken"}
 
     response = client.post("/api/v1/watchlist/refresh", json={})
@@ -274,7 +278,7 @@ def test_refresh_skips_empty_queries_and_isolates_failures(client) -> None:
     assert statuses == {101: "price_drop", 102: "active", 103: "active"}
 
 
-def test_refresh_reports_error_when_every_query_fails(monkeypatch) -> None:
+async def test_refresh_reports_error_when_every_query_fails(monkeypatch) -> None:
     from api.config import get_settings
     from api.routers import workflow
 
@@ -282,7 +286,8 @@ def test_refresh_reports_error_when_every_query_fails(monkeypatch) -> None:
     FakeKufarClient.failing_queries = {"a", "b"}
     monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
     with pytest.raises(KufarAPIError):
-        asyncio.run(workflow._load_watchlist_datasets(["a", "b"], settings=get_settings()))
+        await workflow._load_watchlist_datasets(["a", "b"], settings=get_settings())
+    assert sorted(FakeKufarClient.calls) == ["a", "b"]
 
 
 async def test_upsert_lead_recovers_from_concurrent_insert(monkeypatch) -> None:
@@ -292,6 +297,7 @@ async def test_upsert_lead_recovers_from_concurrent_insert(monkeypatch) -> None:
     engine = get_engine()
     session_factory = get_session_factory(engine)
     async with session_factory() as session:
+        await ensure_user(session, 123456)
         session.add(
             LeadItem(
                 user_id=123456,
@@ -345,6 +351,9 @@ async def test_upsert_lead_status_transitions() -> None:
 
     engine = get_engine()
     session_factory = get_session_factory(engine)
+    async with session_factory() as session:
+        await ensure_user(session, 1)
+        await session.commit()
 
     async def upsert(status: str | None, source: str | None = "telegram_alert") -> LeadItem:
         async with session_factory() as session:

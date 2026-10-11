@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -37,8 +36,15 @@ def test_currency_endpoint_reports_stale_rate_when_nbrb_fails() -> None:
     from api.services.currency_service import LAST_GOOD_RATES_CACHE_KEY, CurrencyService
 
     cache = MemoryCache()
-    asyncio.run(
-        cache.set_json(
+    http_client = MagicMock()
+    http_client.get = AsyncMock(side_effect=httpx.ConnectError("NBRB is down"))
+    service = CurrencyService(cache, http_client=http_client)
+
+    app = create_app()
+    app.dependency_overrides[get_currency_service] = lambda: service
+    with TestClient(app) as client:
+        client.portal.call(
+            cache.set_json,
             LAST_GOOD_RATES_CACHE_KEY,
             {
                 "base": "BYN",
@@ -47,15 +53,8 @@ def test_currency_endpoint_reports_stale_rate_when_nbrb_fails() -> None:
                 "fetched_at": "2026-10-01T09:00:00+00:00",
             },
         )
-    )
-    http_client = MagicMock()
-    http_client.get = AsyncMock(side_effect=httpx.ConnectError("NBRB is down"))
-    service = CurrencyService(cache, http_client=http_client)
-
-    app = create_app()
-    app.dependency_overrides[get_currency_service] = lambda: service
-    with TestClient(app) as client:
         response = client.get("/api/v1/currency-rates")
+    http_client.get.assert_awaited()
     assert response.status_code == 200
     payload = response.json()
     assert payload["source"] == "stale"

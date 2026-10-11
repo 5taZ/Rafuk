@@ -72,6 +72,7 @@ def test_listings_endpoint_returns_items(monkeypatch) -> None:
     from api.main import create_app
     from api.routers import listings
 
+    monkeypatch.setattr(aggregator, "utc_now", lambda: FROZEN_NOW)
     monkeypatch.setattr(listings, "KufarClient", FakeKufarClient)
     app = create_app()
     app.dependency_overrides[get_cache] = lambda: MemoryCache()
@@ -84,8 +85,9 @@ def test_listings_endpoint_returns_items(monkeypatch) -> None:
     assert payload["returned"] == 3
     assert payload["listings"][0]["title"] == "iPhone 15 Pro 256GB"
     assert payload["normalized_query"] == "iphone"
-    assert payload["listings"][0]["deal_verdict"] is not None
-    assert isinstance(payload["listings"][0]["deal_reasons"], list)
+    first = payload["listings"][0]
+    assert (first["deal_score"], first["deal_verdict"]) == (49.0, "Норм")
+    assert first["deal_reasons"] == ["+30% к медиане", "свежий лот"]
     assert payload["listings"][0]["liquidity"] is not None
     assert payload["listings"][0]["flip_estimates"]
 

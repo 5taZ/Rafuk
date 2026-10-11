@@ -195,25 +195,83 @@ def test_status_check_constraints_use_canonical_lists() -> None:
 async def test_status_check_rejects_legacy_values() -> None:
     from api.database import get_engine, get_session_factory
     from api.models import LeadItem, WatchlistItem
+    from api.services.users import ensure_user
 
-    session_factory = get_session_factory(get_engine())
-    async with session_factory() as session:
-        session.add(
-            LeadItem(user_id=1, ad_id=1, query="q", title="t", link="l", status="bought")
-        )
-        session.add(
-            WatchlistItem(
-                user_id=1, ad_id=1, query="q", title="t", link="l", workflow_status="in_progress"
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    try:
+        async with session_factory() as session:
+            await ensure_user(session, 1)
+            session.add(
+                LeadItem(user_id=1, ad_id=1, query="q", title="t", link="l", status="bought")
             )
-        )
-        await session.commit()
-
-    async with session_factory() as session:
-        session.add(
-            LeadItem(user_id=1, ad_id=2, query="q", title="t", link="l", status="closed")
-        )
-        with pytest.raises(IntegrityError):
+            session.add(
+                WatchlistItem(
+                    user_id=1,
+                    ad_id=1,
+                    query="q",
+                    title="t",
+                    link="l",
+                    workflow_status="in_progress",
+                )
+            )
             await session.commit()
+
+        async with session_factory() as session:
+            session.add(
+                LeadItem(user_id=1, ad_id=2, query="q", title="t", link="l", status="closed")
+            )
+            with pytest.raises(IntegrityError, match="CHECK constraint failed"):
+                await session.commit()
+    finally:
+        await engine.dispose()
+
+
+async def test_sqlite_engine_enforces_foreign_keys() -> None:
+    from sqlalchemy import text
+
+    from api.database import get_engine, get_session_factory
+    from api.models import Tracker, TrackerEvent, User
+
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    try:
+        async with engine.connect() as conn:
+            assert (await conn.execute(text("PRAGMA foreign_keys"))).scalar_one() == 1
+
+        async with session_factory() as session:
+            session.add(Tracker(user_id=404, query="iphone"))
+            with pytest.raises(IntegrityError, match="FOREIGN KEY constraint failed"):
+                await session.commit()
+
+        # ON DELETE CASCADE works too: deleting the user removes its trackers and events.
+        async with session_factory() as session:
+            session.add(User(telegram_user_id=7, first_name="Test"))
+            await session.flush()
+            tracker = Tracker(user_id=7, query="iphone")
+            session.add(tracker)
+            await session.flush()
+            session.add(
+                TrackerEvent(
+                    tracker_id=tracker.id,
+                    user_id=7,
+                    ad_id=1,
+                    query="iphone",
+                    strict_mode=False,
+                    event_type="new_listing",
+                    title="iPhone",
+                    link="https://www.kufar.by/item/1",
+                    price_byn=100,
+                )
+            )
+            await session.commit()
+            await session.execute(text("DELETE FROM users WHERE telegram_user_id = 7"))
+            await session.commit()
+            trackers = await session.scalar(text("SELECT count(*) FROM trackers"))
+            events = await session.scalar(text("SELECT count(*) FROM tracker_events"))
+            assert (trackers, events) == (0, 0)
+    finally:
+        await engine.dispose()
 
 
 def test_get_engine_returns_async_engine() -> None:

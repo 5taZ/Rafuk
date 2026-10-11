@@ -21,6 +21,7 @@ from api.models import QueryListingState, QuerySnapshot, Tracker, TrackerEvent
 from api.services.aggregator import build_query_key, normalize_search_text
 from api.services.history_service import snapshot_bucket
 from api.services.kufar_client import KufarAPIError, KufarClient
+from api.services.users import ensure_user
 
 
 def make_ad(ad_id: int, price_byn: float, subject: str = "iPhone 15 128GB") -> dict[str, Any]:
@@ -108,6 +109,8 @@ async def session_factory():
 
 async def add_trackers(session_factory, *specs: tuple[int, str]) -> list[int]:
     async with session_factory() as session:
+        for user_id in sorted({user_id for user_id, _ in specs}):
+            await ensure_user(session, user_id)
         trackers = [Tracker(user_id=user_id, query=query) for user_id, query in specs]
         session.add_all(trackers)
         await session.commit()

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
@@ -8,6 +7,7 @@ from sqlalchemy import select
 
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import Tracker, TrackerEvent, User
+from api.services.users import ensure_user
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -74,12 +74,12 @@ def test_trackers_crud() -> None:
         assert list_response_after_delete.status_code == 200
         assert list_response_after_delete.json() == []
 
-        stored = asyncio.run(fetch_all(app.state.session_factory, select(Tracker)))
+        stored = client.portal.call(fetch_all, app.state.session_factory, select(Tracker))
         assert len(stored) == 1
         assert stored[0].active is False
         assert stored[0].deleted_at is not None
 
-        users = asyncio.run(fetch_all(app.state.session_factory, select(User)))
+        users = client.portal.call(fetch_all, app.state.session_factory, select(User))
         assert [(user.telegram_user_id, user.first_name, user.username) for user in users] == [
             (123456, "Test", "tester")
         ]
@@ -173,18 +173,23 @@ def test_delete_tracker_id_bounds() -> None:
         assert missing.json()["detail"] == "Трекер не найден"
 
 
-async def seed_tracker_event(session_factory) -> None:
+async def seed_tracker_event(session_factory, *, user_id: int, ad_id: int) -> None:
+    """Insert a user, its tracker and one event (foreign keys are enforced)."""
     async with session_factory() as session:
+        await ensure_user(session, user_id)
+        tracker = Tracker(user_id=user_id, query="iphone 15", strict_mode=True)
+        session.add(tracker)
+        await session.flush()
         session.add(
             TrackerEvent(
-                tracker_id=1,
-                user_id=123456,
-                ad_id=1,
+                tracker_id=tracker.id,
+                user_id=user_id,
+                ad_id=ad_id,
                 query="iphone 15",
                 strict_mode=True,
                 event_type="new_listing",
                 title="iPhone 15 256GB",
-                link="https://www.kufar.by/item/1",
+                link=f"https://www.kufar.by/item/{ad_id}",
                 price_byn=2400.0,
                 created_at=datetime.now(UTC),
             )
@@ -195,7 +200,13 @@ async def seed_tracker_event(session_factory) -> None:
 def test_tracker_events_endpoint() -> None:
     client, app = build_client()
     with client:
-        asyncio.run(seed_tracker_event(app.state.session_factory))
+        client.portal.call(
+            lambda: seed_tracker_event(app.state.session_factory, user_id=123456, ad_id=1)
+        )
+        # Another user's events are never returned.
+        client.portal.call(
+            lambda: seed_tracker_event(app.state.session_factory, user_id=777, ad_id=2)
+        )
         response = client.get("/api/v1/tracker-events")
 
     assert response.status_code == 200

@@ -148,10 +148,7 @@ async def test_load_segment_datasets_runs_all_segments(mock_settings: MagicMock)
 @pytest.mark.asyncio
 async def test_load_segment_datasets_uses_dataset_cache(mock_settings: MagicMock) -> None:
     SegmentFakeClient.calls = []
-    configure_dataset_cache(DatasetCache())
-    try:
-        await _load_segments(mock_settings)
-        await _load_segments(mock_settings)
-    finally:
-        configure_dataset_cache(None)
+    configure_dataset_cache(DatasetCache())  # conftest disables it again after the test
+    await _load_segments(mock_settings)
+    await _load_segments(mock_settings)
     assert len(SegmentFakeClient.calls) == 4

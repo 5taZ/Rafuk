@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -8,8 +7,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import SavedSearch, TrackerEvent
+from api.models import SavedSearch, Tracker, TrackerEvent
+from api.services import aggregator
 from api.services.kufar_client import KufarAPIError
+from api.services.users import ensure_user
+
+# 30 hours after the list_time of make_ad() listings: the small "свежий" freshness bonus.
+FROZEN_NOW = datetime(2026, 4, 7, 16, tzinfo=UTC)
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -88,9 +92,13 @@ def client(monkeypatch):
 
 async def seed_price_drop(session_factory) -> None:
     async with session_factory() as session:
+        await ensure_user(session, 123456)
+        tracker = Tracker(user_id=123456, query="iphone 15", strict_mode=True)
+        session.add(tracker)
+        await session.flush()
         session.add(
             TrackerEvent(
-                tracker_id=1,
+                tracker_id=tracker.id,
                 user_id=123456,
                 ad_id=55,
                 query="iphone 15",
@@ -111,7 +119,9 @@ async def fetch_all(session_factory, statement) -> list:
         return list((await session.execute(statement)).scalars())
 
 
-def test_saved_searches_crud_and_board(client) -> None:
+def test_saved_searches_crud_and_board(client, monkeypatch) -> None:
+    # Deal scores include a freshness bonus, so the clock is frozen next to list_time.
+    monkeypatch.setattr(aggregator, "utc_now", lambda: FROZEN_NOW)
     create_response = client.post(
         "/api/v1/saved-searches",
         json={
@@ -145,7 +155,11 @@ def test_saved_searches_crud_and_board(client) -> None:
     rare = board["rare_opportunities"][0]
     assert rare["saved_search_id"] == created["id"]
     assert rare["signal_label"] == "Редкий оффер"
-    assert rare["listing"]["deal_verdict"] in {"Забирать", "Смотреть", "Норм", "Мимо"}
+    # 55 base + 13.6 (-9% to the 1980 BYN median) + 8 private + 4 fresh + 14 config match.
+    assert rare["listing"]["ad_id"] == 1
+    assert rare["listing"]["deal_score"] == 94.6
+    assert rare["listing"]["deal_verdict"] == "Забирать"
+    assert rare["listing"]["deal_reasons"] == ["-9% к медиане", "частник", "свежий", "256GB"]
     assert [signal["subtitle"] for signal in board["market_signals"]] == ["рынок тонкий"]
     assert board["top_price_drops"] == []
 
@@ -157,7 +171,9 @@ def test_saved_searches_crud_and_board(client) -> None:
     assert empty_board_response.json()["items"] == []
     assert empty_board_response.json()["rare_opportunities"] == []
 
-    stored = asyncio.run(fetch_all(client.app.state.session_factory, select(SavedSearch)))
+    stored = client.portal.call(
+        fetch_all, client.app.state.session_factory, select(SavedSearch)
+    )
     assert stored[0].active is False
     assert stored[0].deleted_at is not None
 
@@ -175,7 +191,7 @@ def test_board_regular_market_lists_items_once(client) -> None:
 
 
 def test_board_shows_price_drops_without_saved_searches(client) -> None:
-    asyncio.run(seed_price_drop(client.app.state.session_factory))
+    client.portal.call(seed_price_drop, client.app.state.session_factory)
 
     response = client.get("/api/v1/opportunity-board")
     assert response.status_code == 200

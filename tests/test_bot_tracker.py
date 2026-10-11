@@ -7,8 +7,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
-from api.database import get_session_factory
 from api.models import LeadItem, Tracker, TrackerEvent, User
+from api.services.users import ensure_user
+from bot.database import get_bot_session_factory
 from bot.handlers import tracker as tracker_handlers
 from bot.handlers.tracker import (
     _chunk_lines,
@@ -23,14 +24,9 @@ USER_ID = 123456
 
 
 @pytest.fixture
-async def session_factory(monkeypatch):
-    """A fresh bot engine per test: the module-level singleton would leak between tests."""
-    import bot.database as bot_database
-
-    monkeypatch.setattr(bot_database, "_engine", None)
-    engine = bot_database.get_bot_engine()
-    yield get_session_factory(engine)
-    await engine.dispose()
+def session_factory():
+    """Sessions on the bot engine; conftest resets the singleton around every test."""
+    return get_bot_session_factory()
 
 
 def make_message(user_id: int = USER_ID) -> SimpleNamespace:
@@ -62,9 +58,14 @@ async def fetch_all(session_factory, statement) -> list:
 
 
 async def seed_event(session_factory, *, ad_id: int = 101) -> int:
+    """Insert the user, its tracker and one alert event (FKs are enforced)."""
     async with session_factory() as session:
+        await ensure_user(session, USER_ID, first_name="Test", username="tester")
+        tracker = Tracker(user_id=USER_ID, query="iphone 15 128")
+        session.add(tracker)
+        await session.flush()
         event = TrackerEvent(
-            tracker_id=1,
+            tracker_id=tracker.id,
             user_id=USER_ID,
             ad_id=ad_id,
             query="iphone 15 128",

@@ -60,8 +60,12 @@ def test_sort_listings_newest_first(sample_ads: list[dict[str, object]]) -> None
 
 
 def test_sort_listings_near_median(sample_ads: list[dict[str, object]]) -> None:
-    result = sort_listings(sample_ads[:4], "near_median", 2100.0)
-    assert result[0]["ad_id"] in (1, 2)
+    # Distances to 2100: ad 1 and ad 2 tie at 100 (stable order), then 4 (300) and 3 (400);
+    # the unpriced ad 5 always goes last.
+    result = sort_listings(sample_ads[:5], "near_median", 2100.0)
+    assert [item["ad_id"] for item in result] == [1, 2, 4, 3, 5]
+    result = sort_listings(sample_ads[:4], "near_median", 2190.0)
+    assert [item["ad_id"] for item in result] == [2, 1, 3, 4]
 
 
 def test_filter_deal_ads_respects_discount_threshold(sample_ads: list[dict[str, object]]) -> None:

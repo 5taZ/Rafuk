@@ -48,6 +48,19 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
 
+[tool.coverage.run]
+source = ["api", "bot", "scheduler"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+# Measured total: 91.6% (statements + branches). Keep the floor a few points below it.
+fail_under = 88
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["api", "bot", "scheduler"]
 

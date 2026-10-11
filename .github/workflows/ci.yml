@@ -38,9 +38,25 @@ jobs:
         if: ${{ !cancelled() }}
         run: docker compose config --quiet
 
+      - name: Check frontend JavaScript syntax
+        if: ${{ !cancelled() }}
+        # node --check takes one file; extra arguments would be passed to the script.
+        run: |
+          for file in frontend/js/*.js; do
+            node --check "$file"
+          done
+
   test:
     name: Tests
     runs-on: ubuntu-latest
+    # Settings for the alembic steps. tests/conftest.py overrides them for every test (a fresh
+    # SQLite file with foreign keys enforced), so pytest never touches this Postgres.
+    env:
+      DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost:5432/kufar_test
+      BOT_TOKEN: test_token
+      REDIS_URL: redis://localhost:6379/0
+      API_BASE_URL: https://example.com
+      MINI_APP_URL: https://example.com/app
     services:
       postgres:
         image: postgres:16-alpine
@@ -72,23 +88,20 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      # The migrations run against real Postgres: up, all the way down, and up again.
       - name: Run migrations
-        env:
-          DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost:5432/kufar_test
-          BOT_TOKEN: test_token
-          REDIS_URL: redis://localhost:6379/0
-          API_BASE_URL: https://example.com
-          MINI_APP_URL: https://example.com/app
         run: uv run alembic -c migrations/alembic.ini upgrade head
 
+      - name: Downgrade migrations to base
+        run: uv run alembic -c migrations/alembic.ini downgrade base
+
+      - name: Upgrade migrations again
+        run: uv run alembic -c migrations/alembic.ini upgrade head
+
+      # Runs even when a migration step failed. The coverage floor lives in pyproject.toml.
       - name: Run tests
-        env:
-          DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost:5432/kufar_test
-          BOT_TOKEN: test_token
-          REDIS_URL: redis://localhost:6379/0
-          API_BASE_URL: https://example.com
-          MINI_APP_URL: https://example.com/app
-        run: uv run pytest tests/ -v --cov=api --cov=bot --cov=scheduler --cov-report=xml
+        if: ${{ !cancelled() }}
+        run: uv run pytest -v --cov --cov-report=term --cov-report=xml
 
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}
