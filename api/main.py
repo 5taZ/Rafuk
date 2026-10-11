@@ -42,6 +42,12 @@ KUFAR_UNAVAILABLE_DETAIL = "Kufar временно недоступен, поп�
 API_DATASET_CACHE_ENTRIES = 16
 
 
+@limiter.exempt
+async def healthz() -> dict[str, str]:
+    """Liveness probe for compose and the local scripts: no database, cache or Kufar access."""
+    return {"status": "ok"}
+
+
 async def kufar_api_error_handler(request: Request, exc: KufarAPIError) -> JSONResponse:
     logger.warning("Kufar API error on %s: %s", request.url.path, exc)
     return JSONResponse(status_code=502, content={"detail": KUFAR_UNAVAILABLE_DETAIL})
@@ -130,7 +136,14 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="Rafuks API", lifespan=lifespan)
+    docs_enabled = settings.api_docs_enabled
+    app = FastAPI(
+        title="Rafuks API",
+        lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+    )
 
     # One shared limiter: default limits for every route via the middleware,
     # stricter per-route limits via @limiter.limit (see api/rate_limit.py).
@@ -147,6 +160,9 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
+
+    # Outside /api/v1: nginx does not proxy it, it is for probes next to the process.
+    app.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)
 
     # Include routers
     app.include_router(price_stats.router, prefix="/api/v1")

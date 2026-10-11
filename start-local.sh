@@ -75,7 +75,8 @@ check_env_file() {
     local database_url redis_url
     database_url="$(env_value DATABASE_URL)"
     redis_url="$(env_value REDIS_URL)"
-    if [[ "$database_url" == *"@db:"* || "$redis_url" == *"//redis:"* ]]; then
+    if [[ "$database_url" == *"@db:"* || "$redis_url" == *"//redis:"* \
+        || "$redis_url" == *"@redis:"* ]]; then
         echo "DATABASE_URL/REDIS_URL in .env point at compose hosts (db, redis)."
         echo "Host mode needs localhost:5433 and localhost:6380, see .env.example."
         exit 1
@@ -203,7 +204,7 @@ start_api() {
         --proxy-headers --forwarded-allow-ips "$FORWARDED_IPS"
     echo "$host" >"$RUN_DIR/api.host"
 
-    # Any HTTP status means our uvicorn is serving; the PID check makes sure it is
+    # /healthz answers 200 once startup has finished; the PID check makes sure it is
     # the process started here and not something else answering on the port.
     local status
     for _ in $(seq 1 30); do
@@ -212,8 +213,9 @@ start_api() {
             echo "Check log: $API_LOG"
             exit 1
         fi
-        status="$(curl -s -o /dev/null -w '%{http_code}' "http://$host:$API_PORT/" || true)"
-        if [[ -n "$status" && "$status" != "000" ]]; then
+        status="$(curl -s -o /dev/null -w '%{http_code}' "http://$host:$API_PORT/healthz" \
+            || true)"
+        if [[ "$status" == "200" ]]; then
             return 0
         fi
         sleep 1

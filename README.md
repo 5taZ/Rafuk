@@ -59,6 +59,17 @@ docker compose down                      # stop (data stays in the pgdata volume
 Postgres (`5433`) and Redis (`6380`) are published on `127.0.0.1` only. Change
 `POSTGRES_PASSWORD` before deploying anywhere reachable from the network.
 
+Redis runs without a password by default. Set `REDIS_PASSWORD` in `.env` (URL-safe
+characters only, e.g. `openssl rand -hex 24`) to start it with `--requirepass`; the
+compose services then get the password in their `REDIS_URL` automatically, and for host
+mode change `REDIS_URL` to `redis://:<password>@localhost:6380/0`. Recreate the container
+after changing it: `docker compose up -d redis`.
+
+The containerized API serves no `/docs`, `/redoc` or `/openapi.json`
+(`API_DOCS_ENABLED=false`; set `COMPOSE_API_DOCS_ENABLED=true` to turn them on). Its
+healthcheck calls `GET /healthz`, which answers `{"status": "ok"}` without touching the
+database, Redis or Kufar and is not rate limited.
+
 ## Quick Start: Host Mode (development)
 
 The API, bot and scheduler run on the host through uv; Postgres, Redis and the nginx
@@ -83,8 +94,10 @@ uv sync --extra dev
 4. with `--with-tunnel`, opens a Cloudflare quick tunnel to the frontend and writes its URL
    to `MINI_APP_URL` in `.env`;
 5. runs `alembic -c migrations/alembic.ini upgrade head`;
-6. starts the API (uvicorn with `--proxy-headers`), the bot and the scheduler; logs go to
-   `.run/*.log`.
+6. starts the API (uvicorn with `--proxy-headers`), waits for `GET /healthz` to answer
+   200, then starts the bot and the scheduler; logs go to `.run/*.log`.
+
+A host-mode API serves `/docs` unless `API_DOCS_ENABLED=false` is set in `.env`.
 
 The API binds to the address Docker uses for `host.docker.internal` (the host loopback
 with Docker Desktop, the `docker0` bridge address on native Linux), not to all interfaces.
@@ -121,3 +134,7 @@ uv run ruff check .
 - Redis failures degrade to cache misses instead of crashing the request flow.
 - Telegram Mini App requests should send `X-Telegram-Init-Data`.
 - CORS is handled by the API only; nginx does not add `Access-Control-*` headers.
+- The scheduler checks trackers every `ALERT_CHECK_INTERVAL` minutes. A tracker's
+  `interval_min` is stored as at least that value, and a query is skipped in a run only
+  when none of its trackers is due yet.
+- When a user blocks the bot, the scheduler pauses their trackers; `/start` resumes them.

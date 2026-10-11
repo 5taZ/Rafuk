@@ -32,7 +32,8 @@ async def test_cmd_help_lists_commands() -> None:
 
 @pytest.mark.asyncio
 async def test_cmd_start_and_app_include_keyboard() -> None:
-    message = SimpleNamespace(answer=AsyncMock())
+    # No sender: /start skips the user registration and answers anyway.
+    message = SimpleNamespace(from_user=None, answer=AsyncMock())
     await cmd_start(message)  # type: ignore[arg-type]
     await cmd_app(message)  # type: ignore[arg-type]
 
@@ -48,7 +49,8 @@ async def test_cmd_start_and_app_without_https(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setenv("MINI_APP_URL", "http://localhost:8000/app")
     get_settings.cache_clear()
-    message = SimpleNamespace(answer=AsyncMock())
+    # No sender: /start skips the user registration and answers anyway.
+    message = SimpleNamespace(from_user=None, answer=AsyncMock())
     await cmd_start(message)  # type: ignore[arg-type]
     await cmd_app(message)  # type: ignore[arg-type]
 

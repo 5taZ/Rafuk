@@ -35,6 +35,7 @@ from api.services.history_service import (
 )
 from api.services.kufar_client import KufarClient
 from api.services.market_signals import duplicate_counts
+from api.services.query_pipeline import normalize_ads
 from api.services.reseller_tools import matches_tracker_filters
 from bot.keyboards import tracker_alert_keyboard
 
@@ -57,6 +58,32 @@ TRACKED_LISTING_STATE_RETENTION_DAYS = 365
 DB_HEALTH_CHECK_INTERVAL_SECONDS = 300
 DB_STARTUP_MAX_BACKOFF_SECONDS = 60.0
 
+# A tracker with a longer interval than the global check is due once this much less than
+# its interval has passed since its last check: the job and the Kufar fetches drift by a
+# few seconds from run to run, and missing by a second would delay it by a whole cycle.
+DUE_SLACK_MINUTES = 1
+
+
+def tracker_is_due(
+    interval_min: int | None,
+    last_checked_at: datetime | None,
+    *,
+    check_interval_min: int,
+    now: datetime,
+) -> bool:
+    """Whether a tracker wants a check in the run that starts at ``now``.
+
+    Trackers whose interval is not longer than the global check interval run every time;
+    others run when they were never checked or their interval (minus a minute of slack)
+    has passed since the last check.
+    """
+    if interval_min is None or interval_min <= check_interval_min or last_checked_at is None:
+        return True
+    if last_checked_at.tzinfo is None:
+        # SQLite drops the timezone; the column always stores UTC.
+        last_checked_at = last_checked_at.replace(tzinfo=UTC)
+    return now - last_checked_at >= timedelta(minutes=interval_min - DUE_SLACK_MINUTES)
+
 
 @dataclass(slots=True)
 class TrackerGroup:
@@ -66,6 +93,26 @@ class TrackerGroup:
     query: str
     strict_mode: bool
     tracker_ids: list[int] = field(default_factory=list)
+    # (interval_min, last_checked_at) of every tracker in the group.
+    schedules: list[tuple[int | None, datetime | None]] = field(default_factory=list)
+
+    def is_due(self, *, check_interval_min: int, now: datetime) -> bool:
+        """A group runs when at least one of its trackers is due.
+
+        A running group always processes all of its trackers: they share one listing
+        state, so a tracker skipped now would never see the listings synced in this run.
+        """
+        if not self.schedules:
+            return True
+        return any(
+            tracker_is_due(
+                interval_min,
+                last_checked_at,
+                check_interval_min=check_interval_min,
+                now=now,
+            )
+            for interval_min, last_checked_at in self.schedules
+        )
 
 
 @dataclass(slots=True)
@@ -130,18 +177,28 @@ def _matches_tracker(
 ) -> bool:
     if ad is None:
         return False
-    return matches_tracker_filters(
-        ad,
-        market_stats=market_stats,
-        duplicate_count=duplicate_index.get(listing_ad_id(ad), 0),
-        min_discount_percent=tracker.min_discount_percent,
-        max_price_byn=tracker.max_price_byn,
-        seller_type=tracker.seller_type,
-        condition=tracker.condition,
-        region_name=tracker.region_name,
-        config_keyword=tracker.config_keyword,
-        exclude_duplicates=tracker.exclude_duplicates,
-    )
+    try:
+        return matches_tracker_filters(
+            ad,
+            market_stats=market_stats,
+            duplicate_count=duplicate_index.get(listing_ad_id(ad), 0),
+            min_discount_percent=tracker.min_discount_percent,
+            max_price_byn=tracker.max_price_byn,
+            seller_type=tracker.seller_type,
+            condition=tracker.condition,
+            region_name=tracker.region_name,
+            config_keyword=tracker.config_keyword,
+            exclude_duplicates=tracker.exclude_duplicates,
+        )
+    except Exception:
+        # One odd listing must not cost the whole group its alerts.
+        logger.warning(
+            "Tracker %s: skipping listing %s that the filters could not evaluate",
+            tracker.id,
+            ad.get("ad_id"),
+            exc_info=True,
+        )
+        return False
 
 
 def _filter_sync_result_for_tracker(
@@ -239,14 +296,20 @@ async def _load_tracker_groups(
     async with session_factory() as session:
         rows = (
             await session.execute(
-                select(Tracker.id, Tracker.query, Tracker.strict_mode)
+                select(
+                    Tracker.id,
+                    Tracker.query,
+                    Tracker.strict_mode,
+                    Tracker.interval_min,
+                    Tracker.last_checked_at,
+                )
                 .where(Tracker.active.is_(True))
                 .order_by(Tracker.id)
             )
         ).all()
 
     groups: dict[str, TrackerGroup] = {}
-    for tracker_id, query, strict_mode in rows:
+    for tracker_id, query, strict_mode, interval_min, last_checked_at in rows:
         if not normalize_search_text(query or "").strip():
             logger.warning("Tracker %s has an empty query; skipping it", tracker_id)
             continue
@@ -257,6 +320,7 @@ async def _load_tracker_groups(
             group = TrackerGroup(key=key, query=query, strict_mode=bool(strict_mode))
             groups[key] = group
         group.tracker_ids.append(tracker_id)
+        group.schedules.append((interval_min, last_checked_at))
     return list(groups.values())
 
 
@@ -286,11 +350,10 @@ async def _fetch_group_sample(
         pages += 1
         if kufar_total is None:
             kufar_total = KufarClient.extract_total(payload)
-        page_ads = apply_search_mode(
-            list(payload.get("ads") or []),
-            group.query,
-            group.strict_mode,
-        )
+        # Normalized ads have an integer ad_id and well-typed fields, so one malformed
+        # listing cannot break the sync, the filters or the alert of the whole group.
+        raw_ads = payload.get("ads") if isinstance(payload, dict) else None
+        page_ads = apply_search_mode(normalize_ads(raw_ads), group.query, group.strict_mode)
         has_unknown = False
         for ad in page_ads:
             ad_id = listing_ad_id(ad)
@@ -549,8 +612,9 @@ async def check_trackers(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """Check all active trackers, one Kufar search and one transaction per query key.
+    """Check all due trackers, one Kufar search and one transaction per query key.
 
+    A group is skipped when none of its trackers is due (see ``TrackerGroup.is_due``).
     A failing group (Kufar, database or Telegram error) is logged and skipped; the
     other groups are still processed and committed.
     """
@@ -561,8 +625,17 @@ async def check_trackers(
     client = KufarClient(settings)
     sender = AlertSender(bot, session_factory)
     failed = 0
+    skipped = 0
     try:
         for group in groups:
+            # Evaluated right before the group runs, so a long run does not shift the
+            # cadence of the groups processed late in it.
+            if not group.is_due(
+                check_interval_min=settings.alert_check_interval,
+                now=datetime.now(UTC),
+            ):
+                skipped += 1
+                continue
             try:
                 alerts = await _process_group(
                     group,
@@ -579,6 +652,8 @@ async def check_trackers(
     finally:
         await client.aclose()
 
+    if skipped:
+        logger.info("Tracker check skipped %d query groups that are not due yet", skipped)
     if failed:
         logger.warning("Tracker check finished: %d of %d query groups failed", failed, len(groups))
 

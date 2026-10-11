@@ -48,9 +48,12 @@ if [[ -f "$RUN_DIR/api.host" ]]; then
 fi
 
 if is_pid_running "$RUN_DIR/api.pid"; then
-    status="$(curl -s -o /dev/null -w '%{http_code}' "http://$api_host:$API_PORT/" || true)"
-    if [[ -n "$status" && "$status" != "000" ]]; then
+    status="$(curl -s -o /dev/null -w '%{http_code}' "http://$api_host:$API_PORT/healthz" \
+        || true)"
+    if [[ "$status" == "200" ]]; then
         print_status "api" "running on http://$api_host:$API_PORT"
+    elif [[ -n "$status" && "$status" != "000" ]]; then
+        print_status "api" "process running, /healthz returned HTTP $status"
     else
         print_status "api" "process running, not answering on $api_host:$API_PORT"
     fi

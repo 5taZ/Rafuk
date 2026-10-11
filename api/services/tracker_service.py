@@ -1,4 +1,4 @@
-"""Tracker creation and deactivation shared by the API and the bot."""
+"""Tracker creation, deactivation and reactivation shared by the API and the bot."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
+from api.config import get_settings
 from api.models import Tracker
 from api.services.aggregator import build_query_key, normalize_search_text
 from api.services.users import MAX_ACTIVE_TRACKERS_PER_USER, ensure_user
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
 
 # Integer primary keys are int4 on Postgres; larger path/command ids can never match.
 MAX_DB_ID = 2_147_483_647
+# Interval stored when the caller does not ask for one (matches the column default).
+DEFAULT_TRACKER_INTERVAL_MIN = 15
 _DB_ID_PATTERN = re.compile(r"#?([0-9]{1,10})")
 
 
@@ -132,6 +135,16 @@ def tracker_identity(tracker: Tracker) -> tuple[object, ...]:
     )
 
 
+def effective_interval_min(requested: int | None) -> int:
+    """Interval a tracker is really checked at.
+
+    The scheduler runs every ``ALERT_CHECK_INTERVAL`` minutes, so a shorter interval can
+    never be honoured; storing the real cadence keeps the Mini App and /tracks truthful.
+    """
+    value = DEFAULT_TRACKER_INTERVAL_MIN if requested is None else int(requested)
+    return max(value, get_settings().alert_check_interval)
+
+
 async def list_active_trackers(session: AsyncSession, user_id: int) -> list[Tracker]:
     result = await session.execute(
         select(Tracker)
@@ -188,9 +201,11 @@ async def create_tracker(
         raise TrackerQuotaExceededError(limit)
 
     await ensure_user(session, user_id, first_name=first_name, username=username)
-    tracker = Tracker(user_id=user_id, **values)
-    if interval_min is not None:
-        tracker.interval_min = interval_min
+    tracker = Tracker(
+        user_id=user_id,
+        interval_min=effective_interval_min(interval_min),
+        **values,
+    )
     session.add(tracker)
     await session.flush()
     return tracker
@@ -217,3 +232,54 @@ async def deactivate_tracker(
     tracker.active = False
     tracker.deleted_at = datetime.now(UTC)
     return tracker
+
+
+async def resume_paused_trackers(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    max_active: int | None = None,
+) -> list[Tracker]:
+    """Reactivate the trackers paused because the user had blocked the bot (no commit).
+
+    The scheduler pauses trackers by clearing ``active`` only; explicit deletions (API,
+    /untrack) also set ``deleted_at``, so those are never resumed. Paused trackers that
+    duplicate an active one, or would exceed the quota, stay paused. A resumed tracker
+    starts with a fresh baseline, so it does not alert on everything missed meanwhile.
+    """
+    paused = list(
+        (
+            await session.execute(
+                select(Tracker)
+                .where(
+                    Tracker.user_id == user_id,
+                    Tracker.active.is_(False),
+                    Tracker.deleted_at.is_(None),
+                )
+                .order_by(Tracker.id)
+            )
+        ).scalars()
+    )
+    if not paused:
+        return []
+
+    active_trackers = await list_active_trackers(session, user_id)
+    identities = {tracker_identity(tracker) for tracker in active_trackers}
+    limit = MAX_ACTIVE_TRACKERS_PER_USER if max_active is None else max_active
+    available = limit - len(active_trackers)
+
+    resumed: list[Tracker] = []
+    for tracker in paused:
+        if len(resumed) >= available:
+            break
+        identity = tracker_identity(tracker)
+        if identity in identities:
+            continue
+        identities.add(identity)
+        tracker.active = True
+        tracker.last_checked_at = None
+        tracker.interval_min = effective_interval_min(tracker.interval_min)
+        resumed.append(tracker)
+    if resumed:
+        await session.flush()
+    return resumed

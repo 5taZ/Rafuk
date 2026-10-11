@@ -11,7 +11,7 @@ from httpx import HTTPError
 from api.config import get_settings
 from api.services.aggregator import normalize_price_byn
 from api.services.kufar_client import KufarAPIError, KufarClient
-from api.services.query_pipeline import load_query_dataset
+from api.services.query_pipeline import load_query_dataset, normalize_ads
 from bot.keyboards import is_http_url
 from bot.middlewares import ThrottlingMiddleware
 
@@ -80,8 +80,11 @@ async def fetch_listings(query: str, limit: int = TOP_LIMIT) -> list[dict[str, A
     finally:
         await client.aclose()
 
+    # /top needs no ad_id; normalization only guarantees field types, so one malformed
+    # listing is dropped or cleaned up instead of failing the whole command.
+    raw_ads = payload.get("ads") if isinstance(payload, dict) else None
     listings: list[dict[str, Any]] = []
-    for ad in payload.get("ads", []):
+    for ad in normalize_ads(raw_ads, require_ad_id=False):
         title = " ".join(str(ad.get("subject") or "").split())
         if not title:
             continue

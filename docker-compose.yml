@@ -8,10 +8,12 @@
 # see the same settings. Containers reach Postgres and Redis by service name: the
 # host-mode DATABASE_URL / REDIS_URL from .env (localhost:5433 / localhost:6380) are
 # deliberately not used here. Override with COMPOSE_DATABASE_URL / COMPOSE_REDIS_URL.
+# REDIS_URL carries REDIS_PASSWORD when it is set; with an empty password the URL has an
+# empty userinfo (redis://:@redis:6379/0), which the Redis client treats as no password.
 x-app-env: &app-env
   BOT_TOKEN: ${BOT_TOKEN:-}
   DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@db:5432/${POSTGRES_DB:-kufar}}
-  REDIS_URL: ${COMPOSE_REDIS_URL:-redis://redis:6379/0}
+  REDIS_URL: ${COMPOSE_REDIS_URL:-redis://:${REDIS_PASSWORD:-}@redis:6379/0}
   API_BASE_URL: ${API_BASE_URL:-}
   MINI_APP_URL: ${MINI_APP_URL:-}
   KUFAR_REQUEST_DELAY: ${KUFAR_REQUEST_DELAY:-0.5}
@@ -20,6 +22,9 @@ x-app-env: &app-env
   ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
   CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-300}
   INIT_DATA_MAX_AGE_SECONDS: ${INIT_DATA_MAX_AGE_SECONDS:-86400}
+  # Only the api service reads it: no /docs, /redoc or /openapi.json in containers. The
+  # host-mode API_DOCS_ENABLED from .env is deliberately not used here.
+  API_DOCS_ENABLED: ${COMPOSE_API_DOCS_ENABLED:-false}
 
 # Every Python service runs the same image; each one may build it (layers are cached).
 x-app-image: &app-image
@@ -54,14 +59,14 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    # Any HTTP response means uvicorn is serving (it binds only after startup finished);
-    # independent of /docs and of external services.
+    # /healthz answers 200 once uvicorn has finished startup; it touches no database,
+    # cache or Kufar and is exempt from rate limiting.
     healthcheck:
       test:
         - "CMD"
         - "python"
         - "-c"
-        - "import http.client as h; c = h.HTTPConnection('127.0.0.1', 8000, timeout=3); c.request('HEAD', '/'); c.getresponse()"
+        - "import http.client as h, sys; c = h.HTTPConnection('127.0.0.1', 8000, timeout=3); c.request('GET', '/healthz'); sys.exit(c.getresponse().status != 200)"
       interval: 15s
       timeout: 5s
       retries: 3
@@ -130,12 +135,24 @@ services:
 
   redis:
     image: redis:7-alpine
+    environment:
+      # Optional: when set, Redis requires it (--requirepass) and REDIS_URL above uses it.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    # The image entrypoint still drops root and starts redis-server; --requirepass is
+    # added only when a password is set.
+    command:
+      - "sh"
+      - "-c"
+      - 'if [ -n "$$REDIS_PASSWORD" ]; then set -- --requirepass "$$REDIS_PASSWORD"; fi; exec docker-entrypoint.sh redis-server "$$@"'
     # Published for host mode only, and only on the loopback interface.
     ports:
       - "127.0.0.1:6380:6379"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # redis-cli reads the password from REDISCLI_AUTH; an empty one would fail AUTH.
+      test:
+        - "CMD-SHELL"
+        - 'if [ -n "$$REDIS_PASSWORD" ]; then export REDISCLI_AUTH="$$REDIS_PASSWORD"; fi; redis-cli ping | grep -q PONG'
       interval: 10s
       timeout: 5s
       retries: 3

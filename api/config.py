@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = 300
     # Maximum age of Telegram initData (auth_date) in seconds; 0 disables the age check.
     init_data_max_age_seconds: int = 86400
+    # Serve /docs, /redoc and /openapi.json; compose turns them off for the containerized API.
+    api_docs_enabled: bool = True
 
 
 @lru_cache(maxsize=1)
