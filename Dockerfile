@@ -21,13 +21,14 @@ COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Dependency layer: rebuilt only when pyproject.toml or uv.lock change.
+# Dependency layer: rebuilt only when pyproject.toml or uv.lock change. --locked fails the
+# build when uv.lock is out of date with pyproject.toml instead of installing it as is.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --locked --no-dev --no-install-project
 
 # Application code (.dockerignore keeps .env, databases, .git and tests out of the image).
 COPY . .
-RUN uv sync --frozen --no-dev
+RUN uv sync --locked --no-dev
 
 USER appuser
 

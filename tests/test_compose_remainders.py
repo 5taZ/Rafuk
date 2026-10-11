@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,13 +12,16 @@ from typing import Any
 import pytest
 import yaml
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def _services() -> dict[str, Any]:
-    return yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))["services"]
+    return yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))["services"]
 
 
 def _interpolate(value: str, env: dict[str, str]) -> str:
-    """Minimal compose interpolation: ``${VAR}``, nested ``${VAR:-default}`` and ``$$``."""
+    """Minimal compose interpolation: ``${VAR}``, nested ``${VAR:-default}``, ``${VAR-default}``
+    (default only when unset) and ``$$``."""
     result: list[str] = []
     index = 0
     while index < len(value):
@@ -42,8 +46,15 @@ def _interpolate(value: str, env: dict[str, str]) -> str:
             end += 1
         body = value[index + 2 : end]
         name, sep, default = body.partition(":-")
-        current = env.get(name, "")
-        result.append(current if current or not sep else _interpolate(default, env))
+        if sep:
+            current = env.get(name, "")
+            result.append(current if current else _interpolate(default, env))
+        else:
+            name, sep, default = body.partition("-")
+            if name in env or not sep:
+                result.append(env.get(name, ""))
+            else:
+                result.append(_interpolate(default, env))
         index = end + 1
     return "".join(result)
 
@@ -82,6 +93,53 @@ def test_compose_redis_passes_password_to_container() -> None:
     redis = _services()["redis"]
     assert redis["environment"]["REDIS_PASSWORD"] == "${REDIS_PASSWORD:-}"
     assert redis["ports"] == ["127.0.0.1:6380:6379"]
+
+
+def _database_url(env: dict[str, str]) -> str:
+    return _interpolate(_services()["api"]["environment"]["DATABASE_URL"], env)
+
+
+def test_compose_database_url_with_url_safe_password() -> None:
+    from sqlalchemy.engine import make_url
+
+    password = "0f3a9c-_.~Zz"  # every character class .env.example allows
+    url = make_url(_database_url({"POSTGRES_PASSWORD": password}))
+    assert (url.username, url.password, url.host, url.port) == ("user", password, "db", 5432)
+
+    # Compose cannot encode: an unsafe password silently changes the URL, which is why
+    # .env.example and README require URL-safe characters (or COMPOSE_DATABASE_URL).
+    broken = make_url(_database_url({"POSTGRES_PASSWORD": "a@b"}))
+    assert broken.password != "a@b"
+
+    encoded = "postgresql+asyncpg://user:a%40b@db:5432/kufar"
+    assert make_url(_database_url({"COMPOSE_DATABASE_URL": encoded})).password == "a@b"
+
+
+def _render_nginx_template(env: dict[str, str]) -> str:
+    """What the nginx image's envsubst step produces for the frontend environment."""
+    frontend = _services()["frontend"]["environment"]
+    rendered = {name: _interpolate(str(value), env) for name, value in frontend.items()}
+    pattern = re.compile(rendered.pop("NGINX_ENVSUBST_FILTER"))
+    template = (ROOT / "nginx" / "templates" / "default.conf.template").read_text("utf-8")
+    for name, value in rendered.items():
+        if pattern.search(name):
+            template = template.replace(f"${{{name}}}", value)
+    assert "${" not in template.split("server {", 1)[0].split("upstream kufar_api {", 1)[1]
+    return template
+
+
+def test_nginx_upstream_resolves_compose_api_dynamically() -> None:
+    conf = _render_nginx_template({})
+    assert re.search(r"^\s*server api:8000 resolve;", conf, re.MULTILINE)
+
+
+def test_nginx_upstream_in_host_mode_is_resolved_from_etc_hosts() -> None:
+    # start-local.sh: host.docker.internal comes from extra_hosts (/etc/hosts), which nginx's
+    # runtime resolver does not read, so "resolve" must not be used for it.
+    env = {"NGINX_API_UPSTREAM": "host.docker.internal:8010", "NGINX_API_UPSTREAM_PARAMS": ""}
+    conf = _render_nginx_template(env)
+    assert re.search(r"^\s*server host\.docker\.internal:8010 ;", conf, re.MULTILINE)
+    assert "resolve;" not in conf
 
 
 SH = shutil.which("sh") or shutil.which("bash")

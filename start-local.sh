@@ -43,8 +43,6 @@ for arg in "$@"; do
     esac
 done
 
-mkdir -p "$RUN_DIR"
-
 set_env_var() {
     local key="$1"
     local value="$2"
@@ -138,8 +136,32 @@ pid_alive() {
     [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null
 }
 
+# Containers of the full compose stack (docker compose up -d, restart: unless-stopped)
+# would run a second bot (getUpdates conflict on the same BOT_TOKEN) and a second
+# scheduler (duplicate alerts) next to the host processes, so they are stopped first.
+# They stay stopped until the next "docker compose up -d".
+stop_compose_app_services() {
+    local active
+    active="$(docker compose ps --services --status running --status restarting \
+        2>/dev/null || true)"
+
+    local service
+    local to_stop=()
+    for service in api bot scheduler; do
+        if grep -qx "$service" <<<"$active"; then
+            to_stop+=("$service")
+        fi
+    done
+
+    if [[ "${#to_stop[@]}" -gt 0 ]]; then
+        echo "Stopping compose containers replaced by host processes: ${to_stop[*]} ..."
+        docker compose stop "${to_stop[@]}"
+    fi
+}
+
 stop_existing() {
     "$ROOT_DIR/stop-local.sh" --keep-containers
+    stop_compose_app_services
 }
 
 ensure_port_free() {
@@ -158,7 +180,9 @@ start_infra() {
 
 start_frontend() {
     echo "Starting frontend container on $FRONTEND_URL (API upstream: host:$API_PORT) ..."
-    NGINX_API_UPSTREAM="host.docker.internal:$API_PORT" \
+    # No "resolve" for the upstream: host.docker.internal exists only in the container's
+    # /etc/hosts, which nginx's runtime resolver does not read.
+    NGINX_API_UPSTREAM="host.docker.internal:$API_PORT" NGINX_API_UPSTREAM_PARAMS="" \
         docker compose up -d --no-deps --force-recreate frontend
 }
 
@@ -248,6 +272,7 @@ check_workers() {
 
 main() {
     cd "$ROOT_DIR"
+    mkdir -p "$RUN_DIR"
     check_env_file
     stop_existing
 
@@ -287,4 +312,7 @@ main() {
     fi
 }
 
-main "$@"
+# Sourcing the script (tests) only defines the functions.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

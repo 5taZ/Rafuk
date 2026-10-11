@@ -45,7 +45,15 @@ Compose starts Postgres and Redis, runs the one-shot `migrate` service
 `scheduler`, and finally the nginx `frontend` on <http://127.0.0.1:8081>, which proxies
 `/api/` to the `api` service. Long-running services restart automatically
 (`restart: unless-stopped`). After pulling new code, run the same command again: the
-migrations are applied before the services start.
+migrations are applied before the services start. nginx re-resolves the `api` service
+name every 10 seconds (`resolve` in the upstream, `NGINX_API_UPSTREAM_PARAMS`) and compose
+restarts the frontend whenever it recreates `api`, so a new `api` container is picked up
+without a manual `docker compose restart frontend`.
+
+The frontend port is published on `127.0.0.1:8081` only (`FRONTEND_BIND_ADDRESS`). nginx
+trusts `X-Forwarded-For` from Docker's private addresses, which is safe only while every
+client is a local process: expose the Mini App through a TLS reverse proxy or a tunnel
+(Telegram requires HTTPS anyway), not by publishing 8081 on a public interface.
 
 Useful commands:
 
@@ -57,7 +65,12 @@ docker compose down                      # stop (data stays in the pgdata volume
 ```
 
 Postgres (`5433`) and Redis (`6380`) are published on `127.0.0.1` only. Change
-`POSTGRES_PASSWORD` before deploying anywhere reachable from the network.
+`POSTGRES_PASSWORD` before deploying anywhere reachable from the network. Compose inserts
+`POSTGRES_USER` and `POSTGRES_PASSWORD` into its `DATABASE_URL` verbatim, so use URL-safe
+characters only (letters, digits, `-`, `_`, `.`, `~`; e.g. `openssl rand -hex 24`). With
+`@`, `:`, `/`, `%` and the like the URL breaks or decodes to a different password and the
+`migrate` service cannot connect; if you need them, percent-encode the password in
+`COMPOSE_DATABASE_URL` (and in the host-mode `DATABASE_URL`).
 
 Redis runs without a password by default. Set `REDIS_PASSWORD` in `.env` (URL-safe
 characters only, e.g. `openssl rand -hex 24`) to start it with `--requirepass`; the
@@ -86,11 +99,15 @@ uv sync --extra dev
 
 `start-local.sh`:
 
-1. stops the processes it started earlier (PID files in `.run/`) and refuses to start if
-   port 8010 is taken by something else;
+1. stops the processes it started earlier (PID files in `.run/`) and the `api`, `bot` and
+   `scheduler` containers of a full compose stack (two bots with one token conflict, two
+   schedulers send duplicate alerts; `docker compose up -d` starts them again), and
+   refuses to start if port 8010 is taken by something else;
 2. starts `db` and `redis` (`docker compose up -d --wait db redis`, skip with `--no-infra`
    when `DATABASE_URL` points at SQLite);
-3. starts the `frontend` container with `NGINX_API_UPSTREAM=host.docker.internal:8010`;
+3. starts the `frontend` container with `NGINX_API_UPSTREAM=host.docker.internal:8010`
+   and an empty `NGINX_API_UPSTREAM_PARAMS` (`host.docker.internal` comes from the
+   container's `/etc/hosts`, which nginx's runtime resolver does not read);
 4. with `--with-tunnel`, opens a Cloudflare quick tunnel to the frontend and writes its URL
    to `MINI_APP_URL` in `.env`;
 5. runs `alembic -c migrations/alembic.ini upgrade head`;
@@ -112,7 +129,8 @@ uv run alembic -c migrations/alembic.ini upgrade head
 uv run uvicorn api.main:app --reload --host 127.0.0.1 --port 8010
 uv run python -m bot.main
 uv run python -m scheduler.collector
-NGINX_API_UPSTREAM=host.docker.internal:8010 docker compose up -d --no-deps frontend
+NGINX_API_UPSTREAM=host.docker.internal:8010 NGINX_API_UPSTREAM_PARAMS= \
+    docker compose up -d --no-deps frontend
 ```
 
 With native Docker on Linux, the frontend container reaches the host API only if uvicorn
@@ -126,6 +144,7 @@ the API falls back to an in-memory cache.
 ```bash
 uv run pytest
 uv run ruff check .
+uv lock --check                 # CI and the Docker build use uv sync --locked
 ```
 
 ## Notes

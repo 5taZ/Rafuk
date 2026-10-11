@@ -2,7 +2,8 @@
 #   - full stack:  docker compose up -d --build
 #                  (db, redis, one-shot migrate, api, bot, scheduler, frontend on :8081)
 #   - host mode:   ./start-local.sh starts only db, redis and frontend from here and runs
-#                  the API, bot and scheduler on the host (see README.md).
+#                  the API, bot and scheduler on the host (see README.md); it stops the
+#                  api, bot and scheduler containers of the full stack first.
 
 # One environment for every Python service, so api, bot, scheduler and migrate always
 # see the same settings. Containers reach Postgres and Redis by service name: the
@@ -10,6 +11,10 @@
 # deliberately not used here. Override with COMPOSE_DATABASE_URL / COMPOSE_REDIS_URL.
 # REDIS_URL carries REDIS_PASSWORD when it is set; with an empty password the URL has an
 # empty userinfo (redis://:@redis:6379/0), which the Redis client treats as no password.
+# POSTGRES_USER, POSTGRES_PASSWORD and REDIS_PASSWORD are inserted into the URLs verbatim
+# (compose cannot percent-encode them), so they must be URL-safe: letters, digits, "-",
+# "_", "." and "~" (e.g. openssl rand -hex 24). Otherwise set COMPOSE_DATABASE_URL /
+# COMPOSE_REDIS_URL with a percent-encoded password.
 x-app-env: &app-env
   BOT_TOKEN: ${BOT_TOKEN:-}
   DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@db:5432/${POSTGRES_DB:-kufar}}
@@ -89,23 +94,36 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: nginx:1.27-alpine
+    # 1.28 or newer: the template uses "resolve" in its upstream block (nginx >= 1.27.3).
+    image: nginx:1.28-alpine
     environment:
       # host:port the /api/ location proxies to; start-local.sh passes
       # NGINX_API_UPSTREAM=host.docker.internal:8010 for the API running on the host.
       API_UPSTREAM: ${NGINX_API_UPSTREAM:-api:8000}
-      NGINX_ENVSUBST_FILTER: "^API_UPSTREAM$$"
+      # Parameters of that upstream server. "resolve" makes nginx follow the address of a
+      # recreated api container; start-local.sh passes an empty value, because
+      # host.docker.internal exists only in /etc/hosts, which nginx's resolver ignores.
+      # No ":" in the default on purpose: an explicitly empty value must stay empty.
+      API_UPSTREAM_PARAMS: ${NGINX_API_UPSTREAM_PARAMS-resolve}
+      NGINX_ENVSUBST_FILTER: "^API_UPSTREAM(_PARAMS)?$$"
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./assets:/usr/share/nginx/assets:ro
       - ./nginx/templates:/etc/nginx/templates:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Loopback only by default: nginx trusts X-Forwarded-For from Docker's private
+    # addresses (see the template), which is safe only while every client is a local
+    # process such as cloudflared or a TLS reverse proxy. Do not set FRONTEND_BIND_ADDRESS
+    # to a public interface.
     ports:
-      - "8081:80"
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:8081:80"
     depends_on:
       api:
         condition: service_healthy
+        # Restart nginx whenever compose recreates or restarts api (Compose >= 2.17), in
+        # addition to "resolve" above.
+        restart: true
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]

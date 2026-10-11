@@ -25,7 +25,8 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        # --locked: fail when uv.lock is out of date with pyproject.toml (no silent re-lock).
+        run: uv sync --locked --extra dev
 
       - name: Run ruff linter
         run: uv run ruff check .
@@ -86,7 +87,8 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        # --locked: fail when uv.lock is out of date with pyproject.toml (no silent re-lock).
+        run: uv sync --locked --extra dev
 
       # The migrations run against real Postgres: up, all the way down, and up again.
       - name: Run migrations

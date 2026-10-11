@@ -1,11 +1,20 @@
 # Rendered by the official nginx image at container start: every file in
 # /etc/nginx/templates/*.template is passed through envsubst into /etc/nginx/conf.d/.
-# Only ${API_UPSTREAM} is substituted (see NGINX_ENVSUBST_FILTER in docker-compose.yml):
-#   - compose stack:   api:8000                   (default)
-#   - start-local.sh:  host.docker.internal:8010  (API running on the host)
+# Only ${API_UPSTREAM} and ${API_UPSTREAM_PARAMS} are substituted (see
+# NGINX_ENVSUBST_FILTER in docker-compose.yml):
+#   - compose stack:   api:8000 resolve           (default)
+#   - start-local.sh:  host.docker.internal:8010  (API on the host, no parameters)
 
 upstream kufar_api {
-    server ${API_UPSTREAM};
+    # Shared memory for the peer list; "resolve" needs it (nginx >= 1.27.3).
+    zone kufar_api 64k;
+    # Docker's embedded DNS. With "resolve" (the compose default) nginx re-resolves the
+    # api service name every 10 s, so a recreated api container with a new address is
+    # picked up without restarting the frontend. Host mode passes no parameters:
+    # host.docker.internal lives only in /etc/hosts (extra_hosts), which this resolver
+    # does not read, so there the name is resolved once at startup.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    server ${API_UPSTREAM} ${API_UPSTREAM_PARAMS};
     keepalive 16;
 }
 
@@ -17,10 +26,14 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # Requests arrive either directly or through a local reverse proxy / tunnel
-    # (cloudflared, Docker port forwarding). Trust X-Forwarded-For only from private
-    # addresses, so the client address below is the real one and cannot be spoofed
-    # by public clients.
+    # Trusted proxies, explicitly: X-Forwarded-For is honoured only from loopback and the
+    # private ranges Docker uses for its bridge networks and gateways. That is safe only
+    # because docker-compose.yml publishes port 8081 on 127.0.0.1 (FRONTEND_BIND_ADDRESS):
+    # every connection then comes from a process on the Docker host (cloudflared, a local
+    # TLS reverse proxy) or from the compose network and reaches nginx from a Docker
+    # address. Publishing the port on a public interface would let clients relayed by
+    # docker-proxy (IPv6, rootless Docker, Docker Desktop) arrive from the gateway address
+    # too and spoof their address; put a reverse proxy in front instead.
     set_real_ip_from 127.0.0.1;
     set_real_ip_from 10.0.0.0/8;
     set_real_ip_from 172.16.0.0/12;
