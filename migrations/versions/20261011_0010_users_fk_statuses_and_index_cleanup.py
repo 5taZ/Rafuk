@@ -60,6 +60,24 @@ LEGACY_WATCHLIST_STATUSES = ("watching", "lead", "deferred", "archived")
 LEAD_STATUS_MAP = {"closed": "sold", "abandoned": "skipped"}
 WATCHLIST_STATUS_MAP = {"lead": "in_progress", "archived": "skipped"}
 
+# Canonical value -> legacy value, applied by downgrade() so every row satisfies the
+# restored 0008 CHECKs (Postgres checks them on any later UPDATE of the row, NOT VALID or not).
+DOWNGRADE_LEAD_STATUS_MAP = {
+    "sold": "closed",
+    "skipped": "abandoned",
+    "bought": "in_progress",
+    "reselling": "in_progress",
+}
+DOWNGRADE_WATCHLIST_STATUS_MAP = {
+    "in_progress": "lead",
+    "skipped": "archived",
+    "reviewing": "watching",
+}
+
+LEAD_STATUS_CHECK = "chk_lead_items_status"
+WATCHLIST_STATUS_CHECK = "chk_watchlist_items_workflow_status"
+MARKET_STATUS_CHECK = "chk_watchlist_items_market_status"
+
 # Indexes made redundant by a unique constraint or a composite index on the same leading
 # columns: (table, index name, columns, how downgrade() recreates it).
 # downgrade() modes: "plain" = a regular index, "active" = partial on active = true
@@ -169,14 +187,47 @@ def _normalize(bind, table: str, column: str, mapping: dict[str, str], allowed, 
     )
 
 
-def _replace_check(bind, table: str, name: str, condition: str, *, not_valid: bool) -> None:
-    if name in _check_names(bind, table):
-        op.drop_constraint(name, table, type_="check")
-    if not_valid:
-        # Postgres: enforce for new rows without validating (and failing on) existing ones.
-        op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({condition}) NOT VALID")
+def _drop_checks(bind, table: str, names) -> set[str]:
+    """Drop the named CHECK constraints that exist on ``table``; return the dropped names."""
+    present = [name for name in names if name in _check_names(bind, table)]
+    if not present:
+        return set()
+    if bind.dialect.name == "sqlite":
+        # SQLite cannot drop a constraint in place; batch mode rebuilds the table.
+        with op.batch_alter_table(table, recreate="always") as batch:
+            for name in present:
+                batch.drop_constraint(name, type_="check")
     else:
-        op.create_check_constraint(name, table, condition)
+        for name in present:
+            op.drop_constraint(name, table, type_="check")
+    return set(present)
+
+
+def _create_checks(bind, table: str, checks: dict[str, str]) -> None:
+    if not checks:
+        return
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table(table, recreate="always") as batch:
+            for name, condition in checks.items():
+                batch.create_check_constraint(name, condition)
+    else:
+        for name, condition in checks.items():
+            op.create_check_constraint(name, table, condition)
+
+
+def _replace_status_checks(bind, table: str, checks: dict[str, str], normalize) -> None:
+    """Swap the status CHECKs of ``table``: drop the old ones, rewrite the rows, add the new.
+
+    The order matters: the old CHECK rejects the new vocabulary, so rewriting the rows while
+    it is still in place fails with a check violation. The new CHECKs are validated, which
+    holds because ``normalize`` leaves only allowed values. Migrations add CHECKs on Postgres
+    only; on SQLite only the CHECKs that were already there are put back.
+    """
+    dropped = _drop_checks(bind, table, tuple(checks))
+    normalize()
+    if bind.dialect.name == "sqlite":
+        checks = {name: condition for name, condition in checks.items() if name in dropped}
+    _create_checks(bind, table, checks)
 
 
 def _user_fks(bind, table: str) -> list[dict]:
@@ -232,40 +283,36 @@ def upgrade() -> None:
 
     # Step 4: one status vocabulary for the DB, the API, the bot and the Mini App.
     if "lead_items" in tables:
-        _normalize(bind, "lead_items", "status", LEAD_STATUS_MAP, LEAD_STATUSES, "new")
-        if not is_sqlite:
-            _replace_check(
-                bind,
-                "lead_items",
-                "chk_lead_items_status",
-                _in_list("status", LEAD_STATUSES),
-                not_valid=False,
-            )
+        _replace_status_checks(
+            bind,
+            "lead_items",
+            {LEAD_STATUS_CHECK: _in_list("status", LEAD_STATUSES)},
+            lambda: _normalize(
+                bind, "lead_items", "status", LEAD_STATUS_MAP, LEAD_STATUSES, "new"
+            ),
+        )
     if "watchlist_items" in tables:
-        _normalize(
+
+        def normalize_watchlist() -> None:
+            _normalize(
+                bind,
+                "watchlist_items",
+                "workflow_status",
+                WATCHLIST_STATUS_MAP,
+                WATCHLIST_STATUSES,
+                "watching",
+            )
+            _normalize(bind, "watchlist_items", "market_status", {}, MARKET_STATUSES, "active")
+
+        _replace_status_checks(
             bind,
             "watchlist_items",
-            "workflow_status",
-            WATCHLIST_STATUS_MAP,
-            WATCHLIST_STATUSES,
-            "watching",
+            {
+                WATCHLIST_STATUS_CHECK: _in_list("workflow_status", WATCHLIST_STATUSES),
+                MARKET_STATUS_CHECK: _in_list("market_status", MARKET_STATUSES),
+            },
+            normalize_watchlist,
         )
-        _normalize(bind, "watchlist_items", "market_status", {}, MARKET_STATUSES, "active")
-        if not is_sqlite:
-            _replace_check(
-                bind,
-                "watchlist_items",
-                "chk_watchlist_items_workflow_status",
-                _in_list("workflow_status", WATCHLIST_STATUSES),
-                not_valid=False,
-            )
-            _replace_check(
-                bind,
-                "watchlist_items",
-                "chk_watchlist_items_market_status",
-                _in_list("market_status", MARKET_STATUSES),
-                not_valid=False,
-            )
 
     # Step 5: drop indexes duplicated by a unique constraint or a composite index.
     for table, index_name, columns, _ in REDUNDANT_INDEXES:
@@ -296,25 +343,37 @@ def downgrade() -> None:
         else:
             op.create_index(index_name, table, list(columns))
 
-    # Restore the 0008 CHECK lists. Rows keep their canonical statuses, so the
-    # constraints are added NOT VALID instead of rewriting user data.
-    if not is_sqlite:
-        if "lead_items" in tables:
-            _replace_check(
+    # Restore the 0008 CHECK lists. The rows are mapped back to the 0008 vocabulary first: a
+    # NOT VALID CHECK over canonical rows would still fail every later UPDATE of those rows.
+    # Canonical statuses without a 0008 twin (bought, reselling, reviewing) are coarsened.
+    if "lead_items" in tables:
+        _replace_status_checks(
+            bind,
+            "lead_items",
+            {LEAD_STATUS_CHECK: _in_list("status", LEGACY_LEAD_STATUSES)},
+            lambda: _normalize(
                 bind,
                 "lead_items",
-                "chk_lead_items_status",
-                _in_list("status", LEGACY_LEAD_STATUSES),
-                not_valid=True,
-            )
-        if "watchlist_items" in tables:
-            _replace_check(
+                "status",
+                DOWNGRADE_LEAD_STATUS_MAP,
+                LEGACY_LEAD_STATUSES,
+                "new",
+            ),
+        )
+    if "watchlist_items" in tables:
+        _replace_status_checks(
+            bind,
+            "watchlist_items",
+            {WATCHLIST_STATUS_CHECK: _in_list("workflow_status", LEGACY_WATCHLIST_STATUSES)},
+            lambda: _normalize(
                 bind,
                 "watchlist_items",
-                "chk_watchlist_items_workflow_status",
-                _in_list("workflow_status", LEGACY_WATCHLIST_STATUSES),
-                not_valid=True,
-            )
+                "workflow_status",
+                DOWNGRADE_WATCHLIST_STATUS_MAP,
+                LEGACY_WATCHLIST_STATUSES,
+                "watching",
+            ),
+        )
 
     if "saved_searches" in tables:
         columns = {column["name"] for column in sa.inspect(bind).get_columns("saved_searches")}

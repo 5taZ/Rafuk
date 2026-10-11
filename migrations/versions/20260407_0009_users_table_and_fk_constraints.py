@@ -1,4 +1,4 @@
-"""add users table and FK constraints for referential integrity
+"""add users table, deleted_at columns and the tracker_events.tracker_id FK
 
 Revision ID: 20260407_0009
 Revises: 20260407_0008
@@ -50,87 +50,22 @@ def upgrade() -> None:
                     sa.Column("deleted_at", DateTime(timezone=True), nullable=True),
                 )
 
-    # Step 3: Add FK constraints (PostgreSQL only: SQLite has no ALTER TABLE ADD CONSTRAINT)
-    if not is_sqlite:
-        # TrackerEvent.tracker_id -> Tracker.id
-        if "tracker_events" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("tracker_events") if fk["name"]]
-            if "fk_tracker_events_tracker_id" not in fks:
-                op.create_foreign_key(
-                    "fk_tracker_events_tracker_id",
-                    "tracker_events",
-                    "trackers",
-                    ["tracker_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # Tracker.user_id -> User.id
-        if "trackers" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("trackers") if fk["name"]]
-            if "fk_trackers_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_trackers_user_id",
-                    "trackers",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # SavedSearch.user_id -> User.id
-        if "saved_searches" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("saved_searches") if fk["name"]]
-            if "fk_saved_searches_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_saved_searches_user_id",
-                    "saved_searches",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # TrackerEvent.user_id -> User.id
-        if "tracker_events" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("tracker_events") if fk["name"]]
-            if "fk_tracker_events_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_tracker_events_user_id",
-                    "tracker_events",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # LeadItem.user_id -> User.id
-        if "lead_items" in tables:
-            fks = [fk["name"] for fk in inspector.get_foreign_keys("lead_items") if fk["name"]]
-            if "fk_lead_items_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_lead_items_user_id",
-                    "lead_items",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
-
-        # WatchlistItem.user_id -> User.id
-        if "watchlist_items" in tables:
-            fks = [
-                fk["name"] for fk in inspector.get_foreign_keys("watchlist_items") if fk["name"]
-            ]
-            if "fk_watchlist_items_user_id" not in fks:
-                op.create_foreign_key(
-                    "fk_watchlist_items_user_id",
-                    "watchlist_items",
-                    "users",
-                    ["user_id"],
-                    ["id"],
-                    ondelete="CASCADE",
-                )
+    # Step 3: TrackerEvent.tracker_id -> Tracker.id (PostgreSQL only: SQLite has no
+    # ALTER TABLE ADD CONSTRAINT). The user_id FKs are not created here: user_id holds the
+    # Telegram ID and users is still empty, so an FK to users.id rejected every existing row
+    # and failed the upgrade. 20261011_0010 backfills users and adds FKs to
+    # users.telegram_user_id instead.
+    if not is_sqlite and "tracker_events" in tables:
+        fks = [fk["name"] for fk in inspector.get_foreign_keys("tracker_events") if fk["name"]]
+        if "fk_tracker_events_tracker_id" not in fks:
+            op.create_foreign_key(
+                "fk_tracker_events_tracker_id",
+                "tracker_events",
+                "trackers",
+                ["tracker_id"],
+                ["id"],
+                ondelete="CASCADE",
+            )
 
     # Step 4: Add indexes for FK columns (helpful for CASCADE delete performance)
     if "tracker_events" in tables:
@@ -145,7 +80,8 @@ def downgrade() -> None:
     tables = set(inspector.get_table_names())
     is_sqlite = bind.dialect.name == "sqlite"
 
-    # Drop FK constraints (PostgreSQL only), only those that still exist.
+    # Drop FK constraints (PostgreSQL only), only those that still exist. The user_id FKs
+    # exist only on databases migrated by an earlier version of this revision.
     if not is_sqlite:
         fk_names = {
             "tracker_events": ("fk_tracker_events_tracker_id", "fk_tracker_events_user_id"),

@@ -105,7 +105,13 @@ class UserIDMixin:
 
 
 class ActiveMixin:
-    """Mixin for models that have an active flag."""
+    """Mixin for models that have an active flag.
+
+    ``active = False`` with ``deleted_at`` set is a deletion; ``active = False`` with
+    ``deleted_at`` NULL is a pause (the scheduler pauses the trackers of a user who blocked
+    the bot, and /start resumes them). Migration 20261011_0011 marks every tracker that was
+    inactive before it as deleted, since older code never set ``deleted_at``.
+    """
 
     active: Mapped[bool] = mapped_column(
         Boolean,

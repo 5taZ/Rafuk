@@ -274,6 +274,85 @@ async def test_sqlite_engine_enforces_foreign_keys() -> None:
         await engine.dispose()
 
 
+@pytest.mark.parametrize(
+    ("value", "enforced"),
+    [(None, 0), ("", 0), ("0", 0), ("yes", 0), ("1", 1), ("true", 1), ("TRUE", 1)],
+)
+async def test_sqlite_foreign_keys_are_opt_in(
+    monkeypatch: pytest.MonkeyPatch, value: str | None, enforced: int
+) -> None:
+    from sqlalchemy import text
+
+    from api.database import get_engine
+
+    if value is None:
+        monkeypatch.delenv("SQLITE_FOREIGN_KEYS", raising=False)
+    else:
+        monkeypatch.setenv("SQLITE_FOREIGN_KEYS", value)
+    engine = get_engine()
+    try:
+        async with engine.connect() as conn:
+            assert (await conn.execute(text("PRAGMA foreign_keys"))).scalar_one() == enforced
+    finally:
+        await engine.dispose()
+
+
+async def test_old_create_all_database_accepts_writes_without_the_opt_in(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Local databases built by create_all on older models declare user_id -> users.id."""
+    from sqlalchemy import text
+
+    from api.database import get_engine, get_session_factory
+    from api.services.users import ensure_user
+
+    monkeypatch.delenv("SQLITE_FOREIGN_KEYS", raising=False)
+    engine = get_engine(f"sqlite+aiosqlite:///{(tmp_path / 'legacy.db').as_posix()}")
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "CREATE TABLE users (id INTEGER PRIMARY KEY, "
+                    "telegram_user_id BIGINT NOT NULL UNIQUE, first_name VARCHAR(128) "
+                    "NOT NULL DEFAULT '', username VARCHAR(128), is_bot BOOLEAN NOT NULL "
+                    "DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "last_seen_at DATETIME)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE TABLE trackers (id INTEGER PRIMARY KEY, user_id BIGINT NOT NULL "
+                    "REFERENCES users (id) ON DELETE CASCADE, query VARCHAR(255) NOT NULL)"
+                )
+            )
+        async with get_session_factory(engine)() as session:
+            await ensure_user(session, 5_123_456_789)
+            await session.execute(
+                text("INSERT INTO trackers (user_id, query) VALUES (5123456789, 'iphone')")
+            )
+            await session.commit()
+            assert await session.scalar(text("SELECT count(*) FROM trackers")) == 1
+    finally:
+        await engine.dispose()
+
+
+def test_settings_ignore_the_local_env_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """conftest keeps a developer's ./.env (and shell overrides) out of the suite."""
+    from api.config import get_settings
+
+    (tmp_path / ".env").write_text(
+        "ALERT_CHECK_INTERVAL=10\nAPI_DOCS_ENABLED=false\nKUFAR_REQUEST_DELAY=9\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.alert_check_interval == 30
+    assert settings.api_docs_enabled is True
+    assert settings.kufar_request_delay == 0.5
+    get_settings.cache_clear()
+
+
 def test_get_engine_returns_async_engine() -> None:
     from sqlalchemy.ext.asyncio import AsyncEngine
 

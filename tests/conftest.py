@@ -34,8 +34,26 @@ def _reset_process_state() -> None:
     _reset_throttling_middlewares()
 
 
+def _isolate_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's .env and shell overrides out of the tests.
+
+    Settings reads ./.env from the working directory, so a local .env (ALERT_CHECK_INTERVAL,
+    API_DOCS_ENABLED, ...) used to leak into the suite. Optional settings fall back to their
+    code defaults; tests that need another value set it with monkeypatch.setenv.
+    """
+    from api.config import Settings
+
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    for name, field in Settings.model_fields.items():
+        if not field.is_required():
+            monkeypatch.delenv(name.upper(), raising=False)
+
+
 @pytest.fixture(autouse=True)
 def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    _isolate_settings(monkeypatch)
+    # api.database enforces SQLite foreign keys only on request; the suite always wants them.
+    monkeypatch.setenv("SQLITE_FOREIGN_KEYS", "1")
     monkeypatch.setenv("BOT_TOKEN", "7123456789:AAFtesttoken")
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
