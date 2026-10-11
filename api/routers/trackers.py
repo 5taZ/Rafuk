@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import TrackerEvent
+from api.models import Tracker, TrackerEvent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead
 from api.services import tracker_service
 from api.services.tracker_service import (
@@ -18,6 +18,14 @@ from api.services.tracker_service import (
 from api.services.users import init_data_username
 
 router = APIRouter(tags=["trackers"])
+
+
+def _serialize_tracker(tracker: Tracker) -> TrackerRead:
+    """Show the interval the scheduler really checks the tracker at, not the stored one."""
+    payload = TrackerRead.model_validate(tracker)
+    return payload.model_copy(
+        update={"interval_min": tracker_service.real_check_interval_min(tracker.interval_min)}
+    )
 
 
 @router.get("/tracker-events", response_model=list[TrackerEventRead])
@@ -56,7 +64,8 @@ async def get_trackers(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
 ) -> list[TrackerRead]:
     async with session_factory() as session:
-        return await tracker_service.list_active_trackers(session, telegram_user.user_id)
+        trackers = await tracker_service.list_active_trackers(session, telegram_user.user_id)
+    return [_serialize_tracker(tracker) for tracker in trackers]
 
 
 @router.post("/trackers", response_model=TrackerRead, status_code=status.HTTP_201_CREATED)
@@ -92,7 +101,7 @@ async def create_tracker(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.message) from exc
         await session.commit()
         await session.refresh(tracker)
-        return TrackerRead.model_validate(tracker)
+        return _serialize_tracker(tracker)
 
 
 @router.delete("/trackers/{tracker_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -17,6 +16,7 @@ from api.dependencies import (
 )
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import LeadItem, WatchlistItem
+from api.rate_limit import limiter
 from api.schemas import (
     LeadCreate,
     LeadRead,
@@ -31,15 +31,21 @@ from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
 from api.services.tracker_service import MAX_DB_ID
-from api.services.users import UserQuotaExceededError, ensure_init_data_user
-from api.services.workflow_store import upsert_lead, upsert_watchlist
+from api.services.users import UserQuotaExceededError, ensure_init_data_user, lock_user
+from api.services.workflow_store import gather_within_budget, upsert_lead, upsert_watchlist
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from api.services.query_pipeline import QueryDataset
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["workflow"])
+
+# Pages fetched per watchlist query: lots are looked up among the newest listings only. A lot
+# that is not found in a truncated result is skipped, never marked missing.
+REFRESH_MAX_PAGES = 3
 
 
 def _serialize_watchlist(item: WatchlistItem) -> WatchlistRead:
@@ -162,6 +168,8 @@ async def create_watchlist_item(
 ) -> WatchlistRead:
     async with session_factory() as session:
         await ensure_init_data_user(session, telegram_user)
+        # Serialize one user's adds so parallel requests cannot pass the quota together.
+        await lock_user(session, telegram_user.user_id)
         try:
             item = await upsert_watchlist(
                 session,
@@ -232,70 +240,115 @@ async def delete_watchlist_item(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+def _dataset_truncated(dataset: QueryDataset) -> bool:
+    """Whether the pagination stopped early (page limit, deadline or a failed later page)."""
+    # QueryDataset.truncated arrives with the query pipeline change; the raw response has
+    # carried the flag since the pagination limits were introduced.
+    return bool(getattr(dataset, "truncated", False) or dataset.response.get("truncated"))
+
+
+def _queries_by_staleness(rows: Sequence[tuple[str | None, datetime | None]]) -> list[str]:
+    """Unique non-empty queries, the ones with the longest-unseen lots first.
+
+    When the time budget runs out, repeated refreshes then reach the queries skipped before.
+    """
+    oldest: dict[str, datetime | None] = {}
+    for raw_query, last_seen_at in rows:
+        query = (raw_query or "").strip()
+        if not query:
+            continue  # empty queries would page through the whole Kufar catalogue
+        if last_seen_at is not None and last_seen_at.tzinfo is None:
+            last_seen_at = last_seen_at.replace(tzinfo=UTC)  # SQLite drops the timezone
+        if query not in oldest:
+            oldest[query] = last_seen_at
+            continue
+        current = oldest[query]
+        if current is not None and (last_seen_at is None or last_seen_at < current):
+            oldest[query] = last_seen_at
+    never_seen = datetime.min.replace(tzinfo=UTC)
+    return sorted(oldest, key=lambda query: (oldest[query] or never_seen, query))
+
+
 async def _load_watchlist_datasets(
     queries: list[str],
     *,
     settings: Settings,
 ) -> dict[str, QueryDataset]:
-    """Fetch one dataset per query with bounded concurrency; failed queries are skipped.
+    """Fetch one dataset per query within one time budget; failed or late queries are skipped.
 
-    Raises ``KufarAPIError`` only when every query failed, so the client sees an error
-    instead of a misleading "nothing changed".
+    Every query fetches at most ``REFRESH_MAX_PAGES`` pages. Raises ``KufarAPIError`` only
+    when no query succeeded and at least one failed, so the client sees an error instead of
+    a misleading "nothing changed".
     """
-    semaphore = asyncio.Semaphore(max(1, settings.kufar_parallel_semaphore))
 
-    async def load(query: str) -> QueryDataset:
-        async with semaphore:
-            return await load_query_dataset(
-                query=query,
-                currency="BYN",
-                strict_search=False,
-                settings=settings,
-                client_factory=KufarClient,
-            )
+    async def load(query: str, remaining_seconds: float) -> QueryDataset:
+        return await load_query_dataset(
+            query=query,
+            currency="BYN",
+            strict_search=False,
+            settings=settings,
+            client_factory=KufarClient,
+            search_kwargs={
+                "max_pages": REFRESH_MAX_PAGES,
+                "deadline_seconds": remaining_seconds,
+            },
+        )
 
-    results = await asyncio.gather(*[load(query) for query in queries], return_exceptions=True)
-    datasets: dict[str, QueryDataset] = {}
-    first_error: Exception | None = None
-    for query, result in zip(queries, results, strict=True):
-        if isinstance(result, BaseException):
-            if not isinstance(result, Exception):
-                raise result
-            logger.warning("Watchlist refresh: query %r failed: %s", query, result)
-            first_error = first_error or result
-            continue
-        datasets[query] = result
-    if queries and not datasets and first_error is not None:
+    outcome = await gather_within_budget(
+        queries,
+        load,
+        concurrency=settings.kufar_parallel_semaphore,
+    )
+    for query, error in outcome.failed:
+        logger.warning("Watchlist refresh: query %r failed: %s", query, error)
+    if outcome.skipped:
+        logger.warning(
+            "Watchlist refresh: %s of %s queries skipped (time budget)",
+            len(outcome.skipped),
+            len(queries),
+        )
+    if queries and not outcome.results and outcome.failed:
+        first_error = outcome.failed[0][1]
         if isinstance(first_error, KufarAPIError):
             raise first_error
         raise KufarAPIError(f"Watchlist refresh failed: {first_error}") from first_error
-    return datasets
+    return outcome.results
 
 
 @router.post("/watchlist/refresh", response_model=WatchlistRefreshResponse)
+@limiter.limit("4/minute")
 async def refresh_watchlist(
+    request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),
 ) -> WatchlistRefreshResponse:
+    """Re-check the user's watchlist lots on Kufar.
+
+    ``skipped`` counts lots this run could not check: their search failed or did not fit in
+    the time budget, or the lot was not among the fetched (truncated) results. Their state
+    is kept; such a lot is never marked missing.
+    """
     # 1. Read what to refresh and release the connection before any network call.
     async with session_factory() as session:
         result = await session.execute(
-            select(WatchlistItem.query).where(WatchlistItem.user_id == telegram_user.user_id)
+            select(WatchlistItem.query, WatchlistItem.last_seen_at).where(
+                WatchlistItem.user_id == telegram_user.user_id
+            )
         )
-        raw_queries = list(result.scalars())
-    if not raw_queries:
-        return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0)
+        rows = [(query, last_seen_at) for query, last_seen_at in result.all()]
+    if not rows:
+        return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, skipped=0)
 
-    # 2. Fetch market data outside any transaction. Empty queries would page through the
-    #    whole Kufar catalogue, so they are never sent.
-    queries = sorted({query.strip() for query in raw_queries if query and query.strip()})
+    # 2. Fetch market data outside any transaction.
+    queries = _queries_by_staleness(rows)
     datasets = await _load_watchlist_datasets(queries, settings=settings)
 
     # 3. Apply the results in one short transaction.
     updated = 0
     missing = 0
     price_drops = 0
+    skipped = 0
     async with session_factory() as session:
         result = await session.execute(
             select(WatchlistItem).where(WatchlistItem.user_id == telegram_user.user_id)
@@ -304,9 +357,12 @@ async def refresh_watchlist(
         indexes: dict[str, tuple[dict[int, dict], dict[int, int]]] = {}
         for item in items:
             query = (item.query or "").strip()
+            if not query:
+                continue  # legacy row without a query: it can never be checked
             dataset = datasets.get(query)
             if dataset is None:
-                continue  # empty query or Kufar failed for it: keep the previous state
+                skipped += 1  # Kufar failed or the budget ran out: keep the previous state
+                continue
             if query not in indexes:
                 ads_by_id = {
                     int(ad.get("ad_id", 0)): ad
@@ -318,12 +374,16 @@ async def refresh_watchlist(
 
             ad = ads_by_id.get(item.ad_id)
             if ad is None:
+                if _dataset_truncated(dataset):
+                    # Only part of the market was fetched: the lot may simply be further down.
+                    skipped += 1
+                    continue
                 item.market_status = "missing"
                 missing += 1
                 continue
             price = normalize_price_byn(ad.get("price_byn"))
-            item.title = str(ad.get("subject", item.title))
-            item.link = str(ad.get("ad_link", item.link))
+            item.title = str(ad.get("subject") or item.title)
+            item.link = str(ad.get("ad_link") or item.link)
             item.current_price_byn = price
             item.last_seen_at = datetime.now(UTC)
             item.duplicate_count = duplicate_index.get(item.ad_id, 0)
@@ -338,4 +398,9 @@ async def refresh_watchlist(
                 item.market_status = "duplicate" if item.duplicate_count > 0 else "active"
 
         await session.commit()
-    return WatchlistRefreshResponse(updated=updated, missing=missing, price_drops=price_drops)
+    return WatchlistRefreshResponse(
+        updated=updated,
+        missing=missing,
+        price_drops=price_drops,
+        skipped=skipped,
+    )

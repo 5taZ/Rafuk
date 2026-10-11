@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import asyncio
+import contextlib
+import itertools
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -236,6 +240,111 @@ async def test_create_tracker_service_upserts_user_once() -> None:
         (5_123_456_789, "Anna")
     ]
     await engine.dispose()
+
+
+async def test_concurrent_creation_of_same_tracker_creates_one(monkeypatch) -> None:
+    """A double tap must not create two identical trackers (r3-user-4)."""
+    from api.database import get_engine, get_session_factory
+    from api.services import tracker_service
+
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    async with session_factory() as session:
+        await ensure_user(session, 7)
+        await session.commit()
+
+    # Both requests read the tracker list before either inserts, unless creation is
+    # serialized per user before the checks.
+    both_listed = asyncio.Event()
+    listed = 0
+    real_list = tracker_service.list_active_trackers
+
+    async def list_then_wait(session, user_id):
+        nonlocal listed
+        trackers = await real_list(session, user_id)
+        listed += 1
+        if listed >= 2:
+            both_listed.set()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(both_listed.wait(), timeout=0.5)
+        return trackers
+
+    monkeypatch.setattr(tracker_service, "list_active_trackers", list_then_wait)
+
+    async def create() -> str:
+        async with session_factory() as session:
+            try:
+                await tracker_service.create_tracker(session, user_id=7, query="iphone 15")
+            except tracker_service.DuplicateTrackerError:
+                return "duplicate"
+            await session.commit()
+            return "created"
+
+    results = await asyncio.gather(create(), create())
+    async with session_factory() as session:
+        trackers = list((await session.execute(select(Tracker))).scalars())
+    await engine.dispose()
+
+    assert sorted(results) == ["created", "duplicate"]
+    assert len(trackers) == 1
+
+
+@pytest.mark.parametrize(
+    ("stored", "shown"),
+    [
+        (None, 30),
+        (15, 30),
+        (30, 30),
+        (31, 30),
+        (45, 60),
+        (60, 60),
+        (61, 60),
+        (90, 90),
+        (91, 90),
+        (95, 120),
+    ],
+)
+def test_real_check_interval_follows_the_scheduler(stored: int | None, shown: int) -> None:
+    from api.services.tracker_service import real_check_interval_min
+
+    assert real_check_interval_min(stored) == shown
+
+
+@pytest.mark.parametrize("check_interval", [10, 30])
+def test_real_check_interval_matches_simulated_scheduler_runs(monkeypatch, check_interval) -> None:
+    from api.config import get_settings
+    from api.services import tracker_service
+    from scheduler import collector
+
+    assert tracker_service.DUE_SLACK_MINUTES == collector.DUE_SLACK_MINUTES
+    monkeypatch.setenv("ALERT_CHECK_INTERVAL", str(check_interval))
+    get_settings.cache_clear()
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    for interval in range(1, 200):
+        last_checked = start
+        checks: list[int] = []
+        for run in range(1, 40):
+            now = start + timedelta(minutes=run * check_interval)
+            due = collector.tracker_is_due(
+                interval, last_checked, check_interval_min=check_interval, now=now
+            )
+            if due:
+                checks.append(run * check_interval)
+                last_checked = now
+        gaps = {later - earlier for earlier, later in itertools.pairwise([0, *checks])}
+        assert gaps == {tracker_service.real_check_interval_min(interval)}, interval
+
+
+def test_trackers_show_the_real_check_interval() -> None:
+    client, app = build_client()
+    with client:
+        created = client.post("/api/v1/trackers", json={"query": "iphone 15", "interval_min": 45})
+        assert created.status_code == 201
+        # The scheduler checks every 30 minutes, so "every 45" really means every 60.
+        assert created.json()["interval_min"] == 60
+        assert [item["interval_min"] for item in client.get("/api/v1/trackers").json()] == [60]
+        stored = client.portal.call(fetch_all, app.state.session_factory, select(Tracker))
+        assert stored[0].interval_min == 45
 
 
 def test_parse_db_id() -> None:

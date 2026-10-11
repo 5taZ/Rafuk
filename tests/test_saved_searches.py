@@ -59,15 +59,21 @@ LARGE_MARKET = [make_ad(10, 150000)] + [make_ad(100 + index, 220000) for index i
 class FakeKufarClient:
     markets: dict[str, list[dict]] = {}
     failing_queries: set[str] = set()
+    # Queries whose pagination stopped early (page limit or deadline).
+    truncated_queries: set[str] = set()
+    call_kwargs: list[dict] = []
 
     def __init__(self, settings) -> None:
         del settings
 
     async def search_all_ads(self, **kwargs) -> dict:
         query = kwargs.get("query", "")
+        FakeKufarClient.call_kwargs.append(dict(kwargs))
         if query in FakeKufarClient.failing_queries:
             raise KufarAPIError("Kufar is down")
         ads = FakeKufarClient.markets.get(query, SMALL_MARKET)
+        if query in FakeKufarClient.truncated_queries:
+            return {"total": None, "ads": ads, "truncated": True}
         return {"total": len(ads), "ads": ads}
 
     async def aclose(self) -> None:
@@ -82,6 +88,8 @@ def client(monkeypatch):
 
     FakeKufarClient.markets = {}
     FakeKufarClient.failing_queries = set()
+    FakeKufarClient.truncated_queries = set()
+    FakeKufarClient.call_kwargs = []
     monkeypatch.setattr(saved_searches, "KufarClient", FakeKufarClient)
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
@@ -214,6 +222,99 @@ def test_board_isolates_failing_saved_search(client) -> None:
     response = client.get("/api/v1/opportunity-board")
     assert response.status_code == 200
     assert [item["query"] for item in response.json()["items"]] == ["iphone 15 256"]
+    # OpportunityBoardResponse.partial comes with the schema change (contract 3).
+    assert response.json().get("partial", True) is True
+
+
+def test_board_reports_error_when_every_saved_search_fails(client) -> None:
+    client.portal.call(seed_price_drop, client.app.state.session_factory)
+    FakeKufarClient.failing_queries = {"broken query", "other query"}
+    client.post("/api/v1/saved-searches", json={"query": "broken query"})
+    client.post("/api/v1/saved-searches", json={"query": "other query"})
+
+    response = client.get("/api/v1/opportunity-board")
+    # Not an empty "no deals" board: the client shows an error and can retry.
+    assert response.status_code == 502
+    assert "Kufar" in response.json()["detail"]
+
+
+def test_board_without_failures_is_not_partial(client) -> None:
+    client.post("/api/v1/saved-searches", json={"query": "iphone 15 256"})
+    response = client.get("/api/v1/opportunity-board")
+    assert response.status_code == 200
+    assert response.json().get("partial", False) is False
+
+
+def test_board_uses_small_page_limit_and_shared_deadline(client) -> None:
+    from api.routers import saved_searches
+    from api.services import workflow_store
+
+    client.post("/api/v1/saved-searches", json={"query": "iphone 15 256"})
+    client.post("/api/v1/saved-searches", json={"query": "iphone 14"})
+    assert client.get("/api/v1/opportunity-board").status_code == 200
+
+    assert len(FakeKufarClient.call_kwargs) == 2
+    for kwargs in FakeKufarClient.call_kwargs:
+        assert kwargs["max_pages"] == saved_searches.BOARD_MAX_PAGES
+        assert 0 < kwargs["deadline_seconds"] <= workflow_store.MULTI_SEARCH_BUDGET_SECONDS
+
+
+def test_truncated_small_strict_market_is_neither_rare_nor_thin(client) -> None:
+    # Strict mode keeps 3 matches of the fetched pages, but the pagination stopped early:
+    # the market may be much larger, so no "rare offer" and no "thin market".
+    FakeKufarClient.truncated_queries = {"iphone 15 256"}
+    client.post(
+        "/api/v1/saved-searches",
+        json={"query": "iphone 15 256", "strict_mode": True, "target_discount_percent": 8},
+    )
+
+    board = client.get("/api/v1/opportunity-board").json()
+    assert board["rare_opportunities"] == []
+    assert [item["listing"]["ad_id"] for item in board["items"]] == [1]
+    assert board["items"][0]["signal_label"] is None
+    assert all(signal["subtitle"] != "рынок тонкий" for signal in board["market_signals"])
+
+
+async def test_load_boards_isolated_skips_searches_over_budget(monkeypatch) -> None:
+    import asyncio
+
+    from api.config import get_settings
+    from api.routers import saved_searches
+    from api.services import workflow_store
+
+    monkeypatch.setattr(workflow_store, "MULTI_SEARCH_BUDGET_SECONDS", 0.3)
+    monkeypatch.setattr(workflow_store, "MIN_SEARCH_BUDGET_SECONDS", 0.05)
+    monkeypatch.setattr(workflow_store, "SEARCH_DEADLINE_GRACE_SECONDS", 0.0)
+
+    async def fake_load(saved_search, **kwargs):
+        if saved_search.query == "slow":
+            await asyncio.sleep(5)
+        return saved_searches._SavedSearchBoard(
+            saved_search=saved_search, total_results=100, items=[]
+        )
+
+    monkeypatch.setattr(saved_searches, "_load_saved_search_opportunities", fake_load)
+    fast = SavedSearch(id=1, user_id=1, name="fast", query="fast")
+    slow = SavedSearch(id=2, user_id=1, name="slow", query="slow")
+
+    outcome = await saved_searches._load_boards_isolated(
+        [fast, slow],
+        currency="BYN",
+        settings=get_settings(),
+        currency_service=FakeCurrencyService(),
+    )
+    assert [board.saved_search.query for board in outcome.boards] == ["fast"]
+    assert outcome.partial is True
+
+
+def test_board_is_rate_limited(client) -> None:
+    from api.rate_limit import limiter
+
+    route_limits = limiter._route_limits["api.routers.saved_searches.get_opportunity_board"]
+    assert [str(item.limit) for item in route_limits] == ["10 per 1 minute"]
+    for _ in range(10):
+        assert client.get("/api/v1/opportunity-board").status_code == 200
+    assert client.get("/api/v1/opportunity-board").status_code == 429
 
 
 def test_board_rejects_unknown_currency(client) -> None:

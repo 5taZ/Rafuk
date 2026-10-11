@@ -98,6 +98,21 @@ async def ensure_user(
     )
 
 
+async def lock_user(session: AsyncSession, telegram_user_id: int) -> None:
+    """Hold the user's ``users`` row lock until the transaction ends (no commit).
+
+    ``SELECT ... FOR UPDATE`` on Postgres, so check-then-insert sequences of one user (the
+    duplicate and quota checks of a new tracker) run one at a time. SQLite has no row locks
+    and drops ``FOR UPDATE``; there the preceding ``ensure_user`` write already takes the
+    database write lock. The row must exist: call ``ensure_user`` first.
+    """
+    await session.execute(
+        select(User.telegram_user_id)
+        .where(User.telegram_user_id == telegram_user_id)
+        .with_for_update()
+    )
+
+
 def init_data_username(telegram_user: TelegramInitData) -> str | None:
     """Extract ``username`` from the raw initData ``user`` JSON, if present."""
     raw_user = telegram_user.raw.get("user") if telegram_user.raw else None

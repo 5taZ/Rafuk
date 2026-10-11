@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -19,6 +18,7 @@ from api.dependencies import (
 )
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import SavedSearch, TrackerEvent
+from api.rate_limit import limiter
 from api.schemas import (
     OpportunityBoardResponse,
     OpportunityItem,
@@ -28,7 +28,7 @@ from api.schemas import (
 )
 from api.services.aggregator import filter_deal_ads
 from api.services.currency_service import CurrencyService
-from api.services.kufar_client import KufarClient
+from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.listing_mapper import build_listing_item
 from api.services.market_signals import duplicate_counts
 from api.services.query_pipeline import load_query_dataset
@@ -42,13 +42,21 @@ from api.services.users import (
     MAX_ACTIVE_SAVED_SEARCHES_PER_USER,
     count_user_rows,
     ensure_init_data_user,
+    lock_user,
 )
+from api.services.workflow_store import gather_within_budget
+
+if TYPE_CHECKING:
+    from api.services.query_pipeline import QueryDataset
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["saved-searches"])
 
 BOARD_MAX_SAVED_SEARCHES = 8
+# Pages fetched per saved search: deals are looked for among the newest listings. All saved
+# searches share one time budget (see gather_within_budget).
+BOARD_MAX_PAGES = 5
 # A deal in a market this small is shown once, under "rare offers".
 RARE_OFFER_MAX_RESULTS = 5
 # "Thin market" is about the size of the market, not about how many deals were found.
@@ -61,6 +69,22 @@ class _SavedSearchBoard:
     saved_search: SavedSearch
     total_results: int
     items: list[OpportunityItem]
+    # Only part of the market was fetched: total_results may be a lower bound, so the board
+    # never calls such a market rare or thin.
+    truncated: bool = False
+
+
+@dataclass(slots=True)
+class _BoardsOutcome:
+    boards: list[_SavedSearchBoard]
+    # Some saved searches failed or did not fit in the time budget.
+    partial: bool = False
+
+
+def _dataset_truncated(dataset: QueryDataset) -> bool:
+    # QueryDataset.truncated arrives with the query pipeline change; the raw response has
+    # carried the flag since the pagination limits were introduced.
+    return bool(getattr(dataset, "truncated", False) or dataset.response.get("truncated"))
 
 
 def _serialize_saved_search(saved_search: SavedSearch) -> SavedSearchRead:
@@ -122,6 +146,9 @@ async def create_saved_search(
 
     name = (payload.name or "").strip() or default_saved_search_name(query)
     async with session_factory() as session:
+        # Serialize one user's creations so parallel requests cannot pass the quota together.
+        await ensure_init_data_user(session, telegram_user)
+        await lock_user(session, telegram_user.user_id)
         active_count = await count_user_rows(
             session,
             SavedSearch,
@@ -136,7 +163,6 @@ async def create_saved_search(
                     f"({MAX_ACTIVE_SAVED_SEARCHES_PER_USER}). Удалите ненужные поиски."
                 ),
             )
-        await ensure_init_data_user(session, telegram_user)
         saved_search = SavedSearch(
             user_id=telegram_user.user_id,
             name=name,
@@ -190,6 +216,7 @@ async def _load_saved_search_opportunities(
     currency: str,
     settings: Settings,
     currency_service: CurrencyService,
+    search_kwargs: dict[str, Any] | None = None,
 ) -> _SavedSearchBoard:
     dataset = await load_query_dataset(
         query=saved_search.query,
@@ -197,8 +224,10 @@ async def _load_saved_search_opportunities(
         strict_search=saved_search.strict_mode,
         settings=settings,
         client_factory=KufarClient,
+        search_kwargs=search_kwargs,
     )
     total_results = dataset.total_results
+    truncated = _dataset_truncated(dataset)
     duplicate_index = duplicate_counts(dataset.ads)
     candidate_ads = filter_deal_ads(
         dataset.ads,
@@ -222,7 +251,12 @@ async def _load_saved_search_opportunities(
         )
     ]
     if not candidate_ads:
-        return _SavedSearchBoard(saved_search=saved_search, total_results=total_results, items=[])
+        return _SavedSearchBoard(
+            saved_search=saved_search,
+            total_results=total_results,
+            items=[],
+            truncated=truncated,
+        )
 
     rates_payload = await currency_service.get_rates()
     items = [
@@ -240,7 +274,8 @@ async def _load_saved_search_opportunities(
     ]
     items.sort(key=lambda item: (-float(item.deal_score or 0.0), float(item.price or 0.0)))
     insights = analyze_query_text(saved_search.query)
-    signal_label = RARE_OFFER_LABEL if total_results <= RARE_OFFER_MAX_RESULTS else None
+    is_rare = not truncated and total_results <= RARE_OFFER_MAX_RESULTS
+    signal_label = RARE_OFFER_LABEL if is_rare else None
     opportunities = [
         OpportunityItem(
             saved_search_id=saved_search.id,
@@ -265,6 +300,7 @@ async def _load_saved_search_opportunities(
         saved_search=saved_search,
         total_results=total_results,
         items=opportunities,
+        truncated=truncated,
     )
 
 
@@ -303,42 +339,57 @@ async def _load_boards_isolated(
     currency: str,
     settings: Settings,
     currency_service: CurrencyService,
-) -> list[_SavedSearchBoard]:
-    """Load every saved search with bounded concurrency; one failing search is skipped."""
-    semaphore = asyncio.Semaphore(max(1, settings.kufar_parallel_semaphore))
+) -> _BoardsOutcome:
+    """Load the saved searches within one time budget; failed or late searches are skipped.
 
-    async def load(saved_search: SavedSearch) -> _SavedSearchBoard:
-        async with semaphore:
-            return await _load_saved_search_opportunities(
-                saved_search,
-                currency=currency,
-                settings=settings,
-                currency_service=currency_service,
-            )
+    Raises ``KufarAPIError`` when no saved search loaded and at least one failed, so the
+    client sees an error instead of an empty board.
+    """
+    by_id = {saved_search.id: saved_search for saved_search in saved_searches}
 
-    results = await asyncio.gather(
-        *[load(saved_search) for saved_search in saved_searches],
-        return_exceptions=True,
+    async def load(saved_search_id: int, remaining_seconds: float) -> _SavedSearchBoard:
+        return await _load_saved_search_opportunities(
+            by_id[saved_search_id],
+            currency=currency,
+            settings=settings,
+            currency_service=currency_service,
+            search_kwargs={
+                "max_pages": BOARD_MAX_PAGES,
+                "deadline_seconds": remaining_seconds,
+            },
+        )
+
+    ids = list(by_id)
+    outcome = await gather_within_budget(
+        ids,
+        load,
+        concurrency=settings.kufar_parallel_semaphore,
     )
-    boards: list[_SavedSearchBoard] = []
-    for saved_search, result in zip(saved_searches, results, strict=True):
-        if isinstance(result, BaseException):
-            if not isinstance(result, Exception):
-                raise result
-            logger.warning(
-                "Opportunity board: saved search %s (%r) failed: %s",
-                saved_search.id,
-                saved_search.query,
-                result,
-            )
-            continue
-        boards.append(result)
-    return boards
+    for saved_search_id, error in outcome.failed:
+        logger.warning(
+            "Opportunity board: saved search %s (%r) failed: %s",
+            saved_search_id,
+            by_id[saved_search_id].query,
+            error,
+        )
+    if outcome.skipped:
+        logger.warning(
+            "Opportunity board: %s of %s saved searches skipped (time budget)",
+            len(outcome.skipped),
+            len(ids),
+        )
+    if ids and not outcome.results and outcome.failed:
+        first_error = outcome.failed[0][1]
+        if isinstance(first_error, KufarAPIError):
+            raise first_error
+        raise KufarAPIError(f"Opportunity board failed: {first_error}") from first_error
+    boards = [outcome.results[key] for key in ids if key in outcome.results]
+    return _BoardsOutcome(boards=boards, partial=outcome.partial)
 
 
 def _market_signal(board: _SavedSearchBoard) -> OpportunitySignal | None:
     saved_search = board.saved_search
-    if 0 < board.total_results <= THIN_MARKET_MAX_RESULTS:
+    if not board.truncated and 0 < board.total_results <= THIN_MARKET_MAX_RESULTS:
         return OpportunitySignal(
             title=saved_search.name,
             subtitle="рынок тонкий",
@@ -358,7 +409,9 @@ def _market_signal(board: _SavedSearchBoard) -> OpportunitySignal | None:
 
 
 @router.get("/opportunity-board", response_model=OpportunityBoardResponse)
+@limiter.limit("10/minute")
 async def get_opportunity_board(
+    request: Request,
     currency: Literal["BYN", "USD"] = "BYN",
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
@@ -379,7 +432,7 @@ async def get_opportunity_board(
         user_id=telegram_user.user_id,
         session_factory=session_factory,
     )
-    boards = (
+    loaded = (
         await _load_boards_isolated(
             saved_searches,
             currency=currency,
@@ -387,8 +440,9 @@ async def get_opportunity_board(
             currency_service=currency_service,
         )
         if saved_searches
-        else []
+        else _BoardsOutcome(boards=[])
     )
+    boards = loaded.boards
 
     items: list[OpportunityItem] = []
     rare_opportunities: list[OpportunityItem] = []
@@ -411,4 +465,5 @@ async def get_opportunity_board(
         top_price_drops=top_price_drops[:4],
         rare_opportunities=rare_opportunities[:4],
         market_signals=market_signals[:4],
+        partial=loaded.partial,
     )

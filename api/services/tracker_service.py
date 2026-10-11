@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -11,7 +12,7 @@ from sqlalchemy import select
 from api.config import get_settings
 from api.models import Tracker
 from api.services.aggregator import build_query_key, normalize_search_text
-from api.services.users import MAX_ACTIVE_TRACKERS_PER_USER, ensure_user
+from api.services.users import MAX_ACTIVE_TRACKERS_PER_USER, ensure_user, lock_user
 from api.validators import MAX_QUERY_LENGTH
 
 if TYPE_CHECKING:
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
 MAX_DB_ID = 2_147_483_647
 # Interval stored when the caller does not ask for one (matches the column default).
 DEFAULT_TRACKER_INTERVAL_MIN = 15
+# Mirrors scheduler.collector.DUE_SLACK_MINUTES (the API never imports the scheduler).
+DUE_SLACK_MINUTES = 1
 _DB_ID_PATTERN = re.compile(r"#?([0-9]{1,10})")
 
 
@@ -145,6 +148,21 @@ def effective_interval_min(requested: int | None) -> int:
     return max(value, get_settings().alert_check_interval)
 
 
+def real_check_interval_min(interval_min: int | None) -> int:
+    """How often the scheduler really checks a tracker with this stored interval.
+
+    The scheduler runs every ``ALERT_CHECK_INTERVAL`` minutes and checks a tracker once its
+    interval minus ``DUE_SLACK_MINUTES`` has passed (see ``scheduler.collector.tracker_is_due``),
+    so the real cadence is the first multiple of the global interval that reaches it: with
+    a 30-minute check, 45 becomes 60. This is what the Mini App shows.
+    """
+    check_interval = max(1, int(get_settings().alert_check_interval))
+    if interval_min is None or interval_min <= check_interval:
+        return check_interval
+    runs = max(1, math.ceil((interval_min - DUE_SLACK_MINUTES) / check_interval))
+    return runs * check_interval
+
+
 async def list_active_trackers(session: AsyncSession, user_id: int) -> list[Tracker]:
     result = await session.execute(
         select(Tracker)
@@ -191,6 +209,11 @@ async def create_tracker(
         "exclude_duplicates": bool(exclude_duplicates),
     }
 
+    # Upsert and lock the user's row before the checks, so concurrent creations of one user
+    # (a double tap) run one after another and the second one sees the first tracker.
+    await ensure_user(session, user_id, first_name=first_name, username=username)
+    await lock_user(session, user_id)
+
     active_trackers = await list_active_trackers(session, user_id)
     identity = _tracker_identity(**values)
     for existing in active_trackers:
@@ -200,7 +223,6 @@ async def create_tracker(
     if len(active_trackers) >= limit:
         raise TrackerQuotaExceededError(limit)
 
-    await ensure_user(session, user_id, first_name=first_name, username=username)
     tracker = Tracker(
         user_id=user_id,
         interval_min=effective_interval_min(interval_min),

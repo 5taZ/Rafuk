@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable, Hashable, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +24,17 @@ DEFAULT_LEAD_SOURCE = "manual"
 # A repeated "add" (Mini App button, alert button) may move a lead out of these statuses only;
 # it must never downgrade a lead that is already in work, bought or sold.
 LEAD_STATUSES_OPEN_TO_UPSERT = frozenset({"new", "deferred"})
+KUFAR_ITEM_URL = "https://www.kufar.by/item/{ad_id}"
+
+
+def kufar_item_link(ad_id: int) -> str:
+    """Public Kufar page of an ad; used when the client sends no link."""
+    return KUFAR_ITEM_URL.format(ad_id=int(ad_id))
+
+
+def _resolve_link(link: str | None, ad_id: int, current: str | None = None) -> str:
+    link = (link or "").strip()
+    return link or (current or "").strip() or kufar_item_link(ad_id)
 
 
 async def _get_lead(session: AsyncSession, user_id: int, ad_id: int) -> LeadItem | None:
@@ -57,7 +71,10 @@ async def upsert_lead(
 
     A new lead gets ``status`` (default "new") and ``source`` (default "manual"). For an
     existing lead the listing data is refreshed, but status and source change only when an
-    explicit non-default status is given and the lead is still "new" or "deferred".
+    explicit non-default status is given and the lead is still "new" or "deferred". What the
+    user entered (target resale price, notes) is only filled in when still empty: the Mini
+    App sends its market estimate as ``target_resale_byn`` on every "add". An empty ``link``
+    becomes the ad's Kufar page.
     """
     existing = await _get_lead(session, user_id, ad_id)
     if existing is None:
@@ -66,7 +83,7 @@ async def upsert_lead(
             ad_id=ad_id,
             query=query,
             title=title,
-            link=link,
+            link=_resolve_link(link, ad_id),
             price_byn=price_byn,
             target_resale_byn=target_resale_byn,
             status=status or DEFAULT_LEAD_STATUS,
@@ -85,11 +102,11 @@ async def upsert_lead(
 
     existing.query = query
     existing.title = title
-    existing.link = link
+    existing.link = _resolve_link(link, ad_id, existing.link)
     existing.price_byn = price_byn
-    if target_resale_byn is not None:
+    if target_resale_byn is not None and existing.target_resale_byn is None:
         existing.target_resale_byn = target_resale_byn
-    if notes is not None:
+    if notes and not existing.notes:
         existing.notes = notes
     explicit_status = status if status and status != DEFAULT_LEAD_STATUS else None
     if (
@@ -118,7 +135,7 @@ async def upsert_watchlist(
     """Create or refresh a watchlist item (no commit).
 
     Raises ``UserQuotaExceededError`` when a new item would exceed ``max_items``
-    (default ``MAX_WATCHLIST_ITEMS_PER_USER``).
+    (default ``MAX_WATCHLIST_ITEMS_PER_USER``). An empty ``link`` becomes the ad's Kufar page.
     """
     existing = await _get_watchlist_item(session, user_id, ad_id)
     if existing is None:
@@ -133,7 +150,7 @@ async def upsert_watchlist(
             ad_id=ad_id,
             query=query,
             title=title,
-            link=link,
+            link=_resolve_link(link, ad_id),
             initial_price_byn=price_byn,
             current_price_byn=price_byn,
             notes=notes,
@@ -151,11 +168,87 @@ async def upsert_watchlist(
 
     existing.query = query
     existing.title = title
-    existing.link = link
+    existing.link = _resolve_link(link, ad_id, existing.link)
     existing.current_price_byn = price_byn
     existing.last_seen_at = datetime.now(UTC)
-    if notes is not None:
+    # Notes the user already wrote are never replaced by a repeated "add".
+    if notes and not existing.notes:
         existing.notes = notes
     if existing.initial_price_byn is None:
         existing.initial_price_byn = price_byn
     return existing
+
+
+# --- Time-budgeted loading ----------------------------------------------------------------------
+
+# One budget for every Kufar search of a multi-search request (watchlist refresh, opportunity
+# board). Kufar requests share one process-wide pacer, so the time grows with the number of
+# searches; the budget keeps the response well below nginx's 60 s proxy timeout.
+MULTI_SEARCH_BUDGET_SECONDS = 45.0
+# A search is not started with less time than this left: it could not fetch a page.
+MIN_SEARCH_BUDGET_SECONDS = 3.0
+# Extra wait for a pagination that stops on its own deadline to hand back its partial result.
+SEARCH_DEADLINE_GRACE_SECONDS = 2.0
+
+
+@dataclass(slots=True)
+class BudgetedResults[KeyT: Hashable, ResultT]:
+    """Outcome of ``gather_within_budget``; every key lands in exactly one bucket."""
+
+    results: dict[KeyT, ResultT] = field(default_factory=dict)
+    # Not started, or not finished, within the budget.
+    skipped: list[KeyT] = field(default_factory=list)
+    failed: list[tuple[KeyT, Exception]] = field(default_factory=list)
+
+    @property
+    def partial(self) -> bool:
+        return bool(self.skipped or self.failed)
+
+
+async def gather_within_budget[KeyT: Hashable, ResultT](
+    keys: Sequence[KeyT],
+    load: Callable[[KeyT, float], Awaitable[ResultT]],
+    *,
+    concurrency: int,
+    budget_seconds: float | None = None,
+    min_seconds: float | None = None,
+    grace_seconds: float | None = None,
+) -> BudgetedResults[KeyT, ResultT]:
+    """Run ``load(key, remaining_seconds)`` for every key under one shared time budget.
+
+    Keys start in order with at most ``concurrency`` loads at once. ``load`` gets the time
+    left in the budget (pass it on as the pagination deadline); a key that would start with
+    less than ``min_seconds`` left, or that runs past the budget, is skipped. Exceptions of
+    one key are collected, not raised. The whole call takes at most about
+    ``budget_seconds + grace_seconds``. Unset limits use the module constants.
+    """
+    budget_seconds = MULTI_SEARCH_BUDGET_SECONDS if budget_seconds is None else budget_seconds
+    min_seconds = MIN_SEARCH_BUDGET_SECONDS if min_seconds is None else min_seconds
+    grace_seconds = SEARCH_DEADLINE_GRACE_SECONDS if grace_seconds is None else grace_seconds
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, budget_seconds)
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+    outcome: BudgetedResults[KeyT, ResultT] = BudgetedResults()
+    over_budget = object()
+
+    async def run(key: KeyT) -> Any:
+        async with semaphore:
+            remaining = deadline - loop.time()
+            if remaining < min_seconds:
+                return over_budget
+            try:
+                return await asyncio.wait_for(load(key, remaining), remaining + grace_seconds)
+            except TimeoutError:
+                return over_budget
+
+    results = await asyncio.gather(*(run(key) for key in keys), return_exceptions=True)
+    for key, result in zip(keys, results, strict=True):
+        if result is over_budget:
+            outcome.skipped.append(key)
+        elif isinstance(result, BaseException):
+            if not isinstance(result, Exception):
+                raise result
+            outcome.failed.append((key, result))
+        else:
+            outcome.results[key] = result
+    return outcome
