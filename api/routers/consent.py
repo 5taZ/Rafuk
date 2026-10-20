@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
@@ -17,6 +18,7 @@ from api.config import get_settings
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.models import (
+    TRACKER_PAUSE_REASON_BOT_BLOCKED,
     AIAuditLog,
     Contact,
     DealExpense,
@@ -69,6 +71,17 @@ def _default_ai_provider_region(host: str) -> str:
 
 def _money(value) -> float | None:
     return float(value) if value is not None else None
+
+
+def _export_json_default(value: object) -> object:
+    # RV-BE-01: Numeric columns load as Decimal on both Postgres and
+    # SQLite. A field added to the export without _money() used to turn
+    # the whole download into a 500; serialise instead of failing.
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 @router.get("/ai-consent-info", response_model=AIConsentInfoResponse)
@@ -312,7 +325,13 @@ async def revoke_consent(
                 update(Tracker)
                 .where(
                     Tracker.user_id == uid,
-                    Tracker.paused.is_(False),
+                    # RV-SCH-03: /start lifts a bot_blocked pause, so the
+                    # revoke takes it over — otherwise /start would resume
+                    # trackers the user just withdrew consent for.
+                    or_(
+                        Tracker.paused.is_(False),
+                        Tracker.pause_reason == TRACKER_PAUSE_REASON_BOT_BLOCKED,
+                    ),
                 )
                 .values(
                     paused=True,
@@ -334,13 +353,14 @@ async def revoke_consent(
                 _user.user_id, paused_tracker_count,
             )
         # OPUS-1: revoke means the previously processed AI artefacts
-        # (task results, listing-assistant cache, rate-limit buckets,
-        # initdata replay tracker) must also be evicted — otherwise
-        # the user has revoked permission to process while data we
-        # already processed is still cached. Same best-effort
-        # contract as delete_account: log + continue on failure so
-        # the user's revoke acknowledgement isn't blocked by a
-        # transient Redis blip.
+        # (task results, listing-assistant cache, initdata IP tracker)
+        # must also be evicted — otherwise the user has revoked
+        # permission to process while data we already processed is
+        # still cached. Same best-effort contract as delete_account:
+        # log + continue on failure so the user's revoke
+        # acknowledgement isn't blocked by a transient Redis blip.
+        # RV-SEC-02: quota counters and auth state survive the revoke
+        # (keep_account_state) — wiping them reset the daily AI quota.
         try:
             from api.routers.ai_analysis import clear_user_ai_data  # noqa: PLC0415 — avoid cycle
 
@@ -355,6 +375,7 @@ async def revoke_consent(
                 # evict the (ad_id, query) entries from the shared
                 # ai_analysis cache too.
                 session_factory=request.app.state.session_factory,
+                keep_account_state=True,
             )
         except Exception:
             logger.warning(
@@ -548,8 +569,8 @@ async def export_account_data(
                 "query": t.query,
                 "strict_mode": t.strict_mode,
                 "interval_min": t.interval_min,
-                "min_discount_percent": t.min_discount_percent,
-                "max_price_byn": t.max_price_byn,
+                "min_discount_percent": _money(t.min_discount_percent),
+                "max_price_byn": _money(t.max_price_byn),
                 "seller_type": t.seller_type,
                 "condition": t.condition,
                 "region_name": t.region_name,
@@ -845,7 +866,9 @@ async def export_account_data(
     }
 
     return Response(
-        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        content=json.dumps(
+            payload, ensure_ascii=False, indent=2, default=_export_json_default,
+        ),
         media_type="application/json",
         headers={
             "Content-Disposition": 'attachment; filename="rafuks_data_export.json"',

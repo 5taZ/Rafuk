@@ -91,8 +91,13 @@ _PROMPT_ROLE_MARKERS = re.compile(
 )
 _PROMPT_INJECTION_PATTERNS = re.compile(
     r"(?i)("
-    r"ignore\s+(?:all|any|the)?\s*(?:previous|prior|above)?\s*instructions"
-    r"|disregard\s+(?:all|any|the)?\s*(?:previous|prior|above)?\s*instructions"
+    # RV-AI-01: each optional word carries its own trailing whitespace.
+    # The previous ``\s+(?:…)?\s*(?:…)?\s*`` shape stacked three
+    # quantifiers on one whitespace run, so "ignore" followed by a long
+    # run of spaces backtracked in O(n³) and froze the event loop
+    # (800 spaces ≈ 1.3 s, 20 000 ≈ hours of CPU per request).
+    r"ignore\s+(?:(?:all|any|the)\s+)?(?:(?:previous|prior|above)\s+)?instructions"
+    r"|disregard\s+(?:(?:all|any|the)\s+)?(?:(?:previous|prior|above)\s+)?instructions"
     r"|you\s+(?:are|act as|will now|must)\s+(?:no longer|now)\s+"
     r"|игнориру(?:й|йте)\s+(?:все\s+)?(?:предыдущие|прошлые)\s+"
     r"(?:инструкции|правила|сообщени)"
@@ -105,6 +110,13 @@ _PROMPT_INJECTION_PATTERNS = re.compile(
 )
 _TRIPLE_BACKTICK_RE = re.compile(r"```+|~~~+")
 _MULTILINE_COLLAPSE_RE = re.compile(r"\n{3,}")
+
+# RV-AI-01: hard ceiling on how much raw text the regex pipeline sees.
+# The caller's ``max_length`` (≤1200 everywhere) is still applied
+# exactly at the end, after PII scrubbing, so a phone number is never
+# cut in half before it can be masked; this cap only stops an
+# unbounded request field from reaching the regexes whole.
+_MAX_SANITIZE_INPUT_CHARS = 20_000
 
 
 # ── PII scrubbing patterns (SEC-02) ──────────────────────────────────
@@ -210,7 +222,7 @@ def sanitize_user_text(
     """
     if value is None:
         return None
-    text = str(value)
+    text = str(value)[:_MAX_SANITIZE_INPUT_CHARS]
     if not text.strip():
         return None
     # AI-CRITICAL fix (issues §3.1): NFKC-normalise + Cyrillic-confusables

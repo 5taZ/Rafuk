@@ -282,6 +282,10 @@ def _repair_truncated_json(text: str) -> dict:
 # if it fails we re-open for another window.
 _AI_CB_THRESHOLD = 4
 _AI_CB_OPEN_SECONDS = 60.0
+# RV-AI-02: a half-open probe that hasn't reported back after this long
+# is presumed lost and the next caller takes over as the probe
+# (_post_with_retry's budget is 3 × 45 s read timeouts + backoff).
+_AI_CB_PROBE_DEADLINE_SECONDS = 180.0
 
 
 class AIService:
@@ -324,6 +328,11 @@ class AIService:
         self._cb_consecutive_errors = 0
         self._cb_open_until: float = 0.0
         self._cb_lock = asyncio.Lock()
+        # RV-AI-02: identifies the in-flight half-open probe so a probe
+        # that ends without a verdict can be resolved instead of
+        # pinning the breaker in half_open.
+        self._cb_probe_id = 0
+        self._cb_probe_started_at: float = 0.0
 
     @property
     def available(self) -> bool:
@@ -398,7 +407,7 @@ class AIService:
             self._last_chat_started_at = 0.0
         return self._chat_lock
 
-    async def _cb_check_and_acquire(self) -> None:
+    async def _cb_check_and_acquire(self) -> int | None:
         """Raise RuntimeError if the breaker is open; allow probe in half-open.
 
         SEC-05: called BEFORE every AI HTTP call.
@@ -409,23 +418,49 @@ class AIService:
           * half_open  → another caller already owns the probe;
                          short-circuit until they finish.
 
+        Returns the probe id when THIS caller owns the half-open probe.
         The state transitions out of half_open are owned by
-        _cb_record_success / _cb_record_failure.
+        _cb_record_success / _cb_record_failure, with
+        _cb_abandon_probe as the fallback (RV-AI-02).
         """
         async with self._cb_lock:
+            now = asyncio.get_running_loop().time()
             if self._cb_state == "open":
-                now = asyncio.get_running_loop().time()
                 if now < self._cb_open_until:
                     raise RuntimeError("AI circuit breaker open")
                 # Open window expired — this caller owns the probe.
                 self._cb_state = "half_open"
                 logger.info("AI circuit breaker → half_open (probing)")
-                return
+                self._cb_probe_id += 1
+                self._cb_probe_started_at = now
+                return self._cb_probe_id
             if self._cb_state == "half_open":
-                # Another caller is mid-probe; don't pile on.
-                raise RuntimeError(
-                    "AI circuit breaker half_open (probe in flight)"
-                )
+                if now - self._cb_probe_started_at < _AI_CB_PROBE_DEADLINE_SECONDS:
+                    # Another caller is mid-probe; don't pile on.
+                    raise RuntimeError(
+                        "AI circuit breaker half_open (probe in flight)"
+                    )
+                # RV-AI-02: the previous probe never reported back.
+                logger.warning("AI circuit breaker probe stalled — starting a new probe")
+                self._cb_probe_id += 1
+                self._cb_probe_started_at = now
+                return self._cb_probe_id
+            return None
+
+    async def _cb_abandon_probe(self, probe_id: int) -> None:
+        """RV-AI-02: re-open when the half-open probe ended without a verdict.
+
+        Cancellation by an outer ``wait_for`` (or any exception the
+        retry loop doesn't map) used to leave the breaker in
+        ``half_open`` forever, so every later AI call in this worker
+        failed fast until a restart.
+        """
+        async with self._cb_lock:
+            if self._cb_state != "half_open" or self._cb_probe_id != probe_id:
+                return
+            self._cb_state = "open"
+            self._cb_open_until = asyncio.get_running_loop().time() + _AI_CB_OPEN_SECONDS
+            logger.warning("AI circuit breaker → open (probe ended without a verdict)")
 
     async def _cb_record_success(self) -> None:
         async with self._cb_lock:
@@ -487,8 +522,27 @@ class AIService:
         the provider has been down for a while — see SEC-05.
         """
         # SEC-05: check the breaker BEFORE we even open a socket.
-        await self._cb_check_and_acquire()
+        probe_id = await self._cb_check_and_acquire()
+        try:
+            return await self._post_attempts(
+                client, url, headers=headers, json=json, probe_id=probe_id,
+            )
+        finally:
+            # RV-AI-02: no-op unless this call was the half-open probe
+            # and it ended without recording a verdict.
+            if probe_id is not None:
+                await self._cb_abandon_probe(probe_id)
 
+    async def _post_attempts(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict,
+        probe_id: int | None,
+    ) -> httpx.Response:
+        """The retry loop behind ``_post_with_retry``."""
         # Status codes that justify a retry — everything else short-
         # circuits straight back. 408 = client read timeout (rare here,
         # but cheap to treat the same). 5xx = upstream blip. 429 = rate
@@ -538,6 +592,9 @@ class AIService:
                 # Billing failures aren't a "broken provider" — don't
                 # trip the breaker, but propagate so the analyse path
                 # can fall back to non-AI output.
+                if probe_id is not None:
+                    # RV-AI-02: the provider answered — probe succeeded.
+                    await self._cb_record_success()
                 raise RuntimeError("Insufficient balance")
             if resp.status_code >= 500:
                 await self._cb_record_failure()
@@ -546,6 +603,8 @@ class AIService:
                 # 4xx other than 429/402 — bad request, model name
                 # typo, schema mismatch. Don't flip the breaker for
                 # caller bugs.
+                if probe_id is not None:
+                    await self._cb_record_success()
                 resp.raise_for_status()
             logger.info(
                 "AI _chat response: status=%d (attempt %d)",

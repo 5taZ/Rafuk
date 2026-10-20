@@ -151,6 +151,13 @@ async def _record_replay_warning(cache: Any, user_id: int) -> None:
     keeping a generous margin for legitimate IP changes
     (cellular ↔ wifi, CG-NAT churn) — five mismatches inside one
     hour is well past organic noise.
+
+    RV-SEC-03: that margin didn't hold — the counter grows on every
+    request from a non-first IP, not on every IP change, so a single
+    Wi-Fi → LTE handoff mid-session (one search = 5-6 requests)
+    suspended a real user for 24 h. The blacklist step is now opt-in
+    via ``REPLAY_AUTOBLOCK_ENABLED``; with it off, the first threshold
+    crossing per window is logged at ERROR for ops alerting instead.
     """
     if cache is None:
         return
@@ -162,17 +169,28 @@ async def _record_replay_warning(cache: Any, user_id: int) -> None:
         count = await incr(warn_key, ttl=_REPLAY_WARN_TTL_SECONDS)
     except Exception:  # noqa: BLE001 — best-effort counter
         return
-    if count and count >= _REPLAY_AUTOBLOCK_THRESHOLD:
-        try:
-            await cache.set_json(
-                _BLACKLIST_KEY.format(user_id=int(user_id)),
-                {"reason": "replay_autoblock", "since_ts": int(time())},
-                ttl=_REPLAY_BLOCK_TTL_SECONDS,
+    if not count or count < _REPLAY_AUTOBLOCK_THRESHOLD:
+        return
+    from api.config import get_settings
+
+    if not getattr(get_settings(), "replay_autoblock_enabled", False):
+        if count == _REPLAY_AUTOBLOCK_THRESHOLD:
+            logger.error(
+                "session_security.initdata_replay_threshold "
+                "user_id=%s warnings=%d window_seconds=%d autoblock=disabled",
+                user_id, count, _REPLAY_WARN_TTL_SECONDS,
             )
-        except Exception:  # noqa: BLE001 — best-effort blacklist
-            return
-        logger.error(
-            "session_security.initdata_replay_autoblock "
-            "user_id=%s warnings=%d window_seconds=%d block_seconds=%d",
-            user_id, count, _REPLAY_WARN_TTL_SECONDS, _REPLAY_BLOCK_TTL_SECONDS,
+        return
+    try:
+        await cache.set_json(
+            _BLACKLIST_KEY.format(user_id=int(user_id)),
+            {"reason": "replay_autoblock", "since_ts": int(time())},
+            ttl=_REPLAY_BLOCK_TTL_SECONDS,
         )
+    except Exception:  # noqa: BLE001 — best-effort blacklist
+        return
+    logger.error(
+        "session_security.initdata_replay_autoblock "
+        "user_id=%s warnings=%d window_seconds=%d block_seconds=%d",
+        user_id, count, _REPLAY_WARN_TTL_SECONDS, _REPLAY_BLOCK_TTL_SECONDS,
+    )

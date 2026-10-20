@@ -4,6 +4,7 @@ import asyncio
 import logging
 import signal
 from collections import defaultdict
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -18,7 +19,7 @@ from aiogram.exceptions import (
     TelegramUnauthorizedError,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import Update, delete, select, text, update
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import joinedload
@@ -26,6 +27,7 @@ from sqlalchemy.orm import joinedload
 from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
 from api.models import (
+    TRACKER_PAUSE_REASON_BOT_BLOCKED,
     AIAuditLog,
     DealExpense,
     LeadItem,
@@ -122,7 +124,7 @@ async def _send_message_classified(
     Returns:
       ``"sent"``    — Telegram accepted the message.
       ``"blocked"`` — user blocked / deleted the bot, the chat is no
-                      longer reachable; caller should disable the
+                      longer reachable; caller should pause the
                       user's trackers.
       ``"retry"``   — transient Telegram error (rate limit, server
                       error). Caller leaves the row's ``sent`` /
@@ -132,8 +134,20 @@ async def _send_message_classified(
     try:
         await bot.send_message(telegram_user_id, message, reply_markup=reply_markup)
         return "sent"
-    except (TelegramForbiddenError, TelegramUnauthorizedError, TelegramNotFound):
+    except TelegramForbiddenError:
         return "blocked"
+    except (TelegramUnauthorizedError, TelegramNotFound) as exc:
+        # RV-SCH-03: 401/404 come back for EVERY chat when the bot token
+        # itself is rejected (typo, revoked). Classifying them as a
+        # per-user block disabled the trackers of every user an alert
+        # went to; queue for retry and shout instead.
+        logger.error(
+            "Telegram rejected the bot token sending to user %d: [%s] %s",
+            telegram_user_id,
+            type(exc).__name__,
+            exc,
+        )
+        return "retry"
     except TelegramRetryAfter as exc:
         logger.warning(
             "Telegram rate limit hit for user %d, retry_after=%ss",
@@ -238,6 +252,34 @@ def _queue_notification_dlq(
     )
 
 
+def _pause_unreachable_users_trackers(user_ids: Collection[int]) -> Update:
+    """RV-SCH-03: pause — not ``active=False`` — the trackers of users
+    Telegram refuses to deliver to.
+
+    ``active=False`` is the API's soft-delete flag: trackers flipped by
+    the scheduler vanished from the Mini App and could be neither resumed
+    nor deleted (404), even after the user unblocked the bot. A pause is
+    visible and reversible, and /start in the bot lifts it. Trackers
+    already paused for another reason (consent revoke, Kufar errors)
+    keep that reason.
+    """
+    now = datetime.now(UTC)
+    return (
+        update(Tracker)
+        .where(
+            Tracker.user_id.in_(user_ids),
+            Tracker.active.is_(True),
+            Tracker.paused.is_(False),
+        )
+        .values(
+            paused=True,
+            paused_at=now,
+            pause_reason=TRACKER_PAUSE_REASON_BOT_BLOCKED,
+            updated_at=now,
+        )
+    )
+
+
 async def notify_user(
     bot: Bot,
     telegram_user_id: int,
@@ -249,8 +291,8 @@ async def notify_user(
 ) -> bool:
     """Send message to user via telegram_user_id.
 
-    Returns False if tracker should be deactivated (user blocked/deleted bot
-    or chat is no longer reachable). Other transient telegram errors are
+    Returns False if the user is unreachable (blocked/deleted the bot);
+    their trackers are paused. Other transient telegram errors are
     logged but the tracker stays active so the next tick can retry.
 
     Internally delegates the actual send to
@@ -265,17 +307,10 @@ async def notify_user(
     if outcome == "sent":
         return True
     if outcome == "blocked":
-        # User blocked the bot or deleted the chat — disable all their
+        # User blocked the bot or deleted the chat — pause all their
         # active trackers so we stop spamming the failing chat_id.
         if internal_user_id is not None:
-            await session.execute(
-                update(Tracker)
-                .where(
-                    Tracker.user_id == internal_user_id,
-                    Tracker.active.is_(True),
-                )
-                .values(active=False)
-            )
+            await session.execute(_pause_unreachable_users_trackers([internal_user_id]))
             await session.flush()
         return False
     # outcome == "retry" — keep state untouched
@@ -1249,7 +1284,7 @@ class _TrackerNotifyJob:
     the tick on ``300 trackers × 3 notif × RTT`` of sequential Telegram
     latency. The fields are a strict subset of the ``notify_user``
     argument list — internal_user_id is kept so a blocked-user outcome
-    can trigger the same per-user tracker deactivation as before,
+    can trigger the same per-user tracker pause as ``notify_user``,
     batched across the whole tick.
 
     AUDIT-LOW (cross-tracker dedup): ``dedup_key`` is set when two
@@ -1283,18 +1318,17 @@ async def _dispatch_tracker_notifications(
     but schedule up to ``_TRACKER_USER_CONCURRENCY`` user-batches
     **in parallel** across distinct chats. On the first ``blocked``
     outcome for a user, drop the rest of that user's jobs and mark
-    their ``internal_user_id`` for bulk tracker deactivation.
+    their ``internal_user_id`` for a bulk tracker pause.
 
     Returns the number of successfully sent messages (i.e. only
     ``"sent"`` outcomes; ``"retry"`` is not counted, matching the
     ``check_reminders`` accounting established in Wave 23).
 
     After the fan-out, if any users turned out to be blocked, a single
-    ``UPDATE Tracker SET active=False WHERE user_id IN (...)`` is
-    issued in a fresh session. Same semantic as the per-call
-    deactivation ``notify_user`` performed before, just batched so a
-    tick with K blocked users does 1 UPDATE instead of up to
-    K × jobs-per-user.
+    ``_pause_unreachable_users_trackers`` UPDATE is issued in a fresh
+    session. Same semantic as the per-call pause in ``notify_user``,
+    just batched so a tick with K blocked users does 1 UPDATE instead
+    of up to K × jobs-per-user.
     """
     if not jobs:
         return 0
@@ -1370,14 +1404,7 @@ async def _dispatch_tracker_notifications(
     if blocked_user_ids or retry_jobs:
         async with session_factory() as session:
             if blocked_user_ids:
-                await session.execute(
-                    update(Tracker)
-                    .where(
-                        Tracker.user_id.in_(blocked_user_ids),
-                        Tracker.active.is_(True),
-                    )
-                    .values(active=False)
-                )
+                await session.execute(_pause_unreachable_users_trackers(blocked_user_ids))
             for job in retry_jobs:
                 _queue_notification_dlq(
                     session,
@@ -1393,7 +1420,7 @@ async def _dispatch_tracker_notifications(
             await session.commit()
             if blocked_user_ids:
                 logger.info(
-                    "Tracker notifications: deactivated trackers for %d blocked user(s)",
+                    "Tracker notifications: paused trackers for %d blocked user(s)",
                     len(blocked_user_ids),
                 )
 
@@ -1423,9 +1450,8 @@ async def check_reminders(
       3. Apply phase — single sequential pass over the outcomes
          that updates the session: mark ``sent=True`` for the
          "sent" cases, accumulate distinct ``user_id`` values whose
-         users blocked the bot, then issue one bulk
-         ``UPDATE Tracker SET active=False WHERE user_id IN (...)``
-         per blocked user. Single ``session.commit()`` at the end
+         users blocked the bot, then pause their trackers in one
+         bulk UPDATE. Single ``session.commit()`` at the end
          so a partial failure doesn't half-commit the tick.
 
     Wall-clock for 50 reminders × ~50 ms RTT each: 2.5 s sequential
@@ -1516,16 +1542,8 @@ async def check_reminders(
 
         if blocked_user_ids:
             # Single bulk update per tick instead of one UPDATE per
-            # blocked user — same semantic as the per-call deactivation
-            # in ``notify_user``, just batched.
-            await session.execute(
-                update(Tracker)
-                .where(
-                    Tracker.user_id.in_(blocked_user_ids),
-                    Tracker.active.is_(True),
-                )
-                .values(active=False)
-            )
+            # blocked user — same pause as ``notify_user``, just batched.
+            await session.execute(_pause_unreachable_users_trackers(blocked_user_ids))
 
         await session.commit()
         logger.info(
@@ -1837,7 +1855,7 @@ async def retry_telegram_notification_dlq(
 
     * ``sent``    → DELETE row.
     * ``blocked`` → DELETE every DLQ row for that user_id +
-                    deactivate their trackers in bulk.
+                    pause their trackers in bulk.
     * ``retry``   → ``retry_count += 1``,
                     ``next_retry_at = now + 2^(n-1) * 2 min``.
 
@@ -1958,16 +1976,9 @@ async def retry_telegram_notification_dlq(
                     TelegramNotificationDLQ.telegram_user_id.in_(blocked_user_ids),
                 )
             )
-            await session.execute(
-                update(Tracker)
-                .where(
-                    Tracker.user_id.in_(blocked_internal_ids),
-                    Tracker.active.is_(True),
-                )
-                .values(active=False)
-            )
+            await session.execute(_pause_unreachable_users_trackers(blocked_internal_ids))
             logger.info(
-                "DLQ pump: dropped trackers for %d blocked user(s)",
+                "DLQ pump: paused trackers for %d blocked user(s)",
                 len(blocked_internal_ids),
             )
         if delete_ids:

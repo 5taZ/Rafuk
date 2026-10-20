@@ -279,6 +279,12 @@ class TrackerFiltersMixin:
     alert_discount_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
 
 
+# RV-SCH-03: set by the scheduler when Telegram refuses delivery (403 —
+# user blocked the bot or never pressed Start); /start in the bot
+# resumes exactly these. ``active=False`` stays the user's own delete.
+TRACKER_PAUSE_REASON_BOT_BLOCKED = "bot_blocked"
+
+
 class Tracker(
     Base,
     UserIDMixin,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi.responses import JSONResponse
@@ -26,6 +27,30 @@ def test_frontend_csp_matches_vendored_telegram_sdk_policy() -> None:
     assert "cdn.jsdelivr.net" not in nginx_conf
     assert "script-src 'self' https://telegram.org" not in index_text
     assert all("https://telegram.org" not in line for line in nginx_csp_lines)
+
+
+def test_meta_csp_img_src_matches_nginx_header() -> None:
+    """RV-FE-01: the browser enforces the meta CSP AND the nginx header,
+    so a source missing from either one is blocked. The meta copy had
+    lost ``data:``, which broke photo decoding in the listing assistant
+    and the data:-SVG select chevrons."""
+    index_text = Path("frontend/index.html").read_text(encoding="utf-8")
+    nginx_conf = Path("nginx/default.conf").read_text(encoding="utf-8")
+
+    def img_sources(policy: str) -> frozenset[str]:
+        match = re.search(r"img-src([^;]*)", policy)
+        assert match, policy
+        return frozenset(match.group(1).split())
+
+    meta_policies = re.findall(
+        r'http-equiv="Content-Security-Policy"\s+content="([^"]*)"', index_text,
+    )
+    nginx_policies = re.findall(r'add_header Content-Security-Policy "([^"]*)"', nginx_conf)
+    assert len(meta_policies) == 1
+    assert nginx_policies
+    meta_sources = img_sources(meta_policies[0])
+    assert all(img_sources(policy) == meta_sources for policy in nginx_policies)
+    assert "data:" in meta_sources
 
 
 def test_nginx_uses_csp_frame_ancestors_instead_of_x_frame_options() -> None:

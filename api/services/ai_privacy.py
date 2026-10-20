@@ -102,8 +102,17 @@ async def clear_user_ai_data(
     *,
     cache: Any | None = None,
     session_factory: Any | None = None,
+    keep_account_state: bool = False,
 ) -> None:
     """Remove all per-user data for a Telegram user (Law-99-З erasure).
+
+    RV-SEC-02: consent revoke passes ``keep_account_state=True``. The
+    usage counters (``quota:*``, ``ai_rate:*``, ``ai_daily:*``) and the
+    auth security state (``auth:blacklist``, ``auth:replay_warn``) are
+    not data processed under the AI consent — wiping them on revoke let
+    a user reset the daily AI quota with a revoke → grant cycle. Account
+    deletion keeps the full wipe: the re-provisioned account starts on
+    ``bare_search`` with zero AI quota, so it can't be used the same way.
 
     BE-C6: this used to only touch the AI shadow stores plus a few
     Redis namespaces; the matching call from delete_account also
@@ -172,19 +181,22 @@ async def clear_user_ai_data(
         user_scoped_patterns = [
             f"ai_task:u{telegram_user_id}:*",
             f"ai_listing:u{telegram_user_id}:*",
-            f"ai_rate:{telegram_user_id}:*",
-            f"ai_daily:{telegram_user_id}",
-            f"quota:ai:{telegram_user_id}:*",
-            f"quota:assistant:{telegram_user_id}:*",
-            # Session blacklist key is a fixed shape, but reuse
-            # the same scan loop for symmetry — it's a 1-key scan
-            # in practice.
-            f"auth:blacklist:{telegram_user_id}",
-            # OPUS-8: rolling replay counter must die with the
-            # user — otherwise a previously-flagged session leaks
-            # its history into a fresh account.
-            f"auth:replay_warn:{telegram_user_id}",
         ]
+        if not keep_account_state:
+            user_scoped_patterns += [
+                f"ai_rate:{telegram_user_id}:*",
+                f"ai_daily:{telegram_user_id}",
+                f"quota:ai:{telegram_user_id}:*",
+                f"quota:assistant:{telegram_user_id}:*",
+                # Session blacklist key is a fixed shape, but reuse
+                # the same scan loop for symmetry — it's a 1-key scan
+                # in practice.
+                f"auth:blacklist:{telegram_user_id}",
+                # OPUS-8: rolling replay counter must die with the
+                # user — otherwise a previously-flagged session leaks
+                # its history into a fresh account.
+                f"auth:replay_warn:{telegram_user_id}",
+            ]
         try:
             analysis_patterns = await _analysis_cache_patterns(
                 session_factory, telegram_user_id,

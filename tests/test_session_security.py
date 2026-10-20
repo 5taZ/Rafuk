@@ -103,10 +103,15 @@ async def test_track_init_data_handles_none_inputs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_track_init_data_autoblacklists_after_threshold(caplog) -> None:
+async def test_track_init_data_autoblacklists_after_threshold(caplog, monkeypatch) -> None:
     """OPUS-8: 5 IP-mismatches in the rolling window must auto-blacklist
-    the user without waiting for an ops human to read the logs.
+    the user without waiting for an ops human to read the logs — when
+    the operator opted in (RV-SEC-03: REPLAY_AUTOBLOCK_ENABLED).
     """
+    monkeypatch.setattr(
+        "api.config.get_settings",
+        lambda: type("S", (), {"replay_autoblock_enabled": True})(),
+    )
     cache = _StubCache()
     # First call seeds the (initdata → first_ip) mapping.
     await track_init_data_use(cache, "blob", user_id=11, client_ip="1.1.1.1")
@@ -121,6 +126,32 @@ async def test_track_init_data_autoblacklists_after_threshold(caplog) -> None:
     assert await is_user_blacklisted(cache, 11) is True
     # Auto-block log line emitted.
     assert any("initdata_replay_autoblock" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_track_init_data_threshold_only_logs_when_autoblock_disabled(
+    caplog, monkeypatch,
+) -> None:
+    """RV-SEC-03: by default crossing the threshold must not suspend the
+    user — a Wi-Fi → LTE switch mid-session crosses it legitimately. The
+    first crossing per window is logged at ERROR, once."""
+    monkeypatch.setattr(
+        "api.config.get_settings",
+        lambda: type("S", (), {"replay_autoblock_enabled": False})(),
+    )
+    cache = _StubCache()
+    await track_init_data_use(cache, "blob", user_id=33, client_ip="1.1.1.1")
+    caplog.set_level(logging.ERROR)
+    for i in range(8):
+        await track_init_data_use(cache, "blob", user_id=33, client_ip=f"9.9.9.{i}")
+
+    assert cache._store.get("auth:blacklist:33") is None
+    assert await is_user_blacklisted(cache, 33) is False
+    threshold_logs = [
+        r for r in caplog.records if "initdata_replay_threshold" in r.message
+    ]
+    assert len(threshold_logs) == 1
+    assert not any("initdata_replay_autoblock" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio

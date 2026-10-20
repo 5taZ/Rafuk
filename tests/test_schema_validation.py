@@ -162,6 +162,18 @@ def test_ai_requests_reject_non_positive_ad_id() -> None:
         )
 
 
+def test_ai_negotiate_request_bounds_free_text_fields() -> None:
+    """RV-AI-01: condition / market_context feed sanitize_user_text, so
+    an unbounded value used to carry the whole request body into the
+    prompt-injection regexes."""
+    base = {"ad_id": 1, "asking_price_byn": 100, "my_offer_byn": 80, "query": "iphone"}
+    AINegotiateRequest(**base, condition="Б/у", market_context="x" * 1200)
+    with pytest.raises(ValidationError):
+        AINegotiateRequest(**base, market_context="x" * 1201)
+    with pytest.raises(ValidationError):
+        AINegotiateRequest(**base, condition="x" * 65)
+
+
 def test_ai_intent_goal_fields_accept_known_values() -> None:
     assert AIAnalysisRequest(ad_id=1, query="iphone", user_goal="safe_buy").user_goal == "safe_buy"
     assert AIAnalysisRequest(ad_id=1, query="macbook", user_goal="resale").user_goal == "resale"

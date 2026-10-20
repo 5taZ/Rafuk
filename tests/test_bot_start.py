@@ -29,6 +29,46 @@ async def test_cmd_start_and_app_include_keyboard() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cmd_start_resumes_only_bot_blocked_trackers() -> None:
+    """RV-SCH-03: the scheduler pauses (no longer soft-deletes) trackers
+    when Telegram refuses delivery; /start means the chat is reachable
+    again, so exactly those pauses are lifted."""
+    from sqlalchemy import select
+
+    from api.database import get_engine, get_session_factory
+    from api.models import TRACKER_PAUSE_REASON_BOT_BLOCKED, Tracker, User
+
+    factory = get_session_factory(get_engine())
+    async with factory() as session:
+        session.add(User(id=7001, telegram_user_id=7001, first_name="Тест"))
+        await session.flush()
+        session.add_all([
+            Tracker(
+                user_id=7001, query="blocked", paused=True,
+                pause_reason=TRACKER_PAUSE_REASON_BOT_BLOCKED,
+            ),
+            Tracker(user_id=7001, query="consent", paused=True, pause_reason="consent_revoked"),
+            Tracker(user_id=7001, query="deleted", active=False),
+        ])
+        await session.commit()
+
+    message = SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=7001))
+    await cmd_start(message)  # type: ignore[arg-type]
+
+    async with factory() as session:
+        state = {
+            t.query: (t.active, t.paused, t.pause_reason)
+            for t in (await session.execute(select(Tracker))).scalars()
+        }
+    assert state == {
+        "blocked": (True, False, None),
+        "consent": (True, True, "consent_revoked"),
+        "deleted": (False, False, None),
+    }
+    message.answer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_cmd_start_message_is_in_russian() -> None:
     """Bot greetings used to mix Russian + English ('Rafuk helps you...');
     the whole UX is Russian, so /start must answer in Russian too."""

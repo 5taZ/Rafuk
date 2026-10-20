@@ -173,6 +173,11 @@ class Settings(BaseSettings):
     internal_service_token_required: bool = Field(default=False)
     ai_audit_required: bool = Field(default=False)
     allow_legacy_bot_initdata: bool = Field(default=True)
+    # RV-SEC-03: OPUS-8 replay auto-blacklist is opt-in. Its counter grows
+    # on every request from a non-first IP, so one Wi-Fi → LTE switch
+    # mid-session suspended real users for 24 h. Off: crossings are
+    # only logged at ERROR (session_security.initdata_replay_threshold).
+    replay_autoblock_enabled: bool = Field(default=False)
 
     # Connection-pool sizing.
     #

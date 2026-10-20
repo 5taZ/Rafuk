@@ -188,6 +188,9 @@ async def test_revoke_consent_clears_per_user_cache(client, monkeypatch):
     user, otherwise data processed under the now-revoked consent
     keeps living in Redis until TTL — which contradicts the
     "right to revoke" promise.
+
+    RV-SEC-02: usage counters and auth state must survive the revoke —
+    wiping them let a revoke → grant cycle reset the daily AI quota.
     """
     import fnmatch
 
@@ -196,16 +199,19 @@ async def test_revoke_consent_clears_per_user_cache(client, monkeypatch):
     fake_cache = MemoryCache()
     target_uid = 999888  # _fake_telegram_user user_id
 
-    seeds = {
+    artefacts = {
         f"ai_task:u{target_uid}:abc": {"x": 1},
         f"ai_listing:u{target_uid}:abc": {"title_suggestion": "private"},
+    }
+    account_state = {
         f"ai_rate:{target_uid}:default": {"count": 5},
         f"ai_daily:{target_uid}": {"count": 2},
         f"quota:ai:{target_uid}:2026-05-18": 2,
         f"quota:assistant:{target_uid}:2026-05-18": 1,
         f"auth:blacklist:{target_uid}": {"reason": "test"},
+        f"auth:replay_warn:{target_uid}": 3,
     }
-    for k, v in seeds.items():
+    for k, v in {**artefacts, **account_state}.items():
         await fake_cache.set_json(k, v)
 
     class _FakeRedis:
@@ -235,11 +241,49 @@ async def test_revoke_consent_clears_per_user_cache(client, monkeypatch):
     resp = await client.delete("/api/v1/account/consent/ai_analysis")
     assert resp.status_code == 204
 
-    for key in seeds:
+    for key in artefacts:
         assert await fake_cache.get_json(key) is None, f"{key} should be cleared on revoke"
+    for key, value in account_state.items():
+        assert await fake_cache.get_json(key) == value, f"{key} must survive a revoke"
 
 
 # ── Account export ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_export_account_data_with_tracker_numeric_fields(client):
+    """RV-BE-01: Tracker.min_discount_percent / max_price_byn are Numeric
+    columns, so they load as Decimal. They went into the payload raw and
+    json.dumps raised — every user with a tracker got a 500 instead of
+    their data export (the Mini App always sends min_discount_percent)."""
+    await client.post(
+        "/api/v1/account/consent",
+        json={"consent_type": "ai_analysis", "version": "2026.2"},
+    )
+    from sqlalchemy import select
+
+    from api.main import app
+    from api.models import Tracker, User
+
+    async with app.state.session_factory() as session:
+        user = (
+            await session.execute(
+                select(User).where(User.telegram_user_id == _fake_telegram_user().user_id)
+            )
+        ).scalar_one()
+        session.add(Tracker(
+            user_id=user.id,
+            query="iphone 13",
+            min_discount_percent=10,
+            max_price_byn=1500.5,
+        ))
+        await session.commit()
+
+    resp = await client.get("/api/v1/account/export")
+    assert resp.status_code == 200
+    tracker = resp.json()["trackers"][0]
+    assert tracker["min_discount_percent"] == 10.0
+    assert tracker["max_price_byn"] == 1500.5
 
 
 @pytest.mark.asyncio
@@ -780,3 +824,39 @@ async def test_revoke_pd_processing_keeps_already_paused_trackers_paused(client)
         tracker = (await session.execute(select(Tracker))).scalar_one()
         assert tracker.paused is True
         assert tracker.pause_reason == "manually_paused_by_user"
+
+
+@pytest.mark.asyncio
+async def test_revoke_pd_processing_takes_over_bot_blocked_pause(client):
+    """RV-SCH-03: /start lifts a 'bot_blocked' pause, so a pd_processing
+    revoke must re-label it 'consent_revoked' — otherwise the next /start
+    would resume trackers the user just withdrew consent for."""
+    from sqlalchemy import select
+
+    from api.models import TRACKER_PAUSE_REASON_BOT_BLOCKED, Tracker, User
+
+    await client.post(
+        "/api/v1/account/consent",
+        json={"consent_type": "pd_processing", "version": "2026.2"},
+    )
+
+    sf = app.state.session_factory
+    async with sf() as session:
+        user = (await session.execute(select(User))).scalar_one()
+        session.add(Tracker(
+            user_id=user.id,
+            query="iphone",
+            strict_mode=False,
+            paused=True,
+            paused_at=datetime.now(UTC),
+            pause_reason=TRACKER_PAUSE_REASON_BOT_BLOCKED,
+        ))
+        await session.commit()
+
+    revoke = await client.delete("/api/v1/account/consent/pd_processing")
+    assert revoke.status_code == 204
+
+    async with sf() as session:
+        tracker = (await session.execute(select(Tracker))).scalar_one()
+        assert tracker.paused is True
+        assert tracker.pause_reason == "consent_revoked"

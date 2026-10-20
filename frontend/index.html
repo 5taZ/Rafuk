@@ -32,13 +32,17 @@
          and Telegram's keyboard / theme integration silently
          degrades. The hash pins exactly that one Telegram shim;
          every other inline script still trips the policy. -->
+    <!-- RV-FE-01: img-src must stay identical to the nginx header.
+         Browsers enforce BOTH policies, so dropping data: here alone
+         blocked the listing assistant's photo decode (readAsDataURL)
+         and the data:-SVG chevrons of every custom <select>. -->
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self';
                    script-src 'self' 'sha256-ieoeWczDHkReVBsRBqaal5AFMlBtNjMzgwKvLqi/tSU=';
                    style-src 'self';
                    font-src 'self';
                    connect-src 'self';
-                   img-src 'self' https://rms.kufar.by https://*.kufar.by blob:;
+                   img-src 'self' https://rms.kufar.by https://*.kufar.by data: blob:;
                    object-src 'none';
                    base-uri 'self';
                    form-action 'self';

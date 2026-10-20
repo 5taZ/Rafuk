@@ -79,6 +79,7 @@ services:
       MINI_APP_URL: ${MINI_APP_URL}
       ADMIN_TELEGRAM_USER_IDS: ${ADMIN_TELEGRAM_USER_IDS:-}
       METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
+      REPLAY_AUTOBLOCK_ENABLED: ${REPLAY_AUTOBLOCK_ENABLED:-false}
       # OPUS-12: shared with the bot via env so /api/v1/leads etc.
       # can accept service-token auth on the bot's behalf.
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}

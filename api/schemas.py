@@ -865,8 +865,10 @@ class AINegotiateRequest(BaseModel):
     asking_price_byn: float = Field(gt=0)
     my_offer_byn: float = Field(gt=0)
     query: str = Field(min_length=1, max_length=200)
-    condition: str | None = None
-    market_context: str | None = None
+    # RV-AI-01: both fields go straight into sanitize_user_text; without
+    # a bound the whole request body (up to 8 MB) hit the regexes.
+    condition: str | None = Field(None, max_length=64)
+    market_context: str | None = Field(None, max_length=1200)
 
 
 class AINegotiateResponse(BaseModel):

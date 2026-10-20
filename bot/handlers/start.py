@@ -1,16 +1,72 @@
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 from aiogram import Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
+from sqlalchemy import select, update
 
 from api.config import get_settings
+from api.models import TRACKER_PAUSE_REASON_BOT_BLOCKED, Tracker, User
 from bot.commands import BOT_HELP_TEXT
+from bot.database import get_bot_session_factory
 from bot.keyboards import mini_app_keyboard
 
+logger = logging.getLogger(__name__)
+
 router = Router(name="start")
+
+
+async def _resume_bot_blocked_trackers(message: Message) -> None:
+    """RV-SCH-03: /start means the chat is reachable again — lift the
+    pause the scheduler put on this user's trackers when Telegram
+    refused delivery (bot blocked / Start never pressed). Best-effort:
+    a DB hiccup must not cost the user the greeting.
+    """
+    from_user = getattr(message, "from_user", None)
+    if from_user is None:
+        return
+    try:
+        session_factory = get_bot_session_factory()
+        async with session_factory() as session:
+            internal_id = (
+                select(User.id)
+                .where(User.telegram_user_id == from_user.id)
+                .scalar_subquery()
+            )
+            result = await session.execute(
+                update(Tracker)
+                .where(
+                    Tracker.user_id == internal_id,
+                    Tracker.active.is_(True),
+                    Tracker.paused.is_(True),
+                    Tracker.pause_reason == TRACKER_PAUSE_REASON_BOT_BLOCKED,
+                )
+                .values(
+                    paused=False,
+                    paused_at=None,
+                    pause_reason=None,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            resumed = result.rowcount or 0
+            await session.commit()
+    except Exception:  # noqa: BLE001 — never block /start on this
+        logger.warning(
+            "Failed to resume bot-blocked trackers for user %s",
+            from_user.id,
+            exc_info=True,
+        )
+        return
+    if resumed:
+        logger.info(
+            "Resumed %d bot-blocked tracker(s) for user %s on /start",
+            resumed,
+            from_user.id,
+        )
 
 
 # PR-08: deep-link start_param allowlist. Mirrors the ``viewMap`` in
@@ -38,6 +94,7 @@ def _safe_start_param(raw: str | None) -> str | None:
 @router.message(CommandStart(deep_link=True))
 async def cmd_start_deep(message: Message, command: CommandStart) -> None:
     """Handle /start with a deep link parameter (e.g. /start tracking)."""
+    await _resume_bot_blocked_trackers(message)
     settings = get_settings()
     # PR-08: ``command.args`` is whatever the user typed after
     # ``/start`` (or what landed in a t.me/<bot>?start=... link). The
@@ -65,6 +122,7 @@ async def cmd_start_deep(message: Message, command: CommandStart) -> None:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message) -> None:
+    await _resume_bot_blocked_trackers(message)
     settings = get_settings()
     keyboard = mini_app_keyboard(settings.mini_app_url)
     text = (

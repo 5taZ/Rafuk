@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import scheduler.collector as collector
 from api.database import get_engine, get_session_factory
 from api.models import (
+    TRACKER_PAUSE_REASON_BOT_BLOCKED,
     Base,
     LeadItem,
     LeadReminder,
@@ -432,7 +433,10 @@ async def test_notify_user_success(mock_bot: AsyncMock, populated_session):
 
 
 @pytest.mark.asyncio
-async def test_notify_user_forbidden_deactivates_tracker(mock_bot: AsyncMock, populated_session):
+async def test_notify_user_forbidden_pauses_trackers(mock_bot: AsyncMock, populated_session):
+    """RV-SCH-03: a 403 pauses the user's trackers with a reason /start
+    lifts — it used to flip ``active=False``, the API's soft-delete flag,
+    so the trackers vanished from the Mini App for good."""
     from aiogram.exceptions import TelegramForbiddenError
 
     session, user, tracker = populated_session
@@ -446,33 +450,26 @@ async def test_notify_user_forbidden_deactivates_tracker(mock_bot: AsyncMock, po
         internal_user_id=user.id,
     )
     assert result is False
+    await session.refresh(tracker)
+    assert tracker.active is True
+    assert tracker.paused is True
+    assert tracker.pause_reason == TRACKER_PAUSE_REASON_BOT_BLOCKED
 
 
 @pytest.mark.asyncio
-async def test_notify_user_not_found_deactivates_tracker(mock_bot: AsyncMock, populated_session):
-    from aiogram.exceptions import TelegramNotFound
-
-    session, user, tracker = populated_session
-    mock_bot.send_message.side_effect = _make_tg_error(TelegramNotFound, "Not found")
-
-    result = await notify_user(
-        mock_bot,
-        telegram_user_id=123456,
-        message="Hello",
-        session=session,
-        internal_user_id=user.id,
-    )
-    assert result is False
-
-
-@pytest.mark.asyncio
-async def test_notify_user_unauthorized_deactivates_tracker(
-    mock_bot: AsyncMock, populated_session
+@pytest.mark.parametrize("error_name", ["TelegramNotFound", "TelegramUnauthorizedError"])
+async def test_notify_user_rejected_bot_token_queues_retry_and_keeps_trackers(
+    mock_bot: AsyncMock, populated_session, error_name: str,
 ):
-    from aiogram.exceptions import TelegramUnauthorizedError
+    """RV-SCH-03: 401/404 mean the bot token itself is rejected, so every
+    chat fails the same way. They used to count as a per-user block and
+    disable the trackers of everyone an alert went to."""
+    import aiogram.exceptions
+    from sqlalchemy import select
 
     session, user, tracker = populated_session
-    mock_bot.send_message.side_effect = _make_tg_error(TelegramUnauthorizedError, "Unauthorized")
+    exc_cls = getattr(aiogram.exceptions, error_name)
+    mock_bot.send_message.side_effect = _make_tg_error(exc_cls, "token rejected")
 
     result = await notify_user(
         mock_bot,
@@ -481,7 +478,12 @@ async def test_notify_user_unauthorized_deactivates_tracker(
         session=session,
         internal_user_id=user.id,
     )
-    assert result is False
+    assert result is True
+    queued = (await session.execute(select(TelegramNotificationDLQ))).scalar_one()
+    assert queued.telegram_user_id == 123456
+    await session.refresh(tracker)
+    assert tracker.active is True
+    assert tracker.paused is False
 
 
 @pytest.mark.asyncio
@@ -1062,11 +1064,11 @@ async def test_retry_dlq_retry_bumps_count_and_next_retry(
 
 
 @pytest.mark.asyncio
-async def test_retry_dlq_blocked_drops_user_rows_and_trackers(
+async def test_retry_dlq_blocked_drops_user_rows_and_pauses_trackers(
     monkeypatch, mock_bot, populated_session,
 ):
     """OPUS-2: blocked outcome wipes every DLQ row for that user and
-    deactivates their trackers."""
+    pauses their trackers (RV-SCH-03: no longer soft-deletes them)."""
     session, user, tracker = populated_session
 
     session.add_all([
@@ -1104,7 +1106,9 @@ async def test_retry_dlq_blocked_drops_user_rows_and_trackers(
     assert rows == []
 
     await session.refresh(tracker)
-    assert tracker.active is False
+    assert tracker.active is True
+    assert tracker.paused is True
+    assert tracker.pause_reason == TRACKER_PAUSE_REASON_BOT_BLOCKED
 
 
 @pytest.mark.asyncio
@@ -1586,12 +1590,12 @@ async def test_check_reminders_happy_path_marks_all_sent(mock_bot: AsyncMock):
 
 
 @pytest.mark.asyncio
-async def test_check_reminders_blocked_user_deactivates_trackers(mock_bot: AsyncMock):
+async def test_check_reminders_blocked_user_pauses_trackers(mock_bot: AsyncMock):
     """PERF-M3: when a user has blocked the bot, the matching
     TelegramForbiddenError must translate into the user's active
-    trackers being flipped to ``active=False`` in one bulk update.
-    The reminder itself stays ``sent=False`` so a future cycle can
-    retry if the user later re-enables the bot."""
+    trackers being paused (RV-SCH-03: not soft-deleted) in one bulk
+    update. The reminder itself stays ``sent=False`` so a future cycle
+    can retry if the user later re-enables the bot."""
     from aiogram.exceptions import TelegramForbiddenError
 
     engine = get_engine()
@@ -1619,7 +1623,9 @@ async def test_check_reminders_blocked_user_deactivates_trackers(mock_bot: Async
     async with sf() as session:
         tracker_after = await session.get(Tracker, tracker_id)
         assert tracker_after is not None
-        assert tracker_after.active is False
+        assert tracker_after.active is True
+        assert tracker_after.paused is True
+        assert tracker_after.pause_reason == TRACKER_PAUSE_REASON_BOT_BLOCKED
         # Reminder kept at sent=False so a later cycle can retry.
         from sqlalchemy import select
         reminder_after = (
@@ -1730,8 +1736,8 @@ async def test_dispatch_tracker_notifications_blocked_skips_user_rest(
     mock_bot: AsyncMock,
 ):
     """Blocked user → remaining jobs for that user dropped, other
-    users unaffected, trackers for blocked user deactivated in ONE
-    bulk UPDATE."""
+    users unaffected, trackers for blocked user paused in ONE
+    bulk UPDATE (RV-SCH-03: no longer soft-deleted)."""
     from aiogram.exceptions import TelegramForbiddenError
 
     engine = get_engine()
@@ -1777,18 +1783,17 @@ async def test_dispatch_tracker_notifications_blocked_skips_user_rest(
 
     async with sf() as session:
         from sqlalchemy import select
+        state = (Tracker.active, Tracker.paused, Tracker.pause_reason)
         b_trackers = (
-            await session.execute(
-                select(Tracker.active).where(Tracker.user_id == b_id)
-            )
-        ).scalars().all()
+            await session.execute(select(*state).where(Tracker.user_id == b_id))
+        ).all()
         o_trackers = (
-            await session.execute(
-                select(Tracker.active).where(Tracker.user_id == o_id)
-            )
-        ).scalars().all()
-        assert b_trackers == [False, False]
-        assert o_trackers == [True]
+            await session.execute(select(*state).where(Tracker.user_id == o_id))
+        ).all()
+        assert [tuple(row) for row in b_trackers] == [
+            (True, True, TRACKER_PAUSE_REASON_BOT_BLOCKED),
+        ] * 2
+        assert [tuple(row) for row in o_trackers] == [(True, False, None)]
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

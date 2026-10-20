@@ -188,6 +188,8 @@ def _build_ai_service(monkeypatch) -> AIService:
     svc._cb_consecutive_errors = 0
     svc._cb_open_until = 0.0
     svc._cb_lock = asyncio.Lock()
+    svc._cb_probe_id = 0
+    svc._cb_probe_started_at = 0.0
     return svc
 
 
@@ -556,6 +558,71 @@ async def test_cb_half_open_failure_reopens(monkeypatch) -> None:
     # Half-open probe failed → re-opened for another window.
     assert svc._cb_state == "open"
     assert svc._cb_open_until > asyncio.get_running_loop().time()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 402])
+async def test_cb_half_open_probe_answered_with_4xx_closes_breaker(
+    monkeypatch, status_code: int,
+) -> None:
+    """RV-AI-02: a probe answered with 402 / other 4xx recorded no
+    verdict, so the breaker stayed half_open and every later call in the
+    worker failed fast until a restart. The provider answered — close."""
+    svc = _build_ai_service(monkeypatch)
+    svc._cb_state = "open"
+    svc._cb_open_until = asyncio.get_running_loop().time() - 1
+
+    def handler(_request):
+        return httpx.Response(status_code, json={"error": "nope"})
+
+    async with _mock_transport(handler) as client:
+        with pytest.raises((httpx.HTTPStatusError, RuntimeError)):
+            await svc._post_with_retry(
+                client, "https://ai.test/v1/chat/completions",
+                headers={}, json={},
+            )
+    assert svc._cb_state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_cb_half_open_probe_cancelled_reopens_instead_of_sticking(monkeypatch) -> None:
+    """RV-AI-02: an outer wait_for cancelling the probe left the breaker
+    in half_open forever; it must re-open for another window instead."""
+    svc = _build_ai_service(monkeypatch)
+    svc._cb_state = "open"
+    svc._cb_open_until = asyncio.get_running_loop().time() - 1
+
+    def handler(_request):
+        raise asyncio.CancelledError
+
+    async with _mock_transport(handler) as client:
+        with pytest.raises(asyncio.CancelledError):
+            await svc._post_with_retry(
+                client, "https://ai.test/v1/chat/completions",
+                headers={}, json={},
+            )
+    assert svc._cb_state == "open"
+    assert svc._cb_open_until > asyncio.get_running_loop().time()
+
+
+@pytest.mark.asyncio
+async def test_cb_stalled_probe_is_taken_over_after_deadline(monkeypatch) -> None:
+    """RV-AI-02: a probe that never reports back must not pin the breaker
+    in half_open — past the deadline the next caller becomes the probe."""
+    svc = _build_ai_service(monkeypatch)
+    svc._cb_state = "half_open"
+    svc._cb_probe_started_at = asyncio.get_running_loop().time() - 10_000
+
+    def handler(_request):
+        return httpx.Response(200, json={"ok": True})
+
+    async with _mock_transport(handler) as client:
+        resp = await svc._post_with_retry(
+            client, "https://ai.test/v1/chat/completions",
+            headers={}, json={},
+        )
+    assert resp.status_code == 200
+    assert svc._cb_state == "closed"
 
 
 # ──────────────────────────────────────────────────────────────────────
