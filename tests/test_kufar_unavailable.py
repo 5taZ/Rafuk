@@ -92,9 +92,9 @@ def test_kufar_api_error_answers_503_without_retry_after(path: str) -> None:
 
 @pytest.mark.asyncio
 async def test_scheduler_skips_query_group_while_breaker_is_open(monkeypatch) -> None:
-    """The collector (unchanged) already treats KufarAPIError as a group
-    error; with the breaker raising instead of returning the stub, an open
-    breaker no longer produces a snapshot, a baseline or a sync."""
+    """The collector skips the key on KufarAPIError; with the breaker raising
+    instead of returning the stub, an open breaker no longer produces a
+    snapshot, a baseline or a sync — and is not a C-04 strike."""
     from api.database import get_engine, get_session_factory
     from api.models import QueryListingState, QuerySnapshot, Tracker, TrackerEvent
     from scheduler import collector
@@ -137,8 +137,10 @@ async def test_scheduler_skips_query_group_while_breaker_is_open(monkeypatch) ->
             for model in (QuerySnapshot, QueryListingState, TrackerEvent):
                 count = await session.scalar(select(func.count()).select_from(model))
                 assert count == 0, model.__name__
-        # Counted as a failure for C-04, not mistaken for a clean tick.
-        assert collector._tracker_failure_counts.get(tracker.id) == 1
+        # Not a clean tick (no sync above), but not a C-04 strike either:
+        # an open breaker is a global outage, and counting it would
+        # auto-pause every tracker after a ~25 min Kufar outage.
+        assert tracker.id not in collector._tracker_failure_counts
     finally:
         collector._tracker_failure_counts.clear()
         await engine.dispose()

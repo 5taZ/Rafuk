@@ -80,7 +80,7 @@ from api.services.history_service import (
     sync_query_listing_states,
     upsert_query_snapshot,
 )
-from api.services.kufar_client import KufarAPIError, KufarClient
+from api.services.kufar_client import KufarAPIError, KufarClient, KufarUnavailableError
 from api.services.listing_mapper import first_image_url
 from api.services.market_signals import region_label
 from api.services.reseller_tools import compute_deal_score, matches_tracker_filters
@@ -1056,8 +1056,21 @@ async def _check_trackers_inner(
                         category=category_id,
                     )
                     ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
-                except _TRACKER_QUERY_ERRORS:
+                except _TRACKER_QUERY_ERRORS as exc:
                     total_errors += 1
+                    if isinstance(exc, KufarUnavailableError):
+                        # RV-BE-05: the circuit breaker is open — a global
+                        # Kufar outage, not this tracker's fault. Before
+                        # RV-BE-05 the breaker returned an empty "success"
+                        # that reset these counters; counting it now would
+                        # auto-pause every tracker after a ~25 min outage.
+                        logger.warning(
+                            "Kufar unavailable, skipping query %r [strict=%s category=%s]",
+                            query,
+                            strict_mode,
+                            category_id,
+                        )
+                        continue
                     logger.exception(
                         "Error fetching query %r [strict=%s category=%s], skipping",
                         query,

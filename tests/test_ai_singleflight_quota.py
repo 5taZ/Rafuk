@@ -257,6 +257,19 @@ def _wait_for_task(client: TestClient, task_id: str, timeout_s: float = 10.0) ->
     raise AssertionError("AI task did not finish in time")
 
 
+def _claims_left_after_release(keys, timeout_s: float = 5.0) -> list[str]:
+    """RV-AI-07: the claim is released in ``_run_analysis``'s ``finally``, a
+    beat after the task status flips to done, so a poll can see "done"
+    first (it did under full-suite load). Give the background task that
+    beat instead of asserting on the very next line."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        left = keys()
+        if not left or time.monotonic() >= deadline:
+            return left
+        time.sleep(0.02)
+
+
 def _quota_used(cache, telegram_user_id: int) -> str | None:
     key = quota_key(QUOTA_BUCKET_AI, telegram_user_id)
     if isinstance(cache, MemoryCache):
@@ -293,7 +306,9 @@ def test_repeat_while_running_returns_same_task_without_second_charge(monkeypatc
         assert status["status"] == "done"
         assert status["result"]["source"] == "ai"
         # The claim goes with the task; the next ask is a free cache hit.
-        assert not [key for key in cache._storage if key.startswith("ai_inflight:")]
+        assert not _claims_left_after_release(
+            lambda: [key for key in cache._storage if key.startswith("ai_inflight:")]
+        )
         after = client.post("/api/v1/ai/analyze", json=PAYLOAD)
         assert after.json()["cached"] is True
 
@@ -327,7 +342,7 @@ def test_repeat_on_another_worker_returns_same_task(monkeypatch) -> None:
         ai.release.set()
         # Polled through the worker that did not run the task.
         assert _wait_for_task(worker_two, task_id)["status"] == "done"
-        assert not shared.keys("ai_inflight:")
+        assert not _claims_left_after_release(lambda: shared.keys("ai_inflight:"))
 
     assert ai.calls == 1
 
@@ -350,7 +365,9 @@ def test_listing_not_found_refunds_quota(monkeypatch) -> None:
     assert status["error"] == "Объявление не найдено"
     assert _quota_used(cache, telegram_user_id) == "0"
     assert ai.calls == 0
-    assert not [key for key in cache._storage if key.startswith("ai_inflight:")]
+    assert not _claims_left_after_release(
+        lambda: [key for key in cache._storage if key.startswith("ai_inflight:")]
+    )
 
 
 def test_spawn_refusal_503_refunds_quota_and_frees_claim(monkeypatch) -> None:
@@ -374,7 +391,9 @@ def test_spawn_refusal_503_refunds_quota_and_frees_claim(monkeypatch) -> None:
 
     assert resp.status_code == 503
     assert _quota_used(cache, telegram_user_id) == "0"
-    assert not [key for key in cache._storage if key.startswith("ai_inflight:")]
+    assert not _claims_left_after_release(
+        lambda: [key for key in cache._storage if key.startswith("ai_inflight:")]
+    )
     tasks = [json.loads(value) for key, (value, _) in cache._storage.items()
              if key.startswith(f"ai_task:u{telegram_user_id}:")]
     assert [task["status"] for task in tasks] == ["error"]
@@ -394,7 +413,9 @@ def test_quota_rejection_releases_claim(monkeypatch) -> None:
         resp = client.post("/api/v1/ai/analyze", json=PAYLOAD)
 
     assert resp.status_code == 429
-    assert not [key for key in cache._storage if key.startswith("ai_inflight:")]
+    assert not _claims_left_after_release(
+        lambda: [key for key in cache._storage if key.startswith("ai_inflight:")]
+    )
     assert _quota_used(cache, telegram_user_id) == "10"
     assert ai.calls == 0
 
@@ -647,22 +668,17 @@ async def test_redis_cache_decr_uses_floor_script_and_swallows_errors() -> None:
     assert await RedisCache(BrokenClient()).decr("quota:ai:1:2026-10-21") == 0
 
 
-async def test_redis_decr_floor_script_against_real_redis() -> None:
-    cache = RedisCache.from_url("redis://localhost:6380/15")
-    try:
-        if not await cache.ping():
-            pytest.skip("Redis is not reachable on localhost:6380")
-        await cache.delete("rv-ai-07:decr")
-        assert await cache.decr("rv-ai-07:decr") == 0
-        assert await cache.get("rv-ai-07:decr") is None
-        await cache.incr("rv-ai-07:decr", ttl=60)
-        assert await cache.decr("rv-ai-07:decr") == 0
-        assert await cache.decr("rv-ai-07:decr") == 0
-        assert await cache.get("rv-ai-07:decr") == "0"
-        assert 0 < await cache._client.ttl("rv-ai-07:decr") <= 60
-    finally:
-        await cache.delete("rv-ai-07:decr")
-        await cache.aclose()
+async def test_redis_decr_floor_script_against_real_redis(redis_cache) -> None:
+    # RV-OPS-04: the conftest fixture follows TEST_REDIS_URL (6379 in CI)
+    # and flushes the DB before each test; a hard-coded :6380 never ran in CI.
+    cache = redis_cache
+    assert await cache.decr("rv-ai-07:decr") == 0
+    assert await cache.get("rv-ai-07:decr") is None
+    await cache.incr("rv-ai-07:decr", ttl=60)
+    assert await cache.decr("rv-ai-07:decr") == 0
+    assert await cache.decr("rv-ai-07:decr") == 0
+    assert await cache.get("rv-ai-07:decr") == "0"
+    assert 0 < await cache._client.ttl("rv-ai-07:decr") <= 60
 
 
 async def test_rejected_attempt_does_not_stay_on_the_counter() -> None:

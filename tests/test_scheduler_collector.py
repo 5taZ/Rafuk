@@ -2304,6 +2304,58 @@ def test_new_listing_message_omits_discount_when_above_market() -> None:
 
 
 @pytest.mark.asyncio
+async def test_check_trackers_does_not_auto_pause_while_kufar_breaker_is_open(
+    monkeypatch, mock_bot: AsyncMock,
+):
+    """RV-BE-05: an open circuit breaker (KufarUnavailableError) is a
+    global outage. It must skip the key without feeding the C-04 counter —
+    otherwise a ~25 min outage would auto-pause every tracker."""
+    from sqlalchemy import select
+
+    from api.services.kufar_client import KufarUnavailableError
+
+    class BreakerOpenClient:
+        def __init__(self, settings):
+            del settings
+
+        async def search(self, **kwargs):
+            del kwargs
+            raise KufarUnavailableError("Kufar circuit breaker open")
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(collector, "KufarClient", BreakerOpenClient)
+    collector._tracker_failure_counts.clear()
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=910, first_name="Outage")
+        session.add(user)
+        await session.flush()
+        session.add(Tracker(user_id=user.id, query="breaker query", strict_mode=False))
+        await session.commit()
+
+    settings = MagicMock()
+    settings.mini_app_url = "https://example.com/app"
+
+    for _ in range(collector._TRACKER_AUTO_PAUSE_THRESHOLD + 2):
+        await check_trackers(mock_bot, sf, settings)
+
+    async with sf() as session:
+        tracker = (await session.execute(select(Tracker))).scalar_one()
+        assert tracker.paused is False
+        assert tracker.pause_reason is None
+        # Never synced, so the key stays due for the next tick.
+        assert tracker.last_checked_at is None
+    assert collector._tracker_failure_counts == {}
+
+
+@pytest.mark.asyncio
 async def test_check_trackers_auto_pauses_after_persistent_kufar_errors(
     monkeypatch, mock_bot: AsyncMock,
 ):

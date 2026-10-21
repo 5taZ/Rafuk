@@ -62,7 +62,9 @@ async def test_consume_quota_counts_in_redis_with_a_single_ttl(redis_cache) -> N
     assert excinfo.value.status_code == 429
     assert excinfo.value.detail["error"] == "quota_exceeded"
 
-    assert await client.get(key) == "3"
+    # RV-AI-07: consume_quota rolls the rejected attempt back (decr), so
+    # the counter stays at the limit instead of creeping past it.
+    assert await client.get(key) == "2"
     # The Lua script sets EXPIRE only on the first INCR: later calls must
     # not push the reset further out (that would make the quota window
     # slide with every request).
