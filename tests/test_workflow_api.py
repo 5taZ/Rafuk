@@ -965,3 +965,150 @@ def test_delete_watchlist_item_after_promotion_idempotent(monkeypatch) -> None:
 
         delete_resp = client.delete(f"/api/v1/watchlist/{item['id']}")
         assert delete_resp.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# RV-SEC-04 / RV-BE-05: refreshes are cached, bounded and outage-safe
+# ---------------------------------------------------------------------------
+
+
+class _QueryAwareKufar:
+    """Query ``"item <N>"`` returns the single live ad ``N`` at 1500 BYN."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self.fail: Exception | None = None
+
+    async def search_all_ads(self, **kwargs) -> dict:
+        if self.fail is not None:
+            raise self.fail
+        query = kwargs["query"]
+        self.queries.append(query)
+        ad_id = int(query.rsplit(" ", 1)[-1])
+        return {
+            "total": 1,
+            "ads": [
+                {
+                    "ad_id": ad_id,
+                    "subject": f"Item {ad_id}",
+                    "price_byn": 150000,
+                    "price_usd": 45000,
+                    "ad_link": f"https://www.kufar.by/item/{ad_id}",
+                }
+            ],
+        }
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _refresh_app(kufar: _QueryAwareKufar):
+    from api.dependencies import get_cache, get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.services.cache import MemoryCache
+
+    app = create_app()
+    cache = MemoryCache()
+    app.dependency_overrides[get_kufar_client] = lambda: kufar
+    app.dependency_overrides[get_cache] = lambda: cache
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    return app
+
+
+def _add_item(client, path: str, ad_id: int, *, query: str | None = None) -> None:
+    response = client.post(
+        path,
+        json={
+            "query": query or f"item {ad_id}",
+            "ad_id": ad_id,
+            "title": f"Item {ad_id}",
+            "link": f"https://www.kufar.by/item/{ad_id}",
+            "price_byn": 2000,
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_watchlist_refresh_is_cached_and_bounded_by_distinct_queries(monkeypatch) -> None:
+    """RV-SEC-04: every distinct query used to cost an uncached Kufar
+    pagination on each click, with no limit on how many."""
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "REFRESH_MAX_QUERIES", 2)
+    kufar = _QueryAwareKufar()
+    with TestClient(_refresh_app(kufar)) as client:
+        for ad_id in (901, 902, 903):
+            _add_item(client, "/api/v1/watchlist", ad_id)
+
+        first = client.post("/api/v1/watchlist/refresh", json={})
+        assert first.status_code == 200
+        assert first.json()["updated"] == 2
+        # Most recently touched rows win the per-call budget.
+        assert sorted(kufar.queries) == ["item 902", "item 903"]
+
+        # A second click inside the cache TTL doesn't reach Kufar.
+        second = client.post("/api/v1/watchlist/refresh", json={})
+        assert second.status_code == 200
+        assert len(kufar.queries) == 2
+
+        prices = {
+            item["ad_id"]: item["current_price_byn"]
+            for item in client.get("/api/v1/watchlist").json()
+        }
+    assert prices == {901: 2000, 902: 1500, 903: 1500}  # 901 waits for a later refresh
+
+
+def test_watchlist_refresh_is_bounded_by_item_count(monkeypatch) -> None:
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "REFRESH_MAX_ITEMS", 2)
+    kufar = _QueryAwareKufar()
+    with TestClient(_refresh_app(kufar)) as client:
+        for ad_id in (911, 912, 913):
+            _add_item(client, "/api/v1/watchlist", ad_id, query="item 912")
+        response = client.post("/api/v1/watchlist/refresh", json={})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["updated"] + body["missing"] == 2
+
+
+def test_leads_refresh_is_cached_and_bounded_by_distinct_queries(monkeypatch) -> None:
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "REFRESH_MAX_QUERIES", 2)
+    kufar = _QueryAwareKufar()
+    with TestClient(_refresh_app(kufar)) as client:
+        for ad_id in (921, 922, 923):
+            _add_item(client, "/api/v1/leads", ad_id)
+
+        first = client.post("/api/v1/leads/refresh", json={})
+        assert first.status_code == 200
+        assert first.json() == {"checked": 2, "active": 2, "missing": 0}
+        assert sorted(kufar.queries) == ["item 922", "item 923"]
+
+        client.post("/api/v1/leads/refresh", json={})
+        assert len(kufar.queries) == 2
+
+
+def test_refresh_during_kufar_outage_marks_nothing_missing() -> None:
+    """RV-BE-05: with the breaker's empty stub every lot of the query was
+    flagged "missing" (and, after a week, auto-removed). An outage is now
+    an error for that query and the rows are left as they were."""
+    from api.services.kufar_client import KufarUnavailableError
+
+    kufar = _QueryAwareKufar()
+    kufar.fail = KufarUnavailableError("breaker open", retry_after=20)
+    with TestClient(_refresh_app(kufar)) as client:
+        _add_item(client, "/api/v1/watchlist", 931)
+        _add_item(client, "/api/v1/leads", 932)
+
+        watchlist = client.post("/api/v1/watchlist/refresh", json={})
+        leads = client.post("/api/v1/leads/refresh", json={})
+        items = client.get("/api/v1/watchlist").json()
+
+    assert watchlist.status_code == 200
+    assert watchlist.json()["missing"] == 0
+    assert leads.status_code == 200
+    assert leads.json()["missing"] == 0
+    assert items[0]["market_status"] != "missing"
+    assert items[0]["missing_since_at"] is None

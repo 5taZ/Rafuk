@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import asyncio
+from email.utils import format_datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from api.services.kufar_client import KufarAPIError, KufarClient
+import api.services.kufar_client as kufar_client_module
+from api.services.kufar_client import (
+    KUFAR_BASE_URL,
+    RETRY_AFTER_MAX_SECONDS,
+    KufarAPIError,
+    KufarClient,
+    KufarUnavailableError,
+    _retry_after_seconds,
+)
 
 SAMPLE_RESPONSE = {
     "ads": [
@@ -255,11 +265,11 @@ async def test_circuit_breaker_counter_is_thread_safe(mock_settings: MagicMock) 
 async def test_circuit_breaker_resets_on_success(
     ok_response: MagicMock, mock_settings: MagicMock
 ) -> None:
-    """Once the breaker is open the per-call check returns the empty
-    stub immediately. A clean response after the cooldown should also
-    bring the consecutive-error counter back to 0 atomically (so a
-    later transient failure isn't already at the threshold from the
-    previous storm)."""
+    """Once the breaker is open the per-call check fails fast (RV-BE-05:
+    with KufarUnavailableError; it used to return an empty stub). A clean
+    response after the cooldown should also bring the consecutive-error
+    counter back to 0 atomically (so a later transient failure isn't
+    already at the threshold from the previous storm)."""
     mock_settings.kufar_request_delay = 0.0
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=ok_response):
         client = KufarClient(mock_settings)
@@ -269,3 +279,352 @@ async def test_circuit_breaker_resets_on_success(
         await client.search(query="x")
         # Successful call must reset the counter.
         assert client._consecutive_errors == 0
+
+
+# ---------------------------------------------------------------------------
+# RV-BE-05: the breaker raises instead of returning an empty stub, and the
+# retry policy distinguishes our mistakes (4xx) from Kufar's (5xx/408/429).
+# ---------------------------------------------------------------------------
+
+
+def _http_response(
+    status: int,
+    *,
+    json_body: object | None = None,
+    text: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
+    request = httpx.Request("GET", KUFAR_BASE_URL)
+    if text is not None:
+        return httpx.Response(status, text=text, headers=headers, request=request)
+    return httpx.Response(
+        status,
+        json=SAMPLE_RESPONSE if json_body is None else json_body,
+        headers=headers,
+        request=request,
+    )
+
+
+@pytest.fixture
+def recorded_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record retry back-off delays instead of actually sleeping."""
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(kufar_client_module.asyncio, "sleep", fake_sleep)
+    return delays
+
+
+def _open_breaker(client: KufarClient, *, remaining: float) -> None:
+    client._circuit_state = "open"
+    client._circuit_open_until = asyncio.get_running_loop().time() + remaining
+
+
+@pytest.mark.asyncio
+async def test_open_breaker_raises_unavailable_instead_of_empty_stub(
+    mock_settings: MagicMock, recorded_sleeps: list[float],
+) -> None:
+    client = KufarClient(mock_settings)
+    with patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_http_response(503, json_body={}),
+    ) as get_mock:
+        # 3 failed attempts, then 2 more trip the breaker (threshold 5).
+        with pytest.raises(KufarAPIError, match="after 3 attempts") as first_error:
+            await client.search(query="iphone")
+        assert first_error.value.retry_after is None
+        with pytest.raises(KufarAPIError, match="after 2 attempts") as tripping_error:
+            await client.search(query="iphone")
+        assert client._circuit_state == "open"
+        # The call that tripped the breaker already tells the API when to retry.
+        assert tripping_error.value.retry_after > 0
+        calls_before = get_mock.await_count
+
+        with pytest.raises(KufarUnavailableError) as excinfo:
+            await client.search(query="iphone")
+
+    # Fail fast: no request reaches Kufar, and no fake {"ads": []} result.
+    assert get_mock.await_count == calls_before == 5
+    assert isinstance(excinfo.value, KufarAPIError)
+    assert 0 < excinfo.value.retry_after <= kufar_client_module.CIRCUIT_OPEN_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_search_all_ads_raises_when_breaker_opens_mid_pagination(
+    mock_settings: MagicMock,
+) -> None:
+    """The open breaker used to answer the next page with the empty stub;
+    pagination stopped there and the short result was cached as complete."""
+    client = KufarClient(mock_settings)
+    original_search = client.search
+    pages_requested = 0
+
+    async def search_then_trip(**kwargs):
+        nonlocal pages_requested
+        pages_requested += 1
+        result = await original_search(**kwargs)
+        if pages_requested == 1:
+            _open_breaker(client, remaining=30)
+        return result
+
+    client.search = search_then_trip  # type: ignore[method-assign]
+    first_page = _http_response(
+        200,
+        json_body={
+            "ads": [{"ad_id": 1}],
+            "pagination": {"pages": [{"token": "cursor-2"}]},
+            "total": 400,
+        },
+    )
+    with (
+        patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=first_page) as get,
+        pytest.raises(KufarUnavailableError),
+    ):
+        await client.search_all_ads(query="iphone")
+    assert get.await_count == 1
+    assert pages_requested == 2
+
+
+@pytest.mark.asyncio
+async def test_half_open_probe_is_exclusive_and_closes_breaker_on_success(
+    mock_settings: MagicMock,
+) -> None:
+    client = KufarClient(mock_settings)
+    _open_breaker(client, remaining=-1)  # window already expired
+    release_probe = asyncio.Event()
+
+    async def slow_get(*args, **kwargs):
+        await release_probe.wait()
+        return _http_response(200)
+
+    with patch("httpx.AsyncClient.get", side_effect=slow_get):
+        probe = asyncio.create_task(client.search(query="probe"))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert client._circuit_state == "half_open"
+        # While the probe is in flight everybody else fails fast.
+        with pytest.raises(KufarUnavailableError):
+            await client.search(query="concurrent")
+        release_probe.set()
+        result = await probe
+
+    assert result["ads"][0]["ad_id"] == 12345
+    assert client._circuit_state == "closed"
+    assert client._consecutive_errors == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_reopens_breaker_without_retrying(
+    mock_settings: MagicMock, recorded_sleeps: list[float],
+) -> None:
+    client = KufarClient(mock_settings)
+    client._consecutive_errors = 5
+    _open_breaker(client, remaining=-1)
+    with (
+        patch(
+            "httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=_http_response(502, json_body={}),
+        ) as get_mock,
+        pytest.raises(KufarAPIError) as excinfo,
+    ):
+        await client.search(query="probe")
+
+    assert not isinstance(excinfo.value, KufarUnavailableError)
+    assert get_mock.await_count == 1
+    assert client._circuit_state == "open"
+    assert client._open_remaining() > 0
+    assert recorded_sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_probe_does_not_wedge_breaker_in_half_open(
+    mock_settings: MagicMock,
+) -> None:
+    """The AI-02 failure mode: a probe that never reports back would leave
+    half_open forever and every later call would fail fast."""
+    client = KufarClient(mock_settings)
+    _open_breaker(client, remaining=-1)
+    never = asyncio.Event()
+
+    async def hanging_get(*args, **kwargs):
+        await never.wait()
+
+    with patch("httpx.AsyncClient.get", side_effect=hanging_get):
+        probe = asyncio.create_task(client.search(query="probe"))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert client._circuit_state == "half_open"
+        probe.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await probe
+
+    assert client._circuit_state == "open"
+    assert client._open_remaining() == 0
+    # The next caller becomes a fresh probe and can close the breaker.
+    with patch(
+        "httpx.AsyncClient.get", new_callable=AsyncMock, return_value=_http_response(200),
+    ):
+        await client.search(query="next")
+    assert client._circuit_state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_client_errors_are_neither_retried_nor_counted(
+    mock_settings: MagicMock, recorded_sleeps: list[float],
+) -> None:
+    """A 4xx is about our request: retrying can't fix it, and counting it
+    would let one user's malformed queries open the breaker for everyone."""
+    client = KufarClient(mock_settings)
+    with patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        return_value=_http_response(404, json_body={}),
+    ) as get_mock:
+        for _ in range(10):
+            with pytest.raises(KufarAPIError, match="HTTP 404"):
+                await client.search(query="bad")
+
+    assert get_mock.await_count == 10
+    assert recorded_sleeps == []
+    assert client._consecutive_errors == 0
+    assert client._circuit_state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_client_error_settles_half_open_probe(mock_settings: MagicMock) -> None:
+    client = KufarClient(mock_settings)
+    client._consecutive_errors = 5
+    _open_breaker(client, remaining=-1)
+    with (
+        patch(
+            "httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=_http_response(400, json_body={}),
+        ),
+        pytest.raises(KufarAPIError, match="HTTP 400"),
+    ):
+        await client.search(query="probe")
+    # Kufar answered, so it is reachable: the breaker must not stay half-open.
+    assert client._circuit_state == "closed"
+    assert client._consecutive_errors == 0
+
+
+@pytest.mark.asyncio
+async def test_timeout_and_rate_limit_statuses_are_retried(
+    mock_settings: MagicMock, recorded_sleeps: list[float],
+) -> None:
+    client = KufarClient(mock_settings)
+    with patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        side_effect=[
+            _http_response(429, json_body={}),
+            _http_response(408, json_body={}),
+            _http_response(200),
+        ],
+    ) as get_mock:
+        result = await client.search(query="iphone")
+
+    assert result["ads"][0]["ad_id"] == 12345
+    assert get_mock.await_count == 3
+    assert recorded_sleeps == [1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_retry_after_header_is_honoured(
+    mock_settings: MagicMock, recorded_sleeps: list[float],
+) -> None:
+    client = KufarClient(mock_settings)
+    with patch(
+        "httpx.AsyncClient.get",
+        new_callable=AsyncMock,
+        side_effect=[
+            _http_response(429, json_body={}, headers={"Retry-After": "7"}),
+            _http_response(200),
+        ],
+    ):
+        await client.search(query="iphone")
+
+    # The server's pause wins over the 1 s exponential back-off.
+    assert recorded_sleeps == [7.0]
+
+
+@pytest.mark.asyncio
+async def test_retry_after_beyond_cap_fails_fast(
+    mock_settings: MagicMock, recorded_sleeps: list[float],
+) -> None:
+    client = KufarClient(mock_settings)
+    with (
+        patch(
+            "httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=_http_response(429, json_body={}, headers={"Retry-After": "120"}),
+        ) as get_mock,
+        pytest.raises(KufarAPIError) as excinfo,
+    ):
+        await client.search(query="iphone")
+
+    assert get_mock.await_count == 1
+    assert recorded_sleeps == []
+    assert excinfo.value.retry_after == 120
+    assert client._consecutive_errors == 1
+
+
+def test_retry_after_parsing_supports_seconds_and_http_dates() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    assert _retry_after_seconds(_http_response(429, headers={"Retry-After": "3"})) == 3.0
+    assert _retry_after_seconds(_http_response(429, headers={"Retry-After": "-5"})) == 0.0
+    assert _retry_after_seconds(_http_response(429, headers={"Retry-After": "soon"})) is None
+    assert _retry_after_seconds(_http_response(429)) is None
+    when = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    parsed = _retry_after_seconds(_http_response(503, headers={"Retry-After": when}))
+    assert parsed is not None
+    assert 25 <= parsed <= 31
+    assert parsed > RETRY_AFTER_MAX_SECONDS  # i.e. this pause would fail fast
+
+
+@pytest.mark.asyncio
+async def test_non_json_body_is_an_upstream_failure(
+    mock_settings: MagicMock, recorded_sleeps: list[float],
+) -> None:
+    """An HTML anti-bot page with 200 used to escape as a bare ValueError
+    (500 in the API, an unhandled error in the scheduler tick)."""
+    client = KufarClient(mock_settings)
+    with (
+        patch(
+            "httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=_http_response(200, text="<html>checking your browser</html>"),
+        ),
+        pytest.raises(KufarAPIError, match="after 3 attempts"),
+    ):
+        await client.search(query="iphone")
+    assert client._consecutive_errors == 3
+
+
+@pytest.mark.asyncio
+async def test_retries_stop_once_the_breaker_opens_elsewhere(
+    mock_settings: MagicMock, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = KufarClient(mock_settings)
+
+    async def sleep_while_others_fail(delay: float) -> None:
+        del delay
+        _open_breaker(client, remaining=30)
+
+    monkeypatch.setattr(kufar_client_module.asyncio, "sleep", sleep_while_others_fail)
+    with (
+        patch(
+            "httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=_http_response(503, json_body={}),
+        ) as get_mock,
+        pytest.raises(KufarUnavailableError),
+    ):
+        await client.search(query="iphone")
+    assert get_mock.await_count == 1

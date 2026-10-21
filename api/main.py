@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import secrets as _secrets
 import time
 from contextlib import asynccontextmanager
@@ -50,7 +51,7 @@ from api.services.account_erasure import init_data_auth_date, is_erased_session
 from api.services.ai_service import get_ai_service
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
-from api.services.kufar_client import KufarClient
+from api.services.kufar_client import KufarAPIError, KufarClient, KufarUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,32 @@ async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     if req_id:
         response.headers["X-Request-ID"] = req_id
     return response
+
+
+async def kufar_unavailable_handler(request: Request, exc: KufarAPIError):
+    """RV-BE-05: Kufar being down is an upstream outage, not our bug.
+
+    It used to reach the catch-all handler as a 500 ("внутренняя ошибка").
+    503 tells the Mini App to retry (it backs off on 502/503/504), and
+    ``no-store`` keeps browsers from replaying the error from cache.
+    Registered for ``KufarAPIError``, so it runs inside the middleware
+    stack and gets the request id / security headers / metrics there.
+    """
+    logger.warning(
+        "Kufar unavailable on %s %s: [%s] %s",
+        request.method,
+        request.url.path,
+        type(exc).__name__,
+        exc,
+    )
+    if isinstance(exc, KufarUnavailableError):
+        detail = "Kufar временно недоступен. Попробуйте через минуту."
+    else:
+        detail = "Не удалось получить данные с Kufar. Попробуйте позже."
+    headers = {"Cache-Control": "no-store"}
+    if exc.retry_after is not None:
+        headers["Retry-After"] = str(max(1, math.ceil(exc.retry_after)))
+    return JSONResponse(status_code=503, content={"detail": detail}, headers=headers)
 
 
 @asynccontextmanager
@@ -344,7 +371,11 @@ def create_app() -> FastAPI:
             pass
         elif request.method in ("POST", "PATCH", "DELETE"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        elif request.url.path.startswith(("/api/v1/price-stats", "/api/v1/listings")):
+        elif response.status_code < 400 and request.url.path.startswith(
+            ("/api/v1/price-stats", "/api/v1/listings")
+        ):
+            # RV-BE-05: success only — a 503 "Kufar unavailable" (or a
+            # 429) marked public for 60 s could be replayed from cache.
             # OPUS-10: server-side cache TTL is 300s; if we also tell
             # the browser to keep the body for 300s a user could see
             # a response up to ~10 minutes old. Keep ``max-age`` short
@@ -530,6 +561,7 @@ def create_app() -> FastAPI:
     # Add rate limiter to app state
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+    app.add_exception_handler(KufarAPIError, kufar_unavailable_handler)
 
     # Include routers
     app.include_router(price_stats.router, prefix="/api/v1")

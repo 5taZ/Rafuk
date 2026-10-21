@@ -18,7 +18,11 @@ from api.services.aggregator import PriceStats, compute_segments
 from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
-from api.services.query_pipeline import convert_price_stats, load_query_dataset_with_fallback
+from api.services.query_pipeline import (
+    claim_force_refresh,
+    convert_price_stats,
+    load_query_dataset_with_fallback,
+)
 from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
@@ -57,6 +61,9 @@ async def get_segments(
     cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
         return SegmentsResponse(**cached)
+    # RV-SEC-04: see listings.py — at most one upstream re-fetch per user
+    # per cooldown across all endpoints; otherwise reuse the dataset cache.
+    refetch_upstream = force_refresh and await claim_force_refresh(cache, _user.user_id)
 
     # Compute the 4 segment baskets directly from the singleflighted
     # dataset instead of issuing 2 extra Kufar calls (cnd=new and
@@ -77,7 +84,7 @@ async def get_segments(
         client=kufar_client,
         category=category,
         cache=cache,
-        force_refresh=force_refresh,
+        force_refresh=refetch_upstream,
     )
     dataset = fb.dataset
     raw_segments = compute_segments(dataset.ads)
@@ -108,5 +115,7 @@ async def get_segments(
         used_private=_segment_payload("used_private"),
         used_shop=_segment_payload("used_shop"),
     )
-    await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
+    # RV-BE-05: don't pin a response built from an empty upstream answer.
+    if dataset.cacheable:
+        await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
     return payload

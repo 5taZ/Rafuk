@@ -25,6 +25,9 @@ class CacheBackend(Protocol):
     async def get_json(self, key: str) -> Any: ...
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None: ...
     async def incr(self, key: str, ttl: int | None = None) -> int: ...
+    # RV-SEC-04: atomic "set only if missing" with a TTL (Redis SET NX EX).
+    # True when this call created the key.
+    async def set_if_absent(self, key: str, value: str, ttl: int) -> bool: ...
     async def delete(self, key: str) -> None: ...
     async def ping(self) -> bool: ...
 
@@ -133,6 +136,19 @@ class MemoryCache:
             while len(self._storage) > self.MAX_ENTRIES:
                 self._storage.popitem(last=False)
         return count
+
+    async def set_if_absent(self, key: str, value: str, ttl: int) -> bool:
+        """Store *value* only when *key* is missing or expired (RV-SEC-04)."""
+        async with self._lock:
+            entry = self._storage.get(key)
+            now = time.monotonic()
+            if entry is not None and (entry[1] <= 0 or now < entry[1]):
+                return False
+            self._storage[key] = (value, now + ttl if ttl and ttl > 0 else 0.0)
+            self._storage.move_to_end(key)
+            while len(self._storage) > self.MAX_ENTRIES:
+                self._storage.popitem(last=False)
+            return True
 
     async def delete(self, key: str) -> None:
         """Remove a key from the cache. No-op if the key does not exist."""
@@ -266,6 +282,18 @@ class RedisCache:
         except RedisError:
             logger.warning("Redis incr failed for key=%s", key, exc_info=True)
             return 999_999
+
+    async def set_if_absent(self, key: str, value: str, ttl: int) -> bool:
+        """Atomic ``SET key value NX EX ttl`` (RV-SEC-04).
+
+        Fails closed like ``incr``: on a Redis error nobody gets the key,
+        so a budget guarded by it is denied rather than unlimited.
+        """
+        try:
+            return bool(await self._client.set(key, value, ex=ttl, nx=True))
+        except RedisError:
+            logger.warning("Redis set_if_absent failed for key=%s", key, exc_info=True)
+            return False
 
     async def delete(self, key: str) -> None:
         """Remove a key from Redis. No-op if the key does not exist."""

@@ -263,3 +263,53 @@ def test_price_stats_non_strict_total_results_uses_kufar_total(monkeypatch) -> N
     payload = response.json()
     # strict_search=False: total_results should be Kufar's raw total (50)
     assert payload["total_results"] == 50
+
+
+def test_price_stats_empty_answer_is_neither_cached_nor_snapshotted() -> None:
+    """RV-BE-05: an empty upstream answer (formerly the open breaker's
+    stub) was cached for the whole TTL and written to price history as a
+    zero-median point. Each request now asks again, and history stays clean."""
+    from sqlalchemy import func, select
+
+    from api.database import get_engine, get_session_factory
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.models import QuerySnapshot
+
+    class EmptyClient:
+        fetches = 0
+
+        async def search_all_ads(self, **kwargs) -> dict:
+            del kwargs
+            EmptyClient.fetches += 1
+            return {"ads": [], "total": 0}
+
+        async def aclose(self) -> None:
+            return None
+
+    cache = MemoryCache()
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: EmptyClient()
+    app.dependency_overrides[get_cache] = lambda: cache
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    with TestClient(app) as client:
+        for _ in range(2):
+            response = client.get("/api/v1/price-stats", params={"query": "nothing here"})
+            assert response.status_code == 200
+            assert response.json()["count"] == 0
+
+    # One pagination per request: not cached, and the strict→loose
+    # fallback reuses the answer instead of fetching it twice.
+    assert EmptyClient.fetches == 2
+
+    async def snapshot_count() -> int:
+        engine = get_engine()
+        try:
+            async with get_session_factory(engine)() as session:
+                return int(
+                    await session.scalar(select(func.count()).select_from(QuerySnapshot))
+                )
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(snapshot_count()) == 0

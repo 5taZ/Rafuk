@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -15,10 +18,66 @@ KUFAR_BASE_URL = "https://api.kufar.by/search-api/v2/search/rendered-paginated"
 USER_AGENT = "Mozilla/5.0 (compatible; KufarAnalytics/1.0; +https://kufar.by)"
 MAX_RETRIES = 3
 BACKOFF_BASE_SECONDS = 1.0
+CIRCUIT_FAILURE_THRESHOLD = 5
+CIRCUIT_OPEN_SECONDS = 30.0
+# RV-BE-05: 4xx means "this request is wrong", so it is neither retried
+# nor counted by the breaker (one malformed query must not trip it for
+# everybody). 408 and 429 are the exceptions: Kufar is slow or wants us
+# to back off.
+RETRYABLE_CLIENT_STATUSES = frozenset({408, 429})
+# RV-BE-05: Retry-After is honoured, but a request is never parked for
+# longer than this; a longer server-requested pause fails fast instead
+# of retrying before Kufar allows it.
+RETRY_AFTER_MAX_SECONDS = 10.0
 
 
 class KufarAPIError(Exception):
     """Raised when Kufar API remains unavailable after retries."""
+
+    def __init__(self, message: str = "", *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        # Seconds until a retry makes sense, when known (open breaker,
+        # Retry-After); the API echoes it in the 503 Retry-After header.
+        self.retry_after = retry_after
+
+
+class KufarUnavailableError(KufarAPIError):
+    """Raised without contacting Kufar while the circuit breaker is open.
+
+    RV-BE-05: the breaker used to hand out ``{"ads": [], "total": 0}``.
+    Callers cached that stub and treated it as a genuine "nothing found"
+    (zero medians, empty tracker baselines, lots marked missing). As a
+    ``KufarAPIError`` it is now skipped by the scheduler and answered
+    with 503 by the API.
+    """
+
+
+def _is_retryable_status(status_code: object) -> bool:
+    if not isinstance(status_code, int):
+        return True
+    return status_code >= 500 or status_code in RETRYABLE_CLIENT_STATUSES
+
+
+def _retry_after_seconds(response: object) -> float | None:
+    """Parse ``Retry-After`` (delta-seconds or HTTP-date) from *response*."""
+    headers = getattr(response, "headers", None)
+    raw = headers.get("Retry-After") if headers is not None else None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    raw = raw.strip()
+    try:
+        seconds = float(raw)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        seconds = (when - datetime.now(UTC)).total_seconds()
+    if not math.isfinite(seconds):
+        return None
+    return max(0.0, seconds)
 
 
 class KufarClient:
@@ -41,7 +100,8 @@ class KufarClient:
         # Limit parallel HTTP requests across all KufarClient users
         self._semaphore = asyncio.Semaphore(settings.kufar_parallel_semaphore)
         # Simple circuit breaker: after 5 consecutive errors open the
-        # circuit for 30 seconds and return empty results.
+        # circuit for 30 seconds and fail fast with KufarUnavailableError
+        # (RV-BE-05: it used to return an empty result instead).
         #
         # _circuit_lock serialises read-modify-write of _consecutive_errors
         # / _circuit_open_until. Without it, two coroutines can each
@@ -106,6 +166,98 @@ class KufarClient:
                 await asyncio.sleep(delay - elapsed)
             self._last_request_time = loop.time()
 
+    def _open_remaining(self) -> float | None:
+        if self._circuit_state != "open":
+            return None
+        return max(0.0, self._circuit_open_until - asyncio.get_running_loop().time())
+
+    async def _enter_circuit(self, query: str) -> bool:
+        """Admit one search through the breaker; True if it is the half-open probe.
+
+        SEC-06: 3-state circuit breaker (closed / open / half_open). The
+        state machine lives behind _circuit_lock so concurrent callers
+        can't race through the half-open probe in lockstep.
+        """
+        async with self._circuit_lock:
+            now = asyncio.get_running_loop().time()
+            if self._circuit_state == "open":
+                if now < self._circuit_open_until:
+                    logger.warning("Kufar circuit breaker open; rejecting query=%s", query)
+                    raise KufarUnavailableError(
+                        "Kufar circuit breaker is open",
+                        retry_after=self._circuit_open_until - now,
+                    )
+                # Open window expired — this caller becomes the probe.
+                self._circuit_state = "half_open"
+                logger.info("Kufar circuit breaker → half_open (probing)")
+                return True
+            if self._circuit_state == "half_open":
+                # Another caller already owns the probe; don't pile on.
+                logger.warning("Kufar circuit breaker half_open; rejecting query=%s", query)
+                raise KufarUnavailableError("Kufar circuit breaker is probing upstream")
+            return False
+
+    async def _record_success(self) -> None:
+        # Success — reset error counter under the lock so a concurrent
+        # failure path can't observe an old (high) counter mid-update.
+        # SEC-06: also close the breaker if we were the half-open probe.
+        async with self._circuit_lock:
+            self._consecutive_errors = 0
+            if self._circuit_state != "closed":
+                logger.info("Kufar circuit breaker → closed (was %s)", self._circuit_state)
+            self._circuit_state = "closed"
+            self._circuit_open_until = 0.0
+
+    async def _record_failure(self) -> bool:
+        """Count one retryable failure; True when the breaker is open afterwards."""
+        # Read-modify-write of the error counter MUST be atomic vs. a
+        # concurrent success-reset; otherwise two failures racing with a
+        # success could either overshoot the threshold or never reach it.
+        async with self._circuit_lock:
+            self._consecutive_errors += 1
+            if self._circuit_state == "half_open":
+                # SEC-06: half-open probe failed → re-open for another
+                # full window so we don't immediately send another probe.
+                logger.warning("Kufar circuit breaker → open (half_open probe failed)")
+                self._open_circuit()
+            elif self._consecutive_errors >= CIRCUIT_FAILURE_THRESHOLD:
+                if self._circuit_state != "open":
+                    logger.error(
+                        "Kufar circuit breaker → open after %s consecutive errors",
+                        self._consecutive_errors,
+                    )
+                self._open_circuit()
+            return self._circuit_state == "open"
+
+    async def _record_rejection(self, *, is_probe: bool) -> None:
+        # RV-BE-05: a 4xx proves Kufar is reachable, so it settles a
+        # half-open probe; otherwise it leaves the counter alone, or one
+        # user's malformed queries could trip (or keep resetting) the
+        # breaker that every other request shares.
+        if not is_probe:
+            return
+        async with self._circuit_lock:
+            if self._circuit_state == "half_open":
+                logger.info("Kufar circuit breaker → closed (probe answered with 4xx)")
+                self._consecutive_errors = 0
+                self._circuit_state = "closed"
+                self._circuit_open_until = 0.0
+
+    def _open_circuit(self) -> None:
+        self._circuit_state = "open"
+        self._circuit_open_until = asyncio.get_running_loop().time() + CIRCUIT_OPEN_SECONDS
+
+    def _abandon_probe(self) -> None:
+        # RV-BE-05: the probe finished without an outcome (cancelled
+        # request, unexpected error). Left alone the breaker would stay
+        # half_open forever and every call would fail fast — the AI-02
+        # failure mode. Re-open with an expired window so the next caller
+        # probes again. Synchronous on purpose: it runs from ``finally``,
+        # including during task cancellation.
+        if self._circuit_state == "half_open":
+            self._circuit_state = "open"
+            self._circuit_open_until = 0.0
+
     async def search(
         self,
         query: str,
@@ -121,28 +273,7 @@ class KufarClient:
         category: int | None = None,
         bypass_delay: bool = False,
     ) -> dict[str, Any]:
-        # SEC-06: 3-state circuit breaker (closed / open / half_open).
-        # The state machine lives behind _circuit_lock so concurrent
-        # callers can't race through the half-open probe in lockstep.
-        async with self._circuit_lock:
-            now = asyncio.get_running_loop().time()
-            if self._circuit_state == "open":
-                if now < self._circuit_open_until:
-                    logger.warning(
-                        "Circuit breaker open for query=%s; returning empty stub",
-                        query,
-                    )
-                    return {"ads": [], "total": 0}
-                # Open window expired — this caller becomes the probe.
-                self._circuit_state = "half_open"
-                logger.info("Kufar circuit breaker → half_open (probing)")
-            elif self._circuit_state == "half_open":
-                # Another caller already owns the probe; don't pile on.
-                logger.warning(
-                    "Circuit breaker half_open for query=%s; returning empty stub",
-                    query,
-                )
-                return {"ads": [], "total": 0}
+        is_probe = await self._enter_circuit(query)
 
         params: dict[str, Any] = {
             "query": query,
@@ -174,68 +305,76 @@ class KufarClient:
         }
 
         last_error: Exception | None = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                if not bypass_delay:
-                    await self._enforce_delay()
-                client = await self._get_client()
-                async with self._semaphore:
-                    response = await client.get(KUFAR_BASE_URL, params=params, headers=headers)
-                response.raise_for_status()
-                # Success — reset error counter under the lock so a
-                # concurrent failure path can't observe an old (high)
-                # counter mid-update. SEC-06: also close the breaker
-                # if we were the half-open probe.
-                async with self._circuit_lock:
-                    self._consecutive_errors = 0
-                    if self._circuit_state != "closed":
-                        logger.info(
-                            "Kufar circuit breaker → closed (was %s)",
-                            self._circuit_state,
+        attempts = 0
+        settled = False
+        try:
+            for attempt in range(MAX_RETRIES):
+                if attempt and self._circuit_state != "closed":
+                    # RV-BE-05: the breaker tripped while we were backing
+                    # off; more attempts would only add load to a failing
+                    # upstream.
+                    raise KufarUnavailableError(
+                        "Kufar circuit breaker opened while retrying",
+                        retry_after=self._open_remaining(),
+                    ) from last_error
+                attempts += 1
+                retry_after: float | None = None
+                try:
+                    if not bypass_delay:
+                        await self._enforce_delay()
+                    client = await self._get_client()
+                    async with self._semaphore:
+                        response = await client.get(
+                            KUFAR_BASE_URL, params=params, headers=headers,
                         )
-                    self._circuit_state = "closed"
-                    self._circuit_open_until = 0.0
-                return response.json()
-            except (httpx.HTTPError, httpx.TimeoutException) as exc:
-                last_error = exc
-                # Read-modify-write of the error counter MUST be atomic
-                # vs. a concurrent success-reset; otherwise two failures
-                # racing with a success could either overshoot the
-                # threshold or never reach it.
-                async with self._circuit_lock:
-                    self._consecutive_errors += 1
-                    consecutive = self._consecutive_errors
-                    if self._circuit_state == "half_open":
-                        # SEC-06: half-open probe failed → re-open for
-                        # another full window so we don't immediately
-                        # send another probe.
-                        self._circuit_state = "open"
-                        self._circuit_open_until = (
-                            asyncio.get_running_loop().time() + 30.0
-                        )
-                        logger.warning(
-                            "Kufar circuit breaker → open (half_open probe failed)",
-                        )
-                    elif consecutive >= 5:
-                        self._circuit_state = "open"
-                        self._circuit_open_until = (
-                            asyncio.get_running_loop().time() + 30.0
-                        )
+                    response.raise_for_status()
+                    payload = response.json()
+                except httpx.HTTPStatusError as exc:
+                    status_code = getattr(exc.response, "status_code", None)
+                    if not _is_retryable_status(status_code):
+                        await self._record_rejection(is_probe=is_probe)
+                        settled = True
+                        raise KufarAPIError(
+                            f"Kufar API rejected the request with HTTP {status_code}"
+                        ) from exc
+                    last_error = exc
+                    retry_after = _retry_after_seconds(exc.response)
+                except (httpx.HTTPError, ValueError) as exc:
+                    # ValueError: a 200 whose body is not JSON (an anti-bot
+                    # or maintenance page) is an upstream failure, not data.
+                    last_error = exc
+                else:
+                    await self._record_success()
+                    settled = True
+                    return payload
+
+                breaker_open = await self._record_failure()
+                settled = True
                 logger.warning(
                     "Kufar request failed on attempt %s/%s for query=%s: %s",
                     attempt + 1,
                     MAX_RETRIES,
                     query,
-                    exc,
+                    last_error,
                 )
-                if consecutive >= 5:
-                    logger.error("Circuit breaker opened after 5 consecutive errors")
+                if breaker_open or attempt == MAX_RETRIES - 1:
                     break
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(BACKOFF_BASE_SECONDS * (2**attempt))
+                delay = BACKOFF_BASE_SECONDS * (2**attempt)
+                if retry_after is not None:
+                    if retry_after > RETRY_AFTER_MAX_SECONDS:
+                        raise KufarAPIError(
+                            f"Kufar asked to retry after {retry_after:.0f}s",
+                            retry_after=retry_after,
+                        ) from last_error
+                    delay = max(delay, retry_after)
+                await asyncio.sleep(delay)
+        finally:
+            if is_probe and not settled:
+                self._abandon_probe()
 
         raise KufarAPIError(
-            f"Kufar API request failed after {MAX_RETRIES} attempts"
+            f"Kufar API request failed after {attempts} attempt{'' if attempts == 1 else 's'}",
+            retry_after=self._open_remaining(),
         ) from last_error
 
     async def search_all_ads(

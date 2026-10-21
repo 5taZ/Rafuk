@@ -14,7 +14,6 @@ from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import Tracker, TrackerEvent, User, UserConsent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead, TrackerUpdate
-from api.services.reseller_tools import default_config_keyword
 from api.services.workflow_store import ensure_user, resolve_user_id
 
 router = APIRouter(tags=["trackers"])
@@ -283,7 +282,10 @@ async def create_tracker(
             seller_type=payload.seller_type,
             condition=payload.condition,
             region_name=payload.region_name,
-            config_keyword=payload.config_keyword or default_config_keyword(query),
+            # RV-BE-04: no default_config_keyword(query) any more — that put
+            # the whole query in as a substring filter and dropped most
+            # matches. NULL means "no extra keyword filter".
+            config_keyword=payload.config_keyword,
             alert_price_threshold=payload.alert_price_threshold,
             alert_discount_percent=payload.alert_discount_percent,
         )

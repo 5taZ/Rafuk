@@ -103,3 +103,59 @@ async def test_memory_cache_pipeline_get_empty_list() -> None:
     cache = MemoryCache()
     assert await cache.pipeline_get([]) == []
     assert await cache.pipeline_hgetall([]) == []
+
+
+@pytest.mark.asyncio
+async def test_memory_cache_set_if_absent_is_first_writer_wins_with_ttl(monkeypatch) -> None:
+    """RV-SEC-04: the per-user force_refresh budget relies on this."""
+    from types import SimpleNamespace
+
+    import api.services.cache as cache_module
+
+    now = [500.0]
+    monkeypatch.setattr(cache_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    cache = MemoryCache()
+
+    assert await cache.set_if_absent("k", "first", ttl=60) is True
+    assert await cache.set_if_absent("k", "second", ttl=60) is False
+    assert await cache.get("k") == "first"
+
+    now[0] += 61
+    assert await cache.set_if_absent("k", "third", ttl=60) is True
+    assert await cache.get("k") == "third"
+
+    # A key written without TTL never expires, so it is never "absent".
+    await cache.set("forever", "x")
+    now[0] += 10_000
+    assert await cache.set_if_absent("forever", "y", ttl=60) is False
+
+
+@pytest.mark.asyncio
+async def test_memory_cache_set_if_absent_concurrent_callers_get_one_winner() -> None:
+    import asyncio
+
+    cache = MemoryCache()
+    results = await asyncio.gather(
+        *[cache.set_if_absent("budget", str(i), ttl=60) for i in range(20)]
+    )
+    assert results.count(True) == 1
+
+
+@pytest.mark.asyncio
+async def test_redis_cache_set_if_absent_uses_set_nx_ex_and_fails_closed() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    from api.services.cache import RedisCache
+
+    client = MagicMock()
+    client.set = AsyncMock(side_effect=[True, None, RedisConnectionError("down")])
+    cache = RedisCache(client)
+
+    assert await cache.set_if_absent("force_refresh:1", "1", ttl=60) is True
+    client.set.assert_awaited_with("force_refresh:1", "1", ex=60, nx=True)
+    # SET NX returns None when the key already exists.
+    assert await cache.set_if_absent("force_refresh:1", "1", ttl=60) is False
+    # Redis outage: deny (fail closed) rather than grant unlimited refreshes.
+    assert await cache.set_if_absent("force_refresh:1", "1", ttl=60) is False

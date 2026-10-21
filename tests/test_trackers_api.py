@@ -58,7 +58,10 @@ def test_trackers_crud() -> None:
         assert created["seller_type"] == "Частное лицо"
         assert created["category_id"] == 17010
         assert created["category_label"] == "Мобильные телефоны"
-        assert created["config_keyword"] is not None
+        # RV-BE-04: no implicit config_keyword any more — the old default
+        # (the whole normalised query, matched as a substring) dropped most
+        # alerts. NULL means "no extra keyword filter".
+        assert created["config_keyword"] is None
 
         list_response = client.get("/api/v1/trackers")
         assert list_response.status_code == 200
@@ -104,6 +107,53 @@ def test_trackers_crud() -> None:
         list_response_after_delete = client.get("/api/v1/trackers")
         assert list_response_after_delete.status_code == 200
         assert list_response_after_delete.json() == []
+
+
+def test_tracker_filters_validated_and_stored_as_sent() -> None:
+    """RV-BE-03/RV-BE-04 through the HTTP layer: the Mini App labels are
+    accepted and echoed back verbatim (the edit form preselects by them),
+    junk is a 422 instead of a silently ignored filter, and an explicit
+    config keyword is kept while an absent one stays NULL."""
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/trackers",
+            json={
+                "query": "samsung s23",
+                "seller_type": "Частное лицо",
+                "condition": "Б/у",
+                "config_keyword": " 8/256 ",
+            },
+        )
+        assert created.status_code == 201, created.text
+        body = created.json()
+        assert body["seller_type"] == "Частное лицо"
+        assert body["condition"] == "Б/у"
+        assert body["config_keyword"] == "8/256"
+
+        bad_create = client.post(
+            "/api/v1/trackers",
+            json={"query": "samsung s23", "seller_type": "дилер"},
+        )
+        assert bad_create.status_code == 422
+        bad_patch = client.patch(
+            f"/api/v1/trackers/{body['id']}", json={"condition": "как новый"},
+        )
+        assert bad_patch.status_code == 422
+
+        cleared = client.patch(
+            f"/api/v1/trackers/{body['id']}",
+            json={"seller_type": "shop", "condition": None, "config_keyword": ""},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["seller_type"] == "shop"
+        assert cleared.json()["condition"] is None
+        assert cleared.json()["config_keyword"] is None
 
 
 async def seed_tracker_event(session_factory) -> None:

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from api.services.listing_filters import canonical_condition_filter
+from api.services.reseller_tools import canonical_seller_type_filter
 
 AI_LISTING_PHOTO_MAX_CHARS = 1_500_000
 AI_LISTING_PHOTO_MAX_COUNT = 4
@@ -296,6 +300,29 @@ class GeographyResponse(BaseModel):
     regions: list[GeographyRegionPoint]
 
 
+def _tracker_filter_value(
+    value: str | None, canonicalize: Callable[[str | None], str | None],
+) -> str | None:
+    # RV-BE-03: free-form strings let UI labels the matcher did not know
+    # ("Частное лицо", "Б/у") in, and it then ignored the filter. Accept
+    # exactly what the matcher understands (API codes and the Mini App
+    # labels, any case/spacing) and reject the rest with a 422. The value
+    # is stored as sent (trimmed): the tracker form preselects its
+    # <option> by that exact string, so canonicalising here would make
+    # an edit silently drop the filter.
+    if value is None:
+        return None
+    canonicalize(value)
+    return value.strip() or None
+
+
+def _optional_config_keyword(value: str | None) -> str | None:
+    # RV-BE-04: blank means "no extra keyword filter" (stored as NULL).
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 class TrackerCreate(BaseModel):
     query: str = Field(min_length=1, max_length=255)
     strict_mode: bool = False
@@ -310,6 +337,21 @@ class TrackerCreate(BaseModel):
     config_keyword: str | None = Field(default=None, max_length=128)
     alert_price_threshold: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
     alert_discount_percent: float | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("seller_type")
+    @classmethod
+    def _validate_seller_type(cls, value: str | None) -> str | None:
+        return _tracker_filter_value(value, canonical_seller_type_filter)
+
+    @field_validator("condition")
+    @classmethod
+    def _validate_condition(cls, value: str | None) -> str | None:
+        return _tracker_filter_value(value, canonical_condition_filter)
+
+    @field_validator("config_keyword")
+    @classmethod
+    def _validate_config_keyword(cls, value: str | None) -> str | None:
+        return _optional_config_keyword(value)
 
 
 class TrackerUpdate(BaseModel):
@@ -327,6 +369,21 @@ class TrackerUpdate(BaseModel):
     config_keyword: str | None = Field(default=None, max_length=128)
     alert_price_threshold: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
     alert_discount_percent: float | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("seller_type")
+    @classmethod
+    def _validate_seller_type(cls, value: str | None) -> str | None:
+        return _tracker_filter_value(value, canonical_seller_type_filter)
+
+    @field_validator("condition")
+    @classmethod
+    def _validate_condition(cls, value: str | None) -> str | None:
+        return _tracker_filter_value(value, canonical_condition_filter)
+
+    @field_validator("config_keyword")
+    @classmethod
+    def _validate_config_keyword(cls, value: str | None) -> str | None:
+        return _optional_config_keyword(value)
 
 
 class TrackerRead(BaseModel):

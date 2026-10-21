@@ -20,7 +20,7 @@ from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
 from api.services.market_signals import region_label
-from api.services.query_pipeline import load_query_dataset_with_fallback
+from api.services.query_pipeline import claim_force_refresh, load_query_dataset_with_fallback
 from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
@@ -53,6 +53,9 @@ async def get_geography(
     cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
         return GeographyResponse(**cached)
+    # RV-SEC-04: see listings.py — at most one upstream re-fetch per user
+    # per cooldown across all endpoints; otherwise reuse the dataset cache.
+    refetch_upstream = force_refresh and await claim_force_refresh(cache, _user.user_id)
 
     fb = await load_query_dataset_with_fallback(
         query=query,
@@ -62,7 +65,7 @@ async def get_geography(
         client=kufar_client,
         category=category,
         cache=cache,
-        force_refresh=force_refresh,
+        force_refresh=refetch_upstream,
     )
     dataset = fb.dataset
     grouped: dict[int, list[dict]] = defaultdict(list)
@@ -113,5 +116,7 @@ async def get_geography(
         total_analyzed=dataset.price_stats.count,
         regions=regions[:8],
     )
-    await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
+    # RV-BE-05: don't pin a response built from an empty upstream answer.
+    if dataset.cacheable:
+        await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
     return payload

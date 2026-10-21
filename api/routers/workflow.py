@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
 from api.dependencies import (
+    get_cache,
     get_kufar_client,
     get_session_factory_dependency,
     get_settings_dependency,
@@ -32,6 +33,7 @@ from api.schemas import (
     WatchlistUpdate,
 )
 from api.services.aggregator import normalize_price_byn
+from api.services.cache import CacheBackend
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import first_image_url
 from api.services.query_pipeline import load_query_dataset
@@ -52,6 +54,23 @@ router = APIRouter(tags=["workflow"])
 WATCHING_STATUS = "watching"
 
 _REFRESH_SEMAPHORE = asyncio.Semaphore(3)
+
+# RV-SEC-04: the watchlist has no size cap, and every distinct query in it
+# costs a full Kufar pagination on the one shared client (~1 req/s per
+# worker). Bound a single /watchlist/refresh or /leads/refresh: at most
+# REFRESH_MAX_ITEMS rows, most recently touched first, and of those only
+# the rows whose query is among the first REFRESH_MAX_QUERIES distinct
+# queries. The rest is left untouched until a later refresh. Datasets go
+# through the shared cache, so repeated clicks within cache_ttl_seconds
+# don't reach Kufar again.
+REFRESH_MAX_QUERIES = 20
+REFRESH_MAX_ITEMS = 200
+
+
+def _refresh_batch(items: list[LeadItem]) -> tuple[list[LeadItem], list[str]]:
+    queries = list(dict.fromkeys(item.query for item in items))[:REFRESH_MAX_QUERIES]
+    selected = set(queries)
+    return [item for item in items if item.query in selected], queries
 
 
 # LOGIC-HIGH (issues §11.4): explicit lead-status state machine.
@@ -822,23 +841,26 @@ async def refresh_watchlist(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),
     kufar_client: KufarClient = Depends(get_kufar_client),
+    cache: CacheBackend = Depends(get_cache),
 ) -> WatchlistRefreshResponse:
     async with session_factory() as session:
         user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
         if user_id is None:
             return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, auto_removed=0)
         result = await session.execute(
-            select(LeadItem).where(
+            select(LeadItem)
+            .where(
                 LeadItem.user_id == user_id,
                 LeadItem.status == WATCHING_STATUS,
             )
+            .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
+            .limit(REFRESH_MAX_ITEMS)
         )
-        items = list(result.scalars())
+        items, unique_queries = _refresh_batch(list(result.scalars()))
         if not items:
             return WatchlistRefreshResponse(updated=0, missing=0, price_drops=0, auto_removed=0)
 
         item_ids = [item.id for item in items if item.id is not None]
-        unique_queries = list(dict.fromkeys(item.query for item in items))
 
         # Bulk-load the last snapshot price for every watched item in
         # one query — avoids an N+1 inside record_price_snapshot below.
@@ -855,6 +877,7 @@ async def refresh_watchlist(
                 strict_search=False,
                 settings=settings,
                 client=kufar_client,
+                cache=cache,
             )
         ) for q in unique_queries],
         return_exceptions=True,
@@ -967,6 +990,7 @@ async def refresh_leads(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     settings: Settings = Depends(get_settings_dependency),
     kufar_client: KufarClient = Depends(get_kufar_client),
+    cache: CacheBackend = Depends(get_cache),
 ) -> LeadsRefreshResponse:
     """Check which leads are still available on Kufar.
 
@@ -977,17 +1001,20 @@ async def refresh_leads(
         if user_id is None:
             return LeadsRefreshResponse(checked=0, active=0, missing=0)
         result = await session.execute(
-            select(LeadItem).where(
+            select(LeadItem)
+            .where(
                 LeadItem.user_id == user_id,
                 LeadItem.status.notin_(["sold", "skipped", WATCHING_STATUS]),
             )
+            .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
+            .limit(REFRESH_MAX_ITEMS)
         )
-        leads = list(result.scalars())
+        # RV-SEC-04: same per-call bounds as /watchlist/refresh.
+        leads, unique_queries = _refresh_batch(list(result.scalars()))
         if not leads:
             return LeadsRefreshResponse(checked=0, active=0, missing=0)
 
         lead_ids = [lead.id for lead in leads if lead.id is not None]
-        unique_queries = list(dict.fromkeys(lead.query for lead in leads))
 
     # Batch Kufar queries outside any DB transaction/connection hold.
     datasets = await asyncio.gather(
@@ -998,6 +1025,7 @@ async def refresh_leads(
                 strict_search=False,
                 settings=settings,
                 client=kufar_client,
+                cache=cache,
             )
         ) for q in unique_queries],
         return_exceptions=True,

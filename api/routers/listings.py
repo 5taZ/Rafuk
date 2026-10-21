@@ -34,7 +34,10 @@ from api.services.listing_filters import (
     normalize_filter_text,
 )
 from api.services.listing_mapper import build_listing_item, compute_listing_sort_key
-from api.services.query_pipeline import load_query_dataset_context_with_fallback
+from api.services.query_pipeline import (
+    claim_force_refresh,
+    load_query_dataset_context_with_fallback,
+)
 from api.services.reseller_tools import analyze_query_text
 from api.validators import MAX_QUERY_LENGTH
 
@@ -169,6 +172,12 @@ async def get_listings(
     kufar_client: KufarClient = Depends(get_kufar_client),
     _user=Depends(get_telegram_user),
 ) -> ListingsResponse:
+    # RV-SEC-04: force_refresh still skips this endpoint's response cache
+    # (cheap: rebuilt from the dataset), but only one call per user per
+    # cooldown may re-fetch Kufar. A refused claim reuses the cached
+    # dataset — typically the one /price-stats just refreshed when the
+    # Mini App fans out a refresh.
+    refetch_upstream = force_refresh and await claim_force_refresh(cache, _user.user_id)
     effective_from_source = (
         discount_from_percent if discount_from_percent is not None else discount_percent
     )
@@ -232,7 +241,7 @@ async def get_listings(
         search_kwargs=upstream_filter_kwargs or None,
         allow_low_result_fallback=allow_low_result_fallback,
         cache=cache,
-        force_refresh=force_refresh,
+        force_refresh=refetch_upstream,
     )
     context = fb.context
     fallback_used = fb.fallback_used
@@ -424,9 +433,12 @@ async def get_listings(
         is_limited=filtered_total > served_cap,
         listings=listings,
     )
-    await cache.set_json(
-        cache_key,
-        payload.model_dump(),
-        ttl=settings.cache_ttl_seconds,
-    )
+    # RV-BE-05: a page built from an empty upstream answer is not cached,
+    # so it can't outlive a Kufar hiccup by a whole TTL.
+    if visible_dataset.cacheable and reference_dataset.cacheable:
+        await cache.set_json(
+            cache_key,
+            payload.model_dump(),
+            ttl=settings.cache_ttl_seconds,
+        )
     return payload

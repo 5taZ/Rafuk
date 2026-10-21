@@ -16,10 +16,29 @@ from api.services.aggregator import (
     tokenize_search_text,
 )
 from api.services.listing_filters import (
+    canonical_filter_value,
     match_condition_filter,
     match_region_filter,
+    normalize_filter_text,
+    warn_unknown_filter_value,
 )
 from api.services.market_signals import detect_anomaly_flags
+
+# RV-BE-03: tracker seller filters come as API codes ("private"/"shop")
+# or as the labels the Mini App tracker form stores verbatim
+# (frontend/index.html, tracker-/edit-seller-select: "Частное лицо" /
+# "Магазин"). Keys are normalize_filter_text() forms.
+SELLER_TYPE_FILTER_ALIASES: dict[str, str] = {
+    "private": "private",
+    "частное лицо": "private",
+    "shop": "shop",
+    "магазин": "shop",
+}
+
+
+def canonical_seller_type_filter(value: str | None) -> str | None:
+    """``"private"``/``"shop"`` for a seller filter in any accepted spelling."""
+    return canonical_filter_value(value, SELLER_TYPE_FILTER_ALIASES, field="seller_type")
 
 
 # =============================================================================
@@ -213,13 +232,22 @@ def analyze_query_text(value: str) -> QueryInsights:
 
 
 def default_config_keyword(query: str) -> str:
+    # RV-BE-04: no longer applied on tracker creation (NULL = no extra
+    # filter). Kept so legacy rows that still carry this value can be
+    # recognised, e.g. by a future clean-up migration.
     return analyze_query_text(query).normalized_query[:128]
 
 
 def config_keyword_matches(title: str, keyword: str | None) -> bool:
-    if not keyword:
+    # RV-BE-04: every keyword token must appear among the title tokens, in
+    # any order, with the normalisation is_strict_match uses. The old
+    # substring test rejected "Samsung Galaxy S23 8/256" for "samsung s23"
+    # and "MacBook Air 13 M2" for "macbook air m2"; since every tracker got
+    # the whole query as its default keyword, alerts were silently lost.
+    keyword_tokens = set(tokenize_search_text(keyword or ""))
+    if not keyword_tokens:
         return True
-    return normalize_search_text(keyword) in normalize_search_text(title)
+    return keyword_tokens <= set(tokenize_search_text(title))
 
 
 def profile_match_bonus(query: str, title: str) -> tuple[int, str | None, str | None]:
@@ -372,14 +400,19 @@ def matches_tracker_filters(
     price_byn = normalize_price_byn(ad.get("price_byn"))
     if max_price_byn is not None and price_byn is not None and price_byn > max_price_byn:
         return False
-    if seller_type:
-        ad_seller = get_param(ad, "seller_type")
-        is_shop = bool(ad.get("company_ad")) or (
-            ad_seller and ad_seller.lower() in ("shop", "магазин")
-        )
-        if seller_type == "shop" and not is_shop:
-            return False
-        if seller_type == "private" and is_shop:
+    try:
+        wanted_seller = canonical_seller_type_filter(seller_type)
+    except ValueError:
+        # RV-BE-03: the UI labels used to match neither "shop" nor
+        # "private", so the filter was silently ignored; they are aliases
+        # now. Anything still unrecognised fails closed rather than
+        # matching everything.
+        warn_unknown_filter_value("seller_type", str(seller_type))
+        return False
+    if wanted_seller is not None:
+        ad_seller = normalize_filter_text(get_param(ad, "seller_type"))
+        is_shop = bool(ad.get("company_ad")) or ad_seller in ("shop", "магазин")
+        if (wanted_seller == "shop") != is_shop:
             return False
     # D-1: condition can arrive from Kufar as either text labels
     # ("Новый"/"Б/у") or numeric codes ("1"/"2"); the shared helper

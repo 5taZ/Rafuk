@@ -64,6 +64,51 @@ def test_tracker_update_ignores_query_field() -> None:
     assert TrackerUpdate(query="new query").model_dump(exclude_unset=True) == {}
 
 
+@pytest.mark.parametrize("schema", [TrackerCreate, TrackerUpdate])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("seller_type", "дилер"),
+        ("seller_type", "private seller"),
+        ("condition", "как новый"),
+        ("condition", "refurbished"),
+    ],
+)
+def test_tracker_schemas_reject_unknown_filter_values(schema, field: str, value: str) -> None:
+    """RV-BE-03: free-form values used to be stored and then silently
+    ignored by the matcher; only what the matcher understands is accepted."""
+    kwargs = {"query": "iphone"} if schema is TrackerCreate else {}
+    with pytest.raises(ValidationError):
+        schema(**kwargs, **{field: value})
+
+
+@pytest.mark.parametrize("schema", [TrackerCreate, TrackerUpdate])
+@pytest.mark.parametrize(
+    ("field", "value", "stored"),
+    [
+        ("seller_type", "private", "private"),
+        ("seller_type", "shop", "shop"),
+        ("seller_type", "Частное лицо", "Частное лицо"),
+        ("seller_type", " Магазин ", "Магазин"),
+        ("condition", "new", "new"),
+        ("condition", "used", "used"),
+        ("condition", "Новый", "Новый"),
+        ("condition", "б/у", "б/у"),
+        ("seller_type", "", None),
+        ("condition", "   ", None),
+        ("config_keyword", "  pro max 256 ", "pro max 256"),
+        ("config_keyword", "", None),
+    ],
+)
+def test_tracker_schemas_accept_codes_and_ui_labels(
+    schema, field: str, value: str, stored: str | None,
+) -> None:
+    """RV-BE-03/RV-BE-04: codes and the Mini App labels are accepted and
+    stored as sent (trimmed); blank means "no filter"."""
+    kwargs = {"query": "iphone"} if schema is TrackerCreate else {}
+    assert getattr(schema(**kwargs, **{field: value}), field) == stored
+
+
 def test_lead_and_watchlist_notes_are_bounded() -> None:
     oversized = "x" * 513
     with pytest.raises(ValidationError):

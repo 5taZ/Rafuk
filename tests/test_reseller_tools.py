@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+from bs4 import BeautifulSoup
+
+from api.schemas import TrackerCreate
 from api.services.aggregator import PriceStats
+from api.services.listing_filters import match_condition_filter, warn_unknown_filter_value
 from api.services.reseller_tools import (
     SCORING,
     analyze_query_text,
     compute_deal_score,
+    config_keyword_matches,
+    default_config_keyword,
     matches_tracker_filters,
 )
+
+_INDEX_HTML = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
 
 
 def test_analyze_query_text_extracts_spaced_ram_and_storage() -> None:
@@ -344,3 +355,193 @@ def test_matches_tracker_filters_negotiable_with_min_discount_returns_false() ->
     ad["body"] = "Цена договорная"
     stats = _make_stats(median=1000.0)
     assert matches_tracker_filters(ad, market_stats=stats, min_discount_percent=5.0) is False
+
+
+# ---------------------------------------------------------------------------
+# RV-BE-03: the tracker form's "Продавец"/"Состояние" values must filter
+# ---------------------------------------------------------------------------
+
+# What each <option value> of the tracker forms means. If the Mini App
+# changes these values, the test below fails instead of the filter
+# silently turning into a no-op again.
+_UI_SELLER_MEANING = {"Частное лицо": "private", "Магазин": "shop"}
+_UI_CONDITION_MEANING = {"Новый": "new", "Б/у": "used"}
+
+
+def _ui_option_values(*select_ids: str) -> set[str]:
+    soup = BeautifulSoup(_INDEX_HTML.read_text(encoding="utf-8"), "html.parser")
+    values: set[str] = set()
+    for select_id in select_ids:
+        select = soup.find("select", id=select_id)
+        assert select is not None, select_id
+        values |= {
+            option.get("value", "") for option in select.find_all("option")
+        } - {""}
+    return values
+
+
+def _kufar_ad(*, shop: bool, condition_code: str) -> dict:
+    # Real Kufar ads carry the seller as ``company_ad`` and the condition
+    # as a numeric code ("1" = б/у, "2" = новый).
+    return {
+        "subject": "iPhone 15 128GB",
+        "price_byn": 100000,
+        "company_ad": shop,
+        "ad_parameters": [{"p": "condition", "v": condition_code}],
+    }
+
+
+_ADS = {
+    ("private", "new"): _kufar_ad(shop=False, condition_code="2"),
+    ("private", "used"): _kufar_ad(shop=False, condition_code="1"),
+    ("shop", "new"): _kufar_ad(shop=True, condition_code="2"),
+    ("shop", "used"): _kufar_ad(shop=True, condition_code="1"),
+}
+
+
+def test_ui_seller_and_condition_values_reach_matches_tracker_filters() -> None:
+    """RV-BE-03: the tracker form posts "Частное лицо"/"Магазин" and
+    "Новый"/"Б/у" verbatim; the matcher only knew "private"/"shop" and
+    "new"/"used", so a "private + new" tracker alerted on used shop lots.
+    Values are read from frontend/index.html, pushed through the create
+    schema like the API does, and then matched."""
+    seller_values = _ui_option_values("tracker-seller-select", "edit-seller-select")
+    condition_values = _ui_option_values("tracker-condition-select", "edit-condition-select")
+    assert seller_values == set(_UI_SELLER_MEANING)
+    assert condition_values == set(_UI_CONDITION_MEANING)
+
+    stats = _make_stats(median=1000.0)
+    for seller_value in sorted(seller_values):
+        for condition_value in sorted(condition_values):
+            tracker = TrackerCreate(
+                query="iphone 15", seller_type=seller_value, condition=condition_value,
+            )
+            # Stored as sent, so the form can preselect the option again.
+            assert (tracker.seller_type, tracker.condition) == (seller_value, condition_value)
+            wanted = (_UI_SELLER_MEANING[seller_value], _UI_CONDITION_MEANING[condition_value])
+            matched = {
+                key
+                for key, ad in _ADS.items()
+                if matches_tracker_filters(
+                    ad,
+                    market_stats=stats,
+                    seller_type=tracker.seller_type,
+                    condition=tracker.condition,
+                )
+            }
+            assert matched == {wanted}, (seller_value, condition_value, matched)
+
+
+@pytest.mark.parametrize(
+    ("seller_type", "expected"),
+    [
+        ("private", "private"),
+        ("Частное лицо", "private"),
+        ("  частное   ЛИЦО ", "private"),
+        ("SHOP", "shop"),
+        ("магазин", "shop"),
+    ],
+)
+def test_seller_filter_accepts_codes_and_labels_in_any_case(
+    seller_type: str, expected: str,
+) -> None:
+    stats = _make_stats(median=1000.0)
+    matched = {
+        key[0]
+        for key, ad in _ADS.items()
+        if matches_tracker_filters(ad, market_stats=stats, seller_type=seller_type)
+    }
+    assert matched == {expected}
+
+
+@pytest.mark.parametrize(
+    ("condition", "expected"),
+    [("new", "new"), ("Новый", "new"), (" НОВЫЙ ", "new"), ("used", "used"), ("б/у", "used")],
+)
+def test_condition_filter_accepts_codes_and_labels_in_any_case(
+    condition: str, expected: str,
+) -> None:
+    matched = {key[1] for key, ad in _ADS.items() if match_condition_filter(ad, condition)}
+    assert matched == {expected}
+
+
+def test_condition_filter_label_matches_text_labelled_ads() -> None:
+    ad_new = {"subject": "x", "ad_parameters": [{"p": "condition", "v": "Новый"}]}
+    ad_used = {"subject": "x", "ad_parameters": [{"p": "condition", "v": "Б/у"}]}
+    assert match_condition_filter(ad_new, "Новый") is True
+    assert match_condition_filter(ad_used, "Новый") is False
+    assert match_condition_filter(ad_used, "Б/у") is True
+
+
+def test_unknown_filter_values_fail_closed_and_warn_once(caplog) -> None:
+    """RV-BE-03: an unknown value used to disable the filter (everything
+    matched). Legacy junk now matches nothing and is logged once."""
+    import logging
+
+    warn_unknown_filter_value.cache_clear()
+    stats = _make_stats(median=1000.0)
+    caplog.set_level(logging.WARNING, logger="api.services.listing_filters")
+    for ad in _ADS.values():
+        assert matches_tracker_filters(ad, market_stats=stats, seller_type="дилер") is False
+        assert matches_tracker_filters(ad, market_stats=stats, condition="как новый") is False
+        assert match_condition_filter(ad, "как новый") is False
+
+    warnings = [rec.getMessage() for rec in caplog.records]
+    assert sum("seller_type='дилер'" in msg for msg in warnings) == 1
+    assert sum("condition='как новый'" in msg for msg in warnings) == 1
+
+
+def test_blank_filters_mean_no_filter() -> None:
+    stats = _make_stats(median=1000.0)
+    for ad in _ADS.values():
+        assert matches_tracker_filters(ad, market_stats=stats, seller_type="", condition="  ")
+
+
+# ---------------------------------------------------------------------------
+# RV-BE-04: config_keyword matches a token set, not a substring
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "keyword"),
+    [
+        ("Samsung Galaxy S23 8/256", "samsung s23"),
+        ("MacBook Air 13 M2", "macbook air m2"),
+        ("iPhone 13 Pro Max 256GB", "pro max 256"),
+        ("MacBook Air M1 8GB/256GB", "m1 8 256"),
+        ("Galaxy S23 Samsung", "S23 SAMSUNG"),
+    ],
+)
+def test_config_keyword_matches_tokens_in_any_order(title: str, keyword: str) -> None:
+    """RV-BE-04: the old substring check rejected all of these."""
+    assert config_keyword_matches(title, keyword) is True
+
+
+@pytest.mark.parametrize(
+    ("title", "keyword"),
+    [
+        ("Samsung Galaxy S22 8/256", "samsung s23"),
+        ("MacBook Pro 14 M2", "macbook air m2"),
+        ("iPhone 13 Pro 256GB", "pro max 256"),
+    ],
+)
+def test_config_keyword_still_requires_every_token(title: str, keyword: str) -> None:
+    assert config_keyword_matches(title, keyword) is False
+
+
+def test_config_keyword_blank_means_no_filter() -> None:
+    assert config_keyword_matches("Anything", None) is True
+    assert config_keyword_matches("Anything", "") is True
+    assert config_keyword_matches("Anything", " / ") is True
+
+
+def test_legacy_default_config_keyword_no_longer_drops_reordered_titles() -> None:
+    """Trackers created before RV-BE-04 still carry the whole normalised
+    query as config_keyword; token matching makes those rows work too."""
+    stats = _make_stats(median=1000.0)
+    legacy_keyword = default_config_keyword("Samsung S23")
+    ad = _make_ad(subject="Samsung Galaxy S23 8/256", price_byn=100000)
+    assert matches_tracker_filters(ad, market_stats=stats, config_keyword=legacy_keyword)
+    legacy_keyword = default_config_keyword("macbook air m2")
+    ad = _make_ad(subject="MacBook Air 13 M2", price_byn=100000)
+    assert matches_tracker_filters(ad, market_stats=stats, config_keyword=legacy_keyword)

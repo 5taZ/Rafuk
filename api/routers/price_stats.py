@@ -31,6 +31,7 @@ from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import (
     CATEGORY_TOTAL_MAX_CALLS,
     KUFAR_CATEGORY_LABELS,
+    claim_force_refresh,
     convert_price_stats,
     fetch_category_totals,
     load_query_dataset_with_fallback,
@@ -110,6 +111,9 @@ async def get_price_stats(
     cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
         return PriceStatsResponse(**cached)
+    # RV-SEC-04: see listings.py — at most one upstream re-fetch per user
+    # per cooldown across all endpoints; otherwise reuse the dataset cache.
+    refetch_upstream = force_refresh and await claim_force_refresh(cache, _user.user_id)
 
     # Kufar pagination (~1s) and NBRB rates fetch (~600ms cold) are
     # independent — overlap them so the wall-clock cost is the slower
@@ -123,7 +127,7 @@ async def get_price_stats(
             client=kufar_client,
             category=category,
             cache=cache,
-            force_refresh=force_refresh,
+            force_refresh=refetch_upstream,
         )
         return fb.dataset
 
@@ -216,6 +220,10 @@ async def get_price_stats(
         suggested_refinements=suggested_refinements,
         **converted,
     )
+    # RV-BE-05: an empty upstream answer is neither a price-history point
+    # (it charted as a zero median) nor worth caching for a whole TTL.
+    if not dataset.cacheable:
+        return payload
     # Persist snapshot via FastAPI BackgroundTasks — runs after the
     # response is sent but is awaited by the framework before the
     # request fully tears down. That keeps cold-cache latency down

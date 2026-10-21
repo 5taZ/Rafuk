@@ -30,6 +30,10 @@ _CATEGORY_TOTAL_MAX_CALLS = CATEGORY_TOTAL_MAX_CALLS
 LOW_RESULT_FALLBACK_THRESHOLD = 3
 LOW_RESULT_FALLBACK_MIN_LOOSE_RESULTS = 8
 LOW_RESULT_FALLBACK_MULTIPLIER = 4
+# RV-SEC-04: force_refresh skips the dataset cache and re-paginates Kufar
+# through the one shared, rate-limited client. One upstream re-fetch per
+# user per window, shared by every endpoint that accepts the flag.
+FORCE_REFRESH_COOLDOWN_SECONDS = 60
 
 # Condition-based API tasks — seller_type filtering is done client-side
 # because Kufar API no longer accepts the "otype" parameter.
@@ -45,6 +49,28 @@ _API_CONDITION_TASKS = (
 
 def _cache_digest(prefix: str, payload: dict[str, Any]) -> str:
     return digest_cache_key(prefix, payload)
+
+
+def _is_cacheable_response(response: dict[str, Any]) -> bool:
+    # RV-BE-05: an empty answer is not worth pinning for cache_ttl_seconds:
+    # it used to be the circuit breaker's stub, and Kufar itself can answer
+    # empty during an incident. A partial pagination never gets here —
+    # KufarClient raises instead of returning short pages.
+    ads = response.get("ads")
+    return isinstance(ads, list) and bool(ads)
+
+
+async def claim_force_refresh(cache: Any, user_id: int) -> bool:
+    """True when *user_id* may bypass the dataset cache right now.
+
+    RV-SEC-04: an atomic set-if-absent with a TTL, so the budget is shared
+    by every endpoint and every worker. A refused claim is not an error:
+    the caller just serves cached data. RedisCache fails closed (False)
+    when Redis is down.
+    """
+    return await cache.set_if_absent(
+        f"force_refresh:{user_id}", "1", ttl=FORCE_REFRESH_COOLDOWN_SECONDS,
+    )
 
 
 # Seller type classification: company_ad==True means shop, else private
@@ -172,6 +198,11 @@ class QueryDataset:
             self._price_stats = compute_price_stats(self.prices_byn)
         return self._price_stats
 
+    @property
+    def cacheable(self) -> bool:
+        """Whether responses derived from this dataset may be cached (RV-BE-05)."""
+        return _is_cacheable_response(self.response)
+
 
 @dataclass(slots=True)
 class QueryDatasetContext:
@@ -296,8 +327,11 @@ async def _fetch_dataset_response(
         )
         response = _normalize_response_ads(response)
         if cache is not None:
-            cache_ttl = getattr(settings, "cache_ttl_seconds", 300) or 300
-            await cache.set_json(cache_key, response, ttl=cache_ttl)
+            if _is_cacheable_response(response):
+                cache_ttl = getattr(settings, "cache_ttl_seconds", 300) or 300
+                await cache.set_json(cache_key, response, ttl=cache_ttl)
+            else:
+                await observe_query_dataset_event_with_backend(cache, "uncacheable_response")
         return response
     except BaseException:
         await observe_query_dataset_upstream_fetch_with_backend(
@@ -383,8 +417,25 @@ async def _fetch_dataset_response_with_distributed_singleflight(
                 cache, "distributed_singleflight_cache_hit"
             )
             return cached
-
-    await observe_query_dataset_event_with_backend(cache, "distributed_singleflight_timeout")
+        if await cache.get(lock_key) is None:
+            # RV-BE-05: the owner released the lock without caching (empty
+            # answer or Kufar error). Nothing will appear, so stop polling
+            # now instead of idling until the deadline. Re-read once: the
+            # owner may have cached and released between our two reads.
+            cached = await cache.get_json(cache_key)
+            if cached is not None:
+                await observe_query_dataset_event_with_backend(
+                    cache, "distributed_singleflight_cache_hit"
+                )
+                return cached
+            await observe_query_dataset_event_with_backend(
+                cache, "distributed_singleflight_owner_released"
+            )
+            break
+    else:
+        await observe_query_dataset_event_with_backend(
+            cache, "distributed_singleflight_timeout"
+        )
     return await _fetch_dataset_response(
         query=query,
         currency=currency,
@@ -498,6 +549,12 @@ async def load_query_dataset(
                 except BaseException as exc:
                     if not future.done():
                         future.set_exception(exc)
+                        # RV-BE-05: followers still get the exception when
+                        # they await; mark it retrieved so a fetch nobody
+                        # waited on (the common case, and every request
+                        # while the breaker is open) doesn't also log an
+                        # asyncio "exception was never retrieved" ERROR.
+                        future.exception()
                     raise
                 finally:
                     # Clear under the lock so prune/re-entry don't
@@ -541,6 +598,24 @@ def _should_use_low_result_fallback(strict_count: int, loose_count: int) -> bool
     )
 
 
+def _loose_view(dataset: QueryDataset) -> QueryDataset:
+    """The same raw Kufar response with strict filtering switched off.
+
+    Strict mode is applied after the fetch and the dataset cache key
+    ignores it, so the loose dataset is the strict dataset's response
+    re-filtered. Building it here instead of calling load_query_dataset()
+    again saves a second Kufar pagination whenever that response was not
+    cached — an empty answer (RV-BE-05) or a force_refresh (RV-SEC-04).
+    """
+    return QueryDataset(
+        query=dataset.query,
+        currency=dataset.currency,
+        strict_search=False,
+        response=dataset.response,
+        ads=apply_search_mode(dataset.response.get("ads", []), dataset.query, False),
+    )
+
+
 async def load_query_dataset_with_fallback(
     **kwargs: Any,
 ) -> DatasetWithFallback:
@@ -552,8 +627,7 @@ async def load_query_dataset_with_fallback(
         and kwargs.get("strict_search")
         and len(dataset.ads) < LOW_RESULT_FALLBACK_THRESHOLD
     ):
-        loose_kwargs = {**kwargs, "strict_search": False}
-        loose_dataset = await load_query_dataset(**loose_kwargs)
+        loose_dataset = _loose_view(dataset)
         if _should_use_low_result_fallback(len(dataset.ads), len(loose_dataset.ads)):
             return DatasetWithFallback(dataset=loose_dataset, fallback_used=True)
     return DatasetWithFallback(dataset=dataset, fallback_used=False)
@@ -570,8 +644,11 @@ async def load_query_dataset_context_with_fallback(
         and kwargs.get("strict_search")
         and len(ctx.visible.ads) < LOW_RESULT_FALLBACK_THRESHOLD
     ):
-        loose_kwargs = {**kwargs, "strict_search": False}
-        loose_ctx = await load_query_dataset_context(**loose_kwargs)
+        loose_visible = _loose_view(ctx.visible)
+        loose_reference = (
+            loose_visible if ctx.reference is ctx.visible else _loose_view(ctx.reference)
+        )
+        loose_ctx = QueryDatasetContext(visible=loose_visible, reference=loose_reference)
         if _should_use_low_result_fallback(len(ctx.visible.ads), len(loose_ctx.visible.ads)):
             return DatasetContextWithFallback(context=loose_ctx, fallback_used=True)
     return DatasetContextWithFallback(context=ctx, fallback_used=False)
@@ -742,7 +819,10 @@ async def fetch_category_totals(
     for r in results:
         if isinstance(r, tuple) and r[1] is not None:
             out[r[0]] = r[1]
-    if cache is not None and cache_key is not None and out:
+    # RV-BE-05: only a complete fan-out is cached. A partial map (some
+    # categories failed, e.g. the breaker opened mid-way) would pin sample
+    # counts for the failed chips for the whole TTL.
+    if cache is not None and cache_key is not None and len(out) == len(selected_category_ids):
         # 5-minute TTL aligns with the dataset cache; chip totals
         # don't need to lead the dataset by much, and a stale chip
         # count for ~5 min is harmless next to the latency win.
