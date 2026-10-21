@@ -11,6 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.config import Settings, get_settings
 from api.middleware.telegram_auth import TelegramInitData, verify_telegram_init_data
 from api.models import User
+from api.services.account_erasure import (
+    account_deleted_error,
+    init_data_auth_date,
+    is_erased_session,
+    remember_request_principal,
+)
 from api.services.account_status import is_admin_user
 from api.services.cache import CacheBackend
 from api.services.client_ip import get_client_ip
@@ -142,6 +148,10 @@ async def get_telegram_user(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Account is suspended",
             )
+        # RV-SEC-05: no erasure tombstone check here — the bot acts on a
+        # fresh message or button press from the user, not on a stale
+        # Mini App session.
+        remember_request_principal(user, cache)
         return user
 
     if not x_telegram_init_data:
@@ -186,6 +196,15 @@ async def get_telegram_user(
             detail="Account is suspended",
         )
 
+    # RV-SEC-05: initData lives up to telegram_init_data_max_age, so the
+    # Mini App that just called DELETE /account (or another device) still
+    # holds a valid one. Refuse it before anything — the auto-provision
+    # middleware, ensure_user, the replay tracker — writes the user back.
+    # A reopened Mini App carries a newer auth_date and passes.
+    if await is_erased_session(cache, user.user_id, init_data_auth_date(user)):
+        logger.info("Refused pre-deletion initData for telegram_user_id=%s", user.user_id)
+        raise account_deleted_error()
+
     # SEC-H1: track first-seen IP per initData and log on mismatch.
     # We can't outright reject replay (the Mini App genuinely reuses
     # one initData for many requests), but the log gives ops a signal
@@ -196,6 +215,7 @@ async def get_telegram_user(
     )
 
     request.state.telegram_user = user
+    remember_request_principal(user, cache)
     return user
 
 

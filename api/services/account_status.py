@@ -21,6 +21,7 @@ from api.schemas import (
     ProfileUserRead,
     QuotaBucketRead,
 )
+from api.services.account_erasure import ensure_user_creation_allowed
 from api.services.cache import CacheBackend
 
 BARE_SEARCH_STATUS_CODE = "bare_search"
@@ -201,6 +202,10 @@ async def get_or_create_profile_user(
         await session.execute(select(User).where(User.telegram_user_id == telegram_user.user_id))
     ).scalar_one_or_none()
     if user is None:
+        # RV-SEC-05: /profile/me is the Mini App's first call after a reload;
+        # a request that authenticated just before DELETE /account must not
+        # recreate the erased row (get_telegram_user refuses later ones).
+        await ensure_user_creation_allowed(telegram_user.user_id)
         user = User(
             telegram_user_id=telegram_user.user_id,
             first_name=first_name[:128],

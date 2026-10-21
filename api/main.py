@@ -46,6 +46,7 @@ from api.routers import (
     workflow,
 )
 from api.routers.ai_analysis import periodic_prune_shadow_stores
+from api.services.account_erasure import init_data_auth_date, is_erased_session
 from api.services.ai_service import get_ai_service
 from api.services.cache import MemoryCache, RedisCache
 from api.services.currency_service import CurrencyService
@@ -479,8 +480,15 @@ def create_app() -> FastAPI:
 
     async def _provision_user_async(
         sf: Any, user_id: int, first_name: str,
+        cache: Any = None, auth_date: int | None = None,
     ) -> None:
         try:
+            # RV-SEC-05: re-check the erasure tombstone right before the
+            # upsert — a request that authenticated just before DELETE
+            # /account must not resurrect the row from this background task.
+            if await is_erased_session(cache, user_id, auth_date):
+                _provisioned_users.pop(user_id, None)
+                return
             await asyncio.wait_for(
                 ensure_user_exists(sf, user_id, first_name),
                 timeout=_provision_user_timeout_seconds,
@@ -497,12 +505,22 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         init_data = getattr(request.state, "telegram_user", None)
         if init_data is not None and init_data.user_id != 0:
+            if getattr(request.state, "account_deleted", False):
+                # RV-SEC-05: this was the DELETE /account request itself —
+                # provisioning after it re-created the user it just erased.
+                # Forget the TTL entry so a reopened Mini App provisions anew.
+                _provisioned_users.pop(init_data.user_id, None)
+                return response
             sf = getattr(request.app.state, "session_factory", None)
             if sf is not None and _should_auto_provision(init_data.user_id):
                 # Strong-ref the task so the GC doesn't drop it before
                 # it runs; self-clean via done callback.
                 task = asyncio.create_task(
-                    _provision_user_async(sf, init_data.user_id, init_data.first_name),
+                    _provision_user_async(
+                        sf, init_data.user_id, init_data.first_name,
+                        getattr(request.app.state, "cache", None),
+                        init_data_auth_date(init_data),
+                    ),
                     name=f"provision_user_{init_data.user_id}",
                 )
                 _provision_tasks.add(task)

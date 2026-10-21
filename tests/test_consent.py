@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import hmac
+import json
+import re
+import time
 from datetime import UTC, datetime
+from urllib.parse import urlencode
 
 import pytest
+from fastapi import Depends, Request
 from httpx import ASGITransport, AsyncClient
 
 from api.main import app
@@ -860,3 +867,518 @@ async def test_revoke_pd_processing_takes_over_bot_blocked_pause(client):
         tracker = (await session.execute(select(Tracker))).scalar_one()
         assert tracker.paused is True
         assert tracker.pause_reason == "consent_revoked"
+
+
+# ── RV-SEC-05 / RV-BE-16: account erasure ──────────────────────────────
+
+
+def _signed_init_data(telegram_user_id: int, *, auth_date: int, first_name: str = "Erased") -> str:
+    """initData signed with the test BOT_TOKEN the way Telegram signs it."""
+    from api.config import get_settings
+
+    params = {
+        "auth_date": str(auth_date),
+        "user": json.dumps(
+            {"id": telegram_user_id, "first_name": first_name}, separators=(",", ":"),
+        ),
+    }
+    data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(params.items()))
+    secret = hmac.new(
+        b"WebAppData",
+        get_settings().bot_token.get_secret_value().encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    params["hash"] = hmac.new(
+        secret, data_check_string.encode("utf-8"), hashlib.sha256,
+    ).hexdigest()
+    return urlencode(params)
+
+
+async def _drain_provision_tasks() -> None:
+    """Let the auto-provision middleware's fire-and-forget upserts finish."""
+    pending = [
+        task for task in asyncio.all_tasks() if task.get_name().startswith("provision_user_")
+    ]
+    if pending:
+        await asyncio.wait(pending, timeout=5)
+
+
+async def _user_rows(session_factory, telegram_user_id: int) -> int:
+    from sqlalchemy import func, select
+
+    from api.models import User
+
+    async with session_factory() as session:
+        return await session.scalar(
+            select(func.count(User.id)).where(User.telegram_user_id == telegram_user_id)
+        )
+
+
+@pytest.fixture
+async def erasure_app():
+    """A fresh app (its own auto-provision TTL state) with real initData auth."""
+    from api.config import get_settings
+    from api.database import get_engine, get_session_factory
+    from api.main import create_app
+    from api.services.cache import MemoryCache
+
+    fresh_app = create_app()
+    engine = get_engine()
+    fresh_app.state.session_factory = get_session_factory(engine)
+    fresh_app.state.cache = MemoryCache()
+    fresh_app.state.settings = get_settings()
+    try:
+        yield fresh_app
+    finally:
+        await engine.dispose()
+
+
+def _erasure_client(target_app, **transport_kwargs) -> AsyncClient:
+    return AsyncClient(
+        transport=ASGITransport(app=target_app, **transport_kwargs),
+        base_url="http://test",
+        headers={"origin": "http://localhost:8081", "x-requested-with": "XMLHttpRequest"},
+    )
+
+
+async def _seed_erasure_user(session_factory, telegram_user_id: int) -> None:
+    from api.models import User
+
+    async with session_factory() as session:
+        session.add(User(telegram_user_id=telegram_user_id, first_name="Erased"))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_delete_account_is_not_undone_by_the_same_init_data(erasure_app):
+    """RV-SEC-05: after DELETE /account the Mini App reloaded with the same
+    initData (valid for up to 2 h) and its first request — or the
+    auto-provision middleware right after the DELETE itself — re-created
+    the users row. initData minted before the deletion now gets 410 and
+    nothing is written; a reopened Mini App (newer auth_date) starts over.
+    """
+    tg_id = 777001
+    session_factory = erasure_app.state.session_factory
+    await _seed_erasure_user(session_factory, tg_id)
+    stale = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(time.time()) - 60)}
+
+    async with _erasure_client(erasure_app) as client:
+        resp = await client.request(
+            "DELETE", "/api/v1/account", json={"confirmation": "erased"}, headers=stale,
+        )
+        assert resp.status_code == 204
+        await _drain_provision_tasks()
+        assert await _user_rows(session_factory, tg_id) == 0
+
+        for method, path, body in (
+            ("GET", "/api/v1/profile/me", None),
+            ("POST", "/api/v1/trackers", {"query": "iphone 15"}),
+            ("POST", "/api/v1/account/consent",
+             {"consent_type": "pd_processing", "version": "2026.2"}),
+        ):
+            resp = await client.request(method, path, json=body, headers=stale)
+            assert resp.status_code == 410, path
+            assert resp.json()["detail"]["error"] == "account_deleted"
+            assert "Аккаунт удалён" in resp.json()["detail"]["message"]
+        await _drain_provision_tasks()
+        assert await _user_rows(session_factory, tg_id) == 0
+
+        deleted_at = float(await erasure_app.state.cache.get(f"account:deleted:{tg_id}"))
+        fresh = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(deleted_at) + 1)}
+        resp = await client.get("/api/v1/profile/me", headers=fresh)
+        assert resp.status_code == 200
+        await _drain_provision_tasks()
+    assert await _user_rows(session_factory, tg_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_erasure_tombstone_outlives_init_data(erasure_app, monkeypatch):
+    """RV-SEC-05: the tombstone must live at least as long as the initData
+    it refuses (TELEGRAM_INIT_DATA_MAX_AGE), and must not keep the
+    Telegram id forever when the age check is switched off."""
+    from api.services import account_erasure
+
+    ttls: list[int | None] = []
+    original_set = erasure_app.state.cache.set
+
+    async def _recording_set(key, value, ttl=None):
+        if key.startswith("account:deleted:"):
+            ttls.append(ttl)
+        await original_set(key, value, ttl)
+
+    monkeypatch.setattr(erasure_app.state.cache, "set", _recording_set)
+    await _seed_erasure_user(erasure_app.state.session_factory, 777005)
+    stale = {"X-Telegram-Init-Data": _signed_init_data(777005, auth_date=int(time.time()) - 5)}
+    async with _erasure_client(erasure_app) as client:
+        resp = await client.request(
+            "DELETE", "/api/v1/account", json={"confirmation": "777005"}, headers=stale,
+        )
+    assert resp.status_code == 204
+    assert ttls and ttls[0] >= 7200  # default TELEGRAM_INIT_DATA_MAX_AGE
+    assert 0 < account_erasure.tombstone_ttl_seconds(0) <= 7 * 24 * 3600
+
+
+@pytest.mark.asyncio
+async def test_auto_provision_task_skips_init_data_older_than_tombstone(monkeypatch):
+    """RV-SEC-05: a request that authenticated just before DELETE /account
+    queues the fire-and-forget upsert; the task re-checks the tombstone
+    instead of resurrecting the erased row. Fresh initData still provisions."""
+    from api import main
+    from api.services.account_erasure import mark_account_deleted
+    from api.services.cache import MemoryCache
+
+    fresh_app = main.create_app()
+    fresh_app.state.session_factory = object()
+    fresh_app.state.cache = MemoryCache()
+    calls: list[int] = []
+
+    async def fake_ensure_user_exists(sf, user_id: int, first_name: str) -> None:
+        calls.append(user_id)
+
+    monkeypatch.setattr(main, "ensure_user_exists", fake_ensure_user_exists)
+
+    @fresh_app.get("/_erasure-provision/{auth_date}")
+    async def _provision_probe(request: Request, auth_date: int):
+        request.state.telegram_user = TelegramInitData(
+            user_id=777002, first_name="Race", raw={"auth_date": str(auth_date)},
+        )
+        return {"ok": True}
+
+    fresh_app.router.routes.insert(0, fresh_app.router.routes.pop())
+
+    deleted_at = time.time()
+    await mark_account_deleted(
+        fresh_app.state.cache, 777002, deleted_at=deleted_at, ttl_seconds=60,
+    )
+    async with _erasure_client(fresh_app) as client:
+        assert (await client.get(f"/_erasure-provision/{int(deleted_at) - 30}")).status_code == 200
+        await _drain_provision_tasks()
+        assert calls == []
+        assert (await client.get(f"/_erasure-provision/{int(deleted_at) + 1}")).status_code == 200
+        await _drain_provision_tasks()
+    assert calls == [777002]
+
+
+@pytest.mark.asyncio
+async def test_auto_provision_skips_the_delete_account_request_itself(monkeypatch):
+    """RV-SEC-05: the middleware provisions *after* the handler ran, so the
+    DELETE /account request re-created the user it had just erased. The
+    handler flags its request; this holds even when the tombstone could
+    not be written (no tombstone in the cache here)."""
+    from api import main
+    from api.services.cache import MemoryCache
+
+    fresh_app = main.create_app()
+    fresh_app.state.session_factory = object()
+    fresh_app.state.cache = MemoryCache()
+    calls: list[int] = []
+
+    async def fake_ensure_user_exists(sf, user_id: int, first_name: str) -> None:
+        calls.append(user_id)
+
+    monkeypatch.setattr(main, "ensure_user_exists", fake_ensure_user_exists)
+
+    @fresh_app.get("/_erasure-delete-probe")
+    async def _delete_probe(request: Request):
+        request.state.telegram_user = TelegramInitData(
+            user_id=777007, first_name="Gone", raw={"auth_date": str(int(time.time()) - 60)},
+        )
+        request.state.account_deleted = True
+        return {"ok": True}
+
+    fresh_app.router.routes.insert(0, fresh_app.router.routes.pop())
+
+    async with _erasure_client(fresh_app) as client:
+        assert (await client.get("/_erasure-delete-probe")).status_code == 200
+        await _drain_provision_tasks()
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_refuses_request_authenticated_before_deletion(erasure_app):
+    """RV-SEC-05: get_telegram_user refuses pre-deletion initData, but a
+    request that authenticated a moment before DELETE /account committed
+    could still reach ensure_user afterwards and insert the row again."""
+    from api.dependencies import get_telegram_user
+    from api.services.account_erasure import mark_account_deleted
+    from api.services.workflow_store import ensure_user
+
+    tg_id = 777003
+    session_factory = erasure_app.state.session_factory
+
+    @erasure_app.post("/_erasure-race")
+    async def _race(telegram_user: TelegramInitData = Depends(get_telegram_user)):
+        # DELETE /account lands between this request's auth and its insert.
+        await mark_account_deleted(
+            erasure_app.state.cache, telegram_user.user_id,
+            deleted_at=time.time(), ttl_seconds=60,
+        )
+        async with session_factory() as session:
+            await ensure_user(session, telegram_user_id=telegram_user.user_id)
+            await session.commit()
+        return {"ok": True}
+
+    erasure_app.router.routes.insert(0, erasure_app.router.routes.pop())
+
+    stale = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(time.time()) - 60)}
+    async with _erasure_client(erasure_app) as client:
+        resp = await client.post("/_erasure-race", headers=stale)
+        await _drain_provision_tasks()
+    assert resp.status_code == 410
+    assert await _user_rows(session_factory, tg_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_account_proceeds_when_tombstone_cannot_be_written(erasure_app, caplog):
+    """RV-SEC-05: the right to erasure must not depend on Redis. When the
+    tombstone doesn't stick (RedisCache.set swallows errors) the data is
+    still deleted and the degraded state is logged."""
+    from api.services.cache import MemoryCache
+
+    class _WriteLostCache(MemoryCache):
+        async def set(self, key, value, ttl=None):
+            return None
+
+    erasure_app.state.cache = _WriteLostCache()
+    tg_id = 777004
+    await _seed_erasure_user(erasure_app.state.session_factory, tg_id)
+    stale = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(time.time()) - 60)}
+
+    with caplog.at_level("WARNING", logger="api.routers.consent"):
+        async with _erasure_client(erasure_app) as client:
+            resp = await client.request(
+                "DELETE", "/api/v1/account", json={"confirmation": "erased"}, headers=stale,
+            )
+            await _drain_provision_tasks()
+    assert resp.status_code == 204
+    assert await _user_rows(erasure_app.state.session_factory, tg_id) == 0
+    assert "without an erasure tombstone" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_failed_erasure_drops_the_tombstone(erasure_app, monkeypatch):
+    """RV-SEC-05: the tombstone is written before the DB delete; if the
+    delete fails nothing was erased, so the user's still-valid session
+    must keep working instead of getting 410 for two hours."""
+    from api.routers import consent as consent_router
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(consent_router, "purge_user_data", _boom)
+    tg_id = 777006
+    await _seed_erasure_user(erasure_app.state.session_factory, tg_id)
+    stale = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(time.time()) - 60)}
+
+    async with _erasure_client(erasure_app, raise_app_exceptions=False) as client:
+        resp = await client.request(
+            "DELETE", "/api/v1/account", json={"confirmation": "erased"}, headers=stale,
+        )
+        assert resp.status_code == 500
+        assert await erasure_app.state.cache.get(f"account:deleted:{tg_id}") is None
+        resp = await client.get("/api/v1/profile/me", headers=stale)
+        await _drain_provision_tasks()
+    assert resp.status_code == 200
+    assert await _user_rows(erasure_app.state.session_factory, tg_id) == 1
+
+
+async def _seed_account_graph(session, *, telegram_user_id: int, first_name: str):
+    from api.models import (
+        AIAuditLog,
+        Contact,
+        DealExpense,
+        LeadItem,
+        LeadItemPriceSnapshot,
+        LeadReminder,
+        SavedSearch,
+        TelegramNotificationDLQ,
+        Tracker,
+        TrackerEvent,
+        User,
+        UserConsent,
+    )
+
+    user = User(telegram_user_id=telegram_user_id, first_name=first_name)
+    session.add(user)
+    await session.flush()
+    tracker = Tracker(user_id=user.id, query=f"iphone {telegram_user_id}")
+    lead = LeadItem(
+        user_id=user.id,
+        ad_id=telegram_user_id,
+        query="iphone",
+        title="iPhone 13",
+        link=f"https://www.kufar.by/item/{telegram_user_id}",
+        price_byn=900,
+    )
+    session.add_all([tracker, lead])
+    await session.flush()
+    session.add_all([
+        TrackerEvent(
+            tracker_id=tracker.id,
+            user_id=user.id,
+            ad_id=telegram_user_id,
+            query="iphone",
+            event_type="new_listing",
+            title="iPhone 13",
+            link=f"https://www.kufar.by/item/{telegram_user_id}",
+        ),
+        LeadItemPriceSnapshot(lead_item_id=lead.id, price_byn=900),
+        DealExpense(lead_id=lead.id, user_id=user.id, expense_type="delivery", amount_byn=10),
+        LeadReminder(lead_id=lead.id, user_id=user.id, remind_at=datetime.now(UTC)),
+        UserConsent(user_id=user.id, consent_type="pd_processing", version="2026.2"),
+        AIAuditLog(user_id=user.id, endpoint="analyze", query="iphone", model="test-model"),
+        Contact(user_id=user.id, phone=f"+375{telegram_user_id}"),
+        SavedSearch(user_id=user.id, name="Phones", query="iphone"),
+        TelegramNotificationDLQ(
+            user_id=user.id,
+            telegram_user_id=telegram_user_id,
+            source="test",
+            message="failed notification",
+            error_kind="retryable",
+        ),
+    ])
+    await session.flush()
+    return user
+
+
+async def _owned_row_counts(session, user_id: int) -> dict[str, int]:
+    from sqlalchemy import func, select
+
+    from api.models import (
+        AIAuditLog,
+        Contact,
+        DealExpense,
+        LeadItem,
+        LeadItemPriceSnapshot,
+        LeadReminder,
+        SavedSearch,
+        TelegramNotificationDLQ,
+        Tracker,
+        TrackerEvent,
+        User,
+        UserConsent,
+    )
+
+    counts = {}
+    for model in (
+        Tracker, TrackerEvent, LeadItem, DealExpense, LeadReminder, UserConsent,
+        AIAuditLog, Contact, SavedSearch, TelegramNotificationDLQ,
+    ):
+        counts[model.__tablename__] = await session.scalar(
+            select(func.count()).select_from(model).where(model.user_id == user_id)
+        )
+    counts["lead_item_price_snapshots"] = await session.scalar(
+        select(func.count())
+        .select_from(LeadItemPriceSnapshot)
+        .join(LeadItem, LeadItemPriceSnapshot.lead_item_id == LeadItem.id)
+        .where(LeadItem.user_id == user_id)
+    )
+    counts["users"] = await session.scalar(
+        select(func.count()).select_from(User).where(User.id == user_id)
+    )
+    return counts
+
+
+@pytest.mark.asyncio
+async def test_delete_account_bulk_deletes_the_whole_graph(client):
+    """RV-BE-16: session.delete(user) walked the ORM cascade — SELECT of every
+    tracker, event, lead, snapshot and up to a year of ai_audit_log, then
+    row-by-row DELETEs. Erasure is now one bulk DELETE per table: no child
+    row is loaded, every table the user owns ends up empty for them (also
+    on SQLite, where FK cascades are off) and another user's data survives.
+
+    RV-SEC-05: admin_audit_log rows about the user stay, minus anything that
+    identifies them; rows the user wrote as an admin only lose the actor id.
+    """
+    from sqlalchemy import event, select
+
+    from api.models import AdminAuditLog
+
+    session_factory = app.state.session_factory
+    async with session_factory() as session:
+        target = await _seed_account_graph(
+            session, telegram_user_id=_fake_telegram_user().user_id, first_name="ConsentTest",
+        )
+        other = await _seed_account_graph(session, telegram_user_id=555777, first_name="Other")
+        about_target = AdminAuditLog(
+            actor_user_id=other.id,
+            target_user_id=target.id,
+            action="user_status_updated",
+            payload={
+                "target_telegram_user_id": target.telegram_user_id,
+                "old": {"status_code": "scout", "granted_at": None, "expires_at": None,
+                        "note": "VIP, +375291234567"},
+                "new": {"status_code": "flipper", "granted_at": "2026-10-01T00:00:00+00:00",
+                        "expires_at": None, "note": "звонил сам"},
+            },
+            ip_address="10.0.0.1",
+        )
+        by_target_payload = {
+            "target_telegram_user_id": other.telegram_user_id,
+            "old": {"status_code": "bare_search", "granted_at": None, "expires_at": None,
+                    "note": None},
+            "new": {"status_code": "scout", "granted_at": "2026-10-02T00:00:00+00:00",
+                    "expires_at": None, "note": "promo"},
+        }
+        by_target = AdminAuditLog(
+            actor_user_id=target.id,
+            target_user_id=other.id,
+            action="user_status_updated",
+            payload=by_target_payload,
+        )
+        session.add_all([about_target, by_target])
+        await session.commit()
+        target_id, other_id = target.id, other.id
+        about_target_id, by_target_id = about_target.id, by_target.id
+        other_before = await _owned_row_counts(session, other_id)
+    assert all(other_before.values())
+
+    statements: list[str] = []
+
+    def _capture(_conn, _cursor, statement, _params, _context, _executemany):
+        statements.append(statement)
+
+    sync_engine = session_factory.kw["bind"].sync_engine
+    event.listen(sync_engine, "before_cursor_execute", _capture)
+    try:
+        resp = await client.request(
+            "DELETE", "/api/v1/account", json={"confirmation": "consenttest"},
+        )
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _capture)
+    assert resp.status_code == 204
+
+    owned = (
+        "trackers", "tracker_events", "lead_items", "lead_item_price_snapshots",
+        "deal_expenses", "lead_reminders", "user_consents", "ai_audit_log",
+        "contacts", "saved_searches", "telegram_notification_dlq",
+    )
+    graph_loads = [
+        sql for sql in statements
+        if sql.lstrip().upper().startswith("SELECT")
+        and any(re.search(rf"\bFROM {table}\b", sql) for table in owned)
+    ]
+    assert graph_loads == [], "erasure must not load the user's rows into the worker"
+
+    async with session_factory() as session:
+        assert all(
+            count == 0 for count in (await _owned_row_counts(session, target_id)).values()
+        )
+        assert await _owned_row_counts(session, other_id) == other_before
+        audit = {
+            row.id: row for row in (await session.execute(select(AdminAuditLog))).scalars()
+        }
+    erased = audit[about_target_id]
+    assert erased.target_user_id is None
+    assert erased.actor_user_id == other_id
+    assert erased.ip_address == "10.0.0.1"
+    assert erased.payload == {
+        "old": {"status_code": "scout", "granted_at": None, "expires_at": None},
+        "new": {"status_code": "flipper", "granted_at": "2026-10-01T00:00:00+00:00",
+                "expires_at": None},
+        "target_erased": True,
+    }
+    assert "375291234567" not in json.dumps(erased.payload, ensure_ascii=False)
+    assert audit[by_target_id].actor_user_id is None
+    assert audit[by_target_id].target_user_id == other_id
+    assert audit[by_target_id].payload == by_target_payload

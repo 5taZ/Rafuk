@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models import LeadItem, LeadItemPriceSnapshot, User
+from api.services.account_erasure import ensure_user_creation_allowed
 
 PRICE_SNAPSHOT_RETENTION_DAYS = 90
 
@@ -53,6 +54,10 @@ async def ensure_user(
     )
     inserted_id = await session.scalar(stmt)
     if inserted_id is not None:
+        # RV-SEC-05: a request that authenticated just before DELETE
+        # /account must not resurrect the user. Raising leaves the insert
+        # uncommitted; only the insert branch pays the tombstone lookup.
+        await ensure_user_creation_allowed(telegram_user_id)
         return int(inserted_id)
     # Lost the race (or row already existed) — fetch the existing id.
     existing_id = await session.scalar(

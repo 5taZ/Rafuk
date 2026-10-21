@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -274,3 +276,49 @@ async def test_profile_me_throttles_last_seen_at(profile_client) -> None:
         second_seen = user.last_seen_at
 
     assert first_seen == second_seen
+
+
+@pytest.mark.asyncio
+async def test_profile_user_not_recreated_for_session_older_than_erasure() -> None:
+    """RV-SEC-05: /profile/me is the Mini App's first call after a reload.
+    A request that authenticated a moment before DELETE /account must not
+    recreate the erased row once the deletion committed; a reopened Mini
+    App (newer auth_date) may start a new account."""
+    from api.database import get_engine, get_session_factory
+    from api.services.account_erasure import mark_account_deleted, remember_request_principal
+    from api.services.account_status import get_or_create_profile_user
+
+    cache = MemoryCache()
+    now = int(time.time())
+
+    def _session_user(auth_date: int) -> TelegramInitData:
+        user = _fake_profile_user()
+        user.raw["auth_date"] = str(auth_date)
+        return user
+
+    async def _provision_as(telegram_user: TelegramInitData, session_factory) -> User:
+        # What get_telegram_user records for the request's task.
+        remember_request_principal(telegram_user, cache)
+        async with session_factory() as session:
+            user = await get_or_create_profile_user(session, telegram_user)
+            await session.commit()
+            return user
+
+    engine = get_engine()
+    session_factory = get_session_factory(engine)
+    try:
+        await mark_account_deleted(cache, _PROFILE_USER_ID, deleted_at=now, ttl_seconds=60)
+        # Own task per "request" so the remembered principal can't leak.
+        with pytest.raises(HTTPException) as exc:
+            await asyncio.create_task(_provision_as(_session_user(now - 60), session_factory))
+        assert exc.value.status_code == 410
+        assert exc.value.detail["error"] == "account_deleted"
+        async with session_factory() as session:
+            assert (await session.execute(select(User))).scalars().all() == []
+
+        reopened = await asyncio.create_task(
+            _provision_as(_session_user(now + 1), session_factory)
+        )
+        assert reopened.telegram_user_id == _PROFILE_USER_ID
+    finally:
+        await engine.dispose()

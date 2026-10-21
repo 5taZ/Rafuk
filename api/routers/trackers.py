@@ -12,7 +12,7 @@ from api.config import get_settings
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import Tracker, TrackerEvent, User
+from api.models import Tracker, TrackerEvent, User, UserConsent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead, TrackerUpdate
 from api.services.reseller_tools import default_config_keyword
 from api.services.workflow_store import ensure_user, resolve_user_id
@@ -33,6 +33,50 @@ _LISTING_LEVEL_EVENT_TYPES = (
     "price_threshold_alert",
     "discount_alert",
 )
+
+# Written by revoke_consent (api/routers/consent.py) on a pd_processing revoke.
+_CONSENT_REVOKED_PAUSE_REASON = "consent_revoked"
+_PD_CONSENT_REVOKED_MESSAGE = (
+    "Вы отозвали согласие на обработку персональных данных, поэтому трекеры "
+    "приостановлены. Чтобы создавать и возобновлять трекеры, снова дайте согласие."
+)
+
+
+async def _require_pd_processing_consent(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    paused_by_revoke: bool = False,
+) -> None:
+    """RV-SEC-05: trackers process personal data and message the user, so a
+    pd_processing revoke must not be undone by POST /trackers or one tap on
+    "Resume".
+
+    Only an explicit revoke blocks: users from before consents were recorded
+    have no pd_processing rows at all and keep working. A tracker paused by
+    the revoke itself needs an active consent even if the history is gone.
+    """
+    active, revoked = (
+        await session.execute(
+            select(
+                func.count(UserConsent.id).filter(UserConsent.revoked_at.is_(None)),
+                func.count(UserConsent.id).filter(UserConsent.revoked_at.is_not(None)),
+            ).where(
+                UserConsent.user_id == user_id,
+                UserConsent.consent_type == "pd_processing",
+            )
+        )
+    ).one()
+    if active or not (revoked or paused_by_revoke):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "error": "consent_required",
+            "consent_type": "pd_processing",
+            "message": _PD_CONSENT_REVOKED_MESSAGE,
+        },
+    )
 
 
 @router.get("/tracker-events", response_model=list[TrackerEventRead])
@@ -199,6 +243,7 @@ async def create_tracker(
             telegram_user_id=telegram_user.user_id,
             first_name=telegram_user.first_name,
         )
+        await _require_pd_processing_consent(session, user_id)
 
         # BE-M16: serialise concurrent tracker-create for the same user
         # by taking a row-level FOR UPDATE lock on the User row before
@@ -401,6 +446,11 @@ async def resume_tracker(
         tracker = result.scalar_one_or_none()
         if tracker is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracker not found")
+        await _require_pd_processing_consent(
+            session,
+            user_id,
+            paused_by_revoke=tracker.pause_reason == _CONSENT_REVOKED_PAUSE_REASON,
+        )
 
         tracker.paused = False
         tracker.paused_at = None

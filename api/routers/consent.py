@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -37,6 +38,12 @@ from api.schemas import (
     AIConsentInfoResponse,
     ConsentGrantRequest,
     ConsentStatusResponse,
+)
+from api.services.account_erasure import (
+    clear_account_tombstone,
+    mark_account_deleted,
+    purge_user_data,
+    tombstone_ttl_seconds,
 )
 from api.services.ai_audit import audit_text_sha256, sanitize_audit_text
 from api.services.client_ip import get_client_ip
@@ -397,7 +404,10 @@ async def delete_account(
 ):
     """Delete all user data (right to erasure under Belarus Law No. 99-З).
 
-    Cascade-deletes from all tables where the user has data.
+    RV-BE-16 / RV-SEC-05: one bulk DELETE per table where the user has data
+    (``purge_user_data``), admin-audit rows about the user are kept but
+    stripped of identifiers, and an erasure tombstone stops the Mini App's
+    still-valid initData from re-creating the account.
 
     BE-M3: requires an explicit ``confirmation`` JSON body that matches
     the user's Telegram first_name (case-insensitive, stripped) OR the
@@ -429,24 +439,41 @@ async def delete_account(
             ),
         )
 
+    cache = getattr(request.app.state, "cache", None)
+    # RV-SEC-05: tombstone first, so a request racing the DB delete can't
+    # re-provision the row once the delete commits. initData minted before
+    # this moment is refused for its whole lifetime (see get_telegram_user).
+    deleted_at = time.time()
+    if not await mark_account_deleted(
+        cache,
+        _user.user_id,
+        deleted_at=deleted_at,
+        ttl_seconds=tombstone_ttl_seconds(get_settings().telegram_init_data_max_age),
+    ):
+        logger.warning(
+            "Account deletion for telegram_id=%d proceeds without an erasure "
+            "tombstone (cache unavailable); a still-open Mini App session may "
+            "re-provision an empty profile",
+            _user.user_id,
+        )
+
     user_internal_id: int | None = None
-    async with session_factory() as session:
-        # Find the internal user id
-        stmt = select(User).where(User.telegram_user_id == _user.user_id)
-        user = (await session.execute(stmt)).scalar_one_or_none()
-        if user:
-            # Save id before deletion — object becomes detached after commit
-            user_internal_id = user.id
-
-        dlq_conditions = [TelegramNotificationDLQ.telegram_user_id == _user.user_id]
-        if user_internal_id is not None:
-            dlq_conditions.append(TelegramNotificationDLQ.user_id == user_internal_id)
-        await session.execute(delete(TelegramNotificationDLQ).where(or_(*dlq_conditions)))
-
-        if user:
-            # Cascade deletes happen via ORM relationships + DB ON DELETE CASCADE
-            await session.delete(user)
-        await session.commit()
+    try:
+        async with session_factory() as session:
+            user_internal_id = await resolve_user_id(session, _user.user_id)
+            # RV-BE-16: bulk DELETE per table instead of session.delete(user),
+            # which loaded the whole ORM cascade graph into the worker.
+            purged = await purge_user_data(
+                session, telegram_user_id=_user.user_id, user_id=user_internal_id,
+            )
+            await session.commit()
+    except Exception:
+        # Nothing was erased, so don't lock the still-valid session out.
+        await clear_account_tombstone(cache, _user.user_id)
+        raise
+    # RV-SEC-05: read by the auto-provision middleware once this response
+    # is built — without it the DELETE request itself re-created the user.
+    request.state.account_deleted = True
 
     # BE-C6: Redis cleanup is owned end-to-end by clear_user_ai_data
     # in ai_analysis.py — it scans every per-user namespace
@@ -475,7 +502,12 @@ async def delete_account(
             exc_info=True,
         )
 
-    logger.info("User %s (telegram_id=%d) deleted their account", user_internal_id, _user.user_id)
+    logger.info(
+        "User %s (telegram_id=%d) deleted their account; rows removed: %s",
+        user_internal_id,
+        _user.user_id,
+        ", ".join(f"{table}={count}" for table, count in purged.items() if count) or "none",
+    )
 
 
 @router.get("/export")

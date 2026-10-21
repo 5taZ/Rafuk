@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -290,6 +291,55 @@ def test_user_status_change_writes_admin_audit_log() -> None:
     assert log.payload["old"]["status_code"] == "scout"
     assert log.payload["new"]["status_code"] == "flipper"
     assert log.payload["new"]["note"] == "audit note"
+
+
+def test_account_deletion_pseudonymizes_admin_audit_rows_about_the_user() -> None:
+    """RV-SEC-05: target_user_id is ON DELETE SET NULL, so once the user
+    deleted their account the audit row still carried their Telegram id
+    and the admin's free-text note — with no retention. The row stays (who
+    changed which status when), but nothing in it identifies the erased
+    user any more."""
+    from api.dependencies import get_telegram_user
+
+    _seed_users(
+        {"telegram_user_id": _ADMIN_TG_ID, "first_name": "Admin",
+         "account_status_code": "bare_search"},
+        {"telegram_user_id": _USER_TG_ID, "first_name": "AuditTarget",
+         "account_status_code": "scout"},
+    )
+    app = _admin_app(_ADMIN_TG_ID)
+
+    with TestClient(app) as client:
+        client.app.state.cache = MemoryCache()
+        resp = client.patch(
+            f"/api/v1/admin/users/{_USER_TG_ID}/status",
+            json={"status_code": "flipper", "expires_at": None,
+                  "note": "VIP, звонил с +375291234567"},
+        )
+        assert resp.status_code == 200
+        app.dependency_overrides[get_telegram_user] = _telegram_user(
+            _USER_TG_ID, first_name="AuditTarget",
+        )
+        resp = client.request("DELETE", "/api/v1/account", json={"confirmation": "audittarget"})
+        assert resp.status_code == 204
+        app.dependency_overrides[get_telegram_user] = _telegram_user(_ADMIN_TG_ID)
+        audit = client.get("/api/v1/admin/audit").json()
+
+    assert len(audit) == 1
+    entry = audit[0]
+    assert entry["action"] == "user_status_updated"
+    assert entry["target_user_id"] is None
+    assert entry["actor_user_id"] is not None
+    payload = entry["payload"]
+    assert payload["target_erased"] is True
+    assert "target_telegram_user_id" not in payload
+    assert payload["old"]["status_code"] == "scout"
+    assert payload["new"]["status_code"] == "flipper"
+    assert "note" not in payload["old"]
+    assert "note" not in payload["new"]
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert str(_USER_TG_ID) not in serialized
+    assert "375291234567" not in serialized
 
 
 def test_admin_can_get_status_list() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -602,3 +603,168 @@ def test_trackers_offset_cap_rejects_over_10000() -> None:
         resp = client.get("/api/v1/trackers", params={"offset": 10001})
 
     assert resp.status_code == 422
+
+
+# ── RV-SEC-05: a pd_processing revoke gates tracker create / resume ─────
+
+
+_NO_TRACKER = object()
+
+
+def _seed_pd_consent_history(
+    *, revoked: int, active: bool, pause_reason: str | None | object = _NO_TRACKER,
+) -> int | None:
+    """Seed fake_telegram_user with pd_processing consent rows and, unless
+    ``pause_reason`` is omitted, one paused tracker; returns its id."""
+    from api.models import User, UserConsent
+
+    async def _seed() -> int | None:
+        engine = get_engine()
+        try:
+            async with get_session_factory(engine)() as session:
+                user = User(telegram_user_id=fake_telegram_user().user_id, first_name="Test")
+                session.add(user)
+                await session.flush()
+                now = datetime.now(UTC)
+                for days_ago in range(revoked):
+                    session.add(UserConsent(
+                        user_id=user.id,
+                        consent_type="pd_processing",
+                        version="2026.2",
+                        granted_at=now - timedelta(days=days_ago + 2),
+                        revoked_at=now - timedelta(days=days_ago + 1),
+                    ))
+                if active:
+                    session.add(UserConsent(
+                        user_id=user.id, consent_type="pd_processing", version="2026.2",
+                    ))
+                tracker_id = None
+                if pause_reason is not _NO_TRACKER:
+                    tracker = Tracker(
+                        user_id=user.id,
+                        query="iphone 15",
+                        paused=True,
+                        paused_at=now,
+                        pause_reason=pause_reason,
+                    )
+                    session.add(tracker)
+                    await session.flush()
+                    tracker_id = tracker.id
+                await session.commit()
+                return tracker_id
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_seed())
+
+
+def _tracker_states() -> list[tuple[bool, str | None]]:
+    from sqlalchemy import select
+
+    async def _read() -> list[tuple[bool, str | None]]:
+        engine = get_engine()
+        try:
+            async with get_session_factory(engine)() as session:
+                rows = await session.execute(select(Tracker.paused, Tracker.pause_reason))
+                return [(paused, reason) for paused, reason in rows]
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_read())
+
+
+def _trackers_client() -> TestClient:
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    return TestClient(app)
+
+
+def _assert_pd_consent_refusal(resp) -> None:
+    assert resp.status_code == 403
+    detail = resp.json()["detail"]
+    assert detail["error"] == "consent_required"
+    assert detail["consent_type"] == "pd_processing"
+    assert "отозвали согласие" in detail["message"]
+
+
+def test_create_tracker_refused_after_pd_processing_revoke() -> None:
+    """RV-SEC-05: the revoke paused the user's trackers, but POST /trackers
+    started a new one right away — processing data the user withdrew
+    consent for."""
+    _seed_pd_consent_history(revoked=1, active=False)
+
+    with _trackers_client() as client:
+        resp = client.post("/api/v1/trackers", json={"query": "iphone 15"})
+
+    _assert_pd_consent_refusal(resp)
+    assert _tracker_states() == []
+
+
+@pytest.mark.parametrize(
+    ("revoked", "active"),
+    [
+        (1, True),  # re-granted after the revoke
+        (0, False),  # users from before consents were recorded keep working
+    ],
+)
+def test_create_tracker_allowed_without_an_outstanding_revoke(revoked: int, active: bool) -> None:
+    _seed_pd_consent_history(revoked=revoked, active=active)
+
+    with _trackers_client() as client:
+        resp = client.post("/api/v1/trackers", json={"query": "iphone 15"})
+
+    assert resp.status_code == 201
+
+
+@pytest.mark.parametrize(
+    ("revoked", "active", "pause_reason"),
+    [
+        (1, False, "consent_revoked"),
+        # A manual pause survives the revoke untouched — resuming it is
+        # the same processing the revoke withdrew.
+        (1, False, None),
+        # Paused by the revoke: needs an active consent even if the
+        # consent history is gone.
+        (0, False, "consent_revoked"),
+    ],
+)
+def test_resume_tracker_refused_without_pd_processing_consent(
+    revoked: int, active: bool, pause_reason: str | None,
+) -> None:
+    """RV-SEC-05: one tap on "Resume" lifted the consent_revoked pause
+    without a new consent."""
+    tracker_id = _seed_pd_consent_history(
+        revoked=revoked, active=active, pause_reason=pause_reason,
+    )
+
+    with _trackers_client() as client:
+        resp = client.post(f"/api/v1/trackers/{tracker_id}/resume")
+
+    _assert_pd_consent_refusal(resp)
+    assert _tracker_states() == [(True, pause_reason)]
+
+
+@pytest.mark.parametrize(
+    ("revoked", "active", "pause_reason"),
+    [
+        (1, True, "consent_revoked"),  # re-granted, then resumed by hand
+        (0, False, None),  # legacy user, manual pause
+        (0, False, "bot_blocked"),
+    ],
+)
+def test_resume_tracker_allowed_with_consent_or_without_revoke(
+    revoked: int, active: bool, pause_reason: str | None,
+) -> None:
+    tracker_id = _seed_pd_consent_history(
+        revoked=revoked, active=active, pause_reason=pause_reason,
+    )
+
+    with _trackers_client() as client:
+        resp = client.post(f"/api/v1/trackers/{tracker_id}/resume")
+
+    assert resp.status_code == 200
+    assert resp.json()["paused"] is False
+    assert _tracker_states() == [(False, None)]
