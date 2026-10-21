@@ -21,23 +21,34 @@
 # Single-stage is enough — we have no JS bundler / SCSS step today
 # (everything is hand-written ES modules + plain CSS), so the only
 # work is COPY + a permissions check.
+#
+# RV-OPS-13: the build context is the allowlist in
+# Dockerfile.frontend.dockerignore (frontend/, assets/, nginx/ only).
 
 # SEC-NEW-9: nginxinc/nginx-unprivileged runs the master+workers as the nginx user (uid 101) instead of root.
 # PERF-NEW-5: brotli pending dedicated build pipeline — no maintained unprivileged+brotli
 # image exists; a multi-stage build that compiles ngx_brotli from source is deferred until
 # the CI pipeline supports custom nginx module builds. gzip remains the active compressor.
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+# RV-OPS-02: 1.27.3 or newer is required for "resolve" in the upstream block of
+# nginx/default.conf; 1.30 is the supported stable branch (1.27 is end of life).
+FROM nginxinc/nginx-unprivileged:1.30-alpine
 
 # Temporarily switch to root for file operations; the base image
 # sets USER nginx which would block writes to /etc/nginx.
 USER root
 
-# Drop the upstream default and replace it with ours. The site
-# config carries every cache/CSP/CORS rule the front-end relies on,
-# so leaving the stock /etc/nginx/conf.d/default.conf in place
-# would mask the local one.
+# Drop the upstream default; ours is rendered from the template below. The
+# site config carries every cache/CSP/CORS rule the front-end relies on, so
+# leaving the stock /etc/nginx/conf.d/default.conf in place would mask it.
 RUN rm -f /etc/nginx/conf.d/default.conf
-COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+
+# RV-OPS-02: nginx/default.conf is an envsubst template. The image entrypoint
+# (20-envsubst-on-templates.sh) renders /etc/nginx/templates/*.template into
+# /etc/nginx/conf.d/ at container start, so the API upstream is chosen at run
+# time: the compose api service by default, the host API for start-local.sh.
+# docker-compose.yml mounts a tmpfs on /etc/nginx/conf.d because the root
+# filesystem is read-only.
+COPY nginx/default.conf /etc/nginx/templates/default.conf.template
 
 # Static bundle. The paths match what default.conf expects:
 #   * /                      → /usr/share/nginx/html (Mini-App SPA)
@@ -45,20 +56,29 @@ COPY nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY frontend /usr/share/nginx/html
 COPY assets /usr/share/nginx/assets
 
-# Smoke-test the nginx config at build time. Catches typos before
-# the image ever boots; failed config = failed build = no broken
-# rollout in prod.
-#
-# The upstream is ``host.docker.internal`` which Docker injects via
-# ``extra_hosts: host-gateway`` at CONTAINER start. The BUILD sandbox
-# doesn't have that entry — it's supplied via ``build.extra_hosts``
-# in docker-compose.yml, which BuildKit translates to a /etc/hosts
-# entry visible to RUN steps (the build's /etc/hosts is otherwise
-# read-only by design). Without that compose entry this RUN would
-# fail with "host not found in upstream".
-RUN nginx -t
+# Defaults for the template: the compose stack. Only these two variables are
+# substituted; everything else in the file is nginx syntax.
+ENV API_UPSTREAM=api:8000 \
+    API_UPSTREAM_PARAMS=resolve \
+    NGINX_ENVSUBST_FILTER=^API_UPSTREAM
 
 # Switch back to unprivileged user for runtime.
 USER nginx
+
+# Smoke-test the nginx config at build time. Catches typos before the image
+# ever boots; failed config = failed build = no broken rollout in prod.
+# RV-OPS-02: both upstream shapes are rendered and tested — the start-local.sh
+# one (a plain address, resolved once) and the compose default ("resolve" names
+# are resolved at run time, so no DNS entry for "api" is needed while building).
+# The compose default stays in conf.d as a fallback for a container started
+# without a writable /etc/nginx/conf.d; the entrypoint overwrites it otherwise.
+RUN set -eu; \
+    template=/etc/nginx/templates/default.conf.template; \
+    rendered=/etc/nginx/conf.d/default.conf; \
+    API_UPSTREAM=127.0.0.1:8010 API_UPSTREAM_PARAMS= \
+        envsubst '${API_UPSTREAM} ${API_UPSTREAM_PARAMS}' <"$template" >"$rendered"; \
+    nginx -t; \
+    envsubst '${API_UPSTREAM} ${API_UPSTREAM_PARAMS}' <"$template" >"$rendered"; \
+    nginx -t
 
 EXPOSE 8080

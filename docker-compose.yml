@@ -1,6 +1,17 @@
 # SEC-NEW-1: cap_drop ALL + no-new-privileges + read_only by default. Writable scratch via tmpfs:/tmp.
 name: myprojetctkufar
 
+# RV-OPS-02: the Python services reach Postgres and Redis by service name over
+# kufar-net. The host-mode DATABASE_URL / REDIS_URL from .env (localhost:5433 /
+# localhost:6380) point at the container itself here, and host.docker.internal
+# cannot reach ports published on 127.0.0.1 on a Linux Docker Engine. Set
+# DOCKER_DATABASE_URL / DOCKER_REDIS_URL only to use other servers (e.g. a
+# managed database). POSTGRES_USER, POSTGRES_PASSWORD and REDIS_PASSWORD are
+# inserted into these URLs verbatim, so keep them URL-safe (`openssl rand -hex
+# 32` is); otherwise set the DOCKER_* URLs with percent-encoded passwords.
+x-database-url: &database-url "${DOCKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-kufar}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kufar}}"
+x-redis-url: &redis-url "${DOCKER_REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379/0}"
+
 services:
   # NOTE: resource limits are deliberately conservative — they're sized
   # for a single-host dev deployment, not for production scale. Limits
@@ -28,20 +39,27 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-      - /app/.cache
-    command: ["uv", "run", "--no-sync", "alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
+    # RV-OPS-01: the image CMD runs /app/.venv/bin/alembic for SERVICE=migrate,
+    # like the other services; the old `uv run --no-sync` command needed a
+    # tmpfs uv cache (UV_CACHE_DIR) on this read-only container.
     environment:
-      UV_CACHE_DIR: /app/.cache/uv
+      SERVICE: migrate
       ENV: ${ENV:-production}
       DEBUG: ${DEBUG:-false}
       AUTH_BYPASS: ${AUTH_BYPASS:-false}
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
+      DATABASE_URL: *database-url
       BOT_TOKEN: ${BOT_TOKEN}
-      REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
+      REDIS_URL: *redis-url
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      # RV-OPS-02: wait for the bundled database instead of failing the one-shot
+      # run on a cold start. required: false (Compose >= 2.20) keeps the
+      # dependency optional: without the local-db profile the postgres service
+      # does not exist and DOCKER_DATABASE_URL points at an external database.
+      postgres:
+        condition: service_healthy
+        required: false
     networks:
       - kufar-net
     deploy:
@@ -73,8 +91,8 @@ services:
       AUTH_BYPASS: ${AUTH_BYPASS:-false}
       SERVICE: api
       BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
-      REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
+      DATABASE_URL: *database-url
+      REDIS_URL: *redis-url
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
       ADMIN_TELEGRAM_USER_IDS: ${ADMIN_TELEGRAM_USER_IDS:-}
@@ -109,10 +127,9 @@ services:
       # the whole stack rather than letting api come up half-broken.
       migrate:
         condition: service_completed_successfully
+    # Debug access from the host only; nginx reaches api:8000 over kufar-net.
     ports:
       - "127.0.0.1:8010:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     networks:
       - kufar-net
     deploy:
@@ -155,8 +172,8 @@ services:
       AUTH_BYPASS: ${AUTH_BYPASS:-false}
       SERVICE: bot
       BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
-      REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
+      DATABASE_URL: *database-url
+      REDIS_URL: *redis-url
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
       # OPUS-12: shared with api via env so the bot can authenticate
@@ -165,8 +182,6 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     networks:
       - kufar-net
     deploy:
@@ -211,16 +226,14 @@ services:
       AUTH_BYPASS: ${AUTH_BYPASS:-false}
       SERVICE: scheduler
       BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-${DATABASE_URL}}
-      REDIS_URL: ${DOCKER_REDIS_URL:-${REDIS_URL}}
+      DATABASE_URL: *database-url
+      REDIS_URL: *redis-url
       API_BASE_URL: ${API_BASE_URL}
       MINI_APP_URL: ${MINI_APP_URL}
       ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
     depends_on:
       api:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     networks:
       - kufar-net
     deploy:
@@ -256,24 +269,16 @@ services:
     # — single deploy artifact, atomic rollouts, immutable in
     # production. See Dockerfile.frontend for the build.
     #
-    # In local dev you can still get hot-reload by overriding the
-    # build with a docker-compose.override.yml that re-adds the
-    # bind mounts; we don't ship that file because it is per-developer
-    # ergonomics, not a service contract.
+    # In local dev you can still get hot-reload by re-adding the bind
+    # mounts in a docker-compose.override.yml (the nginx config goes to
+    # /etc/nginx/templates/default.conf.template, see RV-OPS-02 below);
+    # the shipped override only publishes Redis for start-local.sh.
+    # RV-OPS-02: Dockerfile.frontend's build-time `nginx -t` renders the
+    # upstream template with values that need no DNS, so the old
+    # build.extra_hosts stub for host.docker.internal is gone.
     build:
       context: .
       dockerfile: Dockerfile.frontend
-      # Wave 25.2: ``nginx -t`` inside the Dockerfile resolves the
-      # literal ``host.docker.internal`` upstream in nginx.conf at
-      # config-load time. The build sandbox normally doesn't have
-      # that entry — the runtime ``extra_hosts`` below only kicks in
-      # at container START. BuildKit's ``build.extra_hosts``
-      # injects a /etc/hosts entry visible to RUN steps. The build-
-      # time value is a no-op stub (127.0.0.1) because nothing in
-      # the build phase actually talks to it; runtime resolution is
-      # supplied by Docker's host-gateway entry below.
-      extra_hosts:
-        - "host.docker.internal:127.0.0.1"
     restart: unless-stopped
     # SEC-NEW-1: fully read_only; nginx-unprivileged needs /tmp, /var/cache/nginx, /var/run writable.
     security_opt:
@@ -285,8 +290,30 @@ services:
       - /tmp
       - /var/cache/nginx
       - /var/run
+      # RV-OPS-02: the image entrypoint renders nginx/default.conf (an
+      # envsubst template) into conf.d at start; on the read-only root
+      # filesystem it would skip that silently without a writable conf.d.
+      - /etc/nginx/conf.d
+    environment:
+      # RV-OPS-02: host:port the /api/ locations proxy to. The default is the
+      # api service over kufar-net; start-local.sh passes
+      # NGINX_API_UPSTREAM=host.docker.internal:8010 for the API on the host.
+      API_UPSTREAM: ${NGINX_API_UPSTREAM:-api:8000}
+      # Parameters of that upstream server: "resolve" makes nginx follow a
+      # recreated api container to its new address. start-local.sh passes an
+      # empty value because host.docker.internal exists only in /etc/hosts,
+      # which nginx's runtime resolver does not read. No ":" in the default on
+      # purpose: an explicitly empty value must stay empty.
+      API_UPSTREAM_PARAMS: ${NGINX_API_UPSTREAM_PARAMS-resolve}
+    # Only start-local.sh host mode uses it (the API runs on the host there).
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      api:
+        condition: service_healthy
+        # Restart nginx whenever compose recreates or restarts api
+        # (Compose >= 2.17), in addition to "resolve" above.
+        restart: true
     ports:
       - "127.0.0.1:8081:8080"
     networks:
@@ -330,7 +357,10 @@ services:
       - /tmp
     volumes:
       - redis-data:/data
-    command: ["--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "192mb", "--maxmemory-policy", "allkeys-lru"]
+    # RV-OPS-02: no fallback password, like POSTGRES_PASSWORD (PR-14): an unset
+    # value silently started Redis without AUTH. The services build REDIS_URL
+    # from the same variable (x-redis-url above).
+    command: ["--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}", "--maxmemory", "192mb", "--maxmemory-policy", "allkeys-lru"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     # PR-18: no host port mapping in the base compose. Other services
@@ -400,6 +430,11 @@ services:
   # The volume keeps data across `compose down` cycles; `compose down
   # -v` wipes it. Resource limits are tuned for a dev box, not for
   # serving real traffic.
+  #
+  # RV-OPS-02: the containers use it as postgres:5432 over kufar-net
+  # (x-database-url), so a full stack on this database needs
+  # `--profile local-db`. The 127.0.0.1:5433 port below serves only the
+  # host processes of start-local.sh.
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped

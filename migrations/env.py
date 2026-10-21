@@ -11,7 +11,11 @@ from api.config import get_settings
 from api.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# RV-DB-07: Alembic's Config is a ConfigParser, which treats "%" as
+# interpolation syntax: a percent-encoded password (p%40ss) raised
+# "invalid interpolation syntax", so the migrate service failed and api,
+# which waits for it, never started. Reads return the unescaped URL.
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 # RV-DB-01: fileConfig() disables every logger created before it. The
 # Postgres migration tests run alembic inside the pytest process, which

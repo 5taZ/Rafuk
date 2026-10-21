@@ -196,7 +196,12 @@ start_infra() {
 
 start_frontend() {
     echo "Starting frontend container on http://127.0.0.1:8081 ..."
-    docker compose up -d --build frontend --no-deps --force-recreate
+    # RV-OPS-02: nginx proxies /api/ to the compose api service by default; here
+    # the API runs on the host (start_api). No "resolve" parameter: the name
+    # host.docker.internal exists only in the container's /etc/hosts, which
+    # nginx's runtime resolver does not read.
+    NGINX_API_UPSTREAM="host.docker.internal:8010" NGINX_API_UPSTREAM_PARAMS="" \
+        docker compose up -d --build frontend --no-deps --force-recreate
 }
 
 start_tunnel() {

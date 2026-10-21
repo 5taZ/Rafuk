@@ -6,13 +6,20 @@ on:
     # branch the CI exercises. Keep it listed for now; once the
     # workflow stabilises on main, drop bad-app and only run on the
     # release lane plus PRs.
-    branches: [main, develop, bad-app]
+    # RV-OPS-09: the integration branch is `dev`; there is no `develop`.
+    branches: [main, dev, bad-app]
   pull_request:
-    branches: [main]
+    # RV-OPS-09: PRs into the active branch were not checked at all.
+    branches: [main, bad-app]
   workflow_dispatch:  # G-12: manual trigger for E2E smoke
 
 permissions:
   contents: read
+
+env:
+  # RV-OPS-06: the uv release that wrote uv.lock; Dockerfile pins the same
+  # one (ARG UV_VERSION). Bump both together.
+  UV_VERSION: "0.12.19"
 
 jobs:
   lint:
@@ -29,11 +36,16 @@ jobs:
       # tag (`@v4` is mutable) cannot run arbitrary code in CI.
       # Each pin is followed by the human-readable version it
       # resolved at pin time so dependabot/grep can audit drift.
+      # RV-OPS-09: pin the commit a tag points to (git rev-parse
+      # tag^{commit}), not the annotated tag object: setup-uv and codecov
+      # carried tag-object SHAs, which are not commits and do not resolve
+      # reliably as action refs.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@8d55fbecc275b1c35dbe060458839f8d30439ccf # v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Set up Python
@@ -41,8 +53,14 @@ jobs:
         with:
           python-version-file: ".python-version"
 
+      # RV-OPS-06: uv.lock must match pyproject.toml. Every uv sync / uv export
+      # below runs with --locked, so a stale lock fails instead of being
+      # silently re-resolved.
+      - name: Check uv.lock is up to date
+        run: uv lock --check
+
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Run ruff linter
         run: uv run ruff check .
@@ -69,8 +87,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@8d55fbecc275b1c35dbe060458839f8d30439ccf # v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Set up Python
@@ -84,7 +103,7 @@ jobs:
         # auditor (PyPI doesn't know about us). Exporting from uv.lock
         # also pins exactly the versions that ship in the production
         # image — no drift between audit target and runtime.
-        run: uv export --no-dev --no-emit-project --no-hashes --format requirements-txt -o requirements.lock.txt
+        run: uv export --locked --no-dev --no-emit-project --no-hashes --format requirements-txt -o requirements.lock.txt
 
       - name: Run pip-audit
         # `--strict` turns warnings into errors. `--no-deps` skips the
@@ -164,8 +183,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@8d55fbecc275b1c35dbe060458839f8d30439ccf # v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Set up Python
@@ -174,7 +194,7 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Run migrations
         env:
@@ -210,7 +230,7 @@ jobs:
         # SEC-LOW (issues §1.8): codecov v4 requires a token for
         # private repos; without it the upload silently no-ops.
         # CODECOV_TOKEN is provisioned as a repo secret.
-        uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97 # v4.6.0
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           file: ./coverage.xml
@@ -225,8 +245,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@8d55fbecc275b1c35dbe060458839f8d30439ccf # v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Set up Python
@@ -235,7 +256,7 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Install dependencies
-        run: uv sync --extra e2e --extra dev
+        run: uv sync --locked --extra e2e --extra dev
 
       - name: Install Playwright browsers
         run: uv run playwright install chromium --with-deps
@@ -248,6 +269,72 @@ jobs:
           KUFAR_E2E: "1"
         run: uv run pytest tests/e2e/ --tb=short
 
+  # RV-OPS-09: build and run the production-shaped compose stack on every push
+  # and PR. OPS-01 (api/bot/scheduler unable to start on the read-only root
+  # filesystem) and OPS-02 (nginx -> api 502 on Linux) went unnoticed for
+  # months because no job ever started the images or built Dockerfile.frontend.
+  compose-smoke:
+    name: Compose Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Base file only, as in production (no docker-compose.override.yml), plus
+      # the bundled Postgres. Throwaway, URL-safe credentials for this job.
+      COMPOSE_FILE: docker-compose.yml
+      COMPOSE_PROFILES: local-db
+      POSTGRES_PASSWORD: ci-smoke-postgres
+      REDIS_PASSWORD: ci-smoke-redis
+      # Well-formed but not a real token: the bot cannot log in to Telegram
+      # here, so its entry point is only import-checked below.
+      BOT_TOKEN: "123456:ci-smoke-not-a-real-token"
+      API_BASE_URL: https://ci.example.com
+      MINI_APP_URL: https://ci.example.com
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Validate compose files
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.override.yml config --quiet
+
+      - name: Build the Python and frontend images
+        # Dockerfile.frontend runs `nginx -t` on both renderings of the template.
+        run: docker compose build
+
+      - name: Start the stack
+        # Returns once postgres is healthy, migrate has exited 0 and api is
+        # healthy (the depends_on conditions), then starts scheduler and frontend.
+        run: timeout 600 docker compose up -d scheduler frontend
+
+      - name: API readiness through nginx (frontend -> api:8000)
+        run: curl -fsS --retry 20 --retry-delay 3 --retry-all-errors http://127.0.0.1:8081/api/v1/health/ready
+
+      - name: Frontend serves the Mini App shell
+        run: curl -fsS http://127.0.0.1:8081/ | grep -qi '<!doctype html'
+
+      - name: Scheduler becomes healthy
+        run: |
+          for _ in $(seq 1 30); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q scheduler)")"
+            if [ "$status" = "healthy" ]; then exit 0; fi
+            sleep 5
+          done
+          echo "scheduler health: $status"
+          exit 1
+
+      - name: Bot entry point imports in its container
+        run: docker compose run --rm --no-deps bot /app/.venv/bin/python -c "import bot.main"
+
+      - name: Service state and logs
+        if: ${{ always() }}
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail=200
+
+      - name: Tear down
+        if: ${{ always() }}
+        run: docker compose down -v --remove-orphans
+
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest
@@ -256,7 +343,8 @@ jobs:
       packages: write
     # docker-build still gates on the trio — green lint + green tests +
     # clean security audit before we burn CI minutes building images.
-    needs: [lint, test, security]
+    # RV-OPS-09: plus the compose smoke run of the same Dockerfile.
+    needs: [lint, test, security, compose-smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

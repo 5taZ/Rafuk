@@ -9,8 +9,11 @@ audit-fix plan see `konechno.md` and the source-of-truth audit log
 ## TL;DR
 
 ```bash
-# install
-uv sync --extra dev
+# install (--locked: fail instead of re-resolving a stale uv.lock)
+uv sync --locked --extra dev
+
+# after editing dependencies in pyproject.toml: re-lock, CI runs `uv lock --check`
+uv lock
 
 # tests must stay green before any commit
 uv run pytest --tb=short
@@ -39,7 +42,7 @@ Do **not** commit a red suite.
 | `frontend/` | Vanilla JS Mini-App (no bundler, no JSX) |
 | `migrations/` | Alembic migrations |
 | `tests/` | pytest suite against aiosqlite locally / Postgres in CI |
-| `nginx/` | Reverse-proxy config, CSP/headers |
+| `nginx/` | Reverse-proxy config, CSP/headers (`default.conf` is an envsubst template: API upstream) |
 | `docker-compose.yml` | api / bot / scheduler / frontend / redis / cloudflared |
 
 A more detailed file map lives at the bottom of `konechno.md`. Update it
@@ -118,8 +121,9 @@ list of importers so removing them is a deliberate decision.
    `docker compose up`); production deploys use
    `docker compose -f docker-compose.yml up` and the port stays
    internal to `kufar-net`. `REDIS_URL` for host processes still
-   points at `localhost:6380`; `DOCKER_REDIS_URL` carries the
-   `REDIS_PASSWORD` env var for in-cluster traffic.
+   points at `localhost:6380` (with `REDIS_PASSWORD`, which Redis
+   always requires); containers use `redis:6379` with the same
+   password, built by compose unless `DOCKER_REDIS_URL` overrides it.
 3. **The full pytest suite must stay green.** Verify with
    `uv run pytest --tb=short -q` before commits that touch runtime
    code or tests. If a refactor breaks tests, either update the test

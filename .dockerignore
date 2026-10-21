@@ -1,64 +1,74 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-.venv/
-venv/
-*.egg-info/
+# RV-OPS-13: build context of the Python image (Dockerfile: api, bot,
+# scheduler, migrate). It needs pyproject.toml, uv.lock, README.md and the
+# api/, bot/, scheduler/ and migrations/ packages; everything below stays out.
+# Dockerfile.frontend has its own allowlist in Dockerfile.frontend.dockerignore,
+# which BuildKit reads instead of this file for that build.
 
 # Secrets — NEVER bundle .env into Docker images.
 # Pass values via environment variables / docker-compose env_file at runtime.
 .env
-.env.local
-.env.*.local
+.env.*
 *.pem
 *.key
+secrets.yml
+secrets.yaml
+.secrets
 
 # Local DB / dev files
 *.db
-bot.db
+*.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
+*.dump
 
-# Tooling caches
-.ruff_cache/
-.pytest_cache/
-.mypy_cache/
-htmlcov/
+# VCS, CI and editor/agent state
+.git
+.gitignore
+.gitattributes
+.github
+.claude
+.codex
+.gstack
+.planning
+.idea
+.vscode
+
+# Local runtime state, virtualenvs, caches and build artefacts
+.run
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+*.egg-info
+.ruff_cache
+.pytest_cache
+.mypy_cache
+htmlcov
 .coverage
 .coverage.*
-
-# Build artefacts
-dist/
-build/
+coverage.xml
+dist
+build
 *.tar.gz
 *.zip
 
-# IDE / editor
-.idea/
-.vscode/
-.run/
-
-# Git
-.git/
-.gitignore
-
-# Project-internal docs and audit reports
-*.audit.md
-FULL_PROJECT_AUDIT.md
-FRONTEND_OPTIMIZATION_REPORT.md
-AUDIT_FIX_VERIFICATION.md
-FINAL_AUDIT_VERIFICATION.md
-DEEP_DIVE_REVIEW*.md
-AGENT_SWARM*.md
-
-# Repo / CI / planning
-.github/
-LICENSE
-docker-compose.yml
+# Not used by the Python services: the frontend image is built from
+# Dockerfile.frontend, and tests, docs and scripts run outside the containers.
+tests
+docs
+frontend
+assets
+nginx
+scripts
+proxy-server.mjs
+docker-compose*.yml
+Dockerfile*
 .dockerignore
-.planning/
+*.sh
+
+# Documentation and audit reports. README.md stays: pyproject.toml declares it
+# as the package readme, which the build of the project reads.
 *.md
 !README.md
