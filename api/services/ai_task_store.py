@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -134,6 +135,99 @@ async def _set_task(cache: CacheBackend, task_id: str, task: dict[str, Any]) -> 
     user_id = task.get("_telegram_user_id")
     await cache.set_json(_task_cache_key(task_id, user_id=user_id), task, ttl=_task_ttl())
     return task
+
+
+async def _delete_task(cache: CacheBackend, task_id: str, *, user_id: int | None = None) -> None:
+    await cache.delete(_task_cache_key(task_id, user_id=user_id))
+
+
+# ── RV-AI-07: per-(user, analysis) singleflight ────────────────────
+#
+# The frontend gives up polling after ~90 s while the pipeline may run
+# up to _BG_TASK_TIMEOUT, so "Повторить" used to start a duplicate task
+# and charge the quota again. The first request claims
+# ``ai_inflight:u{uid}:{digest}`` with its task_id; repeats return that
+# task_id until the task ends. The claim lives in the shared cache
+# (Redis SET NX across workers) and expires on its own if a worker dies
+# mid-task: no live task can outlast the watchdog.
+_INFLIGHT_TTL_SECONDS = int(_BG_TASK_TIMEOUT) + 60
+_RUNNING_TASK_STATUSES = frozenset({"pending", "processing"})
+
+# MemoryCache has no SET NX; it also only exists inside one process, so
+# an in-process lock around get+set gives the same guarantee there.
+_inflight_lock: asyncio.Lock | None = None
+_inflight_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_inflight_lock() -> asyncio.Lock:
+    global _inflight_lock, _inflight_lock_loop
+    loop = asyncio.get_running_loop()
+    if _inflight_lock is None or _inflight_lock_loop is not loop:
+        _inflight_lock = asyncio.Lock()
+        _inflight_lock_loop = loop
+    return _inflight_lock
+
+
+def _inflight_key(user_id: int, analysis_key: str) -> str:
+    digest = hashlib.sha256(analysis_key.encode("utf-8")).hexdigest()[:32]
+    return f"ai_inflight:u{int(user_id)}:{digest}"
+
+
+async def _task_is_running(cache: CacheBackend, task_id: str, *, user_id: int) -> bool:
+    task = await _get_task(cache, task_id, user_id=user_id)
+    return bool(task) and task.get("status") in _RUNNING_TASK_STATUSES
+
+
+async def _running_inflight_task(cache: CacheBackend, key: str, *, user_id: int) -> str | None:
+    """task_id of the live task holding ``key``, if there is one."""
+    owner = await cache.get(key)
+    if owner and await _task_is_running(cache, owner, user_id=user_id):
+        return owner
+    return None
+
+
+async def _set_if_absent(cache: CacheBackend, key: str, value: str) -> bool | None:
+    acquire = getattr(cache, "try_acquire_lock", None)
+    if callable(acquire):
+        return await acquire(key, value, ttl_seconds=_INFLIGHT_TTL_SECONDS)
+    async with _get_inflight_lock():
+        if await cache.get(key) is not None:
+            return False
+        await cache.set(key, value, ttl=_INFLIGHT_TTL_SECONDS)
+        return True
+
+
+async def _claim_inflight(
+    cache: CacheBackend, key: str, task_id: str, *, user_id: int,
+) -> str | None:
+    """Make ``task_id`` the owner of ``key``.
+
+    Returns None when the caller now owns the claim (or the backend
+    can't tell, in which case the request simply runs unshared), else
+    the task_id of the live task that already owns it. A claim whose
+    task is gone or finished is stale and taken over.
+    """
+    for _ in range(2):
+        acquired = await _set_if_absent(cache, key, task_id)
+        if acquired is not False:
+            return None
+        owner = await cache.get(key)
+        if owner and await _task_is_running(cache, owner, user_id=user_id):
+            return owner
+        if owner:
+            await _release_inflight(cache, key, owner)
+    return None
+
+
+async def _release_inflight(cache: CacheBackend, key: str, task_id: str) -> None:
+    """Drop the claim, but only while ``task_id`` still owns it."""
+    release = getattr(cache, "release_lock", None)
+    if callable(release):
+        await release(key, task_id)
+        return
+    async with _get_inflight_lock():
+        if await cache.get(key) == task_id:
+            await cache.delete(key)
 
 
 # AI-05: per-task asyncio.Lock so concurrent _update_task calls inside

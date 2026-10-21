@@ -287,15 +287,37 @@ def test_normalize_condition_label_maps_common_values(raw: str, expected: str) -
 
 
 def test_normalize_condition_label_trebuet_vnimaniya_edge_case() -> None:
-    """Known edge case: "требует внимания" currently resolves to "Б/у"
-    because the loop does substring matching and "бу" is a substring
-    of "тре**бу**ет". The canonical "Требует внимания" → "Требует
-    внимания" path only fires via the pipe-delimited branch
-    (e.g. "Хорошее|требует внимания"). This test locks down the
-    current behaviour so a refactor of the label-resolver notices.
-    The pipe path is exercised in the next test.
+    """RV-AI-06: this test used to lock in the bug — "требует внимания"
+    resolved to "Б/у" because "бу" is a substring of "тре**бу**ет", so the
+    worst grade reached the buyer (and the seller-side prompt) as a
+    neutral "Б/у". Exact canonical labels now win and keys match on word
+    boundaries, longest first.
     """
-    assert normalize_condition_label("требует внимания") == "Б/у"
+    assert normalize_condition_label("требует внимания") == "Требует внимания"
+    assert normalize_condition_label("Требует внимания.") == "Требует внимания"
+    assert normalize_condition_label("Б/у, требует внимания") == "Требует внимания"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # RV-AI-06: negations must not flip into the label they negate.
+        ("не новый", ""),
+        ("Не новая, но целая", ""),
+        ("неновый", ""),
+        # "как новый" is a used item in pristine shape, not a new one.
+        ("как новый", "Отличное"),
+        ("почти новое", "Отличное"),
+        ("like new", "Отличное"),
+        # Short keys still work as whole words.
+        ("бу", "Б/у"),
+        ("Б/у", "Б/у"),
+        ("Новое", "Новый"),
+        ("состояние: хорошее", "Хорошее"),
+    ],
+)
+def test_normalize_condition_label_word_boundaries_and_negation(raw: str, expected: str) -> None:
+    assert normalize_condition_label(raw) == expected
 
 
 def test_normalize_condition_label_returns_empty_for_missing_input() -> None:

@@ -12,6 +12,8 @@ Three thin checks every AI handler runs before doing real work:
   without re-implementing the math.
 * ``_check_ai_entitlement`` — same status gate as quota consumption,
   but without spending quota on cache hits.
+* ``_refund_quota`` — RV-AI-07: hand back the unit ``_check_rate_limit``
+  charged when the request ends up delivering nothing.
 * ``_check_ai_consent`` — verify the user granted ``ai_analysis``,
   ``cross_border`` and ``pd_processing`` consent. The skip path is
   tied to ``auth_bypass`` (NOT plain ``debug``); ``auth_bypass``
@@ -32,6 +34,8 @@ routers shouldn't be importing from each other).
 from __future__ import annotations
 
 import re as _re
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -49,12 +53,23 @@ from api.services.account_status import (
     get_effective_status,
     get_status_by_code,
     quota_snapshot,
+    refund_quota,
 )
+from api.services.cache import CacheBackend
 from api.services.consent_policy import CURRENT_POLICY_VERSION
 from api.services.workflow_store import resolve_user_id
 
 _REQUIRED_AI_CONSENTS = ("ai_analysis", "cross_border", "pd_processing")
 _ASSISTANT_QUOTA_ENDPOINTS = {"listing", "listing_assistant"}
+
+
+@dataclass(frozen=True, slots=True)
+class QuotaCharge:
+    """RV-AI-07: the exact quota unit a request spent, so it can be refunded."""
+
+    bucket: str
+    telegram_user_id: int
+    charged_at: datetime
 
 
 def _check_ai_available():
@@ -81,24 +96,43 @@ async def _check_rate_limit(
     user_id: int,
     *,
     endpoint: str = "default",
-) -> None:
+) -> QuotaCharge:
     """Consume one status-based AI quota unit for this endpoint.
 
     The public signature stays compatible with the old per-endpoint
     limiter so sibling routers and tests can keep monkeypatching it.
     ``listing``/``listing_assistant`` spend from the assistant bucket;
     buyer-facing AI endpoints spend from the shared AI bucket.
+
+    RV-AI-07: returns the charge so a request that ends up delivering
+    nothing can hand it back via ``_refund_quota``. Monkeypatched
+    stand-ins return ``None``, which ``_refund_quota`` ignores.
     """
     from api.routers import ai_analysis as _aa  # late, preserves test patch
 
     cache = _aa.get_cache(request)
     bucket = _quota_bucket_for_endpoint(endpoint)
     limit = await _status_quota_limit(request, user_id, bucket=bucket)
+    charged_at = datetime.now(UTC)
     await consume_quota(
         cache,
         bucket=bucket,
         telegram_user_id=user_id,
         limit=limit,
+        now=charged_at,
+    )
+    return QuotaCharge(bucket=bucket, telegram_user_id=int(user_id), charged_at=charged_at)
+
+
+async def _refund_quota(cache: CacheBackend, charge: QuotaCharge | None) -> None:
+    """RV-AI-07: return a unit spent by ``_check_rate_limit``."""
+    if charge is None:
+        return
+    await refund_quota(
+        cache,
+        bucket=charge.bucket,
+        telegram_user_id=charge.telegram_user_id,
+        now=charge.charged_at,
     )
 
 

@@ -479,6 +479,9 @@ def test_listing_assistant_uses_assistant_bucket(monkeypatch) -> None:
 
 
 def test_ai_and_assistant_quota_buckets_are_independent(monkeypatch) -> None:
+    """RV-AI-07: the rejected second AI call no longer stays on the
+    counter (it used to read "2" with limit 1); otherwise a later refund
+    would only cancel the overshoot instead of returning a usable unit."""
     from api.services.cache import MemoryCache
 
     telegram_user_id = 730006
@@ -524,5 +527,5 @@ def test_ai_and_assistant_quota_buckets_are_independent(monkeypatch) -> None:
     assert assistant.status_code == 200, assistant.text
     assert second_ai.status_code == 429
     assert second_ai.json()["detail"]["bucket"] == "ai"
-    assert cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0] == "2"
+    assert cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0] == "1"
     assert cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, telegram_user_id)][0] == "1"

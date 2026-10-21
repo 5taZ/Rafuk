@@ -30,26 +30,33 @@ from api.services.aggregator import (
     resolve_price_reference,
 )
 from api.services.ai_guardrails import apply_ai_market_guardrails
+from api.services.ai_guards import QuotaCharge, _refund_quota
 from api.services.ai_marketplace import (
     BestAlternativeDecision,
     MarketplaceRiskContext,
+    RiskFloor,
+    apply_floor_red_flags,
     build_fallback_analysis_result,
     build_market_context_fallback,
     build_marketplace_risk_context,
+    build_risk_floor,
     choose_best_alternative,
     collect_similar_listings_from_cohorts,
     complete_analysis_sections,
+    enforce_risk_floor,
     finalize_red_flags,
+    normalize_photo_authenticity,
+    normalize_scam_analysis,
 )
 from api.services.ai_quality import sanitize_public_ai_payload
-from api.services.ai_sanitize import strip_html_in_payload
+from api.services.ai_sanitize import scrub_model_payload, strip_html_in_payload
 from api.services.ai_service import (
     dedupe_analysis_payload,
     detect_category,
     get_ai_service,
     normalize_condition_label,
 )
-from api.services.ai_task_store import _task_ttl, _update_task
+from api.services.ai_task_store import _get_task, _release_inflight, _task_ttl, _update_task
 from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS
 from api.services.market_signals import anomaly_labels, detect_anomaly_flags
@@ -175,6 +182,7 @@ def _build_fallback_response(
     photo_condition_notes: list[str],
     title: str,
     parameters: list[dict[str, Any]],
+    risk_floor: RiskFloor | None = None,
 ) -> AIAnalysisResponse:
     """Build a fallback AIAnalysisResponse when the AI call fails.
 
@@ -182,7 +190,10 @@ def _build_fallback_response(
     a useful result rather than a raw error message.
     """
     if risk_context is None:
-        risk_context = MarketplaceRiskContext(summary="", flags=[], score=0.0)
+        # RV-AI-12: hot_words is a required field — without it this branch
+        # raised TypeError and the (RV-AI-03) fallback never reached the user.
+        risk_context = MarketplaceRiskContext(summary="", flags=[], score=0.0, hot_words=[])
+    floor = risk_floor or RiskFloor()
     fallback_best_decision = choose_best_alternative(
         similar,
         target_price=price_byn,
@@ -201,7 +212,10 @@ def _build_fallback_response(
             "condition": fallback_best_alt.get("condition"),
             "ai_note": fallback_best_decision.reason,
         }
-    fallback_red_flags = finalize_red_flags([], risk_context)
+    # RV-AI-04: the floor's flags go in before the summary is written so
+    # "Главный риск" names them, and its verdict rule binds the fallback
+    # too (the rules alone call anything under Q1 "worth_it").
+    fallback_red_flags = apply_floor_red_flags(finalize_red_flags([], risk_context), floor)
     fallback_result = build_fallback_analysis_result(
         title=title or "",
         parameters=parameters,
@@ -218,6 +232,16 @@ def _build_fallback_response(
         red_flags=fallback_red_flags,
     )
     fallback_result = dedupe_analysis_payload(fallback_result)
+    fallback_result, fallback_red_flags = enforce_risk_floor(
+        fallback_result,
+        floor=floor,
+        red_flags=fallback_red_flags,
+        title=title or "",
+        price_byn=price_byn,
+        market_median=median,
+        best_alternative=fallback_best_alt,
+        is_negotiable_price=is_negotiable_price,
+    )
     ref_scope = getattr(reference, "scope", None) or "query"
     ref_label = getattr(reference, "label", None) or ""
     fallback_market_ctx = build_market_context_fallback(
@@ -247,6 +271,7 @@ def _build_fallback_response(
         price_reference_label=ref_label,
         best_pick_reason=fallback_best_decision.reason,
         summary=fallback_result.get("summary", ""),
+        source="fallback",
         disclaimer=DISCLAIMER,
     )
     response.resale_potential = _build_resale_potential(
@@ -273,9 +298,18 @@ async def _deliver_fallback_result(
     photo_condition_notes: list[str] | None,
     title: str,
     parameters: list[dict[str, Any]],
-    fallback_cache_ttl: int = 1800,
     warning: str | None = None,
-) -> None:
+    risk_floor: RiskFloor | None = None,
+) -> bool:
+    """Hand the rule-based result to the requesting user's task only.
+
+    RV-AI-03: the fallback used to be written into the shared analysis
+    cache (30 min, and with no marker on timeouts), so everyone who
+    opened the same listing got the rule-based draft as if it were the
+    AI analysis. It now lives in this task alone, labelled
+    ``source="fallback"`` with an ``_ai_warning`` the UI shows.
+    Returns False when not even the fallback could be built.
+    """
     try:
         response = _build_fallback_response(
             payload=payload,
@@ -291,19 +325,18 @@ async def _deliver_fallback_result(
             photo_condition_notes=photo_condition_notes,
             title=title,
             parameters=parameters,
+            risk_floor=risk_floor,
         )
-        cache_key = _analysis_cache_key(payload)
         fallback_serialized = sanitize_public_ai_payload(
             strip_html_in_payload(response.model_dump(by_alias=True))
         )
-        if warning:
-            fallback_serialized["_ai_warning"] = warning
-        await cache.set_json(cache_key, fallback_serialized, ttl=fallback_cache_ttl)
+        fallback_serialized["_ai_warning"] = warning or _GENERIC_FALLBACK_WARNING
         await _update_task(
             cache, task_id, user_id=user_id,
             status="done", progress=100, stage="done",
             result=fallback_serialized, error=None,
         )
+        return True
     except Exception as fallback_exc:
         logger.error(
             "Fallback build also failed for task %s: %s",
@@ -314,6 +347,7 @@ async def _deliver_fallback_result(
             cache, task_id, user_id=user_id,
             status="error", stage="error", error=err_msg,
         )
+        return False
 
 
 # ── Analysis state and stages ──────────────────────────────────────
@@ -413,7 +447,16 @@ def _init_analysis_state(
     c.analysis_timeout = getattr(settings, "ai_analysis_timeout", 150)
     c.photo_precheck_timeout = getattr(settings, "ai_photo_precheck_timeout", 30)
     c.photo_precheck_enabled = bool(getattr(settings, "ai_photo_precheck_enabled", False))
-    c.fallback_cache_ttl = getattr(settings, "ai_fallback_cache_ttl", 1800)
+    c.started_at = _time.monotonic()
+    # RV-AI-07: the unit this task was charged and the singleflight claim
+    # it holds; both are released whatever way the task ends.
+    c.quota_charge = None
+    c.inflight_key = None
+    # Read by the fallback path, which can run before the stages set them.
+    c.target_ad = None
+    c.target_anomaly_flags = []
+    c.failed_sections = []
+    c.images_analyzed = 0
     # Defaults assume "negotiable" (price unknown) — the safer fallback if
     # the extract stage never runs (e.g. early failure). Free items must
     # set is_free_price=True explicitly in _stage_extract.
@@ -475,21 +518,32 @@ def _cluster_stats_usable_for_ai(
     return not (cluster_count < 5 and spread > 0.35)
 
 
+def _risk_floor(c: _AC) -> RiskFloor:
+    return build_risk_floor(c.target_ad, anomaly_flags=c.target_anomaly_flags)
+
+
+async def _refund_task_quota(c: _AC) -> None:
+    """RV-AI-07: give the unit back when the user ends up with nothing."""
+    charge, c.quota_charge = c.quota_charge, None
+    await _refund_quota(c.cache, charge)
+
+
 async def _analysis_fallback(c: _AC, exc: BaseException | None = None) -> None:
     """Deliver a fallback result on timeout or AI errors."""
     if isinstance(exc, TimeoutError):
+        # RV-AI-03: the timeout path used to be called without the
+        # exception and so was never logged at all.
         logger.warning(
-            "AI task %s: timeout for ad_id=%d — delivering fallback",
-            c.task_id, c.payload.ad_id,
+            "AI task %s: timed out after %.1fs (limit %ss) for ad_id=%d — "
+            "delivering fallback",
+            c.task_id, _time.monotonic() - c.started_at, c.analysis_timeout, c.payload.ad_id,
         )
     elif exc is not None:
         logger.error(
             "AI async task %s failed: [%s] %s",
             c.task_id, type(exc).__name__, exc,
         )
-    warning = _analysis_fallback_warning(exc)
-    fallback_cache_ttl = _analysis_fallback_cache_ttl(c.fallback_cache_ttl, exc)
-    await _deliver_fallback_result(
+    delivered = await _deliver_fallback_result(
         c.cache, c.task_id, user_id=c.user_id,
         payload=c.payload,
         price_byn=c.price_byn,
@@ -504,10 +558,12 @@ async def _analysis_fallback(c: _AC, exc: BaseException | None = None) -> None:
         photo_condition_notes=c.photo_condition_notes,
         title=c.title,
         parameters=c.parameters,
-        fallback_cache_ttl=fallback_cache_ttl,
-        warning=warning,
+        warning=_analysis_fallback_warning(exc),
+        risk_floor=_risk_floor(c),
     )
-    if exc is not None and not isinstance(exc, TimeoutError):
+    if not delivered:
+        await _refund_task_quota(c)
+    elif exc is not None and not isinstance(exc, TimeoutError):
         logger.warning(
             "AI task %s: fallback result delivered (error: %s) for ad_id=%d",
             c.task_id, type(exc).__name__, c.payload.ad_id,
@@ -519,21 +575,32 @@ def _is_ai_rate_limit_error(exc: BaseException | None) -> bool:
     return "429" in text or "RATE_LIMIT" in text or "RESOURCE_EXHAUSTED" in text
 
 
-def _analysis_fallback_warning(exc: BaseException | None) -> str | None:
-    if exc is None or isinstance(exc, TimeoutError):
-        return None
+_GENERIC_FALLBACK_WARNING = "AI не ответил. Показан рыночный черновик по данным рынка."
+# RV-AI-03: what the UI banner (api_ai_render.js, _ai_warning) says when
+# the result isn't a complete model answer.
+_PARTIAL_WARNINGS = {
+    "price_market": (
+        "AI ответил не полностью: цена, ценовые ориентиры и советы по торгу "
+        "рассчитаны по данным рынка."
+    ),
+    "condition_risks": (
+        "AI ответил не полностью: вердикт, состояние и риски рассчитаны по данным рынка."
+    ),
+}
+
+
+def _analysis_fallback_warning(exc: BaseException | None) -> str:
+    if isinstance(exc, TimeoutError):
+        return (
+            "AI не успел ответить вовремя. Показан рыночный черновик по данным рынка — "
+            "полный анализ можно повторить позже."
+        )
     if _is_ai_rate_limit_error(exc):
         return (
             "AI сейчас на лимите. Показан рыночный черновик по данным рынка — "
             "полный анализ можно повторить чуть позже."
         )
-    return "AI не ответил. Показан рыночный черновик по данным рынка."
-
-
-def _analysis_fallback_cache_ttl(default_ttl: int, exc: BaseException | None) -> int:
-    if _is_ai_rate_limit_error(exc):
-        return min(int(default_ttl or 1800), 60)
-    return int(default_ttl or 1800)
+    return _GENERIC_FALLBACK_WARNING
 
 
 async def _stage_search(c: _AC) -> None:
@@ -623,6 +690,8 @@ async def _stage_search(c: _AC) -> None:
             stage="target_missing",
             error="Объявление не найдено",
         )
+        # RV-AI-07: nothing was analysed — don't bill for it.
+        await _refund_task_quota(c)
         raise _AnalysisComplete()
 
     c.dataset = dataset
@@ -766,6 +835,7 @@ def _stage_scoring(c: _AC) -> None:
                 c.payload.ad_id,
                 exc_info=True,
             )
+        c.target_anomaly_flags = raw_flags
         c.target_anomaly_labels = anomaly_labels(raw_flags)
         try:
             deal = compute_deal_score(
@@ -793,6 +863,9 @@ async def _stage_photo(c: _AC) -> None:
             quick_photo = await asyncio.wait_for(
                 c.ai.quick_condition(c.images[:3]), timeout=c.photo_precheck_timeout
             )
+            # RV-AI-04: these notes describe seller photos and end up in
+            # the response, so links/contacts read off a photo go too.
+            quick_photo = scrub_model_payload(quick_photo)
             c.photo_condition_label = str(quick_photo.get("condition") or "").strip()
             c.photo_condition_notes = [
                 str(note).strip()
@@ -908,6 +981,15 @@ async def _stage_ai(c: _AC) -> None:
             type(exc).__name__,
         )
         raise TimeoutError(str(exc)) from exc
+    c.failed_sections = list(c.result.pop("_failed_sections", None) or [])
+    c.images_analyzed = int(c.result.pop("_images_analyzed", len(c.images)) or 0)
+    if c.failed_sections:
+        logger.warning(
+            "AI task %s: partial answer, failed sections=%s",
+            c.task_id, ",".join(c.failed_sections),
+        )
+    # RV-AI-04: nothing the model wrote may carry links or contacts.
+    c.result = scrub_model_payload(c.result)
     c.result = apply_ai_market_guardrails(
         c.result,
         title=c.title,
@@ -960,7 +1042,7 @@ async def _stage_response(c: _AC) -> None:
         }
 
     if c.risk_context is None:
-        c.risk_context = MarketplaceRiskContext(summary="", flags=[], score=0.0)
+        c.risk_context = MarketplaceRiskContext(summary="", flags=[], score=0.0, hot_words=[])
     final_red_flags = finalize_red_flags(c.result.get("red_flags", []), c.risk_context)
     final_market_context = build_market_context_fallback(
         price_byn=c.price_byn,
@@ -996,6 +1078,23 @@ async def _stage_response(c: _AC) -> None:
     c.result = dedupe_analysis_payload(c.result)
     # SEC-NEW-4: defence-in-depth strip of HTML tags in AI output before cache/return.
     c.result = strip_html_in_payload(c.result)
+    c.result["scam_analysis"] = normalize_scam_analysis(c.result.get("scam_analysis"))
+    c.result["photo_authenticity"] = normalize_photo_authenticity(
+        c.result.get("photo_authenticity"), images_analyzed=c.images_analyzed > 0,
+    )
+    c.result, final_red_flags = enforce_risk_floor(
+        c.result,
+        floor=_risk_floor(c),
+        red_flags=final_red_flags,
+        title=c.title,
+        price_byn=c.price_byn,
+        market_median=c.median,
+        best_alternative=best_alternative,
+        is_negotiable_price=c.is_negotiable_price,
+    )
+    # RV-AI-03: a half-answered analysis is completed from market data
+    # above; say so instead of passing it off as a full AI answer.
+    source = "partial" if c.failed_sections else "ai"
 
     resale_potential = _build_resale_potential(c.result.get("resale_potential"))
 
@@ -1022,11 +1121,14 @@ async def _stage_response(c: _AC) -> None:
         meeting_checklist=c.result.get("meeting_checklist", []),
         negotiation_tips=c.result.get("negotiation_tips", []),
         red_flags=final_red_flags,
+        scam_analysis=c.result.get("scam_analysis"),
+        photo_authenticity=c.result.get("photo_authenticity"),
         market_context=final_market_context,
         price_reference_scope=c.reference.scope,
         price_reference_label=c.reference.label,
         best_pick_reason=best_pick_reason,
         summary=c.result.get("summary", ""),
+        source=source,
         disclaimer=DISCLAIMER,
     )
 
@@ -1035,12 +1137,17 @@ async def _stage_response(c: _AC) -> None:
         c.cache, c.task_id, user_id=c.user_id, progress=95, stage="building_response",
     )
 
-    # Cache result (use cache passed from endpoint)
-    cache_key = _analysis_cache_key(c.payload)
     serialized = sanitize_public_ai_payload(
         strip_html_in_payload(response.model_dump(by_alias=True))
     )
-    await c.cache.set_json(cache_key, serialized, ttl=_task_ttl())
+    if source == "ai":
+        # Only complete model answers are shared through the analysis cache.
+        await c.cache.set_json(_analysis_cache_key(c.payload), serialized, ttl=_task_ttl())
+    else:
+        serialized["_ai_warning"] = " ".join(
+            _PARTIAL_WARNINGS.get(section, _GENERIC_FALLBACK_WARNING)
+            for section in c.failed_sections
+        )
 
     await _update_task(
         c.cache,
@@ -1063,42 +1170,78 @@ async def _run_analysis(
     kufar_client: KufarClient,
     *,
     user_id: int | None = None,
+    quota_charge: QuotaCharge | None = None,
+    inflight_key: str | None = None,
 ) -> None:
-    """Background coroutine: does the full analysis and updates the task store."""
+    """Background coroutine: does the full analysis and updates the task store.
+
+    RV-AI-07: ``quota_charge`` is refunded when the user ends up with
+    nothing (listing not found, fallback build failure, cancellation),
+    and the ``inflight_key`` singleflight claim taken by the router is
+    released however the task ends.
+    """
     c = _init_analysis_state(task_id, payload, settings, cache, kufar_client, user_id)
+    c.quota_charge = quota_charge
+    c.inflight_key = inflight_key
     safe_query = payload.query.replace("\n", " ")[:80]
     logger.info(
         "AI async task %s: starting for ad_id=%d query=%s",
         task_id, payload.ad_id, safe_query,
     )
-    # INF-02: gate concurrent pipelines. Tasks past _BG_TASK_LIMIT
-    # were already refused before we got here; this semaphore makes
-    # sure the ones that DID get in don't all hit the AI provider at
-    # the same instant. Acquire status is reported back as "queued"
-    # via the task store so the client polling /ai/task/<id> doesn't
-    # see a stuck "pending" while we wait for a slot.
-    run_sem = _get_analysis_run_semaphore()
-    if run_sem.locked():
-        try:
-            await _update_task(
-                c.cache, c.task_id,
-                user_id=c.user_id,
-                stage="queued",
-                progress=0,
-            )
-        except Exception:  # noqa: BLE001 — task store is best-effort
-            logger.debug("AI task %s: queued-stage update failed", task_id, exc_info=True)
     try:
-        async with run_sem:
-            await _stage_search(c)
-            _stage_extract(c)
-            _stage_scoring(c)
-            await _stage_photo(c)
-            await _stage_ai(c)
-            await _stage_response(c)
-    except _AnalysisComplete:
+        # INF-02: gate concurrent pipelines. Tasks past _BG_TASK_LIMIT
+        # were already refused before we got here; this semaphore makes
+        # sure the ones that DID get in don't all hit the AI provider at
+        # the same instant. Acquire status is reported back as "queued"
+        # via the task store so the client polling /ai/task/<id> doesn't
+        # see a stuck "pending" while we wait for a slot.
+        run_sem = _get_analysis_run_semaphore()
+        if run_sem.locked():
+            try:
+                await _update_task(
+                    c.cache, c.task_id,
+                    user_id=c.user_id,
+                    stage="queued",
+                    progress=0,
+                )
+            except Exception:  # noqa: BLE001 — task store is best-effort
+                logger.debug("AI task %s: queued-stage update failed", task_id, exc_info=True)
+        try:
+            async with run_sem:
+                await _stage_search(c)
+                _stage_extract(c)
+                _stage_scoring(c)
+                await _stage_photo(c)
+                await _stage_ai(c)
+                await _stage_response(c)
+        except _AnalysisComplete:
+            return
+        except TimeoutError as exc:
+            await _analysis_fallback(c, exc)
+        except _AI_ANALYSIS_ERRORS as exc:
+            await _analysis_fallback(c, exc)
+    except asyncio.CancelledError:
+        # RV-AI-07: the bg-task watchdog (or shutdown) cancelled us. The
+        # task used to stay "processing" until its TTL with the quota
+        # spent; close it out and give the unit back.
+        await _abort_cancelled_analysis(c)
+        raise
+    finally:
+        if c.inflight_key:
+            await _release_inflight(c.cache, c.inflight_key, c.task_id)
+
+
+async def _abort_cancelled_analysis(c: _AC) -> None:
+    task = await _get_task(c.cache, c.task_id, user_id=c.user_id)
+    if task and task.get("status") in ("done", "error"):
         return
-    except TimeoutError:
-        await _analysis_fallback(c)
-    except _AI_ANALYSIS_ERRORS as exc:
-        await _analysis_fallback(c, exc)
+    logger.warning(
+        "AI task %s: cancelled after %.1fs for ad_id=%d",
+        c.task_id, _time.monotonic() - c.started_at, c.payload.ad_id,
+    )
+    await _update_task(
+        c.cache, c.task_id, user_id=c.user_id,
+        status="error", stage="error",
+        error="Анализ прерван и не засчитан в лимит. Попробуйте ещё раз.",
+    )
+    await _refund_task_quota(c)

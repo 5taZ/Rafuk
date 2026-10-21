@@ -25,6 +25,38 @@ _SUSPICIOUS_WORDS = re.compile(
     re.IGNORECASE,
 )
 
+# RV-AI-04: prepayment / money-transfer wording for the AI verdict floor
+# (ai_marketplace.build_risk_floor). It feeds a hard rule rather than a
+# medium-level hint, so it is narrower than _SUSPICIOUS_WORDS where that
+# one misfires on ordinary listings ("перевод Маршака" in books, "киви"
+# the fruit) and wider on inflections it misses ("предоплатой",
+# "предоплату"). Explicit negations ("без предоплаты", "предоплата не
+# нужна") are an honest seller's opposite signal and are dropped first.
+_PREPAYMENT_NEGATION_RE = re.compile(
+    r"\b(?:без|никак(?:ой|ая|ую|их)|не\s+(?:прошу|беру|требую|надо|нужн[аоы]?))\s+"
+    r"(?:\w+\s+)?(?:предоплат|аванс|задат)\w*"
+    r"|\b(?:предоплат|аванс|задат)\w*\s+(?:не\s+(?:прошу|беру|требую|надо|нужн)\w*|нет\b)",
+    re.IGNORECASE,
+)
+_PREPAYMENT_RE = re.compile(
+    r"\b(?:предоплат\w*|аванс(?:ом|а|у)?\b|задат(?:ок|ка|ку|ком)\b|на\s+карт[уы]\b"
+    r"|перевед(?:и|ите)\b|карт[аыу]\s*\d{4}|qiwi|webmoney|яндекс\s*деньги)",
+    re.IGNORECASE,
+)
+
+
+def find_prepayment_signals(text: str | None) -> list[str]:
+    """Return the prepayment / transfer phrases found in listing text."""
+    if not text or not isinstance(text, str):
+        return []
+    cleaned = _PREPAYMENT_NEGATION_RE.sub(" ", text)
+    found: list[str] = []
+    for match in _PREPAYMENT_RE.finditer(cleaned):
+        phrase = re.sub(r"\s+", " ", match.group(0).lower())
+        if phrase not in found:
+            found.append(phrase)
+    return found
+
 
 def detect_risks(
     ad: dict[str, Any],

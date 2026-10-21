@@ -63,6 +63,7 @@ from api.services.ai_guards import (  # noqa: F401 — re-exports
     _check_ai_entitlement,
     _check_rate_limit,
     _coerce_string_list,
+    _refund_quota,
 )
 from api.services.ai_privacy import clear_user_ai_data  # noqa: F401 — re-export
 from api.services.ai_quality import sanitize_public_ai_payload
@@ -81,7 +82,12 @@ from api.services.ai_shadow_store import (  # noqa: F401 — re-exports
     periodic_prune_shadow_stores,
 )
 from api.services.ai_task_store import (
+    _claim_inflight,
+    _delete_task,
     _get_task,
+    _inflight_key,
+    _release_inflight,
+    _running_inflight_task,
     _set_task,
     _spawn_bg_task,
     _update_task,
@@ -169,7 +175,12 @@ async def analyze_listing(
     cache_key = _analysis_cache_key(payload)
     cached = await cache.get_json(cache_key)
     if cached:
-        if isinstance(cached, dict) and cached.get("_ai_warning"):
+        # RV-AI-03: only complete model answers belong in the shared
+        # cache; anything else is a leftover from before the fallback
+        # stopped being cached.
+        if isinstance(cached, dict) and (
+            cached.get("_ai_warning") or cached.get("source", "ai") != "ai"
+        ):
             await cache.delete(cache_key)
         else:
             await _log_ai_audit(
@@ -189,17 +200,13 @@ async def analyze_listing(
                 "result": sanitize_public_ai_payload(strip_html_in_payload(cached)),
             }
 
-    await _check_rate_limit(request, _user.user_id, endpoint="analyze")
-
-    await _log_ai_audit(
-        request.app.state.session_factory,
-        telegram_user_id=_user.user_id,
-        endpoint="analyze",
-        ad_id=str(payload.ad_id),
-        query=payload.query,
-        model=audit_model,
-        ip_address=client_ip,
-    )
+    # RV-AI-07: a repeat of the same analysis while the first task still
+    # runs (the frontend stops polling long before the pipeline gives up)
+    # gets that task back instead of a duplicate and a second charge.
+    inflight_key = _inflight_key(_user.user_id, cache_key)
+    running_task_id = await _running_inflight_task(cache, inflight_key, user_id=_user.user_id)
+    if running_task_id:
+        return {"task_id": running_task_id, "deduplicated": True}
 
     settings = getattr(request.app.state, "settings", None)
     if settings is None:
@@ -216,25 +223,62 @@ async def analyze_listing(
         "_created_ts": datetime.now(UTC).timestamp(),
         "_updated_ts": datetime.now(UTC).timestamp(),
     }
+    # Written before the claim, so a concurrent repeat that loses the
+    # race always finds a live task behind the claim it reads.
     await _set_task(cache, task_id, task)
+    owner_task_id = await _claim_inflight(cache, inflight_key, task_id, user_id=_user.user_id)
+    if owner_task_id is not None:
+        await _delete_task(cache, task_id, user_id=_user.user_id)
+        return {"task_id": owner_task_id, "deduplicated": True}
 
+    charge = None
     try:
-        _spawn_bg_task(
-            _run_analysis(
-                task_id, payload, settings, cache, kufar_client, user_id=_user.user_id,
-            ),
-            name=f"ai-analysis-{task_id[:8]}",
+        charge = await _check_rate_limit(request, _user.user_id, endpoint="analyze")
+
+        await _log_ai_audit(
+            request.app.state.session_factory,
+            telegram_user_id=_user.user_id,
+            endpoint="analyze",
+            ad_id=str(payload.ad_id),
+            query=payload.query,
+            model=audit_model,
+            ip_address=client_ip,
         )
-    except RuntimeError:
+
+        analysis = _run_analysis(
+            task_id, payload, settings, cache, kufar_client,
+            user_id=_user.user_id,
+            quota_charge=charge,
+            inflight_key=inflight_key,
+        )
+        try:
+            _spawn_bg_task(analysis, name=f"ai-analysis-{task_id[:8]}")
+        except RuntimeError:
+            analysis.close()
+            raise HTTPException(
+                status_code=503,
+                detail="Сервер перегружен, попробуйте позже",
+            ) from None
+    except BaseException as exc:
+        # RV-AI-07: no task will run behind this claim — close the task
+        # for anyone polling it, give back the unit (503 included) and
+        # free the claim for the next attempt.
         await _update_task(
             cache, task_id,
             user_id=_user.user_id,
             status="error",
-            error="Сервер перегружен, попробуйте позже",
+            stage="error",
+            error=_start_error_message(exc),
         )
-        raise HTTPException(
-            status_code=503,
-            detail="Сервер перегружен, попробуйте позже",
-        ) from None
+        await _refund_quota(cache, charge)
+        await _release_inflight(cache, inflight_key, task_id)
+        raise
 
     return {"task_id": task_id}
+
+
+def _start_error_message(exc: BaseException) -> str:
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict):
+        detail = detail.get("message")
+    return detail if isinstance(detail, str) and detail else "Не удалось запустить анализ"

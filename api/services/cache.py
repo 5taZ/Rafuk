@@ -25,6 +25,7 @@ class CacheBackend(Protocol):
     async def get_json(self, key: str) -> Any: ...
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None: ...
     async def incr(self, key: str, ttl: int | None = None) -> int: ...
+    async def decr(self, key: str) -> int: ...
     # RV-SEC-04: atomic "set only if missing" with a TTL (Redis SET NX EX).
     # True when this call created the key.
     async def set_if_absent(self, key: str, value: str, ttl: int) -> bool: ...
@@ -136,6 +137,28 @@ class MemoryCache:
             while len(self._storage) > self.MAX_ENTRIES:
                 self._storage.popitem(last=False)
         return count
+
+    async def decr(self, key: str) -> int:
+        """RV-AI-07: undo one ``incr``; never creates a key or goes below 0."""
+        async with self._lock:
+            entry = self._storage.get(key)
+            if entry is None:
+                return 0
+            value, expires_at = entry
+            if expires_at > 0 and time.monotonic() >= expires_at:
+                del self._storage[key]
+                return 0
+            try:
+                count = int(value)
+            except (TypeError, ValueError):
+                return 0
+            if count <= 0:
+                return 0
+            count -= 1
+            # Keep the original expiry: a refunded quota unit must not
+            # stretch the counter's window.
+            self._storage[key] = (str(count), expires_at)
+            return count
 
     async def set_if_absent(self, key: str, value: str, ttl: int) -> bool:
         """Store *value* only when *key* is missing or expired (RV-SEC-04)."""
@@ -265,6 +288,16 @@ class RedisCache:
         "end "
         "return 0"
     )
+    # RV-AI-07: DECR only an existing positive counter — a plain DECR
+    # would recreate an expired counter at -1 with no TTL (an extra unit
+    # plus a key that never expires). DECR itself keeps the TTL.
+    _DECR_FLOOR_LUA = (
+        "local n = tonumber(redis.call('GET', KEYS[1])) "
+        "if n and n > 0 then "
+        "  return redis.call('DECR', KEYS[1]) "
+        "end "
+        "return 0"
+    )
 
     async def incr(self, key: str, ttl: int | None = None) -> int:
         """Atomically increment a counter and apply TTL on first set.
@@ -282,6 +315,18 @@ class RedisCache:
         except RedisError:
             logger.warning("Redis incr failed for key=%s", key, exc_info=True)
             return 999_999
+
+    async def decr(self, key: str) -> int:
+        """RV-AI-07: undo one ``incr``; never creates a key or goes below 0.
+
+        On Redis failure the refund is simply lost (returns 0) — the
+        counter stays charged, which is the safe direction for a quota.
+        """
+        try:
+            return int(await self._client.eval(self._DECR_FLOOR_LUA, 1, key))
+        except RedisError:
+            logger.warning("Redis decr failed for key=%s", key, exc_info=True)
+            return 0
 
     async def set_if_absent(self, key: str, value: str, ttl: int) -> bool:
         """Atomic ``SET key value NX EX ttl`` (RV-SEC-04).

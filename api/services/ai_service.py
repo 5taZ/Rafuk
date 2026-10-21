@@ -92,6 +92,8 @@ from api.services.ai_sanitize import (  # noqa: F401 — re-export
     _PROMPT_INJECTION_PATTERNS,
     _PROMPT_ROLE_MARKERS,
     _TRIPLE_BACKTICK_RE,
+    fence_nonce,
+    fence_untrusted,
     sanitize_user_text,
     scrub_pii,
 )
@@ -919,6 +921,7 @@ class AIService:
         logger.warning("AI analyze_listing_parallel: starting staggered sub-calls")
         # Use return_exceptions so one failure doesn't kill the other
         results = await _run_subcalls(call_content)
+        images_analyzed = len(image_content)
         if (
             image_content
             and isinstance(results[0], Exception)
@@ -928,6 +931,7 @@ class AIService:
         ):
             logger.warning("AI multimodal analyse rate-limited; retrying text-only")
             results = await _run_subcalls(context)
+            images_analyzed = 0
 
         result_a = results[0] if not isinstance(results[0], Exception) else {}
         result_b = results[1] if not isinstance(results[1], Exception) else {}
@@ -982,6 +986,19 @@ class AIService:
         merged.setdefault("photo_authenticity", None)
         merged.setdefault("recommendation", None)
         merged.setdefault("summary", "")
+        # RV-AI-03: tell the pipeline which half is missing so the result
+        # is labelled "partial" instead of passing for a full AI answer.
+        merged["_failed_sections"] = [
+            section
+            for section, outcome in zip(
+                ("price_market", "condition_risks"), results, strict=True,
+            )
+            if isinstance(outcome, Exception)
+        ]
+        # RV-AI-05: photo_authenticity is only meaningful if the model
+        # actually saw the photos (fetches can fail, the 429 retry is
+        # text-only).
+        merged["_images_analyzed"] = images_analyzed
         return dedupe_analysis_payload(merged)
 
     def _build_listing_assistant_context(
@@ -1042,6 +1059,9 @@ class AIService:
         if similar_listings:
             ctx_lines.append("")
             ctx_lines.append("## ТОП КОНКУРЕНТОВ (до 6)")
+            # RV-AI-04: competitor titles are other sellers' text — fence
+            # them as data, like the buyer-side analysis does.
+            competitor_lines: list[str] = []
             for item in similar_listings[:6]:
                 price = item.get("price_byn") or 0
                 cond = item.get("condition") or item.get("condition_label") or ""
@@ -1062,9 +1082,15 @@ class AIService:
                     bits.append(", ".join(str(p) for p in params_list))
                 meta = " · ".join(bits)
                 if title_text:
-                    ctx_lines.append(f"- {title_text} ({meta})" if meta else f"- {title_text}")
+                    competitor_lines.append(
+                        f"- {title_text} ({meta})" if meta else f"- {title_text}"
+                    )
                 elif meta:
-                    ctx_lines.append(f"- {meta}")
+                    competitor_lines.append(f"- {meta}")
+            if competitor_lines:
+                ctx_lines.append(
+                    fence_untrusted(competitor_lines, fence_nonce(safe_title, *competitor_lines))
+                )
 
         if category_hint:
             ctx_lines.append("")
@@ -1246,7 +1272,27 @@ class AIService:
         # smuggle role-marker headers ("### system: ignore previous…")
         # into our analyse prompt.
         safe_title = sanitize_user_text(title, max_length=240) or ""
-        parts = [f"## ОБЪЯВЛЕНИЕ: {safe_title}"]
+        # RV-AI-04: the regex above only knows a handful of phrasings, so
+        # everything the seller wrote is also fenced off as data (see
+        # ai_sanitize.fence_untrusted and _UNTRUSTED_DATA_RULES).
+        listing_data = [f"Заголовок: {safe_title}"]
+        safe_condition = sanitize_user_text(condition, max_length=64) if condition else None
+        if safe_condition:
+            listing_data.append(f"Состояние (заявлено): {safe_condition}")
+        if parameters:
+            params_str = ", ".join(
+                f"{sanitize_user_text(str(p.get('label', '')), max_length=40) or ''}: "
+                f"{sanitize_user_text(str(p.get('value', '')), max_length=60) or ''}"
+                for p in parameters
+            )
+            listing_data.append(f"Параметры: {params_str}")
+        safe_description = (
+            sanitize_user_text(description, max_length=700) if description else None
+        )
+        if safe_description:
+            listing_data.append(f"Описание продавца:\n{safe_description}")
+        nonce = fence_nonce(*listing_data)
+        parts = ["## ОБЪЯВЛЕНИЕ", fence_untrusted(listing_data, nonce)]
 
         # Three-state price classification:
         #   is_negotiable_price  -> цена не указана продавцом ("договорная")
@@ -1297,8 +1343,6 @@ class AIService:
             if price_delta_pct is not None:
                 parts.append(f"Отклонение от медианы: {price_delta_pct:+.0f}%")
 
-        if condition:
-            parts.append(f"Состояние (заявлено): {condition}")
         if seller_type:
             seller_label = "магазин/дилер" if seller_type == "shop" else "частное лицо"
             parts.append(f"Продавец: {seller_label}")
@@ -1324,10 +1368,13 @@ class AIService:
             if photo_condition_label:
                 parts.append(f"Состояние по фото: {photo_condition_label}")
             if photo_condition_notes:
-                parts.append(
-                    "Наблюдения: "
-                    + "; ".join(str(note)[:140] for note in photo_condition_notes[:4])
-                )
+                # RV-AI-04: the notes paraphrase seller photos, so text
+                # written on a photo can surface here — same sanitiser.
+                notes = [
+                    sanitize_user_text(str(note), max_length=140, context="photo_note") or ""
+                    for note in photo_condition_notes[:4]
+                ]
+                parts.append("Наблюдения: " + "; ".join(note for note in notes if note))
 
         # Market statistics
         if market_median:
@@ -1417,26 +1464,12 @@ class AIService:
         if risk_context_flags:
             parts.append(f"\n## РИСК-СИГНАЛЫ: {'; '.join(risk_context_flags[:4])}")
 
-        # All parameters (not truncated)
-        if parameters:
-            params_str = ", ".join(
-                f"{sanitize_user_text(str(p.get('label', '')), max_length=40) or ''}: "
-                f"{sanitize_user_text(str(p.get('value', '')), max_length=60) or ''}"
-                for p in parameters
-            )
-            parts.append(f"\n## ПАРАМЕТРЫ: {params_str}")
-
-        # Full description — sanitised + truncated. Reads as
-        # "untrusted UGC", so role markers / injection phrases are stripped.
-        if description:
-            safe_description = sanitize_user_text(description, max_length=700)
-            if safe_description:
-                parts.append(f"\n## ОПИСАНИЕ ПРОДАВЦА:\n{safe_description}")
-
         # Similar listings — enriched with price deltas
         if similar_listings:
             compact_similar = similar_listings[:5]
             parts.append(f"\n## АЛЬТЕРНАТИВЫ ({len(compact_similar)} вариантов):")
+            # RV-AI-04: other sellers' titles/descriptions are UGC too.
+            alternatives: list[str] = []
             for i, sl in enumerate(compact_similar, 1):
                 if is_negotiable_price:
                     if market_median:
@@ -1477,7 +1510,7 @@ class AIService:
                     max_length=80,
                     context="similar_listing_title",
                 ) or ""
-                parts.append(
+                alternatives.append(
                     f"  {i}. {safe_sl_title} — "
                     f"{sl.get('price_byn', 0):.0f} BYN ({diff_str}), "
                     f"{sl.get('condition') or 'не указано'}, "
@@ -1487,14 +1520,15 @@ class AIService:
                     str(sl.get("parameters") or ""), max_length=120
                 ) or ""
                 if params:
-                    parts.append(f"     Параметры: {params[:120]}")
+                    alternatives.append(f"     Параметры: {params[:120]}")
                 safe_sl_desc = sanitize_user_text(
                     str(sl.get("description") or ""),
                     max_length=100,
                     context="similar_listing_desc",
                 )
                 if safe_sl_desc:
-                    parts.append(f"     Описание: {safe_sl_desc}")
+                    alternatives.append(f"     Описание: {safe_sl_desc}")
+            parts.append(fence_untrusted(alternatives, nonce))
 
         return "\n".join(parts)
 

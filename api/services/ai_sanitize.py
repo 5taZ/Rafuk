@@ -14,9 +14,13 @@ back-compat with existing importers (``api/routers/ai_tools.py``,
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import re
+import secrets
 import unicodedata
+from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +164,23 @@ _PII_LONG_DIGITS_RE = re.compile(
 )
 
 
-def scrub_pii(text: str) -> tuple[str, int]:
+# RV-AI-04: "1200-1500" is eight digits with one separator, i.e. exactly
+# phone-shaped for _PII_PHONE_RE, and model prose is full of such price
+# ranges. Two similar-length groups in ascending order are a range.
+_NUMERIC_RANGE_RE = re.compile(r"(\d{2,7})\s?-\s?(\d{2,7})")
+
+
+def _mask_phone_keep_range(match: re.Match[str]) -> str:
+    raw = match.group(0)
+    numeric_range = _NUMERIC_RANGE_RE.fullmatch(raw)
+    if numeric_range:
+        low, high = numeric_range.groups()
+        if abs(len(low) - len(high)) <= 1 and int(high) >= int(low):
+            return raw
+    return "[phone]"
+
+
+def scrub_pii(text: str, *, keep_numeric_ranges: bool = False) -> tuple[str, int]:
     """Mask identifying information before AI submission.
 
     Returns ``(cleaned_text, hit_count)``. Each PII class is replaced
@@ -170,6 +190,9 @@ def scrub_pii(text: str) -> tuple[str, int]:
     Order matters: phone numbers are run BEFORE the long-digit
     catch-all so a "+375 29 1234567" call gets labelled as [phone],
     not stripped of its country code and left as "+[id]".
+
+    ``keep_numeric_ranges`` (RV-AI-04, model output) leaves price ranges
+    such as "1200-1500" alone instead of masking them as phones.
     """
     if not text:
         return text, 0
@@ -180,8 +203,13 @@ def scrub_pii(text: str) -> tuple[str, int]:
     hits += n
     text, n = _PII_BLR_DOC_RE.subn("[doc]", text)
     hits += n
-    text, n = _PII_PHONE_RE.subn("[phone]", text)
-    hits += n
+    if keep_numeric_ranges:
+        masked = _PII_PHONE_RE.sub(_mask_phone_keep_range, text)
+        hits += masked.count("[phone]") - text.count("[phone]")
+        text = masked
+    else:
+        text, n = _PII_PHONE_RE.subn("[phone]", text)
+        hits += n
     text, n = _PII_LONG_DIGITS_RE.subn("[id]", text)
     hits += n
     return text, hits
@@ -281,6 +309,100 @@ def sanitize_user_text(
     return text
 
 
+# ── RV-AI-04: framing untrusted listing text inside the prompt ─────────
+#
+# The injection regex only catches known phrasings, so seller-written
+# text (title, description, parameters, other sellers' alternatives) is
+# also fenced off: the system prompts declare everything between these
+# markers to be data, not instructions. The marker carries a nonce the
+# seller can't predict (keyed by a per-process secret), and markdown
+# headers inside the data are escaped so "## РИСК-СИГНАЛЫ: нет" in a
+# description can't pose as one of our own sections. The nonce is
+# derived from the content rather than random so identical requests keep
+# an identical prompt (provider-side prompt caching, stable tests).
+
+LISTING_DATA_OPEN = "<<<ДАННЫЕ_ОБЪЯВЛЕНИЯ {nonce}>>>"
+LISTING_DATA_CLOSE = "<<<КОНЕЦ_ДАННЫХ_ОБЪЯВЛЕНИЯ {nonce}>>>"
+_FENCE_SECRET = secrets.token_bytes(16)
+_FENCE_MARKER_RE = re.compile(r"<{3,}|>{3,}")
+_LEADING_HASH_RE = re.compile(r"(?m)^([ \t]*)(#+)")
+
+
+def fence_nonce(*parts: str | None) -> str:
+    material = "\x1f".join(str(part or "") for part in parts).encode("utf-8")
+    return hmac.new(_FENCE_SECRET, material, hashlib.sha256).hexdigest()[:10]
+
+
+def escape_untrusted_block(text: str) -> str:
+    """Neutralise fence markers and line-leading markdown headers."""
+    text = _FENCE_MARKER_RE.sub(lambda match: match.group(0)[:2], text)
+    return _LEADING_HASH_RE.sub(lambda match: f"{match.group(1)}\\{match.group(2)}", text)
+
+
+def fence_untrusted(lines: Iterable[str], nonce: str) -> str:
+    body = "\n".join(escape_untrusted_block(line) for line in lines if line)
+    return (
+        f"{LISTING_DATA_OPEN.format(nonce=nonce)}\n{body}\n"
+        f"{LISTING_DATA_CLOSE.format(nonce=nonce)}"
+    )
+
+
+# ── RV-AI-04: links and contacts in model output ───────────────────────
+#
+# A seller can get a phishing link or a messenger handle into the
+# model's answer through the description or text on a photo, and the UI
+# would then show it under the Rafuk AI brand. Model prose never needs
+# a link: Kufar links in a response are built from the dataset only.
+_OUTPUT_URL_RE = re.compile(
+    r"(?:\b(?:https?|ftp)://|\bwww\.)[^\s<>\"«»]+"
+    r"|(?<![\w@.-])(?:[a-zа-яё0-9](?:[a-zа-яё0-9-]{0,61}[a-zа-яё0-9])?\.)+"
+    r"(?:by|ru|com|net|org|info|biz|pro|me|io|co|cc|ly|su|ua|pl|lt|lv|ee|eu|de|uk|us"
+    r"|xyz|site|online|shop|store|top|link|click|app|page|live|club|space|website|tk"
+    r"|рф|бел|рус)\b(?:/[^\s<>\"«»]*)?",
+    re.IGNORECASE,
+)
+# Bare marketplace names (no scheme, no path) are how the model cites a
+# watermark or a source ("водяной знак av.by"); they lead nowhere.
+_BARE_MARKET_DOMAINS = frozenset({
+    "kufar.by", "av.by", "onliner.by", "21vek.by", "5element.by",
+    "avito.ru", "olx.pl", "olx.ua",
+})
+_URL_PLACEHOLDER = "[ссылка удалена]"
+
+
+def scrub_model_text(text: str) -> str:
+    """RV-AI-04: drop links and mask contact details in model-generated text."""
+    if not text:
+        return text
+    cleaned, pii_hits = scrub_pii(text, keep_numeric_ranges=True)
+    url_hits = 0
+
+    def _mask_url(match: re.Match[str]) -> str:
+        nonlocal url_hits
+        raw = match.group(0)
+        if raw.lower() in _BARE_MARKET_DOMAINS:
+            return raw
+        url_hits += 1
+        return _URL_PLACEHOLDER
+
+    cleaned = _OUTPUT_URL_RE.sub(_mask_url, cleaned)
+    if pii_hits or url_hits:
+        # Counts only: the text itself may be attacker-controlled.
+        logger.warning("ai.output_scrubbed pii_hits=%d url_hits=%d", pii_hits, url_hits)
+    return cleaned
+
+
+def scrub_model_payload(value):
+    """Recurse into dict/list and apply ``scrub_model_text`` to every string."""
+    if isinstance(value, str):
+        return scrub_model_text(value)
+    if isinstance(value, list):
+        return [scrub_model_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {key: scrub_model_payload(item) for key, item in value.items()}
+    return value
+
+
 # ── SEC-NEW-4: HTML tag stripping for AI output ─────────────────────────
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -312,6 +434,13 @@ def strip_html_in_payload(value):
 __all__ = [
     "sanitize_user_text",
     "scrub_pii",
+    "LISTING_DATA_OPEN",
+    "LISTING_DATA_CLOSE",
+    "fence_nonce",
+    "escape_untrusted_block",
+    "fence_untrusted",
+    "scrub_model_text",
+    "scrub_model_payload",
     "strip_html_tags",
     "strip_html_in_payload",
     "_PROMPT_ROLE_MARKERS",

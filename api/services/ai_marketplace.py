@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from api.services.ai_quality import filter_specific_advice, is_generic_ai_advice
 from api.services.ai_service import detect_category, normalize_condition_label
 from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS, first_image_url
 from api.services.reseller_tools import analyze_query_text
+from api.services.risk_detector import find_prepayment_signals
 
 # ── Static lexicon ───────────────────────────────────────────────────────
 # Wave 19 (BE-M17 / ai_marketplace split): ~200 lines of inline Russian /
@@ -1278,6 +1280,264 @@ def build_fallback_analysis_result(
             ai_market_context="",
         ),
         "summary": summary,
+    }
+
+
+# ── RV-AI-04: deterministic risk floor ──────────────────────────────────
+#
+# The model's verdict used to be final, and too_cheap only reached the
+# prompt as a hint, so a listing 40% under the market asking for
+# prepayment could still come out "Стоит брать" without a single red
+# flag (e.g. after a prompt injection in the description). These two
+# signals are computed without the model and bound whatever it says.
+
+
+@dataclass(slots=True, frozen=True)
+class RiskFloor:
+    too_cheap: bool = False
+    prepayment: bool = False
+
+    @property
+    def active(self) -> bool:
+        return self.too_cheap or self.prepayment
+
+
+_FLOOR_TOO_CHEAP_FLAG = (
+    "Цена подозрительно низкая: заметно ниже рынка без понятной причины — "
+    "так часто выглядят мошеннические объявления."
+)
+_FLOOR_PREPAYMENT_FLAG = (
+    "В объявлении упоминается предоплата или перевод денег до встречи — "
+    "частая схема мошенничества."
+)
+# worth_it is the only verdict the floor forbids; think_twice is the next
+# stricter one, overpriced already warns the buyer off.
+_FLOOR_ALLOWED_VERDICTS = frozenset({"think_twice", "overpriced"})
+_SCAM_RISK_ORDER = ("low", "medium", "high")
+
+
+def build_risk_floor(
+    ad: dict[str, Any] | None,
+    *,
+    anomaly_flags: list[str] | None,
+) -> RiskFloor:
+    ad = ad or {}
+    text = " ".join(
+        str(ad.get(key) or "")
+        for key in ("subject", "title", "body", "body_short", "description")
+    )
+    return RiskFloor(
+        too_cheap="too_cheap" in (anomaly_flags or []),
+        prepayment=bool(find_prepayment_signals(text)),
+    )
+
+
+def apply_floor_red_flags(
+    red_flags: list[str],
+    floor: RiskFloor,
+    *,
+    max_items: int = 3,
+) -> list[str]:
+    """Put the floor's flags first so the max_items cap can't drop them."""
+    floor_flags = [
+        flag
+        for flag, on in (
+            (_FLOOR_TOO_CHEAP_FLAG, floor.too_cheap),
+            (_FLOOR_PREPAYMENT_FLAG, floor.prepayment),
+        )
+        if on
+    ]
+    if not floor_flags:
+        return red_flags
+    seen = {normalize_search_text(flag) for flag in floor_flags}
+    rest = [flag for flag in red_flags if normalize_search_text(flag) not in seen]
+    return (floor_flags + rest)[: max(max_items, len(floor_flags))]
+
+
+def _floor_recommendation_text(floor: RiskFloor) -> str:
+    if floor.too_cheap and floor.prepayment:
+        return (
+            "Цена сильно ниже рынка, и продавец говорит о предоплате — это типичная "
+            "схема мошенничества. Не переводи деньги заранее: только личная встреча, "
+            "осмотр и оплата при получении."
+        )
+    if floor.too_cheap:
+        return (
+            "Цена сильно ниже рынка без понятной причины. Не вноси предоплату: "
+            "встречайся лично и проверяй товар и документы до оплаты."
+        )
+    return (
+        "Продавец упоминает предоплату или перевод денег. Не переводи деньги до "
+        "личного осмотра товара — оплата только при получении."
+    )
+
+
+def enforce_risk_floor(
+    result: dict[str, Any],
+    *,
+    floor: RiskFloor,
+    red_flags: list[str],
+    title: str,
+    price_byn: float,
+    market_median: float | None,
+    best_alternative: dict[str, Any] | None,
+    is_negotiable_price: bool,
+) -> tuple[dict[str, Any], list[str]]:
+    """Guarantee the floor's red flags and keep the verdict off ``worth_it``.
+
+    A downgraded verdict also gets deterministic recommendation text and
+    summary: the model's prose argued for the verdict it no longer has.
+    """
+    if not floor.active:
+        return result, red_flags
+    flags = apply_floor_red_flags(red_flags, floor)
+    completed = dict(result)
+    completed["red_flags"] = flags
+    recommendation = completed.get("recommendation")
+    verdict = recommendation.get("verdict") if isinstance(recommendation, dict) else None
+    if verdict not in _FLOOR_ALLOWED_VERDICTS:
+        completed["recommendation"] = {
+            "verdict": "think_twice",
+            "text": _floor_recommendation_text(floor),
+        }
+        completed["summary"] = _build_summary_fallback(
+            verdict="think_twice",
+            title=title,
+            price_byn=price_byn,
+            market_median=market_median,
+            best_alternative=best_alternative,
+            red_flags=flags,
+            is_negotiable_price=is_negotiable_price,
+        )
+    scam = completed.get("scam_analysis")
+    if isinstance(scam, dict):
+        floor_level = "high" if floor.too_cheap and floor.prepayment else "medium"
+        current = scam.get("risk_level")
+        if current not in _SCAM_RISK_ORDER or (
+            _SCAM_RISK_ORDER.index(current) < _SCAM_RISK_ORDER.index(floor_level)
+        ):
+            completed["scam_analysis"] = {**scam, "risk_level": floor_level}
+    return completed, flags
+
+
+# ── RV-AI-05: scam_analysis / photo_authenticity from the model ────────
+#
+# Both sections were requested (and paid for) on every analysis but never
+# reached the response. The model's JSON is loosely typed, so each field
+# is coerced here and a section with nothing renderable becomes None —
+# a malformed section must not sink the whole response into the fallback.
+
+_SCAM_RISK_LEVELS = {
+    "low": "low", "низкий": "low", "низкая": "low", "минимальный": "low",
+    "medium": "medium", "moderate": "medium", "средний": "medium",
+    "средняя": "medium", "умеренный": "medium",
+    "high": "high", "высокий": "high", "высокая": "high", "critical": "high",
+    "критический": "high",
+}
+_EMPTY_SECTION_TEXTS = frozenset({
+    "нет", "не обнаружено", "не выявлено", "не найдено", "отсутствуют",
+    "отсутствует", "none", "n/a", "null", "-", "—",
+})
+_PHOTO_FLAG_KEYS = (
+    "stock_photo_detected",
+    "duplicate_image_detected",
+    "watermark_detected",
+    "screenshot_detected",
+)
+_TRUE_TEXTS = frozenset({"true", "yes", "да", "1"})
+
+
+def _section_text(value: Any, *, max_len: int) -> str:
+    if isinstance(value, dict):
+        value = " — ".join(
+            str(value[key]).strip()
+            for key in ("point", "text", "issue", "why")
+            if isinstance(value.get(key), str) and value[key].strip()
+        )
+    if not isinstance(value, str):
+        return ""
+    text = re.sub(r"\s+", " ", value).strip()
+    if text.strip(" .;").lower() in _EMPTY_SECTION_TEXTS:
+        return ""
+    return text[:max_len].rstrip()
+
+
+def _section_texts(raw: Any, *, limit: int, max_len: int) -> list[str]:
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    items: list[str] = []
+    seen: set[str] = set()
+    for entry in raw:
+        text = _section_text(entry, max_len=max_len)
+        key = normalize_search_text(text)
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        items.append(text)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def normalize_scam_analysis(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    indicators = _section_texts(raw.get("indicators"), limit=5, max_len=240)
+    photo_issues = _section_texts(raw.get("photo_issues"), limit=4, max_len=240)
+    seller_warnings = _section_texts(raw.get("seller_warnings"), limit=4, max_len=240)
+    advice = _section_text(raw.get("advice"), max_len=400)
+    if not (indicators or photo_issues or seller_warnings or advice):
+        return None
+    level = raw.get("risk_level")
+    return {
+        "risk_level": (
+            _SCAM_RISK_LEVELS.get(level.strip().lower()) if isinstance(level, str) else None
+        ),
+        "indicators": indicators,
+        "photo_issues": photo_issues,
+        "seller_warnings": seller_warnings,
+        "advice": advice,
+    }
+
+
+def _coerce_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in _TRUE_TEXTS
+    return False
+
+
+def _coerce_confidence(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value).strip().rstrip("%"))
+    except ValueError:
+        return None
+    if not math.isfinite(number) or number < 0 or number > 100:
+        return None
+    if number > 1:
+        number /= 100
+    return round(number, 2)
+
+
+def normalize_photo_authenticity(raw: Any, *, images_analyzed: bool) -> dict[str, Any] | None:
+    # Without photos in the request the model can only guess, and the UI
+    # would print "Фото выглядит подлинным" on a guess.
+    if not images_analyzed or not isinstance(raw, dict):
+        return None
+    known = (*_PHOTO_FLAG_KEYS, "issues", "confidence")
+    if not any(key in raw for key in known):
+        return None
+    return {
+        **{key: _coerce_flag(raw.get(key)) for key in _PHOTO_FLAG_KEYS},
+        "issues": _section_texts(raw.get("issues"), limit=4, max_len=200),
+        "confidence": _coerce_confidence(raw.get("confidence")),
     }
 
 

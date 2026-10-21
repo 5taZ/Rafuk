@@ -1655,19 +1655,19 @@ def test_listing_assistant_returns_market_fallback_when_ai_fails(monkeypatch) ->
 
 
 def test_analysis_fallback_warning_is_rate_limit_aware() -> None:
-    from api.services.ai_analysis_pipeline import (
-        _analysis_fallback_cache_ttl,
-        _analysis_fallback_warning,
-    )
+    """RV-AI-03: the fallback no longer goes into the shared analysis
+    cache at all, so the rate-limit-specific cache TTL helper is gone;
+    a timeout now gets its own warning instead of none."""
+    from api.services.ai_analysis_pipeline import _analysis_fallback_warning
 
     rate_limited = RuntimeError("429 RATE_LIMITED")
     generic = RuntimeError("provider unavailable")
 
     assert "AI сейчас на лимите" in (_analysis_fallback_warning(rate_limited) or "")
-    assert _analysis_fallback_cache_ttl(1800, rate_limited) == 60
     assert _analysis_fallback_warning(generic) == (
         "AI не ответил. Показан рыночный черновик по данным рынка."
     )
+    assert "не успел ответить" in _analysis_fallback_warning(TimeoutError())
 
 
 def test_listing_assistant_passes_photos_to_ai_and_drops_invalid_ones(monkeypatch) -> None:

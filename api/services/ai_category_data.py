@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 # Category-specific analysis hints injected into the prompt
 CATEGORY_HINTS: dict[str, dict[str, str]] = {
     "phone": {
@@ -1564,7 +1566,27 @@ _VALID_CONDITION_LABELS = {
     "good": "Хорошее",
     "fair": "Удовлетворительное",
     "poor": "Требует внимания",
+    # RV-AI-06: "как новый" describes a used item in pristine shape, not
+    # a new one; listed so the longer phrase wins over the bare "новый".
+    "как новый": "Отличное",
+    "как новая": "Отличное",
+    "как новое": "Отличное",
+    "почти новый": "Отличное",
+    "почти новая": "Отличное",
+    "почти новое": "Отличное",
+    "like new": "Отличное",
 }
+
+# RV-AI-06: plain substring search let "бу" fire inside "тре*бу*ет", so the
+# worst grade "Требует внимания" came out as a neutral "Б/у". Keys now
+# match on word boundaries, longest first ("требует внимания" before "бу",
+# "как новый" before "новый").
+_CONDITION_LABEL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf"(?<!\w){re.escape(key)}(?!\w)"), label)
+    for key, label in sorted(_VALID_CONDITION_LABELS.items(), key=lambda item: -len(item[0]))
+)
+# RV-AI-06: "не новый" must not become "Новый".
+_CONDITION_NEGATION_RE = re.compile(r"(?:^|\W)(?:не|нет|not|no)\s*$")
 
 
 def detect_category(title: str, parameters: list[dict] | None = None) -> str:
@@ -1605,20 +1627,28 @@ def detect_category(title: str, parameters: list[dict] | None = None) -> str:
 def normalize_condition_label(value: str | None) -> str:
     """Normalize a free-form condition label into one of the valid options.
 
-    Returns one of: "Отличное", "Хорошее", "Удовлетворительное",
-    "Требует внимания", or "" if no match.
+    Returns one of: "Новый", "Б/у", "Отличное", "Хорошее",
+    "Удовлетворительное", "Требует внимания", or "" if no match.
+
+    RV-AI-06: an exact canonical match wins; otherwise keys are matched
+    on word boundaries, longest first, and a match preceded by a
+    negation ("не новый") is skipped instead of being taken literally.
     """
     text = str(value or "").strip()
     if not text:
         return ""
-    normalized = text.lower()
+    normalized = re.sub(r"\s+", " ", text.lower()).strip(" .,;:!")
     if "|" in normalized:
         for token in ("хорошее", "удовлетворительное", "требует внимания", "отличное"):
             if token in normalized:
                 return _VALID_CONDITION_LABELS[token]
-    for key, label in _VALID_CONDITION_LABELS.items():
-        if key == normalized or key in normalized:
-            return label
+    exact = _VALID_CONDITION_LABELS.get(normalized)
+    if exact:
+        return exact
+    for pattern, label in _CONDITION_LABEL_PATTERNS:
+        for match in pattern.finditer(normalized):
+            if not _CONDITION_NEGATION_RE.search(normalized[: match.start()]):
+                return label
     return ""
 
 

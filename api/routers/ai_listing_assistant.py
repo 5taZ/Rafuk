@@ -43,7 +43,7 @@ from api.services.ai_listing_guardrails import (
     thin_market_warning,
 )
 from api.services.ai_quality import repair_seller_advice, sanitize_public_ai_payload
-from api.services.ai_sanitize import strip_html_in_payload
+from api.services.ai_sanitize import scrub_model_payload, strip_html_in_payload
 from api.services.ai_service import (
     CATEGORY_HINTS,
     detect_category,
@@ -623,6 +623,11 @@ async def listing_assistant(
             competitors=competitors,
         )
 
+    # RV-AI-04: competitor titles are other sellers' text; links and
+    # contacts the model picks up from them (or from photos) don't belong
+    # in a draft the seller will paste into Kufar. Competitor links are
+    # rebuilt from the dataset in _coerce_competitors.
+    ai_result = scrub_model_payload(ai_result)
     raw_pricing = ai_result.get("pricing") if isinstance(ai_result.get("pricing"), dict) else {}
     normalised_pricing = normalize_listing_pricing(
         raw_pricing,

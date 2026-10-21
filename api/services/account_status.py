@@ -149,6 +149,11 @@ async def consume_quota(
         resets_at=window.resets_at,
     )
     if raw_used > normalized_limit:
+        # RV-AI-07: a rejected attempt must not stay on the counter.
+        # Otherwise every 429 pushes it past the limit and a later
+        # refund_quota only cancels the overshoot instead of giving
+        # the user a usable unit back.
+        await cache.decr(key)
         raise HTTPException(
             status_code=429,
             detail={
@@ -161,6 +166,23 @@ async def consume_quota(
             },
         )
     return snapshot
+
+
+async def refund_quota(
+    cache: CacheBackend,
+    *,
+    bucket: str,
+    telegram_user_id: int,
+    now: datetime | None = None,
+) -> None:
+    """RV-AI-07: give back one unit spent by ``consume_quota``.
+
+    Pass the moment the unit was charged as ``now`` so a task that
+    straddles Minsk midnight refunds the day it was charged to.
+    """
+    _validate_quota_bucket(bucket)
+    window = quota_window(now)
+    await cache.decr(f"quota:{bucket}:{int(telegram_user_id)}:{window.key_date}")
 
 
 async def get_status_by_code(

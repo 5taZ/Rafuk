@@ -830,6 +830,7 @@ AIListingSellerGoal = Literal["balanced", "sell_fast", "maximize_price"]
 AIFeedbackEndpoint = Literal["analyze", "listing_assistant"]
 AIFeedbackRating = Literal["helpful", "not_helpful"]
 AIFeedbackReason = Literal["too_generic", "wrong_category", "bad_price", "good"]
+AIAnalysisSource = Literal["ai", "partial", "fallback"]
 
 
 class AIAnalysisRequest(BaseModel):
@@ -894,9 +895,13 @@ class AISimilarListing(BaseModel):
 
 
 class AIScamAnalysis(BaseModel):
-    """AI scam/fraud detection result."""
+    """AI scam/fraud detection result.
 
-    risk_level: str = ""  # "low" | "medium" | "high"
+    RV-AI-05: built by ai_marketplace.normalize_scam_analysis; an unknown
+    risk level is None rather than whatever string the model produced.
+    """
+
+    risk_level: Literal["low", "medium", "high"] | None = None
     indicators: list[str] = Field(default_factory=list)
     photo_issues: list[str] = Field(default_factory=list)
     seller_warnings: list[str] = Field(default_factory=list)
@@ -904,14 +909,18 @@ class AIScamAnalysis(BaseModel):
 
 
 class AIPhotoAuthenticity(BaseModel):
-    """AI photo authenticity check result."""
+    """AI photo authenticity check result.
+
+    RV-AI-05: ``confidence`` is None when the model gave none — the UI
+    hides the figure instead of printing "уверенность 0%".
+    """
 
     stock_photo_detected: bool = False
     duplicate_image_detected: bool = False
     watermark_detected: bool = False
     screenshot_detected: bool = False
     issues: list[str] = Field(default_factory=list)
-    confidence: float = 0.0
+    confidence: float | None = None
 
 
 class AINegotiateRequest(BaseModel):
@@ -984,6 +993,10 @@ class AIAnalysisResponse(BaseModel):
     price_reference_label: str | None = None
     best_pick_reason: str = ""
     summary: str = ""
+    # RV-AI-03: "ai" — both model calls answered; "partial" — one failed
+    # and its sections come from market data; "fallback" — no model answer,
+    # the whole result is the rule-based market draft.
+    source: AIAnalysisSource = "ai"
     disclaimer: str = (
         "AI-анализ носит исключительно информационно-справочный характер и не является "
         "финансовой, инвестиционной или юридической консультацией; гарантией прибыли, "

@@ -124,6 +124,7 @@ async def clear_user_ai_data(
     that was previously left behind:
 
     * ``ai_task:u{tg}:*`` — AI task results (api/services/ai_task_store)
+    * ``ai_inflight:u{tg}:*`` — in-flight analysis claims (same module)
     * ``ai_listing:u{tg}:*`` — Listing Assistant response cache
     * ``ai_rate:{tg}:*`` — per-endpoint hourly limiter buckets
     * ``ai_daily:{tg}`` — shared daily limiter counter
@@ -181,6 +182,8 @@ async def clear_user_ai_data(
         user_scoped_patterns = [
             f"ai_task:u{telegram_user_id}:*",
             f"ai_listing:u{telegram_user_id}:*",
+            # RV-AI-07: singleflight claims point at the tasks above.
+            f"ai_inflight:u{telegram_user_id}:*",
         ]
         if not keep_account_state:
             user_scoped_patterns += [
