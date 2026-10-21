@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -43,6 +42,10 @@ class FakeKufarClient:
         return None
 
 
+# RV-DB-01: the tests seed through ``client.portal.call``, i.e. on the app's
+# own event loop. ``asyncio.run`` opened a second loop on the app's engine,
+# and asyncpg binds a pooled connection to the loop that opened it, so on
+# Postgres the next request failed with "attached to a different loop".
 async def seed_history(session_factory, query: str = "iphone 16") -> None:
     async with session_factory() as session:
         await session.execute(
@@ -92,7 +95,7 @@ def test_price_history_endpoint_returns_snapshots() -> None:
     )
 
     with TestClient(app) as client:
-        asyncio.run(seed_history(app.state.session_factory, query="iphone 16 history"))
+        client.portal.call(seed_history, app.state.session_factory, "iphone 16 history")
         response = client.get(
             "/api/v1/price-history",
             params={"query": "iphone 16 history", "currency": "USD", "days": 7},
@@ -117,7 +120,7 @@ def test_price_history_caps_days_at_ninety() -> None:
     )
 
     with TestClient(app) as client:
-        asyncio.run(seed_history(app.state.session_factory, query="iphone 16 caps"))
+        client.portal.call(seed_history, app.state.session_factory, "iphone 16 caps")
         # BE-MEDIUM (issues §2.2): days now has explicit Query(le=90)
         # bounds, so 365 is rejected with 422 instead of being silently
         # clipped. The clamp behaviour was preserved for in-range values
@@ -176,7 +179,7 @@ def test_price_history_endpoint_uses_category_key() -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        asyncio.run(seed_category_history(app.state.session_factory))
+        client.portal.call(seed_category_history, app.state.session_factory)
         response = client.get(
             "/api/v1/price-history",
             params={"query": "iphone 16 category", "days": 7, "category": 17010},
@@ -202,7 +205,7 @@ def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
     )
 
     with TestClient(app) as client:
-        asyncio.run(seed_history(app.state.session_factory, query="iphone 16 persist-old"))
+        client.portal.call(seed_history, app.state.session_factory, "iphone 16 persist-old")
         stats_response = client.get(
             "/api/v1/price-stats",
             params={"query": "iphone 16 fresh", "currency": "BYN"},
@@ -250,7 +253,7 @@ def test_price_history_includes_q1_q3() -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        asyncio.run(seed_q1q3(app.state.session_factory))
+        client.portal.call(seed_q1q3, app.state.session_factory)
         response = client.get(
             "/api/v1/price-history",
             params={"query": "q1q3test", "currency": "BYN", "days": 7},
@@ -293,7 +296,7 @@ def test_price_history_includes_fetched_count() -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        asyncio.run(seed_fetched_count(app.state.session_factory))
+        client.portal.call(seed_fetched_count, app.state.session_factory)
         response = client.get(
             "/api/v1/price-history",
             params={"query": "fetchcount_test", "currency": "BYN", "days": 7},
@@ -315,7 +318,7 @@ def test_price_history_response_includes_rate_source() -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        asyncio.run(seed_history(app.state.session_factory, query="rate_source_test"))
+        client.portal.call(seed_history, app.state.session_factory, "rate_source_test")
         response = client.get(
             "/api/v1/price-history",
             params={"query": "rate_source_test", "currency": "BYN", "days": 7},

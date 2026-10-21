@@ -164,9 +164,15 @@ async def seed_tracker_event(session_factory) -> None:
         user_id = await ensure_user(session, telegram_user_id=123456, first_name="Test")
         await session.commit()
 
+        # RV-DB-01: Postgres enforces tracker_events.tracker_id; SQLite runs
+        # without PRAGMA foreign_keys, so a bare tracker_id=1 passed only there.
+        tracker = Tracker(user_id=user_id, query="iphone 15", strict_mode=True)
+        session.add(tracker)
+        await session.flush()
+
         session.add(
             TrackerEvent(
-                tracker_id=1,
+                tracker_id=tracker.id,
                 user_id=user_id,
                 ad_id=1,
                 query="iphone 15",
@@ -181,8 +187,7 @@ async def seed_tracker_event(session_factory) -> None:
         await session.commit()
 
 
-@pytest.mark.asyncio
-async def test_tracker_events_endpoint() -> None:
+def test_tracker_events_endpoint() -> None:
     from api.dependencies import get_telegram_user
     from api.main import create_app
 
@@ -190,7 +195,9 @@ async def test_tracker_events_endpoint() -> None:
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
 
     with TestClient(app) as client:
-        await seed_tracker_event(app.state.session_factory)
+        # RV-DB-01: seed on the app's own event loop; asyncpg binds pooled
+        # connections to the loop that opened them.
+        client.portal.call(seed_tracker_event, app.state.session_factory)
         response = client.get("/api/v1/tracker-events")
 
     assert response.status_code == 200
@@ -486,12 +493,17 @@ async def seed_mixed_tracker_events(session_factory) -> None:
         user_id = await ensure_user(session, telegram_user_id=123456, first_name="Test")
         await session.commit()
 
+        # RV-DB-01: a real tracker row, since Postgres enforces the FK.
+        tracker = Tracker(user_id=user_id, query="iphone 14 pro", strict_mode=True)
+        session.add(tracker)
+        await session.flush()
+
         now = datetime.now(UTC)
         session.add_all(
             [
                 # Listing-level: should be returned by default.
                 TrackerEvent(
-                    tracker_id=1,
+                    tracker_id=tracker.id,
                     user_id=user_id,
                     ad_id=42,
                     query="iphone 14 pro",
@@ -504,7 +516,7 @@ async def seed_mixed_tracker_events(session_factory) -> None:
                 ),
                 # Query-level market signal: should be filtered out by default.
                 TrackerEvent(
-                    tracker_id=1,
+                    tracker_id=tracker.id,
                     user_id=user_id,
                     ad_id=None,
                     query="iphone 14 pro",
@@ -527,8 +539,7 @@ async def seed_mixed_tracker_events(session_factory) -> None:
         await session.commit()
 
 
-@pytest.mark.asyncio
-async def test_tracker_events_endpoint_filters_out_trend_reversal_by_default() -> None:
+def test_tracker_events_endpoint_filters_out_trend_reversal_by_default() -> None:
     """trend_reversal events have ad_id=None / link="" — they are
     query-level market signals delivered via Telegram, not listings.
 
@@ -545,7 +556,7 @@ async def test_tracker_events_endpoint_filters_out_trend_reversal_by_default() -
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
 
     with TestClient(app) as client:
-        await seed_mixed_tracker_events(app.state.session_factory)
+        client.portal.call(seed_mixed_tracker_events, app.state.session_factory)
 
         # Default: trend_reversal must NOT be in the response.
         default_resp = client.get("/api/v1/tracker-events")

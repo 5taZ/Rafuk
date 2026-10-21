@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -19,6 +18,9 @@ def fake_telegram_user() -> TelegramInitData:
     return TelegramInitData(user_id=987654, first_name="Analytics", raw={})
 
 
+# RV-DB-01: the tests run these through ``client.portal.call``, on the app's
+# own event loop: asyncpg binds a pooled connection to the loop that opened
+# it, so seeding via ``asyncio.run`` broke the next request on Postgres.
 async def _create_tables(engine) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -123,8 +125,8 @@ def _bootstrap_app():
 def test_lead_analytics_returns_full_dashboard_payload() -> None:
     app = _bootstrap_app()
     with TestClient(app) as client:
-        asyncio.run(_create_tables(app.state.engine))
-        asyncio.run(_seed_leads(app.state.session_factory))
+        client.portal.call(_create_tables, app.state.engine)
+        client.portal.call(_seed_leads, app.state.session_factory)
         response = client.get("/api/v1/analytics/leads")
 
     assert response.status_code == 200
@@ -149,8 +151,8 @@ def test_lead_analytics_returns_full_dashboard_payload() -> None:
 def test_lead_analytics_funnel_includes_every_status_with_correct_counts() -> None:
     app = _bootstrap_app()
     with TestClient(app) as client:
-        asyncio.run(_create_tables(app.state.engine))
-        asyncio.run(_seed_leads(app.state.session_factory))
+        client.portal.call(_create_tables, app.state.engine)
+        client.portal.call(_seed_leads, app.state.session_factory)
         response = client.get("/api/v1/analytics/leads")
 
     payload = response.json()
@@ -181,7 +183,7 @@ def test_lead_analytics_returns_zero_dashboard_for_unknown_user() -> None:
     app.dependency_overrides[get_telegram_user] = _other_user
 
     with TestClient(app) as client:
-        asyncio.run(_create_tables(app.state.engine))
+        client.portal.call(_create_tables, app.state.engine)
         response = client.get("/api/v1/analytics/leads")
 
     assert response.status_code == 200
@@ -222,8 +224,8 @@ def test_lead_analytics_excludes_incomplete_cost_basis_from_profit() -> None:
 
     app = _bootstrap_app()
     with TestClient(app) as client:
-        asyncio.run(_create_tables(app.state.engine))
-        asyncio.run(_seed_mixed(app.state.session_factory))
+        client.portal.call(_create_tables, app.state.engine)
+        client.portal.call(_seed_mixed, app.state.session_factory)
         response = client.get("/api/v1/analytics/leads")
 
     assert response.status_code == 200
@@ -266,8 +268,8 @@ def test_lead_analytics_total_projected_profit_for_unsold_leads() -> None:
 
     app = _bootstrap_app()
     with TestClient(app) as client:
-        asyncio.run(_create_tables(app.state.engine))
-        asyncio.run(_seed(app.state.session_factory))
+        client.portal.call(_create_tables, app.state.engine)
+        client.portal.call(_seed, app.state.session_factory)
         response = client.get("/api/v1/analytics/leads")
 
     assert response.status_code == 200

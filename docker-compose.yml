@@ -293,7 +293,10 @@ services:
       # RV-OPS-02: the image entrypoint renders nginx/default.conf (an
       # envsubst template) into conf.d at start; on the read-only root
       # filesystem it would skip that silently without a writable conf.d.
-      - /etc/nginx/conf.d
+      # The tmpfs must belong to the nginx user (uid/gid 101 in
+      # nginx-unprivileged): a root-owned one is just as unwritable, and
+      # nginx then starts without any server block (RV-OPS-09 smoke caught it).
+      - /etc/nginx/conf.d:uid=101,gid=101
     environment:
       # RV-OPS-02: host:port the /api/ locations proxy to. The default is the
       # api service over kufar-net; start-local.sh passes

@@ -366,8 +366,11 @@ def test_compose_frontend_proxies_to_the_api_service() -> None:
     assert environment["API_UPSTREAM"] == "${NGINX_API_UPSTREAM:-api:8000}"
     # "-", not ":-": start-local.sh passes an explicitly empty value.
     assert environment["API_UPSTREAM_PARAMS"] == "${NGINX_API_UPSTREAM_PARAMS-resolve}"
-    # The entrypoint renders the template into conf.d on a read-only rootfs.
-    assert "/etc/nginx/conf.d" in frontend["tmpfs"]
+    # The entrypoint renders the template into conf.d on a read-only rootfs,
+    # as nginx-unprivileged's uid 101: a root-owned tmpfs is not writable.
+    assert "/etc/nginx/conf.d:uid=101,gid=101" in frontend["tmpfs"]
+    dockerfile = Path("Dockerfile.frontend").read_text(encoding="utf-8")
+    assert "FROM nginxinc/nginx-unprivileged:" in dockerfile
     assert frontend["depends_on"]["api"] == {"condition": "service_healthy", "restart": True}
     assert "extra_hosts" not in frontend["build"]
 
