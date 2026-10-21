@@ -235,6 +235,21 @@ class Settings(BaseSettings):
     # falls back to the legacy initData-forge path with a
     # deprecation warning so existing deployments keep working.
     internal_service_token: SecretStr | None = None
+
+    @field_validator("internal_service_token", mode="before")
+    @classmethod
+    def _blank_internal_service_token_is_unset(cls, v: object) -> object:
+        """RV-SCH-06: docker-compose passes ``${INTERNAL_SERVICE_TOKEN:-}``,
+        i.e. an empty string when the variable is not set. As ``SecretStr('')``
+        it counted as configured: the bot sent an empty service token, the
+        API ignored the empty header and answered 401. Blank means unset;
+        surrounding whitespace is dropped (HTTP strips it from the header).
+        """
+        raw = v.get_secret_value() if isinstance(v, SecretStr) else v
+        if isinstance(raw, str):
+            return raw.strip() or None
+        return v
+
     # SEC-NEW-8: HMAC key for AI audit log hashes. Falls back to
     # BOT_TOKEN-derived key when unset.
     audit_hash_secret: SecretStr | None = Field(default=None, alias="AUDIT_HASH_SECRET")

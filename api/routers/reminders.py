@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import LeadItem, LeadReminder
+from api.models import REMINDER_STATUS_PENDING, LeadItem, LeadReminder, User
 from api.schemas import ReminderCreate, ReminderRead
 from api.services.workflow_store import ensure_user, resolve_user_id
 
 router = APIRouter(tags=["reminders"])
+
+# RV-SCH-04: cap on reminders still waiting to go out, per user. The
+# scheduler sends at most 100 per 15-minute tick, so one account with
+# hundreds of reminders could hold up everyone else's.
+REMINDER_MAX_ACTIVE_PER_USER = 50
 
 
 @router.post(
@@ -43,6 +48,21 @@ async def create_reminder(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Lead not found",
+            )
+
+        # BE-M16 pattern: lock the user row so two concurrent creates can't
+        # both pass the count below (no-op on SQLite).
+        await session.scalar(select(User.id).where(User.id == user_id).with_for_update())
+        active_count = await session.scalar(
+            select(func.count(LeadReminder.id)).where(
+                LeadReminder.user_id == user_id,
+                LeadReminder.status == REMINDER_STATUS_PENDING,
+            )
+        )
+        if (active_count or 0) >= REMINDER_MAX_ACTIVE_PER_USER:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Maximum {REMINDER_MAX_ACTIVE_PER_USER} active reminders per user",
             )
 
         reminder = LeadReminder(

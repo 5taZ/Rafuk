@@ -33,7 +33,9 @@ def _build_threshold_message(
         for event in price_alerts[:3]:
             threshold = event.parameters.get("threshold") if event.parameters else None
             threshold_str = f" (порог: {round(float(threshold))} BYN)" if threshold else ""
-            lines.append(f"💰 {round(float(event.price_byn))} BYN{threshold_str}")
+            # RV-SCH-05: a giveaway reads "бесплатно", not "0 BYN".
+            price_label = _format_price_byn(event.price_byn, event.price_type)
+            lines.append(f"💰 {price_label}{threshold_str}")
             lines.append(f"  {event.title}")
             if event.link:
                 lines.append(event.link)

@@ -30,7 +30,7 @@ from scheduler.collector import (
     _build_threshold_message,
     _build_tracker_message,
     _deserialize_reply_markup,
-    _dispatch_tracker_notifications,
+    _enqueue_tracker_notifications,
     _format_price_byn,
     _recent_event_keys,
     _recent_events_by_tracker,
@@ -351,6 +351,9 @@ def test_detect_threshold_alerts_ignores_overpriced_listings():
     folded "30% cheaper than median" and "30% dearer than median" into
     the same value. After the fix only negative deltas (true discounts)
     drive the alert.
+
+    RV-SCH-05: the 24 h ``seen`` set argument became ``alerted`` (lowest
+    price per already-alerted lot); empty here, as ``seen`` was.
     """
     from api.services.aggregator import PriceStats
 
@@ -386,7 +389,7 @@ def test_detect_threshold_alerts_ignores_overpriced_listings():
         tracker=tracker,
         market_stats=market_stats,
         category_price_stats=None,
-        seen=set(),
+        alerted={},
     )
     assert events == [], (
         "Overpriced listing must not trip discount_alert (was a bug "
@@ -406,7 +409,7 @@ def test_detect_threshold_alerts_ignores_overpriced_listings():
         tracker=tracker,
         market_stats=market_stats,
         category_price_stats=None,
-        seen=set(),
+        alerted={},
     )
     assert len(events) == 1
     assert events[0].event_type == "discount_alert"
@@ -1594,8 +1597,12 @@ async def test_check_reminders_blocked_user_pauses_trackers(mock_bot: AsyncMock)
     """PERF-M3: when a user has blocked the bot, the matching
     TelegramForbiddenError must translate into the user's active
     trackers being paused (RV-SCH-03: not soft-deleted) in one bulk
-    update. The reminder itself stays ``sent=False`` so a future cycle
-    can retry if the user later re-enables the bot."""
+    update.
+
+    RV-SCH-04: the reminder is no longer left pending "for a future
+    cycle" — that re-sent it to the blocked chat every 15 minutes
+    forever. It ends ``failed`` (``last_error='blocked'``), still
+    ``sent=False``."""
     from aiogram.exceptions import TelegramForbiddenError
 
     engine = get_engine()
@@ -1626,13 +1633,19 @@ async def test_check_reminders_blocked_user_pauses_trackers(mock_bot: AsyncMock)
         assert tracker_after.active is True
         assert tracker_after.paused is True
         assert tracker_after.pause_reason == TRACKER_PAUSE_REASON_BOT_BLOCKED
-        # Reminder kept at sent=False so a later cycle can retry.
         from sqlalchemy import select
         reminder_after = (
             await session.execute(select(LeadReminder).limit(1))
         ).scalars().first()
         assert reminder_after is not None
         assert reminder_after.sent is False
+        assert reminder_after.status == "failed"
+        assert reminder_after.last_error == "blocked"
+
+    # Terminal: the next tick does not knock on the blocked chat again.
+    mock_bot.send_message.reset_mock()
+    await check_reminders(mock_bot, sf, settings)
+    mock_bot.send_message.assert_not_called()
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -1642,8 +1655,12 @@ async def test_check_reminders_blocked_user_pauses_trackers(mock_bot: AsyncMock)
 @pytest.mark.asyncio
 async def test_check_reminders_retry_error_leaves_reminder_pending(mock_bot: AsyncMock):
     """PERF-M3: transient Telegram errors (rate limit, generic API
-    errors) must NOT mark the reminder as sent — the next tick needs
-    to pick it up again."""
+    errors) must NOT mark the reminder as sent — a later tick needs
+    to pick it up again.
+
+    RV-SCH-04: the retry lives on the reminder row (``attempts`` +
+    ``next_attempt_at`` back-off) and nothing is queued to the DLQ —
+    both used to fire, delivering the reminder twice."""
     from aiogram.exceptions import TelegramRetryAfter
 
     engine = get_engine()
@@ -1668,7 +1685,20 @@ async def test_check_reminders_retry_error_leaves_reminder_pending(mock_bot: Asy
             await session.execute(select(LeadReminder).limit(1))
         ).scalars().first()
         assert reminder is not None
-        assert reminder.sent is False  # NOT sent — let the next tick retry
+        assert reminder.sent is False  # NOT sent — let a later tick retry
+        assert reminder.status == "pending"
+        assert reminder.attempts == 1
+        next_attempt = reminder.next_attempt_at
+        if next_attempt.tzinfo is None:
+            next_attempt = next_attempt.replace(tzinfo=UTC)
+        assert next_attempt > datetime.now(UTC)
+        dlq_rows = (await session.execute(select(TelegramNotificationDLQ))).scalars().all()
+        assert dlq_rows == []
+
+    # Backing off: the very next tick leaves it alone.
+    mock_bot.send_message.reset_mock()
+    await check_reminders(mock_bot, sf, settings)
+    mock_bot.send_message.assert_not_called()
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -1676,24 +1706,33 @@ async def test_check_reminders_retry_error_leaves_reminder_pending(mock_bot: Asy
 
 
 # ---------------------------------------------------------------------------
-# PERF-M3: _dispatch_tracker_notifications — tracker-loop parallel fan-out
+# RV-SCH-02: tracker alerts go through the outbox (enqueue in the group's
+# transaction, deliver with the DLQ pump). These replace the PERF-M3
+# ``_dispatch_tracker_notifications`` tests: same fan-out guarantees, now
+# asserted on the enqueue + pump path that replaced the in-memory queue.
 # ---------------------------------------------------------------------------
 
+async def _enqueue_and_pump(mock_bot, sf, jobs, **enqueue_kwargs) -> tuple[int, int]:
+    """Write ``jobs`` to the outbox in one transaction, then run one pump
+    batch. Returns (rows written, messages sent)."""
+    async with sf() as session:
+        written = _enqueue_tracker_notifications(session, jobs, **enqueue_kwargs)
+        await session.commit()
+    sent = await retry_telegram_notification_dlq(mock_bot, sf)
+    return written, sent
+
+
+def test_enqueue_tracker_notifications_empty_is_noop() -> None:
+    """Empty job list → no outbox rows."""
+    session = MagicMock()
+    assert _enqueue_tracker_notifications(session, []) == 0
+    session.add.assert_not_called()
+
+
 @pytest.mark.asyncio
-async def test_dispatch_tracker_notifications_empty_is_noop(mock_bot: AsyncMock):
-    """Empty job list → return 0 without touching the session factory."""
-
-    def _sf():  # pragma: no cover — must NOT be called
-        raise AssertionError("session_factory must not run for empty jobs")
-
-    total = await _dispatch_tracker_notifications(mock_bot, [], _sf)
-    assert total == 0
-    mock_bot.send_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_dispatch_tracker_notifications_sends_all(mock_bot: AsyncMock):
-    """Happy path: every ``sent`` outcome is counted, no deactivation."""
+async def test_outbox_tracker_notifications_sends_all(mock_bot: AsyncMock):
+    """Happy path: every ``sent`` outcome is counted and its outbox row
+    removed, no deactivation."""
     engine = get_engine()
     sf = get_session_factory(engine)
     async with engine.begin() as conn:
@@ -1714,8 +1753,9 @@ async def test_dispatch_tracker_notifications_sends_all(mock_bot: AsyncMock):
         _TrackerNotifyJob(501, u1_id, "msg-1b", None),
         _TrackerNotifyJob(502, u2_id, "msg-2a", None),
     ]
-    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+    written, total = await _enqueue_and_pump(mock_bot, sf, jobs)
 
+    assert written == 3
     assert total == 3
     assert mock_bot.send_message.await_count == 3
 
@@ -1725,6 +1765,7 @@ async def test_dispatch_tracker_notifications_sends_all(mock_bot: AsyncMock):
             await session.execute(select(Tracker.active))
         ).scalars().all()
         assert all(actives)
+        assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -1732,7 +1773,7 @@ async def test_dispatch_tracker_notifications_sends_all(mock_bot: AsyncMock):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_tracker_notifications_blocked_skips_user_rest(
+async def test_outbox_tracker_notifications_blocked_skips_user_rest(
     mock_bot: AsyncMock,
 ):
     """Blocked user → remaining jobs for that user dropped, other
@@ -1772,7 +1813,7 @@ async def test_dispatch_tracker_notifications_blocked_skips_user_rest(
         _TrackerNotifyJob(601, b_id, "b3", None),
         _TrackerNotifyJob(602, o_id, "o1", None),
     ]
-    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+    _written, total = await _enqueue_and_pump(mock_bot, sf, jobs)
 
     # Only user 602's single job counts as sent. User 601 gets 1
     # attempt, discovers the block, short-circuits → 2 send_message
@@ -1794,6 +1835,8 @@ async def test_dispatch_tracker_notifications_blocked_skips_user_rest(
             (True, True, TRACKER_PAUSE_REASON_BOT_BLOCKED),
         ] * 2
         assert [tuple(row) for row in o_trackers] == [(True, False, None)]
+        # The blocked user's queued rows are gone, not retried.
+        assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -1801,12 +1844,13 @@ async def test_dispatch_tracker_notifications_blocked_skips_user_rest(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_tracker_notifications_retry_does_not_count(
+async def test_outbox_tracker_notifications_retry_does_not_count(
     mock_bot: AsyncMock,
 ):
     """Transient ``TelegramRetryAfter`` → outcome is ``retry``, which
     is NOT counted in total and does NOT deactivate trackers; the job
-    loop continues with the user's next job."""
+    loop continues with the user's next job and the failed row stays
+    queued with a back-off."""
     from aiogram.exceptions import TelegramRetryAfter
 
     engine = get_engine()
@@ -1829,7 +1873,7 @@ async def test_dispatch_tracker_notifications_retry_does_not_count(
         _TrackerNotifyJob(701, uid, "a", None),
         _TrackerNotifyJob(701, uid, "b", None),
     ]
-    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+    _written, total = await _enqueue_and_pump(mock_bot, sf, jobs)
 
     assert total == 1
     assert mock_bot.send_message.await_count == 2
@@ -1848,6 +1892,8 @@ async def test_dispatch_tracker_notifications_retry_does_not_count(
         assert queued.telegram_user_id == 701
         assert queued.source == "tracker"
         assert queued.message == "a"
+        assert queued.retry_count == 1
+        assert queued.next_retry_at is not None
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -1946,7 +1992,7 @@ async def test_persist_tracker_events_thumbnail_none_when_no_images(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dispatch_tracker_notifications_dedups_same_user_same_ad(
+async def test_outbox_tracker_notifications_dedups_same_user_same_ad(
     mock_bot: AsyncMock,
 ):
     """If a user owns two trackers for the same query (e.g. different
@@ -1955,7 +2001,8 @@ async def test_dispatch_tracker_notifications_dedups_same_user_same_ad(
 
     Dedup keys jobs sharing ``(telegram_user_id, dedup_key)``; the
     first-enqueued job wins so the message tied to the earlier-iterated
-    tracker is the one delivered."""
+    tracker is the one delivered. RV-SCH-02: the collapse now happens
+    when the jobs are written to the outbox."""
     engine = get_engine()
     sf = get_session_factory(engine)
     async with engine.begin() as conn:
@@ -1980,10 +2027,11 @@ async def test_dispatch_tracker_notifications_dedups_same_user_same_ad(
         _TrackerNotifyJob(701, u_id, "msg-threshold-A", None, dedup_key=None),
         _TrackerNotifyJob(701, u_id, "msg-threshold-B", None, dedup_key=None),
     ]
-    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+    written, total = await _enqueue_and_pump(mock_bot, sf, jobs)
 
     # 1 deduped + 1 unique listing + 2 threshold = 4 sends; first
     # listing job (msg-strict) wins.
+    assert written == 4
     assert total == 4
     sent_messages = [
         call.kwargs.get("text") or call.args[1] if len(call.args) > 1 else call.kwargs.get("text")
@@ -2001,7 +2049,7 @@ async def test_dispatch_tracker_notifications_dedups_same_user_same_ad(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_tracker_notifications_dedup_is_per_user(
+async def test_outbox_tracker_notifications_dedup_is_per_user(
     mock_bot: AsyncMock,
 ):
     """Two different users can both receive the same dedup_key — the
@@ -2025,8 +2073,9 @@ async def test_dispatch_tracker_notifications_dedup_is_per_user(
         _TrackerNotifyJob(801, u1_id, "user-1", None, dedup_key="new_listing:7"),
         _TrackerNotifyJob(802, u2_id, "user-2", None, dedup_key="new_listing:7"),
     ]
-    total = await _dispatch_tracker_notifications(mock_bot, jobs, sf)
+    written, total = await _enqueue_and_pump(mock_bot, sf, jobs)
 
+    assert written == 2
     assert total == 2
     assert mock_bot.send_message.await_count == 2
 
@@ -2500,3 +2549,805 @@ async def test_cleanup_stale_missing_watchlist_purges_child_rows(populated_sessi
         sa_select(DealExpense).where(DealExpense.lead_id == item.id)
     )).scalars().all()
     assert len(expenses) == 0
+
+
+# ---------------------------------------------------------------------------
+# RV-SCH-01 / RV-SCH-02 / RV-SCH-05 / RV-SEC-05: the tracker tick end to end
+# ---------------------------------------------------------------------------
+
+_TICK_SETTINGS = MagicMock(mini_app_url="https://example.com/app")
+
+
+def _ad(ad_id: int, price_kopecks: int, subject: str = "iPhone 13 128GB") -> dict:
+    return {
+        "ad_id": ad_id,
+        "subject": subject,
+        "price_byn": price_kopecks,
+        "ad_link": f"https://www.kufar.by/item/{ad_id}",
+    }
+
+
+def _kufar_stub(ads_for, calls: list[dict]):
+    """KufarClient stand-in: ``ads_for(query)`` gives the page (or an
+    exception to raise); every search is recorded in ``calls``."""
+
+    class _Stub:
+        def __init__(self, settings):
+            del settings
+
+        async def search(self, **kwargs):
+            calls.append(kwargs)
+            page = ads_for(kwargs["query"])
+            if isinstance(page, BaseException):
+                raise page
+            return {"ads": page, "total": len(page)}
+
+        async def aclose(self):
+            return None
+
+    return _Stub
+
+
+@pytest.fixture
+async def tick_db():
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    collector._tracker_failure_counts.clear()
+    yield sf
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+async def _event_keys(sf) -> set[tuple[int, int | None, str]]:
+    from sqlalchemy import select
+
+    async with sf() as session:
+        rows = await session.execute(
+            select(TrackerEvent.tracker_id, TrackerEvent.ad_id, TrackerEvent.event_type)
+        )
+        return {(row.tracker_id, row.ad_id, row.event_type) for row in rows}
+
+
+def _sent_chats(mock_bot: AsyncMock) -> list[int]:
+    return [call.args[0] for call in mock_bot.send_message.await_args_list]
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_each_tracker_gets_changes_since_its_own_check(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV-SCH-01: two trackers on one search key, checked on different
+    schedules. The 15-minute tracker syncs the key first; the hourly one
+    must still get the new listing and the price drop that appeared after
+    ITS previous check — the old key-level diff had already "eaten" both."""
+    from sqlalchemy import update
+
+    sf = tick_db
+    calls: list[dict] = []
+    # ad 1 was 1100 BYN before both checks, now 1000; ad 2 is brand new.
+    page = [_ad(1, 100_000), _ad(2, 150_000)]
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(lambda q: page, calls))
+    now = datetime.now(UTC)
+    async with sf() as session:
+        fast_user = make_user(telegram_user_id=1101, first_name="Fast")
+        slow_user = make_user(telegram_user_id=1102, first_name="Slow")
+        session.add_all([fast_user, slow_user])
+        await session.flush()
+        fast = Tracker(
+            user_id=fast_user.id, query="iphone 13", strict_mode=False,
+            interval_min=15, last_checked_at=now - timedelta(minutes=20),
+        )
+        slow = Tracker(
+            user_id=slow_user.id, query="iphone 13", strict_mode=False,
+            interval_min=60, last_checked_at=now - timedelta(minutes=20),
+        )
+        session.add_all([fast, slow])
+        session.add(QueryListingState(
+            query=build_query_key("iphone 13", False),
+            ad_id=1,
+            title="iPhone 13 128GB",
+            link="https://www.kufar.by/item/1",
+            last_price_byn=1100,
+            price_type="fixed",
+            active=True,
+            first_seen_at=now - timedelta(hours=3),
+            last_seen_at=now - timedelta(minutes=20),
+        ))
+        await session.commit()
+        fast_id, slow_id = fast.id, slow.id
+
+    # Tick 1: only the 15-minute tracker is due.
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+    assert len(calls) == 1
+    assert await _event_keys(sf) == {(fast_id, 2, "new_listing"), (fast_id, 1, "price_drop")}
+
+    # Tick 2: the hourly tracker comes due; its last check predates tick 1.
+    async with sf() as session:
+        await session.execute(
+            update(Tracker)
+            .where(Tracker.id == slow_id)
+            .values(last_checked_at=datetime.now(UTC) - timedelta(minutes=70))
+        )
+        await session.commit()
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+    assert len(calls) == 2
+    assert await _event_keys(sf) == {
+        (fast_id, 2, "new_listing"), (fast_id, 1, "price_drop"),
+        (slow_id, 2, "new_listing"), (slow_id, 1, "price_drop"),
+    }
+    assert sorted(_sent_chats(mock_bot)) == [1101, 1101, 1102, 1102]
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_queries_kufar_once_per_search_key(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV-SCH-01: "iPhone 13" and "iphone 13" share one search key (and one
+    set of listing states). They used to be two groups: Kufar was asked
+    twice and the second group saw nothing new."""
+    sf = tick_db
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        collector, "KufarClient", _kufar_stub(lambda q: [_ad(7, 120_000)], calls),
+    )
+    checked = datetime.now(UTC) - timedelta(minutes=20)
+    async with sf() as session:
+        first = make_user(telegram_user_id=1201, first_name="Caps")
+        second = make_user(telegram_user_id=1202, first_name="Lower")
+        session.add_all([first, second])
+        await session.flush()
+        a = Tracker(
+            user_id=first.id, query="iPhone 13", strict_mode=False, last_checked_at=checked,
+        )
+        session.add(a)
+        await session.flush()
+        b = Tracker(
+            user_id=second.id, query="iphone 13", strict_mode=False, last_checked_at=checked,
+        )
+        session.add(b)
+        await session.commit()
+        a_id, b_id = a.id, b.id
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    assert len(calls) == 1
+    # Asked in the wording of the key's oldest tracker.
+    assert calls[0]["query"] == "iPhone 13"
+    assert await _event_keys(sf) == {(a_id, 7, "new_listing"), (b_id, 7, "new_listing")}
+    assert sorted(_sent_chats(mock_bot)) == [1201, 1202]
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_delivers_through_outbox_with_keyboard(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV-SCH-02: the alert is an outbox row committed with the key's state
+    and sent by the drain at the end of the tick — keyboard included, row
+    gone afterwards."""
+    from sqlalchemy import select
+
+    sf = tick_db
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(lambda q: [_ad(31, 99_000)], []))
+    async with sf() as session:
+        user = make_user(telegram_user_id=1301, first_name="Outbox")
+        session.add(user)
+        await session.flush()
+        session.add(Tracker(
+            user_id=user.id, query="iphone 13", strict_mode=False,
+            last_checked_at=datetime.now(UTC) - timedelta(minutes=20),
+        ))
+        await session.commit()
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    assert mock_bot.send_message.await_count == 1
+    call = mock_bot.send_message.await_args
+    assert call.args[0] == 1301
+    assert "НОВЫЙ ЛОТ" in call.args[1]
+    assert call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "add_lead:31"
+    async with sf() as session:
+        assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_failure_keeps_alerts_of_committed_keys(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV-SCH-02: an unexpected exception on a later key used to abort the
+    tick before the in-memory queue was sent — the first key's state was
+    committed as "seen", its alert lost. Now the committed key's alert is
+    delivered and the exception still propagates."""
+    sf = tick_db
+
+    def _pages(query):
+        if query == "macbook air":
+            return RuntimeError("unexpected")
+        return [_ad(41, 99_000)]
+
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(_pages, []))
+    now = datetime.now(UTC)
+    async with sf() as session:
+        user = make_user(telegram_user_id=1401, first_name="Crash")
+        session.add(user)
+        await session.flush()
+        session.add_all([
+            Tracker(user_id=user.id, query="iphone 13", strict_mode=False,
+                    last_checked_at=now - timedelta(minutes=40)),
+            Tracker(user_id=user.id, query="macbook air", strict_mode=False,
+                    last_checked_at=now - timedelta(minutes=20)),
+        ])
+        await session.commit()
+
+    with pytest.raises(RuntimeError, match="unexpected"):
+        await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    assert _sent_chats(mock_bot) == [1401]
+    assert "НОВЫЙ ЛОТ" in mock_bot.send_message.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_budget_defers_new_keys_but_finishes_current(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV-SCH-02: once the time budget is spent no new key is started, but
+    the key in flight completes (cursor, events, alert). The old 600 s
+    ``wait_for`` cancelled it — and every queued alert of the tick."""
+    from sqlalchemy import select
+
+    sf = tick_db
+    clock = {"now": 0.0}
+    calls: list[dict] = []
+
+    def _pages(query):
+        clock["now"] += collector._CYCLE_BUDGET_SECONDS + 1  # a very slow Kufar
+        return [_ad(51, 99_000)]
+
+    monkeypatch.setattr(collector, "_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(_pages, calls))
+    now = datetime.now(UTC)
+    async with sf() as session:
+        user = make_user(telegram_user_id=1501, first_name="Slow")
+        session.add(user)
+        await session.flush()
+        first = Tracker(user_id=user.id, query="iphone 13", strict_mode=False,
+                        last_checked_at=now - timedelta(minutes=40))
+        deferred = Tracker(user_id=user.id, query="macbook air", strict_mode=False,
+                           last_checked_at=now - timedelta(minutes=20))
+        session.add_all([first, deferred])
+        await session.commit()
+        first_id, deferred_id = first.id, deferred.id
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    assert [call["query"] for call in calls] == ["iphone 13"]
+    assert await _event_keys(sf) == {(first_id, 51, "new_listing")}
+    assert _sent_chats(mock_bot) == [1501]
+    async with sf() as session:
+        rows = dict((await session.execute(select(Tracker.id, Tracker.last_checked_at))).all())
+    assert collector.as_utc(rows[first_id]) > now
+    # Not touched — still due, it leads the next tick.
+    assert collector.as_utc(rows[deferred_id]) < now
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_failed_key_rolls_back_events_cursor_and_outbox(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV-SCH-02: a key that fails mid-way leaves nothing behind. The error
+    handler used to sit inside the savepoint, which released it with the
+    group half-written instead of rolling it back."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from api.models import QuerySnapshot
+
+    sf = tick_db
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(lambda q: [_ad(61, 99_000)], []))
+    original = collector._enqueue_tracker_notifications
+
+    def _enqueue_then_fail(*args, **kwargs):
+        original(*args, **kwargs)
+        raise SQLAlchemyError("boom")
+
+    monkeypatch.setattr(collector, "_enqueue_tracker_notifications", _enqueue_then_fail)
+    checked = datetime.now(UTC) - timedelta(minutes=20)
+    async with sf() as session:
+        user = make_user(telegram_user_id=1601, first_name="Rollback")
+        session.add(user)
+        await session.flush()
+        tracker = Tracker(user_id=user.id, query="iphone 13", strict_mode=False,
+                          last_checked_at=checked)
+        session.add(tracker)
+        await session.commit()
+        tracker_id = tracker.id
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    mock_bot.send_message.assert_not_called()
+    assert await _event_keys(sf) == set()
+    async with sf() as session:
+        assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
+        assert (await session.execute(select(QuerySnapshot))).first() is None
+        assert (await session.execute(select(QueryListingState))).first() is None
+        stored = (await session.get(Tracker, tracker_id)).last_checked_at
+    assert collector.as_utc(stored) == checked
+
+
+@pytest.mark.asyncio
+async def test_concurrent_dlq_pumps_send_each_row_once(mock_bot: AsyncMock, tick_db):
+    """RV-SCH-02: the tick's outbox drain and the per-minute pump job run
+    in the same loop; without the pump lock both picked the same due rows
+    and every message went out twice."""
+    import asyncio
+
+    sf = tick_db
+    async with sf() as session:
+        user = make_user(telegram_user_id=1701, first_name="Twice")
+        session.add(user)
+        await session.flush()
+        _enqueue_tracker_notifications(session, [
+            _TrackerNotifyJob(1701, user.id, f"msg-{i}", None) for i in range(3)
+        ])
+        await session.commit()
+
+    async def _slow_send(tg_id, message, reply_markup=None):
+        await asyncio.sleep(0.05)
+        return MagicMock()
+
+    mock_bot.send_message.side_effect = _slow_send
+    sent = await asyncio.gather(
+        retry_telegram_notification_dlq(mock_bot, sf),
+        retry_telegram_notification_dlq(mock_bot, sf),
+    )
+
+    assert sum(sent) == 3
+    assert mock_bot.send_message.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_dlq_pump_drops_permanently_rejected_rows(
+    monkeypatch, mock_bot: AsyncMock, populated_session,
+):
+    """RV-SCH-02: a message Telegram rejects (BadRequest) is dropped at once
+    instead of being re-sent until the retry budget runs out."""
+    session, user, _tracker = populated_session
+    session.add(TelegramNotificationDLQ(
+        user_id=user.id,
+        telegram_user_id=user.telegram_user_id,
+        source="tracker",
+        message="bad payload",
+        error_kind="pending",
+    ))
+    await session.commit()
+
+    async def _stub_classify(bot, tg_id, message, **kwargs):
+        return "permanent_error"
+
+    monkeypatch.setattr(collector, "_send_message_classified", _stub_classify)
+
+    sent = await retry_telegram_notification_dlq(mock_bot, get_session_factory(get_engine()))
+
+    assert sent == 0
+    rows = (await session.execute(TelegramNotificationDLQ.__table__.select())).all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_enqueue_skips_alerts_already_waiting_in_outbox(tick_db):
+    """RV-SCH-02 / AUDIT-LOW: cross-tracker dedup holds against rows already
+    queued (an earlier key of the tick, or a copy still backing off) — not
+    just within one batch."""
+    from sqlalchemy import select
+
+    sf = tick_db
+    async with sf() as session:
+        user = make_user(telegram_user_id=1801, first_name="Dedup")
+        session.add(user)
+        await session.flush()
+        uid = user.id
+        _enqueue_tracker_notifications(session, [
+            _TrackerNotifyJob(1801, uid, "first", None, dedup_key="new_listing:5"),
+        ])
+        await session.commit()
+
+    async with sf() as session:
+        pending = await collector._pending_outbox_keys(session, {uid})
+        assert pending == {(1801, "new_listing:5")}
+        written = _enqueue_tracker_notifications(session, [
+            _TrackerNotifyJob(1801, uid, "dup", None, dedup_key="new_listing:5"),
+            _TrackerNotifyJob(1801, uid, "fresh", None, dedup_key="new_listing:6"),
+        ], skip_keys=pending)
+        await session.commit()
+        messages = (await session.execute(select(TelegramNotificationDLQ.message))).scalars().all()
+
+    assert written == 1
+    assert sorted(messages) == ["first", "fresh"]
+
+
+# ── RV-SEC-05: withdrawn pd_processing consent ──────────────────────────
+
+
+async def _seed_consents(session, user_id: int, *states: str) -> None:
+    """``states``: 'revoked' / 'active' pd_processing rows to add."""
+    from api.models import UserConsent
+
+    for state in states:
+        session.add(UserConsent(
+            user_id=user_id,
+            consent_type="pd_processing",
+            revoked_at=datetime.now(UTC) - timedelta(days=1) if state == "revoked" else None,
+        ))
+
+
+@pytest.mark.asyncio
+async def test_dlq_pump_drops_messages_of_users_who_withdrew_consent(
+    mock_bot: AsyncMock, tick_db,
+):
+    """RV-SEC-05: after a pd_processing revoke the DLQ/outbox kept
+    delivering alerts. Rows of a user who revoked (and did not consent
+    again) are deleted unsent; users without any consent rows — accounts
+    older than the consent flow — keep getting theirs."""
+    from sqlalchemy import select
+
+    from api.models import UserConsent
+
+    sf = tick_db
+    async with sf() as session:
+        revoked = make_user(telegram_user_id=1901, first_name="Revoked")
+        legacy = make_user(telegram_user_id=1902, first_name="NoRecords")
+        regranted = make_user(telegram_user_id=1903, first_name="Regranted")
+        other_scope = make_user(telegram_user_id=1904, first_name="AiOnly")
+        session.add_all([revoked, legacy, regranted, other_scope])
+        await session.flush()
+        await _seed_consents(session, revoked.id, "revoked")
+        await _seed_consents(session, regranted.id, "revoked", "active")
+        session.add(UserConsent(
+            user_id=other_scope.id, consent_type="ai_analysis",
+            revoked_at=datetime.now(UTC),
+        ))
+        _enqueue_tracker_notifications(session, [
+            _TrackerNotifyJob(user.telegram_user_id, user.id, f"to-{user.first_name}", None)
+            for user in (revoked, legacy, regranted, other_scope)
+        ])
+        await session.commit()
+
+    sent = await retry_telegram_notification_dlq(mock_bot, sf)
+
+    assert sent == 3
+    assert sorted(_sent_chats(mock_bot)) == [1902, 1903, 1904]
+    async with sf() as session:
+        assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_skips_users_who_withdrew_consent(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV-SEC-05: a tracker left running for a user who withdrew
+    pd_processing (e.g. resumed without consenting again) is not
+    processed; a user with no consent records at all still is."""
+    sf = tick_db
+    calls: list[dict] = []
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(lambda q: [_ad(71, 99_000)], calls))
+    async with sf() as session:
+        revoked = make_user(telegram_user_id=2001, first_name="Revoked")
+        legacy = make_user(telegram_user_id=2002, first_name="NoRecords")
+        session.add_all([revoked, legacy])
+        await session.flush()
+        await _seed_consents(session, revoked.id, "revoked")
+        session.add_all([
+            Tracker(user_id=revoked.id, query="revoked query", strict_mode=False),
+            Tracker(user_id=legacy.id, query="legacy query", strict_mode=False),
+        ])
+        await session.commit()
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    assert [call["query"] for call in calls] == ["legacy query"]
+
+
+# ── RV-SCH-05: threshold alerts ─────────────────────────────────────────
+
+
+def _threshold_tracker(**overrides) -> MagicMock:
+    tracker = MagicMock(spec=Tracker)
+    tracker.id = 1
+    tracker.user_id = 1
+    tracker.query = "диван"
+    tracker.strict_mode = False
+    tracker.alert_price_threshold = 500
+    tracker.alert_discount_percent = None
+    tracker.seller_type = None
+    tracker.condition = None
+    tracker.region_name = None
+    tracker.config_keyword = None
+    tracker.category_id = None
+    for key, value in overrides.items():
+        setattr(tracker, key, value)
+    return tracker
+
+
+def _reliable_stats():
+    from api.services.aggregator import PriceStats
+
+    return PriceStats(mean=1000.0, median=1000.0, q1=900.0, q3=1100.0,
+                      min=400.0, max=1300.0, count=20)
+
+
+def test_threshold_alert_repeats_only_below_previously_alerted_price():
+    """RV-SCH-05: a lot already alerted at 450 BYN is not alerted again at
+    450 (it used to be, every 24 h); a real new drop re-alerts."""
+    from decimal import Decimal
+
+    tracker = _threshold_tracker()
+    alerted = {(10, "price_threshold_alert"): Decimal("450.00")}
+
+    same = collector._detect_threshold_alerts(
+        {10: _ad(10, 45_000, "Диван")}, tracker,
+        market_stats=_reliable_stats(), alerted=alerted,
+    )
+    assert same == []
+
+    cheaper = collector._detect_threshold_alerts(
+        {10: _ad(10, 40_000, "Диван")}, tracker,
+        market_stats=_reliable_stats(), alerted=alerted,
+    )
+    assert [(e.ad_id, e.event_type, e.price_byn) for e in cheaper] == [
+        (10, "price_threshold_alert", 400.0),
+    ]
+
+
+def test_threshold_and_discount_alerts_are_independent():
+    """RV-SCH-05: a lot already alerted for the price threshold used to
+    ``continue`` past the discount check and never got its discount alert."""
+    from decimal import Decimal
+
+    tracker = _threshold_tracker(alert_discount_percent=30)
+    events = collector._detect_threshold_alerts(
+        {10: _ad(10, 45_000, "Диван")}, tracker,
+        market_stats=_reliable_stats(),
+        alerted={(10, "price_threshold_alert"): Decimal("450.00")},
+    )
+    assert [(e.ad_id, e.event_type) for e in events] == [(10, "discount_alert")]
+
+
+def test_free_lot_alerts_threshold_once_and_never_as_discount():
+    """RV-SCH-05: a giveaway (price 0) is not a "-100%" discount alert, and
+    its threshold alert is not repeated — 0 cannot drop any further."""
+    from decimal import Decimal
+
+    tracker = _threshold_tracker(alert_discount_percent=30)
+    free_ad = {20: _ad(20, 0, "Отдам даром диван")}
+
+    first = collector._detect_threshold_alerts(
+        free_ad, tracker, market_stats=_reliable_stats(),
+    )
+    assert [(e.ad_id, e.event_type, e.price_type) for e in first] == [
+        (20, "price_threshold_alert", "free"),
+    ]
+    again = collector._detect_threshold_alerts(
+        free_ad, tracker, market_stats=_reliable_stats(),
+        alerted={(20, "price_threshold_alert"): Decimal("0.00")},
+    )
+    assert again == []
+
+
+def test_threshold_message_labels_free_lots():
+    """RV-SCH-05: a giveaway reads "бесплатно", not "0 BYN"."""
+    tracker = _threshold_tracker()
+    event = TrackerEvent(
+        event_type="price_threshold_alert", price_byn=0, price_type="free",
+        title="Отдам даром диван", link="https://www.kufar.by/item/20",
+        parameters={"threshold": 500.0},
+    )
+    msg = _build_threshold_message(tracker, [event])
+    assert "💰 бесплатно (порог: 500 BYN)" in msg
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_does_not_repeat_threshold_alert_after_24h(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV-SCH-05: the dedup now covers every retained event, not the last
+    24 h — a lot alerted two days ago at the same price stays quiet; once
+    its price drops further it is alerted again."""
+    from sqlalchemy import select, update
+
+    sf = tick_db
+    price = {"lot": 45_000}
+
+    def _pages(query):
+        return [
+            _ad(10, price["lot"], "Диван угловой"),
+            _ad(11, 90_000, "Диван кожаный"),
+            _ad(12, 100_000, "Диван раскладной"),
+        ]
+
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(_pages, []))
+    async with sf() as session:
+        user = make_user(telegram_user_id=2101, first_name="Threshold")
+        session.add(user)
+        await session.flush()
+        tracker = Tracker(
+            user_id=user.id, query="диван", strict_mode=False,
+            alert_price_threshold=500,
+            last_checked_at=datetime.now(UTC) - timedelta(minutes=20),
+        )
+        session.add(tracker)
+        await session.flush()
+        session.add(TrackerEvent(
+            tracker_id=tracker.id, user_id=user.id, ad_id=10, query="диван",
+            strict_mode=False, event_type="price_threshold_alert",
+            title="Диван угловой", link="https://www.kufar.by/item/10",
+            price_byn=450, price_type="fixed", parameters={"threshold": 500.0},
+            created_at=datetime.now(UTC) - timedelta(days=2),
+        ))
+        await session.commit()
+        tracker_id = tracker.id
+
+    async def _threshold_prices():
+        async with sf() as session:
+            rows = await session.execute(
+                select(TrackerEvent.price_byn)
+                .where(TrackerEvent.event_type == "price_threshold_alert")
+                .order_by(TrackerEvent.id)
+            )
+            return [float(value) for value in rows.scalars()]
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+    assert await _threshold_prices() == [450.0]
+    assert not any("ПОРОГ ЦЕНЫ" in call.args[1] for call in mock_bot.send_message.await_args_list)
+
+    price["lot"] = 40_000
+    async with sf() as session:
+        await session.execute(
+            update(Tracker)
+            .where(Tracker.id == tracker_id)
+            .values(last_checked_at=datetime.now(UTC) - timedelta(minutes=20))
+        )
+        await session.commit()
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+    assert await _threshold_prices() == [450.0, 400.0]
+    assert any("ПОРОГ ЦЕНЫ" in call.args[1] for call in mock_bot.send_message.await_args_list)
+
+
+# ── RV-SCH-04: reminder lifecycle ───────────────────────────────────────
+
+
+async def _reminder_rows(sf) -> list[LeadReminder]:
+    from sqlalchemy import select
+
+    async with sf() as session:
+        return list((await session.execute(
+            select(LeadReminder).order_by(LeadReminder.id)
+        )).scalars())
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_permanent_error_is_terminal(mock_bot: AsyncMock, tick_db):
+    """RV-SCH-04: a message Telegram rejects (BadRequest, e.g. a malformed
+    chat) is not retried every 15 minutes forever."""
+    from aiogram.exceptions import TelegramBadRequest
+
+    sf = tick_db
+    async with sf() as session:
+        await _seed_due_reminder(session, telegram_user_id=2201, ad_id=9101)
+        await session.commit()
+    mock_bot.send_message.side_effect = _make_tg_error(TelegramBadRequest, "chat not found")
+
+    await check_reminders(mock_bot, sf, _TICK_SETTINGS)
+    [reminder] = await _reminder_rows(sf)
+    assert (reminder.status, reminder.last_error, reminder.sent) == (
+        "failed", "permanent_error", False,
+    )
+
+    mock_bot.send_message.reset_mock()
+    await check_reminders(mock_bot, sf, _TICK_SETTINGS)
+    mock_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_gives_up_after_max_attempts(mock_bot: AsyncMock, tick_db):
+    """RV-SCH-04: transient failures back off, but not forever."""
+    from aiogram.exceptions import TelegramRetryAfter
+
+    sf = tick_db
+    async with sf() as session:
+        _user, _lead, reminder = await _seed_due_reminder(
+            session, telegram_user_id=2301, ad_id=9102,
+        )
+        reminder.attempts = collector._REMINDER_MAX_ATTEMPTS - 1
+        await session.commit()
+    mock_bot.send_message.side_effect = TelegramRetryAfter(
+        method=MagicMock(), message="rl", retry_after=5,
+    )
+
+    await check_reminders(mock_bot, sf, _TICK_SETTINGS)
+
+    [reminder] = await _reminder_rows(sf)
+    assert (reminder.status, reminder.last_error) == ("failed", "retry_exhausted")
+    assert reminder.attempts == collector._REMINDER_MAX_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_takes_oldest_due_first_and_respects_backoff(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV-SCH-04: ``LIMIT`` without ``ORDER BY`` and without a back-off
+    filter let stuck rows hold the batch; the oldest due reminders that
+    are not backing off go first."""
+    sf = tick_db
+    monkeypatch.setattr(collector, "_REMINDER_BATCH_LIMIT", 2)
+    now = datetime.now(UTC)
+    async with sf() as session:
+        user, lead, newest = await _seed_due_reminder(session, telegram_user_id=2401, ad_id=9103)
+        newest.remind_at = now - timedelta(minutes=10)
+        newest.message = "newest"
+        session.add_all([
+            LeadReminder(lead_id=lead.id, user_id=user.id, message="backing off",
+                         remind_at=now - timedelta(hours=4),
+                         next_attempt_at=now + timedelta(minutes=30), attempts=1),
+            LeadReminder(lead_id=lead.id, user_id=user.id, message="middle",
+                         remind_at=now - timedelta(hours=1)),
+            LeadReminder(lead_id=lead.id, user_id=user.id, message="oldest",
+                         remind_at=now - timedelta(hours=3)),
+        ])
+        await session.commit()
+
+    await check_reminders(mock_bot, sf, _TICK_SETTINGS)
+
+    sent_texts = [call.args[1] for call in mock_bot.send_message.await_args_list]
+    assert len(sent_texts) == 2
+    assert {text.splitlines()[0] for text in sent_texts} == {
+        "⏰ Напоминание: oldest", "⏰ Напоминание: middle",
+    }
+    statuses = {r.message: r.status for r in await _reminder_rows(sf)}
+    assert statuses == {
+        "oldest": "sent", "middle": "sent", "backing off": "pending", "newest": "pending",
+    }
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_cancels_reminders_on_closed_deals(mock_bot: AsyncMock, tick_db):
+    """RV-SCH-04: a reminder on a deal the user has closed (sold, closed,
+    abandoned, skipped) is cancelled instead of sent."""
+    sf = tick_db
+    async with sf() as session:
+        _user, lead, _reminder = await _seed_due_reminder(
+            session, telegram_user_id=2501, ad_id=9104,
+        )
+        lead.status = "sold"
+        await session.commit()
+
+    await check_reminders(mock_bot, sf, _TICK_SETTINGS)
+
+    mock_bot.send_message.assert_not_called()
+    [reminder] = await _reminder_rows(sf)
+    assert (reminder.status, reminder.last_error) == ("cancelled", "lead_closed")
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_respects_withdrawn_pd_consent(mock_bot: AsyncMock, tick_db):
+    """RV-SEC-05: reminders kept coming after a pd_processing revoke. Only an
+    explicit revoke (without a later grant) stops them — users with no
+    consent rows still get theirs."""
+    sf = tick_db
+    async with sf() as session:
+        revoked, _lead, _r = await _seed_due_reminder(session, telegram_user_id=2601, ad_id=9105)
+        await _seed_due_reminder(session, telegram_user_id=2602, ad_id=9106)
+        regranted, _lead, _r = await _seed_due_reminder(
+            session, telegram_user_id=2603, ad_id=9107,
+        )
+        await _seed_consents(session, revoked.id, "revoked")
+        await _seed_consents(session, regranted.id, "revoked", "active")
+        await session.commit()
+        revoked_id = revoked.id
+
+    await check_reminders(mock_bot, sf, _TICK_SETTINGS)
+
+    assert sorted(_sent_chats(mock_bot)) == [2602, 2603]
+    by_user = {r.user_id: (r.status, r.last_error) for r in await _reminder_rows(sf)}
+    assert by_user[revoked_id] == ("cancelled", "consent_revoked")

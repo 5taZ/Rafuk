@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 from api.database import get_engine, get_session_factory
 from api.models import Base, QueryListingState, QuerySnapshot
 from api.services.history_service import (
+    QuerySyncResult,
+    as_utc,
+    changes_since,
     detect_trend_reversal_up,
+    price_as_of,
     sync_query_listing_states,
 )
 
@@ -215,6 +221,198 @@ async def test_sync_query_listing_states_expensive_item_real_drop_fires() -> Non
                 total_results=1,
             )
             assert len(result.price_drops) == 1
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+
+# RV-SCH-01: listing state is shared by every tracker on a search key, so
+# "new" and "cheaper" are derived per tracker from its own last check.
+
+
+def _epoch(value: datetime) -> int:
+    return int(value.timestamp())
+
+
+def _listing(ad_id: int, *, first_seen: datetime, price: float, history=None) -> QueryListingState:
+    return QueryListingState(
+        query="per-tracker",
+        ad_id=ad_id,
+        title=f"Item {ad_id}",
+        link=f"https://www.kufar.by/item/{ad_id}",
+        last_price_byn=price,
+        price_type="fixed",
+        active=True,
+        first_seen_at=first_seen,
+        last_seen_at=datetime.now(UTC),
+        price_history=history,
+    )
+
+
+def test_changes_since_new_listings_are_relative_to_the_reader() -> None:
+    now = datetime.now(UTC)
+    old = _listing(1, first_seen=now - timedelta(hours=2), price=100)
+    fresh = _listing(2, first_seen=now - timedelta(minutes=10), price=100)
+    page = QuerySyncResult(stats_count=2, total_results=2, listings=[old, fresh])
+
+    assert [s.ad_id for s in changes_since(page, now - timedelta(hours=1)).new_listings] == [2]
+    assert [s.ad_id for s in changes_since(page, now - timedelta(hours=3)).new_listings] == [1, 2]
+    assert changes_since(page, now).new_listings == []
+
+
+def test_changes_since_price_drop_compares_with_price_at_reader_cursor() -> None:
+    now = datetime.now(UTC)
+    first_seen, dropped = now - timedelta(hours=3), now - timedelta(hours=1)
+    state = _listing(
+        1, first_seen=first_seen, price=1000,
+        history=[[_epoch(first_seen), 1100.0], [_epoch(dropped), 1000.0]],
+    )
+    page = QuerySyncResult(stats_count=1, total_results=1, listings=[state])
+
+    # Looked before the drop → it is news; looked after it → it is not.
+    assert changes_since(page, now - timedelta(hours=2)).price_drops == [(state, Decimal("100"))]
+    assert changes_since(page, now - timedelta(minutes=30)).price_drops == []
+
+
+def test_changes_since_judges_the_net_change_since_the_reader_looked() -> None:
+    """1000 → 1200 → 1100: a reader that saw 1000 sees a rise, not a
+    drop (a single "previous price" would have called it -100); a reader
+    that saw 1200 sees the drop."""
+    now = datetime.now(UTC)
+    t0, t1, t2 = now - timedelta(hours=3), now - timedelta(hours=2), now - timedelta(hours=1)
+    state = _listing(
+        1, first_seen=t0, price=1100,
+        history=[[_epoch(t0), 1000.0], [_epoch(t1), 1200.0], [_epoch(t2), 1100.0]],
+    )
+    page = QuerySyncResult(stats_count=1, total_results=1, listings=[state])
+
+    assert changes_since(page, t0 + timedelta(minutes=5)).price_drops == []
+    assert changes_since(page, t1 + timedelta(minutes=5)).price_drops == [(state, Decimal("100"))]
+
+
+def test_price_as_of_without_history_is_the_current_price() -> None:
+    state = _listing(1, first_seen=datetime.now(UTC) - timedelta(days=1), price=500)
+    assert price_as_of(state, datetime.now(UTC) - timedelta(hours=5)) == Decimal("500")
+
+
+@pytest.mark.asyncio
+async def test_sync_records_price_changes_for_later_readers() -> None:
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        first_seen = datetime.now(UTC) - timedelta(hours=3)
+        async with sf() as session:
+            session.add(_listing(7, first_seen=first_seen, price=1100))
+            await session.commit()
+
+        def _page(kopecks):
+            return [{"ad_id": 7, "price_byn": kopecks, "subject": "Item 7",
+                     "ad_link": "https://www.kufar.by/item/7"}]
+
+        t1 = datetime.now(UTC) - timedelta(minutes=30)
+        async with sf() as session:
+            result = await sync_query_listing_states(
+                session, query="per-tracker", ads=_page(100_000), observed_at=t1,
+                total_results=1,
+            )
+            # The key-level diff still reports the drop to its own caller.
+            assert len(result.price_drops) == 1
+            assert [s.ad_id for s in result.listings] == [7]
+            await session.commit()
+
+        async with sf() as session:
+            # Same price again: nothing to record.
+            await sync_query_listing_states(
+                session, query="per-tracker", ads=_page(100_000),
+                observed_at=datetime.now(UTC), total_results=1,
+            )
+            await session.commit()
+
+        async with sf() as session:
+            state = (await session.execute(select(QueryListingState))).scalar_one()
+            assert state.price_history == [[_epoch(first_seen), 1100.0], [_epoch(t1), 1000.0]]
+            # A tracker that last looked before t1 still sees the drop.
+            changes = changes_since(
+                QuerySyncResult(stats_count=1, total_results=1, listings=[state]),
+                first_seen + timedelta(minutes=1),
+            )
+            assert [(s.ad_id, d) for s, d in changes.price_drops] == [(7, Decimal("100"))]
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sync_price_history_is_bounded() -> None:
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        start = datetime.now(UTC) - timedelta(days=1)
+        async with sf() as session:
+            session.add(_listing(8, first_seen=start, price=2000))
+            await session.commit()
+        for step in range(1, 13):
+            async with sf() as session:
+                await sync_query_listing_states(
+                    session, query="per-tracker",
+                    ads=[{"ad_id": 8, "price_byn": 200_000 - step * 1_000, "subject": "Item 8",
+                          "ad_link": "https://www.kufar.by/item/8"}],
+                    observed_at=start + timedelta(hours=step), total_results=1,
+                )
+                await session.commit()
+        async with sf() as session:
+            state = (await session.execute(select(QueryListingState))).scalar_one()
+        assert len(state.price_history) == 8
+        assert state.price_history[-1] == [_epoch(start + timedelta(hours=12)), 1880.0]
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sync_refreshes_listing_outside_the_load_window(monkeypatch) -> None:
+    """RV-SCH-01: a known listing older than ``load_listing_states``' window
+    used to come back from the insert-race path as "new" with its stale
+    price; it is now refreshed like any known listing."""
+    import api.services.history_service as history_service
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        first_seen = datetime.now(UTC) - timedelta(days=20)
+        async with sf() as session:
+            session.add(_listing(9, first_seen=first_seen, price=1100))
+            await session.commit()
+
+        async def _window_without_it(session, *, query):
+            return {}
+
+        monkeypatch.setattr(history_service, "load_listing_states", _window_without_it)
+        observed = datetime.now(UTC)
+        async with sf() as session:
+            result = await sync_query_listing_states(
+                session, query="per-tracker",
+                ads=[{"ad_id": 9, "price_byn": 100_000, "subject": "Item 9",
+                      "ad_link": "https://www.kufar.by/item/9"}],
+                observed_at=observed, total_results=1,
+            )
+            assert result.new_listings == []
+            assert [s.ad_id for s in result.listings] == [9]
+            await session.commit()
+
+        async with sf() as session:
+            state = (await session.execute(select(QueryListingState))).scalar_one()
+        assert float(state.last_price_byn) == 1000.0
+        assert as_utc(state.last_seen_at) == observed
     finally:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)

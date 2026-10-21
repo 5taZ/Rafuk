@@ -135,3 +135,45 @@ def test_build_api_headers_legacy_path_works_by_default(monkeypatch) -> None:
 
     from api.config import get_settings
     get_settings.cache_clear()
+
+
+def test_build_api_headers_treats_blank_compose_token_as_unset(monkeypatch) -> None:
+    """RV-SCH-06: compose passes ``INTERNAL_SERVICE_TOKEN=""``. The bot used to
+    send that empty token (the API ignores an empty header and answered
+    401); now it is unset and the configured fallback applies."""
+    api_client = _reset_settings(monkeypatch, internal_token="")
+
+    headers = api_client.build_api_headers(telegram_user_id=123456)
+    assert "X-Internal-Service-Token" not in headers
+    assert "X-Telegram-Init-Data" in headers
+
+    monkeypatch.setenv("ALLOW_LEGACY_BOT_INITDATA", "false")
+    api_client = _reset_settings(monkeypatch, internal_token="")
+    with pytest.raises(RuntimeError, match="ALLOW_LEGACY_BOT_INITDATA"):
+        api_client.build_api_headers(telegram_user_id=123456)
+
+    from api.config import get_settings
+    get_settings.cache_clear()
+
+
+def test_build_api_headers_never_sends_a_blank_service_token(monkeypatch) -> None:
+    """RV-SCH-06: even a settings object that bypassed the Settings
+    validator must not put a blank token on the wire."""
+    from types import SimpleNamespace
+
+    from pydantic import SecretStr
+
+    from bot import api_client
+
+    settings = SimpleNamespace(
+        internal_service_token=SecretStr("   "),
+        internal_service_token_required=False,
+        allow_legacy_bot_initdata=True,
+        bot_token=SecretStr("7123456789:AAFtesttoken"),
+        api_base_url="https://kufar-analytics.example.com",
+    )
+    monkeypatch.setattr(api_client, "get_settings", lambda: settings)
+
+    headers = api_client.build_api_headers(telegram_user_id=123456)
+    assert "X-Internal-Service-Token" not in headers
+    assert "X-Telegram-Init-Data" in headers

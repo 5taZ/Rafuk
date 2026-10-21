@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import httpx
 from aiogram import Bot
@@ -19,7 +21,18 @@ from aiogram.exceptions import (
     TelegramUnauthorizedError,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import Update, delete, select, text, update
+from sqlalchemy import (
+    ColumnElement,
+    Update,
+    and_,
+    delete,
+    exists,
+    func,
+    or_,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import joinedload
@@ -27,6 +40,10 @@ from sqlalchemy.orm import joinedload
 from api.config import Settings, get_settings
 from api.database import get_engine, get_session_factory
 from api.models import (
+    REMINDER_STATUS_CANCELLED,
+    REMINDER_STATUS_FAILED,
+    REMINDER_STATUS_PENDING,
+    REMINDER_STATUS_SENT,
     TRACKER_PAUSE_REASON_BOT_BLOCKED,
     AIAuditLog,
     DealExpense,
@@ -38,6 +55,8 @@ from api.models import (
     TelegramNotificationDLQ,
     Tracker,
     TrackerEvent,
+    User,
+    UserConsent,
 )
 from api.services.aggregator import (
     PriceStats,
@@ -52,8 +71,11 @@ from api.services.aggregator import (
 from api.services.history_service import (
     QuerySyncResult,
     TrendReversal,
+    as_utc,
+    changes_since,
     detect_trend_reversal_up,
     load_query_snapshots,
+    significant_price_drop,
     snapshot_bucket,
     sync_query_listing_states,
     upsert_query_snapshot,
@@ -76,9 +98,21 @@ from scheduler.messages import (
     _format_price_byn,  # noqa: F401 — back-compat import for tests/external callers
 )
 
-# Maximum time (seconds) for a single tracker check cycle.
-# Prevents the cycle from running indefinitely when Kufar is slow.
-_CYCLE_TIMEOUT_SECONDS = 600
+# RV-SCH-02: time budget for the search-key loop of one tracker tick. Once
+# it is spent no new key is started; the key in flight finishes and commits
+# (the old 600 s ``wait_for`` cancelled it mid-way and, with it, every alert
+# collected so far). Deferred keys stay due and lead the next tick — the
+# due query orders by last_checked_at. Kept under the 5-minute tick
+# interval together with the outbox drain below.
+_CYCLE_BUDGET_SECONDS = 240
+# RV-SCH-02: how long a tick keeps draining the notification outbox after
+# its key loop; whatever is left goes out with the per-minute DLQ pump.
+_OUTBOX_DRAIN_BUDGET_SECONDS = 45
+# RV-SCH-02: ``error_kind`` of an outbox row no send was attempted for yet.
+_OUTBOX_PENDING = "pending"
+# Indirection so tests can drive the budget without touching the event
+# loop's own clock.
+_monotonic = time.monotonic
 
 # Maximum events per tracker per check cycle (new listings + price drops).
 # C-10: This is the *audit trail* cap — all 10 events are persisted to
@@ -237,6 +271,7 @@ def _queue_notification_dlq(
     error_message: str | None = None,
     retry_after_seconds: int | None = None,
     reply_markup: object | None = None,
+    dedup_key: str | None = None,
 ) -> None:
     session.add(
         TelegramNotificationDLQ(
@@ -248,8 +283,54 @@ def _queue_notification_dlq(
             error_message=error_message[:512] if error_message else None,
             retry_after_seconds=retry_after_seconds,
             reply_markup_json=_serialize_reply_markup(reply_markup),
+            dedup_key=dedup_key[:128] if dedup_key else None,
         )
     )
+
+
+def _pd_consent_withdrawn(user_id: ColumnElement[int]) -> ColumnElement[bool]:
+    """RV-SEC-05: the user explicitly revoked ``pd_processing`` and has not
+    granted it again.
+
+    Users with no consent rows at all are NOT matched — accounts that predate
+    the consent flow would otherwise silently lose every notification.
+    """
+    def _pd_consent(*conditions: ColumnElement[bool]) -> ColumnElement[bool]:
+        return exists().where(
+            UserConsent.user_id == user_id,
+            UserConsent.consent_type == "pd_processing",
+            *conditions,
+        )
+
+    return and_(
+        _pd_consent(UserConsent.revoked_at.is_not(None)),
+        ~_pd_consent(UserConsent.revoked_at.is_(None)),
+    )
+
+
+async def _users_with_withdrawn_pd_consent(
+    session: AsyncSession, user_ids: Collection[int],
+) -> set[int]:
+    if not user_ids:
+        return set()
+    result = await session.execute(
+        select(User.id).where(User.id.in_(list(user_ids)), _pd_consent_withdrawn(User.id))
+    )
+    return set(result.scalars())
+
+
+async def _telegram_ids_with_withdrawn_pd_consent(
+    session: AsyncSession, telegram_user_ids: Collection[int],
+) -> set[int]:
+    if not telegram_user_ids:
+        return set()
+    result = await session.execute(
+        select(User.telegram_user_id).where(
+            User.telegram_user_id.in_(list(telegram_user_ids)),
+            _pd_consent_withdrawn(User.id),
+        )
+    )
+    return set(result.scalars())
 
 
 def _pause_unreachable_users_trackers(user_ids: Collection[int]) -> Update:
@@ -405,6 +486,45 @@ async def _recent_events_by_tracker(
         for row in result:
             if row.ad_id is not None:
                 out[row.tracker_id].add((row.ad_id, row.event_type))
+    return out
+
+
+_THRESHOLD_EVENT_TYPES = ("price_threshold_alert", "discount_alert")
+
+
+async def _threshold_alert_floors(
+    session: AsyncSession,
+    tracker_ids: list[int],
+) -> dict[int, dict[tuple[int, str], Decimal | None]]:
+    """RV-SCH-05: lowest price each (tracker, ad, threshold type) was already
+    alerted at, over every retained event.
+
+    The old 24-hour dedup window re-sent the same lots under the threshold
+    every day; ``_detect_threshold_alerts`` now repeats an alert only when
+    the price drops below this floor.
+    """
+    if not tracker_ids:
+        return {}
+    out: dict[int, dict[tuple[int, str], Decimal | None]] = defaultdict(dict)
+    batch_size = 500
+    for i in range(0, len(tracker_ids), batch_size):
+        batch = tracker_ids[i : i + batch_size]
+        result = await session.execute(
+            select(
+                TrackerEvent.tracker_id,
+                TrackerEvent.ad_id,
+                TrackerEvent.event_type,
+                func.min(TrackerEvent.price_byn).label("floor_byn"),
+            )
+            .where(
+                TrackerEvent.tracker_id.in_(batch),
+                TrackerEvent.event_type.in_(_THRESHOLD_EVENT_TYPES),
+                TrackerEvent.ad_id.is_not(None),
+            )
+            .group_by(TrackerEvent.tracker_id, TrackerEvent.ad_id, TrackerEvent.event_type)
+        )
+        for row in result:
+            out[row.tracker_id][(row.ad_id, row.event_type)] = row.floor_byn
     return out
 
 
@@ -584,13 +704,27 @@ def _filter_sync_result_for_tracker(
     )
 
 
+def _threshold_alert_due(
+    alerted: Mapping[tuple[int, str], Decimal | float | None],
+    key: tuple[int, str],
+    price_byn: float,
+) -> bool:
+    """RV-SCH-05: alert a lot once, and again only after a real new drop
+    below the lowest price it was alerted at (a free lot, already at 0,
+    therefore at most once)."""
+    if key not in alerted:
+        return True
+    floor = alerted[key]
+    return floor is not None and significant_price_drop(floor, price_byn) is not None
+
+
 def _detect_threshold_alerts(
     ads_by_id: dict[int, dict[str, object]],
     tracker: Tracker,
     *,
     market_stats: PriceStats,
     category_price_stats: dict[int, PriceStats] | None = None,
-    seen: set[tuple[int, str]],
+    alerted: Mapping[tuple[int, str], Decimal | float | None] | None = None,
 ) -> list[TrackerEvent]:
     """Check ads against tracker's alert thresholds and return TrackerEvent rows.
 
@@ -602,6 +736,10 @@ def _detect_threshold_alerts(
     (seller, condition, region, config_keyword). Unlike the soft
     ``min_discount_percent`` filter which *excludes* non-matching ads,
     threshold alerts *escalate* matching ads into dedicated event types.
+
+    RV-SCH-05: ``alerted`` maps (ad_id, event_type) to the lowest price
+    that lot was already alerted at (``_threshold_alert_floors``); see
+    ``_threshold_alert_due``.
     """
     if not tracker.alert_price_threshold and not tracker.alert_discount_percent:
         return []
@@ -609,6 +747,7 @@ def _detect_threshold_alerts(
     # threshold alerts don't fire on a single observation.
     if not market_stats.reliable:
         return []
+    alerted = alerted or {}
 
     events: list[TrackerEvent] = []
     for ad_id, ad in ads_by_id.items():
@@ -628,18 +767,21 @@ def _detect_threshold_alerts(
         # Pass the raw ad so detect_price_type can return 0.0 for genuine
         # free listings instead of None — otherwise free items would be
         # silently dropped from "below threshold" alerts (they trivially
-        # satisfy any threshold) and from "discount" alerts (they're 100%
-        # off, the strongest possible signal).
+        # satisfy any threshold).
         price_byn = normalize_price_byn(ad.get("price_byn"), ad)
         if price_byn is None:
             # negotiable — unknown price, can't evaluate either alert
             continue
         price_type = "free" if price_byn == 0.0 else "fixed"
 
-        # Price threshold alert
-        if tracker.alert_price_threshold and price_byn <= float(tracker.alert_price_threshold):
-            if (ad_id, "price_threshold_alert") in seen:
-                continue
+        # Price threshold alert. RV-SCH-05: an already-alerted lot no longer
+        # ``continue``s past the discount check below — the two alerts are
+        # independent.
+        if (
+            tracker.alert_price_threshold
+            and price_byn <= float(tracker.alert_price_threshold)
+            and _threshold_alert_due(alerted, (ad_id, "price_threshold_alert"), price_byn)
+        ):
             title = str(ad.get("subject", ""))[:255]
             link = str(ad.get("ad_link", ""))
             thumbnail = first_image_url(ad)
@@ -665,8 +807,10 @@ def _detect_threshold_alerts(
                 region_name=region_name_val,
             ))
 
-        # Discount alert
-        if tracker.alert_discount_percent:
+        # Discount alert. RV-SCH-05: a free lot is "-100%" against any
+        # median by construction — that is the price threshold's business
+        # (alerted at most once), not a discount signal.
+        if tracker.alert_discount_percent and price_byn > 0:
             # SCH-HIGH / LOGIC-HIGH (issues §5.1, §11.3): the previous
             # impl computed `abs(compute_price_vs_reference(...))`, which
             # collapsed "30% cheaper than median" and "30% dearer than
@@ -680,9 +824,9 @@ def _detect_threshold_alerts(
             if delta_pct is None:
                 continue
             discount_pct = -delta_pct if delta_pct < 0 else 0.0
-            if discount_pct >= float(tracker.alert_discount_percent):
-                if (ad_id, "discount_alert") in seen:
-                    continue
+            if discount_pct >= float(tracker.alert_discount_percent) and _threshold_alert_due(
+                alerted, (ad_id, "discount_alert"), price_byn,
+            ):
                 title = str(ad.get("subject", ""))[:255]
                 link = str(ad.get("ad_link", ""))
                 thumbnail = first_image_url(ad)
@@ -723,25 +867,45 @@ async def check_trackers(
 ) -> None:
     """Check all due trackers for new listings and price drops.
 
-    Wrapped in an overall timeout to prevent the cycle from running
-    indefinitely when Kufar is slow or there are many query groups.
+    RV-SCH-02: alerts go to the notification outbox
+    (``telegram_notification_dlq``) in the same transaction as the search
+    key's listing state, events and tracker cursors, and are drained right
+    after the key loop; the per-minute DLQ pump delivers whatever is left.
+    They used to sit in memory until the whole loop finished, so a timeout,
+    restart or exception lost every alert of the tick while the committed
+    state already counted the listings as seen. The loop runs on a time
+    budget instead of a ``wait_for`` that cancelled it mid-way.
     """
+    deadline = _monotonic() + _CYCLE_BUDGET_SECONDS
     try:
-        await asyncio.wait_for(
-            _check_trackers_inner(bot, session_factory, settings),
-            timeout=_CYCLE_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        logger.error(
-            "Tracker check cycle exceeded %ds timeout — aborting",
-            _CYCLE_TIMEOUT_SECONDS,
-        )
+        await _check_trackers_inner(session_factory, settings, deadline=deadline)
+    except Exception:
+        # Keys committed before the failure have their alerts in the
+        # outbox already — deliver them now, not at the next pump run.
+        await _drain_notification_outbox(bot, session_factory)
+        raise
+    await _drain_notification_outbox(bot, session_factory)
+
+
+@dataclass(slots=True)
+class _TickContext:
+    """State shared by every search key of one tracker tick."""
+
+    settings: Settings
+    observed_at: datetime
+    bucket_at: datetime
+    seen_by_tracker: dict[int, set[tuple[int, str]]]
+    trend_sent_recently: set[int]
+    alert_floors: dict[int, dict[tuple[int, str], Decimal | None]]
+    # (telegram_user_id, dedup_key) pairs committed to the outbox this tick.
+    queued_keys: set[tuple[int, str]]
 
 
 async def _check_trackers_inner(
-    bot: Bot,
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
+    *,
+    deadline: float,
 ) -> None:
     async with session_factory() as session:
         # BE-03 / INF-05: previously this loaded every active+unpaused
@@ -765,10 +929,16 @@ async def _check_trackers_inner(
         #
         # Realistically intervals come from a small enum (15, 30, 60,
         # 180, 720) so the resulting OR-list is short.
-        from sqlalchemy import or_
         stmt = (
             select(Tracker)
-            .where(Tracker.active.is_(True), Tracker.paused.is_(False))
+            .where(
+                Tracker.active.is_(True),
+                Tracker.paused.is_(False),
+                # RV-SEC-05: no processing for a user who withdrew
+                # pd_processing — e.g. a tracker resumed without consenting
+                # again.
+                ~_pd_consent_withdrawn(Tracker.user_id),
+            )
             .options(joinedload(Tracker.user))
             .order_by(Tracker.last_checked_at.asc().nulls_first())
             .limit(2000)  # safety cap; tracked-user counts well below this
@@ -801,7 +971,7 @@ async def _check_trackers_inner(
             t
             for t in all_trackers
             if t.last_checked_at is None
-            or (now - t.last_checked_at).total_seconds() >= t.interval_min * 60
+            or (now - as_utc(t.last_checked_at)).total_seconds() >= t.interval_min * 60
         ]
         if not trackers:
             logger.debug(
@@ -810,39 +980,49 @@ async def _check_trackers_inner(
             )
             return
 
-        trackers_by_query: dict[tuple[str, bool, int | None], list[Tracker]] = defaultdict(list)
+        # RV-SCH-01: one group per search key — the key the listing states
+        # and snapshots live under. Grouping by the raw (query, strict,
+        # category) split "iPhone 13" and "iphone 13" into two groups over
+        # the same states: Kufar was asked twice and the second group found
+        # nothing new.
+        trackers_by_key: dict[str, list[Tracker]] = defaultdict(list)
         for tracker in trackers:
-            key = (tracker.query, tracker.strict_mode, tracker.category_id)
-            trackers_by_query[key].append(tracker)
+            search_key = build_query_key(tracker.query, tracker.strict_mode, tracker.category_id)
+            trackers_by_key[search_key].append(tracker)
 
+        tracker_ids = [t.id for t in trackers]
         # Bulk-load recently-seen events for all due trackers in a single
         # query — avoids N+1 SELECTs inside persist_tracker_events.
-        seen_by_tracker = await _recent_events_by_tracker(
-            session, [t.id for t in trackers]
-        )
+        seen_by_tracker = await _recent_events_by_tracker(session, tracker_ids)
         # Trend events live at the query level (ad_id is null) so they
         # need their own debounce lookup. Bulk-load once per tick.
-        trend_sent_recently = await _recent_trend_event_tracker_ids(
-            session, [t.id for t in trackers]
+        trend_sent_recently = await _recent_trend_event_tracker_ids(session, tracker_ids)
+        alert_floors = await _threshold_alert_floors(
+            session,
+            [t.id for t in trackers if t.alert_price_threshold or t.alert_discount_percent],
         )
 
         logger.info(
-            "Tracker check: %d due (of %d total), %d unique query group(s)",
+            "Tracker check: %d due (of %d total), %d search key(s)",
             len(trackers),
             len(all_trackers),
-            len(trackers_by_query),
+            len(trackers_by_key),
         )
 
         client = KufarClient(settings)
         try:
             observed_at = datetime.now(UTC)
-            bucket_at = snapshot_bucket(observed_at)
+            ctx = _TickContext(
+                settings=settings,
+                observed_at=observed_at,
+                bucket_at=snapshot_bucket(observed_at),
+                seen_by_tracker=seen_by_tracker,
+                trend_sent_recently=trend_sent_recently,
+                alert_floors=alert_floors,
+                queued_keys=set(),
+            )
             total_errors = 0
-            # PERF-M3: collect all per-listing / trend / threshold
-            # notifications during the DB pass and dispatch them AFTER
-            # the outer commit so a slow Telegram doesn't block DB
-            # writes. See ``_dispatch_tracker_notifications``.
-            pending_notifications: list[_TrackerNotifyJob] = []
+            total_queued = 0
 
             # M18: per-group commit — expire_on_commit=False prevents
             # SQLAlchemy from expiring loaded Tracker/User objects after
@@ -850,7 +1030,24 @@ async def _check_trackers_inner(
             # async session on subsequent iterations.
             session.expire_on_commit = False
 
-            for (query, strict_mode, category_id), query_trackers in trackers_by_query.items():
+            for position, (search_key, query_trackers) in enumerate(trackers_by_key.items()):
+                # RV-SCH-02: budget, not a hard timeout — stop taking new
+                # keys, never abandon the one in flight.
+                if position and _monotonic() >= deadline:
+                    logger.warning(
+                        "Tracker check budget of %ds spent — deferring %d of %d "
+                        "search key(s) to the next tick",
+                        _CYCLE_BUDGET_SECONDS,
+                        len(trackers_by_key) - position,
+                        len(trackers_by_key),
+                    )
+                    break
+                # RV-SCH-01: Kufar is asked once per key, in the wording of
+                # the key's oldest tracker (stable from tick to tick).
+                lead_tracker = min(query_trackers, key=lambda t: t.id)
+                query = lead_tracker.query
+                strict_mode = lead_tracker.strict_mode
+                category_id = lead_tracker.category_id
                 try:
                     payload = await client.search(
                         query=query,
@@ -908,351 +1105,338 @@ async def _check_trackers_inner(
                 for t in query_trackers:
                     _tracker_failure_counts.pop(t.id, None)
 
-                search_key = build_query_key(query, strict_mode, category_id)
+                group_keys: set[tuple[int, str]] = set()
                 # Use a savepoint per query group so that a rollback only
                 # discards THIS group's changes — previous groups' flushed
-                # data stays intact in the outer transaction.
-                async with session.begin_nested():
-                    try:
-                        await upsert_query_snapshot(
+                # data stays intact in the outer transaction. RV-SCH-02: the
+                # handler sits outside the savepoint so a failure really
+                # rolls it back (inside it, the savepoint was released with
+                # the group half-written) — state, events, cursors and
+                # outbox rows of a key commit or vanish together.
+                try:
+                    async with session.begin_nested():
+                        total_queued += await _process_search_key(
                             session,
-                            query=search_key,
+                            ctx,
+                            search_key=search_key,
+                            query=query,
+                            strict_mode=strict_mode,
+                            category_id=category_id,
                             ads=ads,
-                            total_results=len(ads),
-                            bucket_at=bucket_at,
+                            trackers=query_trackers,
+                            group_keys=group_keys,
                         )
-                        # Flush so the just-upserted snapshot is visible to
-                        # the trend detector below.
-                        await session.flush()
-                        snapshots = await load_query_snapshots(
-                            session, query=search_key, days=10
-                        )
-                        trend_signal = detect_trend_reversal_up(snapshots)
-                        # SCH-MEDIUM / LOGIC-MEDIUM (issues §5.1, §11.3):
-                        # if Kufar returns 0 ads on this tick but the
-                        # prior snapshots show the query DID have
-                        # results, treat the empty payload as a
-                        # transient upstream outage rather than "every
-                        # listing disappeared". Without this guard,
-                        # sync_query_listing_states marks every known
-                        # listing as inactive and the next tick fires
-                        # false-positive "пропало" notifications.
-                        prior_snapshots_had_ads = any(
-                            int(s.total_results or 0) > 0
-                            for s in snapshots[:-1]
-                        )
-                        if not ads and prior_snapshots_had_ads:
-                            logger.warning(
-                                "Suspected Kufar outage for query=%r: 0 ads "
-                                "returned but prior snapshots had results — "
-                                "skipping listing-state sync to avoid "
-                                "false-positive removals",
-                                search_key,
-                            )
-                            sync_result = QuerySyncResult(
-                                stats_count=0,
-                                total_results=0,
-                            )
-                        else:
-                            sync_result = await sync_query_listing_states(
-                                session,
-                                query=search_key,
-                                ads=ads,
-                                observed_at=observed_at,
-                                total_results=len(ads),
-                            )
-                        ads_by_id = {
-                            int(ad["ad_id"]): ad
-                            for ad in ads
-                            if int(ad.get("ad_id", 0)) > 0
-                        }
-                        # Hoist these out of the per-tracker loop — they
-                        # depend only on the query result, not the tracker.
-                        # Was being recomputed inside _filter_sync_result_for_tracker
-                        # once per tracker sharing the same query.
-                        ads_list = list(ads_by_id.values())
-                        market_stats = compute_price_stats(extract_prices(ads_list))
-                        category_price_stats = compute_category_price_stats(ads_list)
-
-                        newest_id = int(ads[0].get("ad_id", 0)) if ads else None
-                        newest_price_byn = (
-                            normalize_price_byn(ads[0].get("price_byn")) if ads else None
-                        )
-
-                        safe_query = query.replace("\n", " ")[:80]
-                        logger.info(
-                            "Query %r [strict=%s category=%s]: %d ads, %d new, %d price drops",
-                            safe_query,
-                            strict_mode,
-                            category_id,
-                            len(ads),
-                            len(sync_result.new_listings),
-                            len(sync_result.price_drops),
-                        )
-
-                        for tracker in query_trackers:
-                            is_first_check = tracker.last_checked_at is None
-                            if is_first_check:
-                                logger.info(
-                                    "Tracker %d (user %d): first check, initializing baseline",
-                                    tracker.id,
-                                    tracker.user_id,
-                                )
-                                tracker.last_seen_ad_id = newest_id
-                                tracker.last_seen_price_byn = newest_price_byn
-                                tracker.last_checked_at = observed_at
-                                # Mark all current listings as seen for this tracker
-                                # so they don't generate events on the next cycle.
-                                # sync_query_listing_states already recorded them as new
-                                # for the query, but this tracker should skip them.
-                                seen_by_tracker[tracker.id] = {
-                                    (state.ad_id, "new_listing")
-                                    for state in sync_result.new_listings
-                                }
-                                continue
-
-                            tracker_sync_result = _filter_sync_result_for_tracker(
-                                tracker,
-                                sync_result,
-                                ads_by_id,
-                                market_stats=market_stats,
-                                category_price_stats=category_price_stats,
-                            )
-                            trend_already_sent = tracker.id in trend_sent_recently
-                            seen_for_tracker = seen_by_tracker.get(tracker.id, set())
-
-                            # Persist all events first so we have their data
-                            await persist_tracker_events(
-                                session,
-                                tracker,
-                                tracker_sync_result,
-                                ads_by_id,
-                                seen=seen_for_tracker,
-                                trend_signal=trend_signal,
-                                trend_already_sent=trend_already_sent,
-                            )
-                            await session.flush()
-                            if trend_signal is not None and not trend_already_sent:
-                                trend_sent_recently.add(tracker.id)
-
-                            # Send per-listing enhanced notifications for new listings
-                            # C-10: Telegram cap=3 per type (UX); full set persisted
-                            # to tracker_events (audit trail, see _MAX_EVENTS_PER_TYPE).
-                            for state in tracker_sync_result.new_listings[:3]:
-                                ad = ads_by_id.get(state.ad_id)
-                                median_byn = (
-                                    market_stats.median
-                                    if market_stats.median > 0 else None
-                                )
-                                discount_pct = None
-                                liquidity_label = None
-                                if ad is not None:
-                                    # Sign matters: ``compute_price_vs_reference``
-                                    # returns negative for below-market and
-                                    # positive for above-market. Only show
-                                    # the "% от медианы" suffix when this
-                                    # ad is genuinely cheaper than the
-                                    # reference — otherwise the message
-                                    # template renders it as "📉 -X% от
-                                    # медианы" which IMPLIES a discount,
-                                    # so a +20% premium would falsely look
-                                    # like a deal. ``_detect_threshold_alerts``
-                                    # already uses this same guard.
-                                    delta = compute_price_vs_reference(
-                                        ad, market_stats, category_price_stats
-                                    )
-                                    discount_pct = (
-                                        abs(delta) if delta is not None and delta < 0
-                                        else None
-                                    )
-                                    try:
-                                        deal = compute_deal_score(
-                                            ad, query=query, market_stats=market_stats
-                                        )
-                                        if deal.score >= 70:
-                                            liquidity_label = "Высокая ликвидность"
-                                        elif deal.score >= 40:
-                                            liquidity_label = "Средняя ликвидность"
-                                    except Exception:  # noqa: BLE001
-                                        pass
-                                listing_msg = _build_new_listing_message(
-                                    state,
-                                    median_byn=median_byn,
-                                    discount_pct=discount_pct,
-                                    liquidity=liquidity_label,
-                                )
-                                keyboard = enhanced_alert_keyboard(
-                                    ad_id=state.ad_id,
-                                    listing_url=state.link,
-                                )
-                                # PERF-M3: queue instead of sending now.
-                                # Dispatch after the outer commit so
-                                # Telegram latency doesn't hold the DB
-                                # transaction open.
-                                pending_notifications.append(_TrackerNotifyJob(
-                                    telegram_user_id=tracker.user.telegram_user_id,
-                                    internal_user_id=tracker.user_id,
-                                    message=listing_msg,
-                                    reply_markup=keyboard,
-                                    # AUDIT-LOW: same (user, ad, event)
-                                    # across trackers in the same query
-                                    # group → one Telegram message.
-                                    dedup_key=f"new_listing:{state.ad_id}",
-                                ))
-
-                            # Send per-listing enhanced notifications for price drops
-                            for state, delta in tracker_sync_result.price_drops[:3]:
-                                ad = ads_by_id.get(state.ad_id)
-                                median_byn = (
-                                    market_stats.median
-                                    if market_stats.median > 0 else None
-                                )
-                                discount_pct = None
-                                if ad is not None:
-                                    # Sign-aware: see new-listing branch
-                                    # above. A price drop on a listing
-                                    # that's still above market shouldn't
-                                    # be advertised as "📊 -X% от медианы".
-                                    delta_vs_ref = compute_price_vs_reference(
-                                        ad, market_stats, category_price_stats
-                                    )
-                                    discount_pct = (
-                                        abs(delta_vs_ref)
-                                        if delta_vs_ref is not None and delta_vs_ref < 0
-                                        else None
-                                    )
-                                drop_msg = _build_price_drop_message(
-                                    state,
-                                    delta,
-                                    median_byn=median_byn,
-                                    discount_pct=discount_pct,
-                                )
-                                keyboard = enhanced_alert_keyboard(
-                                    ad_id=state.ad_id,
-                                    listing_url=state.link,
-                                )
-                                # PERF-M3: queue; see new_listings block above.
-                                pending_notifications.append(_TrackerNotifyJob(
-                                    telegram_user_id=tracker.user.telegram_user_id,
-                                    internal_user_id=tracker.user_id,
-                                    message=drop_msg,
-                                    reply_markup=keyboard,
-                                    # AUDIT-LOW: dedup across same-user trackers.
-                                    dedup_key=f"price_drop:{state.ad_id}",
-                                ))
-
-                            # Send trend reversal as a separate message (uses old keyboard)
-                            if trend_signal is not None and not trend_already_sent:
-                                trend_msg = _build_tracker_message(
-                                    query,
-                                    strict_mode,
-                                    QuerySyncResult(
-                                        stats_count=tracker_sync_result.stats_count,
-                                        total_results=tracker_sync_result.total_results,
-                                        new_listings=[],
-                                        price_drops=[],
-                                    ),
-                                    trend_signal=trend_signal,
-                                    trend_already_sent=False,
-                                )
-                                if trend_msg:
-                                    keyboard = tracker_alert_keyboard(
-                                        settings.mini_app_url,
-                                        query=query,
-                                        listing_url=None,
-                                    )
-                                    # PERF-M3: queue; see new_listings block.
-                                    pending_notifications.append(_TrackerNotifyJob(
-                                        telegram_user_id=tracker.user.telegram_user_id,
-                                        internal_user_id=tracker.user_id,
-                                        message=trend_msg,
-                                        reply_markup=keyboard,
-                                        # AUDIT-LOW: trend signal is
-                                        # query-level — two trackers on
-                                        # the same query group share the
-                                        # same TrendReversal object, so
-                                        # dedup on the search_key.
-                                        dedup_key=f"trend_reversal:{search_key}",
-                                    ))
-
-                            tracker.last_seen_ad_id = newest_id
-                            tracker.last_seen_price_byn = newest_price_byn
-                            tracker.last_checked_at = observed_at
-
-                            # ── Threshold alerts (price ≤ X, discount ≥ Y%) ──
-                            threshold_events = _detect_threshold_alerts(
-                                ads_by_id,
-                                tracker,
-                                market_stats=market_stats,
-                                category_price_stats=category_price_stats,
-                                seen=seen_for_tracker,
-                            )
-                            if threshold_events:
-                                for evt in threshold_events:
-                                    session.add(evt)
-                                await session.flush()
-                                threshold_msg = _build_threshold_message(
-                                    tracker, threshold_events
-                                )
-                                if threshold_msg:
-                                    primary = threshold_events[0]
-                                    keyboard = tracker_alert_keyboard(
-                                        settings.mini_app_url,
-                                        query=primary.query,
-                                        listing_url=primary.link,
-                                    )
-                                    # PERF-M3: queue; see new_listings block.
-                                    pending_notifications.append(_TrackerNotifyJob(
-                                        telegram_user_id=tracker.user.telegram_user_id,
-                                        internal_user_id=tracker.user_id,
-                                        message=threshold_msg,
-                                        reply_markup=keyboard,
-                                    ))
-                                    logger.info(
-                                        "Tracker %d (user %d): threshold alert queued "
-                                        "(%d events)",
-                                        tracker.id,
-                                        tracker.user_id,
-                                        len(threshold_events),
-                                    )
-
-                        # Savepoint auto-commits on clean exit, preserving
-                        # this group's data even if a later group fails.
-                    except _TRACKER_QUERY_ERRORS:
-                        total_errors += 1
-                        # Rolling back the savepoint only discards this
-                        # group's changes — previous groups are safe.
-                        logger.exception(
-                            "Error processing query %r [strict=%s category=%s], skipping",
-                            query,
-                            strict_mode,
-                            category_id,
-                        )
+                except _TRACKER_QUERY_ERRORS:
+                    total_errors += 1
+                    group_keys.clear()
+                    logger.exception(
+                        "Error processing query %r [strict=%s category=%s], skipping",
+                        query,
+                        strict_mode,
+                        category_id,
+                    )
 
                 # M18: per-group commit so completed groups survive a later crash.
                 # expire_on_commit=False (set above) keeps loaded objects usable.
                 await session.commit()
+                ctx.queued_keys |= group_keys
 
             # Commit whatever succeeded — errors are logged but don't block
             await session.commit()
-
-            # PERF-M3: dispatch queued notifications AFTER the commit.
-            # If Telegram is slow or flaky, the DB state is already safe
-            # (snapshots upserted, tracker.last_seen_* advanced, events
-            # persisted) and the worst case is a notification gets lost
-            # for one tick — same failure mode as before, just without
-            # holding an open transaction for the duration of the sends.
-            total_notified = await _dispatch_tracker_notifications(
-                bot, pending_notifications, session_factory,
-            )
             logger.info(
-                "Tracker check complete: notified %d (of %d queued), errors %d",
-                total_notified,
-                len(pending_notifications),
+                "Tracker check complete: queued %d notification(s), errors %d",
+                total_queued,
                 total_errors,
             )
         finally:
             await client.aclose()
+
+
+async def _process_search_key(
+    session: AsyncSession,
+    ctx: _TickContext,
+    *,
+    search_key: str,
+    query: str,
+    strict_mode: bool,
+    category_id: int | None,
+    ads: list[dict[str, object]],
+    trackers: list[Tracker],
+    group_keys: set[tuple[int, str]],
+) -> int:
+    """Sync one search key and record every due tracker's events, cursor and
+    outbox rows (inside the caller's savepoint). Returns the number of
+    notifications queued."""
+    skip_keys = ctx.queued_keys | await _pending_outbox_keys(
+        session, {t.user_id for t in trackers},
+    )
+    await upsert_query_snapshot(
+        session,
+        query=search_key,
+        ads=ads,
+        total_results=len(ads),
+        bucket_at=ctx.bucket_at,
+    )
+    # Flush so the just-upserted snapshot is visible to
+    # the trend detector below.
+    await session.flush()
+    snapshots = await load_query_snapshots(session, query=search_key, days=10)
+    trend_signal = detect_trend_reversal_up(snapshots)
+    # SCH-MEDIUM / LOGIC-MEDIUM (issues §5.1, §11.3):
+    # if Kufar returns 0 ads on this tick but the
+    # prior snapshots show the query DID have
+    # results, treat the empty payload as a
+    # transient upstream outage rather than "every
+    # listing disappeared". Without this guard,
+    # sync_query_listing_states marks every known
+    # listing as inactive and the next tick fires
+    # false-positive "пропало" notifications.
+    prior_snapshots_had_ads = any(int(s.total_results or 0) > 0 for s in snapshots[:-1])
+    if not ads and prior_snapshots_had_ads:
+        logger.warning(
+            "Suspected Kufar outage for query=%r: 0 ads "
+            "returned but prior snapshots had results — "
+            "skipping listing-state sync to avoid "
+            "false-positive removals",
+            search_key,
+        )
+        sync_result = QuerySyncResult(stats_count=0, total_results=0)
+    else:
+        sync_result = await sync_query_listing_states(
+            session,
+            query=search_key,
+            ads=ads,
+            observed_at=ctx.observed_at,
+            total_results=len(ads),
+        )
+    ads_by_id = {int(ad["ad_id"]): ad for ad in ads if int(ad.get("ad_id", 0)) > 0}
+    # Hoist these out of the per-tracker loop — they
+    # depend only on the query result, not the tracker.
+    ads_list = list(ads_by_id.values())
+    market_stats = compute_price_stats(extract_prices(ads_list))
+    category_price_stats = compute_category_price_stats(ads_list)
+
+    newest_id = int(ads[0].get("ad_id", 0)) if ads else None
+    newest_price_byn = normalize_price_byn(ads[0].get("price_byn")) if ads else None
+
+    safe_query = query.replace("\n", " ")[:80]
+    logger.info(
+        "Query %r [strict=%s category=%s]: %d ads, %d new, %d price drops, %d tracker(s)",
+        safe_query,
+        strict_mode,
+        category_id,
+        len(ads),
+        len(sync_result.new_listings),
+        len(sync_result.price_drops),
+        len(trackers),
+    )
+
+    queued = 0
+    for tracker in trackers:
+        if tracker.last_checked_at is None:
+            logger.info(
+                "Tracker %d (user %d): first check, initializing baseline",
+                tracker.id,
+                tracker.user_id,
+            )
+            tracker.last_seen_ad_id = newest_id
+            tracker.last_seen_price_byn = newest_price_byn
+            tracker.last_checked_at = ctx.observed_at
+            continue
+
+        # RV-SCH-01: new listings and drops since THIS tracker's previous
+        # check, not since the key's previous sync (possibly by another
+        # tracker on a different schedule, which used to "eat" them).
+        tracker_sync_result = _filter_sync_result_for_tracker(
+            tracker,
+            changes_since(sync_result, tracker.last_checked_at),
+            ads_by_id,
+            market_stats=market_stats,
+            category_price_stats=category_price_stats,
+        )
+        trend_already_sent = tracker.id in ctx.trend_sent_recently
+        created = await persist_tracker_events(
+            session,
+            tracker,
+            tracker_sync_result,
+            ads_by_id,
+            seen=ctx.seen_by_tracker.get(tracker.id, set()),
+            trend_signal=trend_signal,
+            trend_already_sent=trend_already_sent,
+        )
+        await session.flush()
+
+        jobs = _listing_notification_jobs(
+            tracker,
+            tracker_sync_result,
+            created,
+            ads_by_id,
+            market_stats=market_stats,
+            category_price_stats=category_price_stats,
+        )
+        # Send trend reversal as a separate message (uses old keyboard)
+        if trend_signal is not None and not trend_already_sent:
+            trend_msg = _build_tracker_message(
+                tracker.query,
+                tracker.strict_mode,
+                QuerySyncResult(
+                    stats_count=tracker_sync_result.stats_count,
+                    total_results=tracker_sync_result.total_results,
+                ),
+                trend_signal=trend_signal,
+                trend_already_sent=False,
+            )
+            if trend_msg:
+                jobs.append(_TrackerNotifyJob(
+                    telegram_user_id=tracker.user.telegram_user_id,
+                    internal_user_id=tracker.user_id,
+                    message=trend_msg,
+                    reply_markup=tracker_alert_keyboard(
+                        ctx.settings.mini_app_url,
+                        query=tracker.query,
+                        listing_url=None,
+                    ),
+                    # AUDIT-LOW: the trend signal is key-level — one per
+                    # user even when several of their trackers share it.
+                    dedup_key=f"trend_reversal:{search_key}",
+                ))
+
+        tracker.last_seen_ad_id = newest_id
+        tracker.last_seen_price_byn = newest_price_byn
+        tracker.last_checked_at = ctx.observed_at
+
+        # ── Threshold alerts (price ≤ X, discount ≥ Y%) ──
+        threshold_events = _detect_threshold_alerts(
+            ads_by_id,
+            tracker,
+            market_stats=market_stats,
+            category_price_stats=category_price_stats,
+            alerted=ctx.alert_floors.get(tracker.id),
+        )
+        if threshold_events:
+            session.add_all(threshold_events)
+            await session.flush()
+            threshold_msg = _build_threshold_message(tracker, threshold_events)
+            if threshold_msg:
+                primary = threshold_events[0]
+                jobs.append(_TrackerNotifyJob(
+                    telegram_user_id=tracker.user.telegram_user_id,
+                    internal_user_id=tracker.user_id,
+                    message=threshold_msg,
+                    reply_markup=tracker_alert_keyboard(
+                        ctx.settings.mini_app_url,
+                        query=primary.query,
+                        listing_url=primary.link,
+                    ),
+                ))
+                logger.info(
+                    "Tracker %d (user %d): threshold alert queued (%d events)",
+                    tracker.id,
+                    tracker.user_id,
+                    len(threshold_events),
+                )
+
+        queued += _enqueue_tracker_notifications(
+            session, jobs, skip_keys=skip_keys, queued_keys=group_keys,
+        )
+    return queued
+
+
+def _listing_notification_jobs(
+    tracker: Tracker,
+    sync_result: QuerySyncResult,
+    created: list[TrackerEvent],
+    ads_by_id: dict[int, dict[str, object]],
+    *,
+    market_stats: PriceStats,
+    category_price_stats: dict[int, PriceStats] | None,
+) -> list[_TrackerNotifyJob]:
+    """Per-listing Telegram alerts for one tracker's check.
+
+    C-10: Telegram cap=3 per type (UX); the full set is persisted to
+    tracker_events (audit trail, see _MAX_EVENTS_PER_TYPE). Only listings
+    that got an event in this check are announced, so the feed and the
+    chat agree and the 24 h event dedup applies to Telegram too.
+    """
+    recorded = {(event.ad_id, event.event_type) for event in created}
+    median_byn = market_stats.median if market_stats.median > 0 else None
+    jobs: list[_TrackerNotifyJob] = []
+
+    new_states = [
+        state for state in sync_result.new_listings
+        if (state.ad_id, "new_listing") in recorded
+    ]
+    for state in new_states[:3]:
+        ad = ads_by_id.get(state.ad_id)
+        discount_pct = None
+        liquidity_label = None
+        if ad is not None:
+            # Sign matters: ``compute_price_vs_reference``
+            # returns negative for below-market and
+            # positive for above-market. Only show
+            # the "% от медианы" suffix when this
+            # ad is genuinely cheaper than the
+            # reference — otherwise the message
+            # template renders it as "📉 -X% от
+            # медианы" which IMPLIES a discount,
+            # so a +20% premium would falsely look
+            # like a deal. ``_detect_threshold_alerts``
+            # already uses this same guard.
+            delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
+            discount_pct = abs(delta) if delta is not None and delta < 0 else None
+            try:
+                deal = compute_deal_score(ad, query=tracker.query, market_stats=market_stats)
+                if deal.score >= 70:
+                    liquidity_label = "Высокая ликвидность"
+                elif deal.score >= 40:
+                    liquidity_label = "Средняя ликвидность"
+            except Exception:  # noqa: BLE001
+                pass
+        jobs.append(_TrackerNotifyJob(
+            telegram_user_id=tracker.user.telegram_user_id,
+            internal_user_id=tracker.user_id,
+            message=_build_new_listing_message(
+                state,
+                median_byn=median_byn,
+                discount_pct=discount_pct,
+                liquidity=liquidity_label,
+            ),
+            reply_markup=enhanced_alert_keyboard(ad_id=state.ad_id, listing_url=state.link),
+            # AUDIT-LOW: same (user, ad, event) across trackers → one
+            # Telegram message.
+            dedup_key=f"new_listing:{state.ad_id}",
+        ))
+
+    drops = [
+        (state, delta) for state, delta in sync_result.price_drops
+        if (state.ad_id, "price_drop") in recorded
+    ]
+    for state, delta in drops[:3]:
+        ad = ads_by_id.get(state.ad_id)
+        discount_pct = None
+        if ad is not None:
+            # Sign-aware: see new-listing branch
+            # above. A price drop on a listing
+            # that's still above market shouldn't
+            # be advertised as "📊 -X% от медианы".
+            delta_vs_ref = compute_price_vs_reference(ad, market_stats, category_price_stats)
+            discount_pct = (
+                abs(delta_vs_ref) if delta_vs_ref is not None and delta_vs_ref < 0 else None
+            )
+        jobs.append(_TrackerNotifyJob(
+            telegram_user_id=tracker.user.telegram_user_id,
+            internal_user_id=tracker.user_id,
+            message=_build_price_drop_message(
+                state,
+                delta,
+                median_byn=median_byn,
+                discount_pct=discount_pct,
+            ),
+            reply_markup=enhanced_alert_keyboard(ad_id=state.ad_id, listing_url=state.link),
+            # AUDIT-LOW: dedup across same-user trackers.
+            dedup_key=f"price_drop:{state.ad_id}",
+        ))
+    return jobs
 
 
 # PERF-M3: cap on parallel ``check_reminders`` Telegram sends. Set
@@ -1276,23 +1460,21 @@ _TRACKER_USER_CONCURRENCY = 5
 
 @dataclass(slots=True)
 class _TrackerNotifyJob:
-    """PERF-M3: a single pending Telegram notification collected during
-    the ``check_trackers`` DB pass and dispatched afterwards.
+    """PERF-M3: a single Telegram notification built during the
+    ``check_trackers`` DB pass. RV-SCH-02: written to the outbox by
+    ``_enqueue_tracker_notifications`` in the same transaction, sent by
+    the DLQ pump.
 
-    Decoupling the "what should be sent" from the "send it now" lets us
-    fan out across users with bounded concurrency instead of blocking
-    the tick on ``300 trackers × 3 notif × RTT`` of sequential Telegram
-    latency. The fields are a strict subset of the ``notify_user``
-    argument list — internal_user_id is kept so a blocked-user outcome
-    can trigger the same per-user tracker pause as ``notify_user``,
-    batched across the whole tick.
+    The fields are a strict subset of the ``notify_user`` argument list —
+    internal_user_id is kept so a blocked-user outcome can trigger the
+    same per-user tracker pause as ``notify_user``.
 
     AUDIT-LOW (cross-tracker dedup): ``dedup_key`` is set when two
     trackers belonging to the SAME user can legitimately observe the
     same underlying event (e.g. one user owns two trackers for
     "iphone 14 pro" with different price ceilings — both fire on the
     same listing). Without dedup the user gets two near-identical
-    Telegram messages. ``_dispatch_tracker_notifications`` collapses
+    Telegram messages. ``_enqueue_tracker_notifications`` collapses
     jobs sharing the same ``(telegram_user_id, dedup_key)`` to a
     single send. Jobs with ``dedup_key=None`` are not deduped (used
     for threshold messages, which legitimately differ per tracker
@@ -1305,126 +1487,86 @@ class _TrackerNotifyJob:
     dedup_key: str | None = None
 
 
-async def _dispatch_tracker_notifications(
-    bot: Bot,
+def _enqueue_tracker_notifications(
+    session: AsyncSession,
     jobs: list[_TrackerNotifyJob],
-    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    skip_keys: Collection[tuple[int, str]] = frozenset(),
+    queued_keys: set[tuple[int, str]] | None = None,
 ) -> int:
-    """PERF-M3: fan out collected tracker notifications after the DB
-    transaction commits.
+    """RV-SCH-02: write tracker alerts to the notification outbox in the
+    caller's transaction, so they commit (or roll back) together with the
+    listing state and events that produced them.
 
-    Group jobs by ``telegram_user_id`` and send each user's batch
-    **serially** (Telegram rate-limits individual chats to ~1 msg/sec)
-    but schedule up to ``_TRACKER_USER_CONCURRENCY`` user-batches
-    **in parallel** across distinct chats. On the first ``blocked``
-    outcome for a user, drop the rest of that user's jobs and mark
-    their ``internal_user_id`` for a bulk tracker pause.
-
-    Returns the number of successfully sent messages (i.e. only
-    ``"sent"`` outcomes; ``"retry"`` is not counted, matching the
-    ``check_reminders`` accounting established in Wave 23).
-
-    After the fan-out, if any users turned out to be blocked, a single
-    ``_pause_unreachable_users_trackers`` UPDATE is issued in a fresh
-    session. Same semantic as the per-call pause in ``notify_user``,
-    just batched so a tick with K blocked users does 1 UPDATE instead
-    of up to K × jobs-per-user.
+    AUDIT-LOW (cross-tracker dedup): the first job per ``(telegram_user_id,
+    dedup_key)`` wins. ``skip_keys`` are pairs already in the outbox
+    (earlier keys of this tick, rows still waiting from earlier ticks);
+    ``queued_keys`` collects the pairs written here. Returns the number
+    of rows written.
     """
-    if not jobs:
-        return 0
-
-    by_user: dict[int, list[_TrackerNotifyJob]] = defaultdict(list)
+    if queued_keys is None:
+        queued_keys = set()
+    written = deduped = 0
     for job in jobs:
-        by_user[job.telegram_user_id].append(job)
-
-    # AUDIT-LOW (cross-tracker dedup): collapse jobs sharing the same
-    # ``(telegram_user_id, dedup_key)``. Within each user's queue we
-    # keep the FIRST occurrence of each dedup_key — order is the same
-    # as enqueue order (insertion order is preserved by ``defaultdict``
-    # + ``list``), so the message tied to the earlier-iterated tracker
-    # wins. Jobs with ``dedup_key=None`` (threshold messages) are kept
-    # verbatim because each tracker's threshold is genuinely
-    # independent.
-    deduped_count = 0
-    for user_id, user_jobs in by_user.items():
-        seen_keys: set[str] = set()
-        unique: list[_TrackerNotifyJob] = []
-        for job in user_jobs:
-            if job.dedup_key is None:
-                unique.append(job)
-                continue
-            if job.dedup_key in seen_keys:
-                deduped_count += 1
-                continue
-            seen_keys.add(job.dedup_key)
-            unique.append(job)
-        by_user[user_id] = unique
-    if deduped_count:
+        key = (job.telegram_user_id, job.dedup_key) if job.dedup_key else None
+        if key is not None and (key in skip_keys or key in queued_keys):
+            deduped += 1
+            continue
+        _queue_notification_dlq(
+            session,
+            telegram_user_id=job.telegram_user_id,
+            message=job.message,
+            source="tracker",
+            internal_user_id=job.internal_user_id,
+            error_kind=_OUTBOX_PENDING,
+            # AUDIT-LOW: the keyboard travels with the row so the pump
+            # sends the same "📌 В покупки" / "⭐ В Избранное" buttons.
+            reply_markup=job.reply_markup,
+            dedup_key=job.dedup_key,
+        )
+        if key is not None:
+            queued_keys.add(key)
+        written += 1
+    if deduped:
         logger.info(
             "Tracker notifications: deduped %d cross-tracker duplicate(s)",
-            deduped_count,
+            deduped,
         )
+    return written
 
-    sem = asyncio.Semaphore(_TRACKER_USER_CONCURRENCY)
 
-    async def _send_for_user(
-        user_jobs: list[_TrackerNotifyJob],
-    ) -> tuple[int, int | None, list[_TrackerNotifyJob]]:
-        """Serial send loop for one user."""
-        async with sem:
-            sent = 0
-            retries: list[_TrackerNotifyJob] = []
-            for job in user_jobs:
-                outcome = await _send_message_classified(
-                    bot,
-                    job.telegram_user_id,
-                    job.message,
-                    reply_markup=job.reply_markup,
-                )
-                if outcome == "sent":
-                    sent += 1
-                elif outcome == "blocked":
-                    # Skip the rest of this user's queue — same effect
-                    # as the old inline ``break`` but now applied across
-                    # ALL of that user's trackers, not just one.
-                    return sent, job.internal_user_id, retries
-                # outcome == "retry": keep trying; a transient error on
-                # one job doesn't imply the next will fail too.
-                elif outcome == "retry":
-                    retries.append(job)
-            return sent, None, retries
-
-    results = await asyncio.gather(
-        *[_send_for_user(user_jobs) for user_jobs in by_user.values()]
+async def _pending_outbox_keys(
+    session: AsyncSession,
+    user_ids: Collection[int],
+) -> set[tuple[int, str]]:
+    """``(telegram_user_id, dedup_key)`` pairs still waiting in the outbox
+    for these users — the same alert is not queued twice while the first
+    copy is pending or backing off."""
+    if not user_ids:
+        return set()
+    result = await session.execute(
+        select(TelegramNotificationDLQ.telegram_user_id, TelegramNotificationDLQ.dedup_key)
+        .where(
+            TelegramNotificationDLQ.user_id.in_(list(user_ids)),
+            TelegramNotificationDLQ.dedup_key.is_not(None),
+        )
     )
-    total_sent = sum(s for s, _, _ in results)
-    blocked_user_ids = {uid for _, uid, _ in results if uid is not None}
-    retry_jobs = [job for _, _, retries in results for job in retries]
+    return {(row.telegram_user_id, row.dedup_key) for row in result}
 
-    if blocked_user_ids or retry_jobs:
-        async with session_factory() as session:
-            if blocked_user_ids:
-                await session.execute(_pause_unreachable_users_trackers(blocked_user_ids))
-            for job in retry_jobs:
-                _queue_notification_dlq(
-                    session,
-                    telegram_user_id=job.telegram_user_id,
-                    message=job.message,
-                    source="tracker",
-                    internal_user_id=job.internal_user_id,
-                    # AUDIT-LOW: see _queue_notification_dlq docstring
-                    # — preserve the keyboard so a retried tracker
-                    # alert still carries its action buttons.
-                    reply_markup=job.reply_markup,
-                )
-            await session.commit()
-            if blocked_user_ids:
-                logger.info(
-                    "Tracker notifications: paused trackers for %d blocked user(s)",
-                    len(blocked_user_ids),
-                )
 
-    return total_sent
+# RV-SCH-04: reminders retry on their own row — one retry mechanism; a
+# transient failure used to be queued to the DLQ AND left pending, so the
+# reminder arrived twice. The tick runs every 15 minutes, hence the base.
+_REMINDER_BATCH_LIMIT = 100
+_REMINDER_MAX_ATTEMPTS = 5
+_REMINDER_RETRY_BASE_MINUTES = 15
+# RV-SCH-04: deals the user is done with — a reminder about one is noise.
+_CLOSED_LEAD_STATUSES = frozenset({"closed", "sold", "abandoned", "skipped"})
+
+
+def _reminder_next_attempt_at(attempts: int) -> datetime:
+    minutes = _REMINDER_RETRY_BASE_MINUTES * (2 ** max(0, attempts - 1))
+    return datetime.now(UTC) + timedelta(minutes=minutes)
 
 
 async def check_reminders(
@@ -1432,38 +1574,47 @@ async def check_reminders(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """Send due reminders via bot and mark them as sent.
+    """Send due reminders via bot and record the outcome.
 
     PERF-M3: refactored from a sequential ``for reminder: await
     notify_user`` loop into a 3-phase pipeline so a tick with many
     due reminders doesn't block for ``count × telegram_rtt``.
 
       1. Build phase — single DB read + per-row job materialisation.
-         No outbound calls; reminders that can't be sent (no lead,
-         no user) are marked ``sent=True`` immediately because the
-         retry would never succeed.
+         No outbound calls; reminders that must not be sent are
+         cancelled right away (RV-SCH-04/RV-SEC-05: lead or user gone,
+         deal closed, pd_processing consent withdrawn). The read
+         transaction is closed before any Telegram round-trip.
       2. Send phase — ``asyncio.gather`` the prepared messages
          through ``_send_message_classified`` with a bounded
          semaphore. Each send is pure I/O against ``bot`` and does
-         not touch the SQLAlchemy session — that's what makes the
+         not touch a SQLAlchemy session — that's what makes the
          parallelism safe (AsyncSession is not concurrency-safe).
-      3. Apply phase — single sequential pass over the outcomes
-         that updates the session: mark ``sent=True`` for the
-         "sent" cases, accumulate distinct ``user_id`` values whose
-         users blocked the bot, then pause their trackers in one
-         bulk UPDATE. Single ``session.commit()`` at the end
-         so a partial failure doesn't half-commit the tick.
+      3. Apply phase — one pass over the outcomes in a fresh session:
+         ``sent``; ``failed`` for a blocked chat or a rejected message
+         (RV-SCH-04: terminal — they used to be re-sent every tick
+         forever); back-off via ``attempts`` / ``next_attempt_at`` for
+         transient errors until ``_REMINDER_MAX_ATTEMPTS``. Blocked
+         users' trackers are paused in one bulk UPDATE.
 
-    Wall-clock for 50 reminders × ~50 ms RTT each: 2.5 s sequential
-    → ~500 ms with concurrency=5.
+    RV-SCH-04: oldest ``remind_at`` first, so rows waiting out a back-off
+    can no longer starve newer reminders out of the batch.
     """
+    now = datetime.now(UTC)
     async with session_factory() as session:
-        now = datetime.now(UTC)
         result = await session.execute(
             select(LeadReminder)
-            .where(LeadReminder.remind_at <= now, LeadReminder.sent.is_(False))
+            .where(
+                LeadReminder.status == REMINDER_STATUS_PENDING,
+                LeadReminder.remind_at <= now,
+                or_(
+                    LeadReminder.next_attempt_at.is_(None),
+                    LeadReminder.next_attempt_at <= now,
+                ),
+            )
             .options(joinedload(LeadReminder.lead).joinedload(LeadItem.user))
-            .limit(100)
+            .order_by(LeadReminder.remind_at.asc(), LeadReminder.id.asc())
+            .limit(_REMINDER_BATCH_LIMIT)
         )
         due_reminders = list(result.scalars())
         if not due_reminders:
@@ -1471,19 +1622,27 @@ async def check_reminders(
             return
 
         logger.info("Processing %d due reminder(s)", len(due_reminders))
+        withdrawn = await _users_with_withdrawn_pd_consent(
+            session, {r.user_id for r in due_reminders},
+        )
 
         # ── Phase 1: build job list ──────────────────────────────────
         jobs: list[tuple[LeadReminder, int, str, object | None]] = []
+        cancelled: dict[str, list[int]] = defaultdict(list)
         for reminder in due_reminders:
             lead = reminder.lead
-            if lead is None:
-                # Stale reminder for a deleted lead — no point retrying.
-                reminder.sent = True
-                continue
-
-            telegram_user_id = lead.user.telegram_user_id if lead.user else None
+            telegram_user_id = (
+                lead.user.telegram_user_id if lead is not None and lead.user else None
+            )
             if telegram_user_id is None:
-                reminder.sent = True
+                # Stale reminder for a deleted lead — no point retrying.
+                cancelled["no_recipient"].append(reminder.id)
+                continue
+            if reminder.user_id in withdrawn:
+                cancelled["consent_revoked"].append(reminder.id)
+                continue
+            if lead.status in _CLOSED_LEAD_STATUSES:
+                cancelled["lead_closed"].append(reminder.id)
                 continue
 
             lead_title = (lead.title or "Без названия").replace("\n", " ")[:120]
@@ -1498,47 +1657,75 @@ async def check_reminders(
             keyboard = lead_reminder_keyboard(settings.mini_app_url)
             jobs.append((reminder, telegram_user_id, "\n".join(lines), keyboard))
 
-        # ── Phase 2: bounded-concurrency parallel send ───────────────
-        sem = asyncio.Semaphore(_REMINDER_SEND_CONCURRENCY)
+        for reason, reminder_ids in cancelled.items():
+            await session.execute(
+                update(LeadReminder)
+                .where(LeadReminder.id.in_(reminder_ids))
+                .values(status=REMINDER_STATUS_CANCELLED, last_error=reason)
+            )
+        await session.commit()
 
-        async def _bounded_send(
-            tg_user_id: int,
-            text: str,
-            kb: object | None,
-        ) -> str:
-            async with sem:
-                return await _send_message_classified(
-                    bot, tg_user_id, text, reply_markup=kb,
-                )
+    if not jobs:
+        logger.info("Reminders: none to send (%d cancelled)", len(due_reminders))
+        return
 
-        outcomes: list[str] = await asyncio.gather(
-            *[_bounded_send(uid, text, kb) for _, uid, text, kb in jobs],
-            return_exceptions=False,
-        )
+    # ── Phase 2: bounded-concurrency parallel send ───────────────
+    sem = asyncio.Semaphore(_REMINDER_SEND_CONCURRENCY)
 
-        # ── Phase 3: apply outcomes back to the session ──────────────
-        sent_count = 0
-        blocked_user_ids: set[int] = set()
+    async def _bounded_send(
+        tg_user_id: int,
+        text: str,
+        kb: object | None,
+    ) -> str:
+        async with sem:
+            return await _send_message_classified(
+                bot, tg_user_id, text, reply_markup=kb,
+            )
+
+    outcomes: list[str] = await asyncio.gather(
+        *[_bounded_send(uid, text, kb) for _, uid, text, kb in jobs],
+        return_exceptions=False,
+    )
+
+    # ── Phase 3: apply outcomes ──────────────────────────────────
+    sent_count = 0
+    blocked_user_ids: set[int] = set()
+    async with session_factory() as session:
         for (reminder, _uid, _text, _kb), outcome in zip(jobs, outcomes, strict=True):
+            attempts = (reminder.attempts or 0) + 1
+            values: dict[str, object] = {"attempts": attempts}
             if outcome == "sent":
-                reminder.sent = True
-                sent_count += 1
-            elif outcome == "blocked":
-                # Don't mark ``sent`` so a future cycle (after the
-                # user re-enables the bot) can retry naturally.
-                if reminder.user_id is not None:
-                    blocked_user_ids.add(reminder.user_id)
-            elif outcome == "retry":
-                _queue_notification_dlq(
-                    session,
-                    telegram_user_id=_uid,
-                    message=_text,
-                    source="reminder",
-                    internal_user_id=reminder.user_id,
-                    # AUDIT-LOW: keep the reminder's "📌 Открыть сделку"
-                    # web-app button across retries.
-                    reply_markup=_kb,
+                values.update(
+                    status=REMINDER_STATUS_SENT, sent=True,
+                    next_attempt_at=None, last_error=None,
                 )
+                sent_count += 1
+            elif outcome in ("blocked", "permanent_error"):
+                # RV-SCH-04: terminal — the same chat / payload cannot
+                # succeed on the next tick either.
+                values.update(
+                    status=REMINDER_STATUS_FAILED, next_attempt_at=None, last_error=outcome,
+                )
+                if outcome == "blocked" and reminder.user_id is not None:
+                    blocked_user_ids.add(reminder.user_id)
+            elif attempts >= _REMINDER_MAX_ATTEMPTS:
+                values.update(
+                    status=REMINDER_STATUS_FAILED,
+                    next_attempt_at=None,
+                    last_error="retry_exhausted",
+                )
+            else:
+                values.update(
+                    next_attempt_at=_reminder_next_attempt_at(attempts), last_error=outcome,
+                )
+            await session.execute(
+                update(LeadReminder)
+                .where(
+                    LeadReminder.id == reminder.id,
+                    LeadReminder.status == REMINDER_STATUS_PENDING,
+                )
+                .values(**values)
+            )
 
         if blocked_user_ids:
             # Single bulk update per tick instead of one UPDATE per
@@ -1546,10 +1733,10 @@ async def check_reminders(
             await session.execute(_pause_unreachable_users_trackers(blocked_user_ids))
 
         await session.commit()
-        logger.info(
-            "Reminders sent: %d / %d (blocked users: %d)",
-            sent_count, len(due_reminders), len(blocked_user_ids),
-        )
+    logger.info(
+        "Reminders sent: %d / %d (blocked users: %d)",
+        sent_count, len(due_reminders), len(blocked_user_ids),
+    )
 
 
 def create_scheduler(
@@ -1836,6 +2023,20 @@ def _dlq_next_retry_after(retry_count: int) -> datetime:
     return datetime.now(UTC) + timedelta(minutes=minutes)
 
 
+_dlq_pump_lock: tuple[asyncio.AbstractEventLoop, asyncio.Lock] | None = None
+
+
+def _get_dlq_pump_lock() -> asyncio.Lock:
+    """RV-SCH-02: the tracker tick drains the outbox while the per-minute
+    pump job may be running in the same loop — both must not pick (and
+    send) the same rows. One lock per event loop (tests run many)."""
+    global _dlq_pump_lock
+    loop = asyncio.get_running_loop()
+    if _dlq_pump_lock is None or _dlq_pump_lock[0] is not loop:
+        _dlq_pump_lock = (loop, asyncio.Lock())
+    return _dlq_pump_lock[1]
+
+
 async def retry_telegram_notification_dlq(
     bot: Bot,
     session_factory: async_sessionmaker[AsyncSession],
@@ -1847,20 +2048,65 @@ async def retry_telegram_notification_dlq(
     until the daily cleanup wiped them 30 days later. Telegram
     blips of even ~10 minutes lost the affected notifications.
 
+    RV-SCH-02: the table is also the tracker-alert outbox, so this pump
+    is the one delivery path for tracker alerts — the tracker tick
+    drains it right after its key loop (``_drain_notification_outbox``)
+    and this job catches the rest every minute.
+
     This pump reads up to ``_DLQ_PUMP_BATCH_LIMIT`` rows whose
-    ``next_retry_at`` is due (or NULL — fresh failures), groups by
-    ``telegram_user_id`` so one user's burst doesn't preempt
-    everyone else, sends each batch serially through the same
+    ``next_retry_at`` is due (or NULL — fresh failures and outbox
+    rows), groups by ``telegram_user_id`` so one user's burst doesn't
+    preempt everyone else, sends each batch serially through the same
     classifier, and applies the outcome:
 
-    * ``sent``    → DELETE row.
-    * ``blocked`` → DELETE every DLQ row for that user_id +
-                    pause their trackers in bulk.
-    * ``retry``   → ``retry_count += 1``,
-                    ``next_retry_at = now + 2^(n-1) * 2 min``.
+    * ``sent``            → DELETE row.
+    * ``blocked``         → DELETE every DLQ row for that user_id +
+                            pause their trackers in bulk.
+    * ``permanent_error`` → DELETE row (Telegram rejected the message
+                            itself; resending it cannot succeed).
+    * ``retry``           → ``retry_count += 1``,
+                            ``next_retry_at = now + 2^(n-1) * 2 min``.
+
+    RV-SEC-05: rows of users who withdrew ``pd_processing`` consent are
+    deleted unsent.
 
     Returns the number of rows that successfully sent.
     """
+    sent, _taken = await _pump_notification_queue(bot, session_factory)
+    return sent
+
+
+async def _drain_notification_outbox(
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """RV-SCH-02: run pump batches until the due rows run out or
+    ``_OUTBOX_DRAIN_BUDGET_SECONDS`` is spent. Returns messages sent."""
+    deadline = _monotonic() + _OUTBOX_DRAIN_BUDGET_SECONDS
+    total_sent = 0
+    while True:
+        sent, taken = await _pump_notification_queue(bot, session_factory)
+        total_sent += sent
+        if taken < _DLQ_PUMP_BATCH_LIMIT or _monotonic() >= deadline:
+            break
+    if total_sent:
+        logger.info("Notification outbox: delivered %d message(s)", total_sent)
+    return total_sent
+
+
+async def _pump_notification_queue(
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> tuple[int, int]:
+    """One pump batch. Returns (messages sent, rows taken off the queue)."""
+    async with _get_dlq_pump_lock():
+        return await _pump_notification_queue_locked(bot, session_factory)
+
+
+async def _pump_notification_queue_locked(
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> tuple[int, int]:
     async with session_factory() as session:
         now = datetime.now(UTC)
         result = await session.execute(
@@ -1870,12 +2116,15 @@ async def retry_telegram_notification_dlq(
                 (TelegramNotificationDLQ.next_retry_at.is_(None))
                 | (TelegramNotificationDLQ.next_retry_at <= now),
             )
-            .order_by(TelegramNotificationDLQ.created_at.asc())
+            .order_by(TelegramNotificationDLQ.created_at.asc(), TelegramNotificationDLQ.id.asc())
             .limit(_DLQ_PUMP_BATCH_LIMIT)
         )
         rows = list(result.scalars())
         if not rows:
-            return 0
+            return 0, 0
+        withdrawn = await _telegram_ids_with_withdrawn_pd_consent(
+            session, {row.telegram_user_id for row in rows},
+        )
         # Snapshot the bytes we need before we leave the session — the
         # async send loop runs without a session open so we don't block
         # connections on outbound I/O.
@@ -1895,7 +2144,20 @@ async def retry_telegram_notification_dlq(
                 row.reply_markup_json,
             )
             for row in rows
+            if row.telegram_user_id not in withdrawn
         ]
+        if withdrawn:
+            await session.execute(
+                delete(TelegramNotificationDLQ).where(
+                    TelegramNotificationDLQ.telegram_user_id.in_(withdrawn),
+                )
+            )
+            await session.commit()
+            logger.info(
+                "DLQ pump: dropped queued messages of %d user(s) who withdrew "
+                "pd_processing consent",
+                len(withdrawn),
+            )
 
     by_user: dict[int, list[tuple[int, int | None, str, int, str | None]]] = defaultdict(list)
     for row_id, tg_id, user_id, message, retry_count, markup_json in snapshots:
@@ -1911,7 +2173,7 @@ async def retry_telegram_notification_dlq(
 
         Returns a tuple of:
         * count of successful sends,
-        * row ids to delete (sent OR blocked),
+        * row ids to delete (sent, blocked or permanently rejected),
         * (row_id, new_retry_count) tuples to bump for retry,
         * blocked user_id (if encountered) for bulk deactivation.
         """
@@ -1942,6 +2204,10 @@ async def retry_telegram_notification_dlq(
                     blocked_internal_id = user_id
                     delete_ids.append(row_id)
                     return sent_count, delete_ids, bump_ids, blocked_internal_id
+                elif outcome == "permanent_error":
+                    # RV-SCH-02: a payload Telegram rejects (BadRequest)
+                    # used to burn all retries before being dropped.
+                    delete_ids.append(row_id)
                 else:
                     bump_ids.append((row_id, retry_count + 1))
         return sent_count, delete_ids, bump_ids, blocked_internal_id
@@ -1965,7 +2231,7 @@ async def retry_telegram_notification_dlq(
             blocked_internal_ids.add(blocked_uid)
 
     if not (delete_ids or bump_ids or blocked_user_ids):
-        return total_sent
+        return total_sent, len(rows)
 
     async with session_factory() as session:
         # Wipe every DLQ row for blocked users; covers rows we
@@ -2001,6 +2267,7 @@ async def retry_telegram_notification_dlq(
                     .values(
                         retry_count=new_retry_count,
                         next_retry_at=_dlq_next_retry_after(new_retry_count),
+                        error_kind="retry",
                     )
                 )
         await session.commit()
@@ -2009,7 +2276,7 @@ async def retry_telegram_notification_dlq(
             "DLQ pump: sent=%d retried=%d blocked_users=%d",
             total_sent, len(bump_ids), len(blocked_user_ids),
         )
-    return total_sent
+    return total_sent, len(rows)
 
 
 async def check_db_health(engine) -> bool:

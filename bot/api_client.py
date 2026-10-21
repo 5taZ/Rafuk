@@ -96,9 +96,16 @@ def build_api_headers(telegram_user_id: int, *, mutating: bool = False) -> dict[
     """
     global _warned_about_legacy_initdata_path
     settings = get_settings()
-    if settings.internal_service_token is not None:
+    # RV-SCH-06: a configured-but-blank token (compose passes "" for an
+    # unset variable) is no token — sending it got every bot→API call a 401.
+    service_token = (
+        settings.internal_service_token.get_secret_value().strip()
+        if settings.internal_service_token is not None
+        else ""
+    )
+    if service_token:
         headers = {
-            "X-Internal-Service-Token": settings.internal_service_token.get_secret_value(),
+            "X-Internal-Service-Token": service_token,
             "X-Acting-Telegram-User-Id": str(telegram_user_id),
         }
     else:

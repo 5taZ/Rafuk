@@ -673,6 +673,9 @@ class ReminderRead(BaseModel):
     remind_at: datetime
     message: str | None = None
     sent: bool
+    # RV-SCH-04: pending | sent | failed | cancelled — ``sent=False`` alone
+    # cannot tell a reminder still due from one that will never go out.
+    status: str = "pending"
     created_at: datetime
 
 

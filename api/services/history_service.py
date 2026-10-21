@@ -42,6 +42,111 @@ class QuerySyncResult:
     total_results: int
     new_listings: list[QueryListingState] = field(default_factory=list)
     price_drops: list[tuple[QueryListingState, float]] = field(default_factory=list)
+    # RV-SCH-01: every listing on the synced page. ``new_listings`` /
+    # ``price_drops`` above are relative to the previous sync of the KEY,
+    # which a tracker on its own schedule may never have seen —
+    # ``changes_since`` re-derives them for one tracker's cursor.
+    listings: list[QueryListingState] = field(default_factory=list)
+
+
+# RV-SCH-01: price changes kept per listing state. A tracker checked at
+# most every 12 h needs only the last one or two; the slack covers
+# daily USD→BYN re-conversion drift on dollar-priced ads.
+_PRICE_HISTORY_LIMIT = 8
+_CENT = Decimal("0.01")
+
+
+def as_utc(value: datetime) -> datetime:
+    """SQLite hands timestamps back naive (UTC by convention)."""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+def _epoch(value: datetime) -> int:
+    return int(as_utc(value).timestamp())
+
+
+def _to_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    return value if isinstance(value, Decimal) else Decimal(str(value))
+
+
+def significant_price_drop(before: Any, after: Any) -> Decimal | None:
+    """Return ``before - after`` when it is a real drop, else None.
+
+    E-FIND-05: an absolute 0.50 BYN threshold meant a 5000 BYN listing
+    fired a price_drop event on a 0.50 BYN flicker — 0.01% noise. Floor
+    the threshold at the larger of 0.50 BYN (kopecks-rounding noise) and
+    0.5% of the previous price (relative noise on expensive items).
+
+    BE-M11: ``last_price_byn`` comes back as ``Decimal`` from the
+    Numeric(12,2) column under PostgreSQL while live prices are floats
+    from ``normalize_price_byn``; mixing them raises ``TypeError``. Both
+    sides go through Decimal so the comparison is exact on either backend.
+    """
+    before_dec, after_dec = _to_decimal(before), _to_decimal(after)
+    if before_dec is None or after_dec is None or after_dec >= before_dec:
+        return None
+    relative_floor = (before_dec * Decimal("0.005")).quantize(_CENT)
+    delta = before_dec - after_dec
+    return delta if delta >= max(Decimal("0.5"), relative_floor) else None
+
+
+def _price_changed(old: Any, new: Any) -> bool:
+    old_dec, new_dec = _to_decimal(old), _to_decimal(new)
+    if old_dec is None or new_dec is None:
+        return (old_dec is None) != (new_dec is None)
+    return old_dec.quantize(_CENT) != new_dec.quantize(_CENT)
+
+
+def _json_price(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+def price_as_of(state: QueryListingState, when: datetime) -> Decimal | None:
+    """RV-SCH-01: the price ``state`` had at ``when``.
+
+    Without history the price has not changed since first_seen_at. A
+    ``when`` older than the retained history falls back to the oldest
+    retained price.
+    """
+    history = state.price_history
+    if not history:
+        return _to_decimal(state.last_price_byn)
+    cutoff = _epoch(when)
+    price = history[0][1]
+    for changed_at, value in history:
+        if changed_at > cutoff:
+            break
+        price = value
+    return _to_decimal(price)
+
+
+def changes_since(sync_result: QuerySyncResult, since: datetime) -> QuerySyncResult:
+    """RV-SCH-01: new listings and price drops for a reader whose previous
+    look at the key was ``since`` (a tracker's ``last_checked_at``).
+
+    The key-level diff in ``sync_query_listing_states`` belongs to whichever
+    tracker synced the key last; this one is per tracker, so a listing or a
+    drop that appeared between two trackers' checks reaches both.
+    """
+    since = as_utc(since)
+    new_listings: list[QueryListingState] = []
+    price_drops: list[tuple[QueryListingState, Decimal]] = []
+    for state in sync_result.listings:
+        if as_utc(state.first_seen_at) > since:
+            new_listings.append(state)
+            continue
+        delta = significant_price_drop(price_as_of(state, since), state.last_price_byn)
+        if delta is not None:
+            price_drops.append((state, delta))
+    return QuerySyncResult(
+        stats_count=sync_result.stats_count,
+        total_results=sync_result.total_results,
+        new_listings=new_listings,
+        price_drops=price_drops,
+        listings=sync_result.listings,
+    )
 
 
 def snapshot_bucket(now: datetime) -> datetime:
@@ -238,12 +343,29 @@ async def sync_query_listing_states(
 ) -> QuerySyncResult:
     stats = compute_price_stats(extract_prices(ads))
     existing_by_id = await load_listing_states(session, query=query)
+    candidates = listing_candidates(ads)
+    # RV-SCH-01: a listing older than load_listing_states' recency window is
+    # still known — fetch it by id rather than re-inserting it, which hit the
+    # unique constraint and came back "new" with a stale price every sync.
+    outside_window = {int(ad["ad_id"]) for ad in candidates} - existing_by_id.keys()
+    if outside_window:
+        known = await session.execute(
+            select(QueryListingState).where(
+                QueryListingState.query == query,
+                QueryListingState.ad_id.in_(outside_window),
+            )
+        )
+        existing_by_id.update({row.ad_id: row for row in known.scalars()})
     seen_ids: set[int] = set()
     new_listings: list[QueryListingState] = []
     price_drops: list[tuple[QueryListingState, float]] = []
+    listings: list[QueryListingState] = []
 
-    for ad in listing_candidates(ads):
+    for ad in candidates:
         ad_id = int(ad.get("ad_id", 0))
+        if ad_id in seen_ids:
+            # A repeated ad on the page carries nothing new.
+            continue
         seen_ids.add(ad_id)
         # Pass the raw ad so detect_price_type can distinguish "free"
         # (price=0, giveaway phrasing) from "negotiable" (price unknown).
@@ -262,7 +384,7 @@ async def sync_query_listing_states(
 
         existing = existing_by_id.get(ad_id)
         if existing is None:
-            existing = QueryListingState(
+            created = QueryListingState(
                 query=query,
                 ad_id=ad_id,
                 title=title,
@@ -274,7 +396,7 @@ async def sync_query_listing_states(
                 first_seen_at=observed_at,
                 last_seen_at=observed_at,
             )
-            session.add(existing)
+            session.add(created)
             try:
                 async with session.begin_nested():
                     # BE-01: see note on QuerySnapshot insert above — drop
@@ -291,35 +413,29 @@ async def sync_query_listing_states(
                 )
                 if existing is None:
                     raise
-            existing_by_id[ad_id] = existing
-            new_listings.append(existing)
-            continue
+                # RV-SCH-01: a concurrent writer won the insert — refresh
+                # the row like any known listing below.
+                existing_by_id[ad_id] = existing
+            else:
+                existing_by_id[ad_id] = created
+                new_listings.append(created)
+                listings.append(created)
+                continue
 
-        # BE-M11: ``existing.last_price_byn`` comes back as ``Decimal`` from
-        # the Numeric(12,2) column under PostgreSQL, while ``price_byn`` is
-        # a ``float`` from ``normalize_price_byn``. Mixing them raises
-        # ``TypeError: unsupported operand type(s) for -: 'Decimal' and
-        # 'float'`` at runtime — SQLite happens to dodge it because the
-        # NUMERIC affinity returns the value as the type it was inserted
-        # with, hiding the bug from the test-suite. Coerce both to Decimal
-        # for the comparison and the delta we hand back.
-        if existing.last_price_byn is not None and price_byn is not None:
-            last_dec = (
-                existing.last_price_byn
-                if isinstance(existing.last_price_byn, Decimal)
-                else Decimal(str(existing.last_price_byn))
-            )
-            price_dec = Decimal(str(price_byn))
-            # E-FIND-05: an absolute 0.50 BYN threshold meant a 5000 BYN
-            # listing fired a price_drop event on a 0.50 BYN flicker —
-            # 0.01% noise. Floor the threshold at the larger of 0.50 BYN
-            # (kopecks-rounding noise) and 0.5% of the previous price
-            # (relative noise on expensive items). The Decimal arithmetic
-            # keeps this exact across SQLite/Postgres.
-            relative_floor = (last_dec * Decimal("0.005")).quantize(Decimal("0.01"))
-            min_drop = max(Decimal("0.5"), relative_floor)
-            if price_dec < last_dec and (last_dec - price_dec) >= min_drop:
-                price_drops.append((existing, last_dec - price_dec))
+        # BE-M11 / E-FIND-05: Decimal-exact drop with a noise floor, see
+        # ``significant_price_drop``.
+        delta = significant_price_drop(existing.last_price_byn, price_byn)
+        if delta is not None:
+            price_drops.append((existing, delta))
+        if _price_changed(existing.last_price_byn, price_byn):
+            # RV-SCH-01: record the change so trackers that have not looked
+            # at this key since before it still see it as a drop.
+            history = existing.price_history or [
+                [_epoch(existing.first_seen_at), _json_price(existing.last_price_byn)],
+            ]
+            existing.price_history = [
+                *history, [_epoch(observed_at), _json_price(price_byn)],
+            ][-_PRICE_HISTORY_LIMIT:]
 
         existing.title = title
         existing.link = link
@@ -328,6 +444,7 @@ async def sync_query_listing_states(
         existing.price_type = price_type
         existing.last_seen_at = observed_at
         existing.active = True
+        listings.append(existing)
 
     for ad_id, state in existing_by_id.items():
         if ad_id not in seen_ids:
@@ -338,4 +455,5 @@ async def sync_query_listing_states(
         total_results=total_results,
         new_listings=new_listings,
         price_drops=price_drops,
+        listings=listings,
     )

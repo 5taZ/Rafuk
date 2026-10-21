@@ -401,6 +401,12 @@ class QueryListingState(Base):
     )
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # RV-SCH-01: the row is shared by every tracker on the search key, so a
+    # single "previous price" is consumed by whichever tracker syncs first.
+    # Keep the last few price changes ([[epoch_seconds, price_byn|null], ...],
+    # oldest first) so each tracker diffs against the price it saw at its own
+    # last check. NULL = unchanged since first_seen_at.
+    price_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -674,6 +680,15 @@ class DealExpense(Base):
     )
 
 
+# RV-SCH-04: reminder delivery lifecycle. ``pending`` is the only state the
+# scheduler picks up; the other three are terminal, so a blocked chat or a
+# rejected message no longer comes back every tick forever.
+REMINDER_STATUS_PENDING = "pending"
+REMINDER_STATUS_SENT = "sent"
+REMINDER_STATUS_FAILED = "failed"
+REMINDER_STATUS_CANCELLED = "cancelled"
+
+
 class LeadReminder(Base):
     """Reminder for a lead — notifies the user at a scheduled time."""
 
@@ -698,12 +713,29 @@ class LeadReminder(Base):
         index=True,
     )
     message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Kept in step with ``status == 'sent'`` for API/export compatibility.
     sent: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         default=False,
         server_default="false",
     )
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=REMINDER_STATUS_PENDING,
+        server_default=REMINDER_STATUS_PENDING,
+    )
+    # RV-SCH-04: transient failures back off on the row itself instead of
+    # also going through the DLQ, which used to deliver the reminder once
+    # from the DLQ and once more from the next tick.
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    last_error: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -716,6 +748,11 @@ class LeadReminder(Base):
 
     __table_args__ = (
         Index("idx_reminders_due", "remind_at", "sent"),
+        Index("idx_lead_reminders_status_due", "status", "remind_at"),
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'failed', 'cancelled')",
+            name="chk_lead_reminders_status",
+        ),
     )
 
 
@@ -754,6 +791,11 @@ class TelegramNotificationDLQ(Base):
     reply_markup_json: Mapped[str | None] = mapped_column(
         Text, nullable=True,
     )
+    # RV-SCH-02: the table is also the tracker-alert outbox (rows written in
+    # the tick's group transaction, error_kind='pending'). Rows sharing a
+    # (telegram_user_id, dedup_key) collapse to one message — the same
+    # listing seen by several of one user's trackers.
+    dedup_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

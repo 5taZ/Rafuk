@@ -17,6 +17,9 @@ constraints with raw SQL) that SQLite cannot replay.
 from __future__ import annotations
 
 import os
+import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -46,8 +49,8 @@ def test_alembic_chain_has_single_head() -> None:
         f"Alembic should have exactly one head, found {len(heads)}: {heads!r}. "
         "Run `alembic merge -m 'merge heads' " + " ".join(heads) + "` to fix."
     )
-    assert heads[0] == "20260519_0025", (
-        f"Expected alembic head to be 20260519_0025, got {heads[0]!r}"
+    assert heads[0] == "20261021_0026", (
+        f"Expected alembic head to be 20261021_0026, got {heads[0]!r}"
     )
 
 
@@ -84,6 +87,90 @@ def test_alembic_revisions_have_unique_ids() -> None:
     ids = [rev.revision for rev in script.walk_revisions("base", "heads")]
     duplicates = {i for i in ids if ids.count(i) > 1}
     assert not duplicates, f"Duplicate revision IDs: {duplicates}"
+
+
+# ── Scheduler delivery-state revision on SQLite ─────────────────────────
+
+_SCHEDULER_DELIVERY_REVISION = "20261021_0026"
+
+
+def _run_alembic(db_path: Path, *steps: tuple[str, str]) -> None:
+    """Run alembic commands in a subprocess: env.py calls ``asyncio.run`` and
+    must not share this process' event loop or logging setup."""
+    script = (
+        "import sys\n"
+        "from alembic import command\n"
+        "from alembic.config import Config\n"
+        "cfg = Config()\n"
+        "cfg.set_main_option('script_location', sys.argv[1])\n"
+        "for step in sys.argv[2:]:\n"
+        "    name, rev = step.split(':')\n"
+        "    getattr(command, name)(cfg, rev)\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", script, str(REPO_ROOT / "migrations"),
+         *(f"{name}:{rev}" for name, rev in steps)],
+        check=True,
+        cwd=REPO_ROOT,
+        env={**os.environ, "DATABASE_URL": f"sqlite+aiosqlite:///{db_path}"},
+        capture_output=True,
+        timeout=120,
+    )
+
+
+def test_scheduler_delivery_state_migration_round_trips_on_sqlite(tmp_path: Path) -> None:
+    """RV-SCH-01/02/04: 20261021_0026 downgrades and re-upgrades on SQLite
+    (local dev) — Postgres is covered by the round-trip test below in CI.
+
+    Starts from the model schema, so it also pins model and migration to
+    the same columns. Only this revision is stepped (``-1`` / back to it),
+    whatever else the chain holds around it.
+    """
+    from sqlalchemy import create_engine
+
+    from api.models import Base
+
+    db_path = tmp_path / "migration.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    engine.dispose()
+
+    def columns(table: str) -> set[str]:
+        with sqlite3.connect(db_path) as con:
+            return {row[1] for row in con.execute(f"PRAGMA table_info({table})")}
+
+    with sqlite3.connect(db_path) as con:
+        con.execute(
+            "INSERT INTO users (id, telegram_user_id, first_name) VALUES (1, 42, 'A')"
+        )
+        con.execute(
+            "INSERT INTO lead_items (id, user_id, ad_id, query, title, link) "
+            "VALUES (1, 1, 5, 'q', 't', 'l')"
+        )
+        con.execute(
+            "INSERT INTO lead_reminders (lead_id, user_id, remind_at, message, sent, status) "
+            "VALUES (1, 1, '2026-10-01 10:00:00', 'gave up', 0, 'failed')"
+        )
+
+    _run_alembic(db_path, ("stamp", _SCHEDULER_DELIVERY_REVISION), ("downgrade", "-1"))
+    assert "price_history" not in columns("query_listing_states")
+    assert "dedup_key" not in columns("telegram_notification_dlq")
+    assert not {"status", "attempts", "next_attempt_at", "last_error"} & columns("lead_reminders")
+    with sqlite3.connect(db_path) as con:
+        # The old scheduler re-sends every unsent reminder: a terminal one
+        # comes back as sent so the downgrade does not replay it.
+        assert con.execute("SELECT sent FROM lead_reminders").fetchall() == [(1,)]
+
+    _run_alembic(db_path, ("upgrade", _SCHEDULER_DELIVERY_REVISION))
+    assert "price_history" in columns("query_listing_states")
+    assert "dedup_key" in columns("telegram_notification_dlq")
+    assert {"status", "attempts", "next_attempt_at", "last_error"} <= columns("lead_reminders")
+    with sqlite3.connect(db_path) as con:
+        assert con.execute("SELECT status, attempts FROM lead_reminders").fetchall() == [
+            ("sent", 0),
+        ]
+        with pytest.raises(sqlite3.IntegrityError):
+            con.execute("UPDATE lead_reminders SET status = 'bogus'")
 
 
 # ── Round-trip smoke test (Postgres only) ────────────────────────────────

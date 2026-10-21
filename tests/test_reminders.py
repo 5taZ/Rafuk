@@ -212,3 +212,51 @@ def test_reminders_offset_cap_rejects_over_10000() -> None:
         lead = _create_lead(client)
         resp = client.get(f"/api/v1/leads/{lead['id']}/reminders", params={"offset": 10001})
     assert resp.status_code == 422
+
+
+def test_create_reminder_caps_active_reminders_per_user(monkeypatch) -> None:
+    """RV-SCH-04: a user can hold at most REMINDER_MAX_ACTIVE_PER_USER
+    pending reminders — the scheduler sends 100 per tick, so one account
+    with hundreds of reminders delayed everyone else's. Reminders that
+    already went out do not count."""
+    from sqlalchemy import update
+
+    from api.models import LeadReminder
+    from api.routers import reminders as reminders_router
+
+    monkeypatch.setattr(reminders_router, "REMINDER_MAX_ACTIVE_PER_USER", 2)
+    app = _make_app(USER_A)
+
+    async def _mark_all_sent() -> None:
+        async with app.state.session_factory() as session:
+            await session.execute(update(LeadReminder).values(status="sent", sent=True))
+            await session.commit()
+
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        remind_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        url = f"/api/v1/leads/{lead['id']}/reminders"
+        for _ in range(2):
+            assert client.post(url, json={"remind_at": remind_at}).status_code == 201
+        over = client.post(url, json={"remind_at": remind_at})
+        assert over.status_code == 429
+        assert "2 active reminders" in over.json()["detail"]
+
+        client.portal.call(_mark_all_sent)
+        assert client.post(url, json={"remind_at": remind_at}).status_code == 201
+
+
+def test_reminder_read_exposes_delivery_status() -> None:
+    """RV-SCH-04: ``sent=False`` alone cannot tell a reminder that is still
+    due from one that will never go out — the API returns ``status``."""
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        lead = _create_lead(client)
+        remind_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        created = client.post(
+            f"/api/v1/leads/{lead['id']}/reminders", json={"remind_at": remind_at},
+        )
+        assert created.status_code == 201
+        assert created.json()["status"] == "pending"
+        listed = client.get(f"/api/v1/leads/{lead['id']}/reminders").json()
+        assert [r["status"] for r in listed] == ["pending"]

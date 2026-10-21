@@ -283,3 +283,31 @@ def test_production_policy_gate_defaults() -> None:
         assert s.internal_service_token_required is False
         assert s.ai_audit_required is False
         assert s.allow_legacy_bot_initdata is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("", None), ("   ", None), (" svc-token \n", "svc-token"), ("svc-token", "svc-token")],
+)
+def test_blank_internal_service_token_is_unset(raw: str, expected: str | None) -> None:
+    """RV-SCH-06: docker-compose passes INTERNAL_SERVICE_TOKEN="" when the
+    variable is unset. As SecretStr('') it counted as configured, so the bot
+    sent an empty token and every bot→API call got a 401."""
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "INTERNAL_SERVICE_TOKEN": raw,
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        config.get_settings.cache_clear()
+        importlib.reload(config)
+        s = config.Settings(_env_file=None)
+        if expected is None:
+            assert s.internal_service_token is None
+        else:
+            assert s.internal_service_token.get_secret_value() == expected
