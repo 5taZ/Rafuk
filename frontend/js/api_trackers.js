@@ -172,9 +172,11 @@ function createApiTrackers(context) {
             return;
         }
 
-        const query = state.search.query.trim();
+        // RV-FE-03: «Следить» tracks the results on screen; a draft that
+        // was never searched must not become a tracker.
+        const query = (state.search.activeQuery || "").trim();
         if (!query) {
-            showToast("Сначала введите запрос");
+            showToast(state.search.draft ? "Сначала найдите объявления по запросу" : "Сначала введите запрос");
             return;
         }
 

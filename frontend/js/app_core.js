@@ -1,5 +1,154 @@
 const _loadPromises = new Map();
 
+// RV-FE-02: shared plumbing for the lazy-chunk stubs (_lazy_*_stub.js).
+// Each stub used to cache its first init promise forever, so one
+// network blip, 5xx or SRI mismatch mid-deploy left the section dead
+// (skeletons, no detail, no trackers) until the Mini App restarted.
+const LAZY_SCRIPT_TIMEOUT_MS = 20_000;
+const LAZY_RETRY_COOLDOWN_MS = 8_000;
+const LAZY_LOAD_FAILED_MESSAGE = "Не удалось загрузить раздел. Проверьте соединение и попробуйте ещё раз.";
+
+function _createLazyModule(context, { load, factoryKey, label }) {
+    let real = null;
+    let pending = null;
+    let failedAt = 0;
+
+    function ensure() {
+        if (real) return Promise.resolve(real);
+        if (pending) return pending;
+        const attempt = (async () => {
+            await load(context);
+            const factory = (window.App || {})[factoryKey];
+            if (typeof factory !== "function") {
+                throw new Error(`${label} did not register factory`);
+            }
+            real = factory(context);
+            failedAt = 0;
+            return real;
+        })();
+        pending = attempt;
+        // Registered before any caller's handler, so by the time they
+        // see the rejection the next ensure() already starts afresh.
+        attempt.catch(() => {
+            if (pending === attempt) pending = null;
+            failedAt = Date.now();
+        });
+        return attempt;
+    }
+
+    return {
+        ensure,
+        current: () => real,
+        loading: () => Boolean(pending),
+        // Render passes inside the cooldown paint the error state
+        // instead of re-requesting the chunk on every repaint; the
+        // "Повторить" button (or the first render after it) retries.
+        coolingDown: () => !real && !pending && failedAt > 0
+            && Date.now() - failedAt < LAZY_RETRY_COOLDOWN_MS,
+        retry() {
+            failedAt = 0;
+            return ensure();
+        },
+    };
+}
+
+// Sync render entry points: return undefined until the chunk lands,
+// then replay the call and repaint. ``onUnavailable(method, args)`` paints
+// the error state while a recent failure is cooling down.
+function _lazyRenderCall(lazy, context, label, method, args, onUnavailable) {
+    const real = lazy.current();
+    if (real) return real[method].apply(null, args);
+    if (lazy.coolingDown()) {
+        if (typeof onUnavailable === "function") onUnavailable(method, args);
+        return undefined;
+    }
+    lazy.ensure()
+        .then((loaded) => {
+            loaded[method].apply(null, args);
+            if (typeof context.scheduleRender === "function") context.scheduleRender();
+        })
+        .catch((err) => {
+            (context.logClientError || (() => {}))(`${label} lazy-load failed:`, err);
+            // Repaint so the skeletons give way to the error state.
+            if (!lazy.current() && typeof context.scheduleRender === "function") {
+                context.scheduleRender();
+            }
+        });
+    return undefined;
+}
+
+// Async API entry points resolve to ``onFailure(method, err)`` instead of
+// rejecting when the chunk cannot be fetched: callers fire them with
+// ``void`` and would otherwise surface nothing but an unhandled rejection.
+async function _lazyApiCall(lazy, context, label, method, args, onFailure) {
+    let real = lazy.current();
+    if (!real) {
+        try {
+            real = await lazy.ensure();
+        } catch (err) {
+            (context.logClientError || (() => {}))(`${label} lazy-load failed:`, err);
+            return typeof onFailure === "function" ? onFailure(method, err) : undefined;
+        }
+    }
+    return real[method].apply(null, args);
+}
+
+// Teardown entry points (close / destroy) need no chunk when nothing
+// could have been opened yet; if an open is still loading, the close
+// is replayed right after it so it cannot pop up afterwards.
+function _lazyTeardownCall(lazy, method, args) {
+    const real = lazy.current();
+    if (real) return real[method].apply(null, args);
+    if (lazy.loading()) {
+        lazy.ensure().then((loaded) => loaded[method].apply(null, args), () => {});
+    }
+    return undefined;
+}
+
+function _showLazyLoadToast(context) {
+    const toast = context.showToast || context._hooks?.showToast;
+    if (typeof toast === "function") toast(LAZY_LOAD_FAILED_MESSAGE, "error", 3600);
+}
+
+// Paint (once) an error state with "Повторить" into ``container``.
+// ``retry`` reloads the chunk; ``afterLoad`` re-fetches data whose loader
+// lives in the same failed chunk.
+function _renderLazyLoadError(context, container, retry, afterLoad) {
+    if (!container || typeof container.replaceChildren !== "function") return;
+    const current = container.firstElementChild;
+    if (current && container.childElementCount === 1 && current.classList?.contains("lazy-load-error")) {
+        return; // keep focus and avoid re-announcing on every repaint
+    }
+    const button = domEl("button", {
+        className: "empty-state-action",
+        type: "button",
+        text: "Повторить",
+    });
+    const node = domEl(
+        "div",
+        { className: "empty-state empty-state--error lazy-load-error", attrs: { role: "status" } },
+        domEl("p", { className: "empty-state-title", text: "Раздел не загрузился" }),
+        domEl("p", { className: "empty-state-hint", text: LAZY_LOAD_FAILED_MESSAGE }),
+        button,
+    );
+    button.addEventListener("click", () => {
+        button.disabled = true;
+        button.textContent = "Загружаю…";
+        retry().then(
+            () => {
+                if (typeof afterLoad === "function") afterLoad();
+                if (typeof context.scheduleRender === "function") context.scheduleRender();
+            },
+            () => {
+                button.disabled = false;
+                button.textContent = "Повторить";
+                _showLazyLoadToast(context);
+            },
+        );
+    });
+    container.replaceChildren(node);
+}
+
 function createAppCore() {
     const state = {
         ui: {
@@ -8,9 +157,18 @@ function createAppCore() {
             activeView: "overview",
             dirtyViews: new Set(),
             _allDirty: true,
+            // RV-SEC-05: set after account deletion; requestJson refuses
+            // every further request.
+            accountDeleted: false,
         },
         search: {
-            query: "",
+            // RV-FE-03: ``draft`` mirrors the search input on every
+            // keystroke; ``activeQuery`` is the query of the results on
+            // screen. Detail, paging, sort, filters, saving, trackers and
+            // price history must read activeQuery — a half-typed draft
+            // used to leak into all of them.
+            draft: "",
+            activeQuery: "",
             strictSearch: true,
             searchRequestId: 0,
             sort: "newest",
@@ -72,6 +230,10 @@ function createAppCore() {
             items: [],
             filter: "all",
             _requestId: 0,
+            _loading: false,
+            // RV-FE-05: message of the last failed load; the list keeps
+            // its previous items and renders an error state instead.
+            error: null,
             pipelineStep: "active",
             itemsFilter: "purchases",
         },
@@ -79,6 +241,8 @@ function createAppCore() {
             items: [],
             filter: "all",
             _requestId: 0,
+            _loading: false,
+            error: null,
         },
         detail: {
             data: null,
@@ -475,25 +639,48 @@ function createAppCore() {
     }
 
     const _loadedScripts = new Set();
+    const _pendingScripts = new Map();
     // FE-NEW-1: SRI on lazy-loaded modules. Map is generated by
     // scripts/build_frontend_bundle.sh and embedded in the bundle.
     function _loadScript(src, integrity) {
         if (_loadedScripts.has(src)) return Promise.resolve();
+        // RV-FE-02: concurrent callers share one <script> instead of
+        // racing duplicate tags.
+        if (_pendingScripts.has(src)) return _pendingScripts.get(src);
         if (!integrity && typeof __LAZY_INTEGRITY !== "undefined") {
             const basename = src.split("/").pop().split("?")[0];
             integrity = __LAZY_INTEGRITY[basename];
         }
-        return new Promise((resolve, reject) => {
+        const promise = new Promise((resolve, reject) => {
             const s = document.createElement("script");
             s.src = src;
             if (integrity) {
                 s.integrity = integrity;
                 s.crossOrigin = "anonymous";
             }
-            s.onload = () => { _loadedScripts.add(src); resolve(); };
-            s.onerror = reject;
+            let timer = null;
+            const settle = (err) => {
+                clearTimeout(timer);
+                s.onload = null;
+                s.onerror = null;
+                _pendingScripts.delete(src);
+                if (!err) {
+                    _loadedScripts.add(src);
+                    resolve();
+                    return;
+                }
+                // RV-FE-02: a stalled or failed tag is removed so the
+                // retry inserts a fresh one instead of waiting on it.
+                s.remove();
+                reject(err);
+            };
+            s.onload = () => settle(null);
+            s.onerror = () => settle(new Error(`Failed to load ${src}`));
+            timer = setTimeout(() => settle(new Error(`Timed out loading ${src}`)), LAZY_SCRIPT_TIMEOUT_MS);
             document.head.appendChild(s);
         });
+        _pendingScripts.set(src, promise);
+        return promise;
     }
 
     return {

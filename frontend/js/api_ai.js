@@ -42,7 +42,7 @@ function createApiAi(context) {
     const render = app.createAiRender(context, aiCtx);
 
     async function loadAIAnalysis(adId) {
-        const query = (state.detail.data?.query || state.search.query || "").trim();
+        const query = (state.detail.data?.query || state.search.activeQuery || "").trim();
         if (!adId || !query) return;
         if (typeof context.canUseAiFeature === "function" && !context.canUseAiFeature("ai")) return;
 
@@ -86,91 +86,59 @@ function createApiAi(context) {
 
         modal.openAIModal(state.detail.data?.title || "");
 
+        const category = state.filters.category || undefined;
         try {
-            // POST starts async analysis, returns task_id immediately
-            const startResp = await postJson("/api/v1/ai/analyze", {
-                ad_id: adId,
-                query,
-                category: state.filters.category || undefined,
-            });
-            if (isCancelled()) return;
+            let result = null;
+            // RV-AI-07: closing the modal or running out of patience does
+            // not stop the server, which still finishes (and has charged
+            // for) the analysis. Re-opening the same listing resumes that
+            // task instead of starting — and paying for — a second one.
+            let task = _resumableTask(adId, query, category);
+            for (;;) {
+                if (!task) {
+                    // POST starts async analysis, returns task_id immediately
+                    const startResp = await postJson("/api/v1/ai/analyze", {
+                        ad_id: adId,
+                        query,
+                        category,
+                    });
+                    if (isCancelled()) return;
 
-            // Cached result returned immediately
-            if (startResp.cached && startResp.result) {
-                const result = startResp.result;
-                state.detail.ai = { adId, loading: false, result, error: "", source: "ai" };
-                modal.stopLoadingAnimation(false);
-                render.renderAIModalResult(result);
-                return;
-            }
-
-            const taskId = startResp.task_id;
-            if (!taskId) {
-                throw new Error("Сервер не вернул идентификатор задачи");
-            }
-            // Poll for result every 3 seconds
-            const POLL_INTERVAL = 3000;
-            const POLL_TIMEOUT = 12000;
-            // M4: max 90 seconds total polling. 30 polls × ~3s = ~90s
-            const MAX_POLLS = 30;
-            const MAX_CONSECUTIVE_POLL_ERRORS = 4;
-            let pollCount = 0;
-            let consecutivePollErrors = 0;
-            const nextPollDelay = () => POLL_INTERVAL + Math.floor(Math.random() * 700);
-
-            const result = await new Promise((resolve, reject) => {
-                const poll = async () => {
-                    if (isCancelled()) {
-                        resolve(null);
+                    // Cached result returned immediately
+                    if (startResp.cached && startResp.result) {
+                        const cachedResult = startResp.result;
+                        state.detail.ai = { adId, loading: false, result: cachedResult, error: "", source: "ai" };
+                        modal.stopLoadingAnimation(false);
+                        render.renderAIModalResult(cachedResult);
                         return;
                     }
-                    pollCount++;
-                    if (pollCount > MAX_POLLS) {
-                        reject(new Error("Анализ занял слишком долго. Попробуйте ещё раз."));
-                        return;
+                    if (!startResp.task_id) {
+                        throw new Error("Сервер не вернул идентификатор задачи");
                     }
-                    try {
-                        const status = await getJson(`/api/v1/ai/task/${taskId}`, { timeout: POLL_TIMEOUT });
-                        if (isCancelled()) {
-                            resolve(null);
-                            return;
-                        }
-                        consecutivePollErrors = 0;
-                        if (status.stage) {
-                            modal.setStageLabel(status.stage);
-                        }
-                        if (status.status === "done") {
-                            resolve(status.result);
-                        } else if (status.status === "error") {
-                            reject(new Error(status.error || "Ошибка AI анализа"));
-                        } else {
-                            // Still pending/processing — poll again
-                            setTimeout(poll, nextPollDelay());
-                        }
-                    } catch (err) {
-                        if (isCancelled()) {
-                            resolve(null);
-                            return;
-                        }
-                        const message = String(err?.message || "");
-                        const isTaskMissing = message.includes("не найдена");
-                        consecutivePollErrors += 1;
-
-                        if (isTaskMissing && pollCount > 5) {
-                            reject(new Error("Связь с задачей AI-анализа потеряна. Попробуйте открыть анализ ещё раз."));
-                            return;
-                        }
-
-                        if (consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
-                            reject(new Error("Не удалось стабильно получить статус AI-анализа. Проверьте соединение и попробуйте ещё раз."));
-                            return;
-                        }
-
-                        setTimeout(poll, nextPollDelay());
+                    task = {
+                        adId,
+                        query,
+                        category,
+                        taskId: startResp.task_id,
+                        budgetMs: _pollBudgetMs(startResp),
+                        settled: false,
+                        resumed: false,
+                    };
+                    aiCtx.lastTask = task;
+                }
+                try {
+                    result = await _pollTask(task, isCancelled);
+                    break;
+                } catch (err) {
+                    // A resumed task can expire server-side (task TTL,
+                    // restart): start a fresh one instead of failing.
+                    if (err?.taskGone && task.resumed) {
+                        task = null;
+                        continue;
                     }
-                };
-                setTimeout(poll, nextPollDelay());
-            });
+                    throw err;
+                }
+            }
 
             if (isCancelled() || result == null) return;
             state.detail.ai = { adId, loading: false, result, error: "", source: "ai" };
@@ -206,6 +174,114 @@ function createApiAi(context) {
                 aiCtx.loading = false;
             }
         }
+    }
+
+    // RV-AI-07: how long the client waits for one analysis. The pipeline
+    // runs a Kufar search (up to ~2×15 s), an optional photo pre-check
+    // (30 s) and the model call bounded by ai_analysis_timeout (150 s,
+    // api/config.py) before it answers with a fallback. The old cap of
+    // 30 polls (~100 s) gave up first, and the "Повторить" that followed
+    // started a second task and spent a second quota point. A backend
+    // that reports ``poll_timeout_seconds`` with the task id wins.
+    const DEFAULT_POLL_BUDGET_MS = 240_000;
+    const POLL_BUDGET_GRACE_MS = 15_000;
+    const MAX_POLL_BUDGET_MS = 600_000;
+    // Poll for the result every ~3 seconds.
+    const POLL_INTERVAL = 3000;
+    const POLL_TIMEOUT = 12000;
+    const MAX_CONSECUTIVE_POLL_ERRORS = 4;
+    const nextPollDelay = () => POLL_INTERVAL + Math.floor(Math.random() * 700);
+
+    function _pollBudgetMs(startResp) {
+        const serverSeconds = Number(startResp?.poll_timeout_seconds);
+        if (Number.isFinite(serverSeconds) && serverSeconds > 0) {
+            return Math.min(serverSeconds * 1000 + POLL_BUDGET_GRACE_MS, MAX_POLL_BUDGET_MS);
+        }
+        return DEFAULT_POLL_BUDGET_MS;
+    }
+
+    function _resumableTask(adId, query, category) {
+        const last = aiCtx.lastTask;
+        if (!last || last.settled) return null;
+        if (last.adId !== adId || last.query !== query || last.category !== category) return null;
+        last.resumed = true;
+        return last;
+    }
+
+    function _pollTask(task, isCancelled) {
+        const deadline = Date.now() + task.budgetMs;
+        let pollCount = 0;
+        let consecutivePollErrors = 0;
+        const settle = () => { task.settled = true; };
+        return new Promise((resolve, reject) => {
+            const poll = async () => {
+                if (isCancelled()) {
+                    resolve(null);
+                    return;
+                }
+                if (Date.now() > deadline) {
+                    // The task stays resumable: "Повторить" keeps waiting
+                    // for this very analysis instead of starting another.
+                    reject(new Error("Анализ ещё не готов: сервер работает дольше обычного. «Повторить» продолжит ждать этот же анализ."));
+                    return;
+                }
+                pollCount++;
+                try {
+                    const status = await getJson(`/api/v1/ai/task/${task.taskId}`, { timeout: POLL_TIMEOUT });
+                    if (isCancelled()) {
+                        resolve(null);
+                        return;
+                    }
+                    consecutivePollErrors = 0;
+                    if (status.stage) {
+                        modal.setStageLabel(status.stage);
+                    }
+                    if (status.status === "done") {
+                        settle();
+                        resolve(status.result);
+                    } else if (status.status === "error") {
+                        settle();
+                        reject(new Error(status.error || "Ошибка AI анализа"));
+                    } else {
+                        // Still pending/processing — poll again
+                        setTimeout(poll, nextPollDelay());
+                    }
+                } catch (err) {
+                    if (isCancelled()) {
+                        resolve(null);
+                        return;
+                    }
+                    const message = String(err?.message || "");
+                    const isTaskMissing = err?.status === 404 || message.includes("не найдена");
+                    consecutivePollErrors += 1;
+
+                    if (isTaskMissing && task.resumed && pollCount === 1) {
+                        settle();
+                        const gone = new Error("AI task expired");
+                        gone.taskGone = true;
+                        reject(gone);
+                        return;
+                    }
+                    if (isTaskMissing && pollCount > 5) {
+                        settle();
+                        reject(new Error("Связь с задачей AI-анализа потеряна. Попробуйте открыть анализ ещё раз."));
+                        return;
+                    }
+                    if (err?.sessionExpired || err?.accountDeleted) {
+                        reject(err);
+                        return;
+                    }
+
+                    if (consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+                        reject(new Error("Не удалось стабильно получить статус AI-анализа. Проверьте соединение и попробуйте ещё раз."));
+                        return;
+                    }
+
+                    setTimeout(poll, nextPollDelay());
+                }
+            };
+            setTimeout(poll, task.resumed ? 0 : nextPollDelay());
+        });
     }
 
     /** Hybrid error UI: modal-side loader visuals (ring/icon/bar turn

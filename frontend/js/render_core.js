@@ -360,11 +360,13 @@ function createRenderCore(context) {
      * @param {string} [opts.hint]       Second line, muted.
      * @param {string} [opts.actionLabel] CTA button label.
      * @param {Function} [opts.onAction] CTA click handler.
+     * @param {string} [opts.tone]       "error" for a failed load.
+     * @param {boolean} [opts.actionDisabled] Disable the CTA (retry in flight).
      */
     function buildEmptyState(opts) {
-        const { title, hint, actionLabel, onAction } = opts || {};
+        const { title, hint, actionLabel, onAction, tone, actionDisabled } = opts || {};
         const wrap = domEl("div", {
-            className: "empty-state",
+            className: tone === "error" ? "empty-state empty-state--error" : "empty-state",
             attrs: { role: "status" },
         });
         if (title) {
@@ -383,10 +385,45 @@ function createRenderCore(context) {
                 type: "button",
                 text: actionLabel,
             });
+            button.disabled = Boolean(actionDisabled);
             button.addEventListener("click", onAction);
             wrap.appendChild(button);
         }
         return wrap;
+    }
+
+    /* ===== Session banner ===== */
+
+    // RV-FE-05: Telegram initData lives 2 h, after which every request
+    // answers 401. One persistent banner says what happened and how to
+    // recover (reloading the WebView would reuse the same initData).
+    let _sessionBanner = null;
+
+    function showSessionBanner(message) {
+        const text = String(message || "").trim();
+        if (!text || !document.body) return;
+        if (!_sessionBanner || !_sessionBanner.isConnected) {
+            const tg = window.Telegram?.WebApp;
+            const closeButton = typeof tg?.close === "function"
+                ? domEl("button", {
+                    className: "session-banner-action",
+                    type: "button",
+                    text: "Закрыть приложение",
+                })
+                : null;
+            closeButton?.addEventListener("click", () => {
+                try { tg.close(); } catch (_) { /* not inside Telegram */ }
+            });
+            _sessionBanner = domEl(
+                "div",
+                { className: "session-banner", attrs: { role: "alert" } },
+                domEl("span", { className: "session-banner-text" }),
+                closeButton,
+            );
+            document.body.appendChild(_sessionBanner);
+        }
+        const textNode = _sessionBanner.querySelector(".session-banner-text");
+        if (textNode && textNode.textContent !== text) textNode.textContent = text;
     }
 
     /* ===== Loading ===== */
@@ -415,9 +452,11 @@ function createRenderCore(context) {
 
     function renderLoading() {
         return safeRender('renderLoading', () => {
-            const query = state.search.query.trim();
+            const query = (state.search.activeQuery || "").trim();
             const showOverviewLoading = Boolean(state.ui.loading && query);
-            elements.searchButton.disabled = state.ui.loading || !state.search.query.trim();
+            // RV-FE-03: the button reflects what is typed; the loading
+            // copy names the query actually being fetched.
+            elements.searchButton.disabled = state.ui.loading || !(state.search.draft || "").trim();
             elements.searchInput.disabled = state.ui.loading;
             if (elements.overviewLoading) {
                 elements.overviewLoading.hidden = !showOverviewLoading;
@@ -567,7 +606,7 @@ function createRenderCore(context) {
         const refinements = Array.isArray(state.misc.stats?.suggested_refinements)
             ? state.misc.stats.suggested_refinements
             : [];
-        const visibleRefinements = visibleRefinementTokens(refinements, state.search.query);
+        const visibleRefinements = visibleRefinementTokens(refinements, state.search.activeQuery);
         domClear(elements.summaryRefinementsChips);
         if (!visibleRefinements.length) {
             elements.summaryRefinements.hidden = true;
@@ -587,7 +626,7 @@ function createRenderCore(context) {
 
     function renderSummary() {
         return safeRender('renderSummary', () => {
-            if (!state.misc.stats || !state.search.query || state.ui.activeView === "profile" || state.ui.activeView === "admin") {
+            if (!state.misc.stats || !state.search.activeQuery || state.ui.activeView === "profile" || state.ui.activeView === "admin") {
                 elements.summaryStrip.hidden = true;
                 elements.summaryQuery.textContent = "—";
                 elements.summarySignal.textContent = "—";
@@ -627,7 +666,7 @@ function createRenderCore(context) {
                 signal = "Часть рынка без цены, ориентируйтесь на медиану и полный список объявлений.";
             }
 
-            elements.summaryQuery.textContent = state.search.query;
+            elements.summaryQuery.textContent = state.search.activeQuery;
             elements.summarySignal.textContent = signal;
             function shortPrice(v) {
                 if (v == null || v === 0) return "—";
@@ -697,5 +736,6 @@ function createRenderCore(context) {
         renderHelper,
         renderViews,
         buildEmptyState,
+        showSessionBanner,
     };
 }

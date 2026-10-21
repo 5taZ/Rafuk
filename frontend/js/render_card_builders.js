@@ -51,7 +51,9 @@ function createRenderCardBuilders(context) {
                 : validated;
             const attrs = {
                 src,
-                alt: altText || "Товар без названия",
+                // RV-UI-02: on cards the title sits right next to the
+                // photo, so the alt would only repeat it.
+                alt: opts.decorative ? "" : (altText || "Товар без названия"),
                 loading: "lazy",
                 decoding: "async",
                 width: String(displayPx),
@@ -136,15 +138,45 @@ function createRenderCardBuilders(context) {
         };
     }
 
+    // RV-UI-02: ids that tie a card's primary button to its price and
+    // badges (aria-describedby); unique for the page lifetime.
+    let _cardSeq = 0;
+
+    function _describedBy(...nodes) {
+        const ids = nodes.filter((node) => node && node.id).map((node) => node.id);
+        return ids.length ? ids.join(" ") : null;
+    }
+
+    // RV-UI-02: the primary action of a card is a real button in its
+    // heading. CSS stretches its hit area over the card (or the card's
+    // top block), so the card is no longer a role=button that wraps
+    // further buttons, links and inputs.
+    function _buildCardOpenButton(titleNode, headingClass, describedBy) {
+        return domEl(
+            "h3",
+            { className: `card-heading ${headingClass}` },
+            domEl(
+                "button",
+                {
+                    className: "card-open",
+                    type: "button",
+                    attrs: { "aria-describedby": describedBy },
+                },
+                titleNode,
+            ),
+        );
+    }
+
     function buildListingNode(item, verdictClassName) {
-        const listing = domEl("article", {
+        // RV-UI-02: a list item instead of ``role=button`` with the
+        // title as its only accessible name — price, condition, seller
+        // and badges were never announced, and the nested buttons made
+        // it a nested-interactive control.
+        const listing = domEl("div", {
             className: "listing",
-            attrs: {
-                "aria-label": item.subject || item.title || "Объявление",
-                tabindex: "0",
-                role: "button",
-            },
+            attrs: { role: "listitem" },
         });
+        const cardId = `listing-card-${++_cardSeq}`;
         const resolveVerdictClassName =
             typeof verdictClassName === "function" ? verdictClassName : function () { return "neutral"; };
 
@@ -171,29 +203,45 @@ function createRenderCardBuilders(context) {
         if (delta != null) {
             const absDelta = Math.abs(delta);
             if (absDelta < 0.5) {
-                badges.push(domEl("span", {
-                    className: "listing-badge delta-approx",
-                    text: "≈",
-                    attrs: { title: item.price_reference_label
-                        ? `По рынку (${item.price_reference_label})`
-                        : "По рынку" },
-                }));
+                const approxTitle = item.price_reference_label
+                    ? `По рынку (${item.price_reference_label})`
+                    : "По рынку";
+                badges.push(domEl(
+                    "span",
+                    {
+                        className: "listing-badge delta-approx",
+                        text: "≈",
+                        attrs: { title: approxTitle },
+                    },
+                    // RV-UI-02: the tooltip is not announced; say it.
+                    domEl("span", { className: "sr-only", text: ` ${approxTitle.toLowerCase()}` }),
+                ));
             } else {
                 const tooltipPrefix = delta > 0 ? "Выше" : "Ниже";
                 const refLabel = item.price_reference_scope === "category"
                     ? (item.price_reference_label || "категории")
                     : "среднего по запросу";
-                badges.push(domEl("span", {
-                    className: `listing-badge ${deltaClass(delta)}`.trim(),
-                    text: formatDelta(delta),
-                    attrs: { title: `${tooltipPrefix} ${refLabel}` },
-                }));
+                badges.push(domEl(
+                    "span",
+                    {
+                        className: `listing-badge ${deltaClass(delta)}`.trim(),
+                        text: formatDelta(delta),
+                        attrs: { title: `${tooltipPrefix} ${refLabel}` },
+                    },
+                    domEl("span", { className: "sr-only", text: ` ${tooltipPrefix.toLowerCase()} ${refLabel}` }),
+                ));
             }
         }
 
         const tags = domEl("div", { className: "listing-tags" });
         if (item.condition) tags.appendChild(domEl("span", { className: "tag", text: formatCondition(item.condition) }));
         if (item.seller_type) tags.appendChild(domEl("span", { className: "tag", text: formatSeller(item.seller_type) }));
+        if (tags.children.length) tags.id = `${cardId}-tags`;
+
+        const priceNode = domEl("span", { className: "listing-price mono", text: formatPrice(item.price, item.price_type) });
+        priceNode.id = `${cardId}-price`;
+        const badgesNode = badges.length ? domEl("div", { className: "listing-badges" }, badges) : null;
+        if (badgesNode) badgesNode.id = `${cardId}-badges`;
 
         const actionState = _listingActionState(item);
         listing.dataset.collectionState = actionState.inLeads
@@ -211,17 +259,21 @@ function createRenderCardBuilders(context) {
                         "Нет фото",
                         item.thumbnail,
                         item.title || item.subject || "",
-                        { displayPx: 76 },
+                        { displayPx: 76, decorative: true },
                     ),
                     domEl(
                         "div",
                         { className: "listing-body" },
-                        domEl("span", { className: "listing-name", text: item.title }),
+                        _buildCardOpenButton(
+                            domEl("span", { className: "listing-name", text: item.title || item.subject || "Объявление" }),
+                            "listing-heading",
+                            _describedBy(priceNode, tags, badgesNode),
+                        ),
                         tags,
-                        domEl("span", { className: "listing-price mono", text: formatPrice(item.price, item.price_type) }),
+                        priceNode,
                     ),
                 ),
-                badges.length ? domEl("div", { className: "listing-badges" }, badges) : null,
+                badgesNode,
                 domEl(
                     "div",
                     { className: "listing-actions" },
@@ -312,9 +364,10 @@ function createRenderCardBuilders(context) {
     }
 
     /**
-     * Human-readable status for a lead, used as the aria-label suffix
-     * on the outer <article>. Keeps the four values the backend emits
-     * in lead_items.status in sync with what screen readers announce.
+     * Human-readable status for a lead, read by screen readers right
+     * after the card title (visually hidden, RV-UI-02). Keeps the four
+     * values the backend emits in lead_items.status in sync with what
+     * screen readers announce.
      */
     function _leadStatusLabel(status) {
         switch (status) {
@@ -726,6 +779,10 @@ function createRenderCardBuilders(context) {
                 void actions.revertLeadStage(item.id, item.status);
             }, { signal });
         } else if (mode === "watching") {
+            // RV-UI-02: the title button is the card's primary action.
+            card.querySelector(".card-open")?.addEventListener("click", () => {
+                void actions.openWatchlistDetail(item);
+            }, { signal });
             card.querySelector('[data-role="detail"]')?.addEventListener("click", () => {
                 void actions.openWatchlistDetail(item);
             }, { signal });
@@ -755,27 +812,21 @@ function createRenderCardBuilders(context) {
         const outerClass = isLead
             ? `lead-card status-${item.status}`
             : "watchlist-card";
-        // FE-H5/UX-H2: ARIA roles on the card itself.
-        //   * watching card: role="button" — Enter/Space opens the
-        //     detail sheet (primary action, handled below).
-        //   * lead card: no role=button because there are multiple
-        //     equivalent actions (confirm/cancel/close-deal/…) and no
-        //     single "primary" one. We still keep tabindex=0 so the
-        //     card is reachable for screen readers as a landmark that
-        //     contains the inline price inputs and action buttons.
-        //     aria-label summarises the lot and status for assistive
-        //     tech that lands on the article.
-        const card = domEl("article", {
+        // RV-UI-02: both cards are list items. The watching card used to
+        // be role=button around a note input and four buttons; its
+        // primary action is now the title button (hit area stretched over
+        // the top block in CSS). The lead card has no single primary
+        // action, so it is just an item: no extra tab stop, and its
+        // status is read from the content instead of an aria-label that
+        // hid the price and fields behind the title.
+        const card = domEl("div", {
             className: outerClass,
             attrs: isLead
-                ? {
-                    "data-lead-id": item.id,
-                    tabindex: "0",
-                    "aria-label": `${item.title || "лот"} — ${_leadStatusLabel(item.status)}`,
-                }
-                : { "data-watchlist-id": item.id, tabindex: "0", role: "button" },
+                ? { "data-lead-id": item.id, role: "listitem" }
+                : { "data-watchlist-id": item.id, role: "listitem" },
         });
         card.style.overflow = "hidden";
+        const cardId = `item-card-${++_cardSeq}`;
 
         // Price for the header. Lead reads price_byn directly; watchlist
         // prefers the live current_price_byn, falling back to the price
@@ -784,14 +835,6 @@ function createRenderCardBuilders(context) {
             ? item.price_byn
             : item.current_price_byn || item.initial_price_byn;
         const priceDisplay = _roundOrNull(priceSource);
-
-        const titleNode = isLead
-            ? domEl(
-                "div",
-                { className: "lead-card-title-row" },
-                domEl("strong", { className: "lead-card-title", text: item.title }),
-            )
-            : domEl("strong", { className: "watchlist-card-title", text: item.title });
 
         const priceRow = isLead
             ? domEl("span", {
@@ -824,6 +867,29 @@ function createRenderCardBuilders(context) {
 
         const profitNode = isLead ? _buildLeadProfitNode(item) : _buildPotentialProfitNode(item);
 
+        priceRow.id = `${cardId}-price`;
+        if (profitNode) profitNode.id = `${cardId}-profit`;
+        if (watchingMarketBadge && watchingMarketBadge.children.length) {
+            watchingMarketBadge.id = `${cardId}-market`;
+        }
+        const itemTitle = item.title || "Без названия";
+        const titleNode = isLead
+            ? domEl(
+                "div",
+                { className: "lead-card-title-row" },
+                domEl(
+                    "h3",
+                    { className: "card-heading" },
+                    domEl("strong", { className: "lead-card-title", text: itemTitle }),
+                    domEl("span", { className: "sr-only", text: `, ${_leadStatusLabel(item.status)}` }),
+                ),
+            )
+            : _buildCardOpenButton(
+                domEl("span", { className: "watchlist-card-title", text: itemTitle }),
+                "watchlist-card-heading",
+                _describedBy(priceRow, profitNode, watchingMarketBadge),
+            );
+
         const bodyClass = isLead ? "lead-card-body" : "watchlist-card-body";
         const topClass = isLead ? "lead-card-top" : "watchlist-card-top";
 
@@ -844,7 +910,7 @@ function createRenderCardBuilders(context) {
                         "Нет фото",
                         item.thumbnail,
                         item.title || "",
-                        { displayPx: 72 },
+                        { displayPx: 72, decorative: true },
                     ),
                     domEl(
                         "div",
@@ -862,22 +928,6 @@ function createRenderCardBuilders(context) {
         );
 
         _wireCardHandlers(card, item, mode, signal);
-
-        // FE-H5/UX-H2: keyboard activation for watching cards. Only
-        // the outer <article> has role=button in that mode; lead cards
-        // are a focusable group (see role assignment above) and rely
-        // on the nested native <button>s for activation, so we skip
-        // the handler for them to avoid phantom "Enter does nothing"
-        // feedback. Guard on event.target===card so pressing Space in
-        // the inline "Заметка" input still types a space.
-        if (mode === "watching") {
-            card.addEventListener("keydown", (event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                if (event.target !== card) return;
-                event.preventDefault();
-                void actions.openWatchlistDetail(item);
-            }, { signal });
-        }
 
         return card;
     }

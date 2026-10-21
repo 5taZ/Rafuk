@@ -38,7 +38,9 @@ function createRenderViews(context) {
         if (!elements.dealsHeroStats) return;
         const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
         domClear(elements.dealsHeroStats);
-        appendHeroStat(elements.dealsHeroStats, String(activeLeads.length), "сделок");
+        // RV-FE-05: a failed first load is "unknown", not "0 сделок".
+        const unknown = Boolean(state.leads.error) && !state.leads.items.length;
+        appendHeroStat(elements.dealsHeroStats, unknown ? "—" : String(activeLeads.length), "сделок");
     }
 
     /* ===== Sort / Discount / Filter buttons ===== */

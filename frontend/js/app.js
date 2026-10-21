@@ -34,7 +34,9 @@ function analyticsApp() {
      */
     function getRefreshForActiveView() {
         const view = core.state.ui.activeView || "overview";
-        const query = (core.state.search.query || "").trim();
+        // RV-FE-03: refresh the results on screen, not the draft typed
+        // into the search box since they were loaded.
+        const query = (core.state.search.activeQuery || "").trim();
         if (view === "deals") {
             return () => Promise.all([
                 actions.loadLeads ? actions.loadLeads() : null,
@@ -64,7 +66,7 @@ function analyticsApp() {
             return query
                 ? () => actions.search && actions.search(
                     view === "ads" ? "ads" : "overview",
-                    { forceRefresh: true },
+                    { forceRefresh: true, query },
                 )
                 : null;
         }
@@ -150,7 +152,7 @@ function analyticsApp() {
         const privacyBtn = document.getElementById("privacy-btn");
         if (privacyBtn) privacyBtn.addEventListener("click", () => actions.openPrivacyModal?.());
 
-        core.state.search.query = core.elements.searchInput.value.trim();
+        core.state.search.draft = core.elements.searchInput.value.trim();
         renderers.renderAll();
         void actions.loadProfile({ silent: true });
         void actions.loadTrackers();

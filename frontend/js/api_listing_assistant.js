@@ -17,6 +17,12 @@ const prefersReducedMotion = app._prefersReducedMotion || (() => (
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
 ));
 
+// RV-AI-07: the endpoint is synchronous and the server budget is a
+// strict-then-broad Kufar search (~2×15 s) plus the model call bounded by
+// ai_listing_assistant_timeout (120 s). requestJson's 90 s default gave
+// up while the server kept working on an already-charged request.
+const LISTING_ASSISTANT_TIMEOUT_MS = 180_000;
+
 
 function createApiListingAssistant(context) {
     const {
@@ -1016,7 +1022,9 @@ function createApiListingAssistant(context) {
         renderLoading();
 
         try {
-            const data = await postJson("/api/v1/ai/listing-assistant", payload);
+            const data = await postJson("/api/v1/ai/listing-assistant", payload, {
+                timeout: LISTING_ASSISTANT_TIMEOUT_MS,
+            });
 
             if (_analysisId !== myId) return;
 
@@ -1052,7 +1060,13 @@ function createApiListingAssistant(context) {
             if (typeof context.handleAiAccessError === "function") {
                 handledAccessError = await context.handleAiAccessError(error, "assistant");
             }
-            const text = (error && error.message) || "Не удалось получить ответ AI";
+            // RV-AI-07: we stopped waiting (or the edge proxy did), but the
+            // server may still finish — and it caches the answer for this
+            // exact draft, so a later retry returns it without a new call.
+            const stillWorking = Boolean(error?.timeout) || error?.status === 504 || error?.status === 524;
+            const text = stillWorking
+                ? "Ответ готовится дольше обычного. Попробуйте ещё раз через минуту — если сервер успеет, ответ откроется сразу."
+                : (error && error.message) || "Не удалось получить ответ AI";
             renderError(text);
             if (!handledAccessError) showToast(text, "error");
         } finally {

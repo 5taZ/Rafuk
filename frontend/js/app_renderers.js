@@ -166,6 +166,7 @@ function createAppRenderers(baseContext) {
         renderSummary,
         renderHelper,
         renderViews,
+        showSessionBanner,
     } = core;
 
     const {
@@ -317,6 +318,7 @@ function createAppRenderers(baseContext) {
         renderSummary,
         renderHelper,
         renderViews,
+        showSessionBanner,
         renderTrackingHeroStats,
         renderDealsHeroStats,
         renderSortButtons,

@@ -113,9 +113,11 @@ def test_listing_filter_query_omits_non_finite_prices() -> None:
         api_listings
         + r"""
 const assert = require("assert");
+// RV-FE-03: requests are built from the active query, not the draft.
 const state = {
     search: {
-        query: "iphone",
+        draft: "",
+        activeQuery: "iphone",
         strictSearch: true,
         sort: "newest",
         searchRequestId: 1,
@@ -164,7 +166,7 @@ const api = createApiListings({
     showToast() {},
     buildCommonQuery(params = {}) {
         const query = new URLSearchParams({
-            query: state.search.query,
+            query: state.search.activeQuery,
             currency: state.misc.currency,
             strict_search: String(state.search.strictSearch),
         });
@@ -349,7 +351,8 @@ def test_listing_dependency_does_not_overwrite_changed_filters() -> None:
 const assert = require("assert");
 const state = {
     search: {
-        query: "iphone",
+        draft: "",
+        activeQuery: "iphone",
         strictSearch: true,
         sort: "newest",
         searchRequestId: 7,
@@ -400,7 +403,7 @@ const api = createApiListings({
     showToast() {},
     buildCommonQuery(params = {}) {
         const query = new URLSearchParams({
-            query: state.search.query,
+            query: state.search.activeQuery,
             currency: state.misc.currency,
             strict_search: String(state.search.strictSearch),
         });
@@ -438,7 +441,8 @@ def test_search_refresh_and_cap_disclosure_contracts() -> None:
     render_views_js = (JS_DIR / "render_views.js").read_text(encoding="utf-8")
     core_js = (JS_DIR / "app_core.js").read_text(encoding="utf-8")
 
-    assert "{ forceRefresh: true }" in app_js
+    # RV-FE-03: pull-to-refresh re-runs the active query, not the draft.
+    assert "{ forceRefresh: true, query }" in app_js
     assert "forceRefresh: true" in events_js
     assert "force_refresh: forceRefresh ? \"1\" : \"\"" in listings_js
     assert "state.listings.servedCap" in render_cards_js
@@ -2056,7 +2060,7 @@ def test_all_ai_intent_paths_check_ai_consent_lazily() -> None:
     )
 
 
-def test_delete_account_clears_local_account_data_before_reload() -> None:
+def test_delete_account_clears_local_data_and_never_reloads() -> None:
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
     clear_start = actions_js.index("function clearLocalAccountData()")
     clear_body = actions_js[clear_start:actions_js.index("\n    /**", clear_start)]
@@ -2072,8 +2076,12 @@ def test_delete_account_clears_local_account_data_before_reload() -> None:
     ]
     server_delete = delete_body.index('await core.deleteJson("/api/v1/account"')
     local_cleanup = delete_body.index("clearLocalAccountData();")
-    reload = delete_body.index("window.location.reload()")
-    assert server_delete < local_cleanup < reload
+    # RV-SEC-05: a reload re-used the still-valid initData and the first
+    # request re-created the deleted user; the app now closes instead
+    # (behaviour: test_rv_sec05_account_deletion_closes_app_without_reprovisioning).
+    finish = delete_body.index("_finishAccountDeletion();")
+    assert server_delete < local_cleanup < finish
+    assert "location.reload" not in delete_body
 
 
 def test_collection_actions_only_show_final_toasts() -> None:
@@ -2179,7 +2187,8 @@ def test_summary_refinements_are_filtered_before_rendering() -> None:
     assert "queryContainsRefinement(query, token)" in render_core
     assert "if (visible.length >= MAX_REFINEMENT_CHIPS) break;" in render_core
     assert (
-        "const visibleRefinements = visibleRefinementTokens(refinements, state.search.query);"
+        "const visibleRefinements = "
+        "visibleRefinementTokens(refinements, state.search.activeQuery);"
     ) in render_core
     assert "for (const token of visibleRefinements)" in render_core
     assert "function _queryContainsRefinement(query, token)" in api_events
@@ -2494,3 +2503,1879 @@ def test_nginx_brotli_config_documented() -> None:
     assert "PERF-NEW-5" in nginx_conf
     assert "brotli_comp_level 6" in nginx_conf
     assert "brotli_types" in nginx_conf
+
+
+# ── RV wave E (review stage 1, frontend) ──────────────────────────────────
+# Behavioural harnesses for RV-FE-02…RV-FE-05, RV-UI-01…RV-UI-03, RV-SEC-05
+# and RV-AI-07: the real modules run in node against a small fake DOM
+# instead of being grepped for substrings.
+
+_FAKE_DOM_JS = r"""
+// Minimal DOM for node harnesses: tree ops, attributes/dataset/classList,
+// capture/bubble events, and the selector subset the app uses
+// (tag, #id, .class, [attr], [attr="v"], :not(), descendant, child).
+class FakeEvent {
+    constructor(type, init = {}) {
+        Object.assign(this, init);
+        this.type = type;
+        this.bubbles = init.bubbles !== false;
+        this.defaultPrevented = false;
+        this._stopped = false;
+        this._stoppedImmediate = false;
+        this.target = null;
+        this.currentTarget = null;
+    }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() { this._stopped = true; }
+    stopImmediatePropagation() { this._stopped = true; this._stoppedImmediate = true; }
+}
+
+class FakeNode {
+    constructor(nodeType) {
+        this.nodeType = nodeType;
+        this.parentNode = null;
+        this.childNodes = [];
+        this._listeners = [];
+    }
+    get children() { return this.childNodes.filter((node) => node.nodeType === 1); }
+    get firstElementChild() { return this.children[0] || null; }
+    get childElementCount() { return this.children.length; }
+    get firstChild() { return this.childNodes[0] || null; }
+    get parentElement() {
+        return this.parentNode && this.parentNode.nodeType === 1 ? this.parentNode : null;
+    }
+    get isConnected() {
+        let node = this;
+        while (node) {
+            if (node === document) return true;
+            node = node.parentNode;
+        }
+        return false;
+    }
+    get textContent() {
+        if (this.nodeType === 3) return this._text;
+        return this.childNodes.map((node) => node.textContent).join("");
+    }
+    set textContent(value) {
+        if (this.nodeType === 3) {
+            this._text = String(value);
+            return;
+        }
+        this.replaceChildren();
+        const text = value == null ? "" : String(value);
+        if (text) this.appendChild(document.createTextNode(text));
+    }
+    _adopt(child) {
+        if (child.parentNode) child.parentNode.removeChild(child);
+        child.parentNode = this;
+    }
+    appendChild(child) {
+        if (child.nodeType === 11) {
+            for (const node of [...child.childNodes]) this.appendChild(node);
+            return child;
+        }
+        this._adopt(child);
+        this.childNodes.push(child);
+        return child;
+    }
+    insertBefore(child, ref) {
+        if (!ref) return this.appendChild(child);
+        if (child.nodeType === 11) {
+            for (const node of [...child.childNodes]) this.insertBefore(node, ref);
+            return child;
+        }
+        this._adopt(child);
+        const index = this.childNodes.indexOf(ref);
+        this.childNodes.splice(index < 0 ? this.childNodes.length : index, 0, child);
+        return child;
+    }
+    append(...items) {
+        for (const item of items) this.appendChild(_asNode(item));
+    }
+    prepend(...items) {
+        const first = this.childNodes[0] || null;
+        for (const item of items) this.insertBefore(_asNode(item), first);
+    }
+    removeChild(child) {
+        const index = this.childNodes.indexOf(child);
+        if (index >= 0) this.childNodes.splice(index, 1);
+        child.parentNode = null;
+        return child;
+    }
+    replaceChild(next, old) {
+        this.insertBefore(next, old);
+        this.removeChild(old);
+        return old;
+    }
+    replaceChildren(...items) {
+        for (const node of [...this.childNodes]) this.removeChild(node);
+        this.append(...items);
+    }
+    remove() {
+        if (this.parentNode) this.parentNode.removeChild(this);
+    }
+    contains(other) {
+        let node = other;
+        while (node) {
+            if (node === this) return true;
+            node = node.parentNode;
+        }
+        return false;
+    }
+    addEventListener(type, fn, options) {
+        if (typeof fn !== "function") return;
+        const capture = options === true || Boolean(options && options.capture);
+        const same = (l) => l.type === type && l.fn === fn && l.capture === capture;
+        if (this._listeners.some(same)) return;
+        const signal = options && typeof options === "object" ? options.signal : null;
+        if (signal && signal.aborted) return;
+        this._listeners.push({ type, fn, capture, once: Boolean(options && options.once) });
+        if (signal) {
+            signal.addEventListener("abort", () => this.removeEventListener(type, fn, capture));
+        }
+    }
+    removeEventListener(type, fn, options) {
+        const capture = options === true || Boolean(options && options.capture);
+        this._listeners = this._listeners.filter(
+            (l) => !(l.type === type && l.fn === fn && l.capture === capture),
+        );
+    }
+    _invoke(event, phase) {
+        for (const entry of [...this._listeners]) {
+            if (entry.type !== event.type) continue;
+            if (phase === "capture" && !entry.capture) continue;
+            if (phase === "bubble" && entry.capture) continue;
+            if (!this._listeners.includes(entry)) continue;
+            if (entry.once) this.removeEventListener(entry.type, entry.fn, entry.capture);
+            event.currentTarget = this;
+            entry.fn.call(this, event);
+            if (event._stoppedImmediate) return;
+        }
+    }
+    dispatchEvent(event) {
+        event.target = this;
+        const path = [];
+        let node = this.parentNode;
+        while (node) {
+            path.unshift(node);
+            node = node.parentNode;
+        }
+        for (const ancestor of path) {
+            ancestor._invoke(event, "capture");
+            if (event._stopped) return !event.defaultPrevented;
+        }
+        this._invoke(event, "target");
+        if (event._stopped || !event.bubbles) return !event.defaultPrevented;
+        for (const ancestor of [...path].reverse()) {
+            ancestor._invoke(event, "bubble");
+            if (event._stopped) break;
+        }
+        return !event.defaultPrevented;
+    }
+}
+
+function _asNode(item) {
+    return item instanceof FakeNode ? item : document.createTextNode(String(item));
+}
+
+class FakeText extends FakeNode {
+    constructor(text) {
+        super(3);
+        this._text = String(text);
+    }
+}
+
+class FakeFragment extends FakeNode {
+    constructor() { super(11); }
+}
+
+function _camelData(name) {
+    return name.replace(/-([a-z])/g, (_, chr) => chr.toUpperCase());
+}
+
+const _ATTR_RE = /^\s*([\w-]+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+)))?\s*$/;
+
+function _parseCompound(text) {
+    const parts = [];
+    let i = 0;
+    const tag = text.match(/^[a-zA-Z*][\w-]*/);
+    if (tag) {
+        if (tag[0] !== "*") parts.push({ kind: "tag", value: tag[0].toUpperCase() });
+        i = tag[0].length;
+    }
+    while (i < text.length) {
+        const chr = text[i];
+        if (chr === "#" || chr === ".") {
+            const name = text.slice(i + 1).match(/^[\w-]+/)[0];
+            parts.push({ kind: chr === "#" ? "id" : "class", value: name });
+            i += 1 + name.length;
+        } else if (chr === "[") {
+            const end = text.indexOf("]", i);
+            const body = text.slice(i + 1, end);
+            const attr = body.match(_ATTR_RE);
+            parts.push({ kind: "attr", name: attr[1], value: attr[2] ?? attr[3] ?? attr[4] });
+            i = end + 1;
+        } else if (text.startsWith(":not(", i)) {
+            let depth = 0;
+            let j = i + 4;
+            for (; j < text.length; j++) {
+                if (text[j] === "(") depth += 1;
+                else if (text[j] === ")") {
+                    depth -= 1;
+                    if (depth === 0) break;
+                }
+            }
+            parts.push({ kind: "not", inner: _parseCompound(text.slice(i + 5, j)) });
+            i = j + 1;
+        } else {
+            throw new Error(`fake DOM: unsupported selector "${text}"`);
+        }
+    }
+    return parts;
+}
+
+function _matchesCompound(el, parts) {
+    return parts.every((part) => {
+        if (part.kind === "tag") return el.tagName === part.value;
+        if (part.kind === "id") return el.id === part.value;
+        if (part.kind === "class") return el.classList.contains(part.value);
+        if (part.kind === "attr") {
+            const value = el.getAttribute(part.name);
+            return part.value === undefined ? value != null : value === part.value;
+        }
+        if (part.kind === "not") return !_matchesCompound(el, part.inner);
+        return false;
+    });
+}
+
+function _splitTopLevel(text, separator) {
+    const out = [];
+    let current = "";
+    let depth = 0;
+    for (const chr of text) {
+        if (chr === "[" || chr === "(") depth += 1;
+        if (chr === "]" || chr === ")") depth -= 1;
+        if (depth === 0 && chr === separator) {
+            out.push(current);
+            current = "";
+            continue;
+        }
+        current += chr;
+    }
+    out.push(current);
+    return out;
+}
+
+function _complexTokens(selector) {
+    const tokens = [];
+    let current = "";
+    let depth = 0;
+    for (const chr of selector.trim()) {
+        if (chr === "[" || chr === "(") depth += 1;
+        if (chr === "]" || chr === ")") depth -= 1;
+        if (depth === 0 && (chr === " " || chr === ">")) {
+            if (current) {
+                tokens.push(current);
+                current = "";
+            }
+            const last = tokens[tokens.length - 1];
+            if (chr === ">") {
+                if (last === " ") tokens.pop();
+                tokens.push(">");
+            } else if (last !== undefined && last !== " " && last !== ">") {
+                tokens.push(" ");
+            }
+            continue;
+        }
+        current += chr;
+    }
+    if (current) tokens.push(current);
+    return tokens;
+}
+
+function _matchFrom(el, tokens, index) {
+    if (!_matchesCompound(el, _parseCompound(tokens[index]))) return false;
+    if (index === 0) return true;
+    if (tokens[index - 1] === ">") {
+        const parent = el.parentNode;
+        return Boolean(parent && parent.nodeType === 1 && _matchFrom(parent, tokens, index - 2));
+    }
+    let ancestor = el.parentNode;
+    while (ancestor && ancestor.nodeType === 1) {
+        if (_matchFrom(ancestor, tokens, index - 2)) return true;
+        ancestor = ancestor.parentNode;
+    }
+    return false;
+}
+
+function _matchesSelector(el, selectorList) {
+    return _splitTopLevel(selectorList, ",").some((selector) => {
+        const tokens = _complexTokens(selector);
+        return _matchFrom(el, tokens, tokens.length - 1);
+    });
+}
+
+class FakeElement extends FakeNode {
+    constructor(tagName) {
+        super(1);
+        this.tagName = String(tagName).toUpperCase();
+        this._attrs = new Map();
+        this.dataset = {};
+        this.style = {};
+        this.value = "";
+        this.checked = false;
+        const self = this;
+        this.classList = {
+            add(...names) { self._setClasses([...self._classes(), ...names]); },
+            remove(...names) {
+                self._setClasses(self._classes().filter((name) => !names.includes(name)));
+            },
+            contains(name) { return self._classes().includes(name); },
+            toggle(name, force) {
+                const on = force === undefined ? !self._classes().includes(name) : Boolean(force);
+                if (on) this.add(name);
+                else this.remove(name);
+                return on;
+            },
+        };
+    }
+    _classes() { return (this.getAttribute("class") || "").split(/\s+/).filter(Boolean); }
+    _setClasses(names) { this.setAttribute("class", [...new Set(names)].join(" ")); }
+    get className() { return this.getAttribute("class") || ""; }
+    set className(value) { this.setAttribute("class", String(value)); }
+    get id() { return this.getAttribute("id") || ""; }
+    set id(value) { this.setAttribute("id", String(value)); }
+    get hidden() { return this._attrs.has("hidden"); }
+    set hidden(value) {
+        if (value) this._attrs.set("hidden", "");
+        else this._attrs.delete("hidden");
+    }
+    get disabled() { return this._attrs.has("disabled"); }
+    set disabled(value) {
+        if (value) this._attrs.set("disabled", "");
+        else this._attrs.delete("disabled");
+    }
+    get tabIndex() {
+        const value = this.getAttribute("tabindex");
+        if (value != null) return Number(value);
+        return ["BUTTON", "INPUT", "SELECT", "TEXTAREA", "A"].includes(this.tagName) ? 0 : -1;
+    }
+    set tabIndex(value) { this.setAttribute("tabindex", String(value)); }
+    setAttribute(name, value) {
+        const key = String(name).toLowerCase();
+        if (key.startsWith("data-")) {
+            this.dataset[_camelData(key.slice(5))] = String(value);
+            return;
+        }
+        this._attrs.set(key, String(value));
+    }
+    getAttribute(name) {
+        const key = String(name).toLowerCase();
+        if (key.startsWith("data-")) {
+            const value = this.dataset[_camelData(key.slice(5))];
+            return value == null ? null : String(value);
+        }
+        return this._attrs.has(key) ? this._attrs.get(key) : null;
+    }
+    hasAttribute(name) { return this.getAttribute(name) != null; }
+    removeAttribute(name) {
+        const key = String(name).toLowerCase();
+        if (key.startsWith("data-")) delete this.dataset[_camelData(key.slice(5))];
+        this._attrs.delete(key);
+    }
+    focus() { document.activeElement = this; }
+    blur() {
+        if (document.activeElement === this) document.activeElement = document.body;
+    }
+    click() {
+        if (this.disabled) return;
+        this.dispatchEvent(new FakeEvent("click"));
+    }
+    matches(selector) { return _matchesSelector(this, selector); }
+    closest(selector) {
+        let node = this;
+        while (node && node.nodeType === 1) {
+            if (node.matches(selector)) return node;
+            node = node.parentNode;
+        }
+        return null;
+    }
+    querySelectorAll(selector) {
+        const out = [];
+        const walk = (node) => {
+            for (const child of node.children) {
+                if (child.matches(selector)) out.push(child);
+                walk(child);
+            }
+        };
+        walk(this);
+        return out;
+    }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+    scrollIntoView() {}
+    getBoundingClientRect() {
+        return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    }
+}
+
+class FakeDocument extends FakeNode {
+    constructor() {
+        super(9);
+        this.documentElement = new FakeElement("html");
+        this.head = new FakeElement("head");
+        this.body = new FakeElement("body");
+        this.documentElement.appendChild(this.head);
+        this.documentElement.appendChild(this.body);
+        this.documentElement.parentNode = this;
+        this.childNodes = [this.documentElement];
+        this.activeElement = this.body;
+        this.hidden = false;
+    }
+    createElement(tag) { return new FakeElement(tag); }
+    createElementNS(_ns, tag) { return new FakeElement(tag); }
+    createTextNode(text) { return new FakeText(text); }
+    createDocumentFragment() { return new FakeFragment(); }
+    getElementById(id) {
+        return this.documentElement.querySelectorAll("*").find((el) => el.id === id) || null;
+    }
+    querySelector(selector) { return this.documentElement.querySelector(selector); }
+    querySelectorAll(selector) { return this.documentElement.querySelectorAll(selector); }
+}
+
+function makeStorage() {
+    const map = new Map();
+    return {
+        get length() { return map.size; },
+        key(index) { return [...map.keys()][index] ?? null; },
+        getItem(key) { return map.has(key) ? map.get(key) : null; },
+        setItem(key, value) { map.set(key, String(value)); },
+        removeItem(key) { map.delete(key); },
+        clear() { map.clear(); },
+    };
+}
+
+const document = new FakeDocument();
+globalThis.document = document;
+globalThis.Node = FakeNode;
+globalThis.window = globalThis;
+globalThis.App = globalThis.App || {};
+globalThis.localStorage = makeStorage();
+globalThis.location = {
+    hostname: "app.example",
+    protocol: "https:",
+    search: "",
+    origin: "https://app.example",
+};
+// Reduced motion: modal helpers finalise synchronously.
+globalThis.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+globalThis.scrollY = 0;
+globalThis.pageYOffset = 0;
+globalThis.scrollTo = () => {};
+globalThis.addEventListener = () => {};
+globalThis.removeEventListener = () => {};
+globalThis.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 0);
+globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
+
+function el(tag, attrs = {}, ...children) {
+    const node = document.createElement(tag);
+    for (const [name, value] of Object.entries(attrs)) {
+        if (name === "hidden") node.hidden = Boolean(value);
+        else node.setAttribute(name, value === true ? "" : String(value));
+    }
+    node.append(...children);
+    return node;
+}
+
+function fire(target, type, init = {}) {
+    return target.dispatchEvent(new FakeEvent(type, init));
+}
+
+function keydown(target, key, init = {}) {
+    return target.dispatchEvent(new FakeEvent("keydown", { key, ...init }));
+}
+
+const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+"""
+
+
+def _js(*names: str) -> str:
+    return "\n".join((JS_DIR / name).read_text(encoding="utf-8") for name in names)
+
+
+def _node_ok(script: str) -> None:
+    result = subprocess.run(["node"], input=script, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+_NODE_FAIL = r"""
+    .catch((err) => {
+        console.error(err && err.stack || err);
+        process.exit(1);
+    });
+"""
+
+
+def test_rv_fe03_result_actions_use_active_query_not_draft() -> None:
+    """RV-FE-03: paging, detail, sort reload and filter re-runs build
+    their requests from the query of the results on screen while the
+    search box holds a half-typed draft."""
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "app_core_dom.js", "app_core.js", "api_core.js", "api_listings.js",
+    ) + r"""
+const assert = require("assert");
+const core = createAppCore();
+const state = core.state;
+const requests = [];
+const elements = { searchInput: el("input") };
+document.body.append(elements.searchInput);
+function payloadFor(url) {
+    if (url.startsWith("/api/v1/price-stats")) return { categories: [], total_results: 3 };
+    if (url.startsWith("/api/v1/listings")) {
+        return { listings: [{ ad_id: 1 }], total: 120, has_more: true };
+    }
+    if (url.startsWith("/api/v1/listing-detail")) return { ad_id: 5, title: "Lot" };
+    return { points: [], regions: [] };
+}
+const apiCore = createApiCore({ state });
+const api = createApiListings({
+    state,
+    elements,
+    hasTelegramInitData: () => true,
+    renderAll() {},
+    scheduleRender() {},
+    markDirty() {},
+    renderLoading() {},
+    renderError() {},
+    renderHistory() {},
+    setPanelOpen() {},
+    renderDetailModal() {},
+    closeDetailModal() {},
+    showToast() {},
+    focusTarget() {},
+    buildCommonQuery: apiCore.buildCommonQuery,
+    getJson(url) {
+        requests.push(url);
+        return Promise.resolve(payloadFor(url));
+    },
+    deleteJson() {},
+});
+const queryOf = (url) => new URLSearchParams(url.split("?")[1]).get("query");
+
+(async () => {
+    elements.searchInput.value = "iphone 13";
+    await api.search("ads");
+    await tick(5);
+    assert.strictEqual(state.search.activeQuery, "iphone 13");
+    assert.strictEqual(state.search.draft, "iphone 13");
+    assert.ok(requests.length >= 5, requests.join("\n"));
+    assert.ok(requests.every((url) => queryOf(url) === "iphone 13"), requests.join("\n"));
+
+    // The user starts typing a new query but has not searched it yet.
+    elements.searchInput.value = "i";
+    state.search.draft = "i";
+    requests.length = 0;
+    await api.loadMoreListings();
+    await api.openListingDetail({ ad_id: 5 });
+    await api.loadListings(true);
+    await api.search("ads", { keepFilters: true, query: state.search.activeQuery });
+    await tick(5);
+    assert.ok(requests.length >= 8, requests.join("\n"));
+    for (const url of requests) assert.strictEqual(queryOf(url), "iphone 13", url);
+    assert.strictEqual(state.search.draft, "i", "re-running the results keeps the draft");
+
+    // Only an explicit search of the typed text commits it.
+    await api.search("overview");
+    assert.strictEqual(state.search.activeQuery, "i");
+
+    // Clearing the box retires the in-flight search and drops the cards.
+    const requestId = state.search.searchRequestId;
+    elements.searchInput.value = "";
+    await api.search("overview");
+    assert.strictEqual(state.search.activeQuery, "");
+    assert.notStrictEqual(state.search.searchRequestId, requestId);
+    assert.strictEqual(state.listings._pending, false);
+    assert.deepStrictEqual(state.listings.items, []);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_rv_fe03_input_events_edit_only_the_draft() -> None:
+    """RV-FE-03: keystrokes edit ``draft``; refinement chips, the error
+    retry, the strict toggle, filters and sort act on ``activeQuery``."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js") + r"""
+function _bindCarouselEvents() {}
+function _bindExpenseEvents() {}
+""" + _js("api_events.js") + r"""
+const assert = require("assert");
+const searches = [];
+const listingLoads = [];
+const state = {
+    ui: { activeView: "ads", error: "boom" },
+    search: { draft: "iphone 13", activeQuery: "iphone 13", strictSearch: true, sort: "newest" },
+    filters: {
+        category: null, pendingCategory: 7, condition: "", pendingCondition: "",
+        sellerType: "", pendingSellerType: "", minPrice: null, pendingMinPrice: null,
+        maxPrice: null, pendingMaxPrice: null, regionName: "", pendingRegionName: "",
+        discountFromPercent: 10, discountToPercent: 30, filterDropdownOpen: true,
+    },
+    trackers: { events: [] },
+    leads: { items: [] },
+    watchlist: { items: [] },
+    detail: { data: null },
+    admin: {},
+};
+const refinementChip = el("button", { "data-refinement": "pro" });
+const priceSort = el("button", { "data-sort": "price_asc" });
+const newestSort = el("button", { "data-sort": "newest" });
+const elements = {
+    searchInput: el("input"),
+    errorRetry: el("button"),
+    summaryRefinements: el("div", {}, refinementChip),
+    strictSearchToggle: el("input"),
+    filterApplyBtn: el("button"),
+    sortButtons: [priceSort, newestSort],
+    viewTabs: [],
+};
+document.body.append(
+    elements.searchInput, elements.errorRetry, elements.summaryRefinements,
+    elements.strictSearchToggle, elements.filterApplyBtn, priceSort, newestSort,
+);
+createApiEvents({
+    state,
+    elements,
+    renderAll() {},
+    renderLoading() {},
+    renderStrictSearch() {},
+    renderSortButtons() {},
+    search: (...args) => { searches.push(args); return Promise.resolve(); },
+    loadListings: (...args) => { listingLoads.push(args); return Promise.resolve(); },
+    startTrackerRefresh() {},
+    stopTrackerRefresh() {},
+    showToast() {},
+}).bindEvents();
+
+elements.searchInput.value = "i";
+fire(elements.searchInput, "input");
+assert.strictEqual(state.search.draft, "i");
+assert.strictEqual(state.search.activeQuery, "iphone 13");
+assert.strictEqual(searches.length, 0);
+
+fire(refinementChip, "click");
+assert.strictEqual(elements.searchInput.value, "iphone 13 pro", "chips extend the active query");
+assert.strictEqual(state.search.draft, "iphone 13 pro");
+
+searches.length = 0;
+fire(elements.errorRetry, "click");
+assert.deepStrictEqual(searches[0][1], { forceRefresh: true, query: "iphone 13" });
+
+searches.length = 0;
+elements.strictSearchToggle.checked = false;
+fire(elements.strictSearchToggle, "change");
+assert.strictEqual(searches[0][1].query, "iphone 13");
+
+searches.length = 0;
+fire(elements.filterApplyBtn, "click");
+assert.deepStrictEqual(searches[0][1], { keepFilters: true, query: "iphone 13" });
+
+fire(priceSort, "click");
+assert.strictEqual(listingLoads.length, 1);
+
+// Nothing searched yet: a draft alone must not reload results.
+state.search.activeQuery = "";
+fire(newestSort, "click");
+assert.strictEqual(listingLoads.length, 1);
+process.exit(0);
+"""
+    _node_ok(harness)
+
+
+def test_rv_fe02_load_script_times_out_removes_tag_and_retries() -> None:
+    """RV-FE-02: concurrent callers share one <script>; a failed or
+    stalled tag is removed and the next call inserts a fresh one."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "app_core_dom.js", "app_core.js") + r"""
+const assert = require("assert");
+const realSetTimeout = setTimeout;
+const timers = [];
+globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+globalThis.clearTimeout = (id) => { if (timers[id - 1]) timers[id - 1].cleared = true; };
+const flush = () => new Promise((resolve) => realSetTimeout(resolve, 0));
+const scripts = () => document.head.querySelectorAll("script");
+const core = createAppCore();
+
+(async () => {
+    const first = core._loadScript("js/x.js?v=1");
+    assert.strictEqual(core._loadScript("js/x.js?v=1"), first, "one in-flight load per src");
+    assert.strictEqual(scripts().length, 1);
+    scripts()[0].onerror();
+    await assert.rejects(first, /Failed to load/);
+    assert.strictEqual(scripts().length, 0, "the failed tag is removed");
+
+    const retry = core._loadScript("js/x.js?v=1");
+    assert.strictEqual(scripts().length, 1, "retry inserts a fresh tag");
+    scripts()[0].onload();
+    await retry;
+    await core._loadScript("js/x.js?v=1");
+    assert.strictEqual(scripts().length, 1, "a loaded script is not requested again");
+
+    const stalled = core._loadScript("js/y.js?v=1");
+    const timeout = timers.find((t) => !t.cleared && t.ms >= 10000);
+    assert.ok(timeout, "loads are bounded by a timeout");
+    timeout.fn();
+    await assert.rejects(stalled, /Timed out/);
+    assert.strictEqual(scripts().filter((s) => s.src === "js/y.js?v=1").length, 0);
+    await flush();
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_rv_fe02_render_stub_shows_error_state_and_recovers() -> None:
+    """RV-FE-02: a failed chunk paints an error state with "Повторить"
+    instead of eternal skeletons, and recovers on retry or after the
+    cooldown instead of staying broken until a restart."""
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "app_core_dom.js", "app_core.js", "_lazy_cards_stub.js",
+    ) + r"""
+const assert = require("assert");
+let now = 1_000_000;
+Date.now = () => now;
+let fail = true;
+let scheduled = 0;
+const loads = [];
+const rendered = [];
+const context = {
+    state: { search: { activeQuery: "iphone" } },
+    elements: {
+        listingsList: el("div"),
+        leadInboxList: el("div"),
+        listingsSection: el("section", { hidden: true }),
+    },
+    logClientError() {},
+    scheduleRender() { scheduled += 1; },
+    _loadScript(src) {
+        loads.push(src);
+        if (fail) return Promise.reject(new Error("offline"));
+        window.App._realCreateRenderCardBuilders = () => ({});
+        window.App._realCreateRenderCards = () => ({
+            renderListings() { rendered.push("listings"); },
+            renderLeads() { rendered.push("leads"); },
+        });
+        return Promise.resolve();
+    },
+};
+document.body.append(context.elements.listingsSection, context.elements.leadInboxList);
+context.elements.listingsSection.append(context.elements.listingsList);
+const cards = createRenderCards(context);
+
+(async () => {
+    cards.renderListings();
+    await tick(5);
+    assert.strictEqual(loads.length, 1);
+    assert.ok(scheduled >= 1, "a failed load repaints into the error state");
+
+    cards.renderListings();
+    cards.renderLeads();
+    assert.strictEqual(loads.length, 1, "no reload on every repaint inside the cooldown");
+    const listingsError = context.elements.listingsList.querySelector(".lazy-load-error");
+    assert.ok(listingsError, "listings show an error state");
+    assert.ok(
+        context.elements.leadInboxList.querySelector(".lazy-load-error"), "deals show it too",
+    );
+    assert.strictEqual(context.elements.listingsSection.hidden, false);
+    cards.renderListings();
+    assert.strictEqual(
+        context.elements.listingsList.querySelector(".lazy-load-error"), listingsError,
+        "the error state is not rebuilt on every repaint",
+    );
+
+    // After the cooldown the next repaint retries on its own.
+    now += 9000;
+    cards.renderListings();
+    await tick(5);
+    assert.strictEqual(loads.length, 2, "the rejected init promise was not pinned");
+
+    // "Повторить" retries immediately and recovers.
+    fail = false;
+    const button = context.elements.leadInboxList.querySelector(".lazy-load-error button");
+    assert.strictEqual(button.textContent, "Повторить");
+    const before = scheduled;
+    button.click();
+    assert.strictEqual(button.disabled, true);
+    await tick(5);
+    assert.ok(scheduled > before);
+    cards.renderListings();
+    cards.renderLeads();
+    assert.deepStrictEqual(rendered, ["listings", "leads"]);
+    assert.ok(await cards._ensureLoaded());
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_rv_fe02_api_stubs_report_missing_chunk_instead_of_rejecting() -> None:
+    """RV-FE-02: list loaders turn a missing deals chunk into the list's
+    error state, explicit actions get a toast, teardown needs no chunk,
+    and the next call retries the download."""
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "app_core_dom.js", "app_core.js", "_lazy_deals_stub.js",
+    ) + r"""
+const assert = require("assert");
+let fail = true;
+const loads = [];
+const toasts = [];
+const renders = [];
+const realLoads = [];
+const state = {
+    leads: { items: [{ id: 1 }], error: null },
+    watchlist: { items: [], error: null, _loading: true },
+    detail: { data: { ad_id: 7 } },
+};
+const context = {
+    state,
+    logClientError() {},
+    showToast: (...args) => toasts.push(args),
+    renderLeads: () => renders.push("leads"),
+    renderWatchlist: () => renders.push("watchlist"),
+    _loadScript(src) {
+        loads.push(src);
+        if (fail) return Promise.reject(new Error("offline"));
+        window.App._realCreateApiLeads = () => ({
+            loadLeads: async () => realLoads.push("leads"),
+        });
+        window.App._realCreateApiWatchlist = () => ({});
+        window.App._realCreateRenderModals = () => ({
+            closeDetailModal() {},
+            renderDetailModal() {},
+        });
+        return Promise.resolve();
+    },
+};
+const leads = createApiLeads(context);
+const watchlist = createApiWatchlist(context);
+const modals = createRenderModals(context);
+
+(async () => {
+    assert.strictEqual(await leads.loadLeads(), undefined);
+    assert.strictEqual(state.leads.error, LAZY_LOAD_FAILED_MESSAGE);
+    assert.deepStrictEqual(state.leads.items, [{ id: 1 }], "previous data survives");
+    assert.ok(renders.includes("leads"));
+    assert.strictEqual(toasts.length, 0, "the list shows the error, no toast");
+
+    await watchlist.loadWatchlist();
+    assert.strictEqual(state.watchlist.error, LAZY_LOAD_FAILED_MESSAGE);
+    assert.strictEqual(state.watchlist._loading, false);
+
+    await watchlist.addWatchlistFromListing({ ad_id: 7 });
+    assert.strictEqual(toasts.length, 1, "an explicit action reports the failure");
+
+    const loadsBefore = loads.length;
+    modals.closeDetailModal();
+    assert.strictEqual(loads.length, loadsBefore, "closing never-opened modals loads nothing");
+
+    modals.renderDetailModal();
+    await tick(5);
+    assert.strictEqual(state.detail.data, null, "a detail that never opened is not left in state");
+    assert.strictEqual(toasts.length, 2);
+
+    fail = false;
+    await leads.loadLeads();
+    assert.deepStrictEqual(realLoads, ["leads"], "the next call retried the download");
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+_ACTIONS_STUBS = r"""
+function noop() {}
+function stubModule() { return new Proxy({}, { get: () => noop }); }
+const stubCalls = [];
+function spyModule(label) {
+    const record = (name) => () => { stubCalls.push(`${label}.${String(name)}`); };
+    return new Proxy({}, { get: (_target, name) => record(name) });
+}
+function createImageProxyLoader() {
+    return { fetchProxyImageObjectUrl: noop, clearProxyImageObjectUrls: noop };
+}
+const createApiListings = () => spyModule("listings");
+const createApiTrackers = () => spyModule("trackers");
+const createApiLeads = stubModule;
+const createApiWatchlist = stubModule;
+function createApiEvents() { return { bindEvents: noop }; }
+"""
+
+
+def test_rv_fe02_ai_modules_load_once_and_retry_after_failure() -> None:
+    """RV-FE-02: a double tap shares one AI module load (it used to build
+    two modules: double submit, two polling loops); a failure tells the
+    user and the next tap retries."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js") + _ACTIONS_STUBS + r"""
+function createApiCore() {
+    return {
+        telegramHeaders: () => ({}),
+        requestJson: noop,
+        getJson: noop,
+        postJson: noop,
+        deleteJson: noop,
+        buildCommonQuery: noop,
+    };
+}
+""" + _js("app_actions.js") + r"""
+const assert = require("assert");
+const loads = [];
+const toasts = [];
+const analyses = [];
+let gate = null;
+const actions = createAppActions({
+    state: { search: { recentSearches: [] }, misc: {}, ui: {}, profile: {} },
+    elements: { views: {} },
+    markDirty: noop,
+    renderAll: noop,
+    showToast: (...args) => toasts.push(args),
+    logClientError: noop,
+    _loadScript(src) {
+        loads.push(src);
+        return gate.promise;
+    },
+});
+function newGate() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+}
+
+(async () => {
+    gate = newGate();
+    const first = actions.loadAIAnalysis(1);
+    const second = actions.loadAIAnalysis(1);
+    await tick(0);
+    assert.strictEqual(loads.length, 4, "both taps share one load of the 4 AI scripts");
+    gate.reject(new Error("offline"));
+    assert.strictEqual(await first, undefined);
+    assert.strictEqual(await second, undefined);
+    assert.ok(toasts.some(([text]) => text.includes("AI-модуль")), "the failure is reported");
+
+    gate = newGate();
+    window.App.createApiAi = () => ({
+        loadAIAnalysis: (id) => analyses.push(id),
+        closeAIModal: noop,
+    });
+    const third = actions.loadAIAnalysis(2);
+    await tick(0);
+    assert.strictEqual(loads.length, 8, "the next tap retries the download");
+    gate.resolve();
+    await third;
+    assert.deepStrictEqual(analyses, [2]);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_rv_fe05_failed_reload_keeps_leads_and_watchlist() -> None:
+    """RV-FE-05: a failed load (offline, 5xx, the 401 after initData's
+    2 h lifetime) keeps the last good list and records the error instead
+    of turning it into an empty list."""
+    harness = _js("api_leads.js", "api_watchlist.js") + r"""
+const assert = require("assert");
+let next = () => Promise.reject(new Error("Сессия Telegram истекла — перезапустите приложение."));
+const renders = [];
+const state = {
+    leads: { items: [{ id: 1 }], _requestId: 0, error: null, _loading: false },
+    watchlist: { items: [{ id: 2 }], _requestId: 0, error: null, _loading: false },
+    analytics: { loading: false, dashboard: null },
+    detail: {},
+    search: { activeQuery: "" },
+};
+const context = {
+    state,
+    hasTelegramInitData: () => true,
+    renderLeads: () => renders.push("leads"),
+    renderWatchlist: () => renders.push("watchlist"),
+    renderDealsHeroStats() {},
+    renderProfitDashboard() {},
+    showToast() {},
+    getJson: (url) => (url.includes("analytics") ? Promise.resolve({}) : next(url)),
+};
+const leads = createApiLeads(context);
+const watchlist = createApiWatchlist(context);
+
+(async () => {
+    await leads.loadLeads();
+    assert.deepStrictEqual(state.leads.items, [{ id: 1 }]);
+    assert.strictEqual(state.leads.error, "Сессия Telegram истекла — перезапустите приложение.");
+    assert.strictEqual(state.leads._loading, false);
+
+    await watchlist.loadWatchlist();
+    assert.deepStrictEqual(state.watchlist.items, [{ id: 2 }]);
+    assert.ok(state.watchlist.error);
+    assert.strictEqual(state.watchlist._loading, false);
+
+    next = () => Promise.resolve([]);
+    await leads.loadLeads();
+    await watchlist.loadWatchlist();
+    assert.deepStrictEqual(state.leads.items, []);
+    assert.strictEqual(state.leads.error, null);
+    assert.strictEqual(state.watchlist.error, null);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+_CARDS_HARNESS = r"""
+const domContext = {
+    domEl, domClear, domFragment,
+    createVirtualList,
+    attachLongPress: () => {},
+    safeRender: (_name, fn) => fn(),
+    formatPrice: (value) => (value == null ? "Договорная" : `${value} BYN`),
+    formatCondition: (value) => value,
+    formatSeller: (value) => value,
+    formatDelta: (value) => `${value > 0 ? "+" : ""}${value}%`,
+    deltaClass: (value) => (value > 0 ? "over" : "under"),
+    formatDate: (value) => String(value || ""),
+    hasTelegramInitData: () => true,
+    safeKufarUrl: () => "",
+    safeImageUrl: (url) => url || "",
+    optimizedImage: (url) => url,
+    openExternalLink() {},
+    escapeHtml: (value) => String(value),
+};
+"""
+
+
+def test_rv_fe05_deals_list_shows_error_state_with_retry() -> None:
+    """RV-FE-05: an error with no data is an error state with
+    "Повторить" (never "Нет сделок"), an error over old data is a notice
+    above the kept list."""
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "virtual_list.js", "render_core.js",
+        "render_card_builders.js", "render_cards.js",
+    ) + _CARDS_HARNESS + r"""
+const assert = require("assert");
+const reloads = [];
+const state = {
+    leads: {
+        items: [], error: "Нет соединения с сервером.", _loading: false, itemsFilter: "purchases",
+    },
+    watchlist: { items: [], error: null, _loading: false },
+    misc: { stats: {} },
+    filters: {},
+};
+const elements = { leadInboxList: el("div", { role: "tabpanel" }), itemsFilterButtons: [] };
+document.body.append(elements.leadInboxList);
+const actions = {
+    loadLeads: () => reloads.push("leads"),
+    loadWatchlist: () => reloads.push("watchlist"),
+};
+const context = { ...domContext, state, elements, actions };
+context.buildEmptyState = createRenderCore(context).buildEmptyState;
+const cards = createRenderCards(context);
+const list = elements.leadInboxList;
+
+cards.renderLeads();
+const errorState = list.querySelector(".empty-state--error");
+assert.ok(errorState, "error state instead of the empty state");
+assert.ok(errorState.textContent.includes("Не удалось загрузить покупки"));
+assert.ok(errorState.textContent.includes("Нет соединения с сервером."));
+assert.ok(!list.textContent.includes("Нет сделок в работе"));
+errorState.querySelector("button").click();
+assert.deepStrictEqual(reloads, ["leads"]);
+
+state.leads.items = [{ id: 1, ad_id: 9, title: "Лот", status: "new" }];
+cards.renderLeads();
+const notice = list.querySelector(".collection-error-notice");
+assert.ok(notice, "a notice above the kept list");
+assert.strictEqual(notice.closest("[role=list]"), null, "the notice is not a list child");
+assert.strictEqual(list.querySelectorAll("[role=list] > [role=listitem]").length, 1);
+
+state.leads.error = null;
+state.leads.items = [];
+cards.renderLeads();
+assert.ok(list.textContent.includes("Нет сделок в работе"));
+
+state.leads._loading = true;
+cards.renderLeads();
+assert.strictEqual(
+    list.querySelectorAll(".skeleton-card").length, 3, "first load shows skeletons",
+);
+"""
+    _node_ok(harness)
+
+
+def test_rv_fe05_request_json_turns_401_into_session_banner() -> None:
+    """RV-FE-05 / RV-FE-04 / RV-SEC-05: requestJson maps 401 to an
+    actionable Russian message plus the session banner, network
+    failures to a Russian offline message, announces a service-worker
+    saved copy with its time, and refuses requests after account
+    deletion."""
+    harness = _js("api_core.js") + r"""
+const assert = require("assert");
+globalThis.window = globalThis;
+const banners = [];
+const toasts = [];
+const state = { ui: {} };
+const core = createApiCore({
+    state,
+    showSessionBanner: (text) => banners.push(text),
+    showToast: (...args) => toasts.push(args),
+});
+let respond;
+let fetchCalls = 0;
+const reply = (status, payload) => new Response(JSON.stringify(payload), { status });
+globalThis.fetch = async (...args) => { fetchCalls += 1; return respond(...args); };
+
+(async () => {
+    window.Telegram = { WebApp: { initData: "query_id=1" } };
+    respond = () => reply(401, { detail: "Invalid Telegram authentication" });
+    await assert.rejects(core.getJson("/api/v1/leads"), (err) => {
+        assert.strictEqual(err.status, 401);
+        assert.strictEqual(err.sessionExpired, true);
+        assert.strictEqual(err.message, "Сессия Telegram истекла — перезапустите приложение.");
+        return true;
+    });
+    assert.deepStrictEqual(banners, ["Сессия Telegram истекла — перезапустите приложение."]);
+
+    window.Telegram = undefined;
+    await assert.rejects(core.getJson("/api/v1/leads"), /Откройте Rafuk через Telegram/);
+
+    respond = () => reply(403, { detail: "Account is suspended" });
+    await assert.rejects(core.getJson("/api/v1/leads"), /Доступ к аккаунту временно ограничен/);
+
+    respond = () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(core.getJson("/api/v1/leads", { retry: false }), (err) => {
+        assert.strictEqual(err.offline, true);
+        assert.ok(err.message.startsWith("Нет соединения с сервером"));
+        return true;
+    });
+
+    respond = () => new Response(JSON.stringify({ listings: [] }), {
+        status: 200,
+        headers: { "X-SW-Fallback": "1", Date: "Tue, 20 Oct 2026 09:05:00 GMT" },
+    });
+    assert.deepStrictEqual(await core.getJson("/api/v1/listings?query=x"), { listings: [] });
+    assert.strictEqual(toasts.length, 1);
+    assert.ok(toasts[0][0].includes("сохранённые данные от"), toasts[0][0]);
+
+    state.ui.accountDeleted = true;
+    const calls = fetchCalls;
+    await assert.rejects(core.getJson("/api/v1/profile/me"), (err) => err.accountDeleted === true);
+    assert.strictEqual(fetchCalls, calls, "nothing leaves the app after deletion");
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_rv_fe05_session_banner_is_single_and_closes_app() -> None:
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "render_core.js") + r"""
+const assert = require("assert");
+let closed = 0;
+window.Telegram = { WebApp: { close: () => { closed += 1; } } };
+const core = createRenderCore({ state: {}, elements: {} });
+core.showSessionBanner("Сессия Telegram истекла — перезапустите приложение.");
+core.showSessionBanner("Сессия Telegram истекла — перезапустите приложение.");
+const banners = document.querySelectorAll(".session-banner");
+assert.strictEqual(banners.length, 1);
+assert.strictEqual(banners[0].getAttribute("role"), "alert");
+banners[0].querySelector("button").click();
+assert.strictEqual(closed, 1);
+"""
+    _node_ok(harness)
+
+
+_SW_HARNESS = r"""
+const assert = require("assert");
+const ORIGIN = "https://app.example";
+const nativeSetTimeout = setTimeout;
+const handlers = {};
+globalThis.self = {
+    location: { origin: ORIGIN },
+    navigator: { onLine: true },
+    clients: { claim: async () => {} },
+    skipWaiting() {},
+    addEventListener(type, fn) { handlers[type] = fn; },
+};
+class FakeCache {
+    constructor() { this.store = new Map(); }
+    _key(request) {
+        return typeof request === "string" ? new URL(request, ORIGIN).href : request.url;
+    }
+    async match(request) {
+        const hit = this.store.get(this._key(request));
+        return hit ? hit.clone() : undefined;
+    }
+    async put(request, response) { this.store.set(this._key(request), response); }
+    async keys() { return [...this.store.keys()].map((url) => new Request(url)); }
+    async delete(request) { return this.store.delete(this._key(request)); }
+    async addAll() {}
+}
+const buckets = new Map();
+globalThis.caches = {
+    async open(name) {
+        if (!buckets.has(name)) buckets.set(name, new FakeCache());
+        return buckets.get(name);
+    },
+    async keys() { return [...buckets.keys()]; },
+    async delete(name) { return buckets.delete(name); },
+    async match(request) {
+        for (const cache of buckets.values()) {
+            const hit = await cache.match(request);
+            if (hit) return hit;
+        }
+        return undefined;
+    },
+};
+const bucket = (suffix) => [...buckets.entries()].find(([name]) => name.endsWith(suffix))?.[1];
+let network;
+let fetchCalls = 0;
+globalThis.fetch = async (request) => { fetchCalls += 1; return network(request); };
+function basic(body, init = {}) {
+    const response = new Response(body, init);
+    Object.defineProperty(response, "type", { value: "basic" });
+    return response;
+}
+function json(payload, init = {}) {
+    return basic(JSON.stringify(payload), {
+        status: init.status || 200,
+        headers: {
+            "Content-Type": "application/json",
+            Date: new Date().toUTCString(),
+            ...(init.headers || {}),
+        },
+    });
+}
+async function dispatch(path, init = {}) {
+    let responded = null;
+    const waits = [];
+    handlers.fetch({
+        request: new Request(new URL(path, ORIGIN).href, init),
+        respondWith(promise) { responded = Promise.resolve(promise); },
+        waitUntil(promise) { waits.push(promise); },
+    });
+    const response = responded ? await responded : null;
+    // Let cache writes land, without waiting on a deliberately hung fetch.
+    await Promise.race([Promise.all(waits), new Promise((r) => nativeSetTimeout(r, 50))]);
+    return response;
+}
+"""
+
+
+def test_rv_fe04_service_worker_api_is_network_first_with_marked_fallback() -> None:
+    """RV-FE-04: live answers win, the cache only stands in when the
+    network fails (marked for the page), never for force_refresh, and
+    being offline no longer short-circuits to a 503 before the cache."""
+    harness = _SW_HARNESS + Path("frontend/sw.js").read_text(encoding="utf-8") + r"""
+(async () => {
+    const url = "/api/v1/listings?query=iphone";
+    network = () => json({ fresh: 1 });
+    let response = await dispatch(url);
+    assert.deepStrictEqual(await response.json(), { fresh: 1 });
+    assert.strictEqual(response.headers.get("X-SW-Fallback"), null);
+    assert.ok(await bucket("-runtime").match(new URL(url, ORIGIN).href), "kept as fallback");
+
+    network = () => json({ fresh: 2 });
+    response = await dispatch(url);
+    assert.deepStrictEqual(await response.json(), { fresh: 2 }, "no stale answer while online");
+
+    self.navigator.onLine = false;
+    network = () => { throw new TypeError("Failed to fetch"); };
+    response = await dispatch(url);
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.headers.get("X-SW-Fallback"), "1");
+    assert.deepStrictEqual(await response.json(), { fresh: 2 });
+
+    response = await dispatch("/api/v1/segments?query=never-seen");
+    assert.strictEqual(response.status, 503);
+    const body = await response.json();
+    assert.strictEqual(body.detail.error, "offline");
+    assert.ok(body.detail.message.startsWith("Нет соединения"));
+    self.navigator.onLine = true;
+
+    const calls = fetchCalls;
+    const forced = await dispatch(`${url}&force_refresh=1`);
+    assert.strictEqual(forced, null, "force_refresh passes through");
+    const noStore = await dispatch(url, { cache: "no-store" });
+    assert.strictEqual(noStore, null, "no-store passes through");
+    assert.strictEqual(fetchCalls, calls);
+
+    network = () => json({ detail: "bad gateway" }, { status: 502 });
+    response = await dispatch(url);
+    assert.strictEqual(response.headers.get("X-SW-Fallback"), "1", "gateway errors fall back");
+    network = () => json({ detail: "boom" }, { status: 500 });
+    response = await dispatch(url);
+    assert.strictEqual(response.status, 500, "application errors pass through");
+
+    network = () => json({ private: true }, { headers: { "Cache-Control": "private, no-store" } });
+    await dispatch("/api/v1/geography?query=p");
+    const privateHit = await bucket("-runtime").match(`${ORIGIN}/api/v1/geography?query=p`);
+    assert.strictEqual(privateHit, undefined, "private responses are not stored");
+
+    const old = "/api/v1/price-history?query=old";
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toUTCString();
+    network = () => json({ old: true }, { headers: { Date: twoHoursAgo } });
+    await dispatch(old);
+    network = () => { throw new TypeError("Failed to fetch"); };
+    response = await dispatch(old);
+    assert.strictEqual(response.status, 503, "copies older than the ceiling are not served");
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_rv_fe04_service_worker_timeout_and_bounded_image_cache() -> None:
+    """RV-FE-04: a hanging network falls back to a recent copy after the
+    timeout (and keeps waiting when there is none); proxied photos live
+    in their own bucket, capped instead of piling up in the static one."""
+    harness = _SW_HARNESS + Path("frontend/sw.js").read_text(encoding="utf-8") + r"""
+const realSetTimeout = setTimeout;
+globalThis.setTimeout = (fn, ms) => realSetTimeout(fn, ms >= 10000 ? 0 : ms);
+(async () => {
+    const url = "/api/v1/price-stats?query=iphone";
+    network = () => json({ live: 1 });
+    await dispatch(url);
+    network = () => new Promise(() => {});
+    const hung = new Promise((resolve) => realSetTimeout(() => resolve("hung"), 500));
+    const fallback = await Promise.race([dispatch(url), hung]);
+    assert.notStrictEqual(fallback, "hung", "a hanging network must not hang the page");
+    assert.strictEqual(fallback.headers.get("X-SW-Fallback"), "1");
+
+    let release;
+    network = () => new Promise((resolve) => { release = () => resolve(json({ late: true })); });
+    const pending = dispatch("/api/v1/price-stats?query=fresh");
+    realSetTimeout(() => release(), 20);
+    assert.deepStrictEqual(await (await pending).json(), { late: true }, "no copy: keep waiting");
+
+    network = (request) => basic(`img:${request.url}`, {
+        headers: { "Content-Type": "image/webp" },
+    });
+    for (let i = 0; i < 130; i += 1) {
+        await dispatch(`/api/v1/img/adim1/${i}.jpg?w=240`);
+    }
+    const images = bucket("-img");
+    assert.ok(images, "photos go to their own bucket");
+    assert.ok(images.store.size <= 120, `bounded, got ${images.store.size}`);
+    const staticBucket = bucket("-static");
+    const staticKeys = staticBucket ? [...staticBucket.store.keys()] : [];
+    assert.ok(!staticKeys.some((key) => key.includes("/api/v1/img/")), "not in the static bucket");
+    const calls = fetchCalls;
+    await dispatch("/api/v1/img/adim1/129.jpg?w=240");
+    assert.strictEqual(fetchCalls, calls, "a cached photo is served without the network");
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_rv_ui01_privacy_policy_stacks_over_consent_and_owns_escape() -> None:
+    """RV-UI-01: the policy opened from the consent gate becomes the
+    active dialog (focus, inert, scroll lock); Escape closes only it,
+    then only the gate; nothing leaks to the app's global handler."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js") + _ACTIONS_STUBS + r"""
+function createApiCore() {
+    return {
+        telegramHeaders: () => ({}),
+        requestJson: noop,
+        getJson: async (url) => (url.includes("ai-consent-info")
+            ? { display_label: "AI", policy_version: "1" }
+            : { granted: false }),
+        postJson: noop,
+        deleteJson: noop,
+        buildCommonQuery: noop,
+    };
+}
+""" + _js("app_actions.js") + r"""
+const assert = require("assert");
+const app = el("div", { id: "app-root" });
+const main = el("main", {}, el("button", { id: "detail-ai" }, "AI"));
+const consent = el("div", { id: "consent-modal", class: "modal-overlay", hidden: true },
+    el("div", { class: "modal-content", role: "dialog" },
+        el("span", { id: "consent-ai-provider-label" }),
+        el("input", { id: "consent-ai-checkbox", type: "checkbox" }),
+        el("input", { id: "consent-cross-border-checkbox", type: "checkbox" }),
+        el("input", { id: "consent-pd-checkbox", type: "checkbox" }),
+        el("a", { id: "consent-privacy-link", href: "#" }, "политикой"),
+        el("button", { id: "consent-accept-btn" }, "Согласен"),
+        el("button", { id: "consent-cancel-btn" }, "Отмена")));
+const privacy = el("div", { id: "privacy-modal", class: "detail-modal", hidden: true },
+    el("div", { id: "privacy-overlay", class: "detail-overlay" }),
+    el("div", { class: "detail-sheet", role: "dialog" },
+        el("div", { class: "modal-header" }, el("button", { id: "privacy-modal-close" }, "×")),
+        el("div", { class: "detail-sheet-content privacy-content" }, "…")));
+app.append(main, consent, privacy);
+document.body.append(app);
+let globalEscapes = 0;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") globalEscapes += 1; });
+const actions = createAppActions({
+    state: { search: { recentSearches: [] }, misc: {}, ui: {}, profile: {} },
+    elements: { views: {} },
+    markDirty: noop,
+    renderAll: noop,
+    showToast: noop,
+    trapFocus,
+});
+const link = document.getElementById("consent-privacy-link");
+const closeButton = document.getElementById("privacy-modal-close");
+
+(async () => {
+    const gate = actions.checkAiConsent();
+    await tick(5);
+    assert.strictEqual(consent.hidden, false);
+    assert.ok(main.hasAttribute("inert"));
+    assert.ok(privacy.hasAttribute("inert"), "the gate inerts its siblings");
+
+    link.focus();
+    link.click();
+    assert.strictEqual(privacy.hidden, false);
+    assert.ok(!privacy.hasAttribute("inert"), "the policy is lifted out of the gate's inert");
+    assert.ok(consent.hasAttribute("inert"), "the gate underneath goes inert");
+    assert.strictEqual(document.activeElement, closeButton, "focus moves into the policy");
+    assert.ok(document.body.classList.contains("modal-open"));
+
+    keydown(closeButton, "Escape");
+    assert.strictEqual(privacy.hidden, true);
+    assert.strictEqual(consent.hidden, false, "Escape closed only the policy");
+    assert.ok(!consent.hasAttribute("inert"));
+    assert.ok(privacy.hasAttribute("inert"), "the gate's inert is handed back");
+    assert.strictEqual(document.activeElement, link, "focus returns to the link");
+    assert.ok(!document.body.classList.contains("modal-open"));
+    assert.strictEqual(globalEscapes, 0, "the app's Escape handler never saw it");
+
+    keydown(link, "Escape");
+    await assert.rejects(gate, /consent_denied/);
+    assert.strictEqual(consent.hidden, true);
+    assert.strictEqual(globalEscapes, 0, "the gate swallows its own Escape too");
+    assert.ok(!main.hasAttribute("inert"));
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def _css_rule_values(css: str, selector: str, prop: str) -> list[str]:
+    values = []
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+        selectors = [s.strip() for s in match.group(1).split(",")]
+        if selector in selectors:
+            for decl in match.group(2).split(";"):
+                name, _, value = decl.partition(":")
+                if name.strip() == prop:
+                    values.append(value.strip())
+    return values
+
+
+def test_rv_ui01_privacy_modal_css_sits_above_dialogs_with_gutters() -> None:
+    parts = CSS_DIR / "parts"
+    css = "\n".join(
+        (parts / f"{name}.css").read_text(encoding="utf-8")
+        for name in ("tokens", "layout", "modals", "pipeline", "states", "ai", "brand")
+    )
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    overlay_z = max(int(v) for v in _css_rule_values(css, ".modal-overlay", "z-index"))
+    privacy_z = int(_css_rule_values(css, "#privacy-modal", "z-index")[-1])
+    toast_z = int(_css_rule_values(css, ".toast-container", "z-index")[-1])
+    assert overlay_z < privacy_z < toast_z
+    padding = _css_rule_values(css, ".privacy-content", "padding")[-1]
+    assert "safe-area-inset-left" in padding and "safe-area-inset-right" in padding
+    assert "safe-area-inset-bottom" in padding
+    assert not re.fullmatch(r"\S+\s+0", padding), "side gutters must not be zero"
+
+
+def test_rv_ui02_listing_card_is_a_list_item_with_a_described_title_button() -> None:
+    """RV-UI-02: no role=button around nested controls; the title button
+    is the primary action and price, tags and badges are announced."""
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "virtual_list.js", "render_core.js",
+        "render_card_builders.js", "render_cards.js",
+    ) + _CARDS_HARNESS + r"""
+const assert = require("assert");
+const opened = [];
+const added = [];
+const state = {
+    leads: { items: [] }, watchlist: { items: [] }, misc: { stats: {} }, filters: {},
+    listings: { items: [] }, search: { activeQuery: "iphone" }, ui: {},
+};
+const actions = {
+    openListingDetail: (item) => opened.push(item.ad_id),
+    addLeadFromListing: async (item) => { added.push(item.ad_id); return false; },
+    addWatchlistFromListing: async () => false,
+    openWatchlistDetail: (item) => opened.push(`w${item.id}`),
+};
+const context = { ...domContext, state, elements: {}, actions };
+context.buildEmptyState = createRenderCore(context).buildEmptyState;
+const builders = createRenderCardBuilders(context);
+const item = {
+    ad_id: 11, title: "iPhone 14 Pro", price: 1200, condition: "Б/у", seller_type: "Частное",
+    list_time: new Date().toISOString(),
+    price_vs_median: -15,
+    thumbnail: "https://rms.kufar.by/v1/gallery/a.jpg",
+};
+const card = builders.buildListingNode(item, () => "neutral");
+document.body.append(card);
+assert.strictEqual(card.getAttribute("role"), "listitem");
+assert.strictEqual(card.getAttribute("tabindex"), null);
+assert.strictEqual(card.getAttribute("aria-label"), null);
+const open = card.querySelector("h3 > button.card-open");
+assert.ok(open, "the title is a button inside a heading");
+assert.strictEqual(open.textContent, "iPhone 14 Pro");
+const described = open.getAttribute("aria-describedby").split(" ")
+    .map((id) => document.getElementById(id))
+    .map((node) => node && node.textContent)
+    .join(" | ");
+for (const part of ["1200 BYN", "Б/у", "Частное", "Новое", "-15%", "ниже среднего по запросу"]) {
+    assert.ok(described.includes(part), `${part} missing from "${described}"`);
+}
+const photoAlt = card.querySelector("img").getAttribute("alt");
+assert.strictEqual(photoAlt, "", "the photo does not repeat the title");
+for (const control of card.querySelectorAll("button, a, input")) {
+    assert.strictEqual(control.parentNode.closest("button, a, input, [role=button]"), null,
+        "no interactive control nested in another");
+}
+
+const container = el("div");
+document.body.append(container);
+const renderer = createRenderCards(context);
+renderer.renderListingsCollection([item, { ...item, ad_id: 12 }], container, null, "");
+assert.strictEqual(container.children.length, 1);
+const list = container.firstElementChild;
+assert.strictEqual(list.getAttribute("role"), "list");
+const strayChildren = list.children.filter((node) => node.getAttribute("role") !== "listitem");
+assert.strictEqual(strayChildren.length, 0, "the list holds only list items");
+list.querySelector(".card-open").click();
+list.querySelector(".listing-badges").click();
+list.querySelector('[data-role="lead"]').click();
+assert.deepStrictEqual(opened, [11, 11], "title and badges open the detail, actions don't");
+assert.deepStrictEqual(added, [11]);
+
+renderer.renderListingsCollection([], container, null, "Пусто");
+assert.strictEqual(
+    container.querySelector("[role=list]"), null, "the empty state is not inside a list",
+);
+assert.ok(container.querySelector(".empty-state"));
+"""
+    _node_ok(harness)
+
+
+def test_rv_ui02_deal_cards_and_tracker_events_are_list_items() -> None:
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "virtual_list.js", "render_core.js",
+        "render_card_builders.js", "render_trackers.js",
+    ) + _CARDS_HARNESS + r"""
+const assert = require("assert");
+const opened = [];
+const state = {
+    leads: { items: [] }, watchlist: { items: [] }, misc: { stats: {} },
+    trackers: {
+        items: [],
+        events: [{
+            ad_id: 5, title: "Велосипед", event_type: "price_drop", price_byn: 300,
+            delta_byn: 50, region_name: "Минск", query: "велосипед", tracker_id: 1,
+            created_at: "2026-10-20",
+        }],
+        eventFilter: "all",
+        eventFilterTrackerId: null,
+    },
+};
+const actions = {
+    openWatchlistDetail: (item) => opened.push(`watch:${item.id}`),
+    openListingDetail: (item) => opened.push(`event:${item.ad_id}`),
+};
+const elements = { trackerEventsList: el("div"), trackerEventFilterButtons: [] };
+document.body.append(elements.trackerEventsList);
+const context = { ...domContext, state, elements, actions };
+context.buildEmptyState = createRenderCore(context).buildEmptyState;
+const builders = createRenderCardBuilders(context);
+
+const watchItem = { id: 3, ad_id: 8, title: "Ноутбук", current_price_byn: 900 };
+const watch = builders.buildWatchlistNode(watchItem, (value) => value);
+document.body.append(watch);
+assert.strictEqual(watch.getAttribute("role"), "listitem");
+assert.strictEqual(watch.getAttribute("tabindex"), null);
+assert.ok(watch.querySelector(".watchlist-card-top .card-open"));
+const watchDescribedBy = watch.querySelector(".card-open").getAttribute("aria-describedby");
+const firstDescription = document.getElementById(watchDescribedBy.split(" ")[0]);
+assert.ok(firstDescription.textContent.includes("900 BYN"));
+watch.querySelector(".card-open").click();
+assert.deepStrictEqual(opened, ["watch:3"]);
+
+const leadItem = { id: 4, ad_id: 9, title: "Консоль", status: "new", price_byn: 100 };
+const lead = builders.buildLeadNode(leadItem);
+assert.strictEqual(lead.getAttribute("role"), "listitem");
+assert.strictEqual(lead.getAttribute("tabindex"), null);
+assert.strictEqual(lead.getAttribute("aria-label"), null);
+assert.ok(lead.querySelector("h3 .sr-only").textContent.includes("ожидает подтверждения"));
+
+const trackers = createRenderTrackers(context);
+trackers.renderTrackerEvents();
+const list = elements.trackerEventsList.querySelector("[role=list]");
+assert.ok(list);
+const eventCard = list.querySelector("[role=listitem]");
+assert.ok(eventCard);
+assert.strictEqual(elements.trackerEventsList.querySelectorAll("[role=button]").length, 0);
+eventCard.querySelector(".event-header .card-open").click();
+assert.deepStrictEqual(opened, ["watch:3", "event:5"]);
+const eventDescribedBy = eventCard.querySelector(".card-open").getAttribute("aria-describedby");
+const description = eventDescribedBy.split(" ")
+    .map((id) => document.getElementById(id).textContent)
+    .join(" ");
+assert.ok(description.includes("Падение цены") && description.includes("300 BYN"), description);
+"""
+    _node_ok(harness)
+
+
+def test_rv_ui02_virtual_list_keeps_a_single_list_role() -> None:
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "virtual_list.js") + r"""
+const assert = require("assert");
+const listContainer = el("div", { role: "list" });
+const panel = el("div", { role: "tabpanel" });
+const plain = el("div");
+for (const container of [listContainer, panel, plain]) {
+    document.body.append(container);
+    createVirtualList(container, { renderFn: () => el("div", { role: "listitem" }) });
+}
+const viewportOf = (container) => container.children[1];
+assert.strictEqual(viewportOf(listContainer).getAttribute("role"), "none");
+assert.strictEqual(viewportOf(panel).getAttribute("role"), "list");
+assert.strictEqual(panel.getAttribute("role"), "tabpanel");
+assert.strictEqual(viewportOf(plain).getAttribute("role"), "list");
+assert.strictEqual(plain.getAttribute("role"), null, "no second list role on the container");
+"""
+    _node_ok(harness)
+
+
+def test_rv_ui02_card_containers_and_builders_drop_role_button() -> None:
+    index_html = Path("frontend/index.html").read_text(encoding="utf-8")
+    containers = ("listings-list", "trackers-list", "tracker-events-list", "history-deals-list")
+    for element_id in containers:
+        tag = re.search(rf'<div[^>]*id="{element_id}"[^>]*>', index_html).group(0)
+        assert 'role="list"' not in tag, f"#{element_id}: the inner .card-list is the list"
+    for name in ("render_card_builders.js", "render_trackers.js", "render_cards.js"):
+        source = (JS_DIR / name).read_text(encoding="utf-8")
+        assert 'role: "button"' not in source, name
+    css = _read_all_css()
+    assert ".card-open::after" in css and "inset: 0" in css
+
+
+def _hex_luminance(color: str) -> float:
+    color = color.lstrip("#")
+    channels = [int(color[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def _contrast(fg: str, bg: str) -> float:
+    high, low = sorted((_hex_luminance(fg), _hex_luminance(bg)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def _blend(rgba: str, base: str = "#ffffff") -> str:
+    r, g, b, a = (float(x) for x in re.findall(r"[\d.]+", rgba))
+    base_rgb = [int(base.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    mixed = [round(a * c + (1 - a) * bc) for c, bc in zip((r, g, b), base_rgb, strict=True)]
+    return "#" + "".join(f"{c:02x}" for c in mixed)
+
+
+def _theme_block(css: str, selector: str) -> dict[str, str]:
+    start = css.index(f"{selector} {{")
+    body = css[start:css.index("}", start)]
+    return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", body))
+
+
+def test_rv_ui03_light_theme_text_tokens_pass_aa() -> None:
+    """RV-UI-03: semantic text in the light theme reads *-text tokens
+    that reach 4.5:1 on the page, the cards and the 6% badge tints."""
+    tokens_css = (CSS_DIR / "parts" / "tokens.css").read_text(encoding="utf-8")
+    light = _theme_block(tokens_css, '[data-theme="light"]')
+    dark = _theme_block(tokens_css, ":root")
+    surfaces = ["#ffffff", light["--bg"], light["--bg-card"]]
+    for name, soft in (("green", "--green-soft"), ("amber", "--amber-soft"),
+                       ("cyan", "--cyan-soft"), ("red", "--red-soft")):
+        text = light[f"--{name}-text"]
+        for surface in [*surfaces, _blend(light[soft])]:
+            assert _contrast(text, surface) >= 4.5, f"{name}-text {text} on {surface}"
+        fill = dark[dark[f"--{name}-text"][len("var("):-1]]
+        for surface in (dark["--bg"], dark["--bg-card"]):
+            assert _contrast(fill, surface) >= 4.5, f"dark {name}-text on {surface}"
+
+
+def test_rv_ui03_text_colours_never_use_bright_fill_tokens() -> None:
+    offenders = []
+    pattern = re.compile(r"(?<![-\w])color:\s*var\(--(?:green|amber|amber-400|cyan|red|red-400)\)")
+    for path in sorted((CSS_DIR / "parts").glob("*.css")):
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if pattern.search(line):
+                offenders.append(f"{path.name}:{line_no}")
+    assert not offenders, "use the *-text tokens for text: " + ", ".join(offenders)
+
+
+def test_rv_sec05_account_deletion_closes_app_without_reprovisioning() -> None:
+    """RV-SEC-05: after DELETE /account nothing reaches the API again (the
+    backend would re-create the user from the same initData), local data
+    and SW caches are cleared, the Mini App closes and a dead-end screen
+    replaces the app — no reload."""
+    modules = _js("dom_helpers.js") + _ACTIONS_STUBS + _js("api_core.js", "app_actions.js")
+    harness = _FAKE_DOM_JS + modules + r"""
+const assert = require("assert");
+let closed = 0;
+let reloaded = 0;
+location.reload = () => { reloaded += 1; };
+window.Telegram = { WebApp: {
+    initData: "query_id=1",
+    initDataUnsafe: { user: { id: 5, first_name: "Ivan" } },
+    close: () => { closed += 1; },
+} };
+const deletedCaches = [];
+globalThis.caches = {
+    keys: async () => ["rafuk-cache-v1-static", "rafuk-cache-v1-runtime", "rafuk-cache-v1-img"],
+    delete: async (name) => { deletedCaches.push(name); return true; },
+};
+const fetches = [];
+globalThis.fetch = async (url, options = {}) => {
+    fetches.push(`${options.method || "GET"} ${url}`);
+    return new Response(null, { status: 204 });
+};
+localStorage.setItem("recentSearches", "[]");
+localStorage.setItem("rafuk:assistant-history", "[]");
+localStorage.setItem("theme", "dark");
+const appRoot = el("div", { id: "app-root" }, el("main"));
+document.body.append(appRoot);
+const state = { search: { recentSearches: ["iphone"] }, misc: {}, ui: {}, profile: {} };
+const toasts = [];
+const actions = createAppActions({
+    state,
+    elements: { views: {} },
+    markDirty: noop,
+    renderAll: noop,
+    showToast: (...args) => toasts.push(args),
+    trapFocus,
+});
+
+(async () => {
+    const done = actions.deleteAccount();
+    await tick(5);
+    const input = document.querySelector(".typed-confirm-input");
+    input.value = "ivan";
+    fire(input, "input");
+    document.querySelector(".typed-confirm-modal [data-role='confirm']").click();
+    await done;
+    await tick(5);
+
+    assert.deepStrictEqual(fetches, ["DELETE /api/v1/account"]);
+    assert.strictEqual(localStorage.getItem("recentSearches"), null);
+    assert.strictEqual(localStorage.getItem("rafuk:assistant-history"), null);
+    assert.strictEqual(localStorage.getItem("theme"), "dark");
+    assert.deepStrictEqual(deletedCaches.sort(), ["rafuk-cache-v1-img", "rafuk-cache-v1-runtime"]);
+    assert.ok(stubCalls.includes("trackers.stopTrackerRefresh"));
+    assert.strictEqual(appRoot.hidden, true);
+    const screen = document.querySelector(".account-deleted-screen");
+    assert.ok(screen && screen.textContent.includes("Аккаунт удалён"));
+    assert.strictEqual(screen.getAttribute("role"), "alert");
+
+    await actions.refreshLeads();
+    assert.deepStrictEqual(fetches, ["DELETE /api/v1/account"], "no request after deletion");
+
+    await tick(1300);
+    assert.strictEqual(closed, 1, "the Mini App is closed");
+    assert.strictEqual(reloaded, 0, "never reloads with the same initData");
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+_AI_HARNESS = r"""
+const assert = require("assert");
+let now = 1_000_000;
+const startedAt = now;
+Date.now = () => now;
+const realSetTimeout = setTimeout;
+// Fake clock: every timer runs on the next turn and advances time by its delay.
+globalThis.setTimeout = (fn, ms = 0) => realSetTimeout(() => { now += ms; fn(); }, 0);
+globalThis.window = globalThis;
+const posts = [];
+const results = [];
+const errors = [];
+let taskResponder = () => ({ status: "processing", stage: "calling_ai" });
+let startResponder = () => ({ task_id: `task-${posts.length}` });
+window.App = {
+    createAiModal: () => ({
+        openAIModal() {}, stopLoadingAnimation() {}, showLoaderError() {}, closeAIModal() {},
+        setStageLabel() {}, showCompletionThen(cb) { cb(); },
+    }),
+    createAiRender: () => ({
+        renderAIModalResult: (result) => results.push(result),
+        renderAiErrorState: (_node, message) => errors.push(message),
+    }),
+};
+"""
+
+_AI_CONTEXT = r"""
+const state = {
+    search: { activeQuery: "iphone" },
+    filters: {},
+    detail: { data: { query: "iphone", title: "iPhone" }, ai: null },
+};
+const api = window.App.createApiAi({
+    state,
+    elements: { aiModalLoading: {}, aiModalResult: {}, aiModalError: {} },
+    postJson: async (url, body) => { posts.push(body.ad_id); return startResponder(body); },
+    getJson: async (url) => taskResponder(url),
+    logClientError() {},
+});
+"""
+
+
+def test_rv_ai07_analysis_waits_for_backend_budget_and_resumes_the_same_task() -> None:
+    """RV-AI-07: the client waits longer than the backend's own budget
+    (ai_analysis_timeout plus search/photo stages), and "Повторить"
+    after a client-side give-up resumes the running task instead of
+    starting — and paying for — a second one."""
+    config = Path("api/config.py").read_text(encoding="utf-8")
+    backend_timeout = int(re.search(r"ai_analysis_timeout:\s*int\s*=\s*(\d+)", config).group(1))
+    harness = _AI_HARNESS + _js("api_ai.js") + _AI_CONTEXT + r"""
+(async () => {
+    await api.loadAIAnalysis(42);
+    const waitedSeconds = (now - startedAt) / 1000;
+    assert.ok(waitedSeconds >= __BACKEND__ + 60, `gave up after ${waitedSeconds}s`);
+    assert.strictEqual(posts.length, 1);
+    await new Promise((r) => realSetTimeout(r, 5));
+    assert.ok(errors.at(-1).includes("продолжит ждать"), errors.at(-1));
+
+    taskResponder = () => ({ status: "done", result: { verdict: "ok" } });
+    await api.loadAIAnalysis(42);
+    assert.strictEqual(posts.length, 1, "retry resumed the running task");
+    assert.deepStrictEqual(results, [{ verdict: "ok" }]);
+
+    // A finished task is not resumed; another listing starts its own.
+    await api.loadAIAnalysis(43);
+    assert.strictEqual(posts.length, 2);
+
+    // A resumed task that expired server-side is replaced by a new one.
+    taskResponder = () => ({ status: "processing" });
+    startResponder = () => ({ task_id: "slow", poll_timeout_seconds: 1 });
+    await api.loadAIAnalysis(44);
+    assert.strictEqual(posts.length, 3);
+    let polls = 0;
+    taskResponder = () => {
+        polls += 1;
+        if (polls === 1) {
+            const err = new Error("Задача не найдена");
+            err.status = 404;
+            throw err;
+        }
+        return { status: "done", result: { verdict: "again" } };
+    };
+    startResponder = () => ({ task_id: "fresh" });
+    await api.loadAIAnalysis(44);
+    assert.strictEqual(posts.length, 4, "an expired task is started afresh");
+    assert.deepStrictEqual(results.at(-1), { verdict: "again" });
+})()""".replace("__BACKEND__", str(backend_timeout)) + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_rv_ai07_server_announced_poll_budget_wins() -> None:
+    harness = _AI_HARNESS + _js("api_ai.js") + _AI_CONTEXT + r"""
+startResponder = () => ({ task_id: "long", poll_timeout_seconds: 400 });
+(async () => {
+    await api.loadAIAnalysis(7);
+    const waitedSeconds = (now - startedAt) / 1000;
+    assert.ok(waitedSeconds >= 400 && waitedSeconds < 480, `waited ${waitedSeconds}s`);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_rv_ai07_listing_assistant_timeout_covers_backend_budget() -> None:
+    source = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
+    raw = re.search(r"const LISTING_ASSISTANT_TIMEOUT_MS = ([\d_]+);", source).group(1)
+    timeout_ms = int(raw.replace("_", ""))
+    router = Path("api/routers/ai_listing_assistant.py").read_text(encoding="utf-8")
+    backend = int(re.search(r'"ai_listing_assistant_timeout", (\d+)\)', router).group(1))
+    # Model call plus the strict-then-broad Kufar search (2 × kufar_timeout).
+    assert timeout_ms / 1000 > backend + 30
+    call = 'postJson("/api/v1/ai/listing-assistant", payload, {\n'
+    assert call + "                timeout: LISTING_ASSISTANT_TIMEOUT_MS," in source

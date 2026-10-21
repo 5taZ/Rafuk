@@ -90,7 +90,7 @@
 
 .render-error {
     padding: 12px 14px;
-    color: var(--red);
+    color: var(--red-text);
     font-size: var(--text-sm);
     text-align: center;
     background: var(--red-soft);
@@ -269,7 +269,7 @@
 }
 
 .recent-clear:active {
-    color: var(--red);
+    color: var(--red-text);
 }
 
 /* ===== Skeleton Loading Animations ===== */

@@ -26,6 +26,7 @@ function createAppActions(baseContext) {
     context._prefersReducedMotion = _prefersReducedMotion;
     const inflightGuardMs = typeof INFLIGHT_GUARD_MS === "number" ? INFLIGHT_GUARD_MS : 30_000;
     context.inflightGuardMs = inflightGuardMs;
+    const logClientError = context.logClientError || (() => {});
     const {
         state,
         elements,
@@ -264,32 +265,50 @@ function createAppActions(baseContext) {
     });
     let _aiModule = null;
     let _listingAssistantModule = null;
+    let _aiLoadPromise = null;
 
-    async function ensureAiLoaded() {
-        if (_aiModule) return;
-        // UX-M8 (Wave 25): api_ai.js was split by responsibility. Load
-        // the sub-modules (modal/render) BEFORE the orchestrator
-        // (api_ai.js) so their App namespace registrations are ready
-        // by the time createApiAi calls them. They're loaded in
-        // parallel and share the same cache-busting version stamp.
-        await Promise.all([
-            context._loadScript("js/api_ai_modal.js?v=20260523-98e26dc"),
-            context._loadScript("js/api_ai_render.js?v=20260523-98e26dc"),
-            context._loadScript("js/api_ai.js?v=20260523-98e26dc"),
-            context._loadScript("js/api_listing_assistant.js?v=20260523-98e26dc"),
-        ]);
-        const app = window.App || {};
-        if (typeof app.createApiAi !== "function") {
-            throw new Error("AI module failed to register");
-        }
-        _aiModule = app.createApiAi(context);
-        _listingAssistantModule = (typeof app.createApiListingAssistant === "function")
-            ? app.createApiListingAssistant(context)
-            : null;
+    function ensureAiLoaded() {
+        if (_aiModule) return Promise.resolve();
+        // RV-FE-02: one in-flight load per attempt. A double tap used to
+        // build the AI modules twice (two submit handlers, two polling
+        // loops), and a failed load is forgotten so the next tap retries.
+        if (_aiLoadPromise) return _aiLoadPromise;
+        const attempt = (async () => {
+            // UX-M8 (Wave 25): api_ai.js was split by responsibility. Load
+            // the sub-modules (modal/render) BEFORE the orchestrator
+            // (api_ai.js) so their App namespace registrations are ready
+            // by the time createApiAi calls them. They're loaded in
+            // parallel and share the same cache-busting version stamp.
+            await Promise.all([
+                context._loadScript("js/api_ai_modal.js?v=20261021-1872adf"),
+                context._loadScript("js/api_ai_render.js?v=20261021-1872adf"),
+                context._loadScript("js/api_ai.js?v=20261021-1872adf"),
+                context._loadScript("js/api_listing_assistant.js?v=20261021-1872adf"),
+            ]);
+            const app = window.App || {};
+            if (typeof app.createApiAi !== "function") {
+                throw new Error("AI module failed to register");
+            }
+            _aiModule = app.createApiAi(context);
+            _listingAssistantModule = (typeof app.createApiListingAssistant === "function")
+                ? app.createApiListingAssistant(context)
+                : null;
+        })();
+        _aiLoadPromise = attempt;
+        attempt.catch(() => {
+            if (_aiLoadPromise === attempt) _aiLoadPromise = null;
+        });
+        return attempt;
     }
 
     async function loadAIAnalysis(...args) {
-        await ensureAiLoaded();
+        try {
+            await ensureAiLoaded();
+        } catch (err) {
+            logClientError("AI modules failed to load", err);
+            showToast("Не удалось загрузить AI-модуль. Проверьте соединение и попробуйте ещё раз.", "error", 3600);
+            return undefined;
+        }
         return _aiModule.loadAIAnalysis(...args);
     }
 
@@ -495,7 +514,7 @@ function createAppActions(baseContext) {
                     (entry) => entry.label === "По рынку",
                 );
                 await core.postJson("/api/v1/leads", {
-                    query: queryOverride || state.search.query || "",
+                    query: queryOverride || state.search.activeQuery || "",
                     ad_id: item.ad_id,
                     title: item.title,
                     link: item.link,
@@ -579,7 +598,7 @@ function createAppActions(baseContext) {
             return;
         }
         elements.searchInput.value = query;
-        state.search.query = query;
+        state.search.draft = query;
         await listings.search(view);
     }
 
@@ -691,6 +710,58 @@ function createAppActions(baseContext) {
             }
             for (const key of new Set(keys)) localStorage.removeItem(key);
         } catch (_) {}
+        // RV-SEC-05: the service worker's API and photo caches hold
+        // request URLs with the user's search queries; they go with the
+        // rest of the account's local data. The shell cache stays.
+        try {
+            if (typeof caches !== "undefined" && typeof caches.keys === "function") {
+                void caches.keys()
+                    .then((names) => Promise.all(
+                        names
+                            .filter((name) => /-(?:runtime|img)$/.test(name))
+                            .map((name) => caches.delete(name)),
+                    ))
+                    .catch(() => {});
+            }
+        } catch (_) {}
+    }
+
+    // RV-SEC-05: after the server deleted the account, the same initData
+    // stays valid for up to 2 h and the backend auto-provisions a user on
+    // the first authenticated request — so the old reload (or any later
+    // load or background refresh) recreated the users row with the
+    // Telegram id, name and username. Cut the app off from the API,
+    // close the Mini App, and outside Telegram (or if close() is ignored)
+    // leave a dead-end "Аккаунт удалён" screen.
+    function _finishAccountDeletion() {
+        state.ui.accountDeleted = true;
+        try { context.stopTrackerRefresh?.(); } catch (_) {}
+        try { listings.abortSearchRequests(); } catch (_) {}
+        _showAccountDeletedScreen();
+        const tg = window.Telegram?.WebApp;
+        if (tg && typeof tg.close === "function") {
+            setTimeout(() => {
+                try { tg.close(); } catch (_) { /* the screen above stays */ }
+            }, 1200);
+        }
+    }
+
+    function _showAccountDeletedScreen() {
+        const appRoot = document.getElementById("app-root");
+        if (appRoot) appRoot.hidden = true;
+        const title = domEl("h1", { className: "account-deleted-title", text: "Аккаунт удалён" });
+        title.tabIndex = -1;
+        const screen = domEl(
+            "div",
+            { className: "account-deleted-screen", attrs: { role: "alert" } },
+            title,
+            domEl("p", {
+                className: "account-deleted-text",
+                text: "Ваши данные стёрты с сервера. Чтобы снова пользоваться Rafuk, откройте приложение заново из Telegram.",
+            }),
+        );
+        document.body.appendChild(screen);
+        try { title.focus(); } catch (_) {}
     }
 
     /**
@@ -816,6 +887,10 @@ function createAppActions(baseContext) {
         // top, otherwise we'd close both modals together.
         function onKeydown(e) {
             if (e.key !== "Escape") return;
+            // RV-UI-01: the gate owns Escape while it is open (capture
+            // phase): the detail sheet it was opened from must not close
+            // on the same keypress.
+            e.stopPropagation();
             // If the privacy modal is open ON TOP, let it handle the
             // Escape first.
             const privacyModal = document.getElementById("privacy-modal");
@@ -828,7 +903,7 @@ function createAppActions(baseContext) {
             acceptBtn.removeEventListener("click", onAccept);
             cancelBtn.removeEventListener("click", onCancel);
             if (privacyLink) privacyLink.removeEventListener("click", onPrivacyLink);
-            document.removeEventListener("keydown", onKeydown);
+            document.removeEventListener("keydown", onKeydown, true);
             if (typeof focusCleanup === "function") focusCleanup();
             // UX-M2: restore inert AFTER the focus trap cleanup so the
             // restored focus target isn't itself sitting in an inert
@@ -839,42 +914,41 @@ function createAppActions(baseContext) {
         acceptBtn.addEventListener("click", onAccept);
         cancelBtn.addEventListener("click", onCancel);
         if (privacyLink) privacyLink.addEventListener("click", onPrivacyLink);
-        document.addEventListener("keydown", onKeydown);
+        document.addEventListener("keydown", onKeydown, true);
     }
 
     function openPrivacyModal() {
         const modal = document.getElementById("privacy-modal");
         const overlay = document.getElementById("privacy-overlay");
         const closeBtn = document.getElementById("privacy-modal-close");
-        if (!modal) return;
-        modal.hidden = false;
-        document.body.classList.add("modal-open");
-        let focusCleanup = null;
-        if (typeof trapFocus === "function") focusCleanup = trapFocus(modal);
-        // UX-M2: hide rest of the app from assistive tech while the
-        // privacy text is open. The consent modal is usually open
-        // underneath this one — the second-call guard inside
-        // _applyInertToSiblings (skip already-inert siblings) makes
-        // sure we don't double-stamp and mis-restore.
-        if (typeof _applyInertToSiblings === "function") _applyInertToSiblings(modal);
+        if (!modal || !modal.hidden) return;
+        // RV-UI-01: the policy goes through the shared modal helpers. It
+        // stacks above the consent dialog (z-index in modals.css), takes
+        // focus and inert while open — the consent dialog underneath goes
+        // inert, the policy itself is lifted out of the inert the consent
+        // gate stamped on it — and hands focus, inert and the counted
+        // scroll lock back on close. It used to toggle body.modal-open by
+        // hand and render under the dialog it was opened from.
+        openModalAnimated(modal);
 
         function close() {
-            modal.hidden = true;
-            document.body.classList.remove("modal-open");
-            if (typeof focusCleanup === "function") focusCleanup();
-            if (typeof _restoreInertSiblings === "function") _restoreInertSiblings(modal);
             closeBtn?.removeEventListener("click", close);
             overlay?.removeEventListener("click", close);
-            document.removeEventListener("keydown", onKeydown);
+            document.removeEventListener("keydown", onKeydown, true);
+            closeModalAnimated(modal);
         }
         // FE-02: Escape closes the privacy modal too — it's a
         // read-only secondary modal on top of the consent gate.
+        // RV-UI-01: capture + stopPropagation so the same keypress does
+        // not also cancel the consent gate or close the sheet below it.
         function onKeydown(e) {
-            if (e.key === "Escape") close();
+            if (e.key !== "Escape") return;
+            e.stopPropagation();
+            close();
         }
         closeBtn?.addEventListener("click", close);
         overlay?.addEventListener("click", close);
-        document.addEventListener("keydown", onKeydown);
+        document.addEventListener("keydown", onKeydown, true);
     }
 
     async function deleteAccount() {
@@ -902,12 +976,12 @@ function createAppActions(baseContext) {
         if (typed === null) return;
         try {
             await core.deleteJson("/api/v1/account", { confirmation: typed });
-            clearLocalAccountData();
-            showToast("Аккаунт удалён. Данные стёрты.");
-            setTimeout(() => window.location.reload(), 1500);
         } catch (err) {
             showToast(err.message || "Не удалось удалить аккаунт");
+            return;
         }
+        clearLocalAccountData();
+        _finishAccountDeletion();
     }
 
     function _showTypedConfirmDialog(title, message, expectedText) {
@@ -1074,6 +1148,10 @@ function createAppActions(baseContext) {
         openEditTracker: trackers.openEditTracker,
         closeEditTracker: trackers.closeEditTracker,
         saveTracker: trackers.saveTracker,
+        // RV-FE-02: the trackers render stub restarts the feed refresh
+        // after a successful chunk retry.
+        startTrackerRefresh: trackers.startTrackerRefresh,
+        stopTrackerRefresh: trackers.stopTrackerRefresh,
         openListingDetail: listings.openListingDetail,
         // FE-C4: expose abort hooks so closeDetailModal and any
         // future cleanup paths (view tab change, route navigation)

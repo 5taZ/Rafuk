@@ -655,7 +655,7 @@
 
 .la-error {
     padding: 12px 14px;
-    color: var(--red);
+    color: var(--red-text);
     font-size: var(--text-base);
     background: var(--red-soft);
     border-radius: var(--r-md);
@@ -821,9 +821,9 @@
     background: none;
 }
 
-.la-tier--fast .la-tier-kicker { color: var(--green); }
+.la-tier--fast .la-tier-kicker { color: var(--green-text); }
 .la-tier--market .la-tier-kicker { color: var(--accent); }
-.la-tier--patient .la-tier-kicker { color: var(--amber); }
+.la-tier--patient .la-tier-kicker { color: var(--amber-text); }
 
 .la-tier-kicker {
     font-weight: 600;
@@ -1217,7 +1217,7 @@
 }
 
 .la-history-delete:hover {
-    color: var(--red);
+    color: var(--red-text);
     border-color: color-mix(in srgb, var(--red) 32%, transparent);
 }
 
@@ -2065,7 +2065,7 @@
 }
 
 .tracker-action-btn.danger {
-    color: var(--red);
+    color: var(--red-text);
     border-color: color-mix(in srgb, var(--red) 32%, transparent);
 }
 

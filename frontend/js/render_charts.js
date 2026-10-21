@@ -199,12 +199,12 @@ function createRenderCharts(context) {
     function renderHistory() {
         return safeRender('renderHistory', () => {
             const hasHistory = state.charts.historyData.length > 0;
-        elements.historySection.hidden = !state.search.query;
+        elements.historySection.hidden = !state.search.activeQuery;
         if (context._hooks?.renderHistoryRangeButtons) context._hooks.renderHistoryRangeButtons();
         elements.historyEmpty.hidden = hasHistory;
         elements.historySummary.hidden = !hasHistory;
         domClear(elements.historySummary);
-        if (!state.search.query) {
+        if (!state.search.activeQuery) {
             destroyHistoryChart();
             return;
         }
@@ -449,9 +449,14 @@ function createRenderCharts(context) {
             return String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
         });
 
+        // RV-UI-02: closed deals are items of their own list, so the
+        // "no closed deals" note never sits inside role=list.
+        const dealList = domEl("div", { className: "card-list", attrs: { role: "list" } });
+        elements.historyDealsList.appendChild(dealList);
         for (const lead of sortedLeads) {
             const card = document.createElement("div");
             card.className = "history-deal-card";
+            card.setAttribute("role", "listitem");
             card.dataset.leadId = lead.id;
 
             const buyPriceBynRaw = lead.buy_price_byn ? Number(lead.buy_price_byn) : null;
@@ -519,7 +524,7 @@ function createRenderCharts(context) {
                 void actions.deleteHistoryDeal(lead.id);
             });
 
-            elements.historyDealsList.appendChild(card);
+            dealList.appendChild(card);
         }
         });
     }

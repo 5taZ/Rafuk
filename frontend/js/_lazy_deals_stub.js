@@ -18,9 +18,9 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20260523-98e26dc";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20260523-98e26dc";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20260523-98e26dc";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261021-1872adf";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261021-1872adf";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261021-1872adf";
 
 function _lazyLoadDealsSources(context) {
     if (_loadPromises.has("deals")) return _loadPromises.get("deals");
@@ -36,32 +36,35 @@ function _lazyLoadDealsSources(context) {
     return p;
 }
 
-function _ensureRealFactory(globalKey, name) {
-    const factory = (window.App || {})[globalKey];
-    if (typeof factory !== "function") {
-        throw new Error(`${name} did not register factory`);
-    }
-    return factory;
+// RV-FE-02: the list loaders surface a missing chunk the same way as a
+// failed request (RV-FE-05 error state with "Повторить" in the list);
+// background refreshes stay quiet; explicit user actions get a toast.
+function _dealsChunkFailure(context, collection, loadMethod) {
+    return (method) => {
+        const state = context.state;
+        if (method === loadMethod && state?.[collection]) {
+            state[collection].error = LAZY_LOAD_FAILED_MESSAGE;
+            state[collection]._loading = false;
+            if (typeof context.renderLeads === "function") context.renderLeads();
+            if (typeof context.renderWatchlist === "function") context.renderWatchlist();
+            return undefined;
+        }
+        if (method !== "loadAnalytics") _showLazyLoadToast(context);
+        return undefined;
+    };
 }
 
 function createApiLeads(context) {
-    let _real = null;
-    let _initPromise = null;
+    // RV-FE-02: see _createLazyModule (app_core.js).
+    const lazy = _createLazyModule(context, {
+        load: _lazyLoadDealsSources,
+        factoryKey: "_realCreateApiLeads",
+        label: "api_leads.js",
+    });
+    const onFailure = _dealsChunkFailure(context, "leads", "loadLeads");
 
-    function _ensureLoaded() {
-        if (_real) return Promise.resolve(_real);
-        if (_initPromise) return _initPromise;
-        _initPromise = (async () => {
-            await _lazyLoadDealsSources(context);
-            _real = _ensureRealFactory("_realCreateApiLeads", "api_leads.js")(context);
-            return _real;
-        })();
-        return _initPromise;
-    }
-
-    async function _delegate(method, args) {
-        if (!_real) await _ensureLoaded();
-        return _real[method].apply(null, args);
+    function _delegate(method, args) {
+        return _lazyApiCall(lazy, context, "deals", method, args, onFailure);
     }
 
     return {
@@ -77,28 +80,21 @@ function createApiLeads(context) {
         updateLeadStatus: (...args) => _delegate("updateLeadStatus", args),
         markLeadAsSold: (...args) => _delegate("markLeadAsSold", args),
         openLeadDetail: (...args) => _delegate("openLeadDetail", args),
-        _ensureLoaded,
+        _ensureLoaded: lazy.ensure,
     };
 }
 
 function createApiWatchlist(context) {
-    let _real = null;
-    let _initPromise = null;
+    // RV-FE-02: see _createLazyModule (app_core.js).
+    const lazy = _createLazyModule(context, {
+        load: _lazyLoadDealsSources,
+        factoryKey: "_realCreateApiWatchlist",
+        label: "api_watchlist.js",
+    });
+    const onFailure = _dealsChunkFailure(context, "watchlist", "loadWatchlist");
 
-    function _ensureLoaded() {
-        if (_real) return Promise.resolve(_real);
-        if (_initPromise) return _initPromise;
-        _initPromise = (async () => {
-            await _lazyLoadDealsSources(context);
-            _real = _ensureRealFactory("_realCreateApiWatchlist", "api_watchlist.js")(context);
-            return _real;
-        })();
-        return _initPromise;
-    }
-
-    async function _delegate(method, args) {
-        if (!_real) await _ensureLoaded();
-        return _real[method].apply(null, args);
+    function _delegate(method, args) {
+        return _lazyApiCall(lazy, context, "deals", method, args, onFailure);
     }
 
     return {
@@ -112,29 +108,25 @@ function createApiWatchlist(context) {
         deleteWatchlistItem: (...args) => _delegate("deleteWatchlistItem", args),
         deleteAllWatchlist: (...args) => _delegate("deleteAllWatchlist", args),
         refreshWatchlist: (...args) => _delegate("refreshWatchlist", args),
-        _ensureLoaded,
+        _ensureLoaded: lazy.ensure,
     };
 }
 
 function createRenderModals(context) {
+    // RV-FE-02: see _createLazyModule (app_core.js). Every entry point
+    // here answers a tap, so a failure retries on the next tap (no
+    // cooldown) and tells the user instead of silently doing nothing.
+    const lazy = _createLazyModule(context, {
+        load: _lazyLoadDealsSources,
+        factoryKey: "_realCreateRenderModals",
+        label: "render_modals.js",
+    });
     const logClientError = context.logClientError || (() => {});
-    let _real = null;
-    let _initPromise = null;
-
-    function _ensureLoaded() {
-        if (_real) return Promise.resolve(_real);
-        if (_initPromise) return _initPromise;
-        _initPromise = (async () => {
-            await _lazyLoadDealsSources(context);
-            _real = _ensureRealFactory("_realCreateRenderModals", "render_modals.js")(context);
-            return _real;
-        })();
-        return _initPromise;
-    }
 
     function _delegate(method, args) {
-        if (_real) return _real[method].apply(null, args);
-        _ensureLoaded()
+        const loaded = lazy.current();
+        if (loaded) return loaded[method].apply(null, args);
+        lazy.ensure()
             .then((real) => {
                 real[method].apply(null, args);
                 if (typeof context.scheduleRender === "function") {
@@ -143,16 +135,23 @@ function createRenderModals(context) {
             })
             .catch((err) => {
                 logClientError("modals lazy-load failed:", err);
+                if (lazy.current()) return;
+                // The detail modal never opened: don't leave state
+                // claiming it is on screen (Escape / back would chase it).
+                if (method === "renderDetailModal" && context.state?.detail) {
+                    context.state.detail.data = null;
+                }
+                _showLazyLoadToast(context);
             });
         return undefined;
     }
 
     return {
         renderDetailModal: (...args) => _delegate("renderDetailModal", args),
-        closeDetailModal: (...args) => _delegate("closeDetailModal", args),
+        closeDetailModal: (...args) => _lazyTeardownCall(lazy, "closeDetailModal", args),
         renderExpensesModal: (...args) => _delegate("renderExpensesModal", args),
         openExpensesModal: (...args) => _delegate("openExpensesModal", args),
-        closeExpensesModal: (...args) => _delegate("closeExpensesModal", args),
-        _ensureLoaded,
+        closeExpensesModal: (...args) => _lazyTeardownCall(lazy, "closeExpensesModal", args),
+        _ensureLoaded: lazy.ensure,
     };
 }

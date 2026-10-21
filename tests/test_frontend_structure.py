@@ -813,13 +813,12 @@ def test_empty_state_offers_clear_filters_when_filters_narrow_to_zero() -> None:
     # The action exists, calls `resetCategoryFilter` and re-runs the
     # search using the existing pipeline.
     assert "async function clearListingFilters()" in listings_js
-    assert "if (!state.search.query?.trim()) return;" in listings_js
+    # RV-FE-03: the CTA belongs to the results on screen, so it re-runs
+    # the active query rather than whatever is typed in the search box.
+    assert "if (!state.search.activeQuery?.trim()) return;" in listings_js
     assert "if (!_hasActiveListingFilters()) return;" in listings_js
     assert "resetCategoryFilter();" in listings_js
-    assert (
-        'await search(state.ui.activeView || "ads", { keepFilters: true });'
-        in listings_js
-    )
+    assert "keepFilters: true,\n            query: state.search.activeQuery," in listings_js
     # Exported from the module's public surface.
     assert "clearListingFilters," in listings_js
 

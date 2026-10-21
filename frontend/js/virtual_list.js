@@ -75,7 +75,11 @@ function createVirtualList(container, options) {
 
     // Create viewport (sticky container for visible items)
     const viewport = document.createElement("div");
-    viewport.setAttribute("role", "list");
+    // RV-UI-02: exactly one list between the container and the items.
+    // A container that already is a list keeps the role and the viewport
+    // becomes a transparent wrapper; otherwise (e.g. the deals tabpanel)
+    // the viewport is the list. Both used to be lists: list > list > item.
+    viewport.setAttribute("role", container.getAttribute("role") === "list" ? "none" : "list");
     viewport.style.cssText =
         "position:sticky;top:0;overflow:hidden;";
     container.appendChild(viewport);
@@ -89,10 +93,6 @@ function createVirtualList(container, options) {
     // Configure container scrolling
     container.style.overflowY = "auto";
     container.style.maxHeight = maxHeight;
-    // Preserve existing role if set to "list", otherwise add it
-    if (!container.getAttribute("role")) {
-        container.setAttribute("role", "list");
-    }
 
     function renderVisibleItems() {
         if (destroyed) return;

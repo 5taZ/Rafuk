@@ -60,6 +60,15 @@
     --violet-soft: rgba(139, 92, 246, 0.08);
     --cyan: #06b6d4;
     --cyan-soft: rgba(6, 182, 212, 0.08);
+    /* RV-UI-03: semantic colours split into fill and text roles. The
+       bright fills stay for dots, borders and charts; text (badges such
+       as "-15%", "Сегодня", "Потенциал: +300 BYN") reads the *-text
+       tokens, which the light theme darkens to >= 4.5:1. On the dark
+       background the fills already pass, so text aliases them here. */
+    --green-text: var(--green);
+    --amber-text: var(--amber-400);
+    --cyan-text: var(--cyan);
+    --red-text: var(--red);
     --white: #e8e8e8;
     --surface: var(--bg-card);
     --surface-elevated: var(--bg-elevated);
@@ -353,6 +362,14 @@ button:focus-visible,
     --violet-soft: rgba(124, 58, 237, 0.06);
     --cyan: #0891b2;
     --cyan-soft: rgba(8, 145, 178, 0.06);
+    /* RV-UI-03: on white the fills above measure 3.3:1 (green),
+       3.2:1 (amber), 2.15:1 (amber-400) and 3.7:1 (cyan) — below the
+       4.5:1 AA floor for 12px badge text. These pass on --bg, --bg-card
+       and the 6% tints used behind badges. */
+    --green-text: #15803d;
+    --amber-text: #b45309;
+    --cyan-text: #0e7490;
+    --red-text: #b91c1c;
     --white: #ffffff;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06);

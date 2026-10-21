@@ -193,18 +193,21 @@ function createRenderCards(context) {
                 }
                 return;
             }
-            if (event.target.closest(".listing-top")) {
+            // RV-UI-02: the title button is the primary action; CSS
+            // stretches its hit area over the card, and the raised badge
+            // row (kept above it for its tooltips) opens the detail too.
+            // Enter/Space come natively from the button — the old card
+            // keydown handler is gone with the card's role=button.
+            if (event.target.closest(".card-open, .listing-badges")) {
                 void actions.openListingDetail(item);
             }
         });
-        container.addEventListener("keydown", (event) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            const card = event.target.closest(".listing");
-            if (!card || !card._item) return;
-            if (event.target !== card) return;
-            event.preventDefault();
-            void actions.openListingDetail(card._item);
-        });
+    }
+
+    // RV-UI-02: cards go into their own role=list so empty/error states,
+    // notes and the pagination sentinel never sit inside the list.
+    function _buildCardList() {
+        return domEl("div", { className: "card-list", attrs: { role: "list" } });
     }
 
     /**
@@ -287,11 +290,11 @@ function createRenderCards(context) {
                 return false;
             }
 
-            const fragment = document.createDocumentFragment();
+            const list = _buildCardList();
             for (const item of filtered) {
-                fragment.appendChild(buildListingNode(item, verdictClassName));
+                list.appendChild(buildListingNode(item, verdictClassName));
             }
-            container.appendChild(fragment);
+            container.appendChild(list);
 
             if (badge) {
                 // Match kufar.by header behavior: the pill shows the
@@ -419,7 +422,7 @@ function createRenderCards(context) {
             }
 
             const hasData = state.listings.items.length > 0 || state.listings.total > 0;
-            const trimmedQuery = (state.search.query || "").trim();
+            const trimmedQuery = (state.search.activeQuery || "").trim();
             const hasQuery = Boolean(trimmedQuery);
             // SEARCH-10: empty-state copy that names the actual query.
             // The previous flat "По этому запросу пока нечего показать"
@@ -555,6 +558,51 @@ function createRenderCards(context) {
         });
     }
 
+    // RV-FE-05: a failed load is an error with "Повторить", never the
+    // "nothing here yet" empty state — users re-added lots believing
+    // their data was gone.
+    function _buildCollectionError(filter, message, reload) {
+        const title = filter === "watching"
+            ? "Не удалось загрузить избранное"
+            : "Не удалось загрузить покупки";
+        const onAction = () => {
+            if (typeof reload === "function") void reload();
+        };
+        if (typeof context.buildEmptyState === "function") {
+            return context.buildEmptyState({
+                title,
+                hint: message,
+                actionLabel: "Повторить",
+                onAction,
+                tone: "error",
+            });
+        }
+        return domEl("p", { className: "tracker-empty", text: `${title}. ${message}` });
+    }
+
+    // Shown above the last good list when a refresh fails.
+    function _buildStaleListNotice(message, reload) {
+        const button = domEl("button", {
+            className: "collection-error-retry",
+            type: "button",
+            text: "Повторить",
+        });
+        button.addEventListener("click", () => {
+            if (typeof reload === "function") void reload();
+        });
+        return domEl(
+            "div",
+            { className: "collection-error-notice", attrs: { role: "status" } },
+            domEl(
+                "div",
+                { className: "collection-error-copy" },
+                domEl("p", { className: "collection-error-text", text: "Список не обновился — показаны прежние данные." }),
+                domEl("p", { className: "collection-error-reason", text: message }),
+            ),
+            button,
+        );
+    }
+
     function renderLeads() {
         return safeRender('renderLeads', () => {
         const container = elements.leadInboxList;
@@ -643,10 +691,24 @@ function createRenderCards(context) {
             for (let i = 0; i < 3; i++) container.appendChild(_buildSkeletonCard());
             return;
         }
+        if (filter === "purchases" && state.leads._loading && !entries.length) {
+            for (let i = 0; i < 3; i++) container.appendChild(_buildSkeletonCard());
+            return;
+        }
+
+        const collectionError = filter === "watching" ? state.watchlist.error : state.leads.error;
+        const reloadCollection = filter === "watching" ? actions?.loadWatchlist : actions?.loadLeads;
+        if (collectionError && !entries.length) {
+            container.appendChild(_buildCollectionError(filter, collectionError, reloadCollection));
+            return;
+        }
 
         if (!entries.length) {
             container.appendChild(buildItemsEmpty(filter));
             return;
+        }
+        if (collectionError) {
+            container.appendChild(_buildStaleListNotice(collectionError, reloadCollection));
         }
 
         const watchlistMarketLabel = (val) => marketLabel(val);
@@ -663,13 +725,15 @@ function createRenderCards(context) {
             container._virtualList.setItems(entries);
         } else {
             const signal = _getSignal(container);
+            const list = _buildCardList();
             for (const entry of entries) {
                 if (entry.kind === "lead") {
-                    container.appendChild(buildLeadNode(entry.data, signal));
+                    list.appendChild(buildLeadNode(entry.data, signal));
                 } else {
-                    container.appendChild(buildWatchlistNode(entry.data, watchlistMarketLabel, signal));
+                    list.appendChild(buildWatchlistNode(entry.data, watchlistMarketLabel, signal));
                 }
             }
+            container.appendChild(list);
         }
         });
     }
@@ -795,9 +859,11 @@ function createRenderCards(context) {
             container._virtualList.setItems(filteredWatchlist);
         } else {
             const signal = _getSignal(container);
+            const list = _buildCardList();
             for (const item of filteredWatchlist) {
-                container.appendChild(buildWatchlistNode(item, marketLabel, signal));
+                list.appendChild(buildWatchlistNode(item, marketLabel, signal));
             }
+            container.appendChild(list);
         }
         });
     }

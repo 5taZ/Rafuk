@@ -157,6 +157,9 @@ function createRenderTrackers(context) {
         );
     }
 
+    // RV-UI-02: ids tying an event card's button to its description.
+    let _eventCardSeq = 0;
+
     /* ===== Tracker Status ===== */
 
     function renderTrackerStatus() {
@@ -264,6 +267,10 @@ function createRenderTrackers(context) {
             return;
         }
 
+        // RV-UI-02: tracker cards are items of their own list, so the
+        // empty state above never sits inside role=list.
+        const trackerList = domEl("div", { className: "card-list", attrs: { role: "list" } });
+        elements.trackersList.appendChild(trackerList);
         for (const tracker of state.trackers.items) {
             let lastCheckedLabel = "";
             if (tracker.last_checked_at) {
@@ -323,7 +330,10 @@ function createRenderTrackers(context) {
             };
             const card = domEl(
                 "div",
-                { className: `tracker-card-enhanced${tracker.paused ? " paused" : ""}` },
+                {
+                    className: `tracker-card-enhanced${tracker.paused ? " paused" : ""}`,
+                    attrs: { role: "listitem" },
+                },
                 domEl(
                     "div",
                     { className: "tracker-header" },
@@ -378,7 +388,7 @@ function createRenderTrackers(context) {
             });
             card.querySelector('[data-role="open"]')?.addEventListener("click", () => {
                 elements.searchInput.value = tracker.query;
-                state.search.query = tracker.query;
+                state.search.draft = tracker.query;
                 state.search.strictSearch = Boolean(tracker.strict_mode);
                 state.filters.category = tracker.category_id ?? null;
                 state.filters.pendingCategory = tracker.category_id ?? null;
@@ -400,7 +410,7 @@ function createRenderTrackers(context) {
                 if (context._hooks?.renderLoading) context._hooks.renderLoading();
                 void actions.search("overview", { keepFilters: true });
             });
-            elements.trackersList.appendChild(card);
+            trackerList.appendChild(card);
         }
         });
     }
@@ -558,7 +568,9 @@ function createRenderTrackers(context) {
             const thumbnailNode = thumbSrc
                 ? domEl("img", {
                     className: "event-thumbnail",
-                    attrs: { src: thumbSrc, alt: event.title || "Объявление", loading: "lazy" },
+                    // RV-UI-02: the title is the next node; the alt would
+                    // only repeat it.
+                    attrs: { src: thumbSrc, alt: "", loading: "lazy" },
                 })
                 // FE-05: aria-label exposes "Нет фото" while the
                 // decorative SVG stays hidden from screen readers.
@@ -621,9 +633,23 @@ function createRenderTrackers(context) {
             const watchDisabled = inLeads || inWatchlist;
             const eventTitle = event.title || "лот";
 
+            // RV-UI-02: a list item whose title button is the primary
+            // action (hit area stretched over the header in CSS) instead
+            // of role=button around three more controls; the event type,
+            // price and place are announced as the button's description.
+            const cardId = `tracker-event-${++_eventCardSeq}`;
+            const typeBadge = emojiLabel(`event-type-badge ${badgeClass}`, badgeEmoji, badgeLabel);
+            typeBadge.id = `${cardId}-type`;
+            priceRow.id = `${cardId}-price`;
+            if (eventMeta.children.length) eventMeta.id = `${cardId}-meta`;
+            const describedBy = [typeBadge, priceRow, eventMeta]
+                .filter((node) => node.id)
+                .map((node) => node.id)
+                .join(" ");
+
             const card = domEl(
-                "article",
-                { className: `tracker-event-card${cardModifier}`, attrs: { role: "button", "aria-label": `Открыть «${eventTitle}»`, tabindex: "0" } },
+                "div",
+                { className: `tracker-event-card${cardModifier}`, attrs: { role: "listitem" } },
                 domEl(
                     "div",
                     { className: "event-header" },
@@ -634,10 +660,22 @@ function createRenderTrackers(context) {
                         domEl(
                             "div",
                             { className: "event-top-row" },
-                            emojiLabel(`event-type-badge ${badgeClass}`, badgeEmoji, badgeLabel),
+                            typeBadge,
                             domEl("span", { className: "event-time", text: formatDate(event.created_at) }),
                         ),
-                        domEl("strong", { className: "event-title", text: event.title }),
+                        domEl(
+                            "h3",
+                            { className: "card-heading event-heading" },
+                            domEl(
+                                "button",
+                                {
+                                    className: "card-open",
+                                    type: "button",
+                                    attrs: { "aria-describedby": describedBy || null },
+                                },
+                                domEl("span", { className: "event-title", text: event.title || "Объявление" }),
+                            ),
+                        ),
                         priceRow,
                         eventMeta,
                         domEl("span", { className: "event-tracker-source" },
@@ -685,14 +723,9 @@ function createRenderTrackers(context) {
 
             const detailItem = { ad_id: event.ad_id, title: event.title, link: event.link, price_byn: event.price_byn, query: event.query };
 
+            // The stretched title button covers the header, so taps,
+            // Enter and Space all arrive here as its click.
             card.querySelector(".event-header")?.addEventListener("click", () => {
-                void actions.openListingDetail(detailItem);
-            });
-
-            card.addEventListener("keydown", (e) => {
-                if (e.key !== "Enter" && e.key !== " ") return;
-                if (e.target !== card) return;
-                e.preventDefault();
                 void actions.openListingDetail(detailItem);
             });
 
@@ -757,9 +790,11 @@ function createRenderTrackers(context) {
             });
             container._virtualList.setItems(filteredEvents);
         } else {
+            const list = domEl("div", { className: "card-list", attrs: { role: "list" } });
             for (const event of filteredEvents) {
-                container.appendChild(buildEventNode(event));
+                list.appendChild(buildEventNode(event));
             }
+            container.appendChild(list);
         }
         });
     }

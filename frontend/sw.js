@@ -1,13 +1,14 @@
 /**
  * Rafuk Mini App — service worker.
  *
- * Two cache buckets, one for the static shell, one for the read-only
- * API surfaces that benefit from stale-while-revalidate. Mutations
- * (POST/PATCH/DELETE) and AI analysis endpoints are explicitly
- * bypassed — those need the latest server state, no exceptions.
+ * Three cache buckets: the static shell, a network-first fallback for
+ * the read-only API surfaces, and a bounded bucket for proxied listing
+ * photos. Mutations (POST/PATCH/DELETE) and AI analysis endpoints are
+ * explicitly bypassed — those need the latest server state, no
+ * exceptions.
  *
  * Update flow:
- *   - Bumping CACHE_VERSION below invalidates BOTH buckets on the
+ *   - Bumping CACHE_VERSION below invalidates every bucket on the
  *     next activate, so the old shell can't pin users to a stale
  *     bundle.
  *   - skipWaiting() + clients.claim() picks up the new SW on the
@@ -15,8 +16,9 @@
  *
  * Designed to be a strict performance / offline-resilience win:
  *   - First view: identical to no-SW (cache is empty, network passthrough).
- *   - Subsequent views: shell from cache, API list-views show last-known
- *     data instantly while a fresh fetch updates them in the background.
+ *   - API list views always go to the network first; the last copy is
+ *     served only when the network fails or hangs, and is marked so
+ *     the page can say how old it is.
  *   - Offline: shell + last-seen lists render; mutations fail with the
  *     usual error toast (the SW doesn't queue them — the existing
  *     in-flight guards already protect the UI).
@@ -26,29 +28,32 @@
 // max-age check; v7 added the offline-fallback page; v8 moves that
 // fallback's CSS out of inline <style>; v9 evicts stale frontend
 // bundles after the lead-version compatibility fix.
-const CACHE_VERSION = "rafuk-cache-20260523-98e26dc";
+const CACHE_VERSION = "rafuk-cache-20261021-1872adf";
 const OFFLINE_FALLBACK_URL = "/offline.html";
 const OFFLINE_FALLBACK_ASSETS = [OFFLINE_FALLBACK_URL, "/offline.css"];
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
+// RV-FE-04: proxied listing photos used to land in the static bucket
+// (their paths end in .jpg) and pile up without any limit.
+const IMAGE_CACHE = `${CACHE_VERSION}-img`;
+const IMAGE_CACHE_MAX_ENTRIES = 120;
+const IMAGE_PROXY_PREFIX = "/api/v1/img/";
 
-// API paths whose GET responses are safe to serve stale while
-// revalidating. Picked because their UI surfaces re-render gracefully
-// on background update (the loaders all bump request-id guards).
-//
-// /leads and /watchlist USED to live here but caused a UX bug:
-// after a DELETE/PATCH the next GET would hit the SW cache and
-// re-show the just-removed item. Background refresh caught up
-// eventually, but the user saw the wrong state and had to reload
-// the app to fix it. They're now in BYPASS_PATHS so writes are
-// always reflected on the next read.
-const STALE_WHILE_REVALIDATE_API = [
+// RV-FE-04: read-only API surfaces are network-first. They used to be
+// stale-while-revalidate with a one-hour ceiling, so a search repeated
+// 50 minutes later showed the old market and pull-to-refresh changed
+// nothing. The cached copy now only answers when the network fails,
+// hangs past API_NETWORK_TIMEOUT_MS, or the gateway is down.
+const NETWORK_FIRST_API = [
     "/api/v1/listings",
     "/api/v1/price-stats",
     "/api/v1/price-history",
     "/api/v1/segments",
     "/api/v1/geography",
 ];
+const API_NETWORK_TIMEOUT_MS = 10_000;
+const GATEWAY_ERROR_STATUSES = new Set([502, 503, 504]);
+const OFFLINE_MESSAGE = "Нет соединения с сервером. Проверьте интернет и попробуйте ещё раз.";
 
 // Hard-bypass: never cache. Either too dynamic (AI), never returns
 // the same body twice (token-style endpoints), or write-heavy
@@ -119,18 +124,24 @@ self.addEventListener("fetch", (event) => {
     // Hard bypass for sensitive / always-fresh endpoints.
     if (BYPASS_PATHS.some((p) => url.pathname.startsWith(p))) return;
 
-    // FE-M8: offline fallback for API calls. If the browser is offline
-    // and the request targets /api/v1/, respond with a 503 JSON body
-    // so the app can show a user-friendly "offline" toast instead of
-    // a generic network error. Only API requests — navigation and
-    // static assets already have their own offline fallbacks below.
-    if (!self.navigator.onLine && url.pathname.startsWith("/api/v1/")) {
-        event.respondWith(
-            new Response(
-                JSON.stringify({ detail: "offline" }),
-                { status: 503, headers: { "Content-Type": "application/json" } },
-            ),
-        );
+    // RV-FE-04: an explicit refresh (pull-to-refresh, "Повторить")
+    // must never be answered from a cache. The offline 503 that used to
+    // sit here — before any cache lookup — is gone too: being offline is
+    // exactly when the last copy is worth showing.
+    if (isForcedRefresh(url, request)) return;
+
+    // Proxied photos: immutable, so cache-first, in their own bounded
+    // bucket. Checked before the static-asset rule below, which would
+    // otherwise claim them by their .jpg extension.
+    if (url.pathname.startsWith(IMAGE_PROXY_PREFIX)) {
+        event.respondWith(cacheFirstBounded(event, request, IMAGE_CACHE, IMAGE_CACHE_MAX_ENTRIES));
+        return;
+    }
+
+    // Read-only API surfaces — the network answers; the cache only
+    // stands in when the network cannot.
+    if (NETWORK_FIRST_API.some((p) => url.pathname.startsWith(p))) {
+        event.respondWith(networkFirstApi(event, request, RUNTIME_CACHE));
         return;
     }
 
@@ -150,14 +161,21 @@ self.addEventListener("fetch", (event) => {
         return;
     }
 
-    // Read-only API surfaces — render last-known data instantly.
-    if (STALE_WHILE_REVALIDATE_API.some((p) => url.pathname.startsWith(p))) {
-        event.respondWith(staleWhileRevalidate(request, RUNTIME_CACHE));
-        return;
-    }
-
     // Everything else: passthrough.
 });
+
+function isForcedRefresh(url, request) {
+    const flag = (url.searchParams.get("force_refresh") || "").toLowerCase();
+    return flag === "1" || flag === "true"
+        || request.cache === "no-store" || request.cache === "reload";
+}
+
+// Never persist what the server marked private or uncacheable.
+function isStorable(response) {
+    if (!response || !response.ok || response.type !== "basic") return false;
+    const cacheControl = (response.headers.get("cache-control") || "").toLowerCase();
+    return !/\b(?:no-store|private)\b/.test(cacheControl);
+}
 
 async function cacheFirst(request, cacheName) {
     const cache = await caches.open(cacheName);
@@ -173,6 +191,41 @@ async function cacheFirst(request, cacheName) {
         // Offline + nothing cached — let the browser show its native
         // failure UI rather than fabricating a fake response.
         throw err;
+    }
+}
+
+async function cacheFirstBounded(event, request, cacheName, maxEntries) {
+    const cache = await caches.open(cacheName);
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (isStorable(response)) {
+        keepAlive(
+            event,
+            cache.put(request, response.clone())
+                .then(() => trimCache(cache, maxEntries))
+                .catch(() => {}),
+        );
+    }
+    return response;
+}
+
+// Cache writes outlive the response; a waitUntil that comes too late
+// must not turn a good network answer into an error.
+function keepAlive(event, promise) {
+    try {
+        event.waitUntil(promise);
+    } catch (_) {
+        // Lifetime already ended — the write still runs best-effort.
+    }
+}
+
+// CacheStorage keeps insertion order, so the oldest photos go first.
+async function trimCache(cache, maxEntries) {
+    const keys = await cache.keys();
+    const excess = keys.length - maxEntries;
+    for (let i = 0; i < excess; i++) {
+        await cache.delete(keys[i]);
     }
 }
 
@@ -206,14 +259,8 @@ async function networkFirst(request, cacheName) {
     }
 }
 
-// FE-M9: ceiling on how stale a runtime-cache hit may be. Without it,
-// a user who left the app open for hours could still see analytics
-// snapshots from before lunch — the background revalidate fires but
-// the user already started reading and acting on the stale data.
-// One hour is short enough to be barely-noticeable for CPU/network
-// (we spend one extra fetch per stale entry per hour) but long
-// enough to fully amortise away inside a typical "scroll the deals
-// list" session.
+// FE-M9: ceiling on how old a fallback copy may be. Even offline, a
+// snapshot older than this misleads more than it helps.
 const RUNTIME_CACHE_MAX_AGE_SECONDS = 60 * 60;
 
 
@@ -232,35 +279,64 @@ function _cachedResponseAgeSeconds(response) {
     return Math.max(0, (Date.now() - sentAt) / 1000);
 }
 
-
-async function staleWhileRevalidate(request, cacheName) {
-    const cache = await caches.open(cacheName);
+async function _usableFallback(cache, request) {
     const cached = await cache.match(request);
-    const fetchPromise = fetch(request)
-        .then((response) => {
-            if (response && response.ok && response.type === "basic") {
-                cache.put(request, response.clone());
-            }
-            return response;
-        })
-        .catch(() => null);
-
-    // FE-M9: expire-then-network. Skip the cached entry if it's
-    // older than RUNTIME_CACHE_MAX_AGE_SECONDS so the user gets
-    // fresh data on next read; the background fetch above also
-    // refreshes the cache for the next call.
-    if (cached) {
-        const age = _cachedResponseAgeSeconds(cached);
-        if (age <= RUNTIME_CACHE_MAX_AGE_SECONDS) {
-            return cached;
-        }
+    if (!cached || _cachedResponseAgeSeconds(cached) > RUNTIME_CACHE_MAX_AGE_SECONDS) {
+        return null;
     }
+    // The page reads this marker (plus the Date header) to tell the
+    // user the data is a saved copy and how old it is.
+    const headers = new Headers(cached.headers);
+    headers.set("X-SW-Fallback", "1");
+    return new Response(cached.body, {
+        status: cached.status,
+        statusText: cached.statusText,
+        headers,
+    });
+}
 
-    return (await fetchPromise) || cached || new Response(
-        JSON.stringify({ detail: "offline" }),
+function offlineResponse() {
+    return new Response(
+        JSON.stringify({ detail: { error: "offline", message: OFFLINE_MESSAGE } }),
         {
             status: 503,
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "X-SW-Offline": "1" },
         },
     );
+}
+
+async function networkFirstApi(event, request, cacheName) {
+    const cache = await caches.open(cacheName);
+    const network = fetch(request).then((response) => {
+        if (isStorable(response)) {
+            keepAlive(event, cache.put(request, response.clone()).catch(() => {}));
+        }
+        return response;
+    });
+    const TIMED_OUT = Symbol("timed-out");
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), API_NETWORK_TIMEOUT_MS);
+    });
+    try {
+        const first = await Promise.race([network, timeout]);
+        if (first !== TIMED_OUT) {
+            if (!GATEWAY_ERROR_STATUSES.has(first.status)) return first;
+            // Backend unreachable behind the gateway: same as offline.
+            return (await _usableFallback(cache, request)) || first;
+        }
+        // The network hangs: answer with a recent copy if there is one
+        // (the live request keeps running and refreshes the cache),
+        // otherwise keep waiting for it.
+        const fallback = await _usableFallback(cache, request);
+        if (fallback) {
+            keepAlive(event, network.catch(() => {}));
+            return fallback;
+        }
+        return await network;
+    } catch (_) {
+        return (await _usableFallback(cache, request)) || offlineResponse();
+    } finally {
+        clearTimeout(timer);
+    }
 }

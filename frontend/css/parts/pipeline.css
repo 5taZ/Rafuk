@@ -167,12 +167,12 @@
 }
 
 .watchlist-price-delta.down {
-    color: var(--green);
+    color: var(--green-text);
     background: var(--green-soft);
 }
 
 .watchlist-price-delta.up {
-    color: var(--red);
+    color: var(--red-text);
     background: var(--red-soft);
 }
 
@@ -200,12 +200,12 @@
 }
 
 .watchlist-profit.profit-positive {
-    color: var(--green);
+    color: var(--green-text);
     background: var(--green-soft);
 }
 
 .watchlist-profit.profit-negative {
-    color: var(--red);
+    color: var(--red-text);
     background: var(--red-soft);
 }
 
@@ -233,13 +233,13 @@
 }
 
 .market-badge.active {
-    color: var(--green);
+    color: var(--green-text);
     background: var(--green-soft);
     border-color: var(--success-border);
 }
 
 .market-badge.price_drop {
-    color: var(--red);
+    color: var(--red-text);
     background: var(--red-soft);
     border-color: var(--danger-border);
     animation: pulse-badge 2s ease-in-out infinite;
@@ -253,7 +253,7 @@
 }
 
 .market-badge.duplicate {
-    color: var(--amber-400);
+    color: var(--amber-text);
     background: var(--amber-soft);
     border-color: var(--warning-border);
 }
@@ -263,7 +263,7 @@
     margin: -14px -14px 0 -14px;
     padding: 8px 10px;
     background: var(--red-soft);
-    color: var(--red);
+    color: var(--red-text);
     font-size: var(--text-sm);
     font-weight: 600;
     border-radius: var(--r-md) var(--r-md) 0 0;
@@ -329,7 +329,7 @@
 }
 
 .wl-btn--danger {
-    color: var(--red);
+    color: var(--red-text);
 }
 
 .wl-btn--danger:hover {
@@ -504,12 +504,12 @@
 
 .lead-financial-item.profit-positive {
     background: var(--green-soft);
-    color: var(--green);
+    color: var(--green-text);
 }
 
 .lead-financial-item.profit-negative {
     background: var(--red-soft);
-    color: var(--red);
+    color: var(--red-text);
 }
 
 .lead-financial-item .mono {
@@ -559,19 +559,19 @@
 }
 
 .lead-status-badge.negotiating {
-    color: var(--amber-400);
+    color: var(--amber-text);
     background: var(--amber-soft);
     border: 1px solid var(--warning-border);
 }
 
 .lead-status-badge.bought {
-    color: var(--green);
+    color: var(--green-text);
     background: var(--green-soft);
     border: 1px solid var(--success-border);
 }
 
 .lead-status-badge.reselling {
-    color: var(--cyan);
+    color: var(--cyan-text);
     background: var(--cyan-soft);
     border: 1px solid color-mix(in srgb, var(--cyan) 20%, transparent);
 }
@@ -628,12 +628,12 @@
 
 .lead-financial-item.profit-positive {
     background: var(--green-soft);
-    color: var(--green);
+    color: var(--green-text);
 }
 
 .lead-financial-item.profit-negative {
     background: var(--red-soft);
-    color: var(--red);
+    color: var(--red-text);
 }
 
 .lead-card-fields {
@@ -830,7 +830,7 @@
 }
 
 .lead-btn--success {
-    color: var(--green);
+    color: var(--green-text);
     border-color: var(--green);
 }
 
@@ -841,7 +841,7 @@
 }
 
 .lead-btn--danger {
-    color: var(--red);
+    color: var(--red-text);
 }
 
 .lead-btn--danger:hover {
@@ -863,7 +863,7 @@
 }
 
 .lead-btn--confirm {
-    color: var(--green);
+    color: var(--green-text);
     border-color: var(--green);
     background: transparent;
     font-size: var(--text-semi);
@@ -876,7 +876,7 @@
 }
 
 .lead-btn--delete {
-    color: var(--red);
+    color: var(--red-text);
     border-color: var(--red);
     background: transparent;
     font-size: var(--text-semi);
@@ -915,7 +915,7 @@
 }
 
 .lead-btn--revert {
-    color: var(--red);
+    color: var(--red-text);
     border-color: var(--red);
     background: transparent;
 }
@@ -1031,11 +1031,11 @@
 }
 
 .history-profit-positive {
-    color: var(--green);
+    color: var(--green-text);
 }
 
 .history-profit-negative {
-    color: var(--red);
+    color: var(--red-text);
 }
 
 .history-deal-delete {
@@ -1051,7 +1051,7 @@
 }
 
 .history-deal-delete:hover {
-    color: var(--red);
+    color: var(--red-text);
     background: var(--red-soft);
 }
 
@@ -1426,7 +1426,7 @@
 }
 
 .event-delta.event-delta--up {
-    color: var(--amber-400);
+    color: var(--amber-text);
     background: var(--amber-soft);
     border-color: var(--amber-soft);
 }
@@ -1502,7 +1502,7 @@
 
 .event-type-badge.drop {
     background: var(--green-soft);
-    color: var(--green);
+    color: var(--green-text);
     border: 1px solid var(--success-border);
 }
 
@@ -1545,7 +1545,7 @@
 .event-delta {
     font-size: var(--text-sm);
     font-weight: 700;
-    color: var(--green);
+    color: var(--green-text);
     background: var(--green-soft);
     padding: 2px 6px;
     border-radius: var(--r-sm);

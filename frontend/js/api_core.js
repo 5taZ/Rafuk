@@ -28,6 +28,7 @@ function createApiCore(context) {
     const RETRYABLE_STATUSES = new Set([502, 503, 504]);
     const RETRY_BASE_DELAY_MS = 300;
     const RETRY_MAX_ATTEMPTS = 3;
+    const OFFLINE_MESSAGE = "Нет соединения с сервером. Проверьте интернет и попробуйте ещё раз.";
 
     function _retryDelayMs(attempt, response) {
         const retryAfter = response?.headers?.get?.("retry-after");
@@ -59,7 +60,19 @@ function createApiCore(context) {
         if (/Lead version is required for updates|Lead was updated elsewhere/i.test(message)) {
             return "Данные устарели. Обновите список и попробуйте ещё раз.";
         }
+        if (/^Account is suspended$/i.test(message)) {
+            return "Доступ к аккаунту временно ограничен.";
+        }
         return message;
+    }
+
+    // RV-FE-05: initData expires after telegram_init_data_max_age (2 h);
+    // from then on every request is a 401. Without initData at all the
+    // page was opened outside Telegram.
+    function _sessionExpiredMessage() {
+        return window.Telegram?.WebApp?.initData
+            ? "Сессия Telegram истекла — перезапустите приложение."
+            : "Откройте Rafuk через Telegram, чтобы продолжить.";
     }
 
     function _validationErrorMessage(detail) {
@@ -81,6 +94,14 @@ function createApiCore(context) {
 
     // ── Generic request wrapper ──────────────────────────────────────────
     async function requestJson(url, options = {}) {
+        // RV-SEC-05: once the account is deleted nothing may reach the
+        // API again — the first authenticated request would re-create
+        // the user from the still-valid initData.
+        if (state?.ui?.accountDeleted) {
+            const err = new Error("Аккаунт удалён.");
+            err.accountDeleted = true;
+            throw err;
+        }
         const method = (options.method || "GET").toUpperCase();
         // FE-H7: X-Requested-With header on every state-changing call.
         // HTML forms and <img>/<link> tags can't set custom headers, so
@@ -132,9 +153,24 @@ function createApiCore(context) {
             } catch (fetchErr) {
                 if (fetchErr.name === "AbortError") {
                     if (options.signal?.aborted) throw fetchErr;
-                    throw new Error("Превышено время ожидания. Попробуйте ещё раз.");
+                    const timeoutErr = new Error("Превышено время ожидания. Попробуйте ещё раз.");
+                    // RV-AI-07: lets slow AI callers tell "we stopped
+                    // waiting" apart from "the server failed".
+                    timeoutErr.timeout = true;
+                    throw timeoutErr;
                 }
-                if (attempt >= maxAttempts) throw fetchErr;
+                if (attempt >= maxAttempts) {
+                    if (fetchErr instanceof TypeError) {
+                        // RV-FE-04: "Failed to fetch" / "Load failed" is
+                        // what users saw offline once the SW stopped
+                        // fabricating a 503 for every API call.
+                        const offlineErr = new Error(OFFLINE_MESSAGE);
+                        offlineErr.offline = true;
+                        offlineErr.cause = fetchErr;
+                        throw offlineErr;
+                    }
+                    throw fetchErr;
+                }
                 await _sleep(_retryDelayMs(attempt), options.signal);
             } finally {
                 clearTimeout(timer);
@@ -164,6 +200,18 @@ function createApiCore(context) {
                 message = `Слишком много запросов.${waitHint} Попробуйте позже.`;
                 const err = new Error(message);
                 err.status = 429;
+                throw err;
+            }
+            if (response?.status === 401) {
+                // RV-FE-05: one central place turns the English
+                // "Invalid Telegram authentication" into an actionable
+                // message and raises the persistent session banner.
+                const err = new Error(_sessionExpiredMessage());
+                err.status = 401;
+                err.sessionExpired = true;
+                if (typeof context.showSessionBanner === "function") {
+                    context.showSessionBanner(err.message);
+                }
                 throw err;
             }
             try {
@@ -197,11 +245,38 @@ function createApiCore(context) {
             throw err;
         }
 
+        if (response.headers?.get?.("x-sw-fallback") === "1") {
+            _noteSavedCopy(response.headers.get("date"));
+        }
+
         if (response.status === 204) {
             return null;
         }
 
         return response.json();
+    }
+
+    // RV-FE-04: the service worker answers from its cache only when the
+    // network failed; say so, with the time the copy was taken, instead
+    // of passing an old market snapshot off as live data.
+    let _savedCopyNoticeAt = 0;
+    function _noteSavedCopy(dateHeader) {
+        const now = Date.now();
+        if (now - _savedCopyNoticeAt < 30_000) return;
+        _savedCopyNoticeAt = now;
+        const takenAt = dateHeader ? new Date(dateHeader) : null;
+        const time = takenAt && !Number.isNaN(takenAt.getTime())
+            ? takenAt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
+            : "";
+        if (typeof context.showToast === "function") {
+            context.showToast(
+                time
+                    ? `Нет связи с сервером — показаны сохранённые данные от ${time}`
+                    : "Нет связи с сервером — показаны сохранённые данные",
+                "info",
+                4000,
+            );
+        }
     }
 
     // ── Convenience wrappers ─────────────────────────────────────────────
@@ -234,7 +309,7 @@ function createApiCore(context) {
     // ── Query builder ────────────────────────────────────────────────────
     function buildCommonQuery(params = {}) {
         const query = new URLSearchParams({
-            query: state.search.query,
+            query: state.search.activeQuery,
             currency: state.misc.currency,
             strict_search: String(state.search.strictSearch),
         });

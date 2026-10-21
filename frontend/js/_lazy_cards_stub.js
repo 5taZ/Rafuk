@@ -20,8 +20,8 @@
  */
 /* global window */
 
-const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20260523-98e26dc";
-const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20260523-98e26dc";
+const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20261021-1872adf";
+const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20261021-1872adf";
 
 function _lazyLoadCardsSources(context) {
     if (_loadPromises.has("cards")) return _loadPromises.get("cards");
@@ -45,38 +45,31 @@ function _lazyLoadCardsSources(context) {
 }
 
 function createRenderCards(context) {
-    const logClientError = context.logClientError || (() => {});
-    let _real = null;
-    let _initPromise = null;
+    // RV-FE-02: shared loader resets after a failed fetch (see
+    // _createLazyModule in app_core.js) instead of pinning the rejection.
+    const lazy = _createLazyModule(context, {
+        load: _lazyLoadCardsSources,
+        factoryKey: "_realCreateRenderCards",
+        label: "render_cards.js",
+    });
 
-    function _ensureLoaded() {
-        if (_real) return Promise.resolve(_real);
-        if (_initPromise) return _initPromise;
-        _initPromise = (async () => {
-            await _lazyLoadCardsSources(context);
-            const factory = (window.App || {})._realCreateRenderCards;
-            if (typeof factory !== "function") {
-                throw new Error("render_cards.js did not register factory");
-            }
-            _real = factory(context);
-            return _real;
-        })();
-        return _initPromise;
+    function _containerFor(method, args) {
+        const { elements = {}, state } = context;
+        if (method === "renderListings") {
+            if (!state?.search?.activeQuery) return null;
+            if (elements.listingsSection) elements.listingsSection.hidden = false;
+            return elements.listingsList;
+        }
+        if (method === "renderLeads") return elements.leadInboxList;
+        if (method === "renderWatchlist") return elements.watchlistList;
+        if (method === "renderListingsCollection") return args[1];
+        return null;
     }
 
     function _delegate(method, args) {
-        if (_real) return _real[method].apply(null, args);
-        _ensureLoaded()
-            .then((real) => {
-                real[method].apply(null, args);
-                if (typeof context.scheduleRender === "function") {
-                    context.scheduleRender();
-                }
-            })
-            .catch((err) => {
-                logClientError("cards lazy-load failed:", err);
-            });
-        return undefined;
+        return _lazyRenderCall(lazy, context, "cards", method, args, () => {
+            _renderLazyLoadError(context, _containerFor(method, args), lazy.retry);
+        });
     }
 
     return {
@@ -86,6 +79,6 @@ function createRenderCards(context) {
         renderListings: (...args) => _delegate("renderListings", args),
         renderLeads: (...args) => _delegate("renderLeads", args),
         renderWatchlist: (...args) => _delegate("renderWatchlist", args),
-        _ensureLoaded,
+        _ensureLoaded: lazy.ensure,
     };
 }

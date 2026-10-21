@@ -40,6 +40,13 @@ function createApiListings(context) {
     let _detailAbortController = null;
     let _historyAbortController = null;
 
+    // RV-FE-04: a forced refresh must bypass the browser HTTP cache as
+    // well — /listings and /price-stats are served with max-age=60, and
+    // the service worker only skips its own cache for force_refresh=1.
+    function _requestOptions(signal, forceRefresh) {
+        return forceRefresh ? { signal, cache: "no-store" } : { signal };
+    }
+
     function _normalizedFilterPrice(value) {
         if (value == null || value === "") {
             return null;
@@ -158,17 +165,20 @@ function createApiListings(context) {
     // filters above; passing false would make `search()` call
     // `resetCategoryFilter()` again, which is harmless but redundant.
     async function clearListingFilters() {
-        if (!state.search.query?.trim()) return;
+        if (!state.search.activeQuery?.trim()) return;
         if (!_hasActiveListingFilters()) return;
         resetCategoryFilter();
         markDirty('categories', 'listings', 'stats', 'helper', 'summary');
         renderAll();
-        await search(state.ui.activeView || "ads", { keepFilters: true });
+        await search(state.ui.activeView || "ads", {
+            keepFilters: true,
+            query: state.search.activeQuery,
+        });
     }
 
     // ── Load price history (standalone) ──────────────────────────────────
     async function loadHistory() {
-        if (!state.search.query) {
+        if (!state.search.activeQuery) {
             state.charts.historyData = [];
             renderHistory();
             return;
@@ -217,6 +227,7 @@ function createApiListings(context) {
         }
         state.search.searchAbortController = new AbortController();
         const signal = state.search.searchAbortController.signal;
+        const refreshOptions = _requestOptions(signal, forceRefresh);
         const listingRequestId = (state.listings._requestId =
             ((state.listings._requestId || 0) + 1) % 1_000_000);
         const listingFilterKey = _listingsFilterKey();
@@ -232,13 +243,13 @@ function createApiListings(context) {
                 },
             },
             {
-                request: getJson(`/api/v1/segments?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`, { signal }),
+                request: getJson(`/api/v1/segments?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`, refreshOptions),
                 apply(payload) {
                     state.misc.segments = payload;
                 },
             },
             {
-                request: getJson(`/api/v1/geography?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`, { signal }),
+                request: getJson(`/api/v1/geography?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`, refreshOptions),
                 apply(payload) {
                     state.misc.geography = payload.regions || [];
                 },
@@ -251,7 +262,7 @@ function createApiListings(context) {
                         offset: 0,
                         force_refresh: forceRefresh ? "1" : "",
                     })}`,
-                    { signal },
+                    refreshOptions,
                 ),
                 apply(payload) {
                     if (
@@ -352,7 +363,7 @@ function createApiListings(context) {
     }
 
     async function loadListings(force) {
-        if (!state.search.query) {
+        if (!state.search.activeQuery) {
             state.listings.items = [];
             state.listings.hasMore = false;
             _applyListingsMeta({});
@@ -421,7 +432,7 @@ function createApiListings(context) {
         // IntersectionObserver attached to the bottom sentinel card.
         // Multiple observer fires while a request is in-flight should
         // be coalesced via state.listings.loadingMore.
-        if (!state.search.query) return;
+        if (!state.search.activeQuery) return;
         if (!state.listings.hasMore) return;
         if (state.listings.loadingMore) return;
         state.listings.loadingMore = true;
@@ -457,7 +468,7 @@ function createApiListings(context) {
 
     // ── Open listing detail modal ────────────────────────────────────────
     async function openListingDetail(item) {
-        const queryToUse = (item?.query || state.search.query || "").trim();
+        const queryToUse = (item?.query || state.search.activeQuery || "").trim();
         if (!item?.ad_id || !queryToUse) {
             return;
         }
@@ -529,14 +540,32 @@ function createApiListings(context) {
      *        searches, programmatic) uses the default false: every new
      *        query starts clean — no leftover category from the last
      *        search bleeding through.
+     * @param {string}  [options.query]
+     *        Re-run this query instead of the text in the search input.
+     *        Filters, retry and pull-to-refresh pass the active query so
+     *        a half-typed draft never replaces the results on screen.
      */
-    async function search(target = "overview", { keepFilters = false, forceRefresh = false } = {}) {
-        const query = elements.searchInput.value.trim();
-        state.search.query = query;
+    async function search(target = "overview", { keepFilters = false, forceRefresh = false, query: requestedQuery } = {}) {
+        const rerun = typeof requestedQuery === "string";
+        const query = rerun ? requestedQuery.trim() : elements.searchInput.value.trim();
+        if (!rerun) state.search.draft = query;
+        // RV-FE-03: the previous results are dropped right below
+        // (clearSearchData), so from here on everything on screen
+        // belongs to this query — commit it before any request is built.
+        state.search.activeQuery = query;
         state.ui.error = null;
 
         if (!query) {
+            // RV-FE-03: retire the in-flight search too, or its late
+            // response would repaint results for a query that is no
+            // longer active.
+            state.search.searchRequestId = (state.search.searchRequestId + 1) % 1_000_000;
+            state.listings._requestId = ((state.listings._requestId || 0) + 1) % 1_000_000;
+            abortSearchRequests();
             clearSearchData();
+            // Nothing is loading: let renderListings drop the old cards
+            // instead of keeping them as "pending" skeleton content.
+            state.listings._pending = false;
             resetCategoryFilter();
             state.ui.loading = false;
             context.focusTarget("overview");
@@ -573,7 +602,7 @@ function createApiListings(context) {
         try {
             const stats = await getJson(
                 `/api/v1/price-stats?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`,
-                { signal: searchSignal },
+                _requestOptions(searchSignal, forceRefresh),
             );
             if (!isActiveRequest(requestId)) {
                 return;

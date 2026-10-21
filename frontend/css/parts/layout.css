@@ -529,7 +529,7 @@
     border: 1px solid var(--danger-border);
     border-radius: var(--r-md);
     padding: 10px 13px;
-    color: var(--red);
+    color: var(--red-text);
     font-size: var(--text-base);
     margin: 8px 0;
     line-height: 1.4;
@@ -723,14 +723,14 @@
 }
 
 .ghost-btn.danger {
-    color: var(--red);
+    color: var(--red-text);
     border-color: var(--danger-border);
 }
 
 .ghost-btn.danger:hover {
     background: var(--red-soft);
     border-color: var(--red);
-    color: var(--red);
+    color: var(--red-text);
 }
 
 .small {
@@ -755,13 +755,13 @@
 
 .tracker-status.success {
     background: var(--green-soft);
-    color: var(--green);
+    color: var(--green-text);
     border-color: var(--success-border);
 }
 
 .tracker-status.error {
     background: var(--red-soft);
-    color: var(--red);
+    color: var(--red-text);
     border-color: var(--danger-border);
 }
 
@@ -865,7 +865,7 @@
 }
 
 .tracker-event-type.drop {
-    color: var(--red);
+    color: var(--red-text);
 }
 
 .tracker-event-time {
@@ -1009,7 +1009,7 @@
 }
 
 .deals-section-header .sec-title {
-    color: var(--green);
+    color: var(--green-text);
 }
 
 /* ===== Status indicator badges ===== */
@@ -1027,7 +1027,7 @@
 }
 
 .status-badge.active {
-    color: var(--green);
+    color: var(--green-text);
     background: var(--green-soft);
     border-color: var(--success-border);
 }
@@ -1039,7 +1039,7 @@
 }
 
 .status-badge.risk {
-    color: var(--red);
+    color: var(--red-text);
     background: var(--red-soft);
     border-color: var(--danger-border);
 }
@@ -1172,6 +1172,66 @@
 [data-theme="light"] .empty-state {
     background: var(--surface-empty-subtle);
     border: 1px solid var(--border);
+}
+
+/* RV-FE-02 / RV-FE-05: a failed load (lazy chunk or API) reuses the
+   empty-state block with a danger accent and a "Повторить" action, so
+   it can't be mistaken for "nothing here yet". */
+.empty-state--error,
+[data-theme="light"] .empty-state--error {
+    background: var(--red-soft);
+    border: 1px solid var(--danger-border);
+}
+
+.empty-state-action:disabled {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+/* RV-FE-05: shown above the last good list when a refresh failed. */
+.collection-error-notice {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin: 0 0 var(--space-2);
+    padding: var(--space-2_5) var(--space-3);
+    border: 1px solid var(--danger-border);
+    border-radius: var(--r-md);
+    background: var(--red-soft);
+}
+
+.collection-error-copy {
+    flex: 1;
+    min-width: 0;
+}
+
+.collection-error-text {
+    margin: 0;
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.4;
+}
+
+.collection-error-reason {
+    margin: 2px 0 0;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.collection-error-retry {
+    appearance: none;
+    flex-shrink: 0;
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 var(--space-3_5);
+    border: 1px solid var(--border-hover);
+    border-radius: var(--r-md);
+    background: var(--bg-card);
+    color: var(--text);
+    font: 600 var(--text-sm) var(--font);
+    cursor: pointer;
 }
 
 .tracker-event-empty {
@@ -1587,13 +1647,13 @@
 
 .seg-pill.new {
     background: var(--green-soft);
-    color: var(--green);
+    color: var(--green-text);
     border: 1px solid var(--success-border);
 }
 
 .seg-pill.used {
     background: var(--amber-soft);
-    color: var(--amber-400);
+    color: var(--amber-text);
     border: 1px solid var(--warning-border);
 }
 
@@ -1633,11 +1693,11 @@
 }
 
 .seg-delta.over {
-    color: var(--red);
+    color: var(--red-text);
 }
 
 .seg-delta.under {
-    color: var(--green);
+    color: var(--green-text);
 }
 
 .seg-delta.neutral {
@@ -1901,19 +1961,19 @@
 }
 
 .listing-badge.under {
-    color: var(--green);
+    color: var(--green-text);
     background: var(--green-soft);
     border-color: var(--success-border);
 }
 
 .listing-badge.over {
-    color: var(--red);
+    color: var(--red-text);
     background: var(--red-soft);
     border-color: var(--danger-border);
 }
 
 .listing-badge.below_market {
-    color: var(--green);
+    color: var(--green-text);
     background: var(--green-soft);
     border-color: var(--success-border);
 }
@@ -1925,7 +1985,7 @@
 }
 
 .listing-badge.verdict-zabirat {
-    color: var(--green);
+    color: var(--green-text);
     background: var(--green-soft);
     border-color: var(--success-border);
 }
@@ -1942,7 +2002,7 @@
 }
 
 .listing-badge.verdict-mimo {
-    color: var(--red);
+    color: var(--red-text);
     background: var(--red-soft);
     border-color: var(--danger-border);
 }
@@ -1954,7 +2014,7 @@
 }
 
 .listing-badge.fresh-hot {
-    color: var(--red-400);
+    color: var(--red-text);
     background: var(--danger-soft);
     border-color: var(--danger-border);
     animation: pulse-badge 2s ease-in-out infinite;
@@ -1973,7 +2033,7 @@
 }
 
 .listing-badge.fresh-warm {
-    color: var(--amber-400);
+    color: var(--amber-text);
     background: var(--amber-soft);
     border-color: var(--warning-border);
 }
@@ -2046,6 +2106,80 @@
 .listing-btn--accent:active,
 .listing-btn--kufar:active {
     transform: scale(0.98);
+}
+
+/* ===== Card semantics (RV-UI-02) =====
+ * Cards are list items inside an inner role="list" (.card-list). The
+ * title is <h3><button class="card-open">: the button is the card's
+ * primary action and its ::after stretches the hit area over the card
+ * (listing) or the card's top block (favourite, tracker event), while
+ * the other controls sit above it. Replaces role=button cards that
+ * wrapped further buttons and read only the title aloud. */
+.card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.card-heading {
+    margin: 0;
+    min-width: 0;
+    font: inherit;
+}
+
+.card-open {
+    appearance: none;
+    display: block;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.card-open::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: var(--r-lg);
+}
+
+.card-open:focus-visible {
+    outline: none;
+    box-shadow: none;
+}
+
+.card-open:focus-visible::after {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.listing,
+.watchlist-card-top,
+.event-header {
+    position: relative;
+}
+
+/* Controls and tooltip-bearing badges stay above the stretched area. */
+.listing-actions,
+.listing-badges {
+    position: relative;
+    z-index: 1;
+}
+
+.event-heading .event-title {
+    display: block;
+}
+
+.event-heading .card-open:hover .event-title {
+    color: var(--accent);
 }
 
 /* ===== Profile / Admin ===== */
@@ -2392,7 +2526,7 @@
 .la-card-cta.is-ai-locked {
     border-color: color-mix(in srgb, var(--amber) 32%, var(--border));
     background: color-mix(in srgb, var(--amber) 10%, var(--bg-card));
-    color: var(--amber);
+    color: var(--amber-text);
 }
 
 .ai-feature-locked {

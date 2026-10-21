@@ -130,12 +130,14 @@ function createApiEvents(context) {
     function bindSearchEvents() {
         // ── Search input ─────────────────────────────────────────────
         elements.searchInput?.addEventListener("input", () => {
-            state.search.query = elements.searchInput.value.trim();
+            // RV-FE-03: typing only edits the draft; the results on
+            // screen keep their own activeQuery until search() runs.
+            state.search.draft = elements.searchInput.value.trim();
             renderLoading();
 
             clearTimeout(_searchDebounce.timer);
             _searchDebounce.timer = setTimeout(() => {
-                if (state.search.query.length >= 2) {
+                if (state.search.draft.length >= 2) {
                     void search("overview");
 
                     _haptic("light");
@@ -163,7 +165,10 @@ function createApiEvents(context) {
         // ── Error bar retry ────────────────────────────────────────────
         elements.errorRetry?.addEventListener("click", () => {
             state.ui.error = null;
-            void search(state.ui.activeView || "overview", { forceRefresh: true });
+            void search(state.ui.activeView || "overview", {
+                forceRefresh: true,
+                query: state.search.activeQuery || undefined,
+            });
         });
 
     }
@@ -194,7 +199,7 @@ function createApiEvents(context) {
             if (chip) {
                 const query = chip.dataset.recentQuery || "";
                 elements.searchInput.value = query;
-                state.search.query = query;
+                state.search.draft = query;
                 renderLoading();
                 clearTimeout(_searchDebounce.timer);
                 void search("overview");
@@ -208,7 +213,7 @@ function createApiEvents(context) {
                 const query = chip.dataset.recentQuery || "";
                 if (!query) return;
                 elements.searchInput.value = query;
-                state.search.query = query;
+                state.search.draft = query;
                 renderLoading();
                 clearTimeout(_searchDebounce.timer);
                 void search("overview");
@@ -235,14 +240,16 @@ function createApiEvents(context) {
             if (!chip) return;
             const token = chip.dataset.refinement || "";
             if (!token) return;
-            const current = (state.search.query || "").trim();
+            // RV-FE-03: refinement chips belong to the results on screen,
+            // so they extend the active query, not whatever is typed.
+            const current = (state.search.activeQuery || "").trim();
             // Avoid duplicating the token if it's already in the query.
             const merged = _queryContainsRefinement(current, token)
                 ? current
                 : `${current} ${token}`.trim();
             if (merged === current) return;
             elements.searchInput.value = merged;
-            state.search.query = merged;
+            state.search.draft = merged;
             renderLoading();
             clearTimeout(_searchDebounce.timer);
             _haptic("light");
@@ -255,8 +262,8 @@ function createApiEvents(context) {
         elements.strictSearchToggle?.addEventListener("change", () => {
             state.search.strictSearch = Boolean(elements.strictSearchToggle.checked);
             renderStrictSearch();
-            if (state.search.query.trim()) {
-                void search(state.ui.activeView);
+            if (state.search.activeQuery.trim()) {
+                void search(state.ui.activeView, { query: state.search.activeQuery });
             }
         });
         // ── View tabs ────────────────────────────────────────────────
@@ -345,7 +352,7 @@ function createApiEvents(context) {
                 if (elements.dealsControls) {
                     elements.dealsControls.hidden = sort !== "cheap";
                 }
-                if (state.search.query.trim()) {
+                if (state.search.activeQuery.trim()) {
                     void loadListings(true);
                 }
             });
@@ -613,9 +620,12 @@ function createApiEvents(context) {
             // If category changed, trigger new search keeping the
             // freshly-applied filters (otherwise search() would wipe
             // the user's selection).
-            if (categoryChanged && state.search.query.trim()) {
-                void search(state.ui.activeView, { keepFilters: true });
-            } else if (filtersChanged && state.search.query.trim()) {
+            if (categoryChanged && state.search.activeQuery.trim()) {
+                void search(state.ui.activeView, {
+                    keepFilters: true,
+                    query: state.search.activeQuery,
+                });
+            } else if (filtersChanged && state.search.activeQuery.trim()) {
                 void loadListings(true);
             }
 
@@ -653,7 +663,7 @@ function createApiEvents(context) {
                 elements.dealsControls.hidden = false;
             }
             setActiveView("ads");
-            if (state.search.query.trim()) {
+            if (state.search.activeQuery.trim()) {
                 void loadListings(true);
             }
         }
@@ -899,7 +909,7 @@ function createApiEvents(context) {
         elements.detailAddLeadButton?.addEventListener("click", () => {
             if (state.detail.data && !elements.detailAddLeadButton.disabled) {
                 void Promise.resolve(
-                    context.addLeadFromListing(state.detail.data, "detail_modal", state.detail.data.query || state.search.query),
+                    context.addLeadFromListing(state.detail.data, "detail_modal", state.detail.data.query || state.search.activeQuery),
                 ).then((changed) => {
                     if (!changed) return;
                     const title = state.detail.data?.title || "товар";
@@ -912,7 +922,7 @@ function createApiEvents(context) {
         elements.detailAddWatchlistButton?.addEventListener("click", () => {
             if (state.detail.data && !elements.detailAddWatchlistButton.disabled) {
                 void Promise.resolve(
-                    context.addWatchlistFromListing(state.detail.data, state.detail.data.query || state.search.query),
+                    context.addWatchlistFromListing(state.detail.data, state.detail.data.query || state.search.activeQuery),
                 ).then((changed) => {
                     if (!changed) return;
                     const title = state.detail.data?.title || "товар";
@@ -1045,7 +1055,14 @@ function createApiEvents(context) {
         laOpenBtn?.addEventListener("click", async function onFirstLaClick(e) {
             e.stopImmediatePropagation();
             if (typeof canUseAiFeature === "function" && !canUseAiFeature("assistant")) return;
-            await context.ensureAiLoaded();
+            try {
+                await context.ensureAiLoaded();
+            } catch (err) {
+                // RV-FE-02: keep this interceptor so the next tap retries.
+                logClientError("listing assistant load failed", err);
+                showToast("Не удалось загрузить AI-помощника. Проверьте соединение и попробуйте ещё раз.", "error", 3600);
+                return;
+            }
             laOpenBtn.removeEventListener("click", onFirstLaClick);
             laOpenBtn.click();
         });

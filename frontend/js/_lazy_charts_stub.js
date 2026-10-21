@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20260523-98e26dc";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261021-1872adf";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");
@@ -27,48 +27,33 @@ function _lazyLoadChartsSources(context) {
 }
 
 function createRenderCharts(context) {
-    const logClientError = context.logClientError || (() => {});
-    let _real = null;
-    let _initPromise = null;
-
-    function _ensureLoaded() {
-        if (_real) return Promise.resolve(_real);
-        if (_initPromise) return _initPromise;
-        _initPromise = (async () => {
-            await _lazyLoadChartsSources(context);
-            const factory = (window.App || {})._realCreateRenderCharts;
-            if (typeof factory !== "function") {
-                throw new Error("render_charts.js did not register factory");
-            }
-            _real = factory(context);
-            return _real;
-        })();
-        return _initPromise;
-    }
+    // RV-FE-02: see _createLazyModule (app_core.js).
+    const lazy = _createLazyModule(context, {
+        load: _lazyLoadChartsSources,
+        factoryKey: "_realCreateRenderCharts",
+        label: "render_charts.js",
+    });
 
     function _delegate(method, args) {
-        if (_real) return _real[method].apply(null, args);
-        _ensureLoaded()
-            .then((real) => {
-                real[method].apply(null, args);
-                if (typeof context.scheduleRender === "function") {
-                    context.scheduleRender();
-                }
-            })
-            .catch((err) => {
-                logClientError("charts lazy-load failed:", err);
-            });
-        return undefined;
+        return _lazyRenderCall(lazy, context, "charts", method, args, () => {
+            const elements = context.elements || {};
+            let container = null;
+            if (method === "renderHistoryDeals") container = elements.historyDealsList;
+            if (method === "renderProfitDashboard") container = elements.profitCards;
+            _renderLazyLoadError(context, container, lazy.retry);
+        });
     }
 
     return {
-        destroyChart: (...args) => _delegate("destroyChart", args),
-        destroyHistoryChart: (...args) => _delegate("destroyHistoryChart", args),
+        // No chart can exist before the renderer loaded — don't fetch
+        // the chunk just to destroy nothing.
+        destroyChart: (...args) => _lazyTeardownCall(lazy, "destroyChart", args),
+        destroyHistoryChart: (...args) => _lazyTeardownCall(lazy, "destroyHistoryChart", args),
         renderChart: (...args) => _delegate("renderChart", args),
         renderHistory: (...args) => _delegate("renderHistory", args),
         renderHistoryChart: (...args) => _delegate("renderHistoryChart", args),
         renderProfitDashboard: (...args) => _delegate("renderProfitDashboard", args),
         renderHistoryDeals: (...args) => _delegate("renderHistoryDeals", args),
-        _ensureLoaded,
+        _ensureLoaded: lazy.ensure,
     };
 }

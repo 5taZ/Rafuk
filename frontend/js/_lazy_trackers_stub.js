@@ -26,8 +26,8 @@
 // and the AI lazy-load URLs in app_actions.js. A template literal
 // over a separate version constant would be invisible to that
 // regex.
-const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20260523-98e26dc";
-const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20260523-98e26dc";
+const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20261021-1872adf";
+const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20261021-1872adf";
 
 function _lazyLoadTrackerSources(context) {
     if (_loadPromises.has("trackers")) return _loadPromises.get("trackers");
@@ -43,41 +43,32 @@ function _lazyLoadTrackerSources(context) {
 }
 
 function createRenderTrackers(context) {
-    const logClientError = context.logClientError || (() => {});
-    let _real = null;
-    let _initPromise = null;
+    // RV-FE-02: see _createLazyModule (app_core.js).
+    const lazy = _createLazyModule(context, {
+        load: _lazyLoadTrackerSources,
+        factoryKey: "_realCreateRenderTrackers",
+        label: "render_trackers.js",
+    });
 
-    function _ensureLoaded() {
-        if (_real) return Promise.resolve(_real);
-        if (_initPromise) return _initPromise;
-        _initPromise = (async () => {
-            await _lazyLoadTrackerSources(context);
-            const factory = (window.App || {})._realCreateRenderTrackers;
-            if (typeof factory !== "function") {
-                throw new Error("render_trackers.js did not register factory");
-            }
-            _real = factory(context);
-            return _real;
-        })();
-        return _initPromise;
+    // The tracker data loaders live in the same failed chunk, so a
+    // successful retry has to fetch the lists too — otherwise the view
+    // would claim "no trackers yet".
+    function _reloadTrackerData() {
+        const actions = context.actions || {};
+        if (typeof actions.loadTrackers === "function") void actions.loadTrackers();
+        if (context.state?.ui?.activeView === "tracking" && typeof actions.startTrackerRefresh === "function") {
+            void actions.startTrackerRefresh();
+        }
     }
 
     function _delegate(method, args) {
-        if (_real) return _real[method].apply(null, args);
-        // Sync render path — kick off lazy load and re-render once
-        // it finishes so the user gets populated UI inside one
-        // animation frame after opening the tab.
-        _ensureLoaded()
-            .then((real) => {
-                real[method].apply(null, args);
-                if (typeof context.scheduleRender === "function") {
-                    context.scheduleRender();
-                }
-            })
-            .catch((err) => {
-                logClientError("trackers lazy-load failed:", err);
-            });
-        return undefined;
+        return _lazyRenderCall(lazy, context, "trackers", method, args, () => {
+            const elements = context.elements || {};
+            let container = null;
+            if (method === "renderTrackers") container = elements.trackersList;
+            if (method === "renderTrackerEvents") container = elements.trackerEventsList;
+            _renderLazyLoadError(context, container, lazy.retry, _reloadTrackerData);
+        });
     }
 
     return {
@@ -86,32 +77,29 @@ function createRenderTrackers(context) {
         renderTrackers: (...args) => _delegate("renderTrackers", args),
         renderTrackerEvents: (...args) => _delegate("renderTrackerEvents", args),
         renderTrackerEventFilters: (...args) => _delegate("renderTrackerEventFilters", args),
-        _ensureLoaded,
+        _ensureLoaded: lazy.ensure,
     };
 }
 
-function createApiTrackers(context) {
-    let _real = null;
-    let _initPromise = null;
+// Loads and background refreshes are reported by the render stub's
+// error state in the lists; only explicit user actions get a toast.
+const _QUIET_TRACKER_METHODS = new Set(["loadTrackers", "refreshTrackerEvents", "startTrackerRefresh"]);
 
-    function _ensureLoaded() {
-        if (_real) return Promise.resolve(_real);
-        if (_initPromise) return _initPromise;
-        _initPromise = (async () => {
-            await _lazyLoadTrackerSources(context);
-            const factory = (window.App || {})._realCreateApiTrackers;
-            if (typeof factory !== "function") {
-                throw new Error("api_trackers.js did not register factory");
-            }
-            _real = factory(context);
-            return _real;
-        })();
-        return _initPromise;
+function createApiTrackers(context) {
+    // RV-FE-02: see _createLazyModule (app_core.js).
+    const lazy = _createLazyModule(context, {
+        load: _lazyLoadTrackerSources,
+        factoryKey: "_realCreateApiTrackers",
+        label: "api_trackers.js",
+    });
+
+    function _onFailure(method) {
+        if (!_QUIET_TRACKER_METHODS.has(method)) _showLazyLoadToast(context);
+        return undefined;
     }
 
-    async function _delegate(method, args) {
-        if (!_real) await _ensureLoaded();
-        return _real[method].apply(null, args);
+    function _delegate(method, args) {
+        return _lazyApiCall(lazy, context, "trackers", method, args, _onFailure);
     }
 
     return {
@@ -121,11 +109,12 @@ function createApiTrackers(context) {
         resumeTracker: (...args) => _delegate("resumeTracker", args),
         deleteTracker: (...args) => _delegate("deleteTracker", args),
         openEditTracker: (...args) => _delegate("openEditTracker", args),
-        closeEditTracker: (...args) => _delegate("closeEditTracker", args),
+        closeEditTracker: (...args) => _lazyTeardownCall(lazy, "closeEditTracker", args),
         saveTracker: (...args) => _delegate("saveTracker", args),
         refreshTrackerEvents: (...args) => _delegate("refreshTrackerEvents", args),
         startTrackerRefresh: (...args) => _delegate("startTrackerRefresh", args),
-        stopTrackerRefresh: (...args) => _delegate("stopTrackerRefresh", args),
-        _ensureLoaded,
+        // A refresh timer cannot be running before the module loaded.
+        stopTrackerRefresh: (...args) => _lazyTeardownCall(lazy, "stopTrackerRefresh", args),
+        _ensureLoaded: lazy.ensure,
     };
 }

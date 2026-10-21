@@ -62,15 +62,28 @@ function createApiLeads(context) {
         // older response can otherwise resolve last and overwrite a
         // fresher state with outdated rows.
         const requestId = (state.leads._requestId = (state.leads._requestId + 1) % 1_000_000);
+        state.leads._loading = true;
         let nextLeads;
         try {
             nextLeads = await getJson("/api/v1/leads");
-        } catch (_) {
-            nextLeads = [];
+        } catch (error) {
+            if (requestId !== state.leads._requestId) return;
+            // RV-FE-05: a failed reload (offline, 5xx, the 401 that
+            // follows initData's 2 h lifetime) used to become [] and read
+            // as "no deals". Keep the last good list and let the list
+            // show an error state with "Повторить" instead.
+            state.leads._loading = false;
+            state.leads.error = error?.message || "Не удалось загрузить покупки.";
+            renderLeads();
+            renderDealsHeroStats();
+            renderProfitDashboard();
+            return;
         }
         // Drop the response if a newer loadLeads() has started since.
         if (requestId !== state.leads._requestId) return;
-        state.leads.items = nextLeads;
+        state.leads._loading = false;
+        state.leads.error = null;
+        state.leads.items = Array.isArray(nextLeads) ? nextLeads : [];
         renderLeads();
         renderDealsHeroStats();
         renderProfitDashboard();
@@ -413,7 +426,7 @@ function createApiLeads(context) {
             showToast("Не удалось открыть: нет ID объявления");
             return;
         }
-        const queryToUse = lead.query || state.search.query || "";
+        const queryToUse = lead.query || state.search.activeQuery || "";
         if (!queryToUse) {
             showToast("Не удалось открыть: нет привязки к запросу");
             return;

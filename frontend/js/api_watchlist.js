@@ -105,12 +105,20 @@ function createApiWatchlist(context) {
         let nextWatchlist;
         try {
             nextWatchlist = await getJson("/api/v1/watchlist");
-        } catch (_) {
-            nextWatchlist = [];
+        } catch (error) {
+            if (requestId !== state.watchlist._requestId) return;
+            // RV-FE-05: keep the last good list; the list renders an
+            // error state with "Повторить" instead of an empty favourites
+            // screen that looks like the data is gone.
+            state.watchlist._loading = false;
+            state.watchlist.error = error?.message || "Не удалось загрузить избранное.";
+            refreshAfterWatchlistChange();
+            return;
         }
         if (requestId !== state.watchlist._requestId) return;
         state.watchlist._loading = false;
-        state.watchlist.items = nextWatchlist;
+        state.watchlist.error = null;
+        state.watchlist.items = Array.isArray(nextWatchlist) ? nextWatchlist : [];
         refreshAfterWatchlistChange();
     }
 
@@ -168,7 +176,7 @@ function createApiWatchlist(context) {
         _guardInflightAd(item.ad_id);
         try {
             await postJson("/api/v1/watchlist", {
-                query: queryOverride || state.search.query || "",
+                query: queryOverride || state.search.activeQuery || "",
                 ad_id: item.ad_id,
                 title: item.title,
                 link: item.link,
@@ -295,7 +303,7 @@ function createApiWatchlist(context) {
         if (!item?.ad_id) {
             return;
         }
-        const queryToUse = item.query || state.search.query || "";
+        const queryToUse = item.query || state.search.activeQuery || "";
         if (!queryToUse) {
             showToast("Не удалось открыть: нет привязки к запросу");
             return;

@@ -365,7 +365,7 @@
 
 .ai-progress-pct--done,
 .la-progress-pct--done {
-    color: var(--green);
+    color: var(--green-text);
 }
 
 /* Loading error */
@@ -400,7 +400,7 @@
 }
 
 .ai-progress-pct--error {
-    color: var(--red);
+    color: var(--red-text);
 }
 
 /* ── AI Error ── */
@@ -410,7 +410,7 @@
 
 .ai-error {
     padding: 12px 14px;
-    color: var(--red);
+    color: var(--red-text);
     font-size: var(--text-base);
     background: var(--red-soft);
     border-radius: var(--r-md);
@@ -482,7 +482,7 @@
 
 .ai-badge--good {
     background: var(--success-soft);
-    color: var(--green);
+    color: var(--green-text);
     border: 1px solid var(--success-border);
 }
 
@@ -494,13 +494,13 @@
 
 .ai-badge--warn {
     background: var(--warning-soft);
-    color: var(--amber);
+    color: var(--amber-text);
     border: 1px solid var(--warning-border);
 }
 
 .ai-badge--bad {
     background: var(--danger-soft);
-    color: var(--red);
+    color: var(--red-text);
     border: 1px solid var(--danger-border);
 }
 
@@ -816,7 +816,7 @@
 .ai-meta-pill--good {
     background: var(--success-soft);
     border-color: var(--success-border);
-    color: var(--green);
+    color: var(--green-text);
     font-weight: 600;
 }
 
@@ -963,7 +963,7 @@
     align-items: center;
     justify-content: center;
     background: var(--red-soft);
-    color: var(--red);
+    color: var(--red-text);
     border: none;
     font-size: 9px;
     font-weight: 700;
