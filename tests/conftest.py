@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import itertools
 import os
 from datetime import UTC, datetime
@@ -9,13 +10,23 @@ import fastapi.testclient as _ftc
 import pytest
 from sqlalchemy import Integer as _Integer
 
+# RV-OPS-04: the Redis the suite talks to comes from TEST_REDIS_URL. The old
+# hard-coded :6380 never matched the CI service (:6379), so every Redis-only
+# path (Lua INCR+EXPIRE quotas, singleflight locks, SCAN erasure, pipelined
+# metrics) silently ran on MemoryCache. The logical DB is flushed before every
+# test, so point TEST_REDIS_URL at a dedicated DB, never at a dev cache.
+TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL") or "redis://localhost:6380/15"
+
 os.environ["ENV"] = "test"
 os.environ["DEBUG"] = "true"
 os.environ["AUTH_BYPASS"] = "true"
 os.environ["AUTH_BYPASS_CONFIRM_RISK"] = "true"
 os.environ.setdefault("BOT_TOKEN", "7123456789:AAFtesttoken")
 os.environ.setdefault("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:"))
-os.environ.setdefault("REDIS_URL", "redis://localhost:6380/15")
+# RV-OPS-04: forced, not setdefault — api.limiter builds its storage from
+# REDIS_URL at import time, and a job-level REDIS_URL (CI exports one) used
+# to put the limiter on a different Redis DB than the caches under test.
+os.environ["REDIS_URL"] = TEST_REDIS_URL
 os.environ.setdefault("API_BASE_URL", "https://kufar-analytics.example.com")
 os.environ.setdefault("MINI_APP_URL", "https://kufar-analytics.example.com/app")
 
@@ -33,7 +44,7 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # Point tests at a separate Redis logical DB so they don't pollute the
     # dev cache when a real Redis is reachable. Falls back gracefully to
     # MemoryCache via ping() if Redis is unavailable.
-    monkeypatch.setenv("REDIS_URL", "redis://localhost:6380/15")
+    monkeypatch.setenv("REDIS_URL", TEST_REDIS_URL)
     monkeypatch.setenv("API_BASE_URL", "https://kufar-analytics.example.com")
     monkeypatch.setenv("MINI_APP_URL", "https://kufar-analytics.example.com/app")
     monkeypatch.setenv("ENV", "test")
@@ -83,6 +94,8 @@ _ftc.TestClient = _CSRFTestClient
 # SQLite only auto-increments INTEGER PRIMARY KEY, not BIGINT PRIMARY KEY.
 # The User model uses BigInteger for id. Patch the column type so DDL
 # generates INTEGER PRIMARY KEY which auto-increments correctly.
+# (Applied even on Postgres runs: several tests build their own in-memory
+# SQLite engines. The RV-DB-01 drift test undoes it for its comparison.)
 
 try:
     from api.models import User as _User
@@ -117,9 +130,8 @@ def make_user(*, telegram_user_id: int, first_name: str, **kwargs):
     return User(id=uid, telegram_user_id=telegram_user_id, first_name=first_name, **kwargs)
 
 
-@pytest.fixture(autouse=True)
-async def _flush_test_redis() -> None:
-    """Flush the test Redis DB before each test so tests are isolated.
+def reset_test_redis_state() -> None:
+    """Flush the test Redis DB and the rate limiter.
 
     Uses redis-py directly (not the async cache) to avoid event-loop
     binding issues. Silent no-op when Redis isn't reachable — tests fall
@@ -129,7 +141,7 @@ async def _flush_test_redis() -> None:
         import redis
 
         client = redis.Redis.from_url(
-            "redis://localhost:6380/15",
+            TEST_REDIS_URL,
             socket_connect_timeout=0.2,
             socket_timeout=0.2,
         )
@@ -145,7 +157,55 @@ async def _flush_test_redis() -> None:
     except Exception:
         pass
 
+
+@pytest.fixture(autouse=True)
+async def _flush_test_redis() -> None:
+    """Flush the test Redis DB before each test so tests are isolated."""
+    reset_test_redis_state()
     yield
+
+
+@functools.lru_cache(maxsize=1)
+def redis_reachable_for_tests() -> bool:
+    """RV-OPS-04: one PING per session (wrong password / DB index count as down)."""
+    try:
+        import redis
+
+        client = redis.Redis.from_url(
+            TEST_REDIS_URL, socket_connect_timeout=0.2, socket_timeout=0.5,
+        )
+        try:
+            return bool(client.ping())
+        finally:
+            client.close()
+    except Exception:
+        return False
+
+
+def require_test_redis() -> None:
+    """RV-OPS-04: skip when no Redis answers on TEST_REDIS_URL.
+
+    CI sets TEST_REDIS_REQUIRED=1 so a broken Redis service fails loudly
+    instead of silently returning the suite to MemoryCache-only coverage.
+    """
+    if redis_reachable_for_tests():
+        return
+    if os.environ.get("TEST_REDIS_REQUIRED", "").strip().lower() in {"1", "true", "yes"}:
+        pytest.fail("TEST_REDIS_REQUIRED is set but Redis at TEST_REDIS_URL is unreachable")
+    pytest.skip("Redis integration test: no Redis answers on TEST_REDIS_URL")
+
+
+@pytest.fixture
+async def redis_cache():
+    """RV-OPS-04: a RedisCache on TEST_REDIS_URL for Redis integration tests."""
+    from api.services.cache import RedisCache
+
+    require_test_redis()
+    cache = RedisCache.from_url(TEST_REDIS_URL)
+    try:
+        yield cache
+    finally:
+        await cache.aclose()
 
 
 @pytest.fixture(autouse=True)

@@ -19,6 +19,7 @@ from sqlalchemy import (
     event,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -125,12 +126,16 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # RV-DB-01: uniqueness lives in the ix_users_telegram_user_id UNIQUE
+    # index (see __table_args__), which is what the migrations built — a
+    # column-level ``unique=True`` declared a constraint the DB never had.
     telegram_user_id: Mapped[int] = mapped_column(
         BigInteger,
-        unique=True,
         nullable=False,
     )
-    first_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    first_name: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="", server_default="",
+    )
     username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     is_bot: Mapped[bool] = mapped_column(
         Boolean,
@@ -174,7 +179,13 @@ class User(Base):
     )
     contacts = relationship("Contact", back_populates="user", cascade="all, delete-orphan")
 
-    __table_args__ = (Index("idx_users_telegram_id", "telegram_user_id"),)
+    __table_args__ = (
+        Index("ix_users_telegram_user_id", "telegram_user_id", unique=True),
+        # RV-DB-11: redundant with the UNIQUE index above; kept until a
+        # migration drops it so the model keeps mirroring the real schema.
+        Index("idx_users_telegram_id", "telegram_user_id"),
+        Index("idx_users_account_status_code", "account_status_code"),
+    )
 
 
 class AdminAuditLog(Base):
@@ -333,6 +344,9 @@ class Tracker(
 
     __table_args__ = (
         Index("idx_trackers_user", "user_id"),
+        # RV-DB-01/RV-DB-11: created by 20260405_0001 and never dropped;
+        # idx_trackers_active_paused covers it, so it goes with DB-11.
+        Index("idx_trackers_active", "active"),
         Index("idx_trackers_paused", "paused"),
         Index("idx_trackers_user_active", "user_id", "active"),
         Index(
@@ -360,17 +374,31 @@ class QuerySnapshot(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     query: Mapped[str] = mapped_column(String(255), nullable=False)
     snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    total_results: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    analyzed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    mean_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
-    median_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    # RV-DB-01: the server defaults mirror the migrated schema (the
+    # numeric ones still read '0'::double precision from the Float era).
+    total_results: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    analyzed_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    mean_byn: Mapped[float] = mapped_column(
+        Numeric(12, 2), nullable=False, default=0.0, server_default="0",
+    )
+    median_byn: Mapped[float] = mapped_column(
+        Numeric(12, 2), nullable=False, default=0.0, server_default="0",
+    )
     # B-06: q1/q3 persisted so /price-history can render the fair-price band.
     q1_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     q3_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     # B-10: raw pre-outlier sample size (len(extract_prices(ads))).
     fetched_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    min_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
-    max_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0.0)
+    min_byn: Mapped[float] = mapped_column(
+        Numeric(12, 2), nullable=False, default=0.0, server_default="0",
+    )
+    max_byn: Mapped[float] = mapped_column(
+        Numeric(12, 2), nullable=False, default=0.0, server_default="0",
+    )
 
     __table_args__ = (
         UniqueConstraint("query", "snapshot_at", name="uq_query_snapshot_bucket"),
@@ -463,7 +491,11 @@ class TrackerEvent(Base, UserIDMixin):
     delta_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     # Enriched metadata
     thumbnail: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # RV-DB-01: JSONB on Postgres since 20260509_0001 (P1-03); plain JSON
+    # elsewhere so the SQLite test stand keeps working.
+    parameters: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True,
+    )
     seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -478,10 +510,19 @@ class TrackerEvent(Base, UserIDMixin):
 
     __table_args__ = (
         Index("idx_tracker_events_user", "user_id"),
-        Index("idx_tracker_events_created", "created_at"),
+        # RV-DB-01: idx_tracker_events_created is gone — 20260509_0001
+        # dropped it in favour of the covering index below, so declaring it
+        # here only made create_all-built test schemas differ from prod.
         Index("idx_tracker_events_tracker_created", "tracker_id", column("created_at").desc()),
-        # PERF-NEW-1: covers WHERE user_id=? ORDER BY created_at DESC, id DESC.
-        Index("idx_tracker_events_user_created", "user_id", column("created_at").desc(), "id"),
+        # P1-02 (20260509_0001): covers WHERE user_id=? ORDER BY created_at
+        # DESC, id DESC.
+        Index(
+            "idx_tracker_events_user_created_id",
+            "user_id", column("created_at").desc(), column("id").desc(),
+        ),
+        # PERF-NEW-1 (20260519_0025): same ordering read backwards, so it
+        # duplicates the index above — RV-DB-11 drops one of the pair.
+        Index("idx_tracker_events_user_created", "user_id", "created_at", "id"),
         CheckConstraint(
             "event_type IN ('new_listing', 'price_drop', 'trend_reversal', "
             "'price_threshold_alert', 'discount_alert')",
@@ -501,8 +542,10 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
     # QueryListingState.link for the rationale.
     link: Mapped[str] = mapped_column(String(2048), nullable=False)
     price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
-    buy_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
-    sold_price_byn: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # RV-DB-01: widened to (12,2) by 20260509_0001 (P1-07); the model kept
+    # the original (10,2).
+    buy_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    sold_price_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     target_resale_byn: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     status: Mapped[str] = mapped_column(
         String(32),
@@ -580,6 +623,18 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
             name="chk_lead_items_status",
         ),
         CheckConstraint("version >= 1", name="chk_lead_items_version_positive"),
+        # RV-DB-01: both CHECKs exist in prod (20260509_0002, widened by
+        # 20260517_0020) but were missing here, so create_all-built test
+        # schemas accepted values the real database rejects.
+        CheckConstraint(
+            "source IN ('manual', 'watchlist', 'detail_modal', 'bot_callback', "
+            "'tracker_event')",
+            name="chk_lead_items_source",
+        ),
+        CheckConstraint(
+            "market_status IN ('active', 'missing', 'price_drop')",
+            name="chk_lead_items_market_status",
+        ),
         Index("idx_lead_items_user", "user_id"),
         # DB-M4: idx_lead_items_status and idx_lead_items_market_status
         # were dropped in migration 20260510_0006. The former was
@@ -589,10 +644,11 @@ class LeadItem(Base, UserIDMixin, TimestampMixin):
         # would never pick over a seq scan.
         Index("idx_lead_items_user_status", "user_id", "status"),
         # PERF-NEW-2: covers WHERE user_id=? AND status=? ORDER BY updated_at DESC.
-        Index(
-            "idx_lead_items_user_status_updated",
-            "user_id", "status", column("updated_at").desc(),
-        ),
+        # RV-DB-01: 20260519_0025 built it ascending; a B-tree serves the
+        # DESC order by scanning backwards, so the model follows the DB.
+        Index("idx_lead_items_user_status_updated", "user_id", "status", "updated_at"),
+        # P2-05 (20260509_0002): per-user listing ordered by created_at.
+        Index("idx_lead_items_user_created", "user_id", "created_at"),
     )
 
 
@@ -608,11 +664,13 @@ class LeadItemPriceSnapshot(Base):
     __tablename__ = "lead_item_price_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # RV-DB-01: no single-column index — 20260509_0001 (P1-06) dropped
+    # ix_lead_item_price_snapshots_lead_item_id as covered by the lookup
+    # index below.
     lead_item_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("lead_items.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     price_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     snapped_at: Mapped[datetime] = mapped_column(
@@ -677,6 +735,10 @@ class DealExpense(Base):
         ),
         Index("idx_deal_expenses_lead", "lead_id"),
         Index("idx_deal_expenses_user", "user_id"),
+        # RV-DB-01/RV-DB-11: ``index=True`` leftovers from 20260407_0010,
+        # duplicates of the two indexes above.
+        Index("ix_deal_expenses_lead_id", "lead_id"),
+        Index("ix_deal_expenses_user_id", "user_id"),
     )
 
 
@@ -876,6 +938,15 @@ class UserConsent(Base):
             postgresql_where=column("revoked_at").is_(None),
             sqlite_where=column("revoked_at").is_(None),
         ),
+        # RV-DB-01/RV-DB-11: the identical P2-17 index from 20260509_0002
+        # that 20260510_0006 never dropped.
+        Index(
+            "uq_user_consents_active",
+            "user_id", "consent_type",
+            unique=True,
+            postgresql_where=column("revoked_at").is_(None),
+            sqlite_where=column("revoked_at").is_(None),
+        ),
     )
 
 
@@ -966,10 +1037,15 @@ class SavedSearch(Base, UserIDMixin, TimestampMixin):
     # Relationships
     user = relationship("User", back_populates="saved_searches")
 
+    # RV-DB-01: uq_saved_searches_user_query used to be declared here, but
+    # no migration ever created it and nothing writes this table (G-07).
+    # Add it back together with a migration when the feature ships.
     __table_args__ = (
-        UniqueConstraint("user_id", "query", "strict_mode", name="uq_saved_searches_user_query"),
         Index("idx_saved_searches_user", "user_id"),
         Index("idx_saved_searches_active", "active"),
+        # RV-DB-01/RV-DB-11: autogenerated in 6040ea4a0fd6, duplicates
+        # idx_saved_searches_user.
+        Index("ix_saved_searches_user_id", "user_id"),
     )
 
 
@@ -999,4 +1075,7 @@ class Contact(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "phone", name="uq_contacts_user_phone"),
         Index("idx_contacts_user", "user_id"),
+        # RV-DB-01/RV-DB-11: ``index=True`` leftover from 20260407_0010,
+        # duplicates idx_contacts_user.
+        Index("ix_contacts_user_id", "user_id"),
     )

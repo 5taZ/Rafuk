@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 
 
 def _redis_glob_escape(value: object) -> str:
-    replacements = {"*": "[*]", "?": "[?]", "[": "[[]", "]": "[]]"}
+    # RV-OPS-04: no entry for "]" — outside a class it is already literal,
+    # while "[]]" is an empty class in Redis glob (fnmatch reads it as "]"),
+    # so any query containing "]" matched nothing and its cached analysis
+    # survived the erasure. Found by tests/test_redis_integration.py.
+    replacements = {"*": "[*]", "?": "[?]", "[": "[[]"}
     return "".join(replacements.get(ch, ch) for ch in str(value))
 
 

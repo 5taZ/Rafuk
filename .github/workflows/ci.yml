@@ -144,11 +144,12 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      # OPUS-19: real Redis in CI exercises the Redis-only paths
-      # (Lua rate-limit, SCAN-based per-user cache cleanup) that
-      # MemoryCache fallback silently skips locally. Without the
-      # service the test job ran every Redis-shaped test against an
-      # unreachable port and quietly fell back to MemoryCache.
+      # OPUS-19 / RV-OPS-04: real Redis in CI exercises the Redis-only
+      # paths (Lua INCR+EXPIRE quotas, singleflight locks, SCAN-based
+      # per-user cleanup, pipelined metrics) that the MemoryCache
+      # fallback skips. Until RV-OPS-04 conftest pinned :6380, so the
+      # suite never reached this service; tests now take the address
+      # from TEST_REDIS_URL (set on the "Run tests" step).
       redis:
         image: redis:7-alpine
         ports:
@@ -187,9 +188,20 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost:5432/kufar_test
+          # Also the server for the RV-DB-01 migration checks: each one
+          # creates (and drops) its own scratch database next to this one,
+          # so the role needs CREATEDB (the service's superuser has it).
           TEST_DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost:5432/kufar_test
           BOT_TOKEN: test_token
-          REDIS_URL: redis://localhost:6379/0
+          # RV-OPS-04: conftest points the app, the rate limiter and the
+          # Redis integration tests at TEST_REDIS_URL and flushes that DB
+          # before every test — keep it on a dedicated logical DB.
+          TEST_REDIS_URL: redis://localhost:6379/15
+          REDIS_URL: redis://localhost:6379/15
+          # RV-OPS-04: an unreachable Redis fails the Redis integration
+          # tests instead of skipping them (the silent-MemoryCache mode
+          # this job ran in before).
+          TEST_REDIS_REQUIRED: "1"
           API_BASE_URL: https://example.com
           MINI_APP_URL: https://example.com/app
         run: uv run pytest tests/ -v --cov=api --cov=bot --cov=scheduler --cov-report=xml

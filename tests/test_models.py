@@ -86,7 +86,11 @@ def test_history_tables_have_indexes() -> None:
     tracker_events = Base.metadata.tables["tracker_events"]
     tracker_event_indexes = {index.name for index in tracker_events.indexes}
     assert "idx_tracker_events_user" in tracker_event_indexes
-    assert "idx_tracker_events_created" in tracker_event_indexes
+    # RV-DB-01: migration 20260509_0001 dropped idx_tracker_events_created
+    # in favour of the covering (user_id, created_at DESC, id DESC) index;
+    # the model now mirrors that instead of declaring an index prod lacks.
+    assert "idx_tracker_events_created" not in tracker_event_indexes
+    assert "idx_tracker_events_user_created_id" in tracker_event_indexes
     tracker_event_columns = {column.name: column for column in tracker_events.columns}
     assert "ad_id" in tracker_event_columns
     assert tracker_event_columns["link"].type.length == 2048
@@ -115,6 +119,25 @@ def test_history_tables_have_indexes() -> None:
     ):
         assert col in lead_item_columns, f"missing watchlist-merged column: {col}"
     assert "chk_lead_items_version_positive" in lead_item_constraints
+
+
+def test_models_mirror_migrated_column_types() -> None:
+    """RV-DB-01: the model types follow what the migrations built. The
+    full comparison runs against Postgres in test_migrations.py; this
+    keeps SQLite-only runs from quietly reverting the slips fixed there."""
+    from sqlalchemy.dialects import postgresql
+
+    lead_items = Base.metadata.tables["lead_items"]
+    for name in ("buy_price_byn", "sold_price_byn"):
+        column_type = lead_items.c[name].type
+        assert (column_type.precision, column_type.scale) == (12, 2), name
+    assert {"chk_lead_items_source", "chk_lead_items_market_status"} <= {
+        constraint.name for constraint in lead_items.constraints
+    }
+
+    parameters = Base.metadata.tables["tracker_events"].c.parameters.type
+    pg_type = parameters.dialect_impl(postgresql.dialect())
+    assert isinstance(pg_type, postgresql.JSONB)
 
 
 def test_user_consents_version_constraint() -> None:

@@ -110,6 +110,10 @@ def test_export_xlsx_neutralises_spreadsheet_formulas() -> None:
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
 
+    # RV-DB-01: ``source`` is no longer a formula vector here — the test
+    # schema now carries prod's chk_lead_items_source, so a "+manual" lead
+    # cannot be stored (in prod it never could). The free-text query and
+    # title cells still exercise the escaping.
     malicious_payload = {
         "query": "@SUM(1,2)",
         "ad_id": 50202,
@@ -117,7 +121,7 @@ def test_export_xlsx_neutralises_spreadsheet_formulas() -> None:
         "link": "https://www.kufar.by/item/50202",
         "price_byn": 100.0,
         "status": "new",
-        "source": "+manual",
+        "source": "manual",
     }
 
     with TestClient(app) as client:
@@ -134,7 +138,7 @@ def test_export_xlsx_neutralises_spreadsheet_formulas() -> None:
         # a single quote — Excel renders this as literal text.
         assert first_row[1] == "'@SUM(1,2)"
         assert first_row[2] == "'=cmd|'/c calc.exe'!A1"
-        assert first_row[7] == "'+manual"
+        assert first_row[7] == "manual"
 
         # CSV path keeps the same shape (already protected pre-wave135,
         # the assertion locks the contract in).
@@ -143,7 +147,6 @@ def test_export_xlsx_neutralises_spreadsheet_formulas() -> None:
         body = csv_resp.content.decode("utf-8")
         assert "'@SUM(1,2)" in body
         assert "'=cmd|" in body
-        assert "'+manual" in body
 
 
 def test_export_rejects_unknown_format() -> None:
