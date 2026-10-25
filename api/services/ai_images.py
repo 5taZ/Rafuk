@@ -32,18 +32,14 @@ async def fetch_image_b64(url: str, get_client: GetClient) -> dict | None:
     # stalls every other coroutine on the worker. Offload to a thread
     # so other requests can be served while the bytes get crunched.
     compressed = await asyncio.to_thread(compress_image, data)
-    if compressed:
-        data = compressed
-
-    mime = "image/jpeg"
-    if ".png" in url.lower():
-        mime = "image/png"
-    elif ".webp" in url.lower():
-        mime = "image/webp"
-    b64 = base64.b64encode(data).decode()
+    # RV2-AI2-13: compress_image always yields JPEG, whatever the URL says;
+    # bytes Pillow couldn't decode (SVG, corrupt) aren't sent raw.
+    if not compressed:
+        return None
+    b64 = base64.b64encode(compressed).decode()
     return {
         "type": "image_url",
-        "image_url": {"url": f"data:{mime};base64,{b64}"},
+        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
     }
 
 
@@ -122,7 +118,10 @@ def compress_image(data: bytes, max_dim: int = 768, quality: int = 75) -> bytes 
         from io import BytesIO
 
         from PIL import Image
-
+    except ImportError as e:
+        logger.debug("Image compression skipped: %s", e)
+        return None
+    try:
         img = Image.open(BytesIO(data))
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
@@ -135,6 +134,8 @@ def compress_image(data: bytes, max_dim: int = 768, quality: int = 75) -> bytes 
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=quality, optimize=True)
         return buf.getvalue()
-    except (ImportError, OSError, ValueError) as e:
+    # RV2-AI2-13: DecompressionBombError is not an OSError and used to
+    # escape into the analysis pipeline.
+    except (OSError, ValueError, Image.DecompressionBombError) as e:
         logger.debug("Image compression skipped: %s", e)
         return None

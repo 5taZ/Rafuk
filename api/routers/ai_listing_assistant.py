@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re as _re
@@ -13,15 +14,6 @@ from pydantic import ValidationError
 from api.config import get_settings
 from api.dependencies import get_cache, get_kufar_client, get_telegram_user
 from api.limiter import limiter
-from api.routers.ai_analysis import (
-    _AI_ANALYSIS_ERRORS,
-    _check_ai_available,
-    _check_ai_consent,
-    _check_ai_entitlement,
-    _check_rate_limit,
-    _coerce_string_list,
-    _log_ai_audit,
-)
 from api.schemas import (
     AI_LISTING_PHOTO_MAX_CHARS,
     AI_LISTING_PHOTO_MAX_COUNT,
@@ -38,17 +30,30 @@ from api.services.aggregator import (
     filter_ads_for_accessory_category,
     normalize_price_byn,
 )
+from api.services.ai_analysis_pipeline import _AI_ANALYSIS_ERRORS
+from api.services.ai_audit import _log_ai_audit
+from api.services.ai_category_data import (
+    CATEGORY_HINTS,
+    detect_category,
+    normalize_condition_label,
+)
+from api.services.ai_guards import (
+    _check_ai_available,
+    _check_ai_consent,
+    _check_ai_entitlement,
+    _check_rate_limit,
+    _coerce_string_list,
+    _refund_quota,
+)
 from api.services.ai_listing_guardrails import (
     normalize_listing_pricing,
     thin_market_warning,
 )
 from api.services.ai_quality import repair_seller_advice, sanitize_public_ai_payload
-from api.services.ai_sanitize import scrub_model_payload, strip_html_in_payload
-from api.services.ai_service import (
-    CATEGORY_HINTS,
-    detect_category,
-    normalize_condition_label,
+from api.services.ai_sanitize import (
     sanitize_user_text,
+    scrub_model_payload,
+    strip_html_in_payload,
 )
 from api.services.client_ip import get_client_ip
 from api.services.kufar_client import KufarAPIError, KufarClient
@@ -446,6 +451,7 @@ def _build_listing_fallback_response(
         ],
         competitors=fallback_competitors,
         market_summary=market_summary[:600],
+        source="fallback",
     )
 
 
@@ -471,8 +477,6 @@ async def listing_assistant(
     suggested price tiers are grounded in real Q1/median/Q3 numbers
     rather than model guesses.
     """
-    import asyncio
-
     ai = _check_ai_available()
     await _check_ai_consent(request, _user.user_id)
     await _check_ai_entitlement(request, _user.user_id, endpoint="listing")
@@ -518,12 +522,40 @@ async def listing_assistant(
             )
             return response
 
-    await _check_rate_limit(request, _user.user_id, endpoint="listing")
+    charge = await _check_rate_limit(request, _user.user_id, endpoint="listing")
+    try:
+        return await _draft_listing(
+            request, payload, ai=ai, user_id=_user.user_id, title=title, photos=photos,
+            settings=settings, kufar_client=kufar_client, cache=cache, cache_key=cache_key,
+            audit_model=audit_model, client_ip=client_ip,
+        )
+    except BaseException:
+        # RV2-AI2-08: the user got nothing (500, disconnect) — give the
+        # unit back, as /analyze does. A market fallback is a delivered
+        # answer and stays charged, also like /analyze.
+        await _refund_quota(cache, charge)
+        raise
 
+
+async def _draft_listing(
+    request: Request,
+    payload: AIListingAssistantRequest,
+    *,
+    ai: Any,
+    user_id: int,
+    title: str,
+    photos: list[str],
+    settings: Any,
+    kufar_client: KufarClient,
+    cache: Any,
+    cache_key: str,
+    audit_model: str,
+    client_ip: str | None,
+) -> AIListingAssistantResponse:
     # AI audit trail (Belarus Law No. 99-З) — cache miss path.
     await _log_ai_audit(
         request.app.state.session_factory,
-        telegram_user_id=_user.user_id,
+        telegram_user_id=user_id,
         endpoint="listing_assistant",
         query=payload.title,
         model=audit_model,

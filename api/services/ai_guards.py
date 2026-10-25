@@ -44,6 +44,7 @@ from sqlalchemy.exc import IntegrityError
 
 from api.config import get_settings
 from api.models import User, UserConsent
+from api.services.account_erasure import ensure_user_creation_allowed
 from api.services.account_status import (
     BARE_SEARCH_STATUS_CODE,
     QUOTA_BUCKET_AI,
@@ -179,6 +180,9 @@ async def _status_quota_limit(request: Request, user_id: int, *, bucket: str) ->
             await session.execute(select(User).where(User.telegram_user_id == int(user_id)))
         ).scalar_one_or_none()
         if user is None and int(user_id) > 0:
+            # RV2-SC-02: the one user-creation path that skipped the RV-SEC-05
+            # erasure guard.
+            await ensure_user_creation_allowed(int(user_id))
             user = User(telegram_user_id=int(user_id), first_name="")
             session.add(user)
             try:

@@ -7,34 +7,15 @@ Configure via .env:
 
 Wave 18 (BE-C5 follow-up) — this module used to be ~1700 lines with
 most of the volume taken up by inline Russian prompt text and
-payload-normalisation helpers. The original split of
-``ai_analysis.py`` (Wave 10) established the pattern we repeat here:
-pull out concerns into dedicated modules and keep the old import
-surface alive via re-exports so callers don't have to move.
-
-Sibling modules (keep the import surface stable):
+payload-normalisation helpers, now in sibling modules:
 
 * ``api.services.ai_prompts``   — prompt templates + JSON schemas
 * ``api.services.ai_sanitize``  — sanitize_user_text + injection regex
 * ``api.services.ai_dedupe``    — _dedupe_* / dedupe_analysis_payload
 * ``api.services.ai_images``    — multimodal image fetch/compression helpers
 
-Importers that depend on back-compat re-exports (do NOT drop any of
-the symbols below without updating these):
-
-* ``api.services.ai_analysis_pipeline`` — dedupe_analysis_payload,
-  detect_category, get_ai_service, normalize_condition_label
-* ``api.services.ai_marketplace``       — detect_category,
-  normalize_condition_label
-* ``api.routers.ai_analysis``           — get_ai_service (plus the
-  late-bound monkeypatch sites anchored here in Wave 10)
-* ``api.routers.ai_listing_assistant``  — CATEGORY_HINTS,
-  detect_category, normalize_condition_label
-* ``api.routers.ai_tools``              — sanitize_user_text
-* ``api.main``                          — get_ai_service
-* ``tests/test_ai_analysis.py``         — AIService, _clean_photo_notes,
-  _normalize_condition_label, dedupe_analysis_payload, detect_category,
-  sanitize_user_text, _repair_truncated_json
+RV2-CC-W2: the back-compat re-exports were dropped once every importer
+moved to the sibling modules; import helpers from where they live.
 """
 
 from __future__ import annotations
@@ -50,11 +31,9 @@ import httpx
 
 from api.config import get_settings
 from api.metrics import observe_ai_provider_call
-from api.services.ai_category_data import (  # noqa: F401 — re-export
+from api.services.ai_category_data import (
     _VALID_CONDITION_LABELS,
     CATEGORY_HINTS,
-    CATEGORY_KEYWORDS,
-    _normalize_condition_label,
     detect_category,
     normalize_condition_label,
 )
@@ -63,23 +42,19 @@ from api.services.ai_category_profiles import (
     seller_category_profile_text,
 )
 from api.services.ai_costs import estimate_ai_cost_usd, extract_ai_usage
-from api.services.ai_dedupe import (  # noqa: F401 — re-export
-    _dedupe_dict_list,
+from api.services.ai_dedupe import (
     _dedupe_listing_payload,
     _dedupe_text_list,
-    _is_paraphrase,
-    _normalize_for_dedupe,
     dedupe_analysis_payload,
 )
 from api.services.ai_images import (
     MAX_AI_REDIRECTS,
-    compress_image,
     fetch_image_b64,
     fetch_image_bytes,
     is_allowed_image_url,
 )
 from api.services.ai_intent_profiles import buyer_intent_text, seller_intent_text
-from api.services.ai_prompts import (  # noqa: F401 — re-export
+from api.services.ai_prompts import (
     _CONDITION_RISKS_PROMPT_TEMPLATE,
     _CONDITION_RISKS_SCHEMA,
     _PRICE_MARKET_PROMPT_TEMPLATE,
@@ -87,16 +62,7 @@ from api.services.ai_prompts import (  # noqa: F401 — re-export
     LISTING_ASSISTANT_PROMPT,
     QUICK_CONDITION_PROMPT,
 )
-from api.services.ai_sanitize import (  # noqa: F401 — re-export
-    _MULTILINE_COLLAPSE_RE,
-    _PROMPT_INJECTION_PATTERNS,
-    _PROMPT_ROLE_MARKERS,
-    _TRIPLE_BACKTICK_RE,
-    fence_nonce,
-    fence_untrusted,
-    sanitize_user_text,
-    scrub_pii,
-)
+from api.services.ai_sanitize import fence_nonce, fence_untrusted, sanitize_user_text
 
 logger = logging.getLogger(__name__)
 
@@ -200,22 +166,9 @@ def _clean_photo_notes(notes: list[Any] | None) -> list[str]:
     return cleaned[:4]
 
 
-def _repair_truncated_json(text: str) -> dict:
-    """Try to repair a truncated JSON response from the AI model.
-
-    When max_tokens cuts off the response mid-JSON, we try to close
-    open braces/brackets and parse what we have, preserving as many
-    sections as possible.
-    """
-    start = text.find("{")
-    if start == -1:
-        return {"summary": text.strip()[:500], "condition": None, "fair_price": None}
-
-    fragment = text[start:]
-
-    # Count open braces/brackets and close them
-    open_braces = 0
-    open_brackets = 0
+def _scan_json_fragment(fragment: str) -> tuple[bool, list[str]]:
+    """Return (inside an open string, closers of the still-open containers)."""
+    closers: list[str] = []
     in_string = False
     escape_next = False
     for ch in fragment:
@@ -232,16 +185,30 @@ def _repair_truncated_json(text: str) -> dict:
             continue
         if in_string:
             continue
-        if ch == "{":
-            open_braces += 1
-        elif ch == "}":
-            open_braces -= 1
-        elif ch == "[":
-            open_brackets += 1
-        elif ch == "]":
-            open_brackets -= 1
+        if ch in "{[":
+            closers.append("}" if ch == "{" else "]")
+        elif ch in "}]" and closers:
+            closers.pop()
+    return in_string, closers
 
-    # Close any open string
+
+def _repair_truncated_json(text: str) -> dict:
+    """Try to repair a truncated JSON response from the AI model.
+
+    When max_tokens cuts off the response mid-JSON, we try to close
+    open braces/brackets and parse what we have, preserving as many
+    sections as possible.
+
+    RV2-AI2-01: raises ValueError when nothing can be recovered. The old
+    "summary = raw text" stand-in passed for a model answer, so raw JSON
+    reached the UI as source="ai" and went into the shared cache.
+    """
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("unparseable model output")
+
+    fragment = text[start:]
+    in_string, _ = _scan_json_fragment(fragment)
     if in_string:
         fragment += '"'
     # Strip trailing incomplete key/value pairs to make repair viable.
@@ -258,17 +225,21 @@ def _repair_truncated_json(text: str) -> dict:
         if candidate != fragment:
             fragment = candidate
             break
-    # Close open brackets and braces
-    fragment += "]" * max(0, open_brackets)
-    fragment += "}" * max(0, open_braces)
+    fragment = re.sub(r",\s*$", "", fragment)
+    # RV2-AI2-01: close innermost-first; counting braces and brackets
+    # separately closed `[{...` as `]}` and the parse always failed.
+    _, closers = _scan_json_fragment(fragment)
+    fragment += "".join(reversed(closers))
 
     try:
         result = json.loads(fragment)
-        logger.info("Repaired truncated JSON: recovered keys=%s", list(result.keys()))
-        return result
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
         logger.warning("Could not repair truncated JSON")
-        return {"summary": text.strip()[:500], "condition": None, "fair_price": None}
+        raise ValueError("unparseable model output") from exc
+    if not isinstance(result, dict):
+        raise ValueError("model output is not a JSON object")
+    logger.info("Repaired truncated JSON: recovered keys=%s", list(result.keys()))
+    return result
 
 
 # SEC-05: AI-provider circuit breaker constants. Once the provider has
@@ -288,6 +259,15 @@ _AI_CB_OPEN_SECONDS = 60.0
 # is presumed lost and the next caller takes over as the probe
 # (_post_with_retry's budget is 3 × 45 s read timeouts + backoff).
 _AI_CB_PROBE_DEADLINE_SECONDS = 180.0
+
+# Top-level keys of _PRICE_MARKET_SCHEMA (Call A) / _CONDITION_RISKS_SCHEMA (Call B).
+_PRICE_MARKET_KEYS = (
+    "fair_price", "resale_potential", "negotiation_tips", "market_context", "best_pick",
+)
+_CONDITION_RISKS_KEYS = (
+    "condition", "watch_out", "meeting_checklist", "red_flags", "scam_analysis",
+    "photo_authenticity", "recommendation", "summary",
+)
 
 
 class AIService:
@@ -464,8 +444,14 @@ class AIService:
             self._cb_open_until = asyncio.get_running_loop().time() + _AI_CB_OPEN_SECONDS
             logger.warning("AI circuit breaker → open (probe ended without a verdict)")
 
-    async def _cb_record_success(self) -> None:
+    async def _cb_record_success(self, probe_id: int | None = None) -> None:
         async with self._cb_lock:
+            # RV2-AI2-17: only the current half-open probe may close the
+            # breaker; a slow call that started before it opened may not.
+            if self._cb_state == "open" or (
+                self._cb_state == "half_open" and probe_id != self._cb_probe_id
+            ):
+                return
             if self._cb_state != "closed":
                 logger.info(
                     "AI circuit breaker → closed (was %s)", self._cb_state,
@@ -596,9 +582,11 @@ class AIService:
                 # can fall back to non-AI output.
                 if probe_id is not None:
                     # RV-AI-02: the provider answered — probe succeeded.
-                    await self._cb_record_success()
+                    await self._cb_record_success(probe_id)
                 raise RuntimeError("Insufficient balance")
-            if resp.status_code >= 500:
+            # RV2-AI2-17: a 408 that survived every retry is the provider
+            # timing out, not a caller bug.
+            if resp.status_code >= 500 or resp.status_code == 408:
                 await self._cb_record_failure()
                 resp.raise_for_status()
             elif resp.status_code >= 400:
@@ -606,13 +594,13 @@ class AIService:
                 # typo, schema mismatch. Don't flip the breaker for
                 # caller bugs.
                 if probe_id is not None:
-                    await self._cb_record_success()
+                    await self._cb_record_success(probe_id)
                 resp.raise_for_status()
             logger.info(
                 "AI _chat response: status=%d (attempt %d)",
                 resp.status_code, attempt + 1,
             )
-            await self._cb_record_success()
+            await self._cb_record_success(probe_id)
             return resp
 
         # Loop exhausted with only retryable exceptions caught above —
@@ -832,9 +820,12 @@ class AIService:
             fetch_tasks = [
                 self._fetch_image_b64(url) for url in image_urls[:self._max_images]
             ]
-            fetched = await asyncio.gather(*fetch_tasks)
+            # RV2-AI2-13: one bad photo must not sink the analysis.
+            fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
             for img in fetched:
-                if img:
+                if isinstance(img, BaseException):
+                    logger.warning("AI image fetch failed: %s", type(img).__name__)
+                elif img:
                     image_content.append(img)
             if image_content:
                 logger.info(
@@ -965,13 +956,25 @@ class AIService:
             # Re-raise the first error so the router fallback path kicks in
             raise results[0]
 
-        # Merge: Call B sections take priority for overlapping keys,
-        # Call A sections fill in the rest.
+        # RV2-AI2-01: each call contributes only its own schema's keys, and
+        # only the ones it actually filled — a stray or null key from one
+        # call (e.g. a repaired truncated answer) can't wipe the other's.
+        # A call that filled none of its keys counts as failed.
         merged: dict = {}
-        # fair_price, resale_potential, negotiation_tips, market_context, best_pick
-        merged.update(result_a)
-        # condition, watch_out, meeting_checklist, red_flags, recommendation, summary
-        merged.update(result_b)
+        failed_sections: list[str] = []
+        for section, keys, outcome in (
+            ("price_market", _PRICE_MARKET_KEYS, result_a),
+            ("condition_risks", _CONDITION_RISKS_KEYS, result_b),
+        ):
+            filled = {key: outcome[key] for key in keys if outcome.get(key) is not None}
+            if not filled:
+                failed_sections.append(section)
+            merged.update(filled)
+        if len(failed_sections) == 2:
+            raise next(
+                (r for r in results if isinstance(r, Exception)),
+                ValueError("model output has none of the expected sections"),
+            )
         # Ensure all expected keys exist even if a sub-call returned partial data
         merged.setdefault("fair_price", None)
         merged.setdefault("resale_potential", None)
@@ -988,13 +991,7 @@ class AIService:
         merged.setdefault("summary", "")
         # RV-AI-03: tell the pipeline which half is missing so the result
         # is labelled "partial" instead of passing for a full AI answer.
-        merged["_failed_sections"] = [
-            section
-            for section, outcome in zip(
-                ("price_market", "condition_risks"), results, strict=True,
-            )
-            if isinstance(outcome, Exception)
-        ]
+        merged["_failed_sections"] = failed_sections
         # RV-AI-05: photo_authenticity is only meaningful if the model
         # actually saw the photos (fetches can fail, the 429 retry is
         # text-only).
@@ -1494,10 +1491,9 @@ class AIService:
                 ad = sl.get("age_days")
                 if ad is not None:
                     age_str = f", {ad} дн." if ad > 0 else ", сегодня"
-                deal_str = ""
-                ds = sl.get("deal_score")
-                if ds is not None:
-                    deal_str = f", оценка: {ds:.0f}/100"
+                # RV2-AI2-10: an alternative's "deal_score" is its similarity
+                # to the target, not a deal rating — the model read a low
+                # one as "bad deal", so it stays out of the prompt.
 
                 # SEC-01: similar_listings come from other Kufar sellers —
                 # treat title/description as untrusted UGC and strip
@@ -1514,7 +1510,7 @@ class AIService:
                     f"  {i}. {safe_sl_title} — "
                     f"{sl.get('price_byn', 0):.0f} BYN ({diff_str}), "
                     f"{sl.get('condition') or 'не указано'}, "
-                    f"{sl.get('seller_type', '?')}{age_str}{deal_str}"
+                    f"{sl.get('seller_type', '?')}{age_str}"
                 )
                 params = sanitize_user_text(
                     str(sl.get("parameters") or ""), max_length=120
@@ -1543,12 +1539,10 @@ class AIService:
         return is_allowed_image_url(url)
 
     @staticmethod
-    def _compress_image(data: bytes, max_dim: int = 768, quality: int = 75) -> bytes | None:
-        return compress_image(data, max_dim=max_dim, quality=quality)
-
-    @staticmethod
     def _parse_json(text: str) -> dict:
-        """Parse JSON from model response, handling reasoning chains and code blocks."""
+        """Parse a JSON object from the model response (reasoning chains,
+        code fences). RV2-AI-11: anything but an object raises ValueError —
+        every caller does ``.get`` on the result."""
         text = text.strip()
 
         # Remove markdown code fences
@@ -1559,9 +1553,12 @@ class AIService:
 
         # Strategy 1: direct parse
         try:
-            return json.loads(text.strip())
+            parsed = json.loads(text.strip())
         except json.JSONDecodeError:
             pass
+        else:
+            if isinstance(parsed, dict):
+                return parsed
 
         # Strategy 2: parse the last balanced JSON object while respecting
         # braces inside quoted strings.

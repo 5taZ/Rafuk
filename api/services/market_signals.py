@@ -82,13 +82,17 @@ def fair_price_label(band: str | None) -> str | None:
     return labels.get(band)
 
 
+def is_too_cheap(price_byn: float, *, q1: float, median: float) -> bool:
+    return price_byn < min(q1 * 0.72, median * 0.68)
+
+
 def detect_anomaly_flags(ad: dict[str, Any], stats: PriceStats) -> list[str]:
     price_byn = normalize_price_byn(ad.get("price_byn"))
     if price_byn is None or stats.count < 4:
         return []
 
     flags: list[str] = []
-    if price_byn < min(stats.q1 * 0.72, stats.median * 0.68):
+    if is_too_cheap(price_byn, q1=stats.q1, median=stats.median):
         flags.append("too_cheap")
     if price_byn > max(stats.q3 * 1.35, stats.median * 1.45):
         flags.append("too_expensive")

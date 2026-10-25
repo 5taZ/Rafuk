@@ -9,6 +9,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.middleware.telegram_auth import TelegramInitData
+from api.services.ai_category_data import _normalize_condition_label, detect_category
+from api.services.ai_dedupe import dedupe_analysis_payload
 from api.services.ai_listing_guardrails import (
     normalize_listing_pricing,
     thin_market_warning,
@@ -22,14 +24,8 @@ from api.services.ai_marketplace import (
     finalize_red_flags,
     merge_marketplace_red_flags,
 )
-from api.services.ai_service import (
-    AIService,
-    _clean_photo_notes,
-    _normalize_condition_label,
-    dedupe_analysis_payload,
-    detect_category,
-    sanitize_user_text,
-)
+from api.services.ai_sanitize import sanitize_user_text
+from api.services.ai_service import AIService, _clean_photo_notes
 
 
 def fake_telegram_user() -> TelegramInitData:
@@ -282,8 +278,6 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_service, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis_pipeline, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
-    monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
@@ -779,7 +773,6 @@ def test_ai_guardrails_clamp_outlier_price_for_negotiable_financing_bait(monkeyp
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: FakeOutlierAIService())
     monkeypatch.setattr(ai_service, "get_ai_service", lambda: FakeOutlierAIService())
     monkeypatch.setattr(ai_analysis_pipeline, "get_ai_service", lambda: FakeOutlierAIService())
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
@@ -948,7 +941,6 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_service, "get_ai_service", lambda: fake_ai)
     monkeypatch.setattr(ai_analysis_pipeline, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
@@ -1526,7 +1518,6 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
 
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
     import api.routers.ai_listing_assistant as _la_mod
 
@@ -1709,7 +1700,6 @@ def test_listing_assistant_passes_photos_to_ai_and_drops_invalid_ones(monkeypatc
 
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
@@ -1802,7 +1792,6 @@ def test_listing_assistant_handles_empty_market_gracefully(monkeypatch) -> None:
 
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
     import api.routers.ai_listing_assistant as _la_mod2
 
@@ -2092,7 +2081,6 @@ def test_listing_assistant_caches_identical_inputs(monkeypatch) -> None:
 
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
@@ -2165,7 +2153,6 @@ def test_listing_assistant_cache_hit_skips_rate_limit(monkeypatch) -> None:
 
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     rate_calls: list[str] = []
@@ -2280,7 +2267,6 @@ def test_listing_assistant_repairs_generic_seller_advice(monkeypatch) -> None:
 
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
@@ -2339,7 +2325,6 @@ def test_listing_assistant_strips_prompt_injection_from_notes(monkeypatch) -> No
             }
 
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: FakeAI())
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
 
     app = create_app()
@@ -2697,7 +2682,6 @@ def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
 
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
     import api.routers.ai_listing_assistant as _la
 
@@ -2765,7 +2749,6 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
 
     fake_ai = FakeAI()
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: fake_ai)
-    monkeypatch.setattr(ai_analysis, "load_query_dataset", fake_load_query_dataset)
     monkeypatch.setattr(ai_analysis_pipeline, "load_query_dataset", fake_load_query_dataset)
     import api.routers.ai_listing_assistant as _la
 
@@ -2804,7 +2787,7 @@ async def test_shadow_store_prune_lock_prevents_dict_change_during_iteration() -
     with every writer."""
     import asyncio
 
-    from api.routers import ai_analysis as aia
+    from api.services import ai_shadow_store as aia
 
     # Seed enough entries to exercise the prune loop.
     aia._tasks.clear()
@@ -2842,7 +2825,7 @@ async def test_clear_user_ai_data_under_concurrent_pruner() -> None:
     shadow stores. The lock makes it safe to interleave them."""
     import asyncio
 
-    from api.routers import ai_analysis as aia
+    from api.services import ai_shadow_store as aia
 
     aia._tasks.clear()
     now = datetime.now(UTC).timestamp()

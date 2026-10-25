@@ -107,15 +107,6 @@ def _task_cache_key(task_id: str, *, user_id: int | None = None) -> str:
     return f"ai_task{uid_part}:{task_id}"
 
 
-def _task_version(task: dict[str, Any] | None) -> float:
-    if not task:
-        return 0.0
-    try:
-        return float(task.get("_updated_ts") or task.get("_created_ts") or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
 async def _get_task(
     cache: CacheBackend, task_id: str, *, user_id: int | None = None,
 ) -> dict[str, Any] | None:
@@ -292,6 +283,10 @@ async def _update_task(
             "progress": 0,
             "result": None,
             "error": None,
+            # RV2-AI2-07: a task recreated after the user's data was erased
+            # must land under the user-scoped key the erasure sweeps, not
+            # the unscoped one.
+            "_telegram_user_id": user_id,
             "_created_ts": datetime.now(UTC).timestamp(),
             "_updated_ts": datetime.now(UTC).timestamp(),
         }

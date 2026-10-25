@@ -160,16 +160,3 @@ def _check_no_photos(
             "level": "medium",
             "message": "Объявление без фото",
         })
-
-
-def _check_duplicate(*_args, **_kwargs) -> None:  # pragma: no cover
-    """Removed in the May-2026 logic audit (E-FIND-04).
-
-    The function used to read ``seller_info["is_duplicate"]`` but
-    every production caller passed ``seller_info=None`` so it never
-    fired. A real duplicate detector needs ``Listing`` history (same
-    title+price+region in 24h) and is tracked separately as a
-    feature. This stub remains so legacy imports don't blow up;
-    delete after one release if no one notices.
-    """
-    return None

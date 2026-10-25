@@ -29,6 +29,8 @@ from api.services.aggregator import (
     product_cluster_key,
     resolve_price_reference,
 )
+from api.services.ai_category_data import detect_category, normalize_condition_label
+from api.services.ai_dedupe import dedupe_analysis_payload
 from api.services.ai_guardrails import apply_ai_market_guardrails
 from api.services.ai_guards import QuotaCharge, _refund_quota
 from api.services.ai_marketplace import (
@@ -50,12 +52,7 @@ from api.services.ai_marketplace import (
 )
 from api.services.ai_quality import sanitize_public_ai_payload
 from api.services.ai_sanitize import scrub_model_payload, strip_html_in_payload
-from api.services.ai_service import (
-    dedupe_analysis_payload,
-    detect_category,
-    get_ai_service,
-    normalize_condition_label,
-)
+from api.services.ai_service import get_ai_service
 from api.services.ai_task_store import _get_task, _release_inflight, _task_ttl, _update_task
 from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS
@@ -1017,7 +1014,7 @@ async def _stage_response(c: _AC) -> None:
     bp = c.result.get("best_pick") or {}
     if isinstance(bp, dict):
         best_pick_ad_id = bp.get("ad_id")
-        best_pick_reason = bp.get("reason", "")
+        best_pick_reason = str(bp.get("reason") or "")
 
     best_decision: BestAlternativeDecision = choose_best_alternative(
         c.similar,
@@ -1026,7 +1023,10 @@ async def _stage_response(c: _AC) -> None:
         ai_best_pick_ad_id=best_pick_ad_id,
     )
     best_alternative = best_decision.item
-    if not best_pick_reason and best_decision.reason:
+    # RV2-AI2-03: the model's reason describes the listing the model had in
+    # mind; when the backend picked a different one (a non-empty decision
+    # reason), that reason must not be shown under it.
+    if best_decision.reason or best_alternative is None:
         best_pick_reason = best_decision.reason
 
     if best_alternative:
@@ -1219,6 +1219,12 @@ async def _run_analysis(
         except TimeoutError as exc:
             await _analysis_fallback(c, exc)
         except _AI_ANALYSIS_ERRORS as exc:
+            await _analysis_fallback(c, exc)
+        except Exception as exc:  # noqa: BLE001
+            # RV2-AI-12: anything else (AttributeError, Pillow's
+            # DecompressionBombError, ...) used to escape and leave the task
+            # "processing" until its TTL with the unit spent.
+            logger.exception("AI task %s: unexpected %s", task_id, type(exc).__name__)
             await _analysis_fallback(c, exc)
     except asyncio.CancelledError:
         # RV-AI-07: the bg-task watchdog (or shutdown) cancelled us. The

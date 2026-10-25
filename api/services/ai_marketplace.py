@@ -15,9 +15,9 @@ from api.services.aggregator import (
     normalize_search_text,
     tokenize_search_text,
 )
+from api.services.ai_category_data import detect_category, normalize_condition_label
 from api.services.ai_guardrails import contains_financing_bait
 from api.services.ai_quality import filter_specific_advice, is_generic_ai_advice
-from api.services.ai_service import detect_category, normalize_condition_label
 from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS, first_image_url
 from api.services.reseller_tools import analyze_query_text
 from api.services.risk_detector import find_prepayment_signals
@@ -409,19 +409,33 @@ def _cohort_weight(cohort_key: str) -> float:
     return 0.0
 
 
+def coerce_ad_id(value: Any) -> int | None:
+    """RV2-AI2-03: model JSON may carry the id as a string ("123")."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        ad_id = int(str(value).strip())
+    except ValueError:
+        return None
+    return ad_id if ad_id > 0 else None
+
+
 def choose_best_alternative(
     similar_listings: list[dict[str, Any]],
     *,
     target_price: float,
     is_negotiable_price: bool,
-    ai_best_pick_ad_id: int | None = None,
+    ai_best_pick_ad_id: Any = None,
 ) -> BestAlternativeDecision:
+    """``reason`` is empty exactly when the model's own pick was used."""
     if not similar_listings:
         return BestAlternativeDecision(item=None, reason="")
 
-    if ai_best_pick_ad_id:
+    ai_pick = coerce_ad_id(ai_best_pick_ad_id)
+    if ai_pick:
         chosen = next(
-            (item for item in similar_listings if item["ad_id"] == ai_best_pick_ad_id), None
+            (item for item in similar_listings if coerce_ad_id(item.get("ad_id")) == ai_pick),
+            None,
         )
         if chosen is not None:
             return BestAlternativeDecision(item=chosen, reason="")
@@ -585,7 +599,11 @@ def _price_anchor_discount(
     reference = min(anchors)
     overpay = price_byn - reference
     if overpay <= 0:
-        return max(40, int(round(price_byn * 0.03))), "за найденные риски и мелкие дефекты"
+        # RV2-AI2-11: the 40 BYN minimum asked for more than a cheap item costs.
+        discount = min(max(40, int(round(price_byn * 0.03))), int(round(price_byn * 0.15)))
+        if discount <= 0:
+            return None, ""
+        return discount, "за найденные риски и мелкие дефекты"
     target = max(int(round(overpay)), int(round(price_byn * 0.05)))
     return target, "от ближайшего рыночного ориентира"
 
@@ -837,15 +855,18 @@ def complete_analysis_sections(
         or normalize_condition_label(_clean_text(photo_condition_label))
         or normalize_condition_label(_clean_text(listing_condition))
     )
-    notes = [_clean_text(note) for note in (condition.get("notes") or []) if _clean_text(note)]
+    # RV2-AI2-06: a bare string of notes was split into characters, and a
+    # wordy confidence ("высокая") raised and sank the whole paid answer.
+    notes = _section_texts(condition.get("notes"), limit=8, max_len=300)
     notes = _unique_texts(notes + photo_condition_notes, max_items=4)
     if not notes and listing_condition:
         notes = [f"Заявленное состояние: {listing_condition}"]
     if label or notes:
         completed["condition"] = {
             "label": label or "Удовлетворительное",
-            "confidence": float(
-                condition.get("confidence") or (0.72 if photo_condition_notes else 0.64)
+            "confidence": (
+                _coerce_confidence(condition.get("confidence"))
+                or (0.72 if photo_condition_notes else 0.64)
             ),
             "notes": notes,
         }
@@ -1366,9 +1387,14 @@ def _floor_recommendation_text(floor: RiskFloor) -> str:
             "Цена сильно ниже рынка без понятной причины. Не вноси предоплату: "
             "встречайся лично и проверяй товар и документы до оплаты."
         )
+    if floor.prepayment:
+        return (
+            "Продавец упоминает предоплату или перевод денег. Не переводи деньги до "
+            "личного осмотра товара — оплата только при получении."
+        )
     return (
-        "Продавец упоминает предоплату или перевод денег. Не переводи деньги до "
-        "личного осмотра товара — оплата только при получении."
+        "AI оценил риск мошенничества как высокий. Не переводи деньги заранее: "
+        "встречайся лично и проверяй товар и документы до оплаты."
     )
 
 
@@ -1388,7 +1414,11 @@ def enforce_risk_floor(
     A downgraded verdict also gets deterministic recommendation text and
     summary: the model's prose argued for the verdict it no longer has.
     """
-    if not floor.active:
+    scam = result.get("scam_analysis")
+    # RV2-AI2-18: the model's own "high" scam risk binds its verdict too, so
+    # the UI can't say "worth it" next to "high fraud risk".
+    model_high_risk = isinstance(scam, dict) and scam.get("risk_level") == "high"
+    if not floor.active and not model_high_risk:
         return result, red_flags
     flags = apply_floor_red_flags(red_flags, floor)
     completed = dict(result)
@@ -1409,8 +1439,7 @@ def enforce_risk_floor(
             red_flags=flags,
             is_negotiable_price=is_negotiable_price,
         )
-    scam = completed.get("scam_analysis")
-    if isinstance(scam, dict):
+    if floor.active and isinstance(scam, dict):
         floor_level = "high" if floor.too_cheap and floor.prepayment else "medium"
         current = scam.get("risk_level")
         if current not in _SCAM_RISK_ORDER or (

@@ -11,12 +11,9 @@ The supporting concerns now live in dedicated services:
 * ``api.services.ai_guards``        — _check_ai_*, _coerce_string_list
 * ``api.services.ai_audit``         — _log_ai_audit
 
-The names are re-exported from this module for backward compat
-with three sibling routers that import them
-(``api.routers.ai_listing_assistant`` and ``ai_tools``) and the
-older test files that grew up against the monolith. Treat the
-re-exports as deprecated aliases — new code should reach the
-service modules directly.
+RV2-CC-W2: the sibling routers now import from those services; only
+the re-exports that still have importers outside this module remain
+(listed below).
 """
 
 from __future__ import annotations
@@ -32,39 +29,19 @@ from api.dependencies import get_cache, get_kufar_client, get_telegram_user
 from api.limiter import limiter
 from api.metrics import observe_ai_feedback_with_backend
 from api.schemas import AIAnalysisRequest, AIFeedbackRequest
-
-# ── Re-exports for back-compat with sibling routers and tests ────────────
-#
-# Do NOT remove without updating every importer:
-#   tests/test_consent.py            → clear_user_ai_data
-#   api/routers/consent.py           → clear_user_ai_data (deferred)
-#   api/main.py                      → periodic_prune_shadow_stores
-#   api/routers/ai_listing_assistant → _AI_ANALYSIS_ERRORS, _check_ai_*,
-#                                       _coerce_string_list, _log_ai_audit
-#   api/routers/ai_tools             → same set as ai_listing_assistant
-from api.services.ai_analysis_pipeline import (  # noqa: F401 — re-exports
-    _AC,
-    _AI_ANALYSIS_ERRORS,
-    _AI_CACHE_VERSION,
-    DISCLAIMER,
-    _analysis_cache_key,
-    _AnalysisComplete,
-    _build_fallback_response,
-    _build_resale_potential,
-    _deliver_fallback_result,
-    _init_analysis_state,
-    _parse_list_age_days,
-    _run_analysis,
-)
-from api.services.ai_audit import _log_ai_audit  # noqa: F401 — re-export
-from api.services.ai_guards import (  # noqa: F401 — re-exports
+from api.services.ai_analysis_pipeline import _analysis_cache_key, _run_analysis
+from api.services.ai_audit import _log_ai_audit
+from api.services.ai_guards import (
     _check_ai_available,
     _check_ai_consent,
     _check_ai_entitlement,
     _check_rate_limit,
-    _coerce_string_list,
     _refund_quota,
 )
+
+# ── Re-exports with importers elsewhere ──────────────────────────────────
+#   api/routers/consent.py, tests/test_consent.py → clear_user_ai_data
+#   api/main.py                                   → periodic_prune_shadow_stores
 from api.services.ai_privacy import clear_user_ai_data  # noqa: F401 — re-export
 from api.services.ai_quality import sanitize_public_ai_payload
 from api.services.ai_sanitize import strip_html_in_payload
@@ -74,13 +51,7 @@ from api.services.ai_sanitize import strip_html_in_payload
 # at api.routers.ai_analysis.get_ai_service. Treat this as a public
 # API surface for the AI router family.
 from api.services.ai_service import get_ai_service  # noqa: F401 — re-export
-from api.services.ai_shadow_store import (  # noqa: F401 — re-exports
-    _MAX_SHADOW_ENTRIES,
-    _get_shadow_lock,
-    _prune_old_tasks_shadow,
-    _tasks,
-    periodic_prune_shadow_stores,
-)
+from api.services.ai_shadow_store import periodic_prune_shadow_stores  # noqa: F401
 from api.services.ai_task_store import (
     _claim_inflight,
     _delete_task,
@@ -94,7 +65,6 @@ from api.services.ai_task_store import (
 )
 from api.services.client_ip import get_client_ip
 from api.services.kufar_client import KufarClient
-from api.services.query_pipeline import load_query_dataset  # noqa: F401 — re-export
 
 logger = logging.getLogger(__name__)
 

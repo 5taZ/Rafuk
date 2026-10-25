@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from api.services.ai_sanitize import sanitize_user_text
+from api.services.ai_sanitize import clean_model_text, sanitize_user_text
 
 _WORD_RE = re.compile(r"[0-9a-zа-яё]+", re.IGNORECASE)
 _PUBLIC_LISTING_ID_TOKEN = r"(?:\[[a-zа-я_ -]+\]|\d{6,})"
@@ -182,8 +182,9 @@ def filter_specific_advice(items: Iterable[str], *, limit: int, max_len: int) ->
     out: list[str] = []
     seen: set[str] = set()
     for item in items:
-        text = sanitize_user_text(str(item or ""), max_length=max_len) or ""
-        text = text.strip()
+        # RV2-AI2-02: model output, not user input — the input sanitizer
+        # masked price ranges as phones and cut words like "jailbreak".
+        text = clean_model_text(item, max_len)
         if not text or is_generic_ai_advice(text):
             continue
         key = _normalise(text)
@@ -206,8 +207,7 @@ def _fill_specific(
     out = list(current)
     seen = {_normalise(item) for item in out}
     for item in fallbacks:
-        text = sanitize_user_text(str(item or ""), max_length=max_len) or ""
-        text = text.strip()
+        text = clean_model_text(item, max_len)
         if not text or is_generic_ai_advice(text):
             continue
         key = _normalise(text)

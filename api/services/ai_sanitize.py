@@ -63,22 +63,6 @@ _CONFUSABLE_CYRILLIC_TO_LATIN = str.maketrans({
 })
 
 
-def _normalise_for_matching(text: str) -> str:
-    """Return an NFKC-normalised, confusables-folded copy of ``text``.
-
-    Used internally by the prompt-injection regex pass so visually
-    identical Cyrillic / fullwidth payloads ("ｉgnore", "ѕystem:",
-    "ignore　all　instructions") trip the same guards as their ASCII
-    forms. The original string is preserved for the user-visible
-    output — only matching is performed against the normalised view.
-    """
-    if not text:
-        return text
-    folded = unicodedata.normalize("NFKC", text)
-    folded = folded.translate(_CONFUSABLE_CYRILLIC_TO_LATIN)
-    return folded
-
-
 # ── Prompt-injection detection patterns ──────────────────────────────────
 
 _PROMPT_ROLE_MARKERS = re.compile(
@@ -146,6 +130,14 @@ _PII_EMAIL_RE = re.compile(
 _PII_PHONE_RE = re.compile(
     r"(?<!\d)\+?\d(?:[\s\-.()]?\d){7,14}(?!\d)"
 )
+# RV2-AI-13: the generic rule allows one separator between digits, so the
+# usual "+375 (29) 123-45-67" / "8 (029) 123-45-67" spelling (space AND
+# bracket) slipped through. A bracketed operator code followed by seven
+# digits is a phone in any context, never a price.
+_PII_BY_PHONE_RE = re.compile(
+    r"(?:(?<![\d+])(?:\+\s?)?375\s?|(?<!\d)8\s?)?\(\s?0?\d{2}\s?\)\s?-?\s?"
+    r"\d{3}[\s\-.]?\d{2}[\s\-.]?\d{2}(?!\d)"
+)
 # Telegram username (5-32 chars, must start with a letter). Anything
 # shorter is most likely an @-mention of a model/brand.
 _PII_TG_HANDLE_RE = re.compile(
@@ -168,10 +160,14 @@ _PII_LONG_DIGITS_RE = re.compile(
 # phone-shaped for _PII_PHONE_RE, and model prose is full of such price
 # ranges. Two similar-length groups in ascending order are a range.
 _NUMERIC_RANGE_RE = re.compile(r"(\d{2,7})\s?-\s?(\d{2,7})")
+# RV2-AI2-12: "2019 150000 км" (year, then mileage) is phone-shaped too.
+_YEAR_THEN_NUMBER_RE = re.compile(r"(?:19|20)\d{2}\s\d{1,7}")
 
 
 def _mask_phone_keep_range(match: re.Match[str]) -> str:
     raw = match.group(0)
+    if _YEAR_THEN_NUMBER_RE.fullmatch(raw):
+        return raw
     numeric_range = _NUMERIC_RANGE_RE.fullmatch(raw)
     if numeric_range:
         low, high = numeric_range.groups()
@@ -202,6 +198,8 @@ def scrub_pii(text: str, *, keep_numeric_ranges: bool = False) -> tuple[str, int
     text, n = _PII_TG_HANDLE_RE.subn("[handle]", text)
     hits += n
     text, n = _PII_BLR_DOC_RE.subn("[doc]", text)
+    hits += n
+    text, n = _PII_BY_PHONE_RE.subn("[phone]", text)
     hits += n
     if keep_numeric_ranges:
         masked = _PII_PHONE_RE.sub(_mask_phone_keep_range, text)
@@ -287,7 +285,9 @@ def sanitize_user_text(
     # scrubber here covers every existing caller without per-call
     # plumbing. Length cap is applied AFTER scrubbing so we don't
     # accidentally truncate inside a "[phone]" placeholder.
-    text, pii_hits = scrub_pii(text)
+    # RV2-AI2-12: price ranges and "year + mileage" in a seller's text are
+    # what the price analysis needs; only real phone shapes are masked.
+    text, pii_hits = scrub_pii(text, keep_numeric_ranges=True)
     text = text.strip()
     if role_hits or injection_hits:
         # WARNING level so it shows up in standard log scrapers; do
@@ -392,6 +392,22 @@ def scrub_model_text(text: str) -> str:
     return cleaned
 
 
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def clean_model_text(text: str | None, max_len: int = 0) -> str:
+    """RV2-AI2-02: output-side counterpart of ``sanitize_user_text``.
+
+    Model prose must keep price ranges ("1200-1300 BYN") and must not trip
+    the input-only injection guards, so it gets ``scrub_model_text`` plus
+    whitespace collapsing and an optional length cap.
+    """
+    cleaned = _WHITESPACE_RE.sub(" ", scrub_model_text(str(text or ""))).strip()
+    if max_len > 0 and len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].rstrip()
+    return cleaned
+
+
 def scrub_model_payload(value):
     """Recurse into dict/list and apply ``scrub_model_text`` to every string."""
     if isinstance(value, str):
@@ -405,15 +421,17 @@ def scrub_model_payload(value):
 
 # ── SEC-NEW-4: HTML tag stripping for AI output ─────────────────────────
 
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
+# RV2-AI2-14: a tag starts with a letter (or "/" + letter); the old
+# `<[^>]+>` also ate prose such as "цена <30% ниже, пробег >200 тыс.".
+_HTML_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 
 
 def strip_html_tags(text: str) -> str:
     """SEC-NEW-4: defence-in-depth strip for AI output.
     We own a strict CSP so an ``<img onerror>`` won't fire, but stripping
     ensures a future innerHTML callsite (or relaxed CSP) doesn't open
-    a fresh XSS hole. Keep the regex permissive — we'd rather strip a
-    legitimate ``<`` than leak ``<script>``.
+    a fresh XSS hole. Anything shaped like a tag goes, comparison signs
+    in prose stay.
     """
     if not text:
         return text
@@ -440,6 +458,7 @@ __all__ = [
     "escape_untrusted_block",
     "fence_untrusted",
     "scrub_model_text",
+    "clean_model_text",
     "scrub_model_payload",
     "strip_html_tags",
     "strip_html_in_payload",
@@ -449,6 +468,7 @@ __all__ = [
     "_MULTILINE_COLLAPSE_RE",
     "_PII_EMAIL_RE",
     "_PII_PHONE_RE",
+    "_PII_BY_PHONE_RE",
     "_PII_TG_HANDLE_RE",
     "_PII_BLR_DOC_RE",
     "_PII_LONG_DIGITS_RE",

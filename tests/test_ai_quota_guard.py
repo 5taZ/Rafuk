@@ -302,6 +302,7 @@ def test_cached_price_advice_does_not_consume_second_quota(monkeypatch) -> None:
 
 def test_cached_analyze_still_requires_ai_entitlement(monkeypatch) -> None:
     from api.routers import ai_analysis
+    from api.services import ai_analysis_pipeline
     from api.services.cache import MemoryCache
 
     telegram_user_id = 730007
@@ -314,7 +315,7 @@ def test_cached_analyze_still_requires_ai_entitlement(monkeypatch) -> None:
     monkeypatch.setattr(ai_analysis, "get_ai_service", lambda: SimpleNamespace(available=True))
     app = _app_for_user(telegram_user_id)
     cache_key = (
-        f"ai_analysis:{ai_analysis._AI_CACHE_VERSION}:77:"
+        f"ai_analysis:{ai_analysis_pipeline._AI_CACHE_VERSION}:77:"
         "cached analyze entitlement:cat=None"
     )
 
@@ -529,3 +530,199 @@ def test_ai_and_assistant_quota_buckets_are_independent(monkeypatch) -> None:
     assert second_ai.json()["detail"]["bucket"] == "ai"
     assert cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0] == "1"
     assert cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, telegram_user_id)][0] == "1"
+
+
+# ── RV2-AI-12 / RV2-AI2-08: refunds when nothing is delivered ──────────
+
+
+class FailingChatService(FakeAIChatService):
+    async def chat_json(self, *, system: str, content: str, max_tokens: int) -> dict:
+        await super().chat_json(system=system, content=content, max_tokens=max_tokens)
+        raise RuntimeError("AI circuit breaker open")
+
+
+class FailingListingAIService(FakeListingAIService):
+    async def generate_listing(self, **kwargs) -> dict:
+        await super().generate_listing(**kwargs)
+        raise RuntimeError("AI circuit breaker open")
+
+
+def _negotiate_body(query: str) -> dict:
+    return {"ad_id": 7, "asking_price_byn": 1000, "my_offer_byn": 900, "query": query}
+
+
+def test_negotiate_provider_failure_is_503_and_refunded(monkeypatch) -> None:
+    from api.services.cache import MemoryCache
+
+    telegram_user_id = 730011
+    _seed_user_status(
+        telegram_user_id, status_code="quota_refund_730011", ai_limit=1, assistant_limit=1,
+    )
+    _patch_negotiate(monkeypatch, FailingChatService())
+    app = _app_for_user(telegram_user_id)
+
+    with TestClient(app) as client:
+        cache = MemoryCache()
+        client.app.state.cache = cache
+        failed = client.post("/api/v1/ai/negotiate", json=_negotiate_body("refund failed"))
+        _patch_negotiate(monkeypatch, FakeAIChatService())
+        retried = client.post("/api/v1/ai/negotiate", json=_negotiate_body("refund retry"))
+
+    assert failed.status_code == 503
+    assert retried.status_code == 200
+    assert cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0] == "1"
+
+
+def test_price_advice_market_data_error_is_refunded(monkeypatch) -> None:
+    import api.services.query_pipeline as query_pipeline
+    from api.services.cache import MemoryCache
+
+    telegram_user_id = 730012
+    _seed_user_status(
+        telegram_user_id, status_code="quota_refund_730012", ai_limit=1, assistant_limit=1,
+    )
+    fake_ai = FakeAIChatService()
+    _patch_price_advice(monkeypatch, fake_ai)
+
+    async def _broken_dataset(**kwargs):
+        del kwargs
+        raise RuntimeError("search backend exploded")
+
+    monkeypatch.setattr(query_pipeline, "load_query_dataset", _broken_dataset)
+    app = _app_for_user(telegram_user_id)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        cache = MemoryCache()
+        client.app.state.cache = cache
+        resp = client.post(
+            "/api/v1/ai/price-advice",
+            json={"query": "refund price advice", "current_price_byn": 950},
+        )
+
+    assert resp.status_code == 500
+    assert fake_ai.calls == []
+    assert cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0] == "0"
+
+
+def test_listing_assistant_fallback_is_marked_and_charged_like_analyze(monkeypatch) -> None:
+    from api.services.cache import MemoryCache
+
+    telegram_user_id = 730013
+    _seed_user_status(
+        telegram_user_id, status_code="quota_refund_730013", ai_limit=0, assistant_limit=1,
+    )
+    _patch_listing_assistant(monkeypatch, FailingListingAIService())
+    app = _app_for_user(telegram_user_id)
+
+    with TestClient(app) as client:
+        cache = MemoryCache()
+        client.app.state.cache = cache
+        resp = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={"title": "fallback listing", "draft_price_byn": 100},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["source"] == "fallback"
+    # A delivered market draft stays charged, as on /analyze (owner question 2).
+    assert cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, telegram_user_id)][0] == "1"
+
+
+def test_listing_assistant_error_is_refunded(monkeypatch) -> None:
+    from api.routers import ai_listing_assistant
+    from api.services.cache import MemoryCache
+
+    telegram_user_id = 730014
+    _seed_user_status(
+        telegram_user_id, status_code="quota_refund_730014", ai_limit=0, assistant_limit=1,
+    )
+    fake_ai = FakeListingAIService()
+    _patch_listing_assistant(monkeypatch, fake_ai)
+
+    async def _broken_dataset(**kwargs):
+        del kwargs
+        raise ValueError("unexpected search failure")
+
+    monkeypatch.setattr(ai_listing_assistant, "load_query_dataset", _broken_dataset)
+    app = _app_for_user(telegram_user_id)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        cache = MemoryCache()
+        client.app.state.cache = cache
+        resp = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={"title": "broken listing", "draft_price_byn": 100},
+        )
+
+    assert resp.status_code == 500
+    assert fake_ai.calls == 0
+    assert cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, telegram_user_id)][0] == "0"
+
+
+def test_listing_assistant_ai_answer_is_marked_ai(monkeypatch) -> None:
+    from api.services.cache import MemoryCache
+
+    telegram_user_id = 730015
+    _seed_user_status(
+        telegram_user_id, status_code="quota_refund_730015", ai_limit=0, assistant_limit=1,
+    )
+    _patch_listing_assistant(monkeypatch, FakeListingAIService())
+    app = _app_for_user(telegram_user_id)
+
+    with TestClient(app) as client:
+        client.app.state.cache = MemoryCache()
+        resp = client.post(
+            "/api/v1/ai/listing-assistant",
+            json={"title": "ai listing source", "draft_price_byn": 100},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["source"] == "ai"
+
+
+# ── RV2-SC-02: quota lookup must not resurrect an erased user ─────────
+
+
+def test_quota_lookup_does_not_recreate_erased_user() -> None:
+    import time
+
+    import pytest
+    from fastapi import HTTPException
+
+    from api.database import get_engine, get_session_factory
+    from api.models import User
+    from api.services.account_erasure import mark_account_deleted, remember_request_principal
+    from api.services.ai_guards import _status_quota_limit
+    from api.services.cache import MemoryCache
+
+    telegram_user_id = 730016
+    now = int(time.time())
+    cache = MemoryCache()
+    stale_session = TelegramInitData(
+        user_id=telegram_user_id, first_name="Quota", raw={"auth_date": str(now - 60)},
+    )
+
+    async def _scenario() -> list[User]:
+        engine = get_engine()
+        try:
+            session_factory = get_session_factory(engine)
+            request = SimpleNamespace(
+                app=SimpleNamespace(state=SimpleNamespace(session_factory=session_factory)),
+            )
+            await mark_account_deleted(cache, telegram_user_id, deleted_at=now, ttl_seconds=60)
+
+            async def _lookup() -> int:
+                remember_request_principal(stale_session, cache)
+                return await _status_quota_limit(request, telegram_user_id, bucket=QUOTA_BUCKET_AI)
+
+            with pytest.raises(HTTPException) as exc:
+                await asyncio.create_task(_lookup())
+            assert exc.value.status_code == 410
+            async with session_factory() as session:
+                return list((await session.execute(
+                    select(User).where(User.telegram_user_id == telegram_user_id)
+                )).scalars())
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(_scenario()) == []

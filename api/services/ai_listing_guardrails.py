@@ -139,6 +139,11 @@ def normalize_listing_pricing(
         labels_sorted = [t[0] for t in sorted_tiers]
         if labels_in_input != labels_sorted:
             order = ["fast", "market", "patient"]
+            # RV2-AI2-09: with a tier missing, only the first len(tiers) keys
+            # were rewritten and a stale tier stayed behind (fast=1200,
+            # market=1500, patient=1200). Clear all three, then lay out.
+            for key in order:
+                out.pop(key, None)
             for idx, (_orig_key, tier_dict, price) in enumerate(sorted_tiers):
                 if idx >= len(order):
                     break

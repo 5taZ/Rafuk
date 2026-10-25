@@ -184,9 +184,10 @@ def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
     from api.routers import ai_analysis, ai_tools
 
     fake_ai = FakeAIChatService()
+    dataset_calls: list[dict] = []
 
     async def _fake_load_query_dataset(**kwargs):
-        del kwargs
+        dataset_calls.append(kwargs)
         return SimpleNamespace(
             price_stats=SimpleNamespace(
                 median=1000.0, count=10, q1=900.0, q3=1100.0, min=800.0, max=1200.0,
@@ -220,6 +221,8 @@ def test_price_advice_endpoint_returns_response(monkeypatch) -> None:
             },
         )
         assert resp.status_code == 200
+        # RV2-AI2-16: same currency casing as every other dataset caller.
+        assert [call["currency"] for call in dataset_calls] == ["BYN"]
         body = resp.json()
         assert body["advice"] in ("buy_now", "wait", "neutral")
         assert body["reasoning"]

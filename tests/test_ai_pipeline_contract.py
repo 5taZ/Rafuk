@@ -511,3 +511,57 @@ def test_photo_section_needs_known_fields_and_photos() -> None:
     assert normalize_photo_authenticity({"verdict": "ok"}, images_analyzed=True) is None
     assert normalize_photo_authenticity({"issues": ["x"]}, images_analyzed=False) is None
     assert normalize_photo_authenticity("stock", images_analyzed=True) is None
+
+
+# ── RV-2 review regressions ───────────────────────────────────────────
+
+
+async def test_model_reason_never_describes_a_listing_it_did_not_pick(monkeypatch) -> None:
+    """RV2-AI2-03: the backend picks the alternative; the model's reason
+    (written about whatever it had in mind) must not be shown under it."""
+    model_reason = "Аналог за 1650 BYN в лучшем состоянии."
+    result, _, _ = await _run_task(monkeypatch, FakeAI(_model_answer(
+        best_pick={"ad_id": None, "reason": model_reason},
+    )))
+
+    assert result["best_alternative"] is not None
+    assert result["best_pick_reason"] != model_reason
+    assert result["best_alternative"]["ai_note"] == result["best_pick_reason"]
+
+
+async def test_model_reason_kept_when_model_picked_that_listing(monkeypatch) -> None:
+    result, _, _ = await _run_task(monkeypatch, FakeAI(_model_answer(
+        best_pick={"ad_id": "3", "reason": "Тот же iPhone 14 на 128 ГБ."},
+    )))
+
+    assert result["best_alternative"]["ad_id"] == 3
+    assert result["best_pick_reason"] == "Тот же iPhone 14 на 128 ГБ."
+
+
+async def test_unexpected_exception_closes_the_task(monkeypatch) -> None:
+    """RV2-AI-12: an exception outside _AI_ANALYSIS_ERRORS left the task
+    "processing" until its TTL."""
+    result, _, _ = await _run_task(monkeypatch, FakeAI(error=AttributeError("boom")))
+    assert result["source"] == "fallback"
+
+
+async def test_loosely_typed_condition_keeps_the_paid_answer(monkeypatch) -> None:
+    """RV2-AI2-06: a wordy confidence used to raise and replace the whole
+    model answer with the market fallback."""
+    result, _, _ = await _run_task(monkeypatch, FakeAI(_model_answer(
+        condition={"label": "Хорошее", "confidence": "высокая", "notes": "Царапина на крышке"},
+    )))
+
+    assert result["source"] == "ai"
+    assert "Царапина на крышке" in result["condition"]["notes"]
+
+
+async def test_model_high_scam_risk_overrides_worth_it(monkeypatch) -> None:
+    """RV2-AI2-18."""
+    result, _, _ = await _run_task(monkeypatch, FakeAI(_model_answer(
+        recommendation={"verdict": "worth_it", "text": "Бери, цена 1590 BYN по рынку."},
+        scam_analysis={"risk_level": "high", "indicators": ["Просит перейти в мессенджер"]},
+    )))
+
+    assert result["scam_analysis"]["risk_level"] == "high"
+    assert result["recommendation"]["verdict"] == "think_twice"

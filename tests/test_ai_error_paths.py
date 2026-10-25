@@ -395,7 +395,11 @@ async def test_multimodal_rate_limit_retries_text_only(monkeypatch) -> None:
         calls.append(content)
         if len(calls) <= 2:
             raise RuntimeError("429 RATE_LIMITED")
-        return {"summary": "ok"} if len(calls) == 3 else {"condition": {"label": "Хорошее"}}
+        # RV2-AI2-01: each call is merged by its own schema keys only, so
+        # Call A answers with a price/market key.
+        if len(calls) == 3:
+            return {"market_context": "ok"}
+        return {"condition": {"label": "Хорошее"}}
 
     monkeypatch.setattr(svc, "_fetch_image_b64", fake_fetch_image_b64)
     monkeypatch.setattr(svc, "_chat", fake_chat)
@@ -416,7 +420,7 @@ async def test_multimodal_rate_limit_retries_text_only(monkeypatch) -> None:
     assert isinstance(calls[1], list)
     assert isinstance(calls[2], str)
     assert isinstance(calls[3], str)
-    assert result["summary"] == "ok"
+    assert result["market_context"] == "ok"
     assert result["condition"]["label"] == "Хорошее"
 
 
@@ -623,6 +627,41 @@ async def test_cb_stalled_probe_is_taken_over_after_deadline(monkeypatch) -> Non
         )
     assert resp.status_code == 200
     assert svc._cb_state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_cb_late_success_does_not_close_an_open_breaker(monkeypatch) -> None:
+    """RV2-AI2-17: a call that started before the breaker opened and
+    succeeds afterwards must not close it; neither may a non-probe call
+    while another caller owns the half-open probe."""
+    svc = _build_ai_service(monkeypatch)
+    svc._cb_state = "open"
+    svc._cb_open_until = asyncio.get_running_loop().time() + 60
+    await svc._cb_record_success()
+    assert svc._cb_state == "open"
+
+    svc._cb_state = "half_open"
+    svc._cb_probe_id = 5
+    await svc._cb_record_success(4)
+    assert svc._cb_state == "half_open"
+    await svc._cb_record_success(5)
+    assert svc._cb_state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_cb_exhausted_408_counts_as_provider_failure(monkeypatch) -> None:
+    """RV2-AI2-17: a 408 on the last attempt was treated as a caller bug."""
+    svc = _build_ai_service(monkeypatch)
+
+    def handler(_request):
+        return httpx.Response(408, headers={"retry-after": "0"})
+
+    async with _mock_transport(handler) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await svc._post_with_retry(
+                client, "https://ai.test/v1/chat/completions", headers={}, json={},
+            )
+    assert svc._cb_consecutive_errors == 1
 
 
 # ──────────────────────────────────────────────────────────────────────

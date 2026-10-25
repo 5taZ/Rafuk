@@ -1078,6 +1078,8 @@ class AIListingAssistantResponse(BaseModel):
     photo_tips: list[str] = Field(default_factory=list)
     competitors: list[AIListingCompetitor] = Field(default_factory=list)
     market_summary: str = ""
+    # RV2-AI2-08: machine-readable marker for the market-data draft.
+    source: Literal["ai", "fallback"] = "ai"
     disclaimer: str = (
         "Рекомендации AI носят информационно-справочный характер и не являются "
         "гарантией продажи или рыночной стоимости. Финальное решение по цене и тексту "
