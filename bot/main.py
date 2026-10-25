@@ -4,8 +4,9 @@ import asyncio
 import logging
 import os
 
-from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram import Bot, Dispatcher, F
+from aiogram.enums import ChatType
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
 from sqlalchemy import text
 
 from api.config import get_settings
@@ -26,10 +27,28 @@ configure_logging(service="bot")
 
 def build_dispatcher() -> Dispatcher:
     dispatcher = Dispatcher()
+    # TG-03: web_app buttons exist only in private chats (the answer failed
+    # with BadRequest in a group) and /deals, /profit would post the
+    # caller's finances to everyone there. A root filter stops the update
+    # before any router sees it.
+    dispatcher.message.filter(F.chat.type == ChatType.PRIVATE)
     dispatcher.include_router(start_router)
     dispatcher.include_router(analytics_router)
     dispatcher.include_router(callbacks_router)
     return dispatcher
+
+
+async def register_commands(bot: Bot) -> None:
+    # TG-03: the command menu belongs to private chats only; the default
+    # scope (groups included) is cleared of what earlier versions set there.
+    await bot.delete_my_commands()
+    await bot.set_my_commands(
+        [
+            BotCommand(command=command, description=description)
+            for command, description in BOT_COMMANDS
+        ],
+        scope=BotCommandScopeAllPrivateChats(),
+    )
 
 
 async def _bot_readiness() -> bool:
@@ -57,12 +76,7 @@ async def main() -> None:
     settings = get_settings()
     await init_bot_engine()
     bot = Bot(settings.bot_token.get_secret_value())
-    await bot.set_my_commands(
-        [
-            BotCommand(command=command, description=description)
-            for command, description in BOT_COMMANDS
-        ]
-    )
+    await register_commands(bot)
     # INF-H6: run a tiny HTTP health server on a side port so Docker
     # can probe liveness/readiness directly instead of relying on
     # `pgrep python`, which only proves the interpreter exists — not

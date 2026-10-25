@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import signal
 import time
 from collections import defaultdict
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -71,7 +72,6 @@ from api.services.aggregator import (
 from api.services.history_service import (
     QuerySyncResult,
     TrendReversal,
-    as_utc,
     changes_since,
     detect_trend_reversal_up,
     load_query_snapshots,
@@ -130,6 +130,11 @@ _configure_logging(service="scheduler")
 
 logger = logging.getLogger(__name__)
 
+# BE-03 / INF-05: safety cap on the trackers one tick loads.
+_DUE_TRACKER_LIMIT = 2000
+# The shortest interval a tracker is checked at, whatever it asks for.
+_MIN_CHECK_INTERVAL_MIN = 15
+
 _TRACKER_QUERY_ERRORS: tuple[type[Exception], ...] = (
     OperationalError,
     SQLAlchemyError,
@@ -140,55 +145,67 @@ _TRACKER_QUERY_ERRORS: tuple[type[Exception], ...] = (
 )
 
 
+# RV2-DS-03: a bot token Telegram rejects (401/404) fails every chat alike.
+# Delivery pauses for this long instead of spending each queued row's
+# retry budget — the rows used to run out of attempts within ~30 minutes
+# and were deleted, after the trackers' cursors had already moved on.
+_TELEGRAM_UNAUTHORIZED_PAUSE = timedelta(minutes=10)
+_telegram_paused_until: datetime | None = None
+
+
+def _telegram_delivery_paused() -> bool:
+    return _telegram_paused_until is not None and datetime.now(UTC) < _telegram_paused_until
+
+
 async def _send_message_classified(
     bot: Bot,
     telegram_user_id: int,
     message: str,
     *,
     reply_markup: object | None = None,
-) -> str:
-    """PERF-M3 helper: send one Telegram message and return a string
-    classifying the outcome — pure I/O, no SQLAlchemy session touched.
+) -> tuple[str, int | None]:
+    """PERF-M3 helper: send one Telegram message and classify the outcome —
+    pure I/O, no SQLAlchemy session touched, so it is safe inside
+    ``asyncio.gather`` (the AsyncSession isn't safe under concurrent access).
 
-    The classification is the same one ``notify_user`` derives, just
-    decoupled from the deactivation side-effect so this function is
-    safe to call from inside ``asyncio.gather`` (the AsyncSession
-    isn't safe under concurrent access).
-
-    Returns:
-      ``"sent"``    — Telegram accepted the message.
-      ``"blocked"`` — user blocked / deleted the bot, the chat is no
-                      longer reachable; caller should pause the
-                      user's trackers.
-      ``"retry"``   — transient Telegram error (rate limit, server
-                      error). Caller leaves the row's ``sent`` /
-                      tracker-active flags alone so the next tick
-                      retries.
+    Returns ``(outcome, retry_after_seconds)``; the delay is set only for
+    ``rate_limited``. Outcomes:
+      ``"sent"``            — Telegram accepted the message.
+      ``"blocked"``         — user blocked / deleted the bot; caller pauses
+                              the user's trackers.
+      ``"permanent_error"`` — Telegram rejected the message itself.
+      ``"unauthorized"``    — the bot token was rejected; delivery pauses
+                              (RV2-DS-03), no attempt is counted.
+      ``"rate_limited"``    — flood control; wait ``retry_after``, no
+                              attempt is counted.
+      ``"retry"``           — other transient error; counts an attempt.
     """
+    global _telegram_paused_until
     try:
         await bot.send_message(telegram_user_id, message, reply_markup=reply_markup)
-        return "sent"
+        return "sent", None
     except TelegramForbiddenError:
-        return "blocked"
+        return "blocked", None
     except (TelegramUnauthorizedError, TelegramNotFound) as exc:
         # RV-SCH-03: 401/404 come back for EVERY chat when the bot token
         # itself is rejected (typo, revoked). Classifying them as a
         # per-user block disabled the trackers of every user an alert
-        # went to; queue for retry and shout instead.
+        # went to; pause delivery and shout instead.
         logger.error(
             "Telegram rejected the bot token sending to user %d: [%s] %s",
             telegram_user_id,
             type(exc).__name__,
             exc,
         )
-        return "retry"
+        _telegram_paused_until = datetime.now(UTC) + _TELEGRAM_UNAUTHORIZED_PAUSE
+        return "unauthorized", None
     except TelegramRetryAfter as exc:
         logger.warning(
             "Telegram rate limit hit for user %d, retry_after=%ss",
             telegram_user_id,
-            getattr(exc, "retry_after", "?"),
+            exc.retry_after,
         )
-        return "retry"
+        return "rate_limited", max(1, int(exc.retry_after))
     # H13: catch permanent errors separately — BadRequest (malformed message,
     # invalid chat ID, etc.) will never succeed on retry.
     except TelegramBadRequest as exc:
@@ -198,7 +215,7 @@ async def _send_message_classified(
             type(exc).__name__,
             exc,
         )
-        return "permanent_error"
+        return "permanent_error", None
     except TelegramAPIError as exc:
         logger.warning(
             "Telegram API error sending to user %d: [%s] %s",
@@ -206,7 +223,7 @@ async def _send_message_classified(
             type(exc).__name__,
             exc,
         )
-        return "retry"
+        return "retry", None
 
 
 def _serialize_reply_markup(reply_markup: object | None) -> str | None:
@@ -359,55 +376,6 @@ def _pause_unreachable_users_trackers(user_ids: Collection[int]) -> Update:
             updated_at=now,
         )
     )
-
-
-async def notify_user(
-    bot: Bot,
-    telegram_user_id: int,
-    message: str,
-    session: AsyncSession,
-    *,
-    internal_user_id: int | None = None,
-    reply_markup: object | None = None,
-) -> bool:
-    """Send message to user via telegram_user_id.
-
-    Returns False if the user is unreachable (blocked/deleted the bot);
-    their trackers are paused. Other transient telegram errors are
-    logged but the tracker stays active so the next tick can retry.
-
-    Internally delegates the actual send to
-    ``_send_message_classified`` (Wave 23 / PERF-M3) so the
-    error-classification logic stays single-source-of-truth across
-    the sequential per-tracker callers and the new bounded-parallel
-    reminder loop.
-    """
-    outcome = await _send_message_classified(
-        bot, telegram_user_id, message, reply_markup=reply_markup,
-    )
-    if outcome == "sent":
-        return True
-    if outcome == "blocked":
-        # User blocked the bot or deleted the chat — pause all their
-        # active trackers so we stop spamming the failing chat_id.
-        if internal_user_id is not None:
-            await session.execute(_pause_unreachable_users_trackers([internal_user_id]))
-            await session.flush()
-        return False
-    # outcome == "retry" — keep state untouched
-    _queue_notification_dlq(
-        session,
-        telegram_user_id=telegram_user_id,
-        message=message,
-        source="notify_user",
-        internal_user_id=internal_user_id,
-        # AUDIT-LOW: keyboard preserved so the retry pump can rebuild
-        # the same buttons. Without this, a transient send failure on
-        # a tracker alert would replay as plain text on the next pump
-        # tick, losing the "📌 В покупки" / "⭐ В Избранное" actions.
-        reply_markup=reply_markup,
-    )
-    return True
 
 
 async def _recent_event_keys(
@@ -915,69 +883,45 @@ async def _check_trackers_inner(
         # filter so only DUE trackers leave the database, plus a hard
         # safety LIMIT so a pathological dataset can't OOM a worker.
         now = datetime.now(UTC)
-        cutoff_max = now  # never-checked rows are always due
-        # An "interval has elapsed" predicate built without dialect-
-        # specific date math: we compare `last_checked_at` against
-        # ``now - interval_min minutes``. SQLAlchemy renders this as
-        # ``last_checked_at <= :now - INTERVAL '1 minute' * interval_min``
-        # on Postgres and as ``last_checked_at <= datetime(:now, '-' ||
-        # interval_min || ' minutes')`` on SQLite. The portable shape:
-        # use ``func.... `` would tie us to a dialect — instead, do the
-        # interval math via Python (one row per distinct interval_min)
-        # which Postgres' planner handles fine through the
-        # idx_trackers_last_checked index.
-        #
-        # Realistically intervals come from a small enum (15, 30, 60,
-        # 180, 720) so the resulting OR-list is short.
-        stmt = (
+        eligible = (
+            Tracker.active.is_(True),
+            Tracker.paused.is_(False),
+            # RV-SEC-05: no processing for a user who withdrew
+            # pd_processing — e.g. a tracker resumed without consenting
+            # again.
+            ~_pd_consent_withdrawn(Tracker.user_id),
+        )
+        # RV2-DS-04: the due predicate runs in SQL, before the LIMIT. SQL
+        # used to apply only a coarse "older than 15 minutes" and Python the
+        # exact interval, so not-yet-due hourly trackers with older cursors
+        # filled the LIMIT and starved the 15-minute ones. One cutoff per
+        # distinct interval (1..1440 by schema, a handful in practice) keeps
+        # it free of dialect-specific date math; intervals below the floor
+        # are checked at the floor, as before.
+        intervals = (
+            await session.execute(select(Tracker.interval_min).where(*eligible).distinct())
+        ).scalars().all()
+        due = or_(
+            Tracker.last_checked_at.is_(None),
+            *(
+                and_(
+                    Tracker.interval_min == interval,
+                    Tracker.last_checked_at
+                    <= now - timedelta(minutes=max(interval, _MIN_CHECK_INTERVAL_MIN)),
+                )
+                for interval in intervals
+            ),
+        )
+        result = await session.execute(
             select(Tracker)
-            .where(
-                Tracker.active.is_(True),
-                Tracker.paused.is_(False),
-                # RV-SEC-05: no processing for a user who withdrew
-                # pd_processing — e.g. a tracker resumed without consenting
-                # again.
-                ~_pd_consent_withdrawn(Tracker.user_id),
-            )
+            .where(*eligible, due)
             .options(joinedload(Tracker.user))
             .order_by(Tracker.last_checked_at.asc().nulls_first())
-            .limit(2000)  # safety cap; tracked-user counts well below this
+            .limit(_DUE_TRACKER_LIMIT)
         )
-        # We can't compute the "due" predicate in a single SQL
-        # expression without dialect-specific date arithmetic, but we
-        # can prune most never-due rows on the SQL side: a tracker is
-        # only DUE if last_checked_at is NULL or older than 'cutoff_max -
-        # smallest_interval'. The smallest configured interval is
-        # 15 minutes per the Tracker.__init__ default — anything more
-        # recent than 15 minutes ago is definitely not due regardless
-        # of interval_min.
-        smallest_interval_min = 15
-        coarse_cutoff = cutoff_max - timedelta(minutes=smallest_interval_min)
-        stmt = stmt.where(
-            or_(
-                Tracker.last_checked_at.is_(None),
-                Tracker.last_checked_at <= coarse_cutoff,
-            )
-        )
-        result = await session.execute(stmt)
-        all_trackers = list(result.scalars().unique())
-        if not all_trackers:
-            logger.debug("No active trackers due for check")
-            return
-
-        # Final per-row check now that we have only candidates, not
-        # the full table.
-        trackers = [
-            t
-            for t in all_trackers
-            if t.last_checked_at is None
-            or (now - as_utc(t.last_checked_at)).total_seconds() >= t.interval_min * 60
-        ]
+        trackers = list(result.scalars().unique())
         if not trackers:
-            logger.debug(
-                "All %d candidate tracker(s) skipped — interval not elapsed yet",
-                len(all_trackers),
-            )
+            logger.debug("No active trackers due for check")
             return
 
         # RV-SCH-01: one group per search key — the key the listing states
@@ -1003,166 +947,207 @@ async def _check_trackers_inner(
         )
 
         logger.info(
-            "Tracker check: %d due (of %d total), %d search key(s)",
+            "Tracker check: %d due, %d search key(s)",
             len(trackers),
-            len(all_trackers),
             len(trackers_by_key),
         )
 
-        client = KufarClient(settings)
-        try:
-            observed_at = datetime.now(UTC)
-            ctx = _TickContext(
-                settings=settings,
-                observed_at=observed_at,
-                bucket_at=snapshot_bucket(observed_at),
-                seen_by_tracker=seen_by_tracker,
-                trend_sent_recently=trend_sent_recently,
-                alert_floors=alert_floors,
-                queued_keys=set(),
-            )
-            total_errors = 0
-            total_queued = 0
+        client = _get_kufar_client(settings)
+        observed_at = datetime.now(UTC)
+        ctx = _TickContext(
+            settings=settings,
+            observed_at=observed_at,
+            bucket_at=snapshot_bucket(observed_at),
+            seen_by_tracker=seen_by_tracker,
+            trend_sent_recently=trend_sent_recently,
+            alert_floors=alert_floors,
+            queued_keys=set(),
+        )
+        total_errors = 0
+        total_queued = 0
 
-            # M18: per-group commit — expire_on_commit=False prevents
-            # SQLAlchemy from expiring loaded Tracker/User objects after
-            # each mid-loop commit, which would trigger lazy loads in the
-            # async session on subsequent iterations.
-            session.expire_on_commit = False
+        # M18: per-group commit — expire_on_commit=False prevents
+        # SQLAlchemy from expiring loaded Tracker/User objects after
+        # each mid-loop commit, which would trigger lazy loads in the
+        # async session on subsequent iterations.
+        session.expire_on_commit = False
 
-            for position, (search_key, query_trackers) in enumerate(trackers_by_key.items()):
-                # RV-SCH-02: budget, not a hard timeout — stop taking new
-                # keys, never abandon the one in flight.
-                if position and _monotonic() >= deadline:
+        for position, (search_key, query_trackers) in enumerate(trackers_by_key.items()):
+            # RV-SCH-02: budget, not a hard timeout — stop taking new
+            # keys, never abandon the one in flight.
+            if position and _monotonic() >= deadline:
+                logger.warning(
+                    "Tracker check budget of %ds spent — deferring %d of %d "
+                    "search key(s) to the next tick",
+                    _CYCLE_BUDGET_SECONDS,
+                    len(trackers_by_key) - position,
+                    len(trackers_by_key),
+                )
+                break
+            # RV-SCH-01: Kufar is asked once per key, in the wording of
+            # the key's oldest tracker (stable from tick to tick).
+            lead_tracker = min(query_trackers, key=lambda t: t.id)
+            query = lead_tracker.query
+            strict_mode = lead_tracker.strict_mode
+            category_id = lead_tracker.category_id
+            # Read before the savepoint: its rollback expires the trackers.
+            key_tracker_ids = [t.id for t in query_trackers]
+            try:
+                payload = await client.search(
+                    query=query,
+                    currency="BYN",
+                    size=50,
+                    category=category_id,
+                )
+                ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
+            except Exception as exc:  # noqa: BLE001 — RV2-DS-01: isolate the key
+                total_errors += 1
+                if _is_kufar_outage(exc):
                     logger.warning(
-                        "Tracker check budget of %ds spent — deferring %d of %d "
-                        "search key(s) to the next tick",
-                        _CYCLE_BUDGET_SECONDS,
-                        len(trackers_by_key) - position,
-                        len(trackers_by_key),
-                    )
-                    break
-                # RV-SCH-01: Kufar is asked once per key, in the wording of
-                # the key's oldest tracker (stable from tick to tick).
-                lead_tracker = min(query_trackers, key=lambda t: t.id)
-                query = lead_tracker.query
-                strict_mode = lead_tracker.strict_mode
-                category_id = lead_tracker.category_id
-                try:
-                    payload = await client.search(
-                        query=query,
-                        currency="BYN",
-                        size=50,
-                        category=category_id,
-                    )
-                    ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
-                except _TRACKER_QUERY_ERRORS as exc:
-                    total_errors += 1
-                    if isinstance(exc, KufarUnavailableError):
-                        # RV-BE-05: the circuit breaker is open — a global
-                        # Kufar outage, not this tracker's fault. Before
-                        # RV-BE-05 the breaker returned an empty "success"
-                        # that reset these counters; counting it now would
-                        # auto-pause every tracker after a ~25 min outage.
-                        logger.warning(
-                            "Kufar unavailable, skipping query %r [strict=%s category=%s]",
-                            query,
-                            strict_mode,
-                            category_id,
-                        )
-                        continue
-                    logger.exception(
-                        "Error fetching query %r [strict=%s category=%s], skipping",
+                        "Kufar unavailable, skipping query %r [strict=%s category=%s]",
                         query,
                         strict_mode,
                         category_id,
                     )
-                    # C-04: count consecutive failures per tracker so a
-                    # genuinely stuck tracker (Kufar ban, malformed
-                    # filters, dead query) gets paused instead of
-                    # eating a query-group every tick forever. The
-                    # threshold is intentionally generous so a couple
-                    # of transient outages don't auto-pause healthy
-                    # trackers.
-                    paused_now: list[int] = []
-                    for t in query_trackers:
-                        bumped = _tracker_failure_counts.get(t.id, 0) + 1
-                        _tracker_failure_counts[t.id] = bumped
-                        if bumped >= _TRACKER_AUTO_PAUSE_THRESHOLD:
-                            paused_now.append(t.id)
-                    if paused_now:
-                        await session.execute(
-                            update(Tracker)
-                            .where(Tracker.id.in_(paused_now))
-                            .values(
-                                paused=True,
-                                paused_at=datetime.now(UTC),
-                                pause_reason="persistent_kufar_error",
-                                updated_at=datetime.now(UTC),
-                            )
-                        )
-                        for tid in paused_now:
-                            _tracker_failure_counts.pop(tid, None)
-                        logger.warning(
-                            "Auto-paused %d tracker(s) after %d consecutive "
-                            "Kufar errors: %s",
-                            len(paused_now),
-                            _TRACKER_AUTO_PAUSE_THRESHOLD,
-                            paused_now,
-                        )
                     continue
+                logger.exception(
+                    "Error fetching query %r [strict=%s category=%s], skipping",
+                    query,
+                    strict_mode,
+                    category_id,
+                )
+                await _record_key_failure(
+                    session,
+                    key_tracker_ids,
+                    advance_to=None if isinstance(exc, _TRACKER_QUERY_ERRORS) else observed_at,
+                )
+                continue
 
+            group_keys: set[tuple[int, str]] = set()
+            # Use a savepoint per query group so that a rollback only
+            # discards THIS group's changes — previous groups' flushed
+            # data stays intact in the outer transaction. RV-SCH-02: the
+            # handler sits outside the savepoint so a failure really
+            # rolls it back (inside it, the savepoint was released with
+            # the group half-written) — state, events, cursors and
+            # outbox rows of a key commit or vanish together.
+            try:
+                async with session.begin_nested():
+                    total_queued += await _process_search_key(
+                        session,
+                        ctx,
+                        search_key=search_key,
+                        query=query,
+                        strict_mode=strict_mode,
+                        category_id=category_id,
+                        ads=ads,
+                        trackers=query_trackers,
+                        group_keys=group_keys,
+                    )
+            except _TRACKER_QUERY_ERRORS:
+                total_errors += 1
+                group_keys.clear()
+                logger.exception(
+                    "Error processing query %r [strict=%s category=%s], skipping",
+                    query,
+                    strict_mode,
+                    category_id,
+                )
+            except Exception:  # noqa: BLE001 — RV2-DS-01: isolate the key
+                total_errors += 1
+                group_keys.clear()
+                logger.exception(
+                    "Unexpected error processing query %r [strict=%s category=%s]",
+                    query,
+                    strict_mode,
+                    category_id,
+                )
+                await _record_key_failure(session, key_tracker_ids, advance_to=observed_at)
+            else:
                 # C-04: success path — clear failure counters for every
                 # tracker in this group so transient outages don't
                 # accumulate across long runtimes.
-                for t in query_trackers:
-                    _tracker_failure_counts.pop(t.id, None)
+                for tracker_id in key_tracker_ids:
+                    _tracker_failure_counts.pop(tracker_id, None)
 
-                group_keys: set[tuple[int, str]] = set()
-                # Use a savepoint per query group so that a rollback only
-                # discards THIS group's changes — previous groups' flushed
-                # data stays intact in the outer transaction. RV-SCH-02: the
-                # handler sits outside the savepoint so a failure really
-                # rolls it back (inside it, the savepoint was released with
-                # the group half-written) — state, events, cursors and
-                # outbox rows of a key commit or vanish together.
-                try:
-                    async with session.begin_nested():
-                        total_queued += await _process_search_key(
-                            session,
-                            ctx,
-                            search_key=search_key,
-                            query=query,
-                            strict_mode=strict_mode,
-                            category_id=category_id,
-                            ads=ads,
-                            trackers=query_trackers,
-                            group_keys=group_keys,
-                        )
-                except _TRACKER_QUERY_ERRORS:
-                    total_errors += 1
-                    group_keys.clear()
-                    logger.exception(
-                        "Error processing query %r [strict=%s category=%s], skipping",
-                        query,
-                        strict_mode,
-                        category_id,
-                    )
-
-                # M18: per-group commit so completed groups survive a later crash.
-                # expire_on_commit=False (set above) keeps loaded objects usable.
-                await session.commit()
-                ctx.queued_keys |= group_keys
-
-            # Commit whatever succeeded — errors are logged but don't block
+            # M18: per-group commit so completed groups survive a later crash.
+            # expire_on_commit=False (set above) keeps loaded objects usable.
             await session.commit()
-            logger.info(
-                "Tracker check complete: queued %d notification(s), errors %d",
-                total_queued,
-                total_errors,
+            ctx.queued_keys |= group_keys
+
+        # Commit whatever succeeded — errors are logged but don't block
+        await session.commit()
+        logger.info(
+            "Tracker check complete: queued %d notification(s), errors %d",
+            total_queued,
+            total_errors,
+        )
+
+
+def _is_kufar_outage(exc: Exception) -> bool:
+    """RV-BE-05 / RV2-DS-05: an open (or probing) circuit breaker, or Kufar
+    asking us to back off (``retry_after``), is an upstream-wide outage —
+    not the key's fault, so it earns no C-04 strike. Before RV-BE-05 the
+    breaker returned an empty "success"; counting it now would auto-pause
+    every tracker after a ~25 min outage."""
+    return isinstance(exc, KufarUnavailableError) or (
+        isinstance(exc, KufarAPIError) and exc.retry_after is not None
+    )
+
+
+async def _record_key_failure(
+    session: AsyncSession,
+    tracker_ids: list[int],
+    *,
+    advance_to: datetime | None,
+) -> None:
+    """C-04: count consecutive failures per tracker so a genuinely stuck
+    tracker (Kufar ban, malformed filters, dead query) gets paused instead
+    of eating a query-group every tick forever. The threshold is
+    intentionally generous so a couple of transient outages don't
+    auto-pause healthy trackers.
+
+    RV2-DS-01: ``advance_to`` moves the cursor of a key that failed on its
+    own data — it would fail first in every tick otherwise. Trackers
+    without a baseline keep NULL so their first real sync still sets one.
+    """
+    paused_now: list[int] = []
+    for tracker_id in tracker_ids:
+        bumped = _tracker_failure_counts.get(tracker_id, 0) + 1
+        _tracker_failure_counts[tracker_id] = bumped
+        if bumped >= _TRACKER_AUTO_PAUSE_THRESHOLD:
+            paused_now.append(tracker_id)
+    if advance_to is not None:
+        await session.execute(
+            update(Tracker)
+            .where(Tracker.id.in_(tracker_ids), Tracker.last_checked_at.is_not(None))
+            .values(last_checked_at=advance_to)
+            .execution_options(synchronize_session=False)
+        )
+    if paused_now:
+        now = datetime.now(UTC)
+        await session.execute(
+            update(Tracker)
+            .where(Tracker.id.in_(paused_now))
+            .values(
+                paused=True,
+                paused_at=now,
+                pause_reason="persistent_kufar_error",
+                updated_at=now,
             )
-        finally:
-            await client.aclose()
+            .execution_options(synchronize_session=False)
+        )
+        for tracker_id in paused_now:
+            _tracker_failure_counts.pop(tracker_id, None)
+        logger.warning(
+            "Auto-paused %d tracker(s) after %d consecutive Kufar errors: %s",
+            len(paused_now),
+            _TRACKER_AUTO_PAUSE_THRESHOLD,
+            paused_now,
+        )
+    # RV2-DS-12: the open UPDATE held these trackers' row locks (PATCH
+    # /trackers waits on them) through the next key's Kufar request.
+    await session.commit()
 
 
 async def _process_search_key(
@@ -1183,16 +1168,19 @@ async def _process_search_key(
     skip_keys = ctx.queued_keys | await _pending_outbox_keys(
         session, {t.user_id for t in trackers},
     )
-    await upsert_query_snapshot(
-        session,
-        query=search_key,
-        ads=ads,
-        total_results=len(ads),
-        bucket_at=ctx.bucket_at,
-    )
-    # Flush so the just-upserted snapshot is visible to
-    # the trend detector below.
-    await session.flush()
+    # RV2-DS-06: an empty page writes no snapshot — it overwrote the hour's
+    # bucket with zeros, a permanent "0 BYN" point in the price history.
+    if ads:
+        await upsert_query_snapshot(
+            session,
+            query=search_key,
+            ads=ads,
+            total_results=len(ads),
+            bucket_at=ctx.bucket_at,
+        )
+        # Flush so the just-upserted snapshot is visible to
+        # the trend detector below.
+        await session.flush()
     snapshots = await load_query_snapshots(session, query=search_key, days=10)
     trend_signal = detect_trend_reversal_up(snapshots)
     # SCH-MEDIUM / LOGIC-MEDIUM (issues §5.1, §11.3):
@@ -1204,7 +1192,7 @@ async def _process_search_key(
     # sync_query_listing_states marks every known
     # listing as inactive and the next tick fires
     # false-positive "пропало" notifications.
-    prior_snapshots_had_ads = any(int(s.total_results or 0) > 0 for s in snapshots[:-1])
+    prior_snapshots_had_ads = any(int(s.total_results or 0) > 0 for s in snapshots)
     if not ads and prior_snapshots_had_ads:
         logger.warning(
             "Suspected Kufar outage for query=%r: 0 ads "
@@ -1478,9 +1466,8 @@ class _TrackerNotifyJob:
     ``_enqueue_tracker_notifications`` in the same transaction, sent by
     the DLQ pump.
 
-    The fields are a strict subset of the ``notify_user`` argument list —
-    internal_user_id is kept so a blocked-user outcome can trigger the
-    same per-user tracker pause as ``notify_user``.
+    internal_user_id is kept so a blocked-user outcome can pause the
+    user's trackers.
 
     AUDIT-LOW (cross-tracker dedup): ``dedup_key`` is set when two
     trackers belonging to the SAME user can legitimately observe the
@@ -1498,6 +1485,21 @@ class _TrackerNotifyJob:
     message: str
     reply_markup: object | None
     dedup_key: str | None = None
+
+
+# Width of ``telegram_notification_dlq.dedup_key``.
+_DEDUP_KEY_MAX_LEN = 128
+
+
+def _outbox_dedup_key(dedup_key: str | None) -> str | None:
+    """RV2-DS-10: the form a dedup key is stored and compared in. Longer
+    keys (``trend_reversal:<search key>``) were cut to the column width on
+    write but compared in full, so the pending-row dedup never matched them
+    and two long keys sharing a prefix collapsed into one."""
+    if not dedup_key or len(dedup_key) <= _DEDUP_KEY_MAX_LEN:
+        return dedup_key
+    digest = hashlib.sha1(dedup_key.encode(), usedforsecurity=False).hexdigest()
+    return f"{dedup_key[:_DEDUP_KEY_MAX_LEN - len(digest) - 1]}#{digest}"
 
 
 def _enqueue_tracker_notifications(
@@ -1521,7 +1523,8 @@ def _enqueue_tracker_notifications(
         queued_keys = set()
     written = deduped = 0
     for job in jobs:
-        key = (job.telegram_user_id, job.dedup_key) if job.dedup_key else None
+        dedup_key = _outbox_dedup_key(job.dedup_key)
+        key = (job.telegram_user_id, dedup_key) if dedup_key else None
         if key is not None and (key in skip_keys or key in queued_keys):
             deduped += 1
             continue
@@ -1535,7 +1538,7 @@ def _enqueue_tracker_notifications(
             # AUDIT-LOW: the keyboard travels with the row so the pump
             # sends the same "📌 В покупки" / "⭐ В Избранное" buttons.
             reply_markup=job.reply_markup,
-            dedup_key=job.dedup_key,
+            dedup_key=dedup_key,
         )
         if key is not None:
             queued_keys.add(key)
@@ -1613,12 +1616,18 @@ async def check_reminders(
     RV-SCH-04: oldest ``remind_at`` first, so rows waiting out a back-off
     can no longer starve newer reminders out of the batch.
     """
+    if _telegram_delivery_paused():
+        logger.warning("Reminders: Telegram delivery paused (bot token rejected)")
+        return
     now = datetime.now(UTC)
     async with session_factory() as session:
         result = await session.execute(
             select(LeadReminder)
             .where(
                 LeadReminder.status == REMINDER_STATUS_PENDING,
+                # RV2-DS-11: a scheduler from before 0026 marks a delivered
+                # reminder ``sent`` only, leaving ``status`` at its default.
+                LeadReminder.sent.is_(False),
                 LeadReminder.remind_at <= now,
                 or_(
                     LeadReminder.next_attempt_at.is_(None),
@@ -1689,13 +1698,13 @@ async def check_reminders(
         tg_user_id: int,
         text: str,
         kb: object | None,
-    ) -> str:
+    ) -> tuple[str, int | None]:
         async with sem:
             return await _send_message_classified(
                 bot, tg_user_id, text, reply_markup=kb,
             )
 
-    outcomes: list[str] = await asyncio.gather(
+    outcomes: list[tuple[str, int | None]] = await asyncio.gather(
         *[_bounded_send(uid, text, kb) for _, uid, text, kb in jobs],
         return_exceptions=False,
     )
@@ -1704,10 +1713,20 @@ async def check_reminders(
     sent_count = 0
     blocked_user_ids: set[int] = set()
     async with session_factory() as session:
-        for (reminder, _uid, _text, _kb), outcome in zip(jobs, outcomes, strict=True):
+        for (reminder, _uid, _text, _kb), (outcome, retry_after) in zip(
+            jobs, outcomes, strict=True,
+        ):
             attempts = (reminder.attempts or 0) + 1
             values: dict[str, object] = {"attempts": attempts}
-            if outcome == "sent":
+            if outcome in ("unauthorized", "rate_limited"):
+                # RV2-DS-03: a rejected token or flood control is not this
+                # reminder's failure — wait it out without spending an attempt.
+                delay = (
+                    timedelta(seconds=retry_after) if retry_after
+                    else _TELEGRAM_UNAUTHORIZED_PAUSE
+                )
+                values = {"next_attempt_at": datetime.now(UTC) + delay, "last_error": outcome}
+            elif outcome == "sent":
                 values.update(
                     status=REMINDER_STATUS_SENT, sent=True,
                     next_attempt_at=None, last_error=None,
@@ -1742,7 +1761,7 @@ async def check_reminders(
 
         if blocked_user_ids:
             # Single bulk update per tick instead of one UPDATE per
-            # blocked user — same pause as ``notify_user``, just batched.
+            # blocked user — same pause as the DLQ pump applies.
             await session.execute(_pause_unreachable_users_trackers(blocked_user_ids))
 
         await session.commit()
@@ -2029,6 +2048,33 @@ _TRACKER_AUTO_PAUSE_THRESHOLD = 5
 # lifetime trigger auto-pause.
 _tracker_failure_counts: dict[int, int] = {}
 
+# RV2-DS-05: one KufarClient — and so one circuit breaker — for the life of
+# the process. A client per tick reset the breaker every tick, so during an
+# outage the first keys of each tick paid the full retries and a strike.
+# Keyed on loop and settings so tests (a loop each) never share one.
+_kufar_client: tuple[asyncio.AbstractEventLoop, Settings, KufarClient] | None = None
+
+
+def _get_kufar_client(settings: Settings) -> KufarClient:
+    global _kufar_client
+    loop = asyncio.get_running_loop()
+    cached = _kufar_client
+    if (
+        cached is None
+        or cached[0] is not loop
+        or cached[1] is not settings
+        or type(cached[2]) is not KufarClient
+    ):
+        _kufar_client = cached = (loop, settings, KufarClient(settings))
+    return cached[2]
+
+
+async def _close_kufar_client() -> None:
+    global _kufar_client
+    cached, _kufar_client = _kufar_client, None
+    if cached is not None:
+        await cached[2].aclose()
+
 
 def _dlq_next_retry_after(retry_count: int) -> datetime:
     """Exponential backoff anchored on the *next* attempt count."""
@@ -2072,13 +2118,16 @@ async def retry_telegram_notification_dlq(
     preempt everyone else, sends each batch serially through the same
     classifier, and applies the outcome:
 
-    * ``sent``            → DELETE row.
+    * ``sent``            → DELETE row right after the send (RV2-DS-02).
     * ``blocked``         → DELETE every DLQ row for that user_id +
                             pause their trackers in bulk.
     * ``permanent_error`` → DELETE row (Telegram rejected the message
                             itself; resending it cannot succeed).
     * ``retry``           → ``retry_count += 1``,
                             ``next_retry_at = now + 2^(n-1) * 2 min``.
+    * ``rate_limited`` /  → the user's remaining rows wait ``retry_after``
+      ``unauthorized``      (or the delivery pause) with ``retry_count``
+                            untouched (RV2-DS-03).
 
     RV-SEC-05: rows of users who withdrew ``pd_processing`` consent are
     deleted unsent.
@@ -2116,10 +2165,38 @@ async def _pump_notification_queue(
         return await _pump_notification_queue_locked(bot, session_factory)
 
 
+@dataclass(slots=True)
+class _DrainOutcome:
+    """What one user's serial send loop leaves for the apply phase."""
+
+    sent: int = 0
+    # Blocked, or permanently rejected by Telegram.
+    delete_ids: list[int] = field(default_factory=list)
+    # (row_id, new retry_count) — transient failures that count an attempt.
+    bump_ids: list[tuple[int, int]] = field(default_factory=list)
+    # (row_id, delay seconds, outcome) — RV2-DS-03: retried later, uncounted.
+    deferred: list[tuple[int, int, str]] = field(default_factory=list)
+    blocked: bool = False
+    blocked_internal_id: int | None = None
+
+
+async def _delete_outbox_rows(
+    session_factory: async_sessionmaker[AsyncSession], row_ids: Collection[int],
+) -> None:
+    async with session_factory() as session:
+        await session.execute(
+            delete(TelegramNotificationDLQ).where(TelegramNotificationDLQ.id.in_(list(row_ids)))
+        )
+        await session.commit()
+
+
 async def _pump_notification_queue_locked(
     bot: Bot,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> tuple[int, int]:
+    if _telegram_delivery_paused():
+        logger.warning("DLQ pump: Telegram delivery paused (bot token rejected)")
+        return 0, 0
     async with session_factory() as session:
         now = datetime.now(UTC)
         result = await session.execute(
@@ -2181,22 +2258,12 @@ async def _pump_notification_queue_locked(
     async def _drain(
         tg_user_id: int,
         items: list[tuple[int, int | None, str, int, str | None]],
-    ) -> tuple[int, list[int], list[tuple[int, int]], int | None]:
-        """Send every queued message for one user, serially.
-
-        Returns a tuple of:
-        * count of successful sends,
-        * row ids to delete (sent, blocked or permanently rejected),
-        * (row_id, new_retry_count) tuples to bump for retry,
-        * blocked user_id (if encountered) for bulk deactivation.
-        """
-        sent_count = 0
-        delete_ids: list[int] = []
-        bump_ids: list[tuple[int, int]] = []
-        blocked_internal_id: int | None = None
+    ) -> _DrainOutcome:
+        """Send every queued message for one user, serially."""
+        drained = _DrainOutcome()
         async with sem:
-            for row_id, user_id, message, retry_count, markup_json in items:
-                outcome = await _send_message_classified(
+            for index, (row_id, user_id, message, retry_count, markup_json) in enumerate(items):
+                outcome, retry_after = await _send_message_classified(
                     bot,
                     tg_user_id,
                     message,
@@ -2208,42 +2275,53 @@ async def _pump_notification_queue_locked(
                     reply_markup=_deserialize_reply_markup(markup_json),
                 )
                 if outcome == "sent":
-                    sent_count += 1
-                    delete_ids.append(row_id)
+                    # RV2-DS-02: gone the moment it is delivered. The batch
+                    # used to be deleted in one commit after every send, so
+                    # a pump cancelled mid-batch (SIGTERM on deploy) re-sent
+                    # everything already delivered.
+                    await _delete_outbox_rows(session_factory, [row_id])
+                    drained.sent += 1
                 elif outcome == "blocked":
-                    # User no longer reachable — pointless to keep
-                    # any of their queued rows. Mark THIS one and
-                    # let the caller wipe siblings via tg_user_id.
-                    blocked_internal_id = user_id
-                    delete_ids.append(row_id)
-                    return sent_count, delete_ids, bump_ids, blocked_internal_id
+                    # User no longer reachable — pointless to keep any of
+                    # their queued rows; the caller wipes them all.
+                    drained.blocked = True
+                    drained.blocked_internal_id = user_id
+                    drained.delete_ids.append(row_id)
+                    return drained
                 elif outcome == "permanent_error":
                     # RV-SCH-02: a payload Telegram rejects (BadRequest)
                     # used to burn all retries before being dropped.
-                    delete_ids.append(row_id)
+                    drained.delete_ids.append(row_id)
+                elif outcome in ("unauthorized", "rate_limited"):
+                    # RV2-DS-03: not this row's failure — park the chat's
+                    # remaining rows without spending their retry budget.
+                    delay = retry_after or int(_TELEGRAM_UNAUTHORIZED_PAUSE.total_seconds())
+                    drained.deferred.extend((item[0], delay, outcome) for item in items[index:])
+                    return drained
                 else:
-                    bump_ids.append((row_id, retry_count + 1))
-        return sent_count, delete_ids, bump_ids, blocked_internal_id
+                    drained.bump_ids.append((row_id, retry_count + 1))
+        return drained
 
     results = await asyncio.gather(
         *[_drain(tg_id, items) for tg_id, items in by_user.items()]
     )
 
-    total_sent = sum(r[0] for r in results)
+    total_sent = sum(r.sent for r in results)
     delete_ids: list[int] = []
     bump_ids: list[tuple[int, int]] = []
+    deferred: list[tuple[int, int, str]] = []
     blocked_user_ids: set[int] = set()
     blocked_internal_ids: set[int] = set()
-    for tg_id, (_sent_count, drained_delete, drained_bump, blocked_uid) in zip(
-        by_user.keys(), results, strict=True,
-    ):
-        delete_ids.extend(drained_delete)
-        bump_ids.extend(drained_bump)
-        if blocked_uid is not None:
+    for tg_id, drained in zip(by_user.keys(), results, strict=True):
+        delete_ids.extend(drained.delete_ids)
+        bump_ids.extend(drained.bump_ids)
+        deferred.extend(drained.deferred)
+        if drained.blocked:
             blocked_user_ids.add(tg_id)
-            blocked_internal_ids.add(blocked_uid)
+            if drained.blocked_internal_id is not None:
+                blocked_internal_ids.add(drained.blocked_internal_id)
 
-    if not (delete_ids or bump_ids or blocked_user_ids):
+    if not (delete_ids or bump_ids or deferred or blocked_user_ids):
         return total_sent, len(rows)
 
     async with session_factory() as session:
@@ -2255,7 +2333,8 @@ async def _pump_notification_queue_locked(
                     TelegramNotificationDLQ.telegram_user_id.in_(blocked_user_ids),
                 )
             )
-            await session.execute(_pause_unreachable_users_trackers(blocked_internal_ids))
+            if blocked_internal_ids:
+                await session.execute(_pause_unreachable_users_trackers(blocked_internal_ids))
             logger.info(
                 "DLQ pump: paused trackers for %d blocked user(s)",
                 len(blocked_internal_ids),
@@ -2283,11 +2362,21 @@ async def _pump_notification_queue_locked(
                         error_kind="retry",
                     )
                 )
+        for row_id, delay, outcome in deferred:
+            await session.execute(
+                update(TelegramNotificationDLQ)
+                .where(TelegramNotificationDLQ.id == row_id)
+                .values(
+                    next_retry_at=datetime.now(UTC) + timedelta(seconds=delay),
+                    retry_after_seconds=delay,
+                    error_kind=outcome,
+                )
+            )
         await session.commit()
-    if total_sent or bump_ids:
+    if total_sent or bump_ids or deferred:
         logger.info(
-            "DLQ pump: sent=%d retried=%d blocked_users=%d",
-            total_sent, len(bump_ids), len(blocked_user_ids),
+            "DLQ pump: sent=%d retried=%d deferred=%d blocked_users=%d",
+            total_sent, len(bump_ids), len(deferred), len(blocked_user_ids),
         )
     return total_sent, len(rows)
 
@@ -2399,6 +2488,7 @@ async def main() -> None:
         # Without this, the engine would be torn down mid-flight and
         # the session's connection would raise on commit.
         scheduler.shutdown(wait=True)
+        await _close_kufar_client()
         await stop_health_server(health_runner)
         await engine.dispose()
         await bot.session.close()

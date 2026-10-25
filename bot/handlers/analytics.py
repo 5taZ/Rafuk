@@ -62,7 +62,7 @@ async def cmd_deals(message: Message) -> None:
     text = (
         f"📊 <b>Активные сделки:</b>\n"
         f"В работе — {in_progress + researching} | Куплено — {bought} | "
-        f"На продаже — {sold}\n"
+        f"Продано — {sold}\n"
         f"Новые — {new}\n"
         f"Вложено: {_fmt_byn(cost)} BYN | Прибыль: {profit_sign}{_fmt_byn(profit)} BYN{roi_str}"
     )

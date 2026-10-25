@@ -136,3 +136,96 @@ async def test_cmd_start_deep_strips_unknown_start_param(monkeypatch) -> None:
     # And the URL still ends with the mini-app base, not something
     # the attacker stitched on.
     assert url_evil.startswith("https://")
+
+
+@pytest.mark.asyncio
+async def test_cmd_start_deep_opens_existing_views(monkeypatch) -> None:
+    """TG-05 / SCH-15: ``/start monitoring`` promised «Избранное» but passed
+    a view the Mini App does not have, so it opened the overview. The
+    favourites tab lives in the deals view."""
+    from bot.handlers import start as start_mod
+
+    captured: list[str] = []
+    monkeypatch.setattr(
+        start_mod, "mini_app_keyboard", lambda url: captured.append(url) or object(),
+    )
+
+    for arg, view, label in (
+        ("monitoring", "deals", "Избранное"),
+        ("deals", "deals", "Сделки"),
+        ("tracking", "tracking", "Автопоиск"),
+    ):
+        message = SimpleNamespace(answer=AsyncMock())
+        await cmd_start_deep(message, SimpleNamespace(args=arg))  # type: ignore[arg-type]
+        assert captured[-1].endswith(f"start_param={view}")
+        assert label in message.answer.await_args.args[0]
+
+
+def _chat_message(chat_type: str, text: str):
+    from datetime import UTC, datetime
+
+    from aiogram.types import Chat, Message, User
+
+    return Message(
+        message_id=1,
+        date=datetime.now(UTC),
+        chat=Chat(id=-100 if chat_type != "private" else 42, type=chat_type),
+        from_user=User(id=42, is_bot=False, first_name="Тест"),
+        text=text,
+    )
+
+
+@pytest.fixture(scope="module")
+def dispatcher():
+    # The routers are module singletons and attach to one dispatcher only.
+    from bot.main import build_dispatcher
+
+    return build_dispatcher()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chat_type", ["group", "supergroup", "channel"])
+async def test_dispatcher_ignores_commands_outside_private_chats(
+    dispatcher, chat_type: str,
+) -> None:
+    """TG-03: web_app buttons fail in groups, and /profit answered there
+    with the caller's finances for everyone to read."""
+    from aiogram.dispatcher.event.bases import UNHANDLED
+
+    result = await dispatcher.propagate_event(
+        update_type="message", event=_chat_message(chat_type, "/profit"), bot=AsyncMock(),
+    )
+
+    assert result is UNHANDLED
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_still_answers_private_chats(dispatcher) -> None:
+    from aiogram.dispatcher.event.bases import UNHANDLED
+
+    bot = AsyncMock()
+    message = _chat_message("private", "/help").as_(bot)
+    result = await dispatcher.propagate_event(
+        update_type="message", event=message, bot=bot,
+    )
+
+    assert result is not UNHANDLED
+    bot.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_register_commands_scopes_the_menu_to_private_chats() -> None:
+    """TG-03: the command menu used to be set for the default scope, so
+    groups listed /deals and /profit too."""
+    from aiogram.types import BotCommandScopeAllPrivateChats
+
+    from bot.main import register_commands
+
+    bot = AsyncMock()
+    await register_commands(bot)
+
+    bot.delete_my_commands.assert_awaited_once_with()
+    commands = bot.set_my_commands.await_args.args[0]
+    assert [c.command for c in commands] == [command for command, _ in BOT_COMMANDS]
+    scope = bot.set_my_commands.await_args.kwargs["scope"]
+    assert isinstance(scope, BotCommandScopeAllPrivateChats)

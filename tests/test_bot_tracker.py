@@ -22,6 +22,8 @@ def test_tracker_alert_keyboard_has_query_and_listing_buttons() -> None:
     assert len(row) == 2
     assert row[0].text == "Открыть запрос"
     assert "query=iphone+15+128" in row[0].web_app.url
+    # TG-05: an existing Mini App view — "trackers" fell back to the overview.
+    assert "view=tracking" in row[0].web_app.url
     assert row[1].text == "Открыть лот"
     assert row[1].url == "https://www.kufar.by/item/101"
     assert all(button.callback_data is None for button in row)
@@ -29,7 +31,7 @@ def test_tracker_alert_keyboard_has_query_and_listing_buttons() -> None:
 
 def test_tracker_alert_keyboard_returns_none_when_nothing_to_link() -> None:
     """Local dev where mini_app_url is http:// and the listing has no
-    URL — the function should return None so notify_user sends a plain
+    URL — the function should return None so the scheduler sends a plain
     message instead of failing on an empty inline_keyboard."""
     assert (
         tracker_alert_keyboard("http://localhost:8081", query="iphone", listing_url=None)

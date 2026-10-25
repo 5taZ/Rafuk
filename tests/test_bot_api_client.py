@@ -177,3 +177,53 @@ def test_build_api_headers_never_sends_a_blank_service_token(monkeypatch) -> Non
     headers = api_client.build_api_headers(telegram_user_id=123456)
     assert "X-Internal-Service-Token" not in headers
     assert "X-Telegram-Init-Data" in headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call", ["get", "post"])
+async def test_api_calls_return_none_when_headers_cannot_be_built(monkeypatch, call) -> None:
+    """TG-17: without a service token ``build_api_headers`` raises
+    RuntimeError; it ran outside the try, so the handler died and the
+    callback button span until Telegram timed it out."""
+    from bot import api_client
+
+    def _refuse(*args, **kwargs):
+        raise RuntimeError("Refusing to forge initData.")
+
+    monkeypatch.setattr(api_client, "build_api_headers", _refuse)
+
+    if call == "get":
+        assert await api_client._api_get("/api/v1/analytics/leads", 123456) is None
+    else:
+        assert await api_client._api_post("/api/v1/leads", 123456, json_body={}) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call", ["get", "post"])
+async def test_api_calls_return_none_on_non_json_success(monkeypatch, call) -> None:
+    """TG-17: a 200 with an HTML body (a Cloudflare page) raised
+    JSONDecodeError — a ValueError, not an ``httpx.HTTPError``."""
+    import httpx
+
+    from bot import api_client
+
+    _reset_settings(monkeypatch, internal_token="svc-secret")
+    client = httpx.AsyncClient(
+        base_url="https://api.test",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text="<html>")),
+    )
+
+    async def _client(*args, **kwargs):
+        return client
+
+    monkeypatch.setattr(api_client, "get_http_client", _client)
+    try:
+        if call == "get":
+            assert await api_client._api_get("/api/v1/analytics/leads", 123456) is None
+        else:
+            assert await api_client._api_post("/api/v1/leads", 123456, json_body={}) is None
+    finally:
+        await client.aclose()
+        from api.config import get_settings
+
+        get_settings.cache_clear()

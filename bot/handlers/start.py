@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from urllib.parse import quote
 
 from aiogram import Router
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message
 from sqlalchemy import select, update
 
@@ -69,16 +69,17 @@ async def _resume_bot_blocked_trackers(message: Message) -> None:
         )
 
 
-# PR-08: deep-link start_param allowlist. Mirrors the ``viewMap`` in
-# ``frontend/js/app_actions.js applyLaunchParams``. Anything outside
-# this set is dropped from the URL (the Mini App still opens, just
-# without a forced view switch) so a hostile ``/start ?evil#frag``
-# can't smuggle URL characters into the t.me link.
-_ALLOWED_START_PARAMS = ("tracking", "deals", "monitoring")
-_START_PARAM_LABELS = {
-    "tracking": "Автопоиск",
-    "deals": "Сделки",
-    "monitoring": "Избранное",
+# PR-08: deep-link start_param allowlist. Anything outside it is dropped
+# from the URL (the Mini App still opens, just without a forced view
+# switch) so a hostile ``/start ?evil#frag`` can't smuggle URL characters
+# into the t.me link. TG-05 / SCH-15: each maps to (Mini App view, label);
+# the views are the ones ``frontend/js/app_actions.js applyLaunchParams``
+# can open. "monitoring" (older links) is the «Избранное» tab of the deals
+# view — passed through as-is it opened the overview.
+_START_PARAM_VIEWS = {
+    "tracking": ("tracking", "Автопоиск"),
+    "deals": ("deals", "Сделки"),
+    "monitoring": ("deals", "Избранное"),
 }
 
 
@@ -86,13 +87,13 @@ def _safe_start_param(raw: str | None) -> str | None:
     if not raw:
         return None
     cleaned = raw.strip()
-    if cleaned in _ALLOWED_START_PARAMS:
+    if cleaned in _START_PARAM_VIEWS:
         return cleaned
     return None
 
 
 @router.message(CommandStart(deep_link=True))
-async def cmd_start_deep(message: Message, command: CommandStart) -> None:
+async def cmd_start_deep(message: Message, command: CommandObject) -> None:
     """Handle /start with a deep link parameter (e.g. /start tracking)."""
     await _resume_bot_blocked_trackers(message)
     settings = get_settings()
@@ -105,10 +106,11 @@ async def cmd_start_deep(message: Message, command: CommandStart) -> None:
     # suspenders (the allowlist already guarantees safe characters,
     # but the encode keeps the call honest if the list ever grows).
     deep_param = _safe_start_param(command.args)
+    view, label = _START_PARAM_VIEWS.get(deep_param, (None, "мини-апп"))
     url = settings.mini_app_url
-    if deep_param and url.startswith("https://"):
+    if view and url.startswith("https://"):
         sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}start_param={quote(deep_param, safe='')}"
+        url = f"{url}{sep}start_param={quote(view, safe='')}"
     keyboard = mini_app_keyboard(url)
     if keyboard is None:
         await message.answer(
@@ -116,7 +118,6 @@ async def cmd_start_deep(message: Message, command: CommandStart) -> None:
             "Мини-апп отключён локально — Telegram WebApp требует HTTPS."
         )
         return
-    label = _START_PARAM_LABELS.get(deep_param, "мини-апп")
     await message.answer(f"Открыть «{label}» в Rafuk.", reply_markup=keyboard)
 
 

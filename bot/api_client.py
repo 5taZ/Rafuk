@@ -140,6 +140,12 @@ def build_api_headers(telegram_user_id: int, *, mutating: bool = False) -> dict[
     return headers
 
 
+# TG-17: RuntimeError — build_api_headers refuses to run without a service
+# token; ValueError — a 200 whose body is not JSON (a Cloudflare page).
+# Escaping the handler, either left the callback button spinning.
+_API_CALL_ERRORS = (httpx.HTTPError, ValueError, RuntimeError)
+
+
 async def _api_get(
     path: str,
     telegram_user_id: int,
@@ -147,14 +153,13 @@ async def _api_get(
     params: dict | None = None,
 ) -> dict[str, Any] | None:
     """Make an authenticated GET request to the internal API."""
-    settings = get_settings()
-    headers = build_api_headers(telegram_user_id)
-    client = await get_http_client(settings.api_base_url)
     try:
+        headers = build_api_headers(telegram_user_id)
+        client = await get_http_client(get_settings().api_base_url)
         resp = await client.get(path, params=params, headers=headers)
         resp.raise_for_status()
         return resp.json()
-    except httpx.HTTPError:
+    except _API_CALL_ERRORS:
         logger.exception("API call failed: GET %s", path)
         return None
 
@@ -166,15 +171,14 @@ async def _api_post(
     json_body: dict | None = None,
 ) -> dict[str, Any] | None:
     """Make an authenticated POST request to the internal API."""
-    settings = get_settings()
-    headers = build_api_headers(telegram_user_id, mutating=True)
-    client = await get_http_client(settings.api_base_url)
     try:
+        headers = build_api_headers(telegram_user_id, mutating=True)
+        client = await get_http_client(get_settings().api_base_url)
         resp = await client.post(path, json=json_body, headers=headers)
         if resp.status_code == 409:
             return {"conflict": True}
         resp.raise_for_status()
         return resp.json()
-    except httpx.HTTPError:
+    except _API_CALL_ERRORS:
         logger.exception("API call failed: POST %s", path)
         return None

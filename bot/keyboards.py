@@ -35,7 +35,9 @@ def tracker_alert_keyboard(
     statuses (`lead:` → researching, `later:` → new) that didn't match
     the button labels.
     """
-    query_url = f"{mini_app_url}?query={quote_plus(query)}&view=trackers"
+    # TG-05 / SCH-15: "trackers" is no Mini App view; the app fell back to
+    # the overview.
+    query_url = f"{mini_app_url}?query={quote_plus(query)}&view=tracking"
     row: list[InlineKeyboardButton] = []
     if mini_app_url.startswith("https://"):
         row.append(

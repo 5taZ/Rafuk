@@ -5,7 +5,8 @@ BOT_COMMANDS: tuple[tuple[str, str], ...] = (
     ("start", "Приветствие"),
     ("help", "Список команд"),
     ("deals", "Активные сделки"),
-    ("profit", "Прибыль за месяц"),
+    # TG-18: the figures cover all time, not a month.
+    ("profit", "Прибыль и ROI"),
     ("stats", "Статистика по запросу"),
 )
 

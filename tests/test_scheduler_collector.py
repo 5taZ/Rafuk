@@ -22,7 +22,7 @@ from api.models import (
     TrackerEvent,
 )
 from api.services.aggregator import build_query_key
-from api.services.history_service import QuerySyncResult, TrendReversal
+from api.services.history_service import QuerySyncResult, TrendReversal, as_utc
 from scheduler.collector import (
     _DLQ_MAX_RETRIES,
     _build_new_listing_message,
@@ -45,7 +45,6 @@ from scheduler.collector import (
     cleanup_old_snapshots,
     cleanup_stale_missing_watchlist,
     cleanup_telegram_notification_dlq,
-    notify_user,
     persist_tracker_events,
     retry_telegram_notification_dlq,
 )
@@ -418,139 +417,69 @@ def test_detect_threshold_alerts_ignores_overpriced_listings():
 
 
 # ---------------------------------------------------------------------------
-# Test notify_user
+# Test _send_message_classified
 # ---------------------------------------------------------------------------
+# SCH-17 / RV2-DS-16: ``notify_user`` (dead in production) is gone; its
+# tests now pin the classifier every sender shares.
 
 @pytest.mark.asyncio
-async def test_notify_user_success(mock_bot: AsyncMock, populated_session):
-    session, user, tracker = populated_session
-    result = await notify_user(
-        mock_bot,
-        telegram_user_id=123456,
-        message="Hello",
-        session=session,
-        internal_user_id=user.id,
-    )
-    assert result is True
-    mock_bot.send_message.assert_called_once_with(123456, "Hello", reply_markup=None)
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (None, ("sent", None)),
+        (("TelegramForbiddenError", "Forbidden"), ("blocked", None)),
+        (("TelegramBadRequest", "message is too long"), ("permanent_error", None)),
+        (("TelegramAPIError", "Server error"), ("retry", None)),
+    ],
+)
+async def test_send_message_classified_outcomes(
+    monkeypatch, mock_bot: AsyncMock, error, expected,
+):
+    import aiogram.exceptions
 
+    monkeypatch.setattr(collector, "_telegram_paused_until", None)
+    if error is not None:
+        exc_cls = getattr(aiogram.exceptions, error[0])
+        mock_bot.send_message.side_effect = _make_tg_error(exc_cls, error[1])
 
-@pytest.mark.asyncio
-async def test_notify_user_forbidden_pauses_trackers(mock_bot: AsyncMock, populated_session):
-    """RV-SCH-03: a 403 pauses the user's trackers with a reason /start
-    lifts — it used to flip ``active=False``, the API's soft-delete flag,
-    so the trackers vanished from the Mini App for good."""
-    from aiogram.exceptions import TelegramForbiddenError
+    outcome = await collector._send_message_classified(mock_bot, 123456, "Hello")
 
-    session, user, tracker = populated_session
-    mock_bot.send_message.side_effect = _make_tg_error(TelegramForbiddenError, "Forbidden")
-
-    result = await notify_user(
-        mock_bot,
-        telegram_user_id=123456,
-        message="Hello",
-        session=session,
-        internal_user_id=user.id,
-    )
-    assert result is False
-    await session.refresh(tracker)
-    assert tracker.active is True
-    assert tracker.paused is True
-    assert tracker.pause_reason == TRACKER_PAUSE_REASON_BOT_BLOCKED
+    assert outcome == expected
+    mock_bot.send_message.assert_awaited_once_with(123456, "Hello", reply_markup=None)
+    assert not collector._telegram_delivery_paused()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error_name", ["TelegramNotFound", "TelegramUnauthorizedError"])
-async def test_notify_user_rejected_bot_token_queues_retry_and_keeps_trackers(
-    mock_bot: AsyncMock, populated_session, error_name: str,
+async def test_send_message_classified_rejected_token_pauses_delivery(
+    monkeypatch, mock_bot: AsyncMock, error_name: str,
 ):
-    """RV-SCH-03: 401/404 mean the bot token itself is rejected, so every
-    chat fails the same way. They used to count as a per-user block and
-    disable the trackers of everyone an alert went to."""
+    """RV-SCH-03 / RV2-DS-03: 401/404 mean the bot token itself is rejected,
+    so every chat fails the same way — never a per-user block, and delivery
+    pauses instead of spending each row's retries."""
     import aiogram.exceptions
-    from sqlalchemy import select
 
-    session, user, tracker = populated_session
+    monkeypatch.setattr(collector, "_telegram_paused_until", None)
     exc_cls = getattr(aiogram.exceptions, error_name)
     mock_bot.send_message.side_effect = _make_tg_error(exc_cls, "token rejected")
 
-    result = await notify_user(
-        mock_bot,
-        telegram_user_id=123456,
-        message="Hello",
-        session=session,
-        internal_user_id=user.id,
-    )
-    assert result is True
-    queued = (await session.execute(select(TelegramNotificationDLQ))).scalar_one()
-    assert queued.telegram_user_id == 123456
-    await session.refresh(tracker)
-    assert tracker.active is True
-    assert tracker.paused is False
+    outcome = await collector._send_message_classified(mock_bot, 123456, "Hello")
+
+    assert outcome == ("unauthorized", None)
+    assert collector._telegram_delivery_paused()
 
 
 @pytest.mark.asyncio
-async def test_notify_user_retry_after_keeps_active(mock_bot: AsyncMock, populated_session):
+async def test_send_message_classified_reports_retry_after(mock_bot: AsyncMock):
     from aiogram.exceptions import TelegramRetryAfter
-    from sqlalchemy import select
 
-    session, user, tracker = populated_session
-    exc = TelegramRetryAfter(method=MagicMock(), message="Rate limited", retry_after=30)
-    mock_bot.send_message.side_effect = exc
-
-    result = await notify_user(
-        mock_bot,
-        telegram_user_id=123456,
-        message="Hello",
-        session=session,
-        internal_user_id=user.id,
+    mock_bot.send_message.side_effect = TelegramRetryAfter(
+        method=MagicMock(), message="Rate limited", retry_after=30,
     )
-    assert result is True
-    queued = (
-        await session.execute(select(TelegramNotificationDLQ))
-    ).scalar_one()
-    assert queued.user_id == user.id
-    assert queued.telegram_user_id == 123456
-    assert queued.source == "notify_user"
-    assert queued.message == "Hello"
 
+    outcome = await collector._send_message_classified(mock_bot, 123456, "Hello")
 
-@pytest.mark.asyncio
-async def test_notify_user_generic_api_error_keeps_active(
-    mock_bot: AsyncMock, populated_session
-):
-    from aiogram.exceptions import TelegramAPIError
-
-    session, user, tracker = populated_session
-    mock_bot.send_message.side_effect = _make_tg_error(TelegramAPIError, "Server error")
-
-    result = await notify_user(
-        mock_bot,
-        telegram_user_id=123456,
-        message="Hello",
-        session=session,
-        internal_user_id=user.id,
-    )
-    assert result is True
-
-
-@pytest.mark.asyncio
-async def test_notify_user_no_internal_user_id_skips_deactivation(
-    mock_bot: AsyncMock, populated_session
-):
-    from aiogram.exceptions import TelegramForbiddenError
-
-    session, user, tracker = populated_session
-    mock_bot.send_message.side_effect = _make_tg_error(TelegramForbiddenError, "Forbidden")
-
-    result = await notify_user(
-        mock_bot,
-        telegram_user_id=123456,
-        message="Hello",
-        session=session,
-        internal_user_id=None,
-    )
-    assert result is False
+    assert outcome == ("rate_limited", 30)
 
 
 # ---------------------------------------------------------------------------
@@ -1005,7 +934,7 @@ async def test_retry_dlq_sent_deletes_row(monkeypatch, mock_bot, populated_sessi
     await session.commit()
 
     async def _stub_classify(bot, tg_id, message, **kwargs):
-        return "sent"
+        return "sent", None
 
     monkeypatch.setattr(collector, "_send_message_classified", _stub_classify)
 
@@ -1040,7 +969,7 @@ async def test_retry_dlq_retry_bumps_count_and_next_retry(
     await session.commit()
 
     async def _stub_classify(bot, tg_id, message, **kwargs):
-        return "retry"
+        return "retry", None
 
     monkeypatch.setattr(collector, "_send_message_classified", _stub_classify)
 
@@ -1093,7 +1022,7 @@ async def test_retry_dlq_blocked_drops_user_rows_and_pauses_trackers(
     await session.commit()
 
     async def _stub_classify(bot, tg_id, message, **kwargs):
-        return "blocked"
+        return "blocked", None
 
     monkeypatch.setattr(collector, "_send_message_classified", _stub_classify)
 
@@ -1661,7 +1590,7 @@ async def test_check_reminders_retry_error_leaves_reminder_pending(mock_bot: Asy
     RV-SCH-04: the retry lives on the reminder row (``attempts`` +
     ``next_attempt_at`` back-off) and nothing is queued to the DLQ —
     both used to fire, delivering the reminder twice."""
-    from aiogram.exceptions import TelegramRetryAfter
+    from aiogram.exceptions import TelegramAPIError
 
     engine = get_engine()
     sf = get_session_factory(engine)
@@ -1672,8 +1601,8 @@ async def test_check_reminders_retry_error_leaves_reminder_pending(mock_bot: Asy
         await _seed_due_reminder(session, telegram_user_id=301, ad_id=9005)
         await session.commit()
 
-    exc = TelegramRetryAfter(method=MagicMock(), message="Rate limited", retry_after=30)
-    mock_bot.send_message.side_effect = exc
+    # RV2-DS-03: a generic API error — flood control no longer counts.
+    mock_bot.send_message.side_effect = _make_tg_error(TelegramAPIError, "Server error")
 
     settings = MagicMock()
     settings.mini_app_url = "https://example.com/app"
@@ -1847,11 +1776,11 @@ async def test_outbox_tracker_notifications_blocked_skips_user_rest(
 async def test_outbox_tracker_notifications_retry_does_not_count(
     mock_bot: AsyncMock,
 ):
-    """Transient ``TelegramRetryAfter`` → outcome is ``retry``, which
+    """Transient Telegram error → outcome is ``retry``, which
     is NOT counted in total and does NOT deactivate trackers; the job
     loop continues with the user's next job and the failed row stays
     queued with a back-off."""
-    from aiogram.exceptions import TelegramRetryAfter
+    from aiogram.exceptions import TelegramAPIError
 
     engine = get_engine()
     sf = get_session_factory(engine)
@@ -1866,7 +1795,7 @@ async def test_outbox_tracker_notifications_retry_does_not_count(
         await session.commit()
         uid = user.id
 
-    retry_exc = TelegramRetryAfter(method=MagicMock(), message="rl", retry_after=10)
+    retry_exc = _make_tg_error(TelegramAPIError, "Server error")
     mock_bot.send_message.side_effect = [retry_exc, MagicMock()]
 
     jobs = [
@@ -2529,7 +2458,7 @@ async def test_dlq_pump_deletes_exhausted_rows_inline(mock_bot: AsyncMock):
     original = _col._send_message_classified
 
     async def _always_retry(*args, **kwargs):
-        return "retry"
+        return "retry", None
 
     _col._send_message_classified = _always_retry
     try:
@@ -2805,39 +2734,58 @@ async def test_check_trackers_delivers_through_outbox_with_keyboard(
 
 
 @pytest.mark.asyncio
-async def test_check_trackers_failure_keeps_alerts_of_committed_keys(
-    monkeypatch, mock_bot: AsyncMock, tick_db,
+@pytest.mark.parametrize("stage", ["fetch", "process"])
+async def test_check_trackers_unexpected_error_is_isolated_to_its_key(
+    monkeypatch, mock_bot: AsyncMock, tick_db, stage: str,
 ):
-    """RV-SCH-02: an unexpected exception on a later key used to abort the
-    tick before the in-memory queue was sent — the first key's state was
-    committed as "seen", its alert lost. Now the committed key's alert is
-    delivered and the exception still propagates."""
+    """RV-SCH-02 / RV2-DS-01: an unexpected exception on one key used to
+    abort the whole tick, and the failing key — oldest cursor — led the
+    next tick and aborted it again: silence for every user. Now the key is
+    skipped with a strike and its cursor moved on (a tracker without a
+    baseline keeps NULL), and later keys still deliver."""
+    from sqlalchemy import select
+
     sf = tick_db
 
     def _pages(query):
-        if query == "macbook air":
+        if stage == "fetch" and query == "macbook air":
             return RuntimeError("unexpected")
         return [_ad(41, 99_000)]
 
+    if stage == "process":
+        original_jobs = collector._listing_notification_jobs
+
+        def _jobs(tracker, *args, **kwargs):
+            if tracker.query == "macbook air":
+                raise ValueError("unexpected")
+            return original_jobs(tracker, *args, **kwargs)
+
+        monkeypatch.setattr(collector, "_listing_notification_jobs", _jobs)
     monkeypatch.setattr(collector, "KufarClient", _kufar_stub(_pages, []))
     now = datetime.now(UTC)
     async with sf() as session:
         user = make_user(telegram_user_id=1401, first_name="Crash")
         session.add(user)
         await session.flush()
-        session.add_all([
-            Tracker(user_id=user.id, query="iphone 13", strict_mode=False,
-                    last_checked_at=now - timedelta(minutes=40)),
-            Tracker(user_id=user.id, query="macbook air", strict_mode=False,
-                    last_checked_at=now - timedelta(minutes=20)),
-        ])
+        fresh = Tracker(user_id=user.id, query="macbook air", strict_mode=False)
+        poisoned = Tracker(user_id=user.id, query="macbook air", strict_mode=False,
+                           last_checked_at=now - timedelta(minutes=40))
+        healthy = Tracker(user_id=user.id, query="iphone 13", strict_mode=False,
+                          last_checked_at=now - timedelta(minutes=20))
+        session.add_all([fresh, poisoned, healthy])
         await session.commit()
+        fresh_id, poisoned_id, healthy_id = fresh.id, poisoned.id, healthy.id
 
-    with pytest.raises(RuntimeError, match="unexpected"):
-        await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
 
     assert _sent_chats(mock_bot) == [1401]
     assert "НОВЫЙ ЛОТ" in mock_bot.send_message.await_args.args[1]
+    assert await _event_keys(sf) == {(healthy_id, 41, "new_listing")}
+    async with sf() as session:
+        cursors = dict((await session.execute(select(Tracker.id, Tracker.last_checked_at))).all())
+    assert cursors[fresh_id] is None
+    assert as_utc(cursors[poisoned_id]) > now
+    assert collector._tracker_failure_counts == {fresh_id: 1, poisoned_id: 1}
 
 
 @pytest.mark.asyncio
@@ -2879,9 +2827,9 @@ async def test_check_trackers_budget_defers_new_keys_but_finishes_current(
     assert _sent_chats(mock_bot) == [1501]
     async with sf() as session:
         rows = dict((await session.execute(select(Tracker.id, Tracker.last_checked_at))).all())
-    assert collector.as_utc(rows[first_id]) > now
+    assert as_utc(rows[first_id]) > now
     # Not touched — still due, it leads the next tick.
-    assert collector.as_utc(rows[deferred_id]) < now
+    assert as_utc(rows[deferred_id]) < now
 
 
 @pytest.mark.asyncio
@@ -2925,7 +2873,7 @@ async def test_check_trackers_failed_key_rolls_back_events_cursor_and_outbox(
         assert (await session.execute(select(QuerySnapshot))).first() is None
         assert (await session.execute(select(QueryListingState))).first() is None
         stored = (await session.get(Tracker, tracker_id)).last_checked_at
-    assert collector.as_utc(stored) == checked
+    assert as_utc(stored) == checked
 
 
 @pytest.mark.asyncio
@@ -2976,7 +2924,7 @@ async def test_dlq_pump_drops_permanently_rejected_rows(
     await session.commit()
 
     async def _stub_classify(bot, tg_id, message, **kwargs):
-        return "permanent_error"
+        return "permanent_error", None
 
     monkeypatch.setattr(collector, "_send_message_classified", _stub_classify)
 
@@ -3304,7 +3252,7 @@ async def test_check_reminders_permanent_error_is_terminal(mock_bot: AsyncMock, 
 @pytest.mark.asyncio
 async def test_check_reminders_gives_up_after_max_attempts(mock_bot: AsyncMock, tick_db):
     """RV-SCH-04: transient failures back off, but not forever."""
-    from aiogram.exceptions import TelegramRetryAfter
+    from aiogram.exceptions import TelegramAPIError
 
     sf = tick_db
     async with sf() as session:
@@ -3313,15 +3261,63 @@ async def test_check_reminders_gives_up_after_max_attempts(mock_bot: AsyncMock, 
         )
         reminder.attempts = collector._REMINDER_MAX_ATTEMPTS - 1
         await session.commit()
-    mock_bot.send_message.side_effect = TelegramRetryAfter(
-        method=MagicMock(), message="rl", retry_after=5,
-    )
+    mock_bot.send_message.side_effect = _make_tg_error(TelegramAPIError, "Server error")
 
     await check_reminders(mock_bot, sf, _TICK_SETTINGS)
 
     [reminder] = await _reminder_rows(sf)
     assert (reminder.status, reminder.last_error) == ("failed", "retry_exhausted")
     assert reminder.attempts == collector._REMINDER_MAX_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_flood_control_waits_without_spending_attempts(
+    mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-03: a 429 is Telegram's pacing, not the reminder's failure.
+    It used to cost an attempt each time, so a long flood wait could turn
+    a deliverable reminder into ``failed``; now it waits ``retry_after``."""
+    from aiogram.exceptions import TelegramRetryAfter
+
+    sf = tick_db
+    async with sf() as session:
+        _user, _lead, reminder = await _seed_due_reminder(
+            session, telegram_user_id=2311, ad_id=9111,
+        )
+        reminder.attempts = collector._REMINDER_MAX_ATTEMPTS - 1
+        await session.commit()
+    mock_bot.send_message.side_effect = TelegramRetryAfter(
+        method=MagicMock(), message="rl", retry_after=600,
+    )
+
+    before = datetime.now(UTC)
+    await check_reminders(mock_bot, sf, _TICK_SETTINGS)
+
+    [reminder] = await _reminder_rows(sf)
+    assert (reminder.status, reminder.last_error) == ("pending", "rate_limited")
+    assert reminder.attempts == collector._REMINDER_MAX_ATTEMPTS - 1
+    wait = as_utc(reminder.next_attempt_at) - before
+    assert timedelta(seconds=590) < wait < timedelta(seconds=660)
+
+
+@pytest.mark.asyncio
+async def test_check_reminders_skips_reminders_already_marked_sent(
+    mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-11: during the 0026 rollout the old scheduler marks a
+    delivered reminder ``sent`` without touching ``status`` (default
+    ``pending``); the new due query must not deliver it again."""
+    sf = tick_db
+    async with sf() as session:
+        _user, _lead, reminder = await _seed_due_reminder(
+            session, telegram_user_id=2321, ad_id=9121,
+        )
+        reminder.sent = True
+        await session.commit()
+
+    await check_reminders(mock_bot, sf, _TICK_SETTINGS)
+
+    mock_bot.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -3403,3 +3399,334 @@ async def test_check_reminders_respects_withdrawn_pd_consent(mock_bot: AsyncMock
     assert sorted(_sent_chats(mock_bot)) == [2602, 2603]
     by_user = {r.user_id: (r.status, r.last_error) for r in await _reminder_rows(sf)}
     assert by_user[revoked_id] == ("cancelled", "consent_revoked")
+
+
+# ── RV2: scheduler review fixes ─────────────────────────────────────────
+
+
+async def _outbox_rows(sf) -> list[TelegramNotificationDLQ]:
+    from sqlalchemy import select
+
+    async with sf() as session:
+        return list(
+            (await session.execute(
+                select(TelegramNotificationDLQ).order_by(TelegramNotificationDLQ.id)
+            )).scalars()
+        )
+
+
+async def _seed_outbox(sf, telegram_user_id: int, messages: list[str]) -> int:
+    async with sf() as session:
+        user = make_user(telegram_user_id=telegram_user_id, first_name="Outbox")
+        session.add(user)
+        await session.flush()
+        _enqueue_tracker_notifications(session, [
+            _TrackerNotifyJob(telegram_user_id, user.id, message, None) for message in messages
+        ])
+        await session.commit()
+        return user.id
+
+
+@pytest.mark.asyncio
+async def test_dlq_pump_cancelled_mid_batch_does_not_resend_delivered_rows(
+    mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-02: the pump deleted delivered rows in one commit after the
+    whole batch, so a pump cancelled mid-batch (SIGTERM on deploy) left
+    them queued and they went out again after the restart."""
+    import asyncio
+
+    sf = tick_db
+    await _seed_outbox(sf, 2401, ["first", "second", "third"])
+    mock_bot.send_message.side_effect = [MagicMock(), asyncio.CancelledError()]
+
+    with pytest.raises(asyncio.CancelledError):
+        await retry_telegram_notification_dlq(mock_bot, sf)
+
+    assert [row.message for row in await _outbox_rows(sf)] == ["second", "third"]
+
+
+@pytest.mark.asyncio
+async def test_dlq_pump_flood_control_defers_without_spending_retries(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-03 / SCH-09: a 429 parks the chat's rows for ``retry_after``
+    and records it; it used to count an attempt (and keep sending to the
+    same chat), so a long flood wait exhausted the rows and deleted them."""
+    from aiogram.exceptions import TelegramRetryAfter
+
+    monkeypatch.setattr(collector, "_telegram_paused_until", None)
+    sf = tick_db
+    await _seed_outbox(sf, 2501, ["a", "b"])
+    mock_bot.send_message.side_effect = TelegramRetryAfter(
+        method=MagicMock(), message="rl", retry_after=120,
+    )
+
+    before = datetime.now(UTC)
+    assert await retry_telegram_notification_dlq(mock_bot, sf) == 0
+
+    assert mock_bot.send_message.await_count == 1
+    rows = await _outbox_rows(sf)
+    assert [(r.message, r.retry_count, r.retry_after_seconds, r.error_kind) for r in rows] == [
+        ("a", 0, 120, "rate_limited"), ("b", 0, 120, "rate_limited"),
+    ]
+    for row in rows:
+        wait = as_utc(row.next_retry_at) - before
+        assert timedelta(seconds=115) < wait < timedelta(seconds=180)
+
+
+@pytest.mark.asyncio
+async def test_dlq_pump_rejected_bot_token_pauses_delivery_without_losing_rows(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-03: a rejected bot token (401/404) fails every chat. Five
+    pump passes used to exhaust and delete every queued alert within ~30
+    minutes; now no attempt is counted and the pump stands down."""
+    from aiogram.exceptions import TelegramUnauthorizedError
+
+    monkeypatch.setattr(collector, "_telegram_paused_until", None)
+    sf = tick_db
+    await _seed_outbox(sf, 2601, ["a"])
+    await _seed_outbox(sf, 2602, ["b"])
+    mock_bot.send_message.side_effect = _make_tg_error(TelegramUnauthorizedError, "Unauthorized")
+
+    assert await retry_telegram_notification_dlq(mock_bot, sf) == 0
+    assert mock_bot.send_message.await_count == 2
+    rows = await _outbox_rows(sf)
+    assert [(r.retry_count, r.error_kind) for r in rows] == [(0, "unauthorized")] * 2
+
+    # Even once the rows come due again, nothing is sent while paused.
+    async with sf() as session:
+        await session.execute(
+            TelegramNotificationDLQ.__table__.update().values(next_retry_at=None)
+        )
+        await session.commit()
+    assert await retry_telegram_notification_dlq(mock_bot, sf) == 0
+    assert mock_bot.send_message.await_count == 2
+    assert len(await _outbox_rows(sf)) == 2
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_reuses_one_kufar_client_across_ticks(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-05: a fresh client per tick reset the circuit breaker every
+    tick, so each tick of an outage paid full retries (and strikes) on its
+    first keys. The breaker now lives as long as the process."""
+    sf = tick_db
+    created: list[object] = []
+    stub = _kufar_stub(lambda q: [_ad(71, 99_000)], [])
+
+    class _CountingStub(stub):
+        def __init__(self, settings):
+            super().__init__(settings)
+            created.append(self)
+
+    monkeypatch.setattr(collector, "KufarClient", _CountingStub)
+    async with sf() as session:
+        user = make_user(telegram_user_id=2701, first_name="Reuse")
+        session.add(user)
+        await session.flush()
+        session.add(Tracker(user_id=user.id, query="iphone 13", strict_mode=False))
+        await session.commit()
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+    async with sf() as session:
+        await session.execute(Tracker.__table__.update().values(last_checked_at=None))
+        await session.commit()
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    assert len(created) == 1
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_kufar_back_off_is_not_a_strike(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-05: a ``KufarAPIError`` carrying ``retry_after`` means the
+    breaker opened during this request's retries or Kufar asked us to back
+    off — an outage, not the key's fault. It used to strike the first two
+    keys of every tick until their trackers were auto-paused."""
+    from sqlalchemy import select
+
+    from api.services.kufar_client import KufarAPIError
+
+    sf = tick_db
+    monkeypatch.setattr(
+        collector,
+        "KufarClient",
+        _kufar_stub(lambda q: KufarAPIError("breaker opened", retry_after=30.0), []),
+    )
+    async with sf() as session:
+        user = make_user(telegram_user_id=2801, first_name="Outage")
+        session.add(user)
+        await session.flush()
+        session.add(Tracker(user_id=user.id, query="iphone 13", strict_mode=False))
+        await session.commit()
+
+    for _ in range(collector._TRACKER_AUTO_PAUSE_THRESHOLD + 1):
+        await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    async with sf() as session:
+        tracker = (await session.execute(select(Tracker))).scalar_one()
+    assert (tracker.paused, tracker.pause_reason) == (False, None)
+    assert collector._tracker_failure_counts == {}
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_auto_pause_commits_before_next_kufar_request(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-12: the auto-pause UPDATE stayed uncommitted while the next
+    key was fetched (up to ~50 s with retries), holding row locks that
+    PATCH /trackers waits on."""
+    from sqlalchemy import select
+
+    from api.services.kufar_client import KufarAPIError
+
+    sf = tick_db
+    seen_paused: list[bool] = []
+
+    def _pages(query):
+        return KufarAPIError("HTTP 400")
+
+    calls: list[dict] = []
+    stub = _kufar_stub(_pages, calls)
+
+    class _ObservingStub(stub):
+        async def search(self, **kwargs):
+            if kwargs["query"] == "macbook air":
+                async with sf() as other:
+                    seen_paused.append(
+                        (await other.execute(
+                            select(Tracker.paused).where(Tracker.query == "iphone 13")
+                        )).scalar_one()
+                    )
+                return {"ads": [], "total": 0}
+            return await super().search(**kwargs)
+
+    monkeypatch.setattr(collector, "KufarClient", _ObservingStub)
+    now = datetime.now(UTC)
+    async with sf() as session:
+        user = make_user(telegram_user_id=2901, first_name="Locks")
+        session.add(user)
+        await session.flush()
+        failing = Tracker(user_id=user.id, query="iphone 13", strict_mode=False,
+                          last_checked_at=now - timedelta(minutes=40))
+        session.add_all([failing, Tracker(
+            user_id=user.id, query="macbook air", strict_mode=False,
+            last_checked_at=now - timedelta(minutes=20),
+        )])
+        await session.commit()
+        collector._tracker_failure_counts[failing.id] = (
+            collector._TRACKER_AUTO_PAUSE_THRESHOLD - 1
+        )
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    assert seen_paused == [True]
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_empty_page_keeps_the_hour_snapshot(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-06: an empty Kufar page overwrote the hour's snapshot with
+    zeros before the outage guard ran — a permanent "0 BYN" point in the
+    price history."""
+    from sqlalchemy import select
+
+    from api.models import QuerySnapshot
+
+    sf = tick_db
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(lambda q: [], []))
+    now = datetime.now(UTC)
+    key = build_query_key("iphone 13", False)
+    async with sf() as session:
+        user = make_user(telegram_user_id=3001, first_name="Empty")
+        session.add(user)
+        await session.flush()
+        session.add_all([
+            Tracker(user_id=user.id, query="iphone 13", strict_mode=False,
+                    last_checked_at=now - timedelta(minutes=20)),
+            QuerySnapshot(
+                query=key, snapshot_at=collector.snapshot_bucket(now),
+                total_results=5, analyzed_count=5, mean_byn=1000, median_byn=1000,
+                min_byn=900, max_byn=1100,
+            ),
+        ])
+        await session.commit()
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    async with sf() as session:
+        snapshot = (await session.execute(select(QuerySnapshot))).scalar_one()
+    assert (snapshot.total_results, float(snapshot.median_byn)) == (5, 1000.0)
+
+
+@pytest.mark.asyncio
+async def test_enqueue_dedups_long_keys_against_pending_rows(tick_db):
+    """RV2-DS-10: keys longer than the column were cut on write but
+    compared in full, so ``trend_reversal:<long search key>`` was never
+    deduped against a pending row, and two long keys sharing a prefix
+    collapsed into one."""
+    sf = tick_db
+    long_key = "trend_reversal:" + "x" * 200
+    other_key = long_key + "y"
+    stored = collector._outbox_dedup_key(long_key)
+    assert len(stored) <= 128
+    assert collector._outbox_dedup_key(other_key) != stored
+    assert collector._outbox_dedup_key("new_listing:5") == "new_listing:5"
+
+    async with sf() as session:
+        user = make_user(telegram_user_id=3101, first_name="Long")
+        session.add(user)
+        await session.flush()
+        uid = user.id
+        _enqueue_tracker_notifications(session, [
+            _TrackerNotifyJob(3101, uid, "first", None, dedup_key=long_key),
+        ])
+        await session.commit()
+
+    async with sf() as session:
+        pending = await collector._pending_outbox_keys(session, {uid})
+        written = _enqueue_tracker_notifications(session, [
+            _TrackerNotifyJob(3101, uid, "dup", None, dedup_key=long_key),
+            _TrackerNotifyJob(3101, uid, "other", None, dedup_key=other_key),
+        ], skip_keys=pending)
+        await session.commit()
+
+    assert written == 1
+    assert [row.message for row in await _outbox_rows(sf)] == ["first", "other"]
+
+
+@pytest.mark.asyncio
+async def test_check_trackers_limit_applies_to_due_trackers_only(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    """RV2-DS-04: the LIMIT ran before the exact interval check, so hourly
+    trackers that were not due yet — but had older cursors — filled it and
+    the due 15-minute trackers waited. Intervals under the 15-minute floor
+    are still checked at the floor."""
+    sf = tick_db
+    calls: list[dict] = []
+    monkeypatch.setattr(collector, "_DUE_TRACKER_LIMIT", 1)
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(lambda q: [], calls))
+    now = datetime.now(UTC)
+    async with sf() as session:
+        user = make_user(telegram_user_id=3201, first_name="Starved")
+        session.add(user)
+        await session.flush()
+        session.add_all([
+            Tracker(user_id=user.id, query="macbook air", strict_mode=False,
+                    interval_min=60, last_checked_at=now - timedelta(minutes=30)),
+            Tracker(user_id=user.id, query="ipad mini", strict_mode=False,
+                    interval_min=5, last_checked_at=now - timedelta(minutes=10)),
+            Tracker(user_id=user.id, query="iphone 13", strict_mode=False,
+                    interval_min=15, last_checked_at=now - timedelta(minutes=20)),
+        ])
+        await session.commit()
+
+    await check_trackers(mock_bot, sf, _TICK_SETTINGS)
+
+    assert [call["query"] for call in calls] == ["iphone 13"]
