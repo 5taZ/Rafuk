@@ -18,9 +18,9 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261021-1872adf";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261021-1872adf";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261021-1872adf";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261025-2832914";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261025-2832914";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261025-2832914";
 
 function _lazyLoadDealsSources(context) {
     if (_loadPromises.has("deals")) return _loadPromises.get("deals");
@@ -39,14 +39,13 @@ function _lazyLoadDealsSources(context) {
 // RV-FE-02: the list loaders surface a missing chunk the same way as a
 // failed request (RV-FE-05 error state with "Повторить" in the list);
 // background refreshes stay quiet; explicit user actions get a toast.
-function _dealsChunkFailure(context, collection, loadMethod) {
+function _dealsChunkFailure(context, collection, loadMethod, lazy) {
     return (method) => {
         const state = context.state;
         if (method === loadMethod && state?.[collection]) {
-            state[collection].error = LAZY_LOAD_FAILED_MESSAGE;
+            state[collection].error = lazy.needsRestart() ? LAZY_RESTART_MESSAGE : LAZY_LOAD_FAILED_MESSAGE;
             state[collection]._loading = false;
             if (typeof context.renderLeads === "function") context.renderLeads();
-            if (typeof context.renderWatchlist === "function") context.renderWatchlist();
             return undefined;
         }
         if (method !== "loadAnalytics") _showLazyLoadToast(context);
@@ -61,7 +60,7 @@ function createApiLeads(context) {
         factoryKey: "_realCreateApiLeads",
         label: "api_leads.js",
     });
-    const onFailure = _dealsChunkFailure(context, "leads", "loadLeads");
+    const onFailure = _dealsChunkFailure(context, "leads", "loadLeads", lazy);
 
     function _delegate(method, args) {
         return _lazyApiCall(lazy, context, "deals", method, args, onFailure);
@@ -91,7 +90,7 @@ function createApiWatchlist(context) {
         factoryKey: "_realCreateApiWatchlist",
         label: "api_watchlist.js",
     });
-    const onFailure = _dealsChunkFailure(context, "watchlist", "loadWatchlist");
+    const onFailure = _dealsChunkFailure(context, "watchlist", "loadWatchlist", lazy);
 
     function _delegate(method, args) {
         return _lazyApiCall(lazy, context, "deals", method, args, onFailure);

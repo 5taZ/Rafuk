@@ -13,7 +13,9 @@ function createRenderCardBuilders(context) {
         openExternalLink,
         safeImageUrl,
         optimizedImage,
-        escapeHtml,
+        // FR-18: shared lead / ad identity rules (dom_helpers.js).
+        ACTIVE_LEAD_STATUSES,
+        sameAdId,
         // OPUS-13 wave 74: dom_helpers ride through context because
         // this file loads as a lazy <script> inside _lazy_cards_stub
         // and can't see bundle-IIFE-scoped callables.
@@ -90,26 +92,14 @@ function createRenderCardBuilders(context) {
         return domEl("div", { className: placeholderClass, text: placeholderText });
     }
 
-    const ACTIVE_COLLECTION_STATUSES = new Set([
-        "new",
-        "in_progress",
-        "researching",
-        "bought",
-        "sold",
-    ]);
-
-    function _sameAdId(left, right) {
-        return left != null && right != null && String(left) === String(right);
-    }
-
     function _isActiveLeadAd(adId) {
         return (state.leads?.items || []).some(
-            (lead) => _sameAdId(lead.ad_id, adId) && ACTIVE_COLLECTION_STATUSES.has(lead.status),
+            (lead) => sameAdId(lead.ad_id, adId) && ACTIVE_LEAD_STATUSES.has(lead.status),
         );
     }
 
     function _isWatchlistAd(adId) {
-        return (state.watchlist?.items || []).some((watch) => _sameAdId(watch.ad_id, adId));
+        return (state.watchlist?.items || []).some((watch) => sameAdId(watch.ad_id, adId));
     }
 
     function _actionButtonAttrs(disabled, label) {

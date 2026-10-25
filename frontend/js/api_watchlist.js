@@ -12,7 +12,6 @@ function createApiWatchlist(context) {
         hasTelegramInitData,
         renderAll,
         renderError,
-        renderWatchlist,
         renderLeads,
         renderDetailModal,
         showToast,
@@ -21,18 +20,19 @@ function createApiWatchlist(context) {
         deleteJson,
         requestJson,
         buildCommonQuery,
+        // FR-18: shared lead / ad identity rules (dom_helpers.js).
+        ACTIVE_LEAD_STATUSES,
+        sameAdId,
+        validVersion,
         inflightGuardMs = 30_000,
     } = context;
 
     let _watchlistDetailAbortController = null;
 
-    // After watchlist mutations we need to refresh BOTH renders. The
-    // legacy "Избранное" view still binds renderWatchlist, while the
-    // unified "Мои объявления" tab binds renderLeads which itself reads
-    // from state.watchlist for the "Избранное" tab. Without this, a
-    // delete/promote leaves the card visible until the user switches tabs.
+    // The unified "Мои объявления" tab renders state.watchlist inside
+    // renderLeads ("Избранное" chip). Without this, a delete/promote
+    // leaves the card visible until the user switches tabs.
     function refreshAfterWatchlistChange() {
-        if (typeof renderWatchlist === "function") renderWatchlist();
         if (typeof renderLeads === "function") renderLeads();
     }
 
@@ -59,11 +59,6 @@ function createApiWatchlist(context) {
         setTimeout(() => _inflightWatchId.delete(watchId), inflightGuardMs);
     }
 
-    function _validVersion(value) {
-        const numeric = Number(value);
-        return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
-    }
-
     function _findWatchlistSnapshot(itemOrId) {
         const itemId = typeof itemOrId === "object" ? itemOrId?.id : itemOrId;
         return state.watchlist.items.find((w) => w.id === itemId) || null;
@@ -77,10 +72,10 @@ function createApiWatchlist(context) {
     async function _resolveWatchlistVersion(itemOrId) {
         const snapshot = _findWatchlistSnapshot(itemOrId)
             || (typeof itemOrId === "object" ? itemOrId : null);
-        const version = _validVersion(snapshot?.version);
+        const version = validVersion(snapshot?.version);
         if (version) return version;
         await loadWatchlist();
-        return _validVersion(_findWatchlistSnapshot(itemOrId)?.version);
+        return validVersion(_findWatchlistSnapshot(itemOrId)?.version);
     }
 
     function _showStaleWatchlistToast() {
@@ -151,21 +146,14 @@ function createApiWatchlist(context) {
 
         // Check both surfaces — after the watchlist→leads merge a single
         // ad_id can only be in ONE state at a time.
-        const ACTIVE_LEAD_STATUSES = new Set([
-            "new",
-            "in_progress",
-            "researching",
-            "bought",
-            "sold",
-        ]);
-        const alreadyInWatchlist = state.watchlist.items.some((w) => w.ad_id === item.ad_id);
+        const alreadyInWatchlist = state.watchlist.items.some((w) => sameAdId(w.ad_id, item.ad_id));
         if (alreadyInWatchlist) {
             showToast("Уже в избранном", "info", 1600);
             refreshCollectionActionSurfaces();
             return true;
         }
         const alreadyInLeads = state.leads.items.some(
-            (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
+            (l) => sameAdId(l.ad_id, item.ad_id) && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
             showToast("Уже в покупках", "info", 1600);
@@ -248,15 +236,8 @@ function createApiWatchlist(context) {
         // Watchlist items live in the same lead_items table after the
         // 20260427_0001 merge — promotion is a pure status transition,
         // no INSERT + DELETE dance needed.
-        const ACTIVE_LEAD_STATUSES = new Set([
-            "new",
-            "in_progress",
-            "researching",
-            "bought",
-            "sold",
-        ]);
         const alreadyInLeads = state.leads.items.some(
-            (l) => l.ad_id === item.ad_id && ACTIVE_LEAD_STATUSES.has(l.status),
+            (l) => sameAdId(l.ad_id, item.ad_id) && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
             showToast("Уже в покупках", "info", 1600);
@@ -374,7 +355,7 @@ function createApiWatchlist(context) {
             const newThumb = (fullDetail.images && fullDetail.images[0]) || null;
             if (newThumb && !item.thumbnail && state.watchlist?.items) {
                 const matchingItem = state.watchlist.items.find(
-                    (w) => w.ad_id === item.ad_id && !w.thumbnail
+                    (w) => sameAdId(w.ad_id, item.ad_id) && !w.thumbnail
                 );
                 if (matchingItem) {
                     matchingItem.thumbnail = newThumb;

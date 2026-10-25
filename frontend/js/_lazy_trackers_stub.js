@@ -26,8 +26,8 @@
 // and the AI lazy-load URLs in app_actions.js. A template literal
 // over a separate version constant would be invisible to that
 // regex.
-const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20261021-1872adf";
-const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20261021-1872adf";
+const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20261025-2832914";
+const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20261025-2832914";
 
 function _lazyLoadTrackerSources(context) {
     if (_loadPromises.has("trackers")) return _loadPromises.get("trackers");
@@ -67,13 +67,12 @@ function createRenderTrackers(context) {
             let container = null;
             if (method === "renderTrackers") container = elements.trackersList;
             if (method === "renderTrackerEvents") container = elements.trackerEventsList;
-            _renderLazyLoadError(context, container, lazy.retry, _reloadTrackerData);
+            _renderLazyLoadError(context, container, lazy.retry, _reloadTrackerData, lazy.needsRestart());
         });
     }
 
     return {
         renderTrackerStatus: (...args) => _delegate("renderTrackerStatus", args),
-        renderWatchlistFilters: (...args) => _delegate("renderWatchlistFilters", args),
         renderTrackers: (...args) => _delegate("renderTrackers", args),
         renderTrackerEvents: (...args) => _delegate("renderTrackerEvents", args),
         renderTrackerEventFilters: (...args) => _delegate("renderTrackerEventFilters", args),

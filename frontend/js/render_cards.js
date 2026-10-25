@@ -319,19 +319,19 @@ function createRenderCards(context) {
      */
     function _appendPaginationSentinel(container, options) {
         if (!container) return;
-        // Disconnect any previous observer on this container to prevent
-        // orphaned IntersectionObserver callbacks from stale renders.
-        const oldSentinels = container.querySelectorAll(".list-pagination-sentinel");
-        for (const old of oldSentinels) {
-            if (old._paginationObserver) {
-                old._paginationObserver.disconnect();
-            }
+        // Disconnect the previous render's observer. FR-01: it is kept on
+        // the container — the old sentinel is already gone by now
+        // (_resetContainer cleared it), so looking it up found nothing.
+        if (container._paginationObserver) {
+            container._paginationObserver.disconnect();
+            container._paginationObserver = null;
         }
         const {
             renderedCount,
             totalCount,
             hasMore,
             isLoadingMore,
+            loadError = null,
             onLoadMore,
             allLoadedText = "Все объявления загружены.",
         } = options;
@@ -344,7 +344,9 @@ function createRenderCards(context) {
             button.disabled = Boolean(isLoadingMore);
             button.textContent = isLoadingMore
                 ? "Загружаю..."
-                : `Загрузить ещё (${renderedCount} из ${totalCount || "—"})`;
+                : loadError
+                    ? `Не удалось загрузить ещё — повторить (${renderedCount} из ${totalCount || "—"})`
+                    : `Загрузить ещё (${renderedCount} из ${totalCount || "—"})`;
             button.addEventListener("click", () => {
                 if (typeof onLoadMore === "function") {
                     onLoadMore();
@@ -355,8 +357,9 @@ function createRenderCards(context) {
             // close enough to the sentinel, kick off the next page
             // without waiting for a tap. IntersectionObserver isn't
             // supported in really old WebViews; the button stays as
-            // a manual fallback.
-            if (typeof IntersectionObserver !== "undefined") {
+            // a manual fallback. FR-01: after a failed page only the
+            // tap retries, so a persistent error can't loop.
+            if (typeof IntersectionObserver !== "undefined" && !loadError && !isLoadingMore) {
                 const observer = new IntersectionObserver(
                     (entries) => {
                         for (const entry of entries) {
@@ -375,7 +378,7 @@ function createRenderCards(context) {
                     { rootMargin: "1200px 0px" },
                 );
                 observer.observe(sentinel);
-                sentinel._paginationObserver = observer;
+                container._paginationObserver = observer;
             }
         } else if (totalCount && renderedCount > 0) {
             const note = document.createElement("p");
@@ -421,6 +424,22 @@ function createRenderCards(context) {
                 return;
             }
 
+            // FR-02: a failed first page is an error, not an empty result.
+            if (state.listings.error && !state.listings.items.length && elements.listingsList
+                && typeof context.buildEmptyState === "function") {
+                _resetContainer(elements.listingsList);
+                elements.listingsList.appendChild(context.buildEmptyState({
+                    title: "Не удалось загрузить объявления",
+                    hint: state.listings.error,
+                    actionLabel: "Повторить",
+                    onAction: () => { void actions?.loadListings?.(true); },
+                    tone: "error",
+                }));
+                if (elements.listingsTotalBadge) elements.listingsTotalBadge.textContent = "";
+                if (elements.listingsSection) elements.listingsSection.hidden = false;
+                return;
+            }
+
             const hasData = state.listings.items.length > 0 || state.listings.total > 0;
             const trimmedQuery = (state.search.activeQuery || "").trim();
             const hasQuery = Boolean(trimmedQuery);
@@ -462,6 +481,7 @@ function createRenderCards(context) {
                     totalCount: reachableTotal,
                     hasMore: state.listings.hasMore,
                     isLoadingMore: state.listings.loadingMore,
+                    loadError: state.listings.loadMoreError,
                     allLoadedText: limitedText,
                     onLoadMore: () => {
                         if (typeof actions.loadMoreListings === "function") {
@@ -749,131 +769,11 @@ function createRenderCards(context) {
         return labels[value] || value || "Без сигнала";
     }
 
-    function watchlistMatchesFilter(item) {
-        if (state.watchlist.filter === "all") {
-            return true;
-        }
-        return item.workflow_status === state.watchlist.filter;
-    }
-
-    function watchlistSortValue(item) {
-        const marketOrder = {
-            price_drop: 0,
-            missing: 1,
-            active: 2,
-        };
-        const workflowOrder = {
-            in_progress: 0,
-            reviewing: 1,
-            watching: 2,
-            skipped: 3,
-        };
-        return `${marketOrder[item.market_status] ?? 9}:${workflowOrder[item.workflow_status] ?? 9}`;
-    }
-
-    function renderWatchlist() {
-        return safeRender('renderWatchlist', () => {
-        const container = elements.watchlistList;
-        if (!container) return;
-
-        // Destroy existing virtual list before reset
-        if (container._virtualList) {
-            container._virtualList.destroy();
-            container._virtualList = null;
-        }
-        _resetContainer(container);
-
-        if (context._hooks?.renderWatchlistFilters) context._hooks.renderWatchlistFilters();
-
-        if (!hasTelegramInitData()) {
-            const note = document.createElement("p");
-            note.className = "tracker-empty";
-            note.textContent = "Отслеживание лотов доступно внутри Telegram Mini App.";
-            container.appendChild(note);
-            return;
-        }
-
-        // Show skeleton cards while loading
-        if (state.watchlist._loading) {
-                for (let i = 0; i < 3; i++) container.appendChild(_buildSkeletonCard());
-                return;
-            }
-
-        const filteredWatchlist = [...state.watchlist.items]
-            .filter(watchlistMatchesFilter)
-            .sort((left, right) => {
-                const rankDelta = watchlistSortValue(left).localeCompare(watchlistSortValue(right));
-                if (rankDelta !== 0) {
-                    return rankDelta;
-                }
-                return String(right.updated_at || "").localeCompare(String(left.updated_at || ""));
-            });
-
-        if (!filteredWatchlist.length) {
-            const buildEmpty = context.buildEmptyState;
-            if (typeof buildEmpty === "function") {
-                if (state.watchlist.items.length) {
-                    container.appendChild(
-                        buildEmpty({
-                            title: "По этому фильтру ничего нет",
-                            hint: "Попробуйте переключиться на «Все», чтобы увидеть весь список.",
-                        })
-                    );
-                } else {
-                    container.appendChild(
-                        buildEmpty({
-                            title: "Здесь будут ваши избранные лоты",
-                            hint: "Нажмите «В избранное» в карточке объявления, чтобы следить за ценой и снятием с продажи.",
-                            actionLabel: "Найти объявления",
-                            onAction: () => {
-                                if (typeof context.setActiveView === "function") {
-                                    context.setActiveView("overview");
-                                }
-                                const searchInput = document.querySelector(".search-input");
-                                if (searchInput) searchInput.focus();
-                            },
-                        })
-                    );
-                }
-            } else {
-                const note = document.createElement("p");
-                note.className = "tracker-empty";
-                note.textContent = state.watchlist.items.length
-                    ? "По текущему фильтру ничего нет. Попробуйте «Все»."
-                    : "Сохранённых лотов пока нет. Нажмите «В избранное» в карточке объявления.";
-                container.appendChild(note);
-            }
-            return;
-        }
-
-        // Re-enable virtual scrolling for watchlist — cards have consistent layout
-        const WATCHLIST_ITEM_HEIGHT = 220;
-        const VIRTUAL_LIST_THRESHOLD = 30;
-        if (filteredWatchlist.length > VIRTUAL_LIST_THRESHOLD) {
-            container._virtualList = createVirtualList(container, {
-                itemHeight: WATCHLIST_ITEM_HEIGHT,
-                fixedHeight: WATCHLIST_ITEM_HEIGHT,
-                bufferSize: 5,
-                renderFn: (item, index) => buildWatchlistNode(item, marketLabel),
-            });
-            container._virtualList.setItems(filteredWatchlist);
-        } else {
-            const signal = _getSignal(container);
-            const list = _buildCardList();
-            for (const item of filteredWatchlist) {
-                list.appendChild(buildWatchlistNode(item, marketLabel, signal));
-            }
-            container.appendChild(list);
-        }
-        });
-    }
-
     return {
         buildListingNode,
         renderListingsCollection,
         renderListings,
         renderLeads,
-        renderWatchlist,
     };
 }
 

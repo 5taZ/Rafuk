@@ -631,11 +631,13 @@ def test_lazy_watchlist_add_uses_context_guard_timer() -> None:
     """
     watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
     harness = (
-        watchlist_js
+        _DOMAIN_HELPERS_JS
+        + watchlist_js
         + r"""
 const assert = require("assert");
 const calls = [];
 const api = createApiWatchlist({
+    ...domainHelpers,
     state: {
         watchlist: { items: [], _requestId: 0 },
         leads: { items: [] },
@@ -794,7 +796,10 @@ def test_pull_to_refresh_does_not_translate_app_root() -> None:
     setup = text[text.index("function setupPullToRefresh"):text.index("/* ─── Pinch-zoom")]
     assert "document.querySelector('.app')" not in setup
     assert "target.style.transform" not in setup
-    assert "indicatorEl.style.transform" in setup
+    # UI-09: the individual ``translate`` property keeps the CSS
+    # translateX(-50%) centring intact.
+    assert "indicatorEl.style.translate" in setup
+    assert "indicatorEl.style.transform" not in setup
 
 
 def test_pinch_zoom_caches_viewport_size_for_gestures() -> None:
@@ -930,7 +935,8 @@ def test_frontend_image_proxy_policy_is_explicit() -> None:
 def test_detail_proxy_image_keeps_direct_src_while_object_url_loads() -> None:
     modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
     harness = (
-        modals_js
+        _DOMAIN_HELPERS_JS
+        + modals_js
         + r"""
 const assert = require("assert");
 
@@ -1018,6 +1024,7 @@ const state = {
 let proxyCalled = "";
 let proxyResolve;
 const renderer = createRenderModals({
+    ...domainHelpers,
     state,
     elements,
     actions: {
@@ -1065,7 +1072,8 @@ def test_listing_and_detail_duplicate_actions_render_disabled_labels() -> None:
     builders_js = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
     modals_js = (JS_DIR / "render_modals.js").read_text(encoding="utf-8")
     harness = (
-        builders_js
+        _DOMAIN_HELPERS_JS
+        + builders_js
         + "\n"
         + modals_js
         + r"""
@@ -1171,6 +1179,7 @@ const state = {
 };
 const menus = [];
 const builders = createRenderCardBuilders({
+    ...domainHelpers,
     state,
     elements: {},
     actions: { addLeadFromListing() {}, addWatchlistFromListing() {} },
@@ -1240,6 +1249,7 @@ const elements = {
 elements.detailModal.hidden = true;
 elements.detailModal.querySelector = () => ({ scrollTop: 0 });
 const renderer = createRenderModals({
+    ...domainHelpers,
     state,
     elements,
     actions: {},
@@ -1326,7 +1336,8 @@ def test_duplicate_action_state_covers_secondary_surfaces() -> None:
     action_refresh_start = actions_js.index("function _refreshCollectionActionSurfaces")
     action_refresh = actions_js[
         action_refresh_start:
-        actions_js.index("\n    function _validVersion", action_refresh_start)
+        # FR-18: _validVersion moved to dom_helpers.js; the next helper ends the slice.
+        actions_js.index("\n    function _findWatchingSnapshot", action_refresh_start)
     ]
     watch_refresh_start = watchlist_js.index("function refreshCollectionActionSurfaces")
     watch_refresh = watchlist_js[
@@ -2211,13 +2222,13 @@ def test_unified_item_card_replaces_lead_and_watchlist_builders() -> None:
 def test_make_swipeable_helper_kept_for_future_surfaces() -> None:
     """Swipe-to-promote was removed from watching cards because the
     swipe-bg DOM left thin colored slivers visible at the rounded
-    corners on Telegram WebView. The helper itself stays in
-    dom_helpers.js (still respects reduced-motion + haptics) so
-    future surfaces can opt back in without re-implementing the
-    gesture math from scratch.
+    corners on Telegram WebView.
+
+    FR-17: the unused helper (and its .swipe-* CSS) is gone too; the
+    gesture plumbing it relied on (reduced-motion + haptics) stays.
     """
     text = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
-    assert "function makeSwipeable" in text
+    assert "function makeSwipeable" not in text
     assert "(prefers-reduced-motion: reduce)" in text
     assert "HapticFeedback" in text
     assert "impactOccurred" in text
@@ -2479,7 +2490,8 @@ def test_hot_path_view_switches_do_not_double_render() -> None:
 
     # api_events.js tab click handler: setActiveView(view) should not be
     # followed immediately by renderAll()
-    tab_handler_start = events_js.index("_confirmTimers.watchlist = undefined;")
+    # UI-08: the tab handler now disarms confirms via _resetAllConfirms().
+    tab_handler_start = events_js.index("_resetAllConfirms();")
     tab_section = events_js[tab_handler_start:tab_handler_start + 200]
     set_idx = tab_section.index("setActiveView(view);")
     after_set_tab = tab_section[set_idx + len("setActiveView(view);"):]
@@ -3002,6 +3014,18 @@ def _js(*names: str) -> str:
     return "\n".join((JS_DIR / name).read_text(encoding="utf-8") for name in names)
 
 
+def _domain_helpers_js() -> str:
+    """FR-18: lazy chunks take the shared lead / ad identity rules from
+    context; harnesses that don't load dom_helpers.js reuse its block."""
+    src = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
+    start = src.index("// ─── Lead / ad identity rules")
+    block = src[start:src.index("// ─── end lead / ad identity rules")]
+    return block + "\nconst domainHelpers = { ACTIVE_LEAD_STATUSES, sameAdId, validVersion };\n"
+
+
+_DOMAIN_HELPERS_JS = _domain_helpers_js()
+
+
 def _node_ok(script: str) -> None:
     result = subprocess.run(["node"], input=script, capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr or result.stdout
@@ -3190,8 +3214,12 @@ process.exit(0);
 
 
 def test_rv_fe02_load_script_times_out_removes_tag_and_retries() -> None:
-    """RV-FE-02: concurrent callers share one <script>; a failed or
-    stalled tag is removed and the next call inserts a fresh one."""
+    """RV-FE-02: concurrent callers share one <script>; a failed tag is
+    removed and the next call inserts a fresh one.
+
+    FR-04: a *stalled* tag is kept on timeout (removing it never stopped
+    the download, and the retry then executed the file twice); a retry
+    waits on the same tag and a late onload completes it."""
     harness = _FAKE_DOM_JS + _js("dom_helpers.js", "app_core_dom.js", "app_core.js") + r"""
 const assert = require("assert");
 const realSetTimeout = setTimeout;
@@ -3222,7 +3250,15 @@ const core = createAppCore();
     assert.ok(timeout, "loads are bounded by a timeout");
     timeout.fn();
     await assert.rejects(stalled, /Timed out/);
-    assert.strictEqual(scripts().filter((s) => s.src === "js/y.js?v=1").length, 0);
+    const yTags = () => scripts().filter((s) => s.src === "js/y.js?v=1");
+    assert.strictEqual(yTags().length, 1, "the stalled tag keeps loading");
+    const again = core._loadScript("js/y.js?v=1");
+    assert.notStrictEqual(again, stalled, "the retry is a new wait");
+    assert.strictEqual(yTags().length, 1, "the retry reuses the in-flight tag");
+    yTags()[0].onload();
+    await again;
+    await core._loadScript("js/y.js?v=1");
+    assert.strictEqual(yTags().length, 1, "a late load marks the script loaded");
     await flush();
 })()""" + _NODE_FAIL
     _node_ok(harness)
@@ -3471,7 +3507,7 @@ def test_rv_fe05_failed_reload_keeps_leads_and_watchlist() -> None:
     """RV-FE-05: a failed load (offline, 5xx, the 401 after initData's
     2 h lifetime) keeps the last good list and records the error instead
     of turning it into an empty list."""
-    harness = _js("api_leads.js", "api_watchlist.js") + r"""
+    harness = _DOMAIN_HELPERS_JS + _js("api_leads.js", "api_watchlist.js") + r"""
 const assert = require("assert");
 let next = () => Promise.reject(new Error("Сессия Telegram истекла — перезапустите приложение."));
 const renders = [];
@@ -3483,6 +3519,7 @@ const state = {
     search: { activeQuery: "" },
 };
 const context = {
+    ...domainHelpers,
     state,
     hasTelegramInitData: () => true,
     renderLeads: () => renders.push("leads"),
@@ -3519,6 +3556,7 @@ const watchlist = createApiWatchlist(context);
 _CARDS_HARNESS = r"""
 const domContext = {
     domEl, domClear, domFragment,
+    ACTIVE_LEAD_STATUSES, sameAdId, validVersion,
     createVirtualList,
     attachLongPress: () => {},
     safeRender: (_name, fn) => fn(),
@@ -3663,7 +3701,8 @@ def test_rv_fe05_session_banner_is_single_and_closes_app() -> None:
     harness = _FAKE_DOM_JS + _js("dom_helpers.js", "render_core.js") + r"""
 const assert = require("assert");
 let closed = 0;
-window.Telegram = { WebApp: { close: () => { closed += 1; } } };
+// TG-16: the close button is only offered inside a Telegram launch.
+window.Telegram = { WebApp: { initData: "query_id=1", close: () => { closed += 1; } } };
 const core = createRenderCore({ state: {}, elements: {} });
 core.showSessionBanner("Сессия Telegram истекла — перезапустите приложение.");
 core.showSessionBanner("Сессия Telegram истекла — перезапустите приложение.");
@@ -3793,7 +3832,8 @@ def test_rv_fe04_service_worker_api_is_network_first_with_marked_fallback() -> N
 
     network = () => json({ detail: "bad gateway" }, { status: 502 });
     response = await dispatch(url);
-    assert.strictEqual(response.headers.get("X-SW-Fallback"), "1", "gateway errors fall back");
+    // FR-03: the marker names the reason so the page can word it.
+    assert.strictEqual(response.headers.get("X-SW-Fallback"), "gateway", "5xx gateway falls back");
     network = () => json({ detail: "boom" }, { status: 500 });
     response = await dispatch(url);
     assert.strictEqual(response.status, 500, "application errors pass through");
@@ -3829,7 +3869,8 @@ globalThis.setTimeout = (fn, ms) => realSetTimeout(fn, ms >= 10000 ? 0 : ms);
     const hung = new Promise((resolve) => realSetTimeout(() => resolve("hung"), 500));
     const fallback = await Promise.race([dispatch(url), hung]);
     assert.notStrictEqual(fallback, "hung", "a hanging network must not hang the page");
-    assert.strictEqual(fallback.headers.get("X-SW-Fallback"), "1");
+    // FR-03: a slow server is not reported as "no connection".
+    assert.strictEqual(fallback.headers.get("X-SW-Fallback"), "slow");
 
     let release;
     network = () => new Promise((resolve) => { release = () => resolve(json({ late: true })); });
@@ -3927,12 +3968,15 @@ const closeButton = document.getElementById("privacy-modal-close");
     assert.ok(!consent.hasAttribute("inert"));
     assert.ok(privacy.hasAttribute("inert"), "the gate's inert is handed back");
     assert.strictEqual(document.activeElement, link, "focus returns to the link");
-    assert.ok(!document.body.classList.contains("modal-open"));
+    // FR-05: the gate holds its own (counted) scroll lock now, so the
+    // page stays locked until the gate itself closes.
+    assert.ok(document.body.classList.contains("modal-open"), "the gate keeps the page locked");
     assert.strictEqual(globalEscapes, 0, "the app's Escape handler never saw it");
 
     keydown(link, "Escape");
     await assert.rejects(gate, /consent_denied/);
     assert.strictEqual(consent.hidden, true);
+    assert.ok(!document.body.classList.contains("modal-open"), "closing the gate unlocks");
     assert.strictEqual(globalEscapes, 0, "the gate swallows its own Escape too");
     assert.ok(!main.hasAttribute("inert"));
 })()""" + _NODE_FAIL
@@ -4379,3 +4423,160 @@ def test_rv_ai07_listing_assistant_timeout_covers_backend_budget() -> None:
     assert timeout_ms / 1000 > backend + 30
     call = 'postJson("/api/v1/ai/listing-assistant", payload, {\n'
     assert call + "                timeout: LISTING_ASSISTANT_TIMEOUT_MS," in source
+
+
+def test_rv2_telegram_init_disables_swipes_and_survives_blocked_storage() -> None:
+    """TG-01: vertical swipes are handed to the page from Bot API 7.7;
+    TG-15: ready() waits for the first render; TG-12: the light chrome
+    matches --bg; TG-19: a throwing localStorage doesn't break init."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "app_core_dom.js", "app_core.js") + r"""
+const assert = require("assert");
+const calls = [];
+const atLeast = (version) => (min) => {
+    const [a, b] = String(version).split(".").map(Number);
+    const [c, d] = String(min).split(".").map(Number);
+    return a > c || (a === c && b >= d);
+};
+const makeTg = (version) => ({
+    version,
+    colorScheme: "light",
+    isVersionAtLeast: atLeast(version),
+    expand() {},
+    ready() { calls.push(["ready", version]); },
+    disableVerticalSwipes() { calls.push(["swipes", version]); },
+    setBackgroundColor(color) { calls.push(["bg", color]); },
+    setHeaderColor() {},
+    setBottomBarColor() {},
+    onEvent() {},
+});
+Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    get() { throw new Error("SecurityError"); },
+});
+
+window.Telegram = { WebApp: makeTg("7.6") };
+createAppCore().initTelegramTheme();
+assert.ok(!calls.some(([kind]) => kind === "swipes"), "no call below 7.7");
+assert.ok(!calls.some(([kind]) => kind === "ready"), "ready() is left to init()");
+assert.strictEqual(document.documentElement.getAttribute("data-theme"), "light");
+assert.ok(calls.some(([kind, color]) => kind === "bg" && color === "#f7f7f8"));
+
+window.Telegram = { WebApp: makeTg("7.7") };
+const core = createAppCore();
+core.initTelegramTheme();
+assert.ok(calls.some(([kind, version]) => kind === "swipes" && version === "7.7"));
+core.toggleTheme();
+assert.strictEqual(document.documentElement.getAttribute("data-theme"), "dark");
+"""
+    _node_ok(harness)
+
+
+def test_rv2_clear_all_confirmation_is_disarmed_by_a_tab_switch() -> None:
+    """UI-08: a tab switch resets the armed "Удалить все?" state, so a
+    single tap afterwards re-arms instead of wiping the list."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js") + r"""
+function _bindCarouselEvents() {}
+function _bindExpenseEvents() {}
+""" + _js("api_events.js") + r"""
+const assert = require("assert");
+let cleared = 0;
+const toasts = [];
+const state = {
+    ui: { activeView: "deals" },
+    search: { draft: "", activeQuery: "", strictSearch: true, sort: "newest" },
+    filters: {},
+    trackers: { events: [] },
+    leads: { items: [] },
+    watchlist: { items: [{ id: 1, ad_id: 5 }] },
+    detail: { data: null },
+    admin: {},
+};
+const tab = el("button", { "data-view": "tracking" });
+const elements = {
+    searchInput: el("input"),
+    deleteAllWatchlistButton: el("button"),
+    viewTabs: [tab],
+};
+document.body.append(elements.searchInput, elements.deleteAllWatchlistButton, tab);
+createApiEvents({
+    state,
+    elements,
+    renderAll() {},
+    renderLoading() {},
+    setActiveView: (view) => { state.ui.activeView = view; },
+    loadTrackers() {},
+    startTrackerRefresh() {},
+    stopTrackerRefresh() {},
+    clearAllWatchlist: async () => { cleared += 1; },
+    showToast: (...args) => toasts.push(args),
+}).bindEvents();
+
+const button = elements.deleteAllWatchlistButton;
+button.click();
+assert.strictEqual(button.textContent, "Удалить все?");
+tab.click();
+assert.strictEqual(button.textContent, "Очистить", "the tab switch disarms the button");
+button.click();
+assert.strictEqual(cleared, 0, "one tap after the switch only re-arms");
+button.click();
+assert.strictEqual(cleared, 1);
+process.exit(0);
+"""
+    _node_ok(harness)
+
+
+def test_rv2_failed_next_page_stops_auto_loading() -> None:
+    """FR-01: after a failed next page the sentinel offers a manual retry
+    and no IntersectionObserver, so a persistent 401/429/5xx can't loop."""
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "virtual_list.js", "render_core.js",
+        "render_card_builders.js", "render_cards.js",
+    ) + _CARDS_HARNESS + r"""
+const assert = require("assert");
+let observers = 0;
+globalThis.IntersectionObserver = class {
+    constructor() { observers += 1; }
+    observe() {}
+    disconnect() {}
+};
+const loadMore = [];
+const state = {
+    leads: { items: [] }, watchlist: { items: [] }, misc: { stats: {} }, filters: {},
+    ui: {}, search: { activeQuery: "iphone" },
+    listings: {
+        items: [{ ad_id: 1, title: "iPhone", price: 100 }],
+        total: 50, hasMore: true, loading: false, loadingMore: false,
+        loadMoreError: "Сессия Telegram истекла", error: null,
+    },
+};
+const elements = {
+    listingsList: el("div"), listingsSection: el("section"), listingsTotalBadge: el("span"),
+};
+document.body.append(elements.listingsList);
+const actions = { loadMoreListings: () => loadMore.push(1) };
+const context = { ...domContext, state, elements, actions };
+context.buildEmptyState = createRenderCore(context).buildEmptyState;
+createRenderCardBuilders(context);
+const cards = createRenderCards(context);
+
+cards.renderListings();
+assert.strictEqual(observers, 0, "no auto-trigger after a failure");
+const button = elements.listingsList.querySelector(".list-pagination-button");
+assert.ok(button.textContent.includes("повторить"), button.textContent);
+button.click();
+assert.strictEqual(loadMore.length, 1, "the tap retries");
+
+state.listings.loadMoreError = null;
+cards.renderListings();
+assert.strictEqual(observers, 1, "auto-loading resumes after a good page");
+
+// FR-02: a failed first page is an error state, not "ничего не найдено".
+state.listings.items = [];
+state.listings.total = 0;
+state.listings.error = "Нет соединения с сервером.";
+cards.renderListings();
+const error = elements.listingsList.querySelector(".empty-state--error");
+assert.ok(error && error.textContent.includes("Нет соединения с сервером."));
+assert.ok(!elements.listingsList.textContent.includes("ничего не найдено"));
+"""
+    _node_ok(harness)

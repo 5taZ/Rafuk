@@ -50,7 +50,6 @@ function createAppActions(baseContext) {
         renderTrackerEvents,
         renderTrackerEventFilters,
         renderLeads,
-        renderWatchlist,
         renderDetailModal,
         closeDetailModal,
         setPanelOpen,
@@ -280,10 +279,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261021-1872adf"),
-                context._loadScript("js/api_ai_render.js?v=20261021-1872adf"),
-                context._loadScript("js/api_ai.js?v=20261021-1872adf"),
-                context._loadScript("js/api_listing_assistant.js?v=20261021-1872adf"),
+                context._loadScript("js/api_ai_modal.js?v=20261025-2832914"),
+                context._loadScript("js/api_ai_render.js?v=20261025-2832914"),
+                context._loadScript("js/api_ai.js?v=20261025-2832914"),
+                context._loadScript("js/api_listing_assistant.js?v=20261025-2832914"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -420,31 +419,21 @@ function createAppActions(baseContext) {
 
     function _refreshCollectionActionSurfaces() {
         if (typeof renderLeads === "function") renderLeads();
-        if (typeof renderWatchlist === "function") renderWatchlist();
         if (state.detail?.data) renderDetailModal();
-    }
-
-    function _validVersion(value) {
-        const numeric = Number(value);
-        return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
-    }
-
-    function _sameAdId(left, right) {
-        return left != null && right != null && String(left) === String(right);
     }
 
     function _findWatchingSnapshot(item) {
         return state.watchlist.items.find(
-            (w) => w.id === item?.id || _sameAdId(w.ad_id, item?.ad_id),
+            (w) => w.id === item?.id || sameAdId(w.ad_id, item?.ad_id),
         ) || null;
     }
 
     async function _resolveWatchingVersion(item) {
         const current = _findWatchingSnapshot(item) || item;
-        const version = _validVersion(current?.version);
+        const version = validVersion(current?.version);
         if (version) return version;
         await watchlist.loadWatchlist();
-        return _validVersion(_findWatchingSnapshot(item)?.version);
+        return validVersion(_findWatchingSnapshot(item)?.version);
     }
 
     async function _resolveWatchingItem(item) {
@@ -466,15 +455,8 @@ function createAppActions(baseContext) {
         // Closed/skipped leads stay in history but should NOT block a
         // re-add — that's how a returning customer or a re-buy reaches
         // the funnel. Only an actively-tracked lead counts as duplicate.
-        const ACTIVE_LEAD_STATUSES = new Set([
-            "new",
-            "in_progress",
-            "researching",
-            "bought",
-            "sold",
-        ]);
         const alreadyInLeads = state.leads.items.some(
-            (l) => _sameAdId(l.ad_id, item.ad_id) && ACTIVE_LEAD_STATUSES.has(l.status),
+            (l) => sameAdId(l.ad_id, item.ad_id) && ACTIVE_LEAD_STATUSES.has(l.status),
         );
         if (alreadyInLeads) {
             showToast("Уже в покупках", "info", 1600);
@@ -580,16 +562,18 @@ function createAppActions(baseContext) {
         const params = new URLSearchParams(window.location.search);
         // Support deep linking via start_param (from bot /start tracking)
         // Can come from either URL param or Telegram initDataUnsafe
-        const startParam = params.get("start_param") || window.Telegram?.WebApp?.initDataUnsafe?.start_param;
-        if (startParam && !params.has("view")) {
-            const viewMap = { tracking: "tracking", trackers: "tracking", deals: "deals", monitoring: "monitoring" };
-            const mappedView = viewMap[startParam] || startParam;
-            if (elements.views[mappedView]) {
-                params.set("view", mappedView);
-            }
+        // TG-05: bot links and older alert buttons use names that are not
+        // views (``view=trackers``, ``/start monitoring``); the alias
+        // applies to ``view`` as well as ``start_param``. «Избранное»
+        // (monitoring / favorites) lives in the unified deals view.
+        const VIEW_ALIASES = { trackers: "tracking", monitoring: "deals", favorites: "deals", watchlist: "deals" };
+        const normalizeView = (value) => VIEW_ALIASES[value] || value;
+        const startParam = normalizeView(params.get("start_param") || window.Telegram?.WebApp?.initDataUnsafe?.start_param || "");
+        if (startParam && !params.has("view") && elements.views[startParam]) {
+            params.set("view", startParam);
         }
         const query = params.get("query")?.trim() || "";
-        const view = params.get("view") || "overview";
+        const view = normalizeView(params.get("view") || "overview");
         if (view && elements.views[view]) {
             context.setActiveView(view);
         }
@@ -818,13 +802,16 @@ function createAppActions(baseContext) {
         crossCb.checked = false;
         pdCb.checked = false;
         acceptBtn.disabled = true;
+        // FR-05: trapFocus() does not hand focus back, so remember it;
+        // the counted scroll lock keeps the page from jumping under the
+        // gate (and from fighting a sheet that is already locked).
+        const previousFocus = document.activeElement;
+        lockBodyScroll();
         modal.hidden = false;
         // FE-H4/UX-H1: install a focus trap when the modal opens so a
         // keyboard user can't Tab out of the consent dialog and
         // interact with the app underneath (which has its own shortcuts
-        // and scroll). trapFocus returns a cleanup that restores focus
-        // to whatever had it before the modal; we call it from
-        // cleanup() on every exit path.
+        // and scroll). cleanup() removes it on every exit path.
         let focusCleanup = null;
         if (typeof trapFocus === "function") focusCleanup = trapFocus(modal);
         // UX-M2: also hide everything else from assistive tech for
@@ -843,12 +830,16 @@ function createAppActions(baseContext) {
         pdCb.addEventListener("change", updateAcceptBtn, opts);
 
         async function onAccept() {
+            // FR-05: a double tap used to send every POST twice.
+            if (acceptBtn.disabled) return;
+            acceptBtn.disabled = true;
             try {
                 await core.postJson("/api/v1/account/consent", { consent_type: "ai_analysis", version: consentVersion });
                 await core.postJson("/api/v1/account/consent", { consent_type: "cross_border", version: consentVersion });
                 await core.postJson("/api/v1/account/consent", { consent_type: "pd_processing", version: consentVersion });
             } catch (err) {
                 showToast(err.message || "Не удалось сохранить согласие");
+                updateAcceptBtn();
                 return;
             }
             cleanup();
@@ -909,6 +900,10 @@ function createAppActions(baseContext) {
             // restored focus target isn't itself sitting in an inert
             // subtree.
             if (typeof _restoreInertSiblings === "function") _restoreInertSiblings(modal);
+            unlockBodyScroll();
+            if (previousFocus?.isConnected && typeof previousFocus.focus === "function") {
+                try { previousFocus.focus({ preventScroll: true }); } catch (_) {}
+            }
         }
 
         acceptBtn.addEventListener("click", onAccept);
@@ -995,17 +990,26 @@ function createAppActions(baseContext) {
             overlay.className = "detail-modal typed-confirm-modal";
             const sheet = document.createElement("div");
             sheet.className = "typed-confirm-sheet";
+            // FR-05: announce it as a modal dialog with its title, text and
+            // a named input (it used to read as a bare "text field").
+            sheet.setAttribute("role", "dialog");
+            sheet.setAttribute("aria-modal", "true");
+            sheet.setAttribute("aria-labelledby", "typed-confirm-title");
+            sheet.setAttribute("aria-describedby", "typed-confirm-message");
 
             const h3 = document.createElement("h3");
             h3.className = "typed-confirm-title";
+            h3.id = "typed-confirm-title";
             h3.textContent = title;
 
             const p = document.createElement("p");
             p.className = "typed-confirm-message";
+            p.id = "typed-confirm-message";
             p.textContent = message;
 
-            const hint = document.createElement("p");
+            const hint = document.createElement("label");
             hint.className = "typed-confirm-hint";
+            hint.htmlFor = "typed-confirm-input";
             // Build via DOM (not innerHTML) — keeps user-controlled
             // ``expectedText`` away from the HTML parser entirely.
             hint.append("Введите ");
@@ -1020,16 +1024,19 @@ function createAppActions(baseContext) {
             input.autocapitalize = "off";
             input.spellcheck = false;
             input.className = "typed-confirm-input";
+            input.id = "typed-confirm-input";
 
             const btnRow = document.createElement("div");
             btnRow.className = "typed-confirm-actions";
 
             const cancelBtn = document.createElement("button");
+            cancelBtn.type = "button";
             cancelBtn.setAttribute("data-role", "cancel");
             cancelBtn.className = "typed-confirm-btn typed-confirm-btn--secondary";
             cancelBtn.textContent = "Отмена";
 
             const confirmBtn = document.createElement("button");
+            confirmBtn.type = "button";
             confirmBtn.setAttribute("data-role", "confirm");
             confirmBtn.className = "typed-confirm-btn typed-confirm-btn--danger";
             confirmBtn.textContent = "Удалить";
@@ -1038,8 +1045,12 @@ function createAppActions(baseContext) {
             btnRow.append(cancelBtn, confirmBtn);
             sheet.append(h3, p, hint, input, btnRow);
             overlay.appendChild(sheet);
+            const previousFocus = document.activeElement;
             document.body.appendChild(overlay);
-            document.body.classList.add("modal-open");
+            // FR-05: the counted lock (pins ``top``) instead of toggling
+            // body.modal-open by hand — that jumped the page to the top and
+            // unlocked a sheet still open underneath.
+            lockBodyScroll();
             let focusCleanup = null;
             if (typeof trapFocus === "function") focusCleanup = trapFocus(sheet);
             // UX-M2: hide the rest of the page from assistive tech
@@ -1062,14 +1073,30 @@ function createAppActions(baseContext) {
                 if (e.key === "Enter" && !confirmBtn.disabled) close(input.value);
             });
 
+            // FR-05: Escape cancels; capture + stopPropagation so the sheet
+            // underneath doesn't close on the same keypress.
+            function onKeydown(e) {
+                if (e.key !== "Escape") return;
+                e.stopPropagation();
+                close(null);
+            }
+            document.addEventListener("keydown", onKeydown, true);
+
+            let closed = false;
             function close(result) {
-                document.body.classList.remove("modal-open");
+                if (closed) return;
+                closed = true;
+                document.removeEventListener("keydown", onKeydown, true);
                 if (typeof focusCleanup === "function") focusCleanup();
                 // UX-M2: restore inert siblings BEFORE removing the
                 // overlay — once it's gone, ``_inertSiblings`` is
                 // unreachable and the page would stay frozen.
                 if (typeof _restoreInertSiblings === "function") _restoreInertSiblings(overlay);
                 overlay.remove();
+                unlockBodyScroll();
+                if (previousFocus?.isConnected && typeof previousFocus.focus === "function") {
+                    try { previousFocus.focus({ preventScroll: true }); } catch (_) {}
+                }
                 resolve(result);
             }
 

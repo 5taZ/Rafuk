@@ -7,11 +7,18 @@ const _loadPromises = new Map();
 const LAZY_SCRIPT_TIMEOUT_MS = 20_000;
 const LAZY_RETRY_COOLDOWN_MS = 8_000;
 const LAZY_LOAD_FAILED_MESSAGE = "Не удалось загрузить раздел. Проверьте соединение и попробуйте ещё раз.";
+// FR-04: after this many failures in a row a retry is unlikely to help
+// (typically an SRI mismatch: an old tab fetching chunks of a newer
+// deploy), so automatic re-fetches stop and the error state offers a
+// restart that picks up the new build.
+const LAZY_HARD_FAILURE_THRESHOLD = 2;
+const LAZY_RESTART_MESSAGE = "Не удалось загрузить раздел. Возможно, приложение обновилось — перезапустите его.";
 
 function _createLazyModule(context, { load, factoryKey, label }) {
     let real = null;
     let pending = null;
     let failedAt = 0;
+    let failures = 0;
 
     function ensure() {
         if (real) return Promise.resolve(real);
@@ -24,6 +31,7 @@ function _createLazyModule(context, { load, factoryKey, label }) {
             }
             real = factory(context);
             failedAt = 0;
+            failures = 0;
             return real;
         })();
         pending = attempt;
@@ -32,6 +40,7 @@ function _createLazyModule(context, { load, factoryKey, label }) {
         attempt.catch(() => {
             if (pending === attempt) pending = null;
             failedAt = Date.now();
+            failures += 1;
         });
         return attempt;
     }
@@ -40,11 +49,17 @@ function _createLazyModule(context, { load, factoryKey, label }) {
         ensure,
         current: () => real,
         loading: () => Boolean(pending),
+        // FR-07: render calls made while the chunk loads, latest args
+        // per method (see _lazyRenderCall).
+        queued: new Map(),
         // Render passes inside the cooldown paint the error state
         // instead of re-requesting the chunk on every repaint; the
         // "Повторить" button (or the first render after it) retries.
+        // FR-04: after repeated failures only the button retries.
         coolingDown: () => !real && !pending && failedAt > 0
-            && Date.now() - failedAt < LAZY_RETRY_COOLDOWN_MS,
+            && (failures >= LAZY_HARD_FAILURE_THRESHOLD
+                || Date.now() - failedAt < LAZY_RETRY_COOLDOWN_MS),
+        needsRestart: () => failures >= LAZY_HARD_FAILURE_THRESHOLD,
         retry() {
             failedAt = 0;
             return ensure();
@@ -62,12 +77,21 @@ function _lazyRenderCall(lazy, context, label, method, args, onUnavailable) {
         if (typeof onUnavailable === "function") onUnavailable(method, args);
         return undefined;
     }
+    // FR-07: every render pass during a slow load used to chain its own
+    // replay, so N passes meant N full re-renders once the chunk landed.
+    // Replay each method once with its latest args, then repaint once.
+    const alreadyWaiting = lazy.queued.size > 0;
+    lazy.queued.set(method, args);
+    if (alreadyWaiting) return undefined;
     lazy.ensure()
         .then((loaded) => {
-            loaded[method].apply(null, args);
+            const calls = Array.from(lazy.queued);
+            lazy.queued.clear();
+            for (const [queuedMethod, queuedArgs] of calls) loaded[queuedMethod].apply(null, queuedArgs);
             if (typeof context.scheduleRender === "function") context.scheduleRender();
         })
         .catch((err) => {
+            lazy.queued.clear();
             (context.logClientError || (() => {}))(`${label} lazy-load failed:`, err);
             // Repaint so the skeletons give way to the error state.
             if (!lazy.current() && typeof context.scheduleRender === "function") {
@@ -113,10 +137,11 @@ function _showLazyLoadToast(context) {
 // Paint (once) an error state with "Повторить" into ``container``.
 // ``retry`` reloads the chunk; ``afterLoad`` re-fetches data whose loader
 // lives in the same failed chunk.
-function _renderLazyLoadError(context, container, retry, afterLoad) {
+function _renderLazyLoadError(context, container, retry, afterLoad, needsRestart = false) {
     if (!container || typeof container.replaceChildren !== "function") return;
     const current = container.firstElementChild;
-    if (current && container.childElementCount === 1 && current.classList?.contains("lazy-load-error")) {
+    if (current && container.childElementCount === 1 && current.classList?.contains("lazy-load-error")
+        && current.classList.contains("lazy-load-error--restart") === Boolean(needsRestart)) {
         return; // keep focus and avoid re-announcing on every repaint
     }
     const button = domEl("button", {
@@ -126,11 +151,25 @@ function _renderLazyLoadError(context, container, retry, afterLoad) {
     });
     const node = domEl(
         "div",
-        { className: "empty-state empty-state--error lazy-load-error", attrs: { role: "status" } },
+        {
+            className: `empty-state empty-state--error lazy-load-error${needsRestart ? " lazy-load-error--restart" : ""}`,
+            attrs: { role: "status" },
+        },
         domEl("p", { className: "empty-state-title", text: "Раздел не загрузился" }),
-        domEl("p", { className: "empty-state-hint", text: LAZY_LOAD_FAILED_MESSAGE }),
+        domEl("p", { className: "empty-state-hint", text: needsRestart ? LAZY_RESTART_MESSAGE : LAZY_LOAD_FAILED_MESSAGE }),
         button,
     );
+    if (needsRestart) {
+        const restart = domEl("button", {
+            className: "empty-state-action",
+            type: "button",
+            text: "Перезапустить",
+        });
+        // A reload fetches the current index.html and its ?v= tags, so
+        // the chunk URLs and SRI hashes agree again.
+        restart.addEventListener("click", () => window.location.reload());
+        node.appendChild(restart);
+    }
     button.addEventListener("click", () => {
         button.disabled = true;
         button.textContent = "Загружаю…";
@@ -202,6 +241,12 @@ function createAppCore() {
             hasMore: false,
             loading: false,
             loadingMore: false,
+            // FR-01: message of the last failed next-page load. While set,
+            // the sentinel only offers a manual retry (no auto-trigger).
+            loadMoreError: null,
+            // FR-02: message of the last failed first-page load, so the
+            // list shows an error state instead of "ничего не найдено".
+            error: null,
             _requestId: 0,
             _pending: false,
             fallbackUsed: false,
@@ -213,6 +258,11 @@ function createAppCore() {
         trackers: {
             items: [],
             events: [],
+            _requestId: 0,
+            _loading: false,
+            // FR-02: message of the last failed list load; the previous
+            // items stay on screen (same contract as leads.error).
+            loadError: null,
             eventFilter: "all",
             eventFilterTrackerId: null,
             status: "",
@@ -302,6 +352,8 @@ function createAppCore() {
             distribution: null,
             history: null,
             historyData: [],
+            // FR-02: the last /price-history load failed (vs. no points yet).
+            historyError: false,
             _historyRequestId: 0,
         },
         misc: {
@@ -324,7 +376,9 @@ function createAppCore() {
 
     const THEME_CHROME_COLORS = {
         dark: "#0a0a0b",
-        light: "#ffffff",
+        // TG-12: matches [data-theme="light"] --bg so the Telegram
+        // header / overscroll doesn't show a white seam above the app.
+        light: "#f7f7f8",
     };
 
     function normalizeTheme(value) {
@@ -392,28 +446,6 @@ function createAppCore() {
     // FE-NEW-5: callbacks invoked after any theme change (toggle or Telegram event).
     const _themeChangeCallbacks = [];
 
-    const _TG_THEME_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
-    function _applyTelegramThemeVars() {
-        const tp = window.Telegram?.WebApp?.themeParams || {};
-        const root = document.documentElement;
-        const map = [
-            ["bg_color", "--tg-theme-bg-color"],
-            ["text_color", "--tg-theme-text-color"],
-            ["hint_color", "--tg-theme-hint-color"],
-            ["link_color", "--tg-theme-link-color"],
-            ["button_color", "--tg-theme-button-color"],
-            ["button_text_color", "--tg-theme-button-color-text"],
-            ["secondary_bg_color", "--tg-theme-secondary-bg-color"],
-            ["destructive_text_color", "--tg-theme-destructive-text-color"],
-        ];
-        for (const [tgKey, cssVar] of map) {
-            const value = tp[tgKey];
-            if (typeof value === "string" && value.length > 0 && value.length <= 16 && _TG_THEME_COLOR_RE.test(value.trim())) {
-                root.style.setProperty(cssVar, value.trim());
-            }
-        }
-    }
-
     /**
      * Pick a starting theme. We mirror Telegram's coarse dark/light
      * preference (so a user who has Telegram in light mode opens the
@@ -425,7 +457,7 @@ function createAppCore() {
      * user who explicitly toggled the theme keeps their choice.
      */
     function initTelegramTheme() {
-        const saved = localStorage.getItem("theme");
+        const saved = safeStorageGet("theme");
         const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
         const initialTheme = saved === "light" || saved === "dark"
             ? saved
@@ -434,15 +466,21 @@ function createAppCore() {
         if (tg) {
             try {
                 tg.expand();
-                tg.ready();
             } catch (_) {
-                // ready/expand can throw outside a real Telegram client
+                // expand can throw outside a real Telegram client
+            }
+            // TG-01: since Bot API 7.7 a vertical swipe minimises the Mini
+            // App; our pull-to-refresh, photo pan and sheets use that
+            // gesture, so keep it for the page. Closing still works by
+            // swiping the header.
+            if (telegramVersionAtLeast(tg, "7.7")) {
+                try { tg.disableVerticalSwipes(); } catch (_) {}
             }
             syncTelegramChromeTheme(initialTheme);
             // FE-NEW-3: single themeChanged listener with stored ref so re-init / pagehide can deregister.
             if (!_themeChangedRegistered) {
                 _themeChangedRef = () => {
-                    if (localStorage.getItem("theme")) {
+                    if (safeStorageGet("theme")) {
                         syncTelegramChromeTheme();
                         return;
                     }
@@ -450,8 +488,6 @@ function createAppCore() {
                     const next = s === "light" ? "light" : "dark";
                     document.documentElement.setAttribute("data-theme", next);
                     syncTelegramChromeTheme(next);
-                    // Also sync Telegram CSS custom properties (app.js palette).
-                    _applyTelegramThemeVars();
                     // FE-NEW-5: re-paint charts with fresh CSS tokens.
                     for (const cb of _themeChangeCallbacks) cb();
                 };
@@ -471,7 +507,7 @@ function createAppCore() {
         const current = document.documentElement.getAttribute("data-theme");
         const next = current === "light" ? "dark" : "light";
         document.documentElement.setAttribute("data-theme", next);
-        localStorage.setItem("theme", next);
+        safeStorageSet("theme", next);
         syncTelegramChromeTheme(next);
         for (const cb of _themeChangeCallbacks) cb();
     }
@@ -583,24 +619,6 @@ function createAppCore() {
     }
 
     /**
-     * Performance monitoring utility — measures render time in development.
-     * Returns elapsed ms when the cleanup function is called.
-     *
-     * @param {string} name - Human-readable operation name
-     * @param {number} [thresholdMs=100] - Warn threshold for console.warn
-     * @returns {Function} Cleanup function that returns elapsed ms
-     */
-    function measureRender(name, thresholdMs = 100) {
-        const start = performance.now();
-        return function () {
-            const elapsed = performance.now() - start;
-            // Slow-render diagnostic is available via the returned elapsed
-            // value; console.warn removed to avoid noise on weak devices.
-            return elapsed;
-        };
-    }
-
-    /**
      * Mark one or more views as needing re-render.
      * Views: 'error','loading','currency','strict','tabs','panels','summary',
      * 'helper','views','trackingHero','dealsHero',
@@ -640,6 +658,11 @@ function createAppCore() {
 
     const _loadedScripts = new Set();
     const _pendingScripts = new Map();
+    // FR-04: one <script> per src until it settles. A timeout only stops
+    // waiting — the tag keeps loading, and a late onload still marks the
+    // chunk loaded, so a retry waits on the same tag instead of inserting
+    // a second one that downloads and executes the file again.
+    const _scriptTags = new Map();
     // FE-NEW-1: SRI on lazy-loaded modules. Map is generated by
     // scripts/build_frontend_bundle.sh and embedded in the bundle.
     function _loadScript(src, integrity) {
@@ -651,35 +674,46 @@ function createAppCore() {
             const basename = src.split("/").pop().split("?")[0];
             integrity = __LAZY_INTEGRITY[basename];
         }
-        const promise = new Promise((resolve, reject) => {
-            const s = document.createElement("script");
-            s.src = src;
-            if (integrity) {
-                s.integrity = integrity;
-                s.crossOrigin = "anonymous";
-            }
-            let timer = null;
-            const settle = (err) => {
-                clearTimeout(timer);
-                s.onload = null;
-                s.onerror = null;
-                _pendingScripts.delete(src);
-                if (!err) {
+        let tagSettled = _scriptTags.get(src);
+        if (!tagSettled) {
+            tagSettled = new Promise((resolve, reject) => {
+                const s = document.createElement("script");
+                s.src = src;
+                if (integrity) {
+                    s.integrity = integrity;
+                    s.crossOrigin = "anonymous";
+                }
+                s.onload = () => {
+                    _scriptTags.delete(src);
                     _loadedScripts.add(src);
                     resolve();
-                    return;
-                }
-                // RV-FE-02: a stalled or failed tag is removed so the
-                // retry inserts a fresh one instead of waiting on it.
-                s.remove();
-                reject(err);
-            };
-            s.onload = () => settle(null);
-            s.onerror = () => settle(new Error(`Failed to load ${src}`));
-            timer = setTimeout(() => settle(new Error(`Timed out loading ${src}`)), LAZY_SCRIPT_TIMEOUT_MS);
-            document.head.appendChild(s);
+                };
+                s.onerror = () => {
+                    // A failed tag never executed; drop it so the retry
+                    // inserts a fresh one.
+                    _scriptTags.delete(src);
+                    s.remove();
+                    reject(new Error(`Failed to load ${src}`));
+                };
+                document.head.appendChild(s);
+            });
+            _scriptTags.set(src, tagSettled);
+        }
+        const promise = new Promise((resolve, reject) => {
+            const timer = setTimeout(
+                () => reject(new Error(`Timed out loading ${src}`)),
+                LAZY_SCRIPT_TIMEOUT_MS,
+            );
+            tagSettled.then(
+                () => { clearTimeout(timer); resolve(); },
+                (err) => { clearTimeout(timer); reject(err); },
+            );
         });
         _pendingScripts.set(src, promise);
+        const clear = () => {
+            if (_pendingScripts.get(src) === promise) _pendingScripts.delete(src);
+        };
+        promise.then(clear, clear);
         return promise;
     }
 
@@ -704,7 +738,6 @@ function createAppCore() {
         saveRecentSearches,
         addRecentSearch,
         clearRecentSearches,
-        measureRender,
         markDirty,
         isDirty,
         clearDirty,
@@ -721,6 +754,10 @@ function createAppCore() {
             );
         },
         logClientError,
+        // FR-18: shared lead / ad identity rules (dom_helpers.js).
+        ACTIVE_LEAD_STATUSES,
+        sameAdId,
+        validVersion,
         _loadScript,
     };
 }

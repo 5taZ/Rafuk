@@ -8,7 +8,6 @@ function createRenderViews(context) {
         state,
         elements,
         formatPrice,
-        escapeHtml: escapeHtml,
         safeRender: safeRender,
     } = context;
 

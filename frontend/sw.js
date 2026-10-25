@@ -28,7 +28,7 @@
 // max-age check; v7 added the offline-fallback page; v8 moves that
 // fallback's CSS out of inline <style>; v9 evicts stale frontend
 // bundles after the lead-version compatibility fix.
-const CACHE_VERSION = "rafuk-cache-20261021-1872adf";
+const CACHE_VERSION = "rafuk-cache-20261025-2832914";
 const OFFLINE_FALLBACK_URL = "/offline.html";
 const OFFLINE_FALLBACK_ASSETS = [OFFLINE_FALLBACK_URL, "/offline.css"];
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -279,7 +279,10 @@ function _cachedResponseAgeSeconds(response) {
     return Math.max(0, (Date.now() - sentAt) / 1000);
 }
 
-async function _usableFallback(cache, request) {
+// FR-03: why the cached copy answered — "1" offline, "slow" the network
+// outlived API_NETWORK_TIMEOUT_MS, "gateway" a 502/503/504 — so the page
+// doesn't claim "no connection" when the server is merely slow.
+async function _usableFallback(cache, request, reason = "1") {
     const cached = await cache.match(request);
     if (!cached || _cachedResponseAgeSeconds(cached) > RUNTIME_CACHE_MAX_AGE_SECONDS) {
         return null;
@@ -287,7 +290,7 @@ async function _usableFallback(cache, request) {
     // The page reads this marker (plus the Date header) to tell the
     // user the data is a saved copy and how old it is.
     const headers = new Headers(cached.headers);
-    headers.set("X-SW-Fallback", "1");
+    headers.set("X-SW-Fallback", reason);
     return new Response(cached.body, {
         status: cached.status,
         statusText: cached.statusText,
@@ -323,12 +326,12 @@ async function networkFirstApi(event, request, cacheName) {
         if (first !== TIMED_OUT) {
             if (!GATEWAY_ERROR_STATUSES.has(first.status)) return first;
             // Backend unreachable behind the gateway: same as offline.
-            return (await _usableFallback(cache, request)) || first;
+            return (await _usableFallback(cache, request, "gateway")) || first;
         }
         // The network hangs: answer with a recent copy if there is one
         // (the live request keeps running and refreshes the cache),
         // otherwise keep waiting for it.
-        const fallback = await _usableFallback(cache, request);
+        const fallback = await _usableFallback(cache, request, "slow");
         if (fallback) {
             keepAlive(event, network.catch(() => {}));
             return fallback;

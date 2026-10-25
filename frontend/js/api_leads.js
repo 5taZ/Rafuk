@@ -21,15 +21,13 @@ function createApiLeads(context) {
         postJson,
         deleteJson,
         requestJson,
+        // FR-18: shared lead / ad identity rules (dom_helpers.js).
+        sameAdId,
+        validVersion,
     } = context;
 
     let _leadDetailAbortController = null;
     let _analyticsAbortController = null;
-
-    function _validVersion(value) {
-        const numeric = Number(value);
-        return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
-    }
 
     function _findLeadSnapshot(leadOrId) {
         const leadId = typeof leadOrId === "object" ? leadOrId?.id : leadOrId;
@@ -38,10 +36,10 @@ function createApiLeads(context) {
 
     async function _resolveLeadVersion(leadOrId) {
         const snapshot = _findLeadSnapshot(leadOrId) || (typeof leadOrId === "object" ? leadOrId : null);
-        const version = _validVersion(snapshot?.version);
+        const version = validVersion(snapshot?.version);
         if (version) return version;
         await loadLeads();
-        return _validVersion(_findLeadSnapshot(leadOrId)?.version);
+        return validVersion(_findLeadSnapshot(leadOrId)?.version);
     }
 
     function _showStaleLeadToast() {
@@ -497,7 +495,7 @@ function createApiLeads(context) {
             const newThumb = (fullDetail.images && fullDetail.images[0]) || null;
             if (newThumb && !lead.thumbnail && state.leads?.items) {
                 const matchingLead = state.leads.items.find(
-                    (l) => l.ad_id === lead.ad_id && !l.thumbnail
+                    (l) => sameAdId(l.ad_id, lead.ad_id) && !l.thumbnail
                 );
                 if (matchingLead) {
                     matchingLead.thumbnail = newThumb;

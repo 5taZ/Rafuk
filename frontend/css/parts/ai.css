@@ -47,8 +47,8 @@
        to content (tiny when only the loader was visible) while the
        Listing Assistant pinned to min(780px, 94vh) — the asymmetry
        made the pair feel unrelated. .la-sheet inherits this rule. */
-    height: min(780px, 94vh);
-    max-height: 94vh;
+    height: min(780px, calc(var(--app-vh) * 0.94));
+    max-height: calc(var(--app-vh) * 0.94);
     background: var(--bg-card);
     background: color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%);
     border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);

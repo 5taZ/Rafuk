@@ -30,7 +30,6 @@ function createApiEvents(context) {
         renderTrackerEvents,
         renderTrackingHeroStats,
         renderLeads,
-        renderWatchlist,
         setActiveView,
         setPanelOpen,
         closeDetailModal,
@@ -98,7 +97,40 @@ function createApiEvents(context) {
 
     // ── Event binding ────────────────────────────────────────────────────
     const _searchDebounce = { timer: null };
-    const _confirmTimers = {};
+    // UI-08: two-tap "Очистить" confirmations. The armed flag lives next
+    // to its timer so a tab switch disarms both — clearing only the
+    // timers left the button armed forever, and the next single tap
+    // wiped everything.
+    const _confirms = {};
+
+    function _resetConfirm(key) {
+        const entry = _confirms[key];
+        if (!entry) return;
+        clearTimeout(entry.timer);
+        entry.timer = undefined;
+        entry.armed = false;
+        if (entry.button) entry.button.textContent = "Очистить";
+    }
+
+    function _resetAllConfirms() {
+        for (const key of Object.keys(_confirms)) _resetConfirm(key);
+    }
+
+    // Returns true on the confirming (second) tap.
+    function _confirmTap(key, button) {
+        if (!_confirms[key]) _confirms[key] = { armed: false, timer: undefined, button };
+        const entry = _confirms[key];
+        entry.button = button;
+        if (entry.armed) {
+            _resetConfirm(key);
+            return true;
+        }
+        entry.armed = true;
+        if (button) button.textContent = "Удалить все?";
+        showToast("Нажмите ещё раз для подтверждения");
+        entry.timer = setTimeout(() => _resetConfirm(key), 3000);
+        return false;
+    }
     const _preloadCache = [];
     let _filterCloseTimeout = null;
     // FE-NEW-8: keep dedup state in module scope, not on document.
@@ -276,10 +308,7 @@ function createApiEvents(context) {
                     return;
                 }
                 _preloadCache.length = 0;
-                Object.values(_confirmTimers).forEach(clearTimeout);
-                _confirmTimers.events = undefined;
-                _confirmTimers.leads = undefined;
-                _confirmTimers.watchlist = undefined;
+                _resetAllConfirms();
                 setActiveView(view);
                 // FE-NEW-7: setActiveView already calls markDirty + renderAll
                 if (view === "tracking") {
@@ -715,34 +744,20 @@ function createApiEvents(context) {
         });
 
         // ── Clear events button (double-confirm) ─────────────────────
-        let clearEventsConfirmed = false;
         elements.clearEventsButton?.addEventListener("click", () => {
             void (async () => {
                 if (state.trackers.events.length === 0) {
                     showToast("Нет событий для удаления");
                     return;
                 }
-
-                if (!clearEventsConfirmed) {
-                    clearEventsConfirmed = true;
-                    elements.clearEventsButton.textContent = "Удалить все?";
-                    _confirmTimers.events = setTimeout(() => {
-                        clearEventsConfirmed = false;
-                        if (elements.clearEventsButton) {
-                            elements.clearEventsButton.textContent = "Очистить";
-                        }
-                    }, 3000);
-                    showToast("Нажмите ещё раз для подтверждения");
-                    return;
-                }
-                clearEventsConfirmed = false;
-                if (elements.clearEventsButton) {
-                    elements.clearEventsButton.textContent = "Очистить";
-                }
+                if (!_confirmTap("events", elements.clearEventsButton)) return;
                 try {
                     await deleteJson("/api/v1/tracker-events");
-                } catch (_) {
-                    // ignore — clear locally anyway
+                } catch (err) {
+                    // FR-10: clearing only locally claimed success, then the
+                    // next 30 s refresh brought every event back.
+                    showToast(err?.message || "Не удалось очистить события", "error");
+                    return;
                 }
                 state.trackers.events = [];
                 showToast("События очищены");
@@ -756,7 +771,6 @@ function createApiEvents(context) {
         });
 
         // ── Clear all leads button (double-confirm) ──────────────────
-        let clearLeadsConfirmed = false;
         elements.clearAllLeadsButton?.addEventListener("click", () => {
             void (async () => {
                 const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
@@ -764,50 +778,19 @@ function createApiEvents(context) {
                     showToast("Нет активных сделок для удаления");
                     return;
                 }
-                if (!clearLeadsConfirmed) {
-                    clearLeadsConfirmed = true;
-                    elements.clearAllLeadsButton.textContent = "Удалить все?";
-                    showToast("Нажмите ещё раз для подтверждения");
-                    _confirmTimers.leads = setTimeout(() => {
-                        clearLeadsConfirmed = false;
-                        if (elements.clearAllLeadsButton) {
-                            elements.clearAllLeadsButton.textContent = "Очистить";
-                        }
-                    }, 3000);
-                    return;
-                }
-                clearLeadsConfirmed = false;
-                if (elements.clearAllLeadsButton) {
-                    elements.clearAllLeadsButton.textContent = "Очистить";
-                }
+                if (!_confirmTap("leads", elements.clearAllLeadsButton)) return;
                 await clearAllLeads();
             })();
         });
 
         // ── Clear all watchlist button (double-confirm) ──────────────
-        let clearWatchlistConfirmed = false;
         elements.deleteAllWatchlistButton?.addEventListener("click", () => {
             void (async () => {
                 if (state.watchlist.items.length === 0) {
                     showToast("Список уже пуст");
                     return;
                 }
-                if (!clearWatchlistConfirmed) {
-                    clearWatchlistConfirmed = true;
-                    elements.deleteAllWatchlistButton.textContent = "Удалить все?";
-                    showToast("Нажмите ещё раз для подтверждения");
-                    _confirmTimers.watchlist = setTimeout(() => {
-                        clearWatchlistConfirmed = false;
-                        if (elements.deleteAllWatchlistButton) {
-                            elements.deleteAllWatchlistButton.textContent = "Очистить";
-                        }
-                    }, 3000);
-                    return;
-                }
-                clearWatchlistConfirmed = false;
-                if (elements.deleteAllWatchlistButton) {
-                    elements.deleteAllWatchlistButton.textContent = "Очистить";
-                }
+                if (!_confirmTap("watchlist", elements.deleteAllWatchlistButton)) return;
                 await clearAllWatchlist();
             })();
         });

@@ -46,7 +46,7 @@ body.modal-open {
     left: 0;
     right: 0;
     bottom: 0;
-    max-height: min(92vh, 900px);
+    max-height: min(calc(var(--app-vh) * 0.92), 900px);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -102,6 +102,8 @@ body.modal-open {
 }
 
 .typed-confirm-hint {
+    /* FR-05: now a <label for> (inline by default) — keep the block layout. */
+    display: block;
     font-size: var(--text-base);
     line-height: 1.45;
 }
@@ -484,8 +486,8 @@ body.modal-open {
     height: 28px;
 }
 
-/* Offline Banner */
-#offline-banner {
+/* Offline Banner — UI-10: the markup is #offline-badge.offline-badge */
+.offline-badge {
     position: fixed;
     top: 0;
     left: 0;
@@ -1319,77 +1321,6 @@ body.lp-menu-open {
 
 @media (prefers-reduced-motion: reduce) {
     .ptr-indicator { display: none; }
-}
-
-/* ===== Swipe-to-action gesture (Telegram-style) =====
- * makeSwipeable wraps the card in `.swipe-wrap` and reveals the colored
- * `.swipe-bg--*` panels as the user drags. Right-drag (positive dx)
- * reveals the LEFT background (promote to "Покупки"); left-drag reveals
- * the RIGHT one (delete). Disabled under prefers-reduced-motion: the
- * helper short-circuits and returns the card unwrapped. */
-.swipe-wrap {
-    position: relative;
-    border-radius: var(--r-lg);
-    overflow: hidden;
-}
-
-.swipe-bg {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    padding: 0 22px;
-    color: var(--accent-foreground);
-    font-weight: 600;
-    font-size: var(--text-norm);
-    letter-spacing: 0.01em;
-    pointer-events: none;
-    z-index: 0;
-}
-
-.swipe-bg--left {
-    left: 0;
-    right: 50%;
-    justify-content: flex-start;
-}
-
-.swipe-bg--right {
-    right: 0;
-    left: 50%;
-    justify-content: flex-end;
-}
-
-.swipe-bg--accent {
-    background: var(--accent);
-}
-
-.swipe-bg--danger {
-    background: var(--red);
-}
-
-.swipe-target {
-    position: relative;
-    z-index: 1;
-    /* Lets the page keep scrolling vertically while we capture
-       horizontal pans for the gesture. */
-    touch-action: pan-y;
-    transition: transform var(--t-slow) var(--easing-standard);
-}
-
-.swipe-target.swipe-dragging {
-    /* Direct finger-tracking — no easing during the drag itself. */
-    transition: none;
-}
-
-.swipe-target.swipe-completing {
-    transition: transform 180ms ease-out;
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .swipe-target {
-        transition: none !important;
-    }
 }
 
 /* ===== Consent Modal =====

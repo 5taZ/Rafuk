@@ -127,6 +127,9 @@ function createApiCore(context) {
         let timedOut = false;
         let response;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            // FR-19: an "abort" listener added to an already-aborted
+            // signal never fires, so the request would run anyway.
+            if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             const controller = new AbortController();
             const timer = setTimeout(() => {
                 timedOut = true;
@@ -245,8 +248,9 @@ function createApiCore(context) {
             throw err;
         }
 
-        if (response.headers?.get?.("x-sw-fallback") === "1") {
-            _noteSavedCopy(response.headers.get("date"));
+        const fallbackReason = response.headers?.get?.("x-sw-fallback");
+        if (fallbackReason) {
+            _noteSavedCopy(response.headers.get("date"), fallbackReason);
         }
 
         if (response.status === 204) {
@@ -259,8 +263,13 @@ function createApiCore(context) {
     // RV-FE-04: the service worker answers from its cache only when the
     // network failed; say so, with the time the copy was taken, instead
     // of passing an old market snapshot off as live data.
+    // FR-03: the reason comes from sw.js (_usableFallback).
+    const _SAVED_COPY_REASONS = {
+        slow: "Сервер отвечает медленно",
+        gateway: "Сервис временно недоступен",
+    };
     let _savedCopyNoticeAt = 0;
-    function _noteSavedCopy(dateHeader) {
+    function _noteSavedCopy(dateHeader, reason) {
         const now = Date.now();
         if (now - _savedCopyNoticeAt < 30_000) return;
         _savedCopyNoticeAt = now;
@@ -268,11 +277,12 @@ function createApiCore(context) {
         const time = takenAt && !Number.isNaN(takenAt.getTime())
             ? takenAt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
             : "";
+        const lead = _SAVED_COPY_REASONS[reason] || "Нет связи с сервером";
         if (typeof context.showToast === "function") {
             context.showToast(
                 time
-                    ? `Нет связи с сервером — показаны сохранённые данные от ${time}`
-                    : "Нет связи с сервером — показаны сохранённые данные",
+                    ? `${lead} — показаны сохранённые данные от ${time}`
+                    : `${lead} — показаны сохранённые данные`,
                 "info",
                 4000,
             );

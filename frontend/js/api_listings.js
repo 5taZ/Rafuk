@@ -196,6 +196,7 @@ function createApiListings(context) {
         const requestId = (state.charts._historyRequestId =
             (state.charts._historyRequestId + 1) % 1_000_000);
         let nextHistory;
+        let failed = false;
         try {
             const payload = await getJson(
                 `/api/v1/price-history?${buildCommonQuery({ days: state.misc.historyDays })}`,
@@ -205,9 +206,11 @@ function createApiListings(context) {
         } catch (err) {
             if (err.name === "AbortError") return;
             nextHistory = [];
+            failed = true;
         }
         if (requestId !== state.charts._historyRequestId) return;
         state.charts.historyData = nextHistory;
+        state.charts.historyError = failed;
         renderHistory();
     }
 
@@ -366,6 +369,7 @@ function createApiListings(context) {
         if (!state.search.activeQuery) {
             state.listings.items = [];
             state.listings.hasMore = false;
+            state.listings.error = null;
             _applyListingsMeta({});
             markDirty('listings');
             renderAll();
@@ -386,6 +390,8 @@ function createApiListings(context) {
         // First page — reset pagination cursor.
         state.listings.items = [];
         state.listings.hasMore = false;
+        state.listings.loadMoreError = null;
+        state.listings.error = null;
         state.listings.loading = true;
         markDirty('listings');
         renderAll();
@@ -416,6 +422,7 @@ function createApiListings(context) {
             if (requestId !== state.listings._requestId) return;
             state.listings.items = [];
             state.listings.hasMore = false;
+            state.listings.error = error.message || "Не удалось загрузить объявления";
             state.ui.error = error.message || "Не удалось загрузить объявления";
             renderError();
         } finally {
@@ -436,6 +443,7 @@ function createApiListings(context) {
         if (!state.listings.hasMore) return;
         if (state.listings.loadingMore) return;
         state.listings.loadingMore = true;
+        state.listings.loadMoreError = null;
         markDirty('listings');
         scheduleRender();
 
@@ -456,9 +464,14 @@ function createApiListings(context) {
             state.listings.total = payload.total || state.listings.total;
             state.listings.hasMore = Boolean(payload.has_more);
             _applyListingsMeta(payload);
-        } catch (_) {
-            // On error, surface the chip-style "load more" button by
-            // keeping has_more true. The user can tap to retry.
+        } catch (err) {
+            // FR-01: keep has_more so the button stays, but record the
+            // failure — the sentinel then stops auto-loading. Re-arming
+            // the observer here looped error → re-render → sentinel in
+            // view → request at RTT speed (401/429/5xx storm).
+            if (requestId === state.listings._requestId) {
+                state.listings.loadMoreError = err?.message || "Не удалось загрузить ещё";
+            }
         } finally {
             state.listings.loadingMore = false;
             markDirty('listings');

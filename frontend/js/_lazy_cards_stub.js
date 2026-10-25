@@ -20,8 +20,8 @@
  */
 /* global window */
 
-const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20261021-1872adf";
-const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20261021-1872adf";
+const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20261025-2832914";
+const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20261025-2832914";
 
 function _lazyLoadCardsSources(context) {
     if (_loadPromises.has("cards")) return _loadPromises.get("cards");
@@ -61,14 +61,13 @@ function createRenderCards(context) {
             return elements.listingsList;
         }
         if (method === "renderLeads") return elements.leadInboxList;
-        if (method === "renderWatchlist") return elements.watchlistList;
         if (method === "renderListingsCollection") return args[1];
         return null;
     }
 
     function _delegate(method, args) {
         return _lazyRenderCall(lazy, context, "cards", method, args, () => {
-            _renderLazyLoadError(context, _containerFor(method, args), lazy.retry);
+            _renderLazyLoadError(context, _containerFor(method, args), lazy.retry, undefined, lazy.needsRestart());
         });
     }
 
@@ -78,7 +77,6 @@ function createRenderCards(context) {
         renderListingsCollection: (...args) => _delegate("renderListingsCollection", args),
         renderListings: (...args) => _delegate("renderListings", args),
         renderLeads: (...args) => _delegate("renderLeads", args),
-        renderWatchlist: (...args) => _delegate("renderWatchlist", args),
         _ensureLoaded: lazy.ensure,
     };
 }

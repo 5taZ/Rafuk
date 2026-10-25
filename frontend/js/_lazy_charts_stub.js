@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261021-1872adf";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261025-2832914";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");
@@ -34,13 +34,40 @@ function createRenderCharts(context) {
         label: "render_charts.js",
     });
 
+    // FR-08: the distribution / history panels hold a <canvas> the real
+    // renderer needs later, so their error state goes into a slot in
+    // front of it, removed once the chunk has loaded.
+    let errorSlotsShown = false;
+    function _errorSlot(panelBody) {
+        if (!panelBody) return null;
+        let slot = Array.from(panelBody.children).find((child) => child.classList.contains("lazy-load-slot"));
+        if (!slot) {
+            slot = domEl("div", { className: "lazy-load-slot" });
+            panelBody.prepend(slot);
+        }
+        errorSlotsShown = true;
+        return slot;
+    }
+
     function _delegate(method, args) {
+        if (errorSlotsShown && lazy.current()) {
+            errorSlotsShown = false;
+            for (const slot of document.querySelectorAll(".lazy-load-slot")) slot.remove();
+        }
         return _lazyRenderCall(lazy, context, "charts", method, args, () => {
             const elements = context.elements || {};
+            const panels = elements.panelBodies || {};
             let container = null;
             if (method === "renderHistoryDeals") container = elements.historyDealsList;
             if (method === "renderProfitDashboard") container = elements.profitCards;
-            _renderLazyLoadError(context, container, lazy.retry);
+            if (method === "renderChart") container = _errorSlot(panels.distribution);
+            if (method === "renderHistory" || method === "renderHistoryChart") {
+                // renderHistory() normally unhides its section.
+                if (!context.state?.search?.activeQuery) return;
+                if (elements.historySection) elements.historySection.hidden = false;
+                container = _errorSlot(panels.history);
+            }
+            _renderLazyLoadError(context, container, lazy.retry, undefined, lazy.needsRestart());
         });
     }
 

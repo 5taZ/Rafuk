@@ -24,6 +24,13 @@
 }
 
 :root {
+    /* UI-16: native controls (scrollbars, <select> popups, autofill)
+       follow the app theme, not the OS one. */
+    color-scheme: dark;
+    /* TG-06: Telegram's stable viewport height (set by the SDK) keeps
+       bottom sheets on screen while the client animates its chrome;
+       plain browsers fall back to 100vh. */
+    --app-vh: var(--tg-viewport-stable-height, 100vh);
     --bg: #0a0a0b;
     --bg-card: #111113;
     --bg-elevated: #141416;
@@ -141,6 +148,7 @@
     /* Radius aliases — consistent naming */
     --radius-sm: var(--r-sm);
     --radius-md: var(--r-md);
+    --radius-lg: var(--r-lg);
     --radius-full: 999px;
 
     /* Motion tokens — unify the most-used transition durations.
@@ -326,6 +334,7 @@ button:focus-visible,
 }
 
 [data-theme="light"] {
+    color-scheme: light;
     --bg: #f7f7f8;
     --bg-card: #ffffff;
     --bg-elevated: #eeeeef;
@@ -383,6 +392,7 @@ button:focus-visible,
     /* Radius aliases — consistent naming */
     --radius-sm: var(--r-sm);
     --radius-md: var(--r-md);
+    --radius-lg: var(--r-lg);
     --radius-full: 999px;
 
     /* Subtle surface for filter chips and secondary inputs */
@@ -457,7 +467,9 @@ body {
     padding-left: calc(14px + env(safe-area-inset-left, 0px));
     padding-right: calc(14px + env(safe-area-inset-right, 0px));
     scroll-behavior: smooth;
-    overflow-x: hidden;
+    /* UI-11: ``clip`` (unlike ``hidden``) doesn't turn .app into a
+       scroll container, so the sticky header keeps sticking. */
+    overflow-x: clip;
 }
 
 .header {
@@ -909,4 +921,16 @@ body {
 
 .quick-chip:active {
     transform: scale(0.97) translateY(0);
+}
+
+/* TG-04: WKWebView (Telegram iOS) zooms into any focused field whose
+   font is under 16px and never zooms back. ``-webkit-touch-callout``
+   is only supported by iOS WebKit, so desktop/Android keep the
+   compact sizes. !important because field classes set their own size. */
+@supports (-webkit-touch-callout: none) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select,
+    textarea {
+        font-size: max(16px, 1em) !important;
+    }
 }

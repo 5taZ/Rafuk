@@ -84,6 +84,9 @@ function analyticsApp() {
             if (el && typeof el.click === "function") el.click();
         };
         const topmostClose = () => {
+            // TG-07: the long-press menu sits above every sheet; without
+            // it here Android's back closed the whole Mini App.
+            if (isOpen(document.querySelector(".lp-menu-overlay"))) return () => hideLongPressMenu();
             if (document.querySelector(".typed-confirm-modal")) {
                 return () => click(".typed-confirm-modal [data-role='cancel']");
             }
@@ -95,6 +98,11 @@ function analyticsApp() {
             if (isOpen(core.elements.expensesModal)) return () => renderers.closeExpensesModal?.();
             if (isOpen(core.elements.detailModal)) return () => renderers.closeDetailModal?.();
             if (isOpen(core.elements.editTrackerModal)) return () => actions.closeEditTracker?.();
+            // TG-07: Profile / Admin have no tab of their own, so Back
+            // walks up to where they are reached from.
+            const view = core.state.ui.activeView;
+            if (view === "admin") return () => actions.openProfile?.();
+            if (view === "profile") return () => actions.openOverview?.();
             return null;
         };
         const sync = () => {
@@ -219,7 +227,6 @@ function analyticsApp() {
         search,
         loadListings,
         renderChart,
-        renderBoxPlot: renderChart,
         formatPrice: core.formatPrice,
         syncTelegramChromeTheme: core.syncTelegramChromeTheme,
     };
@@ -227,52 +234,15 @@ function analyticsApp() {
 
 document.addEventListener("DOMContentLoaded", () => {
     const app = analyticsApp();
-    app.init();
-
-    if (window.Telegram?.WebApp) {
-        Telegram.WebApp.ready();
-        Telegram.WebApp.expand();
-        app.syncTelegramChromeTheme?.();
+    try {
+        app.init();
+    } finally {
+        // TG-15: one ready() (it used to run twice), after init() painted
+        // the first screen — it drops Telegram's placeholder. ``finally``
+        // so a failed init can't leave the user on the loader for good.
+        // expand() runs in initTelegramTheme().
+        try { window.Telegram?.WebApp?.ready?.(); } catch (_) {}
     }
-
-    // PR-15: Telegram themeParams come from the WebView host. The
-    // values are normally trusted (Telegram controls them) but
-    // ``setProperty`` accepts anything string-shaped — including
-    // ``"red; --custom: …"`` style payloads that would inject extra
-    // CSS variables. Defence-in-depth: only let strict CSS color
-    // literals through. Unrecognised values are dropped, leaving
-    // the cascade to use the value from frontend/css.
-    const _TG_THEME_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
-    function _isSafeTelegramThemeColor(value) {
-        return typeof value === "string"
-            && value.length > 0
-            && value.length <= 16
-            && _TG_THEME_COLOR_RE.test(value.trim());
-    }
-
-    function _applyTelegramTheme() {
-        const tp = window.Telegram?.WebApp?.themeParams || {};
-        const root = document.documentElement;
-        const map = [
-            ["bg_color", "--tg-theme-bg-color"],
-            ["text_color", "--tg-theme-text-color"],
-            ["hint_color", "--tg-theme-hint-color"],
-            ["link_color", "--tg-theme-link-color"],
-            ["button_color", "--tg-theme-button-color"],
-            ["button_text_color", "--tg-theme-button-text-color"],
-            ["secondary_bg_color", "--tg-theme-secondary-bg-color"],
-            ["destructive_text_color", "--tg-theme-destructive-text-color"],
-        ];
-        for (const [tgKey, cssVar] of map) {
-            const value = tp[tgKey];
-            if (_isSafeTelegramThemeColor(value)) {
-                root.style.setProperty(cssVar, value.trim());
-            }
-        }
-    }
-    _applyTelegramTheme();
-    // FE-NEW-3: themeChanged listener now lives in app_core.js (single registration).
-    // Initial CSS var application still runs here on DOMContentLoaded.
 
     // Offline / online detection
     const _offlineBadge = document.getElementById("offline-badge");
@@ -298,7 +268,9 @@ document.addEventListener("DOMContentLoaded", () => {
             navigator.serviceWorker
                 .register("/sw.js", { scope: "/" })
                 .catch((err) => {
-                    core.logClientError("Service worker registration failed", err, "warn");
+                    // FE-20: ``core`` lives inside analyticsApp(); the
+                    // bundle-scope logger is the one in reach here.
+                    logClientError("Service worker registration failed", err, "warn");
                 });
         });
     }

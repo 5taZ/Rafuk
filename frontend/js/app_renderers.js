@@ -29,8 +29,7 @@ function createAppRenderers(baseContext) {
     // ── Instantiate sub-modules ──────────────────────────────────────────
     const core = createRenderCore(context);
 
-    // Share escapeHtml and safeRender across sub-modules via context
-    context.escapeHtml = core.escapeHtml;
+    // Share URL helpers and safeRender across sub-modules via context
     context.safeUrl = core.safeUrl;
     context.safeKufarUrl = core.safeKufarUrl;
     context.openExternalLink = core.openExternalLink;
@@ -90,7 +89,6 @@ function createAppRenderers(baseContext) {
     context._prefersReducedMotion = _prefersReducedMotion;
     context.attachLongPress = attachLongPress;
     context.attachPinchZoom = attachPinchZoom;
-    context.makeSwipeable = makeSwipeable;
 
     const cards = createRenderCards(context);
     const views = createRenderViews(context);
@@ -118,7 +116,6 @@ function createAppRenderers(baseContext) {
         renderDealsHeroStats: views.renderDealsHeroStats,
         renderProfitDashboard: charts.renderProfitDashboard,
         renderHistoryDeals: charts.renderHistoryDeals,
-        renderWatchlistFilters: trackers.renderWatchlistFilters,
         renderTrackerEvents: trackers.renderTrackerEvents,
         renderStrictSearch: core.renderStrictSearch,
         renderTrackerInputs: views.renderTrackerInputs,
@@ -150,7 +147,6 @@ function createAppRenderers(baseContext) {
 
     // ── Forwarded functions (all names that app_actions.js destructures) ─
     const {
-        escapeHtml,
         safeUrl,
         safeKufarUrl,
         openExternalLink,
@@ -174,7 +170,6 @@ function createAppRenderers(baseContext) {
         renderListingsCollection,
         renderListings,
         renderLeads,
-        renderWatchlist,
     } = cards;
 
     const {
@@ -222,7 +217,6 @@ function createAppRenderers(baseContext) {
 
     const {
         renderTrackerStatus,
-        renderWatchlistFilters,
         renderTrackers,
         renderTrackerEvents,
         renderTrackerEventFilters,
@@ -265,7 +259,6 @@ function createAppRenderers(baseContext) {
         trackers: renderTrackers,
         trackerEvents: renderTrackerEvents,
         leads: renderLeads,
-        watchlist: renderWatchlist,
         profit: renderProfitDashboard,
         profile: renderProfile,
         adminUsers: renderAdminUsers,
@@ -304,7 +297,6 @@ function createAppRenderers(baseContext) {
     return {
         showToast,
         dismissToast,
-        escapeHtml,
         safeUrl,
         safeKufarUrl,
         openExternalLink,
@@ -338,9 +330,7 @@ function createAppRenderers(baseContext) {
         renderTrackerStatus,
         renderTrackers,
         renderTrackerEvents,
-        renderWatchlistFilters,
         renderLeads,
-        renderWatchlist,
         renderProfitDashboard,
         renderHistoryDeals,
         renderExpensesModal,

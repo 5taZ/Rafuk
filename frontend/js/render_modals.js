@@ -16,8 +16,10 @@ function createRenderModals(context) {
         safeKufarUrl,
         safeImageUrl,
         optimizedImage,
+        // FR-18: shared lead / ad identity rules (dom_helpers.js).
+        ACTIVE_LEAD_STATUSES,
+        sameAdId,
         safeRender: safeRender,
-        escapeHtml,
         // OPUS-13 wave 74: dom_helpers ride through context because
         // this file loads as a lazy <script> in _lazy_deals_stub and
         // can't see bundle-IIFE-scoped callables.
@@ -42,26 +44,14 @@ function createRenderModals(context) {
         return item;
     }
 
-    const ACTIVE_DETAIL_STATUSES = new Set([
-        "new",
-        "in_progress",
-        "researching",
-        "bought",
-        "sold",
-    ]);
-
-    function _sameAdId(left, right) {
-        return left != null && right != null && String(left) === String(right);
-    }
-
     function _detailCollectionState(detail) {
         const adId = detail?.ad_id;
         const inLeads = (state.leads?.items || []).some(
-            (lead) => _sameAdId(lead.ad_id, adId) && ACTIVE_DETAIL_STATUSES.has(lead.status),
+            (lead) => sameAdId(lead.ad_id, adId) && ACTIVE_LEAD_STATUSES.has(lead.status),
         );
         const inWatchlist = !inLeads && (
             Boolean(state.detail.fromWatchlist)
-            || (state.watchlist?.items || []).some((watch) => _sameAdId(watch.ad_id, adId))
+            || (state.watchlist?.items || []).some((watch) => sameAdId(watch.ad_id, adId))
         );
         return { inLeads, inWatchlist };
     }
@@ -218,20 +208,45 @@ function createRenderModals(context) {
         }
 
         domClear(elements.detailThumbs);
+        // FR-06: thumbnails are named buttons and the active one is marked
+        // for AT. A tap swaps only the main photo — re-rendering the whole
+        // detail removed the focused button (focus fell to <body>).
+        const thumbButtons = [];
+        const syncThumbs = () => {
+            thumbButtons.forEach((thumb, i) => {
+                if (i === state.detail.imageIndex) {
+                    thumb.classList.add("active");
+                    thumb.setAttribute("aria-current", "true");
+                } else {
+                    thumb.classList.remove("active");
+                    thumb.removeAttribute("aria-current");
+                }
+            });
+            if (elements.detailMedia) {
+                elements.detailMedia.setAttribute(
+                    "aria-label",
+                    `Фото объявления ${state.detail.imageIndex + 1} из ${images.length}`,
+                );
+            }
+        };
         for (const [index, image] of images.entries()) {
             const button = document.createElement("button");
             button.type = "button";
-            button.className = `detail-thumb${state.detail.imageIndex === index ? " active" : ""}`;
+            button.className = "detail-thumb";
+            button.setAttribute("aria-label", `Фото ${index + 1} из ${images.length}`);
             const img = document.createElement("img");
             img.src = optimizeWith(image, 120, false);
             img.alt = "";
             button.appendChild(img);
             button.addEventListener("click", () => {
                 state.detail.imageIndex = index;
-                renderDetailModal();
+                setDetailMainImage(image, 800, detail.title || "Фото объявления");
+                syncThumbs();
             });
+            thumbButtons.push(button);
             elements.detailThumbs.appendChild(button);
         }
+        if (thumbButtons.length) syncThumbs();
 
         domClear(elements.detailParams);
         const params = detail.parameters || [];

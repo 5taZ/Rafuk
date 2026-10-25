@@ -6,24 +6,6 @@
 function createRenderCore(context) {
     const { state, elements, logClientError = () => {} } = context;
 
-    /**
-     * Escape HTML special characters to prevent XSS attacks.
-     * Uses a singleton DOM element to avoid creating new elements on every call.
-     */
-    function escapeHtml(str) {
-        if (str == null) return "";
-        return String(str).replace(/[&<>"']/g, (char) => {
-            const map = {
-                "&": "&amp;",
-                "<": "&lt;",
-                ">": "&gt;",
-                '"': "&quot;",
-                "'": "&#39;",
-            };
-            return map[char] || char;
-        });
-    }
-
     const _APP_URL_BASE = "https://rafuk.local";
     const _KUFAR_LINK_HOSTS = new Set(["kufar.by", "www.kufar.by", "re.kufar.by", "auto.kufar.by"]);
     const _KUFAR_GALLERY_PREFIX = "https://rms.kufar.by/v1/gallery/";
@@ -404,7 +386,9 @@ function createRenderCore(context) {
         if (!text || !document.body) return;
         if (!_sessionBanner || !_sessionBanner.isConnected) {
             const tg = window.Telegram?.WebApp;
-            const closeButton = typeof tg?.close === "function"
+            // TG-16: the vendored SDK defines close() in a plain browser
+            // too; only offer it inside a real Telegram launch.
+            const closeButton = typeof tg?.close === "function" && tg.initData
                 ? domEl("button", {
                     className: "session-banner-action",
                     type: "button",
@@ -718,7 +702,6 @@ function createRenderCore(context) {
     }
 
     return {
-        escapeHtml,
         safeUrl,
         safeKufarUrl,
         openExternalLink,

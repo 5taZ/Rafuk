@@ -31,6 +31,7 @@ function createApiTrackers(context) {
 
     // ── Auto-refresh state ───────────────────────────────────────────────
     let trackerRefreshTimer = null;
+    let trackerRefreshInFlight = false;
     const TRACKER_REFRESH_MS = 30_000;
 
     function categoryLabelFor(categoryId, fallback = null) {
@@ -102,11 +103,25 @@ function createApiTrackers(context) {
     async function refreshTrackerEvents() {
         if (!hasTelegramInitData()) return;
         if (state.ui.activeView !== "tracking") return;
+        // FR-12: no background polling while hidden or still in flight.
+        if (document.hidden || trackerRefreshInFlight) return;
+        trackerRefreshInFlight = true;
+        // FR-02: a loadTrackers() started meanwhile owns the list.
+        const requestId = state.trackers._requestId;
         try {
             const [trackersResult, eventsResult] = await Promise.allSettled([
                 getJson("/api/v1/trackers"),
                 getJson("/api/v1/tracker-events"),
             ]);
+            // TG-16: once initData has expired every poll is another 401
+            // (and a WARNING in the API log); the session banner already
+            // asks the user to reopen the Mini App.
+            if ([trackersResult, eventsResult].some((r) => r.status === "rejected"
+                && (r.reason?.sessionExpired || r.reason?.accountDeleted))) {
+                stopTrackerRefresh();
+                return;
+            }
+            if (requestId !== state.trackers._requestId) return;
             if (trackersResult.status === "fulfilled") {
                 state.trackers.items = trackersResult.value;
                 renderTrackers();
@@ -118,6 +133,8 @@ function createApiTrackers(context) {
             }
         } catch (err) {
             // Background refresh failed — will retry on next interval
+        } finally {
+            trackerRefreshInFlight = false;
         }
     }
 
@@ -133,8 +150,11 @@ function createApiTrackers(context) {
             return;
         }
 
-        // Show skeleton cards while loading
-        state.trackers.items = [];
+        // FR-02: keep the last good list on screen (skeletons only when
+        // there is nothing to show yet) — wiping it first made the
+        // duplicate check in createTracker() look at [] after a failed
+        // reload. Stale-response guard as in loadLeads().
+        const requestId = (state.trackers._requestId = ((state.trackers._requestId || 0) + 1) % 1_000_000);
         state.trackers._loading = true;
         renderTrackers();
 
@@ -142,10 +162,14 @@ function createApiTrackers(context) {
             getJson("/api/v1/trackers"),
             getJson("/api/v1/tracker-events"),
         ]);
+        if (requestId !== state.trackers._requestId) return;
 
         state.trackers._loading = false;
-        state.trackers.items = trackersResult.status === "fulfilled" ? trackersResult.value : [];
-        state.trackers.events = eventsResult.status === "fulfilled" ? eventsResult.value : [];
+        if (trackersResult.status === "fulfilled") state.trackers.items = trackersResult.value;
+        if (eventsResult.status === "fulfilled") state.trackers.events = eventsResult.value;
+        state.trackers.loadError = trackersResult.status === "rejected"
+            ? (trackersResult.reason?.message || "Не удалось загрузить трекеры.")
+            : null;
 
         const failures = [trackersResult, eventsResult].filter((r) => r.status === "rejected");
         if (failures.length > 0 && context.showToast) {

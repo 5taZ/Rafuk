@@ -7,6 +7,11 @@
  */
 /* global Chart */
 
+// FR-04: scope the top-level bindings — a second execution of this file
+// (late load after a timeout + retry) threw "Identifier 'CHART_JS_URL'
+// has already been declared".
+(function () {
+
 const CHART_JS_URL =
     "js/vendor/chart.umd.min.js";
 const CHART_JS_INTEGRITY =
@@ -48,7 +53,6 @@ function createRenderCharts(context) {
         formatDate,
         trapFocus,
         hasTelegramInitData,
-        escapeHtml: escapeHtml,
         safeImageUrl,
         optimizedImage,
         safeRender: safeRender,
@@ -202,6 +206,14 @@ function createRenderCharts(context) {
         elements.historySection.hidden = !state.search.activeQuery;
         if (context._hooks?.renderHistoryRangeButtons) context._hooks.renderHistoryRangeButtons();
         elements.historyEmpty.hidden = hasHistory;
+        // FR-02: tell a failed load apart from "history still accumulating".
+        const emptyEl = elements.historyEmpty;
+        if (emptyEl && !emptyEl.dataset.defaultText) emptyEl.dataset.defaultText = emptyEl.textContent.trim();
+        if (emptyEl) {
+            emptyEl.textContent = state.charts.historyError
+                ? "Не удалось загрузить историю цен. Потяните вниз или повторите поиск."
+                : emptyEl.dataset.defaultText;
+        }
         elements.historySummary.hidden = !hasHistory;
         domClear(elements.historySummary);
         if (!state.search.activeQuery) {
@@ -546,3 +558,4 @@ if (typeof window !== "undefined") {
     window.App = window.App || {};
     window.App._realCreateRenderCharts = createRenderCharts;
 }
+})();

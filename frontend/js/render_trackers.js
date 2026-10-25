@@ -16,7 +16,6 @@ function createRenderTrackers(context) {
         formatDate,
         trapFocus,
         hasTelegramInitData,
-        escapeHtml: escapeHtml,
         safeKufarUrl,
         safeImageUrl,
         optimizedImage,
@@ -31,6 +30,9 @@ function createRenderTrackers(context) {
         createVirtualList,
         domEl,
         domClear,
+        // FR-18: shared lead / ad identity rules (dom_helpers.js).
+        ACTIVE_LEAD_STATUSES,
+        sameAdId,
     } = context;
 
     // FE-05 / Wave 29: emoji-prefixed labels need a tiny shim so screen
@@ -133,27 +135,15 @@ function createRenderTrackers(context) {
             ]);
     }
 
-    const ACTIVE_COLLECTION_STATUSES = new Set([
-        "new",
-        "in_progress",
-        "researching",
-        "bought",
-        "sold",
-    ]);
-
-    function _sameAdId(left, right) {
-        return left != null && right != null && String(left) === String(right);
-    }
-
     function _isActiveLeadAd(adId) {
         return (state.leads?.items || []).some(
-            (lead) => _sameAdId(lead.ad_id, adId) && ACTIVE_COLLECTION_STATUSES.has(lead.status),
+            (lead) => sameAdId(lead.ad_id, adId) && ACTIVE_LEAD_STATUSES.has(lead.status),
         );
     }
 
     function _isActiveWatchAd(adId) {
         return (state.watchlist?.items || []).some(
-            (w) => _sameAdId(w.ad_id, adId),
+            (w) => sameAdId(w.ad_id, adId),
         );
     }
 
@@ -176,14 +166,6 @@ function createRenderTrackers(context) {
         elements.trackerStatus.className = `tracker-status is-visible ${state.trackers.statusKind}`;
         elements.trackerStatus.hidden = false;
         });
-    }
-
-    /* ===== Watchlist Filters ===== */
-
-    function renderWatchlistFilters() {
-        for (const button of elements.watchlistFilterButtons || []) {
-            button.classList.toggle("active", button.dataset.watchFilter === state.watchlist.filter);
-        }
     }
 
     /* ===== Tracker Cards ===== */
@@ -227,8 +209,9 @@ function createRenderTrackers(context) {
             return;
         }
 
-        // Show skeleton cards while loading
-        if (state.trackers._loading) {
+        // Show skeleton cards while loading — FR-02: only when there is no
+        // previous list to keep on screen.
+        if (state.trackers._loading && !state.trackers.items.length) {
             for (let i = 0; i < 3; i++) {
                 const skel = document.createElement("div");
                 skel.className = "skeleton-card";
@@ -242,6 +225,20 @@ function createRenderTrackers(context) {
                 }
                 elements.trackersList.appendChild(skel);
             }
+            return;
+        }
+
+        // FR-02: a failed load is not "no trackers yet".
+        if (!state.trackers.items.length && state.trackers.loadError && typeof buildEmpty === "function") {
+            elements.trackersList.appendChild(
+                buildEmpty({
+                    title: "Не удалось загрузить трекеры",
+                    hint: state.trackers.loadError,
+                    actionLabel: "Повторить",
+                    onAction: () => { void actions?.loadTrackers?.(); },
+                    tone: "error",
+                })
+            );
             return;
         }
 
@@ -846,7 +843,6 @@ function createRenderTrackers(context) {
 
     return {
         renderTrackerStatus,
-        renderWatchlistFilters,
         renderTrackers,
         renderTrackerEvents,
         renderTrackerEventFilters,
