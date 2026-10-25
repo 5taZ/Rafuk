@@ -21,11 +21,25 @@ Expected result:
 
 ## Schedule it
 
-Use a scheduler outside the app containers. Example cron shape:
+Use a scheduler outside the app containers. Keep the database URL out of the
+crontab line itself: a password there shows up in `crontab -l` and in the
+`ps` output of cron's `sh -c`, which `scripts/backup.sh` otherwise avoids
+(IN-18). Put the variables in a root-only environment file:
+
+```bash
+# /etc/kufar-backup.env, mode 0600, owned by the user that runs the job
+DATABASE_URL='postgresql+asyncpg://user:password@host:5432/kufar'
+BACKUP_DIR=/mnt/kufar-backups
+RETENTION_DAYS=30
+```
+
+and source it in the cron entry:
 
 ```cron
-17 2 * * * cd /srv/kufar-analytics && DATABASE_URL='postgresql+asyncpg://user:password@host:5432/kufar' BACKUP_DIR=/mnt/kufar-backups RETENTION_DAYS=30 scripts/backup.sh >> /var/log/kufar-backup.log 2>&1
+17 2 * * * cd /srv/kufar-analytics && set -a && . /etc/kufar-backup.env && set +a && scripts/backup.sh >> /var/log/kufar-backup.log 2>&1
 ```
+
+A systemd timer can load the same file with `EnvironmentFile=/etc/kufar-backup.env`.
 
 The concrete path, environment source, and off-host sync mechanism are
 deployment-specific. Do not treat local disk alone as an off-host backup.

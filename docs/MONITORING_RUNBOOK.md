@@ -11,13 +11,18 @@ Monitor these through the same public route real users use:
 | Check | Endpoint | Expected |
 |-------|----------|----------|
 | Frontend availability | `/` | HTTP 200 and non-empty HTML |
-| API readiness | `/api/v1/health/ready` | HTTP 200 |
+| API readiness | `/api/v1/health/ready` | HTTP 200 and a body without `degraded` |
 | API detailed health | `/api/v1/health` | JSON `status` is `healthy` |
+
+`/api/v1/health/ready` answers 200 with `{"status":"degraded","redis":"unavailable"}`
+when Redis is down and `SECURITY_CACHE_REQUIRED=false`, so check the body, not
+just the status code.
 
 Recommended alert shape:
 
 - Page if frontend or API readiness fails for 2 consecutive checks.
-- Ticket if detailed health reports `degraded` but readiness still returns 200.
+- Ticket if detailed health or the readiness body reports `degraded` but
+  readiness still returns 200.
 - Track latency separately from availability; alert on sustained p95 regressions
   only after a baseline is known for the deployment.
 
@@ -36,8 +41,13 @@ blackbox exporter rather than exposing these ports publicly.
 
 ## Metrics
 
-The API exposes Prometheus text at `/metrics`.
+The API exposes Prometheus text at `/metrics` on the api service itself, not
+through the public route: nginx answers 404 for `/metrics` (IN-18; it used to
+fall through to the SPA shell and answer 200 with HTML, which a probe could
+read as healthy).
 
+- Scrape `http://api:8000/metrics` from inside `kufar-net`, or
+  `http://127.0.0.1:8010/metrics` on the Docker host.
 - In production-like deployments, set `METRICS_BEARER_TOKEN`.
 - Scrape with `Authorization: Bearer <token>`.
 - Do not expose `/metrics` unauthenticated on the public internet.

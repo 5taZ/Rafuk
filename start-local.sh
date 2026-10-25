@@ -267,15 +267,28 @@ start_tunnel() {
     echo "Tunnel URL: $tunnel_url"
 }
 
+# IN-20: an .env from before RV-OPS-02 may still route the compose services
+# through host.docker.internal, which a Linux Docker Engine cannot reach on
+# the 127.0.0.1-only ports; `docker compose up` of the full stack then fails
+# in migrate. start-local.sh itself does not use these variables.
+warn_stale_docker_urls() {
+    if [[ -f "$ROOT_DIR/.env" ]] \
+        && grep -qE '^DOCKER_(DATABASE|REDIS)_URL=.*host\.docker\.internal' "$ROOT_DIR/.env"; then
+        echo "WARNING: .env points DOCKER_DATABASE_URL / DOCKER_REDIS_URL at host.docker.internal." >&2
+        echo "         The compose services use postgres:5432 / redis:6379 over kufar-net;" >&2
+        echo "         remove those lines (see README, 'Upgrading an older .env')." >&2
+    fi
+}
+
 migrate_db() {
     echo "Running database migrations ..."
-    uv run alembic -c migrations/alembic.ini upgrade head
+    uv run --locked alembic -c migrations/alembic.ini upgrade head
 }
 
 start_api() {
     : >"$API_LOG"
     echo "Starting API on 0.0.0.0:8010 ..."
-    nohup uv run uvicorn api.main:app --host 0.0.0.0 --port 8010 >"$API_LOG" 2>&1 &
+    nohup uv run --locked uvicorn api.main:app --host 0.0.0.0 --port 8010 >"$API_LOG" 2>&1 &
     echo $! >"$RUN_DIR/api.pid"
 
     if ! wait_for_http "http://127.0.0.1:8010/api/v1/health" 30; then
@@ -288,19 +301,20 @@ start_api() {
 start_bot() {
     : >"$BOT_LOG"
     echo "Starting bot ..."
-    nohup uv run python -m bot.main >"$BOT_LOG" 2>&1 &
+    nohup uv run --locked python -m bot.main >"$BOT_LOG" 2>&1 &
     echo $! >"$RUN_DIR/bot.pid"
 }
 
 start_scheduler() {
     : >"$SCHEDULER_LOG"
     echo "Starting scheduler ..."
-    nohup uv run python -m scheduler.collector >"$SCHEDULER_LOG" 2>&1 &
+    nohup uv run --locked python -m scheduler.collector >"$SCHEDULER_LOG" 2>&1 &
     echo $! >"$RUN_DIR/scheduler.pid"
 }
 
 main() {
     cd "$ROOT_DIR"
+    warn_stale_docker_urls
     stop_existing
     start_infra
     start_frontend

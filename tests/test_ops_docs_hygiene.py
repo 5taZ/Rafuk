@@ -83,6 +83,84 @@ def test_ci_compose_smoke_runs_the_production_stack() -> None:
     assert "compose-smoke" in jobs["docker-build"]["needs"]
 
 
+def test_ci_compose_smoke_checks_bodies_health_and_auth() -> None:
+    """IN-06: the smoke only checked the HTTP status of /health/ready, which
+    is 200 with a "degraded" body on a broken Redis, never waited for the
+    frontend healthcheck and made no authenticated request."""
+    smoke = _workflow()["jobs"]["compose-smoke"]
+    script = "\n".join(step.get("run", "") for step in smoke["steps"])
+    assert "for service in api scheduler frontend; do" in script
+    assert "grep -q degraded" in script
+    assert "jq -e '.status == \"healthy\"" in script
+    assert 'kufar_metrics_backend_info{backend="redis"} 1' in script
+    assert smoke["env"]["METRICS_BEARER_TOKEN"]
+    assert 'hmac.new(b"WebAppData"' in script
+    assert "X-Telegram-Init-Data:" in script
+    assert "/api/v1/ai-consent-info)\" = 401" in script
+
+
+def test_ci_jobs_have_timeouts_and_report_slow_tests() -> None:
+    """IN-07: a hung test held the job until GitHub's 6-hour limit."""
+    jobs = _workflow()["jobs"]
+    assert all(isinstance(job.get("timeout-minutes"), int) for job in jobs.values()), [
+        name for name, job in jobs.items() if "timeout-minutes" not in job
+    ]
+    assert all(job["runs-on"] == "ubuntu-24.04" for job in jobs.values())
+    test_run = next(
+        step["run"] for step in jobs["test"]["steps"] if step.get("name") == "Run tests"
+    )
+    assert "--durations=" in test_run
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert re.search(r"^timeout = \d+$", pyproject, re.MULTILINE)
+    assert '"pytest-timeout>=' in pyproject
+
+
+def test_dev_extra_provides_node_for_the_js_tests() -> None:
+    """IN-03: the documented `uv run pytest` failed 34 JS tests on a machine
+    without Node.js; the dev extra now installs `node` into the venv."""
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert '"nodejs-wheel>=' in pyproject
+    lock = Path("uv.lock").read_text(encoding="utf-8")
+    assert 'name = "nodejs-wheel-binaries"' in lock
+
+
+def test_ci_pins_its_tools_and_gates_the_whole_change() -> None:
+    """IN-13: unpinned pip-audit and axe-core, an axe download without -f,
+    PRs into dev unchecked, and a frontend gate that only saw HEAD~1."""
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    triggers = workflow.get("on", workflow.get(True))
+    assert "dev" in triggers["pull_request"]["branches"]
+    audit = "\n".join(step.get("run", "") for step in jobs["security"]["steps"])
+    assert re.search(r"--from pip-audit==\d+\.\d+\.\d+ ", audit)
+    e2e = "\n".join(step.get("run", "") for step in jobs["e2e-smoke"]["steps"])
+    assert re.search(r"curl -fsSL https://cdn\.jsdelivr\.net/npm/axe-core@\d+\.\d+\.\d+/", e2e)
+    gate = jobs["frontend-version-gate"]
+    assert gate["steps"][0]["with"]["fetch-depth"] == 0
+    check = gate["steps"][1]
+    assert "github.event.pull_request.base.sha" in check["env"]["BASE_SHA"]
+    assert "github.event.before" in check["env"]["BASE_SHA"]
+    assert 'git diff --name-only "$base" HEAD' in check["run"]
+
+
+def test_review_reports_stay_out_of_git() -> None:
+    """IN-02: local review reports map open vulnerabilities; the repository
+    is public."""
+    gitignore = Path(".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "reviews/" in gitignore
+    assert "REVIEW.md" in gitignore
+
+
+def test_agents_md_documents_a_real_concurrent_index_recipe() -> None:
+    """BE-DEEP-11 / DB-02: `def with_autocommit()` is not an Alembic API."""
+    agents = Path("AGENTS.md").read_text(encoding="utf-8")
+    assert "with_autocommit" not in agents
+    assert "with op.get_context().autocommit_block():" in agents
+    assert "postgresql_concurrently=True" in agents
+    # CC-22: konechno.md never had a file map.
+    assert "file map lives at the bottom of `konechno.md`" not in agents
+
+
 def test_readme_production_command_runs_the_bundled_database() -> None:
     """RV-OPS-02: the containers reach the database as postgres:5432, so the
     documented full-stack command must start it (local-db profile)."""

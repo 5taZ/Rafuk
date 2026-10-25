@@ -3,12 +3,15 @@ from __future__ import annotations
 import functools
 import itertools
 import os
+import sqlite3 as _sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 import fastapi.testclient as _ftc
 import pytest
 from sqlalchemy import Integer as _Integer
+from sqlalchemy import event as _sa_event
+from sqlalchemy.engine import Engine as _Engine
 
 # RV-OPS-04: the Redis the suite talks to comes from TEST_REDIS_URL. The old
 # hard-coded :6380 never matched the CI service (:6379), so every Redis-only
@@ -116,6 +119,20 @@ except Exception:
     pass
 
 
+# IN-05: SQLite leaves foreign keys unenforced unless every connection turns
+# them on, so cascades and FK violations surfaced only in the Postgres CI run.
+@_sa_event.listens_for(_Engine, "connect")
+def _sqlite_enforce_foreign_keys(dbapi_connection, _connection_record) -> None:
+    if not (
+        isinstance(dbapi_connection, _sqlite3.Connection)
+        or "aiosqlite" in type(dbapi_connection).__module__
+    ):
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
 # ── SQLite BigInteger fix: User.id auto-assignment ───────────────────────
 # Fallback helper for tests that create User objects directly — provides
 # an explicit id in case the type patch above isn't sufficient.
@@ -137,18 +154,21 @@ def reset_test_redis_state() -> None:
     binding issues. Silent no-op when Redis isn't reachable — tests fall
     back to MemoryCache automatically.
     """
-    try:
-        import redis
+    # IN-14: a Redis known to be down (one PING per session) is not dialled
+    # again before every test; a host that drops packets cost 0.2 s each.
+    if redis_reachable_for_tests():
+        try:
+            import redis
 
-        client = redis.Redis.from_url(
-            TEST_REDIS_URL,
-            socket_connect_timeout=0.2,
-            socket_timeout=0.2,
-        )
-        client.flushdb()
-        client.close()
-    except Exception:
-        pass
+            client = redis.Redis.from_url(
+                TEST_REDIS_URL,
+                socket_connect_timeout=0.2,
+                socket_timeout=0.2,
+            )
+            client.flushdb()
+            client.close()
+        except Exception:
+            pass
 
     try:
         from api.limiter import limiter

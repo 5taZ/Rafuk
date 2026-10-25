@@ -1,8 +1,16 @@
 # RV-OPS-13: BuildKit reads this file instead of .dockerignore when it builds
 # Dockerfile.frontend. The nginx image needs only the static bundle, the logos
-# and the nginx config template, so the build context is an allowlist: secrets,
+# and the nginx config, so the build context is an allowlist: secrets,
 # Python code, tests and local state never reach this build.
 *
 !frontend/
 !assets/
 !nginx/
+
+# IN-02: nested local files inside the allowed directories stay out too.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.md
+**/.DS_Store

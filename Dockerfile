@@ -34,9 +34,14 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 
-# Application code; .dockerignore keeps secrets, tests, docs and the frontend out.
+# Application code; the .dockerignore allowlist lets only the packages,
+# pyproject.toml, uv.lock and README.md in (IN-02).
 COPY . .
 RUN uv sync --locked --no-dev
+# IN-16: the project is installed in editable mode, so UV_COMPILE_BYTECODE only
+# covered site-packages. Compile the application code here: on the read-only
+# root filesystem every worker would otherwise recompile it in memory at start.
+RUN /app/.venv/bin/python -m compileall -q api bot scheduler migrations
 
 USER appuser
 
@@ -57,4 +62,6 @@ EXPOSE 8000
 # the environment on every start and may re-lock or re-sync it, which fails on
 # the read-only root filesystem. `exec` makes the service PID 1, so it gets
 # the SIGTERM of `docker stop`. SERVICE=migrate is the one-shot alembic run.
-CMD ["sh", "-c", "case \"$SERVICE\" in api) exec /app/.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers \"${WORKERS:-4}\" --log-level \"${LOG_LEVEL:-info}\" ;; bot) exec /app/.venv/bin/python -m bot.main ;; scheduler) exec /app/.venv/bin/python -m scheduler.collector ;; migrate) exec /app/.venv/bin/alembic -c migrations/alembic.ini upgrade head ;; *) echo \"Unknown SERVICE=$SERVICE\"; exit 1 ;; esac"]
+# OPS-07: compose now passes LOG_LEVEL from .env, and uvicorn's --log-level
+# choices are lowercase only, so "INFO" would stop the api from starting.
+CMD ["sh", "-c", "case \"$SERVICE\" in api) exec /app/.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers \"${WORKERS:-4}\" --log-level \"$(printf %s \"${LOG_LEVEL:-info}\" | tr A-Z a-z)\" ;; bot) exec /app/.venv/bin/python -m bot.main ;; scheduler) exec /app/.venv/bin/python -m scheduler.collector ;; migrate) exec /app/.venv/bin/alembic -c migrations/alembic.ini upgrade head ;; *) echo \"Unknown SERVICE=$SERVICE\"; exit 1 ;; esac"]

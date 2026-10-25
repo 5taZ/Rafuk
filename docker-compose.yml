@@ -12,6 +12,47 @@ name: myprojetctkufar
 x-database-url: &database-url "${DOCKER_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-kufar}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kufar}}"
 x-redis-url: &redis-url "${DOCKER_REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379/0}"
 
+# OPS-07: the Settings fields (api/config.py) the containers get. Unlike the
+# host processes, the containers do not read .env (it never enters the image),
+# so a field missing here silently kept its code default in the stack. Every
+# default below equals the api/config.py default (the exceptions are commented),
+# so an unset variable keeps the previous behaviour; set it in .env to change
+# it. tests/test_docker_config.py fails when a Settings field is neither passed
+# nor allowlisted there, and when a default here drifts from api/config.py.
+x-app-env: &app-env
+  ENV: ${ENV:-production}
+  DEBUG: ${DEBUG:-false}
+  AUTH_BYPASS: ${AUTH_BYPASS:-false}
+  # IN-11: an unset token started api "healthy" with every initData rejected
+  # and the bot in a crash loop; compose now refuses to start instead.
+  BOT_TOKEN: ${BOT_TOKEN:?BOT_TOKEN must be set in .env}
+  DATABASE_URL: *database-url
+  REDIS_URL: *redis-url
+  API_BASE_URL: ${API_BASE_URL}
+  MINI_APP_URL: ${MINI_APP_URL}
+  # Read by api/logging_config.py in every service and by uvicorn (--log-level,
+  # lowercase) in the api service.
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  # IN-19: per process. Worst case api WORKERS x (size + overflow) + bot +
+  # scheduler must stay under Postgres max_connections (100 by default).
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+  # SEC-06 / G-03..G-05 production policy gates (lax defaults, see
+  # api/config.py); the api and the bot both read them.
+  SECURITY_CACHE_REQUIRED: ${SECURITY_CACHE_REQUIRED:-false}
+  INTERNAL_SERVICE_TOKEN_REQUIRED: ${INTERNAL_SERVICE_TOKEN_REQUIRED:-false}
+  ALLOW_LEGACY_BOT_INITDATA: ${ALLOW_LEGACY_BOT_INITDATA:-true}
+
+# OPS-07: Kufar client and tracker settings, shared by api and scheduler.
+x-kufar-env: &kufar-env
+  KUFAR_REQUEST_DELAY: ${KUFAR_REQUEST_DELAY:-1.0}
+  KUFAR_TIMEOUT: ${KUFAR_TIMEOUT:-15.0}
+  KUFAR_MAX_ADS_PER_QUERY: ${KUFAR_MAX_ADS_PER_QUERY:-1500}
+  ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
+  CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-300}
+  AUTO_REMOVE_MISSING_DAYS: ${AUTO_REMOVE_MISSING_DAYS:-7}
+
 services:
   # NOTE: resource limits are deliberately conservative — they're sized
   # for a single-host dev deployment, not for production scale. Limits
@@ -43,15 +84,8 @@ services:
     # like the other services; the old `uv run --no-sync` command needed a
     # tmpfs uv cache (UV_CACHE_DIR) on this read-only container.
     environment:
+      <<: *app-env
       SERVICE: migrate
-      ENV: ${ENV:-production}
-      DEBUG: ${DEBUG:-false}
-      AUTH_BYPASS: ${AUTH_BYPASS:-false}
-      DATABASE_URL: *database-url
-      BOT_TOKEN: ${BOT_TOKEN}
-      REDIS_URL: *redis-url
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
     depends_on:
       # RV-OPS-02: wait for the bundled database instead of failing the one-shot
       # run on a cold start. required: false (Compose >= 2.20) keeps the
@@ -86,21 +120,31 @@ services:
     tmpfs:
       - /tmp
     environment:
-      ENV: ${ENV:-production}
-      DEBUG: ${DEBUG:-false}
-      AUTH_BYPASS: ${AUTH_BYPASS:-false}
+      <<: [*app-env, *kufar-env]
       SERVICE: api
-      BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: *database-url
-      REDIS_URL: *redis-url
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
+      # PERF-H1: uvicorn worker processes (the Dockerfile default is 4). Raise
+      # DB_POOL_* budgeting and the cpus/memory limits below together with it.
+      WORKERS: ${WORKERS:-4}
+      # Deliberately above the api/config.py default (2) for the api's
+      # request fan-out; the scheduler keeps 2.
+      KUFAR_PARALLEL_SEMAPHORE: ${KUFAR_PARALLEL_SEMAPHORE:-3}
       ADMIN_TELEGRAM_USER_IDS: ${ADMIN_TELEGRAM_USER_IDS:-}
       METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
       REPLAY_AUTOBLOCK_ENABLED: ${REPLAY_AUTOBLOCK_ENABLED:-false}
+      TELEGRAM_INIT_DATA_MAX_AGE: ${TELEGRAM_INIT_DATA_MAX_AGE:-7200}
       # OPUS-12: shared with the bot via env so /api/v1/leads etc.
       # can accept service-token auth on the bot's behalf.
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      # SEC-NEW-8: blank falls back to the BOT_TOKEN-derived key.
+      AUDIT_HASH_SECRET: ${AUDIT_HASH_SECRET:-}
+      AI_AUDIT_REQUIRED: ${AI_AUDIT_REQUIRED:-false}
+      API_MAX_BODY_BYTES: ${API_MAX_BODY_BYTES:-8388608}
+      MAX_TRACKERS_PER_USER: ${MAX_TRACKERS_PER_USER:-50}
+      MAX_DEAL_ADS_PER_QUERY: ${MAX_DEAL_ADS_PER_QUERY:-20}
+      MAX_OPPORTUNITY_ITEMS: ${MAX_OPPORTUNITY_ITEMS:-12}
+      MAX_OPPORTUNITY_SIGNALS: ${MAX_OPPORTUNITY_SIGNALS:-4}
+      MAX_SAVED_SEARCHES_FOR_BOARD: ${MAX_SAVED_SEARCHES_FOR_BOARD:-8}
+      MAX_RECENT_TRACKER_EVENTS: ${MAX_RECENT_TRACKER_EVENTS:-6}
       AI_API_KEY: ${AI_API_KEY:-}
       # OPUS-5: align default base URL with default model.
       # gemini-2.5-flash is served by Google, not Together — the
@@ -109,15 +153,26 @@ services:
       AI_MODEL: ${AI_MODEL:-gemini-2.5-flash}
       AI_ANALYSIS_MODEL: ${AI_ANALYSIS_MODEL:-}
       AI_LISTING_ASSISTANT_MODEL: ${AI_LISTING_ASSISTANT_MODEL:-}
+      # Blank: the consent screen derives provider and region from AI_BASE_URL.
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-}
+      AI_PROVIDER_REGION: ${AI_PROVIDER_REGION:-}
       AI_PROXY_URL: ${AI_PROXY_URL:-}
+      AI_MAX_IMAGES: ${AI_MAX_IMAGES:-3}
+      AI_CACHE_HOURS: ${AI_CACHE_HOURS:-1}
+      AI_HOURLY_LIMIT: ${AI_HOURLY_LIMIT:-10}
+      AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-50}
       AI_ANALYSIS_TIMEOUT: ${AI_ANALYSIS_TIMEOUT:-150}
       AI_QUICK_CONDITION_TIMEOUT: ${AI_QUICK_CONDITION_TIMEOUT:-45}
       AI_PHOTO_PRECHECK_TIMEOUT: ${AI_PHOTO_PRECHECK_TIMEOUT:-30}
       AI_PHOTO_PRECHECK_ENABLED: ${AI_PHOTO_PRECHECK_ENABLED:-false}
       AI_CHAT_MIN_INTERVAL_SECONDS: ${AI_CHAT_MIN_INTERVAL_SECONDS:-1.5}
-      KUFAR_REQUEST_DELAY: ${KUFAR_REQUEST_DELAY:-1.0}
-      KUFAR_PARALLEL_SEMAPHORE: ${KUFAR_PARALLEL_SEMAPHORE:-3}
-      ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
+      AI_TASK_TTL: ${AI_TASK_TTL:-3600}
+      AI_FALLBACK_CACHE_TTL: ${AI_FALLBACK_CACHE_TTL:-1800}
+      IMAGE_PROXY_ENABLED: ${IMAGE_PROXY_ENABLED:-true}
+      IMAGE_PROXY_MAX_WIDTH: ${IMAGE_PROXY_MAX_WIDTH:-1024}
+      IMAGE_PROXY_QUALITY: ${IMAGE_PROXY_QUALITY:-80}
+      IMAGE_PROXY_FETCH_TIMEOUT: ${IMAGE_PROXY_FETCH_TIMEOUT:-5.0}
+      IMAGE_PROXY_MAX_BYTES: ${IMAGE_PROXY_MAX_BYTES:-5242880}
     depends_on:
       redis:
         condition: service_healthy
@@ -167,15 +222,8 @@ services:
     tmpfs:
       - /tmp
     environment:
-      ENV: ${ENV:-production}
-      DEBUG: ${DEBUG:-false}
-      AUTH_BYPASS: ${AUTH_BYPASS:-false}
+      <<: *app-env
       SERVICE: bot
-      BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: *database-url
-      REDIS_URL: *redis-url
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
       # OPUS-12: shared with api via env so the bot can authenticate
       # callbacks against the API without forging initData.
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
@@ -221,16 +269,10 @@ services:
     tmpfs:
       - /tmp
     environment:
-      ENV: ${ENV:-production}
-      DEBUG: ${DEBUG:-false}
-      AUTH_BYPASS: ${AUTH_BYPASS:-false}
+      <<: [*app-env, *kufar-env]
       SERVICE: scheduler
-      BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: *database-url
-      REDIS_URL: *redis-url
-      API_BASE_URL: ${API_BASE_URL}
-      MINI_APP_URL: ${MINI_APP_URL}
-      ALERT_CHECK_INTERVAL: ${ALERT_CHECK_INTERVAL:-30}
+      # The api/config.py default; the api service runs with 3.
+      KUFAR_PARALLEL_SEMAPHORE: ${KUFAR_PARALLEL_SEMAPHORE:-2}
     depends_on:
       api:
         condition: service_healthy
@@ -311,12 +353,10 @@ services:
     # Only start-local.sh host mode uses it (the API runs on the host there).
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      api:
-        condition: service_healthy
-        # Restart nginx whenever compose recreates or restarts api
-        # (Compose >= 2.17), in addition to "resolve" above.
-        restart: true
+    # IN-01: no depends_on on api. nginx serves the static shell on its own and
+    # follows a recreated api through "resolve" above; waiting for a healthy
+    # api tied the shell to Postgres/Redis health, and `restart: true` cut
+    # static downloads and long AI requests whenever compose recreated api.
     ports:
       - "127.0.0.1:8081:8080"
     networks:
@@ -395,6 +435,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    # OPS-14: bounded logs like every other service.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   cloudflared:
     image: cloudflare/cloudflared:2024.12.1
@@ -410,9 +456,10 @@ services:
     command: tunnel run
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    # IN-01: the tunnel forwards to nginx (frontend), not to the api.
     depends_on:
-      api:
-        condition: service_healthy
+      frontend:
+        condition: service_started
     networks:
       - kufar-net
     profiles: ["tunnel"]
@@ -424,6 +471,12 @@ services:
         reservations:
           memory: 32M
           cpus: "0.05"
+    # OPS-14: bounded logs like every other service.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # INF-01: local PostgreSQL is profile-gated for compose-only deploys,
   # but start-local.sh always starts it explicitly. Keeping the database

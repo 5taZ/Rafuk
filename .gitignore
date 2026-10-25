@@ -35,3 +35,7 @@ notmyfault.md
 1.md
 kimiissues.md
 .gstack/
+# Local-only review reports (vulnerability maps): the repository is public,
+# never commit them.
+REVIEW.md
+reviews/

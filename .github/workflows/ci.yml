@@ -10,7 +10,8 @@ on:
     branches: [main, dev, bad-app]
   pull_request:
     # RV-OPS-09: PRs into the active branch were not checked at all.
-    branches: [main, bad-app]
+    # IN-13: nor were PRs into the `dev` integration branch.
+    branches: [main, dev, bad-app]
   workflow_dispatch:  # G-12: manual trigger for E2E smoke
 
 permissions:
@@ -21,6 +22,11 @@ env:
   # one (ARG UV_VERSION). Bump both together.
   UV_VERSION: "0.12.19"
 
+# IN-07: every job has a timeout-minutes, so a hung step fails in minutes
+# instead of holding the runner until GitHub's 6-hour limit.
+# IN-12: runners are pinned to ubuntu-24.04: `ubuntu-latest` moves to a new
+# image (Docker, Compose, system Python) without a change in this repository.
+
 jobs:
   lint:
     # INF-M4: lint and test now run in parallel — neither has a `needs:`
@@ -29,7 +35,8 @@ jobs:
     # regressions until the lint was fixed and the whole pipeline was
     # re-run.
     name: Lint & Type Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       # SEC-HIGH-effective-MEDIUM (issues §1.8): every third-party
       # action is pinned to a 40-char commit SHA so a compromised
@@ -82,7 +89,8 @@ jobs:
     # we've evaluated and accepted; keep the list short and add a
     # comment whenever you extend it.
     name: Dependency Audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -110,29 +118,45 @@ jobs:
         # transitive resolution step (we already have the full graph
         # frozen in requirements.lock.txt) which keeps the audit job
         # under a minute.
-        run: uv tool run --from pip-audit pip-audit --strict -r requirements.lock.txt --no-deps
+        # IN-13: a pinned auditor, so a new pip-audit release cannot change
+        # the result of an unchanged lock file.
+        run: uv tool run --from pip-audit==2.10.1 pip-audit --strict -r requirements.lock.txt --no-deps
 
   # FE-NEW-4: enforce that frontend changes refresh ?v= tags so the SW cache picks them up.
   frontend-version-gate:
     name: Frontend Version Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 2
+          # IN-13: the whole history, so the base of a PR or of a
+          # multi-commit push is available.
+          fetch-depth: 0
 
       - name: Check frontend cache-busting tags
+        env:
+          # IN-13: compare with the PR base or with the commit before the
+          # push. HEAD~1 only covered the last commit, so a JS change without
+          # a bump in an earlier commit of the same push passed.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          # Detect if frontend/js or frontend/css changed vs parent commit
-          if git diff --name-only HEAD~1 | grep -qE '^frontend/(js|css)/'; then
+          base="$BASE_SHA"
+          # New branch (all-zero "before"), manual run or a force-push whose
+          # old head is gone: fall back to the parent commit.
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD~1)"
+          fi
+          echo "Comparing with $base"
+          if git diff --name-only "$base" HEAD | grep -qE '^frontend/(js|css)/'; then
             echo "Frontend JS/CSS changed — verifying version bump..."
             # Extract current ?v= tag
             CURRENT_V=$(grep -hoE '\?v=[A-Za-z0-9._-]+' frontend/index.html | head -1)
             # Extract current CACHE_VERSION
             CURRENT_CV=$(grep -oE 'const CACHE_VERSION = "[^"]+"' frontend/sw.js | head -1)
-            # Extract base (parent) values
-            BASE_V=$(git show HEAD~1:frontend/index.html | grep -hoE '\?v=[A-Za-z0-9._-]+' | head -1)
-            BASE_CV=$(git show HEAD~1:frontend/sw.js | grep -oE 'const CACHE_VERSION = "[^"]+"' | head -1)
+            # Extract base values
+            BASE_V=$(git show "$base:frontend/index.html" | grep -hoE '\?v=[A-Za-z0-9._-]+' | head -1)
+            BASE_CV=$(git show "$base:frontend/sw.js" | grep -oE 'const CACHE_VERSION = "[^"]+"' | head -1)
             if [[ "$CURRENT_V" == "$BASE_V" ]]; then
               echo "::error::frontend/js or frontend/css changed but ?v= tag in index.html was NOT bumped ($CURRENT_V). Run scripts/bump_static_version.sh"
               exit 1
@@ -148,7 +172,10 @@ jobs:
 
   test:
     name: Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # IN-07: ~13 minutes today; pytest-timeout (pyproject.toml) caps each
+    # test, this caps the job.
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -224,7 +251,9 @@ jobs:
           TEST_REDIS_REQUIRED: "1"
           API_BASE_URL: https://example.com
           MINI_APP_URL: https://example.com/app
-        run: uv run pytest tests/ -v --cov=api --cov=bot --cov=scheduler --cov-report=xml
+        # IN-07: --durations lists the slowest tests, so a creeping slowdown
+        # shows up in the log before it reaches the timeouts.
+        run: uv run --locked pytest tests/ -v --durations=20 --cov=api --cov=bot --cov=scheduler --cov-report=xml
 
       - name: Upload coverage to Codecov
         # SEC-LOW (issues §1.8): codecov v4 requires a token for
@@ -233,13 +262,15 @@ jobs:
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          file: ./coverage.xml
+          # `file` is deprecated in codecov-action v4.
+          files: ./coverage.xml
           fail_ci_if_error: false
 
   # G-12: opt-in E2E smoke; full coverage is a follow-up.
   e2e-smoke:
     name: E2E Smoke (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'e2e')
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -262,7 +293,9 @@ jobs:
         run: uv run playwright install chromium --with-deps
 
       - name: Download axe-core
-        run: curl -sL https://cdn.jsdelivr.net/npm/axe-core/axe.min.js -o tests/e2e/vendor/axe.min.js
+        # OPS-12 / IN-13: a pinned release, and -f so an error page (404,
+        # rate limit) fails the step instead of landing in axe.min.js.
+        run: curl -fsSL https://cdn.jsdelivr.net/npm/axe-core@4.14.0/axe.min.js -o tests/e2e/vendor/axe.min.js
 
       - name: Run E2E smoke tests
         env:
@@ -275,7 +308,7 @@ jobs:
   # months because no job ever started the images or built Dockerfile.frontend.
   compose-smoke:
     name: Compose Smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       # Base file only, as in production (no docker-compose.override.yml), plus
@@ -289,6 +322,8 @@ jobs:
       BOT_TOKEN: "123456:ci-smoke-not-a-real-token"
       API_BASE_URL: https://ci.example.com
       MINI_APP_URL: https://ci.example.com
+      # IN-06: lets the smoke read /metrics, which ENV=production protects.
+      METRICS_BEARER_TOKEN: ci-smoke-metrics-token
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -303,24 +338,77 @@ jobs:
 
       - name: Start the stack
         # Returns once postgres is healthy, migrate has exited 0 and api is
-        # healthy (the depends_on conditions), then starts scheduler and frontend.
+        # healthy (scheduler's depends_on conditions); frontend has no
+        # dependency (IN-01) and starts right away.
         run: timeout 600 docker compose up -d scheduler frontend
 
-      - name: API readiness through nginx (frontend -> api:8000)
-        run: curl -fsS --retry 20 --retry-delay 3 --retry-all-errors http://127.0.0.1:8081/api/v1/health/ready
-
-      - name: Frontend serves the Mini App shell
-        run: curl -fsS http://127.0.0.1:8081/ | grep -qi '<!doctype html'
-
-      - name: Scheduler becomes healthy
+      - name: Api, scheduler and frontend become healthy
+        # IN-06: every started service with a healthcheck, including nginx's
+        # own, which nothing checked before.
         run: |
-          for _ in $(seq 1 30); do
-            status="$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q scheduler)")"
-            if [ "$status" = "healthy" ]; then exit 0; fi
-            sleep 5
+          for service in api scheduler frontend; do
+            status=unknown
+            for _ in $(seq 1 60); do
+              status="$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q "$service")")"
+              if [ "$status" = "healthy" ]; then break; fi
+              sleep 5
+            done
+            echo "$service health: $status"
+            if [ "$status" != "healthy" ]; then exit 1; fi
           done
-          echo "scheduler health: $status"
-          exit 1
+
+      - name: API readiness and health through nginx (frontend -> api:8000)
+        # IN-06: /health/ready answers 200 with a "degraded" body when Redis is
+        # unreachable (SECURITY_CACHE_REQUIRED=false), so the status code
+        # alone let an api on the in-memory fallback pass.
+        run: |
+          ready="$(curl -fsS --retry 20 --retry-delay 3 --retry-all-errors http://127.0.0.1:8081/api/v1/health/ready)"
+          echo "ready: ${ready:-<empty body>}"
+          if grep -q degraded <<<"$ready"; then
+            echo "::error::readiness reports a degraded dependency"
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:8081/api/v1/health \
+            | tee /dev/stderr \
+            | jq -e '.status == "healthy" and .database == "ok" and .rate_limiter == "ok"'
+
+      - name: Metrics come from the shared Redis backend
+        # IN-06: the api port is published on 127.0.0.1 only; nginx answers
+        # 404 for /metrics (IN-18).
+        run: |
+          curl -fsS -H "Authorization: Bearer ${METRICS_BEARER_TOKEN}" http://127.0.0.1:8010/metrics \
+            | grep -F 'kufar_metrics_backend_info{backend="redis"} 1'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/metrics)" = 404
+
+      - name: Authenticated request through nginx
+        # IN-06: initData signed with the job's BOT_TOKEN, the way Telegram
+        # signs it; without initData the same route must answer 401.
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/api/v1/ai-consent-info)" = 401
+          init_data="$(python3 - <<'PY'
+          import hashlib, hmac, json, os, time, urllib.parse
+          fields = {
+              "auth_date": str(int(time.time())),
+              "user": json.dumps({"id": 777000001, "first_name": "CI"}, separators=(",", ":")),
+          }
+          check = "\n".join(f"{key}={value}" for key, value in sorted(fields.items()))
+          secret = hmac.new(b"WebAppData", os.environ["BOT_TOKEN"].encode(), hashlib.sha256).digest()
+          fields["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+          print(urllib.parse.urlencode(fields))
+          PY
+          )"
+          curl -fsS -H "X-Telegram-Init-Data: ${init_data}" http://127.0.0.1:8081/api/v1/ai-consent-info \
+            | jq -e '.model | length > 0'
+
+      - name: Frontend serves the Mini App shell with its security headers
+        # SC-05: static assets and sw.js keep CSP and nosniff.
+        run: |
+          curl -fsS http://127.0.0.1:8081/ | grep -qi '<!doctype html'
+          for path in / /sw.js /js/app_bundle.js; do
+            headers="$(curl -fsS -o /dev/null -D - "http://127.0.0.1:8081${path}")"
+            grep -qi '^content-security-policy:' <<<"$headers"
+            grep -qi '^x-content-type-options: nosniff' <<<"$headers"
+          done
 
       - name: Bot entry point imports in its container
         run: docker compose run --rm --no-deps bot /app/.venv/bin/python -c "import bot.main"
@@ -337,7 +425,8 @@ jobs:
 
   docker-build:
     name: Docker Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write

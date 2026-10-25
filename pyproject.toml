@@ -61,6 +61,13 @@ dev = [
     # the minified bundle.
     "rjsmin>=1.2.0",
     "rcssmin>=1.1.2",
+    # IN-03: the frontend tests run JS through `node`; this wheel puts a
+    # `node` executable into the venv, so `uv run pytest` passes on a machine
+    # without a system Node.js.
+    "nodejs-wheel>=22.0.0",
+    # IN-07: a hung test fails after [tool.pytest.ini_options] timeout instead
+    # of holding the CI job until GitHub's 6-hour limit.
+    "pytest-timeout>=2.3.0",
 ]
 # G-12: browser-level E2E via Playwright + axe-core. Gated behind
 # KUFAR_E2E=1 so the default test run doesn't need Chromium installed.
@@ -86,6 +93,9 @@ known-first-party = ["api", "bot", "scheduler"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+# IN-07 (pytest-timeout): per-test ceiling. Generous on purpose — the slowest
+# tests (Node harnesses, Postgres migration checks) take seconds, not minutes.
+timeout = 300
 
 [tool.hatch.build.targets.wheel]
 packages = ["api", "bot", "scheduler"]

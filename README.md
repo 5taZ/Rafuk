@@ -7,8 +7,9 @@ runs analytics and AI-assisted decisioning over them, and surfaces
 
 > **Status:** active development on the `bad-app` branch. Keep
 > `uv run pytest --tb=short -q` and `uv run ruff check .` green before
-> commits. See [`konechno.md`](./konechno.md) for the current atomic
-> audit-fix wave plan.
+> commits. [`konechno.md`](./konechno.md) is the historical audit-fix
+> wave plan (up to wave 183); `git log --grep=<audit ID>` shows which
+> wave closed what.
 
 ## What it does
 
@@ -45,8 +46,8 @@ ingress through Cloudflare Tunnel.
 You need:
 
 * Python 3.12+ (managed via [`uv`](https://docs.astral.sh/uv/))
-* PostgreSQL 16 OR `aiosqlite` for ephemeral dev
-* Redis 7
+* Docker with Compose 2.20+ (`start-local.sh` runs PostgreSQL 16, Redis 7
+  and the nginx frontend in containers)
 
 ```bash
 # 1. install deps (--locked: fail instead of re-resolving a stale uv.lock)
@@ -56,23 +57,22 @@ uv sync --locked --extra dev
 cp .env.example .env
 $EDITOR .env       # BOT_TOKEN, POSTGRES_PASSWORD, REDIS_PASSWORD, DATABASE_URL, REDIS_URL
 
-# 3. run migrations
-uv run alembic -c migrations/alembic.ini upgrade head
-
-# 4. boot the local stack (api + bot + scheduler)
+# 3. boot the local stack: Postgres + Redis + nginx in Docker, then
+#    migrations, api, bot and scheduler on the host
 ./start-local.sh                # add --with-tunnel for cloudflared
 
-# 5. or run components individually
-uv run uvicorn api.main:app --reload --port 8010
-uv run python -m bot.main
-uv run python -m scheduler.collector
+# 4. or run components individually, once Postgres and Redis are up
+#    (`docker compose --profile local-db up -d redis postgres`)
+uv run --locked alembic -c migrations/alembic.ini upgrade head
+uv run --locked uvicorn api.main:app --reload --port 8010
+uv run --locked python -m bot.main
+uv run --locked python -m scheduler.collector
 ```
 
-The Mini App frontend can be served with the dev proxy:
-
-```bash
-node proxy-server.mjs           # serves frontend/ on :8081, proxies /api/* to :8010
-```
+`proxy-server.mjs` (`node proxy-server.mjs`: frontend/ on :8081, `/api/*`
+to :8010) is a bare dev proxy without nginx's CSP and security headers
+and without `/assets/`; prefer `./start-local.sh`, which serves the
+same nginx image as production.
 
 `./start-local.sh` runs the nginx `frontend` container with
 `NGINX_API_UPSTREAM=host.docker.internal:8010`, so `/api/` on :8081 reaches
@@ -86,11 +86,15 @@ Docker volume, so restarts keep your saved searches, trackers, and deals.
 ## Tests
 
 ```bash
-# all tests (uses aiosqlite locally)
-uv run pytest --tb=short
+# all tests (aiosqlite locally; the dev extra brings `node` for the JS tests)
+uv run pytest --tb=short -q
 
 # single file
 uv run pytest tests/test_consent.py -x --tb=short
+
+# Redis integration tests (skipped when nothing answers on TEST_REDIS_URL,
+# default redis://localhost:6380/15); the suite FLUSHES that logical DB
+TEST_REDIS_URL=redis://:<redis-password>@localhost:6380/15 uv run pytest tests/test_redis_integration.py
 
 # linter (formatter not enforced — see AGENTS.md)
 uv run ruff check .
@@ -107,10 +111,19 @@ together and re-run `uv lock`.
 
 ## Production deployment
 
-Requires Docker Compose 2.20 or newer. Set `POSTGRES_PASSWORD` and
-`REDIS_PASSWORD` in `.env` (compose refuses to start without them); use
-URL-safe values such as `openssl rand -hex 32`, because compose inserts
-them verbatim into the containers' `DATABASE_URL` / `REDIS_URL`.
+Requires Docker Compose 2.20 or newer. Set `BOT_TOKEN`,
+`POSTGRES_PASSWORD` and `REDIS_PASSWORD` in `.env` (compose refuses to
+start without them); use URL-safe passwords such as `openssl rand -hex
+32`, because compose inserts them verbatim into the containers'
+`DATABASE_URL` / `REDIS_URL`.
+
+The containers do not read `.env` themselves: compose passes each
+setting of `api/config.py` explicitly (`x-app-env` and the service
+`environment` blocks in `docker-compose.yml`), with the code defaults
+when a variable is unset. That includes the production gates
+`SECURITY_CACHE_REQUIRED`, `INTERNAL_SERVICE_TOKEN_REQUIRED`,
+`AI_AUDIT_REQUIRED` and `ALLOW_LEGACY_BOT_INITDATA`, plus `WORKERS`,
+`LOG_LEVEL` and `DB_POOL_SIZE` / `DB_MAX_OVERFLOW`.
 
 Migrate (one-shot) + api + bot + scheduler + frontend + Redis +
 PostgreSQL, with cloudflared in front:
@@ -134,11 +147,17 @@ in-network defaults are built from `POSTGRES_*` and `REDIS_PASSWORD`.
 
 See [`docker-compose.yml`](./docker-compose.yml). Resource limits are
 tuned for a single-host dev box; scale up `WORKERS` and pool sizing
-together if you raise the CPU budget.
+(`DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, per process) together if you raise
+the CPU budget, and keep `WORKERS x (pool + overflow)` for the api plus
+the bot's and the scheduler's pools under Postgres `max_connections`
+(100 by default).
 
 ### Observability boundaries
 
-`/metrics` exposes Prometheus text. When the app is using Redis, counters
+`/metrics` exposes Prometheus text on the api itself: `api:8000/metrics`
+inside `kufar-net`, `127.0.0.1:8010/metrics` on the host, with
+`Authorization: Bearer $METRICS_BEARER_TOKEN` in production. nginx
+answers 404 for `/metrics`, so it is not reachable through the tunnel. When the app is using Redis, counters
 and summary totals are written to Redis hashes and the endpoint renders
 cross-worker aggregates; if Redis is unavailable it falls back to the
 current worker's in-memory counters. The
@@ -164,7 +183,7 @@ whether the timeout/lock TTL needs tuning.
   backup, freshness-check, and restore-drill procedure.
 * [`docs/MONITORING_RUNBOOK.md`](./docs/MONITORING_RUNBOOK.md) —
   health-check, metrics, and alerting checklist.
-* [`konechno.md`](./konechno.md) — current atomic audit-fix wave plan.
+* [`konechno.md`](./konechno.md) — historical audit-fix wave plan.
 * [`docs/`](./docs/) — additional design notes and runbooks.
 
 ## Compliance

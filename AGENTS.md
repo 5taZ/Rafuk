@@ -2,9 +2,10 @@
 
 This file is the canonical reference for anyone — human or AI — working
 on the Kufar Analytics codebase. It supersedes the historical
-`claude.md` / `mybad.md` session-handoff snapshots; for the live
-audit-fix plan see `konechno.md` and the source-of-truth audit log
-`issues.md`.
+`claude.md` / `mybad.md` session-handoff snapshots. `konechno.md` (the
+wave plan up to wave 183) and `issues.md` (the deep-dive audit log) are
+historical context; `git log --grep=<ID>` is the record of what each wave
+closed.
 
 ## TL;DR
 
@@ -15,8 +16,9 @@ uv sync --locked --extra dev
 # after editing dependencies in pyproject.toml: re-lock, CI runs `uv lock --check`
 uv lock
 
-# tests must stay green before any commit
-uv run pytest --tb=short
+# tests must stay green before any commit. The dev extra ships `node`
+# (nodejs-wheel) for the frontend JS tests and pytest-timeout (300 s/test).
+uv run --locked pytest --tb=short -q
 
 # lint (CI matches this — `ruff format` is NOT enforced; see Code style)
 uv run ruff check .
@@ -45,8 +47,8 @@ Do **not** commit a red suite.
 | `nginx/` | Reverse-proxy config, CSP/headers (`default.conf` is an envsubst template: API upstream) |
 | `docker-compose.yml` | api / bot / scheduler / frontend / redis / cloudflared |
 
-A more detailed file map lives at the bottom of `konechno.md`. Update it
-there when you reshape the layout.
+Update this table and the Architecture table in `README.md` when you
+reshape the layout.
 
 ## Conventions
 
@@ -54,13 +56,9 @@ there when you reshape the layout.
 
 Every meaningful change set is a **single atomic commit** named a
 "wave". The body of the commit message names every audit ID it closes
-(e.g. `BE-M11: Decimal vs float in history_service`). The trailer is:
-
-```
-Generated with [Devin](https://cli.devin.ai/docs)
-
-Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>
-```
+(e.g. `BE-M11: Decimal vs float in history_service`), followed by the
+`Tests:` lines of the commands that were run and their results. Commits
+carry no attribution trailers (`Co-Authored-By`, "Generated with ...").
 
 This lets `git log --grep="BE-M11"` find the wave that closed a given
 audit item, in either direction.
@@ -108,7 +106,22 @@ list of importers so removing them is a deliberate decision.
   `tests/test_consent.py`) must set both headers manually.
 * Pytest is async-mode auto (`asyncio_mode = "auto"`).
 * Coverage runs in CI via `pytest-cov`; local runs don't need it.
-* E2E smoke lives in `tests/e2e/`, gated by `KUFAR_E2E=1`; CI runs it on the `e2e` PR label or via `workflow_dispatch`.
+* The frontend JS tests run `node`; `uv sync --extra dev` installs it into
+  the venv (`nodejs-wheel`), so no system Node.js is needed.
+* Every test has a 300 s ceiling (`pytest-timeout`, `[tool.pytest.ini_options]`).
+* Local SQLite runs enforce foreign keys (`PRAGMA foreign_keys=ON` in
+  `tests/conftest.py`), like Postgres in CI.
+* Redis integration tests use `TEST_REDIS_URL` (default
+  `redis://localhost:6380/15`, no password) and skip when it does not
+  answer; the suite flushes that logical DB before every test, so never
+  point it at a DB holding data. Against the compose Redis:
+  `TEST_REDIS_URL=redis://:<redis-password>@localhost:6380/15`.
+  CI sets `TEST_REDIS_REQUIRED=1`, which turns the skip into a failure.
+* E2E smoke lives in `tests/e2e/`, gated by `KUFAR_E2E=1`; CI runs it on
+  the `e2e` PR label or via `workflow_dispatch`. Locally:
+  `uv sync --locked --extra dev --extra e2e`, `uv run playwright install
+  chromium`, put the pinned `axe.min.js` into `tests/e2e/vendor/` (see its
+  README), then `KUFAR_E2E=1 uv run pytest tests/e2e/`.
 
 ## Hard constraints from the user
 
@@ -125,7 +138,7 @@ list of importers so removing them is a deliberate decision.
    always requires); containers use `redis:6379` with the same
    password, built by compose unless `DOCKER_REDIS_URL` overrides it.
 3. **The full pytest suite must stay green.** Verify with
-   `uv run pytest --tb=short -q` before commits that touch runtime
+   `uv run --locked pytest --tb=short -q` before commits that touch runtime
    code or tests. If a refactor breaks tests, either update the test
    (with audit-ID comments) or roll back. Never commit a red suite.
 4. **Never commit `.env`, `DEEP_DIVE_REVIEW_COMPREHENSIVE.md`, or
@@ -176,13 +189,27 @@ user first**.
   remove anything you didn't intend.
 
   For new indexes on large tables (`tracker_events`, `lead_items`,
-  `query_snapshots`, `lead_item_price_snapshots`, `ai_audit_log`), prefer
-  `op.execute("CREATE INDEX CONCURRENTLY ...")` inside an autocommit-only
-  migration so a deploy doesn't take an ACCESS EXCLUSIVE lock for the
-  duration of the build. The migration must declare
-  `def with_autocommit() -> bool: return True` (or the equivalent Alembic
-  `op_kwargs` setup). For small tables this is unnecessary; default
-  `op.create_index` is fine. (BE-DEEP-11)
+  `query_snapshots`, `lead_item_price_snapshots`, `ai_audit_log`), build
+  them `CONCURRENTLY`: a plain `CREATE INDEX` holds a SHARE lock, which
+  blocks every write to the table for the duration of the build.
+  `CONCURRENTLY` cannot run inside a transaction, and `env.py` runs the
+  migrations in one, so step out of it with Alembic's autocommit block
+  (`migrations/versions/20261021_0027_db05_model_only_checks.py` uses the
+  same pattern for `VALIDATE CONSTRAINT`):
+
+  ```python
+  def upgrade() -> None:
+      with op.get_context().autocommit_block():
+          op.create_index(
+              "ix_tracker_events_created_at", "tracker_events", ["created_at"],
+              postgresql_concurrently=True, if_not_exists=True,
+          )
+  ```
+
+  `if_not_exists` lets a re-run finish an interrupted build. A failed
+  concurrent build leaves an INVALID index behind: drop it
+  (`DROP INDEX CONCURRENTLY`) before retrying. For small tables this is
+  unnecessary; default `op.create_index` is fine. (BE-DEEP-11)
 * **Adding a frontend feature** → vanilla JS, no bundler. Read the
   `frontend/js/api_*.js` and `frontend/js/render_*.js` files and
   follow the existing module split. CSS uses `frontend/css/parts/`.
@@ -193,13 +220,13 @@ user first**.
   `api/services/ai_guards.py`,
   `api/services/ai_shadow_store.py`,
   `api/services/ai_privacy.py`,
-  `api/services/ai_audit.py`. Wave 10 split the original god-file —
-  the seams are documented in `konechno.md`.
+  `api/services/ai_audit.py`, which were split out of the original
+  god-file in several waves; start from the module docstrings.
 
 ## Current open work
 
-Historical audit context lives in `issues.md` (latest deep-dive log)
-and the wave plan at `konechno.md`; treat older `claude.md` / `mybad.md`
+Historical audit context lives in `issues.md` (deep-dive log) and the
+wave plan at `konechno.md` (last updated at wave 183); treat them and older `claude.md` / `mybad.md`
 mentions as superseded snapshots, not live source of truth. Use
 `git log --oneline` and current test/lint output to establish what is
 still open. Keep waves themed and atomic.

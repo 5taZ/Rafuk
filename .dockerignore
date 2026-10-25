@@ -1,74 +1,40 @@
-# RV-OPS-13: build context of the Python image (Dockerfile: api, bot,
-# scheduler, migrate). It needs pyproject.toml, uv.lock, README.md and the
-# api/, bot/, scheduler/ and migrations/ packages; everything below stays out.
+# RV-OPS-13 / IN-02: build context of the Python image (Dockerfile: api, bot,
+# scheduler, migrate). It is an allowlist: Docker anchors patterns at the
+# context root, so a denylist such as `*.md` or `.env` missed nested files
+# (reviews/, api/.env, bot/local.db, ...) and every new untracked directory.
+# Only what the Dockerfile COPYs and `uv sync` builds gets in: pyproject.toml,
+# uv.lock, README.md (the package readme declared in pyproject.toml),
+# .python-version and the api/, bot/, scheduler/ and migrations/ packages.
 # Dockerfile.frontend has its own allowlist in Dockerfile.frontend.dockerignore,
 # which BuildKit reads instead of this file for that build.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!.python-version
+!api/
+!bot/
+!scheduler/
+!migrations/
 
-# Secrets — NEVER bundle .env into Docker images.
-# Pass values via environment variables / docker-compose env_file at runtime.
-.env
-.env.*
-*.pem
-*.key
-secrets.yml
-secrets.yaml
-.secrets
-
-# Local DB / dev files
-*.db
-*.db-journal
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
-*.dump
-
-# VCS, CI and editor/agent state
-.git
-.gitignore
-.gitattributes
-.github
-.claude
-.codex
-.gstack
-.planning
-.idea
-.vscode
-
-# Local runtime state, virtualenvs, caches and build artefacts
-.run
-.venv
-venv
+# Inside the allowed packages: secrets, local databases, notes and caches stay
+# out. NEVER bundle .env into an image: values come from the compose
+# environment at run time.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.db
+**/*.db-journal
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
+**/*.dump
+**/*.md
+!README.md
 **/__pycache__
 **/*.py[cod]
-*.egg-info
-.ruff_cache
-.pytest_cache
-.mypy_cache
-htmlcov
-.coverage
-.coverage.*
-coverage.xml
-dist
-build
-*.tar.gz
-*.zip
-
-# Not used by the Python services: the frontend image is built from
-# Dockerfile.frontend, and tests, docs and scripts run outside the containers.
-tests
-docs
-frontend
-assets
-nginx
-scripts
-proxy-server.mjs
-docker-compose*.yml
-Dockerfile*
-.dockerignore
-*.sh
-
-# Documentation and audit reports. README.md stays: pyproject.toml declares it
-# as the package readme, which the build of the project reads.
-*.md
-!README.md
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
