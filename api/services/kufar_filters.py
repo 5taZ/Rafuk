@@ -181,19 +181,27 @@ KUFAR_AREAS_BY_REGION = {
 }
 
 
-def normalize_kufar_filter_text(value: str | None) -> str:
+def normalize_filter_text(value: str | None) -> str:
+    """Casefold, fold ``ё`` → ``е``, collapse whitespace.
+
+    CC-06: the one normaliser for filter text — upstream region lookup
+    here and the listing/tracker matchers in ``listing_filters`` used to
+    disagree on ``ё`` ("Могилёвская область" resolved to a region id but
+    never matched an ad's region label).
+    """
     return " ".join(str(value or "").casefold().replace("ё", "е").split())
 
 
+
 KUFAR_REGION_IDS = {
-    normalize_kufar_filter_text(name): region_id
+    normalize_filter_text(name): region_id
     for name, region_id in _REGIONS_RAW.items()
 }
 
 _area_ids_by_name: dict[str, set[int]] = {}
 for _areas in KUFAR_AREAS_BY_REGION.values():
     for _area_id, _area_name in _areas.items():
-        _area_ids_by_name.setdefault(normalize_kufar_filter_text(_area_name), set()).add(_area_id)
+        _area_ids_by_name.setdefault(normalize_filter_text(_area_name), set()).add(_area_id)
 
 KUFAR_UNIQUE_AREA_IDS = {
     name: next(iter(ids))
@@ -232,7 +240,7 @@ def kufar_price_range(min_price: float | None, max_price: float | None) -> str |
 
 
 def kufar_location_kwargs(region_name: str | None) -> tuple[dict[str, int], bool]:
-    normalized = normalize_kufar_filter_text(region_name)
+    normalized = normalize_filter_text(region_name)
     if not normalized:
         return {}, True
     region_id = KUFAR_REGION_IDS.get(normalized)

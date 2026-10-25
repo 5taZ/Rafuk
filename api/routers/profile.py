@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -10,6 +10,7 @@ from api.dependencies import (
     get_settings_dependency,
     get_telegram_user,
 )
+from api.limiter import limiter
 from api.schemas import ProfileRead
 from api.services.account_status import build_profile
 from api.services.cache import CacheBackend
@@ -18,7 +19,10 @@ router = APIRouter(prefix="/profile", tags=["profile"])
 
 
 @router.get("/me", response_model=ProfileRead)
+# BK-21: the only user endpoint without a limit, and it opens a write tx.
+@limiter.limit("60/minute")
 async def get_my_profile(
+    request: Request,
     _user=Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
     cache: CacheBackend = Depends(get_cache),

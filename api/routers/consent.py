@@ -457,24 +457,8 @@ async def delete_account(
             _user.user_id,
         )
 
-    user_internal_id: int | None = None
-    try:
-        async with session_factory() as session:
-            user_internal_id = await resolve_user_id(session, _user.user_id)
-            # RV-BE-16: bulk DELETE per table instead of session.delete(user),
-            # which loaded the whole ORM cascade graph into the worker.
-            purged = await purge_user_data(
-                session, telegram_user_id=_user.user_id, user_id=user_internal_id,
-            )
-            await session.commit()
-    except Exception:
-        # Nothing was erased, so don't lock the still-valid session out.
-        await clear_account_tombstone(cache, _user.user_id)
-        raise
-    # RV-SEC-05: read by the auto-provision middleware once this response
-    # is built — without it the DELETE request itself re-created the user.
-    request.state.account_deleted = True
-
+    # SC-03: before the purge — the shared ai_analysis:* eviction is keyed
+    # by this user's AIAuditLog rows, which the purge deletes.
     # BE-C6: Redis cleanup is owned end-to-end by clear_user_ai_data
     # in ai_analysis.py — it scans every per-user namespace
     # (ai_task / ai_rate / ai_daily, plus auth:blacklist
@@ -501,6 +485,24 @@ async def delete_account(
             _user.user_id,
             exc_info=True,
         )
+
+    user_internal_id: int | None = None
+    try:
+        async with session_factory() as session:
+            user_internal_id = await resolve_user_id(session, _user.user_id)
+            # RV-BE-16: bulk DELETE per table instead of session.delete(user),
+            # which loaded the whole ORM cascade graph into the worker.
+            purged = await purge_user_data(
+                session, telegram_user_id=_user.user_id, user_id=user_internal_id,
+            )
+            await session.commit()
+    except Exception:
+        # Nothing was erased, so don't lock the still-valid session out.
+        await clear_account_tombstone(cache, _user.user_id)
+        raise
+    # RV-SEC-05: read by the auto-provision middleware once this response
+    # is built — without it the DELETE request itself re-created the user.
+    request.state.account_deleted = True
 
     logger.info(
         "User %s (telegram_id=%d) deleted their account; rows removed: %s",

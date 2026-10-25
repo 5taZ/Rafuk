@@ -390,10 +390,18 @@ async def update_tracker(
             "alert_price_threshold",
             "alert_discount_percent",
         }
+        previous_key = (tracker.strict_mode, tracker.category_id)
         for field, value in update_data.items():
             if value is None and field not in nullable_fields:
                 continue
             setattr(tracker, field, value)
+        if (tracker.strict_mode, tracker.category_id) != previous_key:
+            # RV2-BK-08: the tracker now reads a different search key, whose
+            # states are all "newer" than the old last_checked_at — restart
+            # from a fresh baseline instead of alerting on old listings.
+            tracker.last_checked_at = None
+            tracker.last_seen_ad_id = None
+            tracker.last_seen_price_byn = None
 
         await session.commit()
         await session.refresh(tracker)

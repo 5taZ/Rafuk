@@ -21,6 +21,7 @@ from functools import lru_cache
 from typing import Any
 
 from api.services.aggregator import get_param
+from api.services.kufar_filters import normalize_filter_text
 from api.services.market_signals import area_label, region_label
 
 logger = logging.getLogger(__name__)
@@ -55,11 +56,6 @@ CONDITION_FILTER_ALIASES: dict[str, str] = {
     "used": "used",
     "б/у": "used",
 }
-
-
-def normalize_filter_text(value: str | None) -> str:
-    """Casefold + collapse whitespace, NFC-stable enough for region/condition."""
-    return " ".join(str(value or "").casefold().split())
 
 
 def canonical_filter_value(

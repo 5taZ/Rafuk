@@ -105,8 +105,9 @@ async def get_telegram_user(
     # valid token (the initData would be ignored either way).
     configured_token = settings.internal_service_token
     if configured_token is not None and x_internal_service_token:
+        # SEC-11: compare bytes — compare_digest raises TypeError on non-ASCII str.
         if not _secrets.compare_digest(
-            x_internal_service_token, configured_token.get_secret_value()
+            x_internal_service_token.encode(), configured_token.get_secret_value().encode()
         ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -129,7 +130,7 @@ async def get_telegram_user(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="X-Acting-Telegram-User-Id must be a positive integer",
             )
-        user = TelegramInitData(user_id=acting_id, first_name="", raw={})
+        user = TelegramInitData(user_id=acting_id, first_name="", raw={}, via_service_token=True)
         request.state.telegram_user = user
         # Service-token path bypasses the initdata replay tracker
         # because the bot doesn't carry a Telegram-signed blob —
@@ -223,7 +224,7 @@ async def require_admin_user(
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     settings: Settings = Depends(get_settings_dependency),
 ) -> TelegramInitData:
-    if not is_admin_user(telegram_user.user_id, settings):
+    if telegram_user.via_service_token or not is_admin_user(telegram_user.user_id, settings):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return telegram_user
 

@@ -58,35 +58,29 @@ def _redis_client(cache: Any | None) -> Any | None:
     return None
 
 
-async def _redis_hincrby(cache: Any | None, key: str, field: str, amount: int) -> None:
+async def _redis_hincr_many(cache: Any | None, ops: list[tuple[str, str, str, float]]) -> None:
+    """Apply ``(hincrby|hincrbyfloat, key, field, amount)`` counter updates.
+
+    RV2-BK-10: several updates go out as one non-transactional pipeline —
+    this runs on every HTTP request, and one round-trip per counter
+    multiplied the latency a slow Redis adds to each response.
+    """
     client = _redis_client(cache)
     if client is None:
         return
     try:
-        await client.hincrby(key, field, amount)
+        if len(ops) > 1 and callable(getattr(client, "pipeline", None)):
+            async with client.pipeline(transaction=False) as pipe:
+                for op, key, field, amount in ops:
+                    getattr(pipe, op)(key, field, amount)
+                await pipe.execute()
+        else:
+            for op, key, field, amount in ops:
+                await getattr(client, op)(key, field, amount)
     except Exception:
-        logger.warning("Redis metrics hincrby failed key=%s", key, exc_info=True)
-
-
-async def _redis_hincrbyfloat(cache: Any | None, key: str, field: str, amount: float) -> None:
-    client = _redis_client(cache)
-    if client is None:
-        return
-    try:
-        await client.hincrbyfloat(key, field, amount)
-    except Exception:
-        logger.warning("Redis metrics hincrbyfloat failed key=%s", key, exc_info=True)
-
-
-async def _redis_hgetall(cache: Any | None, key: str) -> dict[str, Any] | None:
-    client = _redis_client(cache)
-    if client is None:
-        return None
-    try:
-        return dict(await client.hgetall(key))
-    except Exception:
-        logger.warning("Redis metrics hgetall failed key=%s", key, exc_info=True)
-        return None
+        logger.warning(
+            "Redis metrics update failed keys=%s", sorted({op[1] for op in ops}), exc_info=True,
+        )
 
 
 def observe_http_request(
@@ -123,15 +117,11 @@ async def observe_http_request_with_backend(
     method = method.upper()
     status = str(status_code)
     duration = max(duration_seconds, 0.0)
-    await _redis_hincrby(
-        cache, "metrics:v1:http_requests", _field((method, path, status)), 1
-    )
-    await _redis_hincrbyfloat(
-        cache, "metrics:v1:http_duration_sum", _field((method, path)), duration
-    )
-    await _redis_hincrby(
-        cache, "metrics:v1:http_duration_count", _field((method, path)), 1
-    )
+    await _redis_hincr_many(cache, [
+        ("hincrby", "metrics:v1:http_requests", _field((method, path, status)), 1),
+        ("hincrbyfloat", "metrics:v1:http_duration_sum", _field((method, path)), duration),
+        ("hincrby", "metrics:v1:http_duration_count", _field((method, path)), 1),
+    ])
 
 
 def observe_query_dataset_event(event: str) -> None:
@@ -141,7 +131,9 @@ def observe_query_dataset_event(event: str) -> None:
 
 async def observe_query_dataset_event_with_backend(cache: Any | None, event: str) -> None:
     observe_query_dataset_event(event)
-    await _redis_hincrby(cache, "metrics:v1:query_dataset_events", _field((event,)), 1)
+    await _redis_hincr_many(
+        cache, [("hincrby", "metrics:v1:query_dataset_events", _field((event,)), 1)],
+    )
 
 
 def observe_query_dataset_upstream_fetch(
@@ -162,12 +154,11 @@ async def observe_query_dataset_upstream_fetch_with_backend(
 ) -> None:
     observe_query_dataset_upstream_fetch(status=status, duration_seconds=duration_seconds)
     duration = max(duration_seconds, 0.0)
-    await _redis_hincrbyfloat(
-        cache, "metrics:v1:query_dataset_fetch_duration_sum", _field((status,)), duration
-    )
-    await _redis_hincrby(
-        cache, "metrics:v1:query_dataset_fetch_duration_count", _field((status,)), 1
-    )
+    field = _field((status,))
+    await _redis_hincr_many(cache, [
+        ("hincrbyfloat", "metrics:v1:query_dataset_fetch_duration_sum", field, duration),
+        ("hincrby", "metrics:v1:query_dataset_fetch_duration_count", field, 1),
+    ])
 
 
 def observe_ai_audit_failure(*, endpoint: str) -> None:
@@ -197,8 +188,8 @@ async def observe_ai_feedback_with_backend(
     rating = rating or "unknown"
     reason = reason or "unknown"
     observe_ai_feedback(endpoint=endpoint, rating=rating, reason=reason)
-    await _redis_hincrby(
-        cache, "metrics:v1:ai_feedback", _field((endpoint, rating, reason)), 1
+    await _redis_hincr_many(
+        cache, [("hincrby", "metrics:v1:ai_feedback", _field((endpoint, rating, reason)), 1)],
     )
 
 
@@ -491,7 +482,10 @@ def is_metrics_request_allowed(settings: Settings, authorization: str | None) ->
     if not token:
         return not is_production_like_deployment(settings)
     scheme, _, credentials = (authorization or "").partition(" ")
-    return scheme.lower() == "bearer" and compare_digest(credentials.strip(), token)
+    # SEC-11: compare bytes — compare_digest raises TypeError on non-ASCII str.
+    return scheme.lower() == "bearer" and compare_digest(
+        credentials.strip().encode(), token.encode(),
+    )
 
 
 def _reset_metrics_for_tests() -> None:

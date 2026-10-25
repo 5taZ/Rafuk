@@ -124,6 +124,23 @@ def test_image_proxy_returns_avif_when_accept_header_lists_it(
         assert img.format == "AVIF"
 
 
+def test_image_proxy_decompression_bomb_is_415(
+    client: TestClient,
+    fake_upstream: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BK-13: Pillow's DecompressionBombError is not an OSError/ValueError,
+    so a pixel-bomb source used to fall through to the 500 handler."""
+    from api.routers import image_proxy
+
+    def _bomb(*_args, **_kwargs):
+        raise Image.DecompressionBombError("too many pixels")
+
+    monkeypatch.setattr(image_proxy, "_transcode", _bomb)
+    response = client.get("/api/v1/img/ad/bomb.jpg?fmt=jpeg")
+    assert response.status_code == 415
+
+
 def test_image_proxy_explicit_jpeg_format(
     client: TestClient,
     fake_upstream: None,

@@ -8,6 +8,7 @@ import secrets as _secrets
 import time
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,6 +55,12 @@ from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarAPIError, KufarClient, KufarUnavailableError
 
 logger = logging.getLogger(__name__)
+_MIN_SERVICE_TOKEN_LENGTH = 32
+
+
+def _url_origin(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 # BE-DEEP-1: shared between the security middleware and the exception handlers
@@ -172,6 +179,15 @@ async def lifespan(app: FastAPI):
         )
     if settings.debug:
         logger.warning("Debug mode is active (extra dev origins, verbose logs)")
+    # SEC-07: the service token acts for any user; warn rather than refuse
+    # so existing deployments with a short token keep starting.
+    service_token = settings.internal_service_token
+    token_length = len(service_token.get_secret_value()) if service_token is not None else None
+    if token_length is not None and token_length < _MIN_SERVICE_TOKEN_LENGTH:
+        logger.warning(
+            "INTERNAL_SERVICE_TOKEN is shorter than %d characters; use a random "
+            "token of at least that length.", _MIN_SERVICE_TOKEN_LENGTH,
+        )
 
     # Rate limiter sanity check: if Redis was unreachable at import time
     # the limiter silently fell back to in-memory storage, which makes
@@ -254,8 +270,10 @@ def create_app() -> FastAPI:
     # client legitimately needs cross-origin POSTs, add its real origin
     # explicitly rather than reopening "null".
     origins = [
-        settings.mini_app_url,
-        settings.api_base_url,
+        # BK-16: browsers send a bare origin; MINI_APP_URL may carry a path.
+        *dict.fromkeys(
+            _url_origin(url) for url in (settings.mini_app_url, settings.api_base_url) if url
+        ),
         "https://web.telegram.org",
         "https://webk.telegram.org",
         # SEC-MEDIUM (issues §1.2): nginx CORS allows webz.telegram.org
@@ -406,26 +424,7 @@ def create_app() -> FastAPI:
     # CSRF protection: validate Origin header on state-changing requests.
     # Prevents cross-origin POST/PATCH/DELETE from arbitrary websites.
     # Same "null" origin restriction as CORS — see comment above.
-    _csrf_allowed = frozenset(origins) | frozenset(
-        [
-            "https://web.telegram.org",
-            "https://webk.telegram.org",
-            "https://webz.telegram.org",
-        ]
-    )
-    if settings.debug:
-        _csrf_allowed = _csrf_allowed | frozenset(
-            [
-                "http://localhost:8081",
-                "http://127.0.0.1:8081",
-                "http://localhost:8010",
-                "http://127.0.0.1:8010",
-            ]
-        )
-    if settings.mini_app_url:
-        _csrf_allowed = _csrf_allowed | {settings.mini_app_url}
-    if settings.api_base_url:
-        _csrf_allowed = _csrf_allowed | {settings.api_base_url}
+    _csrf_allowed = frozenset(origins)
 
     @app.middleware("http")
     async def csrf_origin_check(request: Request, call_next):

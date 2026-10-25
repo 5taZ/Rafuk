@@ -417,3 +417,47 @@ async def test_sync_refreshes_listing_outside_the_load_window(monkeypatch) -> No
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_upsert_query_snapshot_recovers_from_lost_insert_race() -> None:
+    """RV2-BK-03: a concurrent writer that wins the hourly bucket must not
+    poison the caller's transaction — the INSERT has to run inside the
+    savepoint so the IntegrityError path can re-read the winner's row."""
+    from api.services.history_service import upsert_query_snapshot
+
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        bucket = datetime(2026, 4, 1, 10, tzinfo=UTC)
+        async with sf() as session:
+            session.add(QuerySnapshot(query="race", snapshot_at=bucket, total_results=1))
+            await session.commit()
+
+        ads = [{"ad_id": 1, "price_byn": 100_000}, {"ad_id": 2, "price_byn": 120_000}]
+        async with sf() as session:
+            real_scalar = session.scalar
+            calls = 0
+
+            async def _miss_first_lookup(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                return None if calls == 1 else await real_scalar(*args, **kwargs)
+
+            session.scalar = _miss_first_lookup
+            snap = await upsert_query_snapshot(
+                session, query="race", ads=ads, total_results=2, bucket_at=bucket,
+            )
+            await session.commit()
+            assert calls == 2
+
+        async with sf() as session:
+            rows = (await session.execute(select(QuerySnapshot))).scalars().all()
+        assert len(rows) == 1 and rows[0].id == snap.id
+        assert rows[0].total_results == 2
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()

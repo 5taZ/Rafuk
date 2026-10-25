@@ -24,7 +24,7 @@ from api.services.aggregator import (
     sort_listings,
 )
 from api.services.cache import CacheBackend, digest_cache_key
-from api.services.currency_service import CurrencyService
+from api.services.currency_service import CurrencyService, get_rates_safe
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.kufar_filters import build_kufar_search_filters
@@ -277,10 +277,7 @@ async def get_listings(
                 category: visible_dataset.price_stats,
             }
     liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats)
-    try:
-        rates_payload = await currency_service.get_rates()
-    except Exception:
-        rates_payload = {"rates": {"BYN": 1.0}}
+    rates_payload = await get_rates_safe(currency_service)
     rates = rates_payload["rates"]
     insights = analyze_query_text(query)
 

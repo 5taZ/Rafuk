@@ -17,7 +17,7 @@ from api.limiter import limiter
 from api.schemas import GeographyRegionPoint, GeographyResponse
 from api.services.aggregator import compute_price_stats, extract_prices
 from api.services.cache import CacheBackend, digest_cache_key
-from api.services.currency_service import CurrencyService
+from api.services.currency_service import CurrencyService, get_rates_safe
 from api.services.kufar_client import KufarClient
 from api.services.market_signals import region_label
 from api.services.query_pipeline import claim_force_refresh, load_query_dataset_with_fallback
@@ -76,11 +76,8 @@ async def get_geography(
         grouped[region_id].append(ad)
 
     # BE-MEDIUM (issues §2.2): NBRB upstream can fail; fall back to
-    # BYN-only rates rather than 500 the entire endpoint.
-    try:
-        rates_payload = await currency_service.get_rates()
-    except Exception:  # noqa: BLE001 — fallback to identity rates
-        rates_payload = {"rates": {"BYN": 1.0}}
+    # the service's default rates rather than 500 the entire endpoint.
+    rates_payload = await get_rates_safe(currency_service)
     rates = rates_payload["rates"]
     # B-05/D-3: use sum of per-region counts as denominator so share_percent
     # sums to ~100. total_analyzed (post-global-outlier) differs from the sum

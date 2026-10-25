@@ -52,14 +52,6 @@ def _is_valid_ip(value: str) -> bool:
         return False
 
 
-def _is_cloudflare_ip(ip_str: str) -> bool:
-    try:
-        addr = ipaddress.ip_address(ip_str)
-        return any(addr in net for net in _CLOUDFLARE_IP_RANGES)
-    except ValueError:
-        return False
-
-
 def _is_trusted_proxy_peer(ip_str: str) -> bool:
     try:
         addr = ipaddress.ip_address(ip_str)

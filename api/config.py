@@ -222,13 +222,6 @@ class Settings(BaseSettings):
     ai_task_ttl: int = 3600
     ai_fallback_cache_ttl: int = 1800
 
-    # Result size limits
-    max_deal_ads_per_query: int = 20
-    max_opportunity_items: int = 12
-    max_opportunity_signals: int = 4
-    max_saved_searches_for_board: int = 8
-    max_recent_tracker_events: int = 6
-
     # OPUS-12: internal service-to-service authentication. Lets the
     # bot call the API for arbitrary telegram_user_ids without
     # forging initData with the bot token. When unset, the bot
@@ -290,11 +283,9 @@ class Settings(BaseSettings):
     @classmethod
     def validate_https_url(cls, v: str) -> str:
         v = v.rstrip("/")
-        if v.startswith("http://") and not (
-            v.startswith("http://127.0.0.1")
-            or v.startswith("http://localhost")
-            or v.startswith("http://10.0.2.2")
-        ):
+        # BK-16: compare the parsed host — a prefix check let
+        # ``http://localhost.example.com`` through as "local".
+        if v.startswith("http://") and not _is_local_database_url(v):
             raise ValueError("URLs must use HTTPS unless using localhost/127.0.0.1")
         if not (v.startswith("https://") or v.startswith("http://")):
             raise ValueError("URLs must start with http:// or https://")

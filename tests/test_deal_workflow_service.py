@@ -249,6 +249,19 @@ class TestComputeFlipEstimates:
         stats = _make_stats()
         assert compute_flip_estimates(ad, stats) == []
 
+    def test_high_byn_median_is_a_real_market(self) -> None:
+        """BE-02: a 150 000 BYN median (flats, cars) used to raise."""
+        ad = _ad(price_byn=14_000_000)  # 140 000 BYN in kopecks
+        stats = _make_stats(
+            median=150_000, q1=140_000, q3=160_000, min=120_000, max=200_000, mean=150_000,
+        )
+        market = [e for e in compute_flip_estimates(ad, stats) if e.label == "По рынку"][0]
+        assert market.profit_byn == 10_000
+
+    def test_kopeck_median_degrades_to_no_estimates(self) -> None:
+        stats = _make_stats(median=50_000_000)
+        assert compute_flip_estimates(_ad(), stats) == []
+
     def test_profit_percent_calculation(self) -> None:
         ad = _ad(price_byn=100_000)
         stats = _make_stats(median=2000)

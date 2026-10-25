@@ -21,7 +21,7 @@ from api.models import LeadItem
 from api.schemas import ListingDetailResponse
 from api.services.aggregator import compute_category_price_stats, precompute_cluster_stats
 from api.services.cache import CacheBackend, digest_cache_key
-from api.services.currency_service import CurrencyService
+from api.services.currency_service import CurrencyService, get_rates_safe
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_detail
@@ -145,10 +145,7 @@ async def get_listing_detail(
     cluster_cache = await precompute_cluster_stats(visible_dataset.ads, query=query)
     liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats, ad=ad)
     # BE-MEDIUM (issues §2.2): NBRB outage shouldn't 500 the detail.
-    try:
-        rates_payload = await currency_service.get_rates()
-    except Exception:  # noqa: BLE001
-        rates_payload = {"rates": {"BYN": 1.0}}
+    rates_payload = await get_rates_safe(currency_service)
     payload = build_listing_detail(
         ad=ad,
         query=query,

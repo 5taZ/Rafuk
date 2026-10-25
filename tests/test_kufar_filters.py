@@ -31,6 +31,17 @@ def test_kufar_location_kwargs_maps_regions_and_unique_areas() -> None:
     assert kufar_location_kwargs("Октябрьский") == ({}, False)
 
 
+def test_region_filter_folds_yo_on_both_sides() -> None:
+    """CC-06: the upstream lookup folded ё→е but the local matcher did not,
+    so "Могилёвская область" found a region id yet matched no ad."""
+    from api.services.listing_filters import match_region_filter
+
+    ad = {"region_name": "Могилевская область"}
+    assert kufar_location_kwargs("Могилёвская область")[0]
+    assert match_region_filter(ad, "Могилёвская область")
+    assert match_region_filter({"region_name": "Могилёвская область"}, "могилевская  область")
+
+
 def test_build_kufar_search_filters_returns_supported_native_params() -> None:
     kwargs, unsupported = build_kufar_search_filters(
         min_price=500,

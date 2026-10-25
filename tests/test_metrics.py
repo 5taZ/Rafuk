@@ -214,6 +214,67 @@ async def test_metrics_redis_backend_renders_aggregate_counters() -> None:
     )
 
 
+class _FakePipeline:
+    def __init__(self, client: _FakeRedisClient) -> None:
+        self._client = client
+        self._ops: list[tuple[str, tuple]] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        return None
+
+    def hincrby(self, *args) -> _FakePipeline:
+        self._ops.append(("hincrby", args))
+        return self
+
+    def hincrbyfloat(self, *args) -> _FakePipeline:
+        self._ops.append(("hincrbyfloat", args))
+        return self
+
+    async def execute(self) -> list:
+        self._client.executes += 1
+        return [await getattr(self._client, op)(*args) for op, args in self._ops]
+
+
+class _FakePipelinedRedisClient(_FakeRedisClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.executes = 0
+
+    def pipeline(self, *, transaction: bool = True) -> _FakePipeline:
+        assert transaction is False
+        return _FakePipeline(self)
+
+
+@pytest.mark.asyncio
+async def test_http_request_metrics_use_one_redis_round_trip() -> None:
+    """RV2-BK-10: the three per-request counters go out as one pipeline."""
+    _reset_metrics_for_tests()
+    cache = _FakeRedisCache()
+    cache._client = _FakePipelinedRedisClient()
+
+    await observe_http_request_with_backend(
+        cache, method="GET", path="/api/v1/health", status_code=200, duration_seconds=0.25,
+    )
+
+    hashes = cache._client.hashes
+    assert cache._client.executes == 1
+    assert hashes["metrics:v1:http_requests"] == {'["GET","/api/v1/health","200"]': "1"}
+    assert hashes["metrics:v1:http_duration_sum"] == {'["GET","/api/v1/health"]': "0.25"}
+    assert hashes["metrics:v1:http_duration_count"] == {'["GET","/api/v1/health"]': "1"}
+
+
+def test_metrics_bearer_non_ascii_is_denied_not_500() -> None:
+    """SEC-11: compare_digest raised TypeError on a non-ASCII header."""
+    from api.metrics import is_metrics_request_allowed
+
+    settings = _remote_settings("metrics-secret")
+    assert is_metrics_request_allowed(settings, "Bearer sécret") is False
+    assert is_metrics_request_allowed(settings, "Bearer metrics-secret") is True
+
+
 @pytest.mark.asyncio
 async def test_metrics_redis_backend_renders_ai_feedback_counter() -> None:
     from api import metrics

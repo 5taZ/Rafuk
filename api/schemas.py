@@ -446,6 +446,9 @@ class TrackerEventRead(BaseModel):
     created_at: datetime
 
 
+LeadSource = Literal["manual", "watchlist", "detail_modal", "bot_callback", "tracker_event"]
+
+
 class LeadCreate(BaseModel):
     query: str = Field(min_length=1, max_length=255)
     # OPUS-4: ad_id is a Kufar listing identifier — always positive.
@@ -460,7 +463,8 @@ class LeadCreate(BaseModel):
     market_median_byn: float | None = Field(default=None, ge=0)
     notes: str | None = Field(default=None, max_length=512)
     status: LeadStatusEnum = LeadStatusEnum.new
-    source: str = Field(default="manual", max_length=32)
+    # BE-11: mirrors chk_lead_items_source — anything else was a 500 at INSERT.
+    source: LeadSource = "manual"
 
 
 class LeadUpdate(BaseModel):
@@ -619,17 +623,25 @@ class LeadAnalyticsResponse(BaseModel):
 
 
 # Deal Expenses schemas
+# BE-11: bounds of deal_expenses.amount_byn NUMERIC(10,2) / notes VARCHAR(255),
+# so oversized input is a 422 instead of a DataError 500 on Postgres.
+_EXPENSE_AMOUNT_MAX = 99_999_999.99
+_EXPENSE_NOTES_MAX = 255
+
+
 class DealExpenseCreate(BaseModel):
     expense_type: ExpenseTypeEnum
-    amount_byn: float = Field(gt=0, description="Expense amount in BYN (must be positive)")
-    notes: str | None = None
+    amount_byn: float = Field(
+        gt=0, le=_EXPENSE_AMOUNT_MAX, description="Expense amount in BYN (must be positive)",
+    )
+    notes: str | None = Field(default=None, max_length=_EXPENSE_NOTES_MAX)
     expense_date: datetime | None = None
 
 
 class DealExpenseUpdate(BaseModel):
     expense_type: ExpenseTypeEnum | None = None
-    amount_byn: float | None = Field(default=None, gt=0)
-    notes: str | None = None
+    amount_byn: float | None = Field(default=None, gt=0, le=_EXPENSE_AMOUNT_MAX)
+    notes: str | None = Field(default=None, max_length=_EXPENSE_NOTES_MAX)
     expense_date: datetime | None = None
 
 
@@ -704,17 +716,6 @@ class AIConsentInfoResponse(BaseModel):
     model: str
     policy_version: str
     display_label: str
-
-
-class ConsentRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    user_id: int
-    consent_type: str
-    version: str
-    granted_at: datetime
-    revoked_at: datetime | None = None
 
 
 # BE-M3: explicit confirmation payload for the right-to-erasure endpoint.

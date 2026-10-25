@@ -317,8 +317,17 @@ async def test_profile_user_not_recreated_for_session_older_than_erasure() -> No
             assert (await session.execute(select(User))).scalars().all() == []
 
         reopened = await asyncio.create_task(
-            _provision_as(_session_user(now + 1), session_factory)
+            _provision_as(_session_user(now + 6), session_factory)  # SC-08 skew margin
         )
         assert reopened.telegram_user_id == _PROFILE_USER_ID
     finally:
         await engine.dispose()
+
+
+def test_profile_me_is_rate_limited() -> None:
+    """BK-21: /profile/me was the only user endpoint without a limit."""
+    from api.limiter import limiter
+    from api.routers import profile
+
+    limits = limiter._route_limits[f"{profile.__name__}.get_my_profile"]
+    assert [str(item.limit) for item in limits] == ["60 per 1 minute"]

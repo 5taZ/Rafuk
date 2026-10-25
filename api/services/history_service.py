@@ -189,9 +189,13 @@ async def upsert_query_snapshot(
     )
     if existing is None:
         existing = QuerySnapshot(query=query, snapshot_at=bucket_at)
-        session.add(existing)
         try:
             async with session.begin_nested():
+                # RV2-BK-03: add() inside the savepoint — begin_nested()
+                # flushes pending objects first, so an add() before it
+                # would run the INSERT outside the savepoint and a
+                # conflict would poison the outer transaction.
+                session.add(existing)
                 # BE-01: passing the list-of-objects to Session.flush()
                 # is deprecated since SQLAlchemy 1.4 and slated for
                 # removal. begin_nested() above already scopes the
@@ -396,11 +400,10 @@ async def sync_query_listing_states(
                 first_seen_at=observed_at,
                 last_seen_at=observed_at,
             )
-            session.add(created)
             try:
                 async with session.begin_nested():
-                    # BE-01: see note on QuerySnapshot insert above — drop
-                    # the deprecated flush([obj]) shape.
+                    # RV2-BK-03 / BE-01: see the QuerySnapshot insert above.
+                    session.add(created)
                     await session.flush()
             except IntegrityError:
                 # begin_nested() already rolled back the savepoint —

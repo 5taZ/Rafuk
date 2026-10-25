@@ -35,18 +35,6 @@ LOW_RESULT_FALLBACK_MULTIPLIER = 4
 # user per window, shared by every endpoint that accepts the flag.
 FORCE_REFRESH_COOLDOWN_SECONDS = 60
 
-# Condition-based API tasks — seller_type filtering is done client-side
-# because Kufar API no longer accepts the "otype" parameter.
-#
-# Kufar's `cnd` parameter switched from string ("new"/"used") to numeric
-# codes (2=new, 1=used) some time after 2026 — the string variants now
-# silently return 0 results. Sending the int codes restores segments.
-_API_CONDITION_TASKS = (
-    ("new", {"condition": "2"}),
-    ("used", {"condition": "1"}),
-)
-
-
 def _cache_digest(prefix: str, payload: dict[str, Any]) -> str:
     return digest_cache_key(prefix, payload)
 
@@ -73,29 +61,12 @@ async def claim_force_refresh(cache: Any, user_id: int) -> bool:
     )
 
 
-# Seller type classification: company_ad==True means shop, else private
-def _is_shop_ad(ad: dict[str, Any]) -> bool:
-    return bool(ad.get("company_ad"))
-
-
-SEGMENT_NAMES = ("new_private", "new_shop", "used_private", "used_shop")
-
-
 class SupportsSearchAllAds(Protocol):
     async def search_all_ads(self, **kwargs: Any) -> dict[str, Any]: ...
     async def aclose(self) -> None: ...
     # Optional: per-category totals call. Not all test fakes implement
     # it — `fetch_category_totals` checks for the attribute at runtime.
     async def search(self, **kwargs: Any) -> dict[str, Any]: ...
-
-
-class SupportsParallelSearch(Protocol):
-    async def __call__(
-        self,
-        client: SupportsSearchAllAds,
-        tasks: list[dict[str, Any]],
-        settings: Settings,
-    ) -> list[dict[str, Any]]: ...
 
 
 def _normalize_response_ads(response: dict[str, Any]) -> dict[str, Any]:
@@ -240,6 +211,10 @@ _DISTRIBUTED_SINGLEFLIGHT_POLL_SECONDS = 0.1
 # for the tiny check-then-insert section; the actual await on the
 # future happens OUTSIDE the lock so other keys can be registered.
 _inflight_lock: asyncio.Lock | None = None
+
+
+class _OwnerCancelledError(Exception):
+    """Set on a singleflight future whose owner was cancelled."""
 
 
 def _get_inflight_lock() -> asyncio.Lock:
@@ -502,7 +477,7 @@ async def load_query_dataset(
         else:
             await observe_query_dataset_event_with_backend(cache, "cache_disabled")
 
-        if response is None:
+        while response is None:
             # Register-or-attach under the lock. We must decide
             # "do I own the fetch or am I a follower?" atomically —
             # without the lock two coroutines would both see a cache
@@ -531,7 +506,12 @@ async def load_query_dataset(
                 await observe_query_dataset_event_with_backend(cache, "singleflight_wait")
                 # Wait outside the lock so the owner can finish and
                 # other keys can register meanwhile.
-                response = await future
+                try:
+                    response = await future
+                except _OwnerCancelledError:
+                    # RV2-BK-04: the owner's request went away, not ours —
+                    # go round again and take over (or join) the fetch.
+                    continue
             else:
                 await observe_query_dataset_event_with_backend(cache, "singleflight_owner")
                 try:
@@ -548,7 +528,12 @@ async def load_query_dataset(
                         future.set_result(response)
                 except BaseException as exc:
                     if not future.done():
-                        future.set_exception(exc)
+                        # RV2-BK-04: never hand the owner's own
+                        # cancellation to followers nobody cancelled.
+                        future.set_exception(
+                            _OwnerCancelledError("dataset fetch owner cancelled")
+                            if isinstance(exc, asyncio.CancelledError) else exc
+                        )
                         # RV-BE-05: followers still get the exception when
                         # they await; mark it retrieved so a fetch nobody
                         # waited on (the common case, and every request
@@ -558,10 +543,11 @@ async def load_query_dataset(
                     raise
                 finally:
                     # Clear under the lock so prune/re-entry don't
-                    # race with us. `.pop(key, None)` is a no-op if a
-                    # later cycle already rotated the key out.
+                    # race with us. Only drop our own future: a
+                    # follower may already have registered a new one.
                     async with lock:
-                        _inflight_dataset_futures.pop(sf_key, None)
+                        if _inflight_dataset_futures.get(sf_key) is future:
+                            del _inflight_dataset_futures[sf_key]
     finally:
         if owns_client:
             await client.aclose()
@@ -837,28 +823,8 @@ async def fetch_category_totals(
     return out
 
 
-# Top-level Kufar category ids → ordered list of known sub-category
-# ids that share the same parent group. Extracted from the kufar.by
-# `__NEXT_DATA__` payload + observed Kufar API responses. Used to
-# expose chips that don't appear in the unfiltered first-200 ads
-# distribution but are still meaningful for the query (e.g.
-# "Легковые авто" — 2010 — for "Audi Q7 4L 2015" where the first 200
-# Kufar ads are all "Запчасти" (2040)).
-KUFAR_CATEGORY_FAMILY: dict[int, tuple[int, ...]] = {
-    # 2000 — Авто и запчасти
-    2000: (2010, 2020, 2030, 2040, 2050, 2060, 2070, 2075, 2080),
-    # 1000 — Недвижимость (rare in mini-app, kept for completeness)
-    1000: (1010, 1020, 1030, 1040, 1050, 1060),
-    # 17000 — Телефоны и планшеты
-    17000: (17010, 17020, 17030, 17040, 17050, 17060),
-    # 5000 — Электроника
-    5000: (5010, 5020, 5030, 5040, 5050, 5060),
-}
-
-
-# Fallback labels for category ids that were added by the family
-# expansion but don't have an ad in the first 200 ads to read the
-# label from. Sourced from kufar.by's `__NEXT_DATA__`.
+# Fallback labels for category ids that don't have an ad in the
+# dataset to read the label from. Sourced from kufar.by's `__NEXT_DATA__`.
 KUFAR_CATEGORY_LABELS: dict[int, str] = {
     2000: "Авто и запчасти",
     2010: "Легковые авто",
@@ -871,82 +837,6 @@ KUFAR_CATEGORY_LABELS: dict[int, str] = {
     2075: "Шины, диски",
     2080: "Инструмент, оборудование",
 }
-
-
-def expand_with_known_siblings(category_ids: list[int]) -> list[int]:
-    """Add known sibling subcategories from the same Kufar parent group.
-
-    For each id in ``category_ids`` whose parent (id // 1000 * 1000)
-    has a hardcoded family in :data:`KUFAR_CATEGORY_FAMILY`, return a
-    list that includes every sibling. Preserves the original order and
-    de-duplicates. If no family is known, the input is returned as-is.
-    """
-    seen: set[int] = set()
-    out: list[int] = []
-    for cid in category_ids:
-        if cid in seen:
-            continue
-        seen.add(cid)
-        out.append(cid)
-        parent = (cid // 1000) * 1000
-        for sibling in KUFAR_CATEGORY_FAMILY.get(parent, ()):
-            if sibling in seen:
-                continue
-            seen.add(sibling)
-            out.append(sibling)
-    return out
-
-
-async def load_segment_datasets(
-    *,
-    query: str,
-    currency: str,
-    strict_search: bool,
-    settings: Settings,
-    client_factory: type[SupportsSearchAllAds] | None = None,
-    client: SupportsSearchAllAds | None = None,
-    parallel_search: SupportsParallelSearch,
-    category: int | None = None,
-) -> dict[str, QueryDataset]:
-    owns_client = client is None and client_factory is not None
-    if client is None and client_factory is not None:
-        client = client_factory(settings)
-    # Fetch by condition only (seller type filtered client-side)
-    tasks = [
-        {
-            "query": query,
-            "currency": currency,
-            **task_params,
-        }
-        for _, task_params in _API_CONDITION_TASKS
-    ]
-    if category is not None:
-        for task in tasks:
-            task["category"] = category
-
-    try:
-        responses = await parallel_search(client, tasks, settings)
-        responses = [_normalize_response_ads(response) for response in responses]
-    finally:
-        if owns_client and client is not None:
-            await client.aclose()
-
-    datasets: dict[str, QueryDataset] = {}
-    for (cond_name, _), response in zip(_API_CONDITION_TASKS, responses, strict=True):
-        all_ads = apply_search_mode(response.get("ads", []), query, strict_search)
-        private_ads = [ad for ad in all_ads if not _is_shop_ad(ad)]
-        shop_ads = [ad for ad in all_ads if _is_shop_ad(ad)]
-
-        for suffix, ads in (("_private", private_ads), ("_shop", shop_ads)):
-            segment_name = f"{cond_name}{suffix}"
-            datasets[segment_name] = QueryDataset(
-                query=query,
-                currency=currency,
-                strict_search=strict_search,
-                response=response,
-                ads=ads,
-            )
-    return datasets
 
 
 def convert_price_stats(

@@ -241,3 +241,37 @@ async def test_lifespan_fails_fast_when_cache_required_and_redis_down(monkeypatc
     with pytest.raises(RuntimeError, match="SECURITY_CACHE_REQUIRED"):
         async with main.lifespan(FastAPI()):
             pass
+
+
+def test_csrf_allowlist_uses_mini_app_origin_not_url(monkeypatch) -> None:
+    """BK-16: MINI_APP_URL is a page URL (may carry a path) but browsers
+    send a bare Origin, so a Mini App hosted apart from the API was 403'd."""
+    from starlette.testclient import TestClient as _OriginalTestClient
+
+    from api import main
+
+    settings = main.get_settings().model_copy(
+        update={"mini_app_url": "https://mini.example.org/app/index.html"},
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    xhr = {"X-Requested-With": "XMLHttpRequest"}
+    with _OriginalTestClient(main.create_app()) as client:
+        allowed = client.post(
+            "/api/v1/leads", json={}, headers={"Origin": "https://mini.example.org", **xhr},
+        )
+        foreign = client.post(
+            "/api/v1/leads", json={}, headers={"Origin": "https://evil.example.org", **xhr},
+        )
+    assert allowed.status_code != 403, allowed.text
+    assert foreign.status_code == 403
+
+
+def test_http_urls_must_be_really_local() -> None:
+    """BK-16: the old prefix check accepted ``http://localhost.<anything>``."""
+    from api.config import Settings
+
+    assert Settings.validate_https_url("http://localhost:8081/") == "http://localhost:8081"
+    assert Settings.validate_https_url("http://127.0.0.1:8010") == "http://127.0.0.1:8010"
+    for bad in ("http://localhost.example.com", "http://127.0.0.1.example.com"):
+        with pytest.raises(ValueError):
+            Settings.validate_https_url(bad)

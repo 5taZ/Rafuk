@@ -25,7 +25,7 @@ from api.services.aggregator import (
     extract_search_refinements,
 )
 from api.services.cache import CacheBackend, digest_cache_key
-from api.services.currency_service import CurrencyService
+from api.services.currency_service import CurrencyService, get_rates_safe
 from api.services.history_service import snapshot_bucket, upsert_query_snapshot
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import (
@@ -132,10 +132,7 @@ async def get_price_stats(
         return fb.dataset
 
     async def _fetch_rates():
-        try:
-            return await currency_service.get_rates()
-        except Exception:
-            return {"rates": {"BYN": 1.0}}
+        return await get_rates_safe(currency_service)
 
     dataset, rates_payload = await asyncio.gather(
         _fetch_dataset(),

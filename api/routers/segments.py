@@ -16,7 +16,7 @@ from api.limiter import limiter
 from api.schemas import SegmentsResponse
 from api.services.aggregator import PriceStats, compute_segments
 from api.services.cache import CacheBackend, digest_cache_key
-from api.services.currency_service import CurrencyService
+from api.services.currency_service import CurrencyService, get_rates_safe
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import (
     claim_force_refresh,
@@ -89,12 +89,9 @@ async def get_segments(
     dataset = fb.dataset
     raw_segments = compute_segments(dataset.ads)
 
-    # BE-MEDIUM (issues §2.2): NBRB outage → fallback to BYN-only
+    # BE-MEDIUM (issues §2.2): NBRB outage → fallback rates
     # rather than 500'ing the segment endpoint.
-    try:
-        rates_payload = await currency_service.get_rates()
-    except Exception:  # noqa: BLE001
-        rates_payload = {"rates": {"BYN": 1.0}}
+    rates_payload = await get_rates_safe(currency_service)
     rates = rates_payload["rates"]
 
     def _segment_payload(name: str) -> dict:

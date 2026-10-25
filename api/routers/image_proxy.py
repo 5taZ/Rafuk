@@ -404,7 +404,10 @@ async def get_optimized_image(
                     max_width=target_width,
                     quality=settings.image_proxy_quality,
                 )
-            except (UnidentifiedImageError, OSError, ValueError) as exc:
+            # BK-13: DecompressionBombError subclasses Exception directly.
+            except (
+                UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError,
+            ) as exc:
                 logger.warning("Image transcode failed for %s: %s", path, exc)
                 raise HTTPException(status_code=415, detail="Unsupported source image") from exc
 

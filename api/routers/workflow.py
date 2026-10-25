@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -42,6 +42,7 @@ from api.services.workflow_store import (
     load_last_snapshot_prices,
     make_price_snapshot,
     prune_price_snapshots,
+    purge_leads,
     record_price_snapshot,
     resolve_user_id,
     upsert_lead,
@@ -180,6 +181,24 @@ def _check_lead_version(
 
 def _bump_lead_version(item: LeadItem) -> None:
     item.version = int(item.version or 1) + 1
+
+
+def _stamp_status_dates(lead: LeadItem, previous_status: str | None) -> None:
+    """E-FIND-02 date stamps for entering ``bought`` / ``sold``.
+
+    RV2-BK-02: every path into ``sold`` (PATCH status, PATCH
+    sold_price_byn, POST /leads) goes through here so ``sold_at`` is
+    never left empty. ``bought_at`` is never overwritten; a direct
+    active → sold flip stamps it at the sale moment so hold_time_days
+    is computable.
+    """
+    now = datetime.now(UTC)
+    if lead.status == "bought" and lead.bought_at is None:
+        lead.bought_at = now
+    elif lead.status == "sold":
+        if previous_status != "sold" or lead.sold_at is None:
+            lead.sold_at = now
+        lead.bought_at = lead.bought_at or lead.sold_at
 
 
 def _compute_hold_time_days(lead: LeadItem) -> int | None:
@@ -402,6 +421,7 @@ async def create_lead(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Этот лот уже в покупках",
             )
+        previous_status = existing.status if existing is not None else None
         lead = await upsert_lead(
             session,
             user_id=user_id,
@@ -417,6 +437,7 @@ async def create_lead(
             market_median_byn=payload.market_median_byn,
             notes=payload.notes,
         )
+        _stamp_status_dates(lead, previous_status)
         await session.commit()
         # Refresh to materialize server-generated columns (created_at,
         # updated_at, server_default columns) before pydantic walks the
@@ -453,14 +474,13 @@ async def update_lead(
         # treat null as no-op for the status field.
         if "status" in payload.model_fields_set and payload.status is not None:
             _validate_lead_status_transition(lead.status, payload.status.value)
-            lead.status = payload.status.value
+            previous_status, lead.status = lead.status, payload.status.value
             # E-FIND-02: stamp bought_at on the first transition into
             # ``bought``. We never overwrite an existing value — the
             # user might have manually corrected the date elsewhere
             # in the future, and round-tripping through bought →
             # bought (idempotent) shouldn't reset the clock.
-            if lead.status == "bought" and lead.bought_at is None:
-                lead.bought_at = datetime.now(UTC)
+            _stamp_status_dates(lead, previous_status)
         if "target_resale_byn" in payload.model_fields_set:
             lead.target_resale_byn = payload.target_resale_byn
         if "buy_price_byn" in payload.model_fields_set:
@@ -494,16 +514,8 @@ async def update_lead(
             lead.sold_price_byn = payload.sold_price_byn
             if payload.sold_price_byn is not None and lead.status != "sold":
                 _validate_lead_status_transition(lead.status, "sold")
-                lead.status = "sold"
-                lead.sold_at = datetime.now(UTC)
-                # E-FIND-02: if the lead transitions straight from
-                # an active status into ``sold`` without ever passing
-                # through ``bought``, retroactively stamp bought_at
-                # at the same moment so hold_time_days renders as 0
-                # rather than NULL. Skipping the bought stage is
-                # rare but legitimate (e.g. quick flip).
-                if lead.bought_at is None:
-                    lead.bought_at = lead.sold_at
+                previous_status, lead.status = lead.status, "sold"
+                _stamp_status_dates(lead, previous_status)
             elif payload.sold_price_byn is None and lead.status == "sold":
                 # BE-M10: revert un-sold deal to a real LeadStatusEnum value.
                 # The previous "active" string was not in the enum and would
@@ -546,23 +558,7 @@ async def delete_all_leads(
                 LeadItem.user_id == user_id,
                 LeadItem.status.notin_(preserved_statuses),
             )
-            # Bulk DELETE bypasses ORM cascade — remove snapshots and
-            # expenses explicitly before the parent rows disappear.
-            await session.execute(
-                delete(LeadItemPriceSnapshot).where(
-                    LeadItemPriceSnapshot.lead_item_id.in_(active_lead_ids)
-                )
-            )
-            await session.execute(
-                delete(DealExpense).where(DealExpense.lead_id.in_(active_lead_ids))
-            )
-            # Delete only active leads (keep closed deals for finance tracking)
-            await session.execute(
-                delete(LeadItem).where(
-                    LeadItem.user_id == user_id,
-                    LeadItem.status.notin_(preserved_statuses),
-                )
-            )
+            await purge_leads(session, active_lead_ids)
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -588,17 +584,7 @@ async def delete_lead(
         )
         if lead is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
-        # Explicit pre-delete for bulk-style safety (ORM cascade may
-        # not fire for all relationship configurations).
-        await session.execute(
-            delete(LeadItemPriceSnapshot).where(
-                LeadItemPriceSnapshot.lead_item_id == lead.id
-            )
-        )
-        await session.execute(
-            delete(DealExpense).where(DealExpense.lead_id == lead.id)
-        )
-        await session.delete(lead)
+        await purge_leads(session, [lead.id])
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -770,22 +756,7 @@ async def delete_all_watchlist_items(
                 LeadItem.user_id == user_id,
                 LeadItem.status == WATCHING_STATUS,
             )
-            # Bulk DELETE bypasses ORM cascade — remove snapshots and
-            # expenses explicitly before the parent rows disappear.
-            await session.execute(
-                delete(LeadItemPriceSnapshot).where(
-                    LeadItemPriceSnapshot.lead_item_id.in_(watching_ids)
-                )
-            )
-            await session.execute(
-                delete(DealExpense).where(DealExpense.lead_id.in_(watching_ids))
-            )
-            await session.execute(
-                delete(LeadItem).where(
-                    LeadItem.user_id == user_id,
-                    LeadItem.status == WATCHING_STATUS,
-                )
-            )
+            await purge_leads(session, watching_ids)
         await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -819,16 +790,7 @@ async def delete_watchlist_item(
             )
         )
         if item is not None:
-            # Explicit pre-delete for cascade safety (matches delete_lead pattern).
-            await session.execute(
-                delete(LeadItemPriceSnapshot).where(
-                    LeadItemPriceSnapshot.lead_item_id == item.id
-                )
-            )
-            await session.execute(
-                delete(DealExpense).where(DealExpense.lead_id == item.id)
-            )
-            await session.delete(item)
+            await purge_leads(session, [item.id])
             await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -906,7 +868,7 @@ async def refresh_watchlist(
         snapshots_to_insert: list[dict[str, Any]] = []
         for query, query_items in grouped.items():
             dataset = datasets_by_query.get(query)
-            if isinstance(dataset, Exception):
+            if isinstance(dataset, BaseException):
                 logger.warning("Watchlist refresh: query %r failed: %s", query, dataset)
                 continue
             ads_by_id = {
@@ -956,23 +918,15 @@ async def refresh_watchlist(
 
         # Auto-remove watchlist items that have been missing too long
         auto_remove_cutoff = datetime.now(UTC) - timedelta(days=settings.auto_remove_missing_days)
-        auto_removed = 0
-        for item in items:
-            if (
-                item.market_status == "missing"
-                and item.missing_since_at is not None
-                and item.missing_since_at < auto_remove_cutoff
-            ):
-                await session.execute(
-                    delete(LeadItemPriceSnapshot).where(
-                        LeadItemPriceSnapshot.lead_item_id == item.id
-                    )
-                )
-                await session.execute(
-                    delete(DealExpense).where(DealExpense.lead_id == item.id)
-                )
-                await session.delete(item)
-                auto_removed += 1
+        expired_ids = [
+            item.id for item in items
+            if item.market_status == "missing"
+            and item.missing_since_at is not None
+            and item.missing_since_at < auto_remove_cutoff
+        ]
+        if expired_ids:
+            await purge_leads(session, expired_ids)
+        auto_removed = len(expired_ids)
 
         return WatchlistRefreshResponse(
             updated=updated,
@@ -1053,7 +1007,7 @@ async def refresh_leads(
         missing_count = 0
         for query, query_leads in grouped.items():
             dataset = datasets_by_query.get(query)
-            if isinstance(dataset, Exception):
+            if isinstance(dataset, BaseException):
                 logger.warning("Leads refresh: query %r failed: %s", query, dataset)
                 continue
             ads_by_id = {

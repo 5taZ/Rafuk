@@ -589,6 +589,138 @@ def test_update_lead_stamps_bought_at_on_skip_to_sold(monkeypatch) -> None:
         assert body["hold_time_days"] is None
 
 
+def test_update_lead_status_sold_with_price_stamps_dates(monkeypatch) -> None:
+    """RV2-BK-02: the Mini App marks a deal sold with ``{status: "sold",
+    sold_price_byn, version}``; the status branch used to win and leave
+    sold_at / bought_at empty."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        lead = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "drone", "ad_id": 8003,
+                "title": "DJI Mini", "link": "https://www.kufar.by/item/8003",
+                "price_byn": 1500, "source": "manual",
+            },
+        ).json()
+        body = client.patch(
+            f"/api/v1/leads/{lead['id']}",
+            json={"status": "sold", "sold_price_byn": 1700, "version": lead["version"]},
+        ).json()
+        assert body["status"] == "sold"
+        assert body["sold_price_byn"] == 1700
+        assert body["sold_at"] is not None
+        assert body["bought_at"] is not None
+
+        bought = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "drone", "ad_id": 8004,
+                "title": "DJI Air", "link": "https://www.kufar.by/item/8004",
+                "price_byn": 1500, "source": "manual",
+            },
+        ).json()
+        bought = client.patch(
+            f"/api/v1/leads/{bought['id']}",
+            json={"status": "bought", "version": bought["version"]},
+        ).json()
+        sold = client.patch(
+            f"/api/v1/leads/{bought['id']}",
+            json={"status": "sold", "version": bought["version"]},
+        ).json()
+        assert sold["sold_at"] is not None
+        assert sold["bought_at"] == bought["bought_at"]
+
+
+def test_delete_lead_removes_reminders_and_expenses(monkeypatch) -> None:
+    """BK-18: the per-handler purge copies never removed reminders; on a
+    schema without enforced FK cascades they were left orphaned."""
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import func, select
+
+    from api.database import get_engine, get_session_factory
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.models import DealExpense, LeadReminder
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    async def _child_counts() -> tuple[int, int]:
+        engine = get_engine()
+        try:
+            async with get_session_factory(engine)() as session:
+                return (
+                    await session.scalar(select(func.count()).select_from(LeadReminder)),
+                    await session.scalar(select(func.count()).select_from(DealExpense)),
+                )
+        finally:
+            await engine.dispose()
+
+    with TestClient(app) as client:
+        lead = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "drone", "ad_id": 8006,
+                "title": "DJI Mini", "link": "https://www.kufar.by/item/8006",
+                "price_byn": 1500, "source": "manual",
+            },
+        ).json()
+        remind_at = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+        assert client.post(
+            f"/api/v1/leads/{lead['id']}/reminders", json={"remind_at": remind_at},
+        ).status_code == 201
+        assert client.post(
+            f"/api/v1/leads/{lead['id']}/expenses",
+            json={"expense_type": "delivery", "amount_byn": 10},
+        ).status_code == 201
+        assert asyncio.run(_child_counts()) == (1, 1)
+
+        assert client.delete(f"/api/v1/leads/{lead['id']}").status_code == 204
+        assert asyncio.run(_child_counts()) == (0, 0)
+
+
+def test_create_lead_with_sold_status_stamps_dates(monkeypatch) -> None:
+    """RV2-BK-02: POST /leads accepts ``status: sold``; the row must not
+    be sold with an empty sold_at."""
+    from api.dependencies import get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.routers import workflow
+
+    monkeypatch.setattr(workflow, "KufarClient", FakeKufarClient)
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: FakeKufarClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    with TestClient(app) as client:
+        create = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "drone", "ad_id": 8005, "status": "sold",
+                "title": "DJI Mini", "link": "https://www.kufar.by/item/8005",
+                "price_byn": 1500, "source": "manual",
+            },
+        )
+        assert create.status_code == 201, create.text
+        body = create.json()
+        assert body["status"] == "sold"
+        assert body["sold_at"] is not None
+        assert body["bought_at"] is not None
+
+
 def test_lead_projected_profit_from_target_resale(monkeypatch) -> None:
     """E-FIND-01: unsold leads with target_resale_byn show projected_profit_byn."""
     from api.dependencies import get_kufar_client, get_telegram_user

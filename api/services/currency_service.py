@@ -13,6 +13,29 @@ logger = logging.getLogger(__name__)
 
 NBRB_URL = "https://api.nbrb.by/exrates/rates?periodicity=0"
 DEFAULT_USD_RATE = 3.0
+# B-07: fallback covers all supported currencies so convert_from_byn
+# never silently returns BYN-amount labelled as EUR/RUB.
+FALLBACK_RATES: dict[str, float] = {"USD": DEFAULT_USD_RATE, "EUR": 3.3, "RUB": 0.033}
+
+
+async def get_rates_safe(currency_service: Any) -> dict[str, Any]:
+    """``currency_service.get_rates()`` that never raises.
+
+    CC-10: six routers each caught the failure and fell back to
+    ``{"BYN": 1.0}`` — silently, and losing the USD/EUR/RUB fallback B-07
+    asked for. A module function rather than a method so duck-typed
+    services (tests, stubs) only need ``get_rates``.
+    """
+    try:
+        return await currency_service.get_rates()
+    except Exception:  # noqa: BLE001 — rates must never 500 a market endpoint
+        logger.warning("currency_service: get_rates failed; serving fallback rates", exc_info=True)
+        return {
+            "base": "BYN",
+            "rates": dict(FALLBACK_RATES),
+            "source": "fallback",
+            "fetched_at": datetime.now(UTC).isoformat(),
+        }
 
 
 class CurrencyService:
@@ -46,13 +69,7 @@ class CurrencyService:
             if cached and cached_usd > 0:
                 return cached
 
-            # B-07: fallback covers all supported currencies so convert_from_byn
-            # never silently returns BYN-amount labelled as EUR/RUB.
-            rates = {
-                "USD": DEFAULT_USD_RATE,
-                "EUR": 3.3,
-                "RUB": 0.033,
-            }
+            rates = dict(FALLBACK_RATES)
             source = "fallback"
             fetched_at = datetime.now(UTC).isoformat()
 

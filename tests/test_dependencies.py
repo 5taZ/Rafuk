@@ -90,6 +90,59 @@ async def test_service_token_path_rejects_wrong_token(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_service_token_non_ascii_is_401_not_500(monkeypatch) -> None:
+    """SEC-11: compare_digest raised TypeError on a non-ASCII header."""
+    from api import dependencies
+
+    class _Stub:
+        bot_token = SecretStr("dummy")
+        internal_service_token = SecretStr("super-secret")
+        auth_bypass = False
+
+    monkeypatch.setattr(dependencies, "get_settings", lambda: _Stub())
+
+    with pytest.raises(HTTPException) as exc:
+        await dependencies.get_telegram_user(
+            _service_request(),
+            x_telegram_init_data=None,
+            x_internal_service_token="sécret",
+            x_acting_telegram_user_id="42",
+        )
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_service_token_principal_is_never_admin(monkeypatch) -> None:
+    """SEC-07: acting as an admin's Telegram id via the service token must
+    not unlock /admin."""
+    from api import dependencies
+
+    class _Stub:
+        bot_token = SecretStr("dummy")
+        internal_service_token = SecretStr("super-secret")
+        auth_bypass = False
+
+    monkeypatch.setattr(dependencies, "get_settings", lambda: _Stub())
+    monkeypatch.setattr(dependencies, "is_admin_user", lambda user_id, settings: user_id == 42)
+
+    service_user = await dependencies.get_telegram_user(
+        _service_request(),
+        x_telegram_init_data=None,
+        x_internal_service_token="super-secret",
+        x_acting_telegram_user_id="42",
+    )
+    assert service_user.via_service_token is True
+    with pytest.raises(HTTPException) as exc:
+        await dependencies.require_admin_user(service_user, settings=_Stub())
+    assert exc.value.status_code == 403
+
+    from api.middleware.telegram_auth import TelegramInitData
+
+    direct = TelegramInitData(user_id=42, first_name="Admin", raw={"auth_date": "1"})
+    assert await dependencies.require_admin_user(direct, settings=_Stub()) is direct
+
+
+@pytest.mark.asyncio
 async def test_service_token_path_requires_positive_acting_id(monkeypatch) -> None:
     from api import dependencies
 
@@ -252,9 +305,20 @@ async def test_init_data_minted_before_account_deletion_is_refused(monkeypatch) 
     )
     assert other.user_id == 4343
 
+    # SC-08: auth_date within the clock-skew margin of deleted_at may still
+    # predate the deletion on Telegram's clock, so it is refused too.
+    with pytest.raises(HTTPException) as skewed:
+        await dependencies.get_telegram_user(
+            request,
+            x_telegram_init_data=_signed_init_data(4242, auth_date=now + 3),
+            x_internal_service_token=None,
+            x_acting_telegram_user_id=None,
+        )
+    assert skewed.value.status_code == 410
+
     reopened = await dependencies.get_telegram_user(
         request,
-        x_telegram_init_data=_signed_init_data(4242, auth_date=now + 1),
+        x_telegram_init_data=_signed_init_data(4242, auth_date=now + 6),
         x_internal_service_token=None,
         x_acting_telegram_user_id=None,
     )

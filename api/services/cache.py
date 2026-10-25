@@ -8,7 +8,7 @@ import time
 from collections import OrderedDict
 from typing import Any, Protocol
 
-from redis.asyncio import Redis
+from redis.asyncio import BlockingConnectionPool, Redis
 from redis.exceptions import RedisError
 
 logger = logging.getLogger(__name__)
@@ -218,20 +218,24 @@ class RedisCache:
         #   socket_keepalive=True   — kernel-level keepalive probes
         #     drop dead sockets even when the redis-py heartbeat is
         #     itself stuck.
-        #   max_connections=20      — pool ceiling so a stampeding
+        #   max_connections=50      — pool ceiling so a stampeding
         #     watch-list fan-out can't open hundreds of sockets.
-        return cls(
-            Redis.from_url(
-                url,
-                decode_responses=True,
-                socket_connect_timeout=0.5,
-                socket_timeout=3.0,
-                socket_keepalive=True,
-                retry_on_timeout=True,
-                health_check_interval=30,
-                max_connections=20,
-            )
+        # IN-04: a *blocking* pool — the default one raised
+        # MaxConnectionsError on the first command past the ceiling, which
+        # incr() turned into a spurious 429 and get() into a cache miss.
+        # Now a burst waits up to 2 s for a free connection.
+        pool = BlockingConnectionPool.from_url(
+            url,
+            decode_responses=True,
+            socket_connect_timeout=0.5,
+            socket_timeout=3.0,
+            socket_keepalive=True,
+            retry_on_timeout=True,
+            health_check_interval=30,
+            max_connections=50,
+            timeout=2,
         )
+        return cls(Redis.from_pool(pool))
 
     async def aclose(self) -> None:
         """Close the Redis connection pool."""

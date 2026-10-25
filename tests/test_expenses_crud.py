@@ -52,6 +52,28 @@ def test_create_expense_happy_path() -> None:
         assert body["notes"] == "курьерская доставка"
 
 
+def test_lead_and_expense_inputs_beyond_db_bounds_are_422() -> None:
+    """BE-11: values the DB CHECK / column types reject used to surface as
+    a 500 at INSERT time on Postgres."""
+    app = _make_app(USER_A)
+    with TestClient(app) as client:
+        bogus = client.post(
+            "/api/v1/leads",
+            json={
+                "query": "x", "ad_id": 7002, "title": "x",
+                "link": "https://www.kufar.by/item/7002", "source": "bogus",
+            },
+        )
+        assert bogus.status_code == 422
+        lead = _create_lead(client)
+        url = f"/api/v1/leads/{lead['id']}/expenses"
+        for body in (
+            {"expense_type": "delivery", "amount_byn": 100_000_000},
+            {"expense_type": "delivery", "amount_byn": 10, "notes": "n" * 256},
+        ):
+            assert client.post(url, json=body).status_code == 422, body
+
+
 def test_create_expense_accepts_full_contract_type_set() -> None:
     app = _make_app(USER_A)
     with TestClient(app) as client:

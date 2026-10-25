@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 KUFAR_BASE_URL = "https://api.kufar.by/search-api/v2/search/rendered-paginated"
 USER_AGENT = "Mozilla/5.0 (compatible; KufarAnalytics/1.0; +https://kufar.by)"
 MAX_RETRIES = 3
+# RV2-BK-01: the cursor parser used to read the ``self`` entry (always a
+# null token), so every dataset was a single page of <= 200 ads. The parser
+# now finds ``next``; going deeper multiplies upstream load per key (SEC-04)
+# and is an owner decision, so the effective depth stays one page until
+# this is raised (the old hard cap was 25).
+KUFAR_MAX_PAGES = 1
 BACKOFF_BASE_SECONDS = 1.0
 CIRCUIT_FAILURE_THRESHOLD = 5
 CIRCUIT_OPEN_SECONDS = 30.0
@@ -295,6 +301,11 @@ class KufarClient:
                 params["cmp"] = seller_value
         if price_range:
             params["prc"] = price_range
+            # BE-15: Kufar reads ``prc`` in the ``cur`` currency, but the
+            # range is always built from BYN (kufar_price_range). The API
+            # only consumes ``price_byn`` from the response, so asking in
+            # BYN changes nothing else.
+            params["cur"] = "BYN"
         if category is not None:
             params["cat"] = category
 
@@ -406,10 +417,16 @@ class KufarClient:
         total = self.extract_total(response) or len(ads)
         cursor = self.extract_next_cursor(response)
         pages_fetched = 1
+        seen_cursors: set[str] = set()
+        seen_ids = {ad.get("ad_id") for ad in ads if isinstance(ad, dict)}
 
-        # Safety cap: max 25 pages or configured max ads (whichever comes first)
+        # Safety cap: KUFAR_MAX_PAGES pages or configured max ads (whichever comes first)
         max_ads = self._settings.kufar_max_ads_per_query
-        while cursor and pages_fetched < 25 and len(ads) < max_ads:
+        while (
+            cursor and cursor not in seen_cursors
+            and pages_fetched < KUFAR_MAX_PAGES and len(ads) < max_ads
+        ):
+            seen_cursors.add(cursor)
             page = await self.search(
                 query=query,
                 size=size,
@@ -423,7 +440,12 @@ class KufarClient:
                 price_range=price_range,
                 category=category,
             )
-            ads.extend(page.get("ads", []))
+            for ad in page.get("ads", []):
+                ad_id = ad.get("ad_id") if isinstance(ad, dict) else None
+                if ad_id is not None and ad_id in seen_ids:
+                    continue  # the feed shifted under us between pages
+                seen_ids.add(ad_id)
+                ads.append(ad)
             cursor = self.extract_next_cursor(page)
             pages_fetched += 1
             if total and len(ads) >= total:
@@ -442,9 +464,12 @@ class KufarClient:
             pages = response["pagination"]["pages"]
         except (KeyError, TypeError):
             return None
-        if not pages:
+        # RV2-BK-01: Kufar lists ``self`` (token null) first, then ``next``,
+        # numbered pages, ``prev``/``first`` — only ``next`` advances.
+        if not isinstance(pages, list):
             return None
-        return pages[0].get("token")
+        nxt = next((p for p in pages if isinstance(p, dict) and p.get("label") == "next"), None)
+        return (nxt.get("token") or None) if nxt else None
 
     @staticmethod
     def extract_total(response: dict[str, Any]) -> int | None:

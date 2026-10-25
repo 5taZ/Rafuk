@@ -30,6 +30,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.middleware.telegram_auth import FUTURE_AUTH_DATE_SKEW_SECONDS
 from api.models import (
     AdminAuditLog,
     AIAuditLog,
@@ -54,9 +55,12 @@ ACCOUNT_DELETED_MESSAGE = (
     "Аккаунт удалён. Чтобы начать заново, закройте приложение и откройте его снова."
 )
 # Slack on top of the initData lifetime: verify_telegram_init_data accepts
-# auth_date up to 5 s in the future and the tombstone lands a moment after
-# ``deleted_at`` is taken.
-_TOMBSTONE_TTL_MARGIN_SECONDS = 60
+# auth_date up to FUTURE_AUTH_DATE_SKEW_SECONDS in the future and the
+# tombstone lands a moment after ``deleted_at`` is taken.
+_TOMBSTONE_TTL_MARGIN_SECONDS = FUTURE_AUTH_DATE_SKEW_SECONDS + 60
+# SC-08: initData minted by Telegram this close after our ``deleted_at`` may
+# still predate the deletion on a skewed host clock; a reopen within it gets 410.
+_TOMBSTONE_CLOCK_SKEW_SECONDS = 5
 # TELEGRAM_INIT_DATA_MAX_AGE <= 0 disables the age check, but the tombstone
 # still must not keep a Telegram id around forever.
 _TOMBSTONE_UNBOUNDED_TTL_SECONDS = 7 * 24 * 3600
@@ -166,7 +170,8 @@ async def is_erased_session(cache: Any, telegram_user_id: int, auth_date: int | 
     if auth_date is None:
         return False
     deleted_at = await account_deleted_at(cache, telegram_user_id)
-    return deleted_at is not None and auth_date <= deleted_at
+    # SC-08: auth_date is Telegram's clock, deleted_at ours — allow for skew.
+    return deleted_at is not None and auth_date <= deleted_at + _TOMBSTONE_CLOCK_SKEW_SECONDS
 
 
 @dataclass(frozen=True, slots=True)

@@ -34,7 +34,12 @@ SAMPLE_RESPONSE = {
             ],
         }
     ],
-    "pagination": {"pages": [{"token": "next_cursor_token", "label": 2}]},
+    # RV2-BK-01: the real shape — ``self`` (null token) first, then ``next``.
+    "pagination": {"pages": [
+        {"label": "self", "num": 1, "token": None},
+        {"label": "next", "num": 2, "token": "next_cursor_token"},
+        {"label": "page", "num": 3, "token": "page_3_token"},
+    ]},
 }
 
 
@@ -122,6 +127,20 @@ async def test_search_sends_supported_native_filter_params(
 
 
 @pytest.mark.asyncio
+async def test_search_price_range_is_always_read_in_byn(
+    ok_response: MagicMock,
+    mock_settings: MagicMock,
+) -> None:
+    """BE-15: Kufar interprets ``prc`` in the ``cur`` currency; the range
+    is BYN kopecks, so a USD display currency used to filter by dollars."""
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=ok_response) as mock:
+        await KufarClient(mock_settings).search(
+            query="iphone", currency="USD", price_range="r:3000000,4000000",
+        )
+    assert mock.call_args.kwargs["params"]["cur"] == "BYN"
+
+
+@pytest.mark.asyncio
 async def test_search_raises_kufar_api_error_after_retries(mock_settings: MagicMock) -> None:
     bad_response = MagicMock(spec=httpx.Response)
     bad_response.raise_for_status.side_effect = httpx.HTTPStatusError(
@@ -168,20 +187,79 @@ async def test_search_parses_next_cursor(ok_response: MagicMock, mock_settings: 
     assert KufarClient.extract_next_cursor(result) == "next_cursor_token"
 
 
+def _pages(next_token: str | None) -> dict:
+    pages = [{"label": "self", "num": 1, "token": None}]
+    if next_token:
+        pages += [
+            {"label": "first", "num": 1, "token": "cursor-1"},
+            {"label": "next", "num": 2, "token": next_token},
+        ]
+    return {"pages": pages}
+
+
+def test_extract_next_cursor_reads_only_the_next_entry() -> None:
+    assert KufarClient.extract_next_cursor({"pagination": _pages("cursor-2")}) == "cursor-2"
+    assert KufarClient.extract_next_cursor({"pagination": _pages(None)}) is None
+    legacy_fixture = {"pagination": {"pages": [{"token": "x", "label": 2}]}}
+    assert KufarClient.extract_next_cursor(legacy_fixture) is None
+    assert KufarClient.extract_next_cursor({"pagination": {"pages": "junk"}}) is None
+
+
 @pytest.mark.asyncio
-async def test_search_all_ads_collects_all_pages(mock_settings: MagicMock) -> None:
+async def test_search_all_ads_stays_on_one_page_by_default(mock_settings: MagicMock) -> None:
+    """RV2-BK-01: fixing the cursor parser must not by itself deepen the
+    pagination — KUFAR_MAX_PAGES is an owner decision (upstream load)."""
+    first = MagicMock(spec=httpx.Response)
+    first.raise_for_status = MagicMock()
+    first.json.return_value = {
+        "ads": [{"ad_id": 1}], "pagination": _pages("cursor-2"), "total": 400,
+    }
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=first) as get:
+        result = await KufarClient(mock_settings).search_all_ads(query="test")
+
+    assert get.await_count == 1
+    assert result["fetched_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_search_all_ads_stops_on_repeated_cursor_and_dedupes(
+    mock_settings: MagicMock, monkeypatch,
+) -> None:
+    monkeypatch.setattr(kufar_client_module, "KUFAR_MAX_PAGES", 25)
+    first = MagicMock(spec=httpx.Response)
+    first.raise_for_status = MagicMock()
+    first.json.return_value = {
+        "ads": [{"ad_id": 1}], "pagination": _pages("cursor-2"), "total": 400,
+    }
+    again = MagicMock(spec=httpx.Response)
+    again.raise_for_status = MagicMock()
+    again.json.return_value = {
+        "ads": [{"ad_id": 1}, {"ad_id": 2}], "pagination": _pages("cursor-2"), "total": 400,
+    }
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=[first, again]) as get:
+        result = await KufarClient(mock_settings).search_all_ads(query="test")
+
+    assert get.await_count == 2
+    assert [ad["ad_id"] for ad in result["ads"]] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_search_all_ads_collects_all_pages(mock_settings: MagicMock, monkeypatch) -> None:
+    monkeypatch.setattr(kufar_client_module, "KUFAR_MAX_PAGES", 25)
     first = MagicMock(spec=httpx.Response)
     first.raise_for_status = MagicMock()
     first.json.return_value = {
         "ads": [{"ad_id": 1}, {"ad_id": 2}],
-        "pagination": {"pages": [{"token": "cursor-2"}]},
+        "pagination": _pages("cursor-2"),
         "total": 3,
     }
     second = MagicMock(spec=httpx.Response)
     second.raise_for_status = MagicMock()
     second.json.return_value = {
         "ads": [{"ad_id": 3}],
-        "pagination": {"pages": []},
+        "pagination": _pages(None),
         "total": 3,
     }
 
@@ -354,10 +432,11 @@ async def test_open_breaker_raises_unavailable_instead_of_empty_stub(
 
 @pytest.mark.asyncio
 async def test_search_all_ads_raises_when_breaker_opens_mid_pagination(
-    mock_settings: MagicMock,
+    mock_settings: MagicMock, monkeypatch,
 ) -> None:
     """The open breaker used to answer the next page with the empty stub;
     pagination stopped there and the short result was cached as complete."""
+    monkeypatch.setattr(kufar_client_module, "KUFAR_MAX_PAGES", 25)
     client = KufarClient(mock_settings)
     original_search = client.search
     pages_requested = 0
@@ -375,7 +454,7 @@ async def test_search_all_ads_raises_when_breaker_opens_mid_pagination(
         200,
         json_body={
             "ads": [{"ad_id": 1}],
-            "pagination": {"pages": [{"token": "cursor-2"}]},
+            "pagination": _pages("cursor-2"),
             "total": 400,
         },
     )

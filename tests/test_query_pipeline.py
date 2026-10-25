@@ -566,6 +566,47 @@ async def test_singleflight_follower_still_receives_owner_exception() -> None:
 
 
 @pytest.mark.asyncio
+async def test_singleflight_owner_cancellation_does_not_cancel_followers() -> None:
+    """RV2-BK-04: the owner's request going away (client disconnect) used
+    to hand CancelledError to every follower; a follower now takes over
+    the fetch instead."""
+    from api.services import query_pipeline
+
+    calls = 0
+    owner_started = asyncio.Event()
+
+    class Client:
+        async def search_all_ads(self, **kwargs) -> dict:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                owner_started.set()
+                await asyncio.Event().wait()
+            return {"ads": [{"subject": "iphone", "price_byn": 100}], "total": 1}
+
+    async def load():
+        return await load_query_dataset(
+            query="iphone owner-cancel",
+            currency="BYN",
+            strict_search=False,
+            settings=SimpleNamespace(cache_ttl_seconds=300),
+            client=Client(),
+        )
+
+    owner = asyncio.create_task(load())
+    await owner_started.wait()
+    follower = asyncio.create_task(load())
+    await asyncio.sleep(0.01)
+    owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    dataset = await asyncio.wait_for(follower, timeout=5)
+    assert len(dataset.ads) == 1
+    assert calls == 2
+    assert not query_pipeline._inflight_dataset_futures
+
+
+@pytest.mark.asyncio
 async def test_strict_fallback_reuses_fetched_response_for_empty_answer() -> None:
     """RV-BE-05: empty answers are no longer cached, so the strict→loose
     fallback must not re-paginate Kufar for the same (cache-key-identical)

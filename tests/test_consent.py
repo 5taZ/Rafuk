@@ -984,7 +984,8 @@ async def test_delete_account_is_not_undone_by_the_same_init_data(erasure_app):
         assert await _user_rows(session_factory, tg_id) == 0
 
         deleted_at = float(await erasure_app.state.cache.get(f"account:deleted:{tg_id}"))
-        fresh = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(deleted_at) + 1)}
+        # SC-08: beyond the tombstone's clock-skew margin.
+        fresh = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(deleted_at) + 6)}
         resp = await client.get("/api/v1/profile/me", headers=fresh)
         assert resp.status_code == 200
         await _drain_provision_tasks()
@@ -1016,6 +1017,36 @@ async def test_erasure_tombstone_outlives_init_data(erasure_app, monkeypatch):
     assert resp.status_code == 204
     assert ttls and ttls[0] >= 7200  # default TELEGRAM_INIT_DATA_MAX_AGE
     assert 0 < account_erasure.tombstone_ttl_seconds(0) <= 7 * 24 * 3600
+
+
+@pytest.mark.asyncio
+async def test_delete_account_evicts_shared_ai_analysis_cache(erasure_app):
+    """SC-03: the ai_analysis:* eviction is built from the user's AIAuditLog
+    rows; it ran after the purge had deleted them and never matched."""
+    from api.models import AIAuditLog, User
+
+    tg_id = 777006
+    session_factory = erasure_app.state.session_factory
+    async with session_factory() as session:
+        user = User(telegram_user_id=tg_id, first_name="Erased")
+        session.add(user)
+        await session.flush()
+        session.add(AIAuditLog(
+            user_id=user.id, endpoint="analyze", ad_id="321", query="iphone", model="test-model",
+        ))
+        await session.commit()
+    cache = erasure_app.state.cache
+    analysis_key = "ai_analysis:v3:321:iphone:cat=None"
+    await cache.set_json(analysis_key, {"ad_id": 321})
+
+    stale = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(time.time()) - 5)}
+    async with _erasure_client(erasure_app) as client:
+        resp = await client.request(
+            "DELETE", "/api/v1/account", json={"confirmation": str(tg_id)}, headers=stale,
+        )
+    assert resp.status_code == 204
+    assert await _user_rows(session_factory, tg_id) == 0
+    assert await cache.get_json(analysis_key) is None
 
 
 @pytest.mark.asyncio
@@ -1054,7 +1085,7 @@ async def test_auto_provision_task_skips_init_data_older_than_tombstone(monkeypa
         assert (await client.get(f"/_erasure-provision/{int(deleted_at) - 30}")).status_code == 200
         await _drain_provision_tasks()
         assert calls == []
-        assert (await client.get(f"/_erasure-provision/{int(deleted_at) + 1}")).status_code == 200
+        assert (await client.get(f"/_erasure-provision/{int(deleted_at) + 6}")).status_code == 200
         await _drain_provision_tasks()
     assert calls == [777002]
 
@@ -1353,10 +1384,13 @@ async def test_delete_account_bulk_deletes_the_whole_graph(client):
         "deal_expenses", "lead_reminders", "user_consents", "ai_audit_log",
         "contacts", "saved_searches", "telegram_notification_dlq",
     )
+    # SC-03: the ai_analysis:* eviction now reads its (ad_id, query) index
+    # before the purge — a bounded projection, not the ORM graph.
     graph_loads = [
         sql for sql in statements
         if sql.lstrip().upper().startswith("SELECT")
         and any(re.search(rf"\bFROM {table}\b", sql) for table in owned)
+        and not sql.lstrip().startswith("SELECT DISTINCT ai_audit_log.ad_id, ai_audit_log.")
     ]
     assert graph_loads == [], "erasure must not load the user's rows into the worker"
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from api.schemas import FlipEstimate, LiquidityInsight
-from api.services.aggregator import PriceStats, get_param, normalize_price_byn
+from api.services.aggregator import MAX_PRICE_BYN, PriceStats, get_param, normalize_price_byn
+
+logger = logging.getLogger(__name__)
 
 
 def _age_hours(list_time: str | None) -> float | None:
@@ -231,12 +234,13 @@ def compute_flip_estimates(
     if price_byn is None or market_stats.count == 0:
         return []
     # H6: guard against kopecks being passed instead of BYN.
-    # PriceStats fields should be in BYN; if median > 100000 the caller
-    # likely passed raw kopecks.
-    if market_stats.median > 100_000:
-        raise ValueError(
-            f"PriceStats.median={market_stats.median} looks like kopecks, not BYN"
-        )
+    # BE-02: the old 100 000 cut-off rejected real BYN medians (flats, cars)
+    # and raised, turning /listing-detail into a 500. Stats are built from
+    # prices capped at MAX_PRICE_BYN, so only a median above that cap means
+    # kopecks — and then the card just goes without flip estimates.
+    if market_stats.median > MAX_PRICE_BYN:
+        logger.warning("PriceStats.median=%s looks like kopecks, not BYN", market_stats.median)
+        return []
     expenses = max(0.0, float(expenses_byn or 0.0))
     cost_basis = price_byn + expenses
 

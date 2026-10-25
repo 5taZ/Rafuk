@@ -76,7 +76,6 @@ async def test_consume_quota_counts_in_redis_with_a_single_ttl(redis_cache) -> N
 
 
 async def test_incr_is_atomic_under_concurrency(redis_cache) -> None:
-    # Stays below the pool's max_connections=20; see the xfail below.
     counts = await asyncio.gather(
         *(redis_cache.incr("ops04:concurrent", ttl=60) for _ in range(15))
     )
@@ -84,21 +83,15 @@ async def test_incr_is_atomic_under_concurrency(redis_cache) -> None:
     assert 0 < await redis_cache._client.ttl("ops04:concurrent") <= 60
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RV-OPS-04 finding: RedisCache.from_url caps the pool at 20 with a "
-        "non-blocking ConnectionPool, so the 21st concurrent command raises "
-        "MaxConnectionsError — incr() then fails closed (999999 → spurious "
-        "429 quota_exceeded), get() misses, locks report 'unavailable'. "
-        "Drop this marker once the pool waits for a free connection."
-    ),
-)
 async def test_burst_beyond_pool_size_is_served(redis_cache) -> None:
+    # IN-04: past max_connections the blocking pool queues the command
+    # instead of raising MaxConnectionsError (→ incr() failing closed as a
+    # spurious 429 quota_exceeded, get() missing, locks "unavailable").
+    burst = redis_cache._client.connection_pool.max_connections + 5
     counts = await asyncio.gather(
-        *(redis_cache.incr("ops04:burst", ttl=60) for _ in range(25))
+        *(redis_cache.incr("ops04:burst", ttl=60) for _ in range(burst))
     )
-    assert sorted(counts) == list(range(1, 26))
+    assert sorted(counts) == list(range(1, burst + 1))
 
 
 async def test_incr_without_ttl_never_expires(redis_cache) -> None:

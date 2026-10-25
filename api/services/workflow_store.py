@@ -3,13 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import Select, delete, desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models import LeadItem, LeadItemPriceSnapshot, User
+from api.models import DealExpense, LeadItem, LeadItemPriceSnapshot, LeadReminder, User
 from api.services.account_erasure import ensure_user_creation_allowed
 
 PRICE_SNAPSHOT_RETENTION_DAYS = 90
@@ -71,6 +71,20 @@ async def ensure_user(
             "inserted nor present after upsert"
         )
     return int(existing_id)
+
+
+async def purge_leads(session: AsyncSession, lead_ids: Select[tuple[int]] | list[int]) -> None:
+    """Delete leads and their child rows, one bulk DELETE per table.
+
+    BK-18: five handlers each carried their own copy of this and none
+    removed reminders. Children go explicitly because the SQLite test
+    schema doesn't enforce the FK cascades production relies on.
+    """
+    for column in (
+        LeadItemPriceSnapshot.lead_item_id, DealExpense.lead_id, LeadReminder.lead_id,
+    ):
+        await session.execute(delete(column.class_).where(column.in_(lead_ids)))
+    await session.execute(delete(LeadItem).where(LeadItem.id.in_(lead_ids)))
 
 
 async def resolve_user_id(session: AsyncSession, telegram_user_id: int) -> int | None:

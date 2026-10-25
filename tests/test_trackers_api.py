@@ -635,6 +635,56 @@ def test_tracker_sequential_patches_last_write_wins() -> None:
         assert second.json()["interval_min"] == 15
 
 
+def test_tracker_patch_search_key_resets_baseline() -> None:
+    """RV2-BK-08: strict_mode / category_id pick a different search key;
+    keeping the old last_checked_at would replay that key's whole history
+    as "new" listings on the next tick."""
+    from sqlalchemy import update
+
+    from api.dependencies import get_telegram_user
+    from api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+
+    async def _seed_baseline(tid: int) -> None:
+        engine = get_engine()
+        try:
+            async with get_session_factory(engine)() as session:
+                await session.execute(
+                    update(Tracker).where(Tracker.id == tid).values(
+                        last_checked_at=datetime.now(UTC),
+                        last_seen_ad_id=42, last_seen_price_byn=100,
+                    )
+                )
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+    with TestClient(app) as client:
+        tid = client.post(
+            "/api/v1/trackers",
+            json={"query": "pixel 8", "strict_mode": False, "interval_min": 30},
+        ).json()["id"]
+
+        asyncio.run(_seed_baseline(tid))
+        kept = client.patch(
+            f"/api/v1/trackers/{tid}", json={"interval_min": 60, "strict_mode": False},
+        ).json()
+        assert kept["last_checked_at"] is not None
+        assert kept["last_seen_ad_id"] == 42
+
+        for patch in (
+            {"strict_mode": True},
+            {"category_id": 17010, "category_label": "Мобильные телефоны"},
+        ):
+            asyncio.run(_seed_baseline(tid))
+            reset = client.patch(f"/api/v1/trackers/{tid}", json=patch).json()
+            assert reset["last_checked_at"] is None, patch
+            assert reset["last_seen_ad_id"] is None
+            assert reset["last_seen_price_byn"] is None
+
+
 @pytest.mark.asyncio
 async def test_tracker_events_rejects_invalid_event_type() -> None:
     """SEC-NEW-5: event_type must match the DB CHECK constraint Literal."""
