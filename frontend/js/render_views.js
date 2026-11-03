@@ -56,7 +56,7 @@ function createRenderViews(context) {
 
             // Render category chips
             domClear(elements.filterCategories);
-            if (!state.filters.categories.length || state.filters.categories.length <= 1) {
+            if (state.filters.category == null && state.filters.categories.length <= 1) {
                 const empty = document.createElement("span");
                 empty.className = "filter-empty";
                 empty.textContent = "Нет категорий";

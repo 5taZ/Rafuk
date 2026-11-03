@@ -52,17 +52,17 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#0a0a0b">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261025-2832914">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261025-2832914">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261103-mark">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261103-mark">
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
          depending on the user's network RTT. -->
     <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
     <link rel="dns-prefetch" href="https://rms.kufar.by">
-    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261025-2832914" crossorigin>
-    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261025-2832914" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
-    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261025-2832914" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261103-market-filters" crossorigin>
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261103-market-filters" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261103-market-filters" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
     <!-- FE-M1: Preload the bundled stylesheet so the browser starts
          fetching it during HTML parse, in parallel with the font
          CSS request above. The subsequent ``<link rel="stylesheet">``
@@ -77,8 +77,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20261025-2832914" crossorigin>
-    <link rel="stylesheet" href="css/style.css?v=20261025-2832914" integrity="sha384-7TtVamjjomgndUngim9xf6u+xYUmTJg+Fc/aPiiduNiAHrMH+GNCUGmwUrXJ3SSI" crossorigin>
+    <link rel="preload" as="style" href="css/style.css?v=20261103-ai-neutral" crossorigin>
+    <link rel="stylesheet" href="css/style.css?v=20261103-ai-neutral" integrity="sha384-EXibLIIhgr1/+POswTAm+rroM1PpSgpmGDWxGLP59QvrVIdodwLG2QLS6cCM6NEQ" crossorigin>
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -95,14 +95,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20261025-2832914"
+            src="vendor/telegram-web-app.js?v=20261103-market-filters"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
          on first paint of the price-distribution / price-history
          charts. Keeps the initial bundle smaller for users who only
          use the watchlist or trackers without leaking IP to a CDN. -->
-    <script defer src="js/app_bundle.js?v=20261025-2832914"></script>
+    <script defer src="js/app_bundle.js?v=20261103-market-filters"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -125,7 +125,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20261025-2832914" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20261103-mark" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">
@@ -369,7 +369,7 @@
             </div>
             <div class="section-body" id="geography-body" hidden>
                 <p class="section-note" id="geography-note">
-                    Показываем, где по запросу чаще встречаются объявления и как отличается медиана.
+                    География по запросу и категории, без фильтров состояния, продавца и региона.
                 </p>
                 <div class="geo-grid" id="geography-grid"></div>
             </div>
@@ -399,6 +399,7 @@
                 <button class="section-toggle" data-panel-toggle="history" type="button">Свернуть</button>
             </div>
             <div class="section-body" id="history-body">
+                <p class="section-note">История по запросу и категории, без фильтров состояния, продавца и региона.</p>
                 <div class="sort-row history-range-row" id="history-range-row">
                     <button class="s-tab active" data-history-days="7" type="button" aria-pressed="true">7 дней</button>
                     <button class="s-tab" data-history-days="30" type="button" aria-pressed="false">30 дней</button>
@@ -421,6 +422,7 @@
                 <button class="section-toggle" data-panel-toggle="segments" type="button">Показать</button>
             </div>
             <div class="section-body" id="segments-body" hidden>
+                <p class="section-note">Сегменты по запросу и категории, без фильтров состояния, продавца и региона.</p>
                 <div class="segs-grid" id="segments-grid"></div>
             </div>
         </section>

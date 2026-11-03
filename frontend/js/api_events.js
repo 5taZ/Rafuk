@@ -268,6 +268,13 @@ function createApiEvents(context) {
 
         // ── Refinement chips (summary strip) ─────────────────────────
         elements.summaryRefinements?.addEventListener("click", (event) => {
+            const category = event.target.closest("[data-summary-category]");
+            if (category) {
+                state.filters.category = Number(category.dataset.summaryCategory);
+                state.filters.pendingCategory = state.filters.category;
+                void search(state.ui.activeView, { keepFilters: true, query: state.search.activeQuery });
+                return;
+            }
             const chip = event.target.closest("[data-refinement]");
             if (!chip) return;
             const token = chip.dataset.refinement || "";
@@ -627,14 +634,13 @@ function createApiEvents(context) {
 
         // ── Filter dropdown: Apply button ─────────────────────────────
         elements.filterApplyBtn?.addEventListener("click", () => {
-            // Check if category changed to trigger search
-            const categoryChanged = state.filters.pendingCategory !== state.filters.category;
-            const filtersChanged = categoryChanged
+            const marketChanged = state.filters.pendingCategory !== state.filters.category
                 || state.filters.pendingCondition !== state.filters.condition
                 || state.filters.pendingSellerType !== state.filters.sellerType
-                || state.filters.pendingMinPrice !== state.filters.minPrice
-                || state.filters.pendingMaxPrice !== state.filters.maxPrice
                 || state.filters.pendingRegionName !== state.filters.regionName;
+            const filtersChanged = marketChanged
+                || state.filters.pendingMinPrice !== state.filters.minPrice
+                || state.filters.pendingMaxPrice !== state.filters.maxPrice;
             
             // Apply pending filter values
             state.filters.category = state.filters.pendingCategory;
@@ -646,10 +652,7 @@ function createApiEvents(context) {
             state.filters.filterDropdownOpen = false;
             renderAll();
 
-            // If category changed, trigger new search keeping the
-            // freshly-applied filters (otherwise search() would wipe
-            // the user's selection).
-            if (categoryChanged && state.search.activeQuery.trim()) {
+            if (marketChanged && state.search.activeQuery.trim()) {
                 void search(state.ui.activeView, {
                     keepFilters: true,
                     query: state.search.activeQuery,

@@ -78,8 +78,17 @@ function createApiListings(context) {
         }
     }
 
+    function buildMarketQuery(params = {}) {
+        return buildCommonQuery({
+            condition: state.filters.condition,
+            seller_type: state.filters.sellerType,
+            region_name: state.filters.regionName,
+            ...params,
+        });
+    }
+
     function buildListingsQuery(params = {}) {
-        const query = new URLSearchParams(buildCommonQuery(params));
+        const query = new URLSearchParams(buildMarketQuery(params));
         if (state.filters.category != null) {
             query.set("reference_context", "base_query");
         }
@@ -90,15 +99,6 @@ function createApiListings(context) {
         }
         if (maxPrice != null) {
             query.set("max_price", String(maxPrice));
-        }
-        if (state.filters.condition) {
-            query.set("condition", state.filters.condition);
-        }
-        if (state.filters.sellerType) {
-            query.set("seller_type", state.filters.sellerType);
-        }
-        if (state.filters.regionName) {
-            query.set("region_name", state.filters.regionName);
         }
         return query.toString();
     }
@@ -614,7 +614,7 @@ function createApiListings(context) {
 
         try {
             const stats = await getJson(
-                `/api/v1/price-stats?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`,
+                `/api/v1/price-stats?${buildMarketQuery({ force_refresh: forceRefresh ? "1" : "" })}`,
                 _requestOptions(searchSignal, forceRefresh),
             );
             if (!isActiveRequest(requestId)) {

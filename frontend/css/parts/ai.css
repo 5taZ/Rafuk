@@ -50,13 +50,9 @@
     height: min(780px, calc(var(--app-vh) * 0.94));
     max-height: calc(var(--app-vh) * 0.94);
     background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%);
-    border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);
+    border: 1px solid var(--border);
     border-bottom: 0;
-    box-shadow:
-        var(--shadow-sheet-strong),
-        0 -1px 0 color-mix(in srgb, var(--white) 8%, transparent),
-        inset 0 1px 0 color-mix(in srgb, var(--white) 7%, transparent);
+    box-shadow: var(--shadow-sheet-strong);
 }
 
 /* ── AI Header Bar ── */
@@ -65,10 +61,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px 14px;
-    border-bottom: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
-    background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 88%, transparent);
-    backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
 
@@ -86,10 +79,9 @@
     width: 28px;
     height: 28px;
     border-radius: 8px;
-    background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
-    color: color-mix(in srgb, var(--accent) 76%, var(--text));
-    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
-    box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 11%, transparent);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
     flex-shrink: 0;
 }
 
@@ -444,27 +436,15 @@
 
 /* ── AI Verdict (hero) — Clean, prominent ── */
 .ai-modal-verdict {
-    text-align: center;
-    padding: 28px 0 20px;
-    margin-bottom: 0;
-    position: relative;
-}
-
-.ai-modal-verdict::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 32px;
-    height: 1px;
-    background: var(--border);
+    text-align: left;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--border);
 }
 
 .ai-modal-summary {
     margin: 10px 0 0;
     font-size: var(--text-base);
-    color: var(--text-muted);
+    color: var(--text);
     line-height: 1.6;
 }
 
@@ -1050,14 +1030,13 @@
     align-items: center;
     gap: 8px;
     padding: 10px 14px;
-    background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 92%, var(--accent) 8%);
-    border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border) 84%);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
     border-radius: 10px;
     font-size: var(--text-xs);
     color: var(--text-muted);
     line-height: 1.4;
-    margin-bottom: 12px;
+    margin-top: 12px;
 }
 .ai-warning-icon {
     flex-shrink: 0;
@@ -1070,20 +1049,11 @@
     font-size: 11px;
     font-weight: 700;
     font-family: var(--font-mono);
-    color: var(--accent);
-    background: var(--accent-soft);
+    color: var(--text-muted);
+    background: var(--bg-hover);
 }
 
 /* ── AI: Light theme adjustments ── */
-[data-theme="light"] .ai-header-icon {
-    background: var(--bg-elevated);
-    color: var(--text-muted);
-}
-
-[data-theme="light"] .ai-sheet {
-    background: var(--bg);
-}
-
 [data-theme="light"] .ai-section--best {
     background: none;
 }

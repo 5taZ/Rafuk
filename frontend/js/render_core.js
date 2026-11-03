@@ -592,9 +592,16 @@ function createRenderCore(context) {
             : [];
         const visibleRefinements = visibleRefinementTokens(refinements, state.search.activeQuery);
         domClear(elements.summaryRefinementsChips);
-        if (!visibleRefinements.length) {
-            elements.summaryRefinements.hidden = true;
-            return;
+        const categories = state.misc.stats.categories || [];
+        if (state.filters.category == null && categories.length > 1) {
+            for (const category of categories.slice(0, 3)) {
+                elements.summaryRefinementsChips.appendChild(domEl("button", {
+                    type: "button",
+                    className: "summary-refinement-chip",
+                    attrs: { "data-summary-category": String(category.id) },
+                    text: category.label,
+                }));
+            }
         }
         for (const token of visibleRefinements) {
             const chip = document.createElement("button");
@@ -605,7 +612,7 @@ function createRenderCore(context) {
             chip.title = `Добавить «${token}» к запросу`;
             elements.summaryRefinementsChips.appendChild(chip);
         }
-        elements.summaryRefinements.hidden = false;
+        elements.summaryRefinements.hidden = !elements.summaryRefinementsChips.hasChildNodes();
     }
 
     function renderSummary() {
@@ -651,7 +658,18 @@ function createRenderCore(context) {
             }
 
             elements.summaryQuery.textContent = state.search.activeQuery;
-            elements.summarySignal.textContent = signal;
+            const category = state.filters.categories.find(item => item.id === state.filters.category)
+                || state.misc.stats.categories?.find(item => item.id === state.filters.category);
+            const market = [
+                category?.label || (state.filters.category != null ? "Выбранная категория" : ""),
+                { new: "Новое", used: "Б/у" }[state.filters.condition],
+                { private: "Частные продавцы", shop: "Магазины" }[state.filters.sellerType],
+                state.filters.regionName,
+            ].filter(Boolean);
+            const scope = market.length ? `${market.join(" · ")}. ` : "";
+            const mixed = state.filters.category == null && (state.misc.stats.categories?.length || 0) > 1;
+            elements.summarySignal.textContent = `${scope}Объявлений с ценой в расчёте: ${analyzedCount}. ` +
+                (mixed ? "В выдаче несколько категорий. Уточните категорию для оценки цены." : signal);
             function shortPrice(v) {
                 if (v == null || v === 0) return "—";
                 const n = Number(v);

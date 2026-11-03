@@ -46,6 +46,65 @@ def test_price_stats_endpoint_returns_payload(monkeypatch) -> None:
     assert payload["currency"] == "USD"
 
 
+def test_price_stats_uses_market_filters_without_budget_or_sort() -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+
+    class MarketClient(FakeKufarClient):
+        async def search_all_ads(self, **kwargs) -> dict:
+            ads = [
+                (1010, 1200, "Б/у", False, "Минск"),
+                (1010, 1400, "Б/у", False, "Минск"),
+                (1010, 1600, "Б/у", False, "Минск"),
+                (1010, 2100, "Новый", False, "Минск"),
+                (1010, 2400, "Б/у", True, "Минск"),
+                (1010, 1900, "Б/у", False, "Гомель"),
+                (1020, 30, "Б/у", False, "Минск"),
+            ]
+            category = kwargs.get("category")
+            result = [
+                {
+                    "subject": "iPhone 14 Pro",
+                    "category": str(cat),
+                    "price_byn": price * 100,
+                    "company_ad": shop,
+                    "region_name": region,
+                    "ad_parameters": [{"p": "condition", "v": condition}],
+                }
+                for cat, price, condition, shop, region in ads
+                if category is None or cat == category
+            ]
+            return {"ads": result, "total": len(result)}
+
+    cache = MemoryCache()
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: MarketClient(None)
+    app.dependency_overrides[get_cache] = lambda: cache
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    market = {
+        "query": "iPhone 14 Pro", "category": 1010, "condition": "used",
+        "seller_type": "private", "region_name": "Минск",
+    }
+    with TestClient(app) as client:
+        asyncio.get_event_loop().run_until_complete(init_test_tables(app))
+
+        def stats(**changes):
+            response = client.get("/api/v1/price-stats", params={**market, **changes})
+            assert response.status_code == 200
+            return response.json()
+
+        expected = stats()
+        assert expected["analyzed_count"] == 3
+        assert (expected["min"], expected["median"], expected["max"]) == (1200, 1400, 1600)
+        assert expected["fair_price_from"] == 1300
+        assert expected["fair_price_to"] == 1500
+        assert stats(max_price=900, sort="price_asc") == expected
+        assert stats(category=1020)["median"] == 30
+        assert stats(condition="new")["median"] == 2100
+        assert stats(seller_type="shop")["median"] == 2400
+        assert stats(region_name="Гомель")["median"] == 1900
+
+
 def test_price_stats_exposes_category_total_cap_metadata(monkeypatch) -> None:
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app

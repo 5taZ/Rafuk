@@ -308,6 +308,8 @@ function _applyInertToSiblings(modalEl) {
         // Inert everything else at this level.
         for (const sibling of current.children) {
             if (sibling === pathChild) continue;
+            // The toast close button must still receive clicks above a modal.
+            if (sibling.id === "toast-container") continue;
             if (sibling.hasAttribute("inert")) continue;  // outer modal already inerted it
             sibling.setAttribute("inert", "");
             newlyInert.push(sibling);

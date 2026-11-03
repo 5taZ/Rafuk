@@ -1,0 +1,6 @@
+# Keep frontend asset bytes stable across platforms for Subresource Integrity.
+frontend/**/*.js text eol=lf
+frontend/**/*.css text eol=lf
+
+# Shell scripts also run on Linux from Windows checkouts.
+*.sh text eol=lf

@@ -18,8 +18,6 @@ from api.schemas import ListingsResponse
 from api.services.aggregator import (
     compute_category_price_stats,
     filter_deal_ads,
-    get_param,
-    normalize_price_byn,
     precompute_cluster_stats,
     sort_listings,
 )
@@ -29,8 +27,7 @@ from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.kufar_filters import build_kufar_search_filters
 from api.services.listing_filters import (
-    match_condition_filter,
-    match_region_filter,
+    filter_listing_ads,
     normalize_filter_text,
 )
 from api.services.listing_mapper import build_listing_item, compute_listing_sort_key
@@ -96,51 +93,6 @@ def _listings_cache_key(
             "total_semantics": 4,
         },
     )
-
-
-def _matches_seller_type(ad: dict[str, Any], seller_type: str | None) -> bool:
-    if seller_type is None:
-        return True
-    raw = normalize_filter_text(get_param(ad, "seller_type"))
-    is_shop = bool(ad.get("company_ad")) or raw in {"магазин", "shop"}
-    return is_shop if seller_type == "shop" else not is_shop
-
-
-def _matches_price(ad: dict[str, Any], min_price: float | None, max_price: float | None) -> bool:
-    if min_price is None and max_price is None:
-        return True
-    price = normalize_price_byn(ad.get("price_byn"), ad)
-    if price is None:
-        return False
-    if min_price is not None and price < min_price:
-        return False
-    return not (max_price is not None and price > max_price)
-
-
-def _filter_visible_ads(
-    ads: list[dict[str, Any]],
-    *,
-    min_price: float | None,
-    max_price: float | None,
-    condition: str | None,
-    seller_type: str | None,
-    region_name: str | None,
-) -> list[dict[str, Any]]:
-    if (
-        min_price is None
-        and max_price is None
-        and condition is None
-        and seller_type is None
-        and not normalize_filter_text(region_name)
-    ):
-        return ads
-    return [
-        ad for ad in ads
-        if _matches_price(ad, min_price, max_price)
-        and match_condition_filter(ad, condition)
-        and _matches_seller_type(ad, seller_type)
-        and match_region_filter(ad, region_name)
-    ]
 
 
 @router.get("/listings", response_model=ListingsResponse)
@@ -247,7 +199,7 @@ async def get_listings(
     fallback_used = fb.fallback_used
     visible_dataset = context.visible
     reference_dataset = context.reference
-    filtered_visible_ads = _filter_visible_ads(
+    filtered_visible_ads = filter_listing_ads(
         visible_dataset.ads,
         min_price=min_price,
         max_price=max_price,

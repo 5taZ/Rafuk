@@ -194,31 +194,6 @@
 }
 
 /* AI modal: clean neutral background — no purple tint */
-.ai-sheet {
-    background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%);
-    border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);
-    border-bottom: 0;
-    box-shadow:
-        var(--shadow-sheet-strong),
-        0 -1px 0 color-mix(in srgb, var(--white) 8%, transparent),
-        inset 0 1px 0 color-mix(in srgb, var(--white) 7%, transparent);
-}
-
-.ai-header-bar {
-    background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 88%, transparent);
-    backdrop-filter: blur(16px);
-    border-bottom-color: color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
-}
-
-.ai-header-icon {
-    background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
-    color: color-mix(in srgb, var(--accent) 76%, var(--text));
-    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
-    box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 11%, transparent);
-}
-
 .ai-modal-verdict,
 .ai-section {
     border-color: var(--border);

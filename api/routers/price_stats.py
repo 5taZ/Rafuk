@@ -21,13 +21,17 @@ from api.limiter import limiter
 from api.schemas import PriceStatsResponse
 from api.services.aggregator import (
     build_query_key,
+    compute_price_stats,
     extract_category_distribution,
+    extract_prices,
     extract_search_refinements,
 )
 from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService, get_rates_safe
 from api.services.history_service import snapshot_bucket, upsert_query_snapshot
 from api.services.kufar_client import KufarClient
+from api.services.kufar_filters import build_kufar_search_filters
+from api.services.listing_filters import filter_listing_ads, normalize_filter_text
 from api.services.query_pipeline import (
     CATEGORY_TOTAL_MAX_CALLS,
     KUFAR_CATEGORY_LABELS,
@@ -49,6 +53,9 @@ def _price_stats_cache_key(
     currency: str,
     strict_search: bool,
     category: int | None,
+    condition: str | None = None,
+    seller_type: str | None = None,
+    region_name: str | None = None,
 ) -> str:
     return digest_cache_key(
         "price-stats",
@@ -57,6 +64,9 @@ def _price_stats_cache_key(
             "currency": currency,
             "strict_search": strict_search,
             "category": category,
+            "condition": condition,
+            "seller_type": seller_type,
+            "region_name": region_name,
             "category_total_semantics": 2,
         },
     )
@@ -94,6 +104,9 @@ async def get_price_stats(
     currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
     strict_search: bool = True,
     category: int | None = None,
+    condition: Literal["new", "used"] | None = None,
+    seller_type: Literal["private", "shop"] | None = None,
+    region_name: str | None = Query(default=None, max_length=128),
     force_refresh: bool = False,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
@@ -102,11 +115,16 @@ async def get_price_stats(
     kufar_client: KufarClient = Depends(get_kufar_client),
     _user=Depends(get_telegram_user),
 ) -> PriceStatsResponse:
+    region_name = normalize_filter_text(region_name) or None
+    market_filtered = any((condition, seller_type, region_name))
     cache_key = _price_stats_cache_key(
         query=query,
         currency=currency,
         strict_search=strict_search,
         category=category,
+        condition=condition,
+        seller_type=seller_type,
+        region_name=region_name,
     )
     cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
@@ -119,6 +137,10 @@ async def get_price_stats(
     # independent — overlap them so the wall-clock cost is the slower
     # of the two instead of the sum.
     async def _fetch_dataset():
+        upstream_filters, _ = build_kufar_search_filters(
+            min_price=None, max_price=None, condition=condition,
+            seller_type=seller_type, region_name=region_name,
+        )
         fb = await load_query_dataset_with_fallback(
             query=query,
             currency=currency,
@@ -126,6 +148,8 @@ async def get_price_stats(
             settings=settings,
             client=kufar_client,
             category=category,
+            search_kwargs=upstream_filters or None,
+            allow_low_result_fallback=not market_filtered and category is None,
             cache=cache,
             force_refresh=refetch_upstream,
         )
@@ -138,7 +162,11 @@ async def get_price_stats(
         _fetch_dataset(),
         _fetch_rates(),
     )
-    stats = dataset.price_stats
+    ads = filter_listing_ads(
+        dataset.ads, min_price=None, max_price=None, condition=condition,
+        seller_type=seller_type, region_name=region_name,
+    )
+    stats = compute_price_stats(extract_prices(ads)) if market_filtered else dataset.price_stats
     converted = convert_price_stats(
         stats,
         currency=currency,
@@ -147,16 +175,16 @@ async def get_price_stats(
     )
     converted.pop("count", None)
     insights = analyze_query_text(query)
-    category_distribution = extract_category_distribution(dataset.ads)
+    category_distribution = extract_category_distribution(ads)
     # When strict_search is on, the user-facing total must match the strict-filtered
     # count to stay consistent with the listings badge and category chip sums.
-    effective_total = len(dataset.ads) if strict_search else dataset.total_results
+    effective_total = len(ads) if strict_search or market_filtered else dataset.total_results
     category_total_candidates = 0
     categories_limited = False
 
     # Replace sample-only category counts with the official per-category
     # totals Kufar returns for `cat=<id>` so the chips mirror kufar.by.
-    if category is None:
+    if category is None and not market_filtered:
         seed_ids = [int(c["id"]) for c in category_distribution if c.get("id") is not None]
         category_total_candidates = len(seed_ids)
         categories_limited = category_total_candidates > CATEGORY_TOTAL_MAX_CALLS
@@ -197,7 +225,7 @@ async def get_price_stats(
         category_distribution = [c for c in category_distribution if c.get("count", 0) > 0]
         category_distribution.sort(key=lambda c: c["count"], reverse=True)
 
-    suggested_refinements = extract_search_refinements(dataset.ads, query)
+    suggested_refinements = extract_search_refinements(ads, query)
     payload = PriceStatsResponse(
         query=query,
         currency=currency,
@@ -227,13 +255,14 @@ async def get_price_stats(
     # without leaking pending writes into pytest fixture teardowns
     # (which previously deadlocked on "database is locked" with the
     # bare asyncio.create_task variant).
-    background_tasks.add_task(
-        _persist_snapshot_safe,
-        session_factory,
-        query_key=build_query_key(query, strict_search, category),
-        ads=dataset.ads,
-        total_results=payload.total_results,
-        bucket_at=snapshot_bucket(datetime.now(UTC)),
-    )
+    if not market_filtered:
+        background_tasks.add_task(
+            _persist_snapshot_safe,
+            session_factory,
+            query_key=build_query_key(query, strict_search, category),
+            ads=ads,
+            total_results=payload.total_results,
+            bucket_at=snapshot_bucket(datetime.now(UTC)),
+        )
     await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
     return payload
