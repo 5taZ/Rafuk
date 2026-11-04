@@ -52,6 +52,147 @@ class FakeKufarClient:
         return None
 
 
+def test_watchlist_compares_cars_and_parts_in_separate_markets() -> None:
+    from api.dependencies import get_cache, get_kufar_client, get_telegram_user
+    from api.main import create_app
+    from api.services.cache import MemoryCache
+
+    def ad(ad_id, title, price, category, **specs):
+        return {
+            "ad_id": ad_id, "subject": title, "price_byn": price * 100, "category": str(category),
+            "ad_parameters": [{"p": key, "v": str(value)} for key, value in specs.items()],
+        }
+
+    def car(ad_id, price, year=2017, gearbox="Автомат", title="Volkswagen Polo"):
+        return ad(
+            ad_id, title, price, 2010, regdate=year, cars_gearbox=gearbox, condition="С пробегом",
+        )
+
+    def part(ad_id, price, title="Подсветка номера к Volkswagen Polo 4", kind="Подсветка номера"):
+        return ad(ad_id, title, price, 2040, condition="Б/у", spares_passenger_group=kind)
+
+    ads = [
+        car(101, 19500), car(102, 22000, 2016), car(103, 23000), car(104, 24000, 2018),
+        car(105, 10000, 2004), car(106, 13000, gearbox="Механика"),
+        car(107, 29000, title="Volkswagen Golf"),
+        part(201, 18), part(202, 25), part(203, 27), part(204, 30),
+        part(205, 400, "Дроссель Volkswagen Polo 4", "Дроссель"),
+        part(206, 80, "Подсветка номера к Volkswagen Polo 5"),
+    ]
+
+    class MarketClient(FakeKufarClient):
+        async def search_all_ads(self, **kwargs) -> dict:
+            category = kwargs.get("category")
+            result = [
+                item for item in ads if category is None or str(category) == item["category"]
+            ]
+            return {"ads": result, "total": len(result)}
+
+    cache = MemoryCache()
+    app = create_app()
+    app.dependency_overrides[get_kufar_client] = lambda: MarketClient(None)
+    app.dependency_overrides[get_telegram_user] = fake_telegram_user
+    app.dependency_overrides[get_cache] = lambda: cache
+    with TestClient(app) as client:
+        ids = []
+        for item in (ads[0], ads[7]):
+            response = client.post("/api/v1/watchlist", json={
+                "query": "Volkswagen Polo", "ad_id": item["ad_id"], "title": item["subject"],
+                "link": f"https://www.kufar.by/item/{item['ad_id']}",
+                "price_byn": item["price_byn"] / 100 + 100,
+                "market_median_byn": 39,
+            })
+            assert response.status_code == 201
+            assert response.json()["market_median_byn"] is None
+            ids.append(str(response.json()["id"]))
+
+        response = client.get("/api/v1/watchlist/comparisons")
+        assert response.status_code == 200
+        comparisons = response.json()
+        assert comparisons[ids[0]]["median_byn"] == 23000
+        assert comparisons[ids[0]]["ad_found"] is True
+        assert comparisons[ids[0]]["current_price_byn"] == ads[0]["price_byn"] / 100
+        assert comparisons[ids[1]]["median_byn"] == 27
+        assert all(comparisons[item_id]["comparable_count"] == 3 for item_id in ids)
+
+        app.dependency_overrides[get_telegram_user] = lambda: TelegramInitData(
+            user_id=999999, first_name="Other", raw={},
+        )
+        assert client.get("/api/v1/watchlist/comparisons").json() == {}
+
+
+def test_watchlist_comparison_requires_matching_phone_configuration_and_enough_prices() -> None:
+    from api.services.watchlist_market import compare_watchlist_ad
+
+    def phone(ad_id, title, price, condition="Б/у"):
+        return {
+            "ad_id": ad_id, "subject": title, "price_byn": price * 100, "category": "3010",
+            "ad_parameters": [{"p": "condition", "v": condition}],
+        }
+
+    target = phone(1, "iPhone 14 Pro 256 GB Deep Purple", 1000)
+    same_model = [
+        phone(2, "iPhone 14 Pro 256GB Space Black", 1200),
+        phone(3, "iPhone 14 Pro 256GB Gold", 1300),
+        phone(4, "iPhone 14 Pro 256 GB", 1400),
+    ]
+    noise = [
+        target, same_model[0],
+        phone(5, "iPhone 14 Pro Max 256GB", 1800),
+        phone(6, "iPhone 14 Pro 128GB", 900),
+        phone(7, "Чехол iPhone 14 Pro 256GB", 15),
+        phone(8, "iPhone 14 Pro 256GB", 2000, condition="Новый"),
+    ]
+    result = compare_watchlist_ad(target, same_model + noise)
+    assert result.comparable_count == 3
+    assert result.median_byn == 1300
+    assert compare_watchlist_ad(target, same_model[:2] + noise).median_byn is None
+
+
+def test_market_comparables_use_specs_for_other_products() -> None:
+    from api.services.watchlist_market import build_market_comparables, listing_draft_target
+
+    def phone(ad_id, price, memory):
+        return {
+            "ad_id": ad_id, "subject": "Samsung Galaxy A55",
+            "price_byn": price * 100, "category": "17010",
+            "ad_parameters": [
+                {"p": "phablet_phones_memory", "vl": f"{memory} ГБ"},
+                {"p": "phablet_phones_diagonal", "pl": "Диагональ экрана",
+                 "vl": "6 и более" if ad_id % 2 else "5,5–5,9"},
+                {"p": "condition", "vl": "Б/у"},
+            ],
+        }
+
+    ads = [
+        phone(1, 750, 256), phone(2, 800, 256), phone(3, 850, 256),
+        phone(4, 550, 128), phone(5, 600, 128), phone(6, 650, 128),
+    ]
+    draft = listing_draft_target("Samsung Galaxy A55", "Хорошее", "Память 256 ГБ", None, ads)
+    result = build_market_comparables(draft, ads)
+    assert result.reliable
+    assert result.stats.median == 800
+    assert {ad["ad_id"] for ad in result.ads} == {1, 2, 3}
+    ambiguous = listing_draft_target("Samsung Galaxy A55", "Хорошее", None, None, ads)
+    assert not build_market_comparables(ambiguous, ads).reliable
+
+    drill = {"subject": "Makita HP1640", "category": "4020"}
+    drill_ads = [
+        {**drill, "ad_id": ad_id, "price_byn": price * 100}
+        for ad_id, price in enumerate((110, 120, 125), 10)
+    ]
+    drill_ads.append({**drill_ads[0], "ad_id": 13, "subject": "Makita HP1630"})
+    drill_ads.append({**drill_ads[0], "ad_id": 14, "category": "9990"})
+    drill_ads.append({**drill_ads[0], "ad_id": 15, "subject": "Аренда дрели Makita HP1640"})
+    result = build_market_comparables(drill, drill_ads)
+    assert result.reliable
+    assert result.stats.median == 120
+    assert {ad["ad_id"] for ad in result.ads} == {10, 11, 12}
+    assert not build_market_comparables(
+        {**drill, "subject": "Makita"}, drill_ads,
+    ).reliable
+
+
 def test_leads_and_watchlist_workflow(monkeypatch) -> None:
     from api.dependencies import get_kufar_client, get_telegram_user
     from api.main import create_app

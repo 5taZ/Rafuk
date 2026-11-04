@@ -8,10 +8,9 @@ function createRenderModals(context) {
         elements,
         actions,
         formatPrice,
+        formatMarketDelta,
         formatCondition,
         formatSeller,
-        formatDelta,
-        formatDate,
         trapFocus,
         safeKufarUrl,
         safeImageUrl,
@@ -122,24 +121,13 @@ function createRenderModals(context) {
         }
         elements.detailLiquidityBlock.hidden = !detail.liquidity;
 
-        // Build the price-vs-market badge with the reference label so the user
-        // sees WHAT the deviation is measured against (per-category fallback
-        // is computed on the backend when the category has ≥3 ads).
-        let priceVsMarketLabel = detail.fair_price_label || "";
-        if (priceVsMarketLabel && detail.price_reference_scope === "category"
-            && detail.price_reference_label) {
-            priceVsMarketLabel += ` · ${detail.price_reference_label}`;
-        } else if (priceVsMarketLabel && detail.price_reference_scope === "query") {
-            priceVsMarketLabel += " · по запросу";
-        }
-
         const metaItems = [
             detail.category,
             detail.condition ? formatCondition(detail.condition) : "",
             detail.seller_type ? formatSeller(detail.seller_type) : "",
-            detail.list_time ? formatDate(detail.list_time) : "",
-            priceVsMarketLabel,
-            formatDelta(detail.price_vs_median),
+            detail.market_comparison?.delta_percent == null
+                ? "" : formatMarketDelta(detail.market_comparison),
+            detail.market_comparison?.sample_limited ? "Часть рынка" : "",
         ].filter(Boolean);
         domClear(elements.detailMeta);
         for (const item of metaItems) {
@@ -286,7 +274,8 @@ function createRenderModals(context) {
                     : `Добавить «${detailTitleText}» в избранное`,
         );
 
-        const shouldOpenDetailModal = elements.detailModal.hidden;
+        const shouldOpenDetailModal = elements.detailModal.hidden
+            || elements.detailModal.classList.contains("is-closing");
 
         // Reset scroll position to top when modal opens
         const scrollContainer = elements.detailModal?.querySelector(".detail-sheet-content");
@@ -332,15 +321,6 @@ function createRenderModals(context) {
             state.misc.modalCleanup();
             state.misc.modalCleanup = null;
         }
-        // Drop any pinch-zoom transform so the next lot opens at 1×
-        // even if the previous viewer left the photo magnified.
-        if (elements.detailMainImage?._pinchController) {
-            elements.detailMainImage._pinchController.reset(false);
-        }
-        if (typeof actions.clearProxyImageObjectUrls === "function") {
-            actions.clearProxyImageObjectUrls();
-        }
-        elements.detailMainImage?.removeAttribute("src");
         state.detail.data = null;
         state.detail.imageIndex = 0;
         state.detail.fromWatchlist = false;
@@ -351,9 +331,15 @@ function createRenderModals(context) {
             error: "",
             source: "",
         };
-        // Animate close, THEN renderDetailModal will see state.detail = null
-        // and the modal will already be hidden by the helper.
-        closeModalAnimated(elements.detailModal);
+        closeModalAnimated(elements.detailModal, {
+            onClosed: () => {
+                elements.detailMainImage?._pinchController?.reset(false);
+                elements.detailMainImage?.removeAttribute("src");
+                if (typeof actions.clearProxyImageObjectUrls === "function") {
+                    actions.clearProxyImageObjectUrls();
+                }
+            },
+        });
     }
 
     /* ===== Expenses Modal ===== */

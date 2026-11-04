@@ -11,7 +11,6 @@ function createApiWatchlist(context) {
         elements,
         hasTelegramInitData,
         renderAll,
-        renderError,
         renderLeads,
         renderDetailModal,
         showToast,
@@ -26,8 +25,6 @@ function createApiWatchlist(context) {
         validVersion,
         inflightGuardMs = 30_000,
     } = context;
-
-    let _watchlistDetailAbortController = null;
 
     // The unified "Мои объявления" tab renders state.watchlist inside
     // renderLeads ("Избранное" chip). Without this, a delete/promote
@@ -86,6 +83,7 @@ function createApiWatchlist(context) {
     async function loadWatchlist() {
         if (!hasTelegramInitData()) {
             state.watchlist.items = [];
+            state.watchlist.comparisons = {};
             refreshAfterWatchlistChange();
             return;
         }
@@ -115,6 +113,17 @@ function createApiWatchlist(context) {
         state.watchlist.error = null;
         state.watchlist.items = Array.isArray(nextWatchlist) ? nextWatchlist : [];
         refreshAfterWatchlistChange();
+        if (!state.watchlist.items.length) {
+            state.watchlist.comparisons = {};
+            return;
+        }
+        void getJson("/api/v1/watchlist/comparisons").catch(() => ({})).then(comparisons => {
+            if (requestId !== state.watchlist._requestId) return;
+            state.watchlist.comparisons = Object.fromEntries(
+                state.watchlist.items.map(item => [item.id, comparisons?.[item.id] ?? null]),
+            );
+            refreshAfterWatchlistChange();
+        });
     }
 
     // ── Clear entire watchlist ───────────────────────────────────────────
@@ -170,7 +179,6 @@ function createApiWatchlist(context) {
                 link: item.link,
                 price_byn: item.price_byn,
                 thumbnail: item.thumbnail || null,
-                market_median_byn: state.misc.stats?.median ? Number(state.misc.stats.median) : null,
             });
             showToast("В избранном", "success", 1600);
             await loadWatchlist();
@@ -281,79 +289,17 @@ function createApiWatchlist(context) {
 
     // ── Open watchlist item detail modal ─────────────────────────────────
     async function openWatchlistDetail(item) {
-        if (!item?.ad_id) {
-            return;
-        }
-        const queryToUse = item.query || state.search.activeQuery || "";
-        if (!queryToUse) {
-            showToast("Не удалось открыть: нет привязки к запросу");
-            return;
-        }
-
-        // Abort previous in-flight watchlist detail request
-        if (_watchlistDetailAbortController) {
-            _watchlistDetailAbortController.abort();
-        }
-        _watchlistDetailAbortController = new AbortController();
-        const signal = _watchlistDetailAbortController.signal;
-
-        // Shared stale-response guard with openListingDetail and
-        // openLeadDetail — older detail responses are dropped.
-        const requestId = (state.detail._requestId =
-            (state.detail._requestId + 1) % 1_000_000);
-
-        // Show modal immediately with data we already have from the
-        // watchlist item — avoids the user staring at a blank screen
-        // while the full Kufar dataset loads (can take 2-5s).
-        const instantDetail = {
-            ad_id: item.ad_id,
-            title: item.title || "Объявление",
-            price: item.current_price_byn ?? item.initial_price_byn ?? null,
-            price_type: null,
-            currency: state.misc.currency || "BYN",
-            link: item.link || "",
-            query: queryToUse,
-            images: item.thumbnail ? [item.thumbnail] : [],
-            description: null,
-            parameters: [],
-            seller_fields: [],
-        };
-        state.detail.data = instantDetail;
-        state.detail.imageIndex = 0;
-        state.detail.fromWatchlist = true;
-        state.detail.ai = {
-            adId: item.ad_id,
-            loading: false,
-            result: null,
-            error: "",
-            source: "",
-        };
-        renderDetailModal();
-
-        // Enrich with full Kufar data in background
-        state.ui.error = null;
-        renderError();
-        try {
-            const catParam = state.filters.category != null ? `&category=${state.filters.category}` : "";
-            const fullDetail = await getJson(
-                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.misc.currency}&strict_search=${state.search.strictSearch}&ad_id=${item.ad_id}${catParam}`,
-                { signal }
-            );
-            if (requestId !== state.detail._requestId) return;
-            state.detail.data = fullDetail;
-            state.detail.imageIndex = 0;
-            state.detail.ai = {
-                adId: fullDetail.ad_id || item.ad_id,
-                loading: false,
-                result: null,
-                error: "",
-                source: "",
-            };
-            // Mirror the server-side backfill in local state so the
-            // watchlist card preview updates without a full reload —
-            // the server already updated the DB row in listing-detail.
-            const newThumb = (fullDetail.images && fullDetail.images[0]) || null;
-            if (newThumb && !item.thumbnail && state.watchlist?.items) {
+        if (!item?.ad_id) return;
+        return context.openListingDetail({
+            ...item,
+            price_byn: item.current_price_byn ?? item.initial_price_byn ?? null,
+        }, {
+            fromWatchlist: true,
+            referenceContext: "current",
+            onLoaded(fullDetail) {
+                // Mirror the server-side thumbnail backfill without reloading the list.
+                const newThumb = fullDetail.images?.[0];
+                if (!newThumb || item.thumbnail || !state.watchlist?.items) return;
                 const matchingItem = state.watchlist.items.find(
                     (w) => sameAdId(w.ad_id, item.ad_id) && !w.thumbnail
                 );
@@ -361,14 +307,8 @@ function createApiWatchlist(context) {
                     matchingItem.thumbnail = newThumb;
                     refreshAfterWatchlistChange();
                 }
-            }
-            renderDetailModal();
-        } catch (error) {
-            if (error.name === "AbortError") return;
-            if (requestId !== state.detail._requestId) return;
-            // Keep the instant detail visible — don't show error if we
-            // already have basic data displayed.
-        }
+            },
+        });
     }
 
     // ── Delete single watchlist item ─────────────────────────────────────

@@ -36,6 +36,7 @@ from api.services.query_pipeline import (
     load_query_dataset_context_with_fallback,
 )
 from api.services.reseller_tools import analyze_query_text
+from api.services.watchlist_market import MARKET_ESTIMATE_TTL, load_page_comparisons
 from api.validators import MAX_QUERY_LENGTH
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ def _listings_cache_key(
     region_name: str | None,
     limit: int,
     offset: int,
+    include_market: bool = True,
 ) -> str:
     return digest_cache_key(
         "listings",
@@ -91,6 +93,8 @@ def _listings_cache_key(
             "limit": limit,
             "offset": offset,
             "total_semantics": 4,
+            "market_comparison": 2,
+            "include_market": include_market,
         },
     )
 
@@ -116,6 +120,7 @@ async def get_listings(
     seller_type: Literal["private", "shop"] | None = None,
     region_name: str | None = Query(default=None, max_length=128),
     force_refresh: bool = False,
+    include_market: bool = True,
     limit: int = Query(default=_DEFAULT_LISTINGS_PAGE, ge=1, le=_MAX_LISTINGS_PAGE),
     offset: int = Query(default=0, ge=0, le=_MAX_LISTINGS_PAGE * 10),
     settings: Settings = Depends(get_settings_dependency),
@@ -177,6 +182,7 @@ async def get_listings(
         region_name=normalized_region_name,
         limit=limit,
         offset=offset,
+        include_market=include_market,
     )
     cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
@@ -314,11 +320,7 @@ async def get_listings(
                     exc_info=True,
                 )
         ranked_ads.sort(key=lambda item: item[0])
-        built = (
-            _safe_build(ad)
-            for _, ad in ranked_ads[offset : offset + limit]
-        )
-        listings = [item for item in built if item is not None]
+        page_slice = [ad for _, ad in ranked_ads[offset : offset + limit]]
     else:
         # newest / nearest_to_median etc. — sort_listings already
         # ordered the underlying ads, so we can slice before
@@ -329,8 +331,16 @@ async def get_listings(
             page_slice = []
         elif offset + limit > _MAX_LISTINGS_PAGE:
             page_slice = sorted_ads[offset:_MAX_LISTINGS_PAGE]
-        built = (_safe_build(ad) for ad in page_slice)
-        listings = [item for item in built if item is not None]
+    built = (_safe_build(ad) for ad in page_slice)
+    listings = [item for item in built if item is not None]
+    if include_market and listings:
+        returned_ids = {str(item.ad_id) for item in listings}
+        comparisons = await load_page_comparisons(
+            [ad for ad in page_slice if str(ad.get("ad_id")) in returned_ids],
+            query=query, settings=settings, client=kufar_client, cache=cache,
+        )
+        for item in listings:
+            item.market_comparison = comparisons.get(item.ad_id)
 
     # `total` is what the pill above the cards shows.
     #  - Cheap sort: show the post-discount count, not Kufar's raw
@@ -388,6 +398,6 @@ async def get_listings(
         await cache.set_json(
             cache_key,
             payload.model_dump(),
-            ttl=settings.cache_ttl_seconds,
+            ttl=min(MARKET_ESTIMATE_TTL, settings.cache_ttl_seconds),
         )
     return payload

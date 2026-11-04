@@ -276,7 +276,6 @@ class TrackerFiltersMixin:
     seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     condition: Mapped[str | None] = mapped_column(String(32), nullable=True)
     region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    config_keyword: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # C-09: field exists but is never read by collector/reseller_tools/query_pipeline.
     # Kept for schema stability; removing requires a destructive migration.
     # Intended for a future duplicate-detection feature.
@@ -1019,7 +1018,6 @@ class SavedSearch(Base, UserIDMixin, TimestampMixin):
     seller_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     condition: Mapped[str | None] = mapped_column(String(32), nullable=True)
     region_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    config_keyword: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # C-09: unused — see Tracker.exclude_duplicates comment.
     exclude_duplicates: Mapped[bool] = mapped_column(
         Boolean,

@@ -645,7 +645,6 @@ def _filter_sync_result_for_tracker(
             seller_type=tracker.seller_type,
             condition=tracker.condition,
             region_name=tracker.region_name,
-            config_keyword=tracker.config_keyword,
         )
     ]
     price_drops = [
@@ -661,7 +660,6 @@ def _filter_sync_result_for_tracker(
             seller_type=tracker.seller_type,
             condition=tracker.condition,
             region_name=tracker.region_name,
-            config_keyword=tracker.config_keyword,
         )
     ]
     return QuerySyncResult(
@@ -701,7 +699,7 @@ def _detect_threshold_alerts(
     - ``alert_discount_percent``: fire when discount from median >= threshold
 
     Both checks only consider ads that pass the tracker's base filters
-    (seller, condition, region, config_keyword). Unlike the soft
+    (seller, condition, region). Unlike the soft
     ``min_discount_percent`` filter which *excludes* non-matching ads,
     threshold alerts *escalate* matching ads into dedicated event types.
 
@@ -728,7 +726,6 @@ def _detect_threshold_alerts(
             seller_type=tracker.seller_type,
             condition=tracker.condition,
             region_name=tracker.region_name,
-            config_keyword=tracker.config_keyword,
         ):
             continue
 

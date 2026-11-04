@@ -82,13 +82,17 @@ function createAppActions(baseContext) {
         // No-op when the view is already active. Otherwise an in-page
         // action that happens to re-call setActiveView (e.g. picking a
         // discount preset inside the Объявления view) would run a full
-        // renderAll + replay the slide-in animation, making the page
+        // renderAll + replay the fade-in animation, making the page
         // look like it's reloading.
         if (state.ui.activeView === view) {
             return;
         }
+        if (state.detail?.data) closeDetailModal();
         state.ui.activeView = view;
-        markDirty('tabs', 'views');
+        if (view === "ads" || view === "tracking" || view === "deals") {
+            context._modalsEnsureLoaded?.().catch((err) => logClientError("modals preload failed:", err));
+        }
+        markDirty('tabs', 'views', 'helper', 'summary');
         renderAll();
 
         const viewEl = elements.views[view];
@@ -279,10 +283,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261103-market-filters"),
-                context._loadScript("js/api_ai_render.js?v=20261103-market-filters"),
-                context._loadScript("js/api_ai.js?v=20261103-market-filters"),
-                context._loadScript("js/api_listing_assistant.js?v=20261103-market-filters"),
+                context._loadScript("js/api_ai_modal.js?v=20261104-unified-card-detail"),
+                context._loadScript("js/api_ai_render.js?v=20261104-unified-card-detail"),
+                context._loadScript("js/api_ai.js?v=20261104-unified-card-detail"),
+                context._loadScript("js/api_listing_assistant.js?v=20261104-unified-card-detail"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {

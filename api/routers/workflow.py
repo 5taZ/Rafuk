@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -27,16 +28,23 @@ from api.schemas import (
     LeadsRefreshResponse,
     LeadStatusEnum,
     LeadUpdate,
+    WatchlistComparison,
     WatchlistCreate,
     WatchlistRead,
     WatchlistRefreshResponse,
     WatchlistUpdate,
 )
-from api.services.aggregator import normalize_price_byn
-from api.services.cache import CacheBackend
+from api.services.aggregator import get_category_id, normalize_price_byn
+from api.services.cache import CacheBackend, digest_cache_key
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import first_image_url
 from api.services.query_pipeline import load_query_dataset
+from api.services.watchlist_market import (
+    MARKET_ESTIMATE_TTL,
+    compare_watchlist_ad,
+    load_market_dataset,
+    market_sample_limited,
+)
 from api.services.workflow_store import (
     ensure_user,
     load_last_snapshot_prices,
@@ -53,6 +61,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["workflow"])
 
 WATCHING_STATUS = "watching"
+WATCHLIST_PAGE_SIZE = 50
 
 _REFRESH_SEMAPHORE = asyncio.Semaphore(3)
 
@@ -309,7 +318,6 @@ def _serialize_watchlist(
         # default value.
         workflow_status="default",
         market_status=item.market_status,
-        market_median_byn=item.market_median_byn,
         notes=item.notes,
         created_at=item.created_at,
         last_seen_at=item.last_seen_at,
@@ -595,7 +603,7 @@ async def get_watchlist(
     request: Request,
     telegram_user: TelegramInitData = Depends(get_telegram_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=WATCHLIST_PAGE_SIZE, ge=1, le=200),
     # BE-MEDIUM (issues §2.2): cap to avoid full-table scans on absurd offsets.
     offset: int = Query(default=0, ge=0, le=10_000),
 ) -> list[WatchlistRead]:
@@ -642,6 +650,83 @@ async def get_watchlist(
         ]
 
 
+@router.get("/watchlist/comparisons", response_model=dict[int, WatchlistComparison])
+@limiter.limit("12/minute")
+async def get_watchlist_comparisons(
+    request: Request,
+    telegram_user: TelegramInitData = Depends(get_telegram_user),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dependency),
+    settings: Settings = Depends(get_settings_dependency),
+    kufar_client: KufarClient = Depends(get_kufar_client),
+    cache: CacheBackend = Depends(get_cache),
+) -> dict[int, WatchlistComparison]:
+    async with session_factory() as session:
+        user_id = await resolve_user_id(session, telegram_user_id=telegram_user.user_id)
+        if user_id is None:
+            return {}
+        rows = (await session.execute(
+            select(LeadItem.id, LeadItem.ad_id, LeadItem.query, LeadItem.title)
+            .where(LeadItem.user_id == user_id, LeadItem.status == WATCHING_STATUS)
+            .order_by(LeadItem.updated_at.desc(), LeadItem.id.desc())
+            .limit(WATCHLIST_PAGE_SIZE)
+        )).all()
+
+    datasets: dict[tuple[str, int | None], asyncio.Task] = {}
+
+    async def load_ads(query: str, category: int | None = None) -> list[dict] | None:
+        key = query, category
+        if key not in datasets:
+            if len(datasets) >= REFRESH_MAX_QUERIES:
+                return None
+            datasets[key] = asyncio.create_task(_limited_query(load_query_dataset(
+                query=query, currency="BYN", strict_search=False, category=category,
+                settings=settings, client=kufar_client,
+            )))
+        try:
+            return (await datasets[key]).ads
+        except Exception as exc:
+            logger.warning("Watchlist comparison lookup failed: %s", type(exc).__name__)
+            return None
+
+    async def compare(ad_id: int, query: str, title: str) -> WatchlistComparison | None:
+        key = digest_cache_key(
+            "watchlist-comparison-v5", {"ad": ad_id, "query": query, "title": title},
+        )
+        cached = await cache.get_json(key)
+        if cached is not None:
+            return WatchlistComparison(**cached)
+
+        started_at = time.monotonic()
+        ads = await load_ads(query)
+        target = next((ad for ad in ads or [] if str(ad.get("ad_id")) == str(ad_id)), None)
+        if target is None and title and title != query:
+            ads = await load_ads(title)
+            target = next((ad for ad in ads or [] if str(ad.get("ad_id")) == str(ad_id)), None)
+        if target is None:
+            return WatchlistComparison() if ads is not None else None
+
+        category = get_category_id(target)
+        market = (
+            await _limited_query(load_market_dataset(
+                query, category, settings=settings, client=kufar_client, cache=cache,
+            )) if category is not None else None
+        )
+        result = compare_watchlist_ad(target, market.ads if market is not None else [])
+        if market is not None:
+            result.sample_limited = market_sample_limited(market)
+        ttl = int(MARKET_ESTIMATE_TTL - (time.monotonic() - started_at))
+        if market is not None and ttl > 0:
+            await cache.set_json(key, result.model_dump(), ttl=ttl)
+        return result
+
+    results = await asyncio.gather(*(
+        compare(row.ad_id, row.query, row.title) for row in rows
+    ))
+    return {
+        row.id: result for row, result in zip(rows, results, strict=True) if result is not None
+    }
+
+
 @router.post("/watchlist", response_model=WatchlistRead, status_code=status.HTTP_201_CREATED)
 @limiter.limit("20/minute")
 async def create_watchlist_item(
@@ -683,7 +768,6 @@ async def create_watchlist_item(
             thumbnail=payload.thumbnail,
             status=WATCHING_STATUS,
             source="watchlist",
-            market_median_byn=payload.market_median_byn,
             notes=payload.notes,
             track_initial_price=True,
             update_last_seen=True,

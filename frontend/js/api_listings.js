@@ -18,7 +18,6 @@ function createApiListings(context) {
         renderHistory,
         setPanelOpen,
         renderDetailModal,
-        closeDetailModal,
         showToast,
         buildCommonQuery,
         getJson,
@@ -37,7 +36,6 @@ function createApiListings(context) {
     // Hoisted to module scope so `loadSearchDependencies` can use it.
     const PAGE_SIZE = 50;
 
-    let _detailAbortController = null;
     let _historyAbortController = null;
 
     // RV-FE-04: a forced refresh must bypass the browser HTTP cache as
@@ -60,10 +58,8 @@ function createApiListings(context) {
     // in-flight requests instead of letting them resolve into stale
     // state. Each hook is a no-op when nothing is pending.
     function abortDetailRequest() {
-        if (_detailAbortController) {
-            _detailAbortController.abort();
-            _detailAbortController = null;
-        }
+        state.detail.requestController?.abort();
+        state.detail.requestController = null;
     }
     function abortHistoryRequest() {
         if (_historyAbortController) {
@@ -103,6 +99,37 @@ function createApiListings(context) {
         return query.toString();
     }
 
+    function _requestListingPage(params, options) {
+        const query = buildListingsQuery(params);
+        const request = getJson(`/api/v1/listings?${query}&include_market=false`, options);
+        return { query, request };
+    }
+
+    function _loadPageMarket(query, items, requestId, signal) {
+        if (!items.some((item) => Number(item.price_byn) > 0)) return;
+        const params = new URLSearchParams(query);
+        params.delete("force_refresh");
+        void getJson(`/api/v1/listings?${params}`, { signal, retry: false }).then((payload) => {
+            if (signal?.aborted || requestId !== state.listings._requestId) return;
+            const targets = new Set(items);
+            const comparisons = new Map(
+                (payload.listings || []).filter((item) => item.market_comparison)
+                    .map((item) => [String(item.ad_id), item]),
+            );
+            let changed = false;
+            state.listings.items = state.listings.items.map((item) => {
+                const result = comparisons.get(String(item.ad_id));
+                if (!targets.has(item) || !result || result.price_byn !== item.price_byn) return item;
+                changed = true;
+                return { ...item, market_comparison: result.market_comparison };
+            });
+            if (changed) {
+                markDirty('listings');
+                scheduleRender();
+            }
+        }).catch(() => {});
+    }
+
     // ── Clear search-dependent state ─────────────────────────────────────
     function clearSearchData() {
         state.misc.stats = null;
@@ -110,6 +137,11 @@ function createApiListings(context) {
         state.misc.segments = null;
         state.misc.geography = [];
         state.listings.items = [];
+        state.listings.error = null;
+        state.listings.loadMoreError = null;
+        state.listings.hasMore = false;
+        state.listings.loading = false;
+        state.listings.loadingMore = false;
         state.listings._loadedAt = 0;
         state.listings.total = 0;
         state.listings.fallbackUsed = false;
@@ -117,8 +149,6 @@ function createApiListings(context) {
         state.listings.datasetCount = 0;
         state.listings.servedCap = 0;
         state.listings.isLimited = false;
-        state.detail.data = null;
-        state.detail.imageIndex = 0;
         state.listings._pending = true;
     }
 
@@ -224,12 +254,7 @@ function createApiListings(context) {
 
     function loadSearchDependencies(requestId, options = {}) {
         const forceRefresh = Boolean(options.forceRefresh);
-        // Abort previous in-flight search dependencies
-        if (state.search.searchAbortController) {
-            state.search.searchAbortController.abort();
-        }
-        state.search.searchAbortController = new AbortController();
-        const signal = state.search.searchAbortController.signal;
+        const signal = state.search.searchAbortController?.signal;
         const refreshOptions = _requestOptions(signal, forceRefresh);
         const listingRequestId = (state.listings._requestId =
             ((state.listings._requestId || 0) + 1) % 1_000_000);
@@ -237,36 +262,37 @@ function createApiListings(context) {
         const listingSort = state.search.sort;
         const listingDiscountFrom = state.filters.discountFromPercent;
         const listingDiscountTo = state.filters.discountToPercent;
+        const page = _requestListingPage(_listingsQueryParams({
+            limit: PAGE_SIZE,
+            offset: 0,
+            force_refresh: forceRefresh ? "1" : "",
+        }), refreshOptions);
 
         const dependencies = [
             {
+                dirty: ['history'],
                 request: getJson(`/api/v1/price-history?${buildCommonQuery({ days: state.misc.historyDays })}`, { signal }),
                 apply(payload) {
                     state.charts.historyData = payload.points || [];
                 },
             },
             {
+                dirty: ['segments'],
                 request: getJson(`/api/v1/segments?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`, refreshOptions),
                 apply(payload) {
                     state.misc.segments = payload;
                 },
             },
             {
+                dirty: ['geography'],
                 request: getJson(`/api/v1/geography?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`, refreshOptions),
                 apply(payload) {
                     state.misc.geography = payload.regions || [];
                 },
             },
             {
-                request: getJson(
-                    `/api/v1/listings?${buildListingsQuery({
-                        sort: state.search.sort,
-                        limit: PAGE_SIZE,
-                        offset: 0,
-                        force_refresh: forceRefresh ? "1" : "",
-                    })}`,
-                    refreshOptions,
-                ),
+                dirty: ['listings', 'loading'],
+                request: page.request,
                 apply(payload) {
                     if (
                         listingRequestId !== state.listings._requestId ||
@@ -293,44 +319,34 @@ function createApiListings(context) {
                     state._listingsLoadedDiscountFrom = state.filters.discountFromPercent;
                     state._listingsLoadedDiscountTo = state.filters.discountToPercent;
                     state.listings._pending = false;
+                    _loadPageMarket(page.query, state.listings.items, listingRequestId, signal);
                     return true;
+                },
+                fail(error) {
+                    if (listingRequestId !== state.listings._requestId) return;
+                    state.listings._pending = false;
+                    state.listings.error = error.message || "Не удалось загрузить объявления";
                 },
             },
         ];
 
-        // FE-03: each dependency still applies its slice as it lands
-        // (so the user sees progressive paint of history → segments →
-        // geography → listings), but we ONLY clear ``listings._pending``
-        // — i.e. drop the skeletons — once EVERY dependency has
-        // settled. The previous code flipped _pending = false the
-        // moment any single dependency rejected, which made the
-        // listings skeleton vanish while the other three were still
-        // in flight, replacing it with a half-empty page.
-        const settled = dependencies.map((dependency) =>
-            dependency.request
+        for (const dependency of dependencies) {
+            void dependency.request
                 .then((payload) => {
                     if (!isActiveRequest(requestId)) return;
                     if (dependency.apply(payload) === false) return;
-                    markDirty('stats', 'history', 'segments', 'geography', 'listings');
+                    markDirty(...dependency.dirty);
                     scheduleRender();
                 })
                 .catch((err) => {
                     if (err.name === "AbortError" || !isActiveRequest(requestId)) {
                         return;
                     }
-                    // Don't clear _pending here — wait for the whole
-                    // fan-out to settle so other still-loading slots
-                    // keep their skeletons.
-                    markDirty('stats', 'history', 'segments', 'geography', 'listings');
+                    dependency.fail?.(err);
+                    markDirty(...dependency.dirty);
                     scheduleRender();
-                })
-        );
-        Promise.allSettled(settled).then(() => {
-            if (!isActiveRequest(requestId)) return;
-            state.listings._pending = false;
-            markDirty('listings');
-            scheduleRender();
-        });
+                });
+        }
     }
 
     // ── Load listings (ads view) ─────────────────────────────────────────
@@ -390,22 +406,21 @@ function createApiListings(context) {
         // First page — reset pagination cursor.
         state.listings.items = [];
         state.listings.hasMore = false;
+        state.listings.loadingMore = false;
         state.listings.loadMoreError = null;
         state.listings.error = null;
+        state.listings._pending = false;
         state.listings.loading = true;
         markDirty('listings');
         renderAll();
 
         const requestId = (state.listings._requestId =
             ((state.listings._requestId || 0) + 1) % 1_000_000);
+        const signal = state.search.searchAbortController?.signal;
 
         try {
-            const payload = await getJson(
-                `/api/v1/listings?${buildListingsQuery(_listingsQueryParams({
-                    limit: PAGE_SIZE,
-                    offset: 0,
-                }))}`
-            );
+            const page = _requestListingPage(_listingsQueryParams({limit: PAGE_SIZE, offset: 0}), { signal });
+            const payload = await page.request;
             if (requestId !== state.listings._requestId) return;
             state.listings.items = payload.listings || [];
             state.listings.total = payload.total || 0;
@@ -418,6 +433,7 @@ function createApiListings(context) {
             state._listingsLoadedDiscountFrom = state.filters.discountFromPercent;
             state._listingsLoadedDiscountTo = state.filters.discountToPercent;
             state.ui.error = null;
+            _loadPageMarket(page.query, state.listings.items, requestId, signal);
         } catch (error) {
             if (requestId !== state.listings._requestId) return;
             state.listings.items = [];
@@ -449,13 +465,10 @@ function createApiListings(context) {
 
         const offset = state.listings.items.length;
         const requestId = state.listings._requestId;
+        const signal = state.search.searchAbortController?.signal;
         try {
-            const payload = await getJson(
-                `/api/v1/listings?${buildListingsQuery(_listingsQueryParams({
-                    limit: PAGE_SIZE,
-                    offset,
-                }))}`
-            );
+            const page = _requestListingPage(_listingsQueryParams({limit: PAGE_SIZE, offset}), { signal });
+            const payload = await page.request;
             // Drop the response if the user re-searched in the
             // meantime — the new query ditched the old cursor.
             if (requestId !== state.listings._requestId) return;
@@ -464,6 +477,7 @@ function createApiListings(context) {
             state.listings.total = payload.total || state.listings.total;
             state.listings.hasMore = Boolean(payload.has_more);
             _applyListingsMeta(payload);
+            _loadPageMarket(page.query, fresh, requestId, signal);
         } catch (err) {
             // FR-01: keep has_more so the button stays, but record the
             // failure — the sentinel then stops auto-loading. Re-arming
@@ -473,69 +487,75 @@ function createApiListings(context) {
                 state.listings.loadMoreError = err?.message || "Не удалось загрузить ещё";
             }
         } finally {
-            state.listings.loadingMore = false;
-            markDirty('listings');
-            renderAll();
+            if (requestId === state.listings._requestId) {
+                state.listings.loadingMore = false;
+                markDirty('listings');
+                renderAll();
+            }
         }
     }
 
     // ── Open listing detail modal ────────────────────────────────────────
-    async function openListingDetail(item) {
+    async function openListingDetail(item, {
+        category = state.filters.category,
+        strictSearch = state.search.strictSearch,
+        referenceContext = "base_query",
+        fromWatchlist = false,
+        onLoaded,
+    } = {}) {
         const queryToUse = (item?.query || state.search.activeQuery || "").trim();
-        if (!item?.ad_id || !queryToUse) {
+        if (!item?.ad_id) return;
+        if (!queryToUse) {
+            showToast("Не удалось открыть: нет привязки к запросу");
             return;
         }
 
-        // Abort previous in-flight detail request
-        if (_detailAbortController) {
-            _detailAbortController.abort();
-        }
-        _detailAbortController = new AbortController();
-        const signal = _detailAbortController.signal;
+        abortDetailRequest();
+        const controller = new AbortController();
+        state.detail.requestController = controller;
+        const { signal } = controller;
 
-        // Stale-response guard — if the user taps a different listing
-        // before the first detail fetch resolves, the older response
-        // would otherwise overwrite state.detail and pop the wrong
-        // modal contents on screen.
-        const requestId = (state.detail._requestId =
-            (state.detail._requestId + 1) % 1_000_000);
+        state.detail.data = {
+            ...item,
+            title: item.title || "Объявление",
+            price: item.price_byn ?? item.price ?? null,
+            query: queryToUse,
+            images: item.thumbnail ? [item.thumbnail] : [],
+        };
+        state.detail.imageIndex = 0;
+        state.detail.fromWatchlist = fromWatchlist;
+        state.detail.ai = {
+            adId: item.ad_id,
+            loading: false,
+            result: null,
+            error: "",
+            source: "",
+        };
+        renderDetailModal();
 
-        state.ui.error = null;
-        renderError();
         try {
             const params = new URLSearchParams({
                 query: queryToUse,
                 currency: state.misc.currency,
-                strict_search: String(state.search.strictSearch),
+                strict_search: String(strictSearch),
                 ad_id: String(item.ad_id),
             });
-            if (state.filters.category != null) {
-                params.set("category", String(state.filters.category));
-                params.set("reference_context", "base_query");
+            if (category != null) {
+                params.set("category", String(category));
+                if (referenceContext !== "current") params.set("reference_context", referenceContext);
             }
             const fullDetail = await getJson(
                 `/api/v1/listing-detail?${params.toString()}`,
                 { signal }
             );
-            if (requestId !== state.detail._requestId) return;
+            if (signal.aborted) return;
             state.detail.data = fullDetail;
-            state.detail.imageIndex = 0;
-            state.detail.fromWatchlist = false;
-            state.detail.ai = {
-                adId: fullDetail.ad_id || item.ad_id,
-                loading: false,
-                result: null,
-                error: "",
-                source: "",
-            };
             renderDetailModal();
-        } catch (error) {
-            if (error.name === "AbortError") {
-                return;
-            }
-            if (requestId !== state.detail._requestId) return;
-            state.ui.error = error.message || "Не удалось загрузить детали";
-            renderError();
+            onLoaded?.(fullDetail);
+        } catch {
+            // The listing preview stays usable if enrichment fails.
+        } finally {
+            if (state.detail.requestController === controller) state.detail.requestController = null;
         }
     }
 
@@ -598,14 +618,7 @@ function createApiListings(context) {
         markDirty('loading', 'error', 'summary', 'helper', 'stats');
         renderAll();
 
-        // FE-C2: cancel any in-flight /price-stats from a previous
-        // search before kicking off a new one. Without this, fast
-        // typers race two stats requests against each other and the
-        // older one's response can clobber the fresh state — even
-        // with isActiveRequest() guarding the .then() branch, the
-        // socket and DB query keep running on the server. We reuse
-        // the same searchAbortController that loadSearchDependencies
-        // wires up, so abort() drops both groups in one call.
+        // Cancel the previous query's stats, listings and market requests together.
         if (state.search.searchAbortController) {
             state.search.searchAbortController.abort();
         }
@@ -613,10 +626,12 @@ function createApiListings(context) {
         const searchSignal = state.search.searchAbortController.signal;
 
         try {
-            const stats = await getJson(
+            const statsRequest = getJson(
                 `/api/v1/price-stats?${buildMarketQuery({ force_refresh: forceRefresh ? "1" : "" })}`,
                 _requestOptions(searchSignal, forceRefresh),
             );
+            loadSearchDependencies(requestId, { forceRefresh });
+            const stats = await statsRequest;
             if (!isActiveRequest(requestId)) {
                 return;
             }
@@ -641,7 +656,6 @@ function createApiListings(context) {
             }
             markDirty('loading', 'stats', 'summary', 'helper', 'categories');
             renderAll();
-            loadSearchDependencies(requestId, { forceRefresh });
 
             // Save to recent searches
             if (context.addRecentSearch) {
@@ -661,10 +675,9 @@ function createApiListings(context) {
             if (error?.name === "AbortError") {
                 return;
             }
-            clearSearchData();
             state.ui.error = error.message || "Не удалось загрузить аналитику.";
             state.ui.loading = false;
-            markDirty('loading', 'error', 'summary', 'helper');
+            markDirty('loading', 'error', 'summary', 'helper', 'listings');
             renderAll();
         }
     }

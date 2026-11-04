@@ -6,7 +6,7 @@ Revises: 20260514_0018
 AUDIT-LOW (audit follow-up): the Telegram notification DLQ used to
 store only the message text, so a transient send failure that landed
 in the DLQ would replay as a plain text message — the inline keyboard
-("\ud83d\udcccВ покупки", "\u2b50В Избранное", "\ud83d\udd17 Открыть", or the trend-alert
+("📌В покупки", "⭐В Избранное", "🔗 Открыть", or the trend-alert
 "Открыть запрос" / "Открыть лот" pair) was silently dropped on retry,
 leaving the user with a non-actionable message they couldn't recover.
 

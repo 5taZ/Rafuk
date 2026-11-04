@@ -32,6 +32,7 @@ function createApiTrackers(context) {
     // ── Auto-refresh state ───────────────────────────────────────────────
     let trackerRefreshTimer = null;
     let trackerRefreshInFlight = false;
+    let editCategoriesController = null;
     const TRACKER_REFRESH_MS = 30_000;
 
     function categoryLabelFor(categoryId, fallback = null) {
@@ -48,8 +49,7 @@ function createApiTrackers(context) {
         };
     }
 
-    function populateEditCategorySelect(tracker) {
-        if (!elements.editCategorySelect) return;
+    function populateEditCategorySelect(tracker, categories, selected) {
         const options = [domEl("option", { value: "", text: "Любая категория" })];
         const seen = new Set();
         if (tracker.category_id != null) {
@@ -59,14 +59,47 @@ function createApiTrackers(context) {
                 text: tracker.category_label || `Категория ${tracker.category_id}`,
             }));
         }
-        for (const category of state.filters.categories || []) {
+        for (const category of categories) {
             const categoryId = Number(category.id);
-            if (!Number.isFinite(categoryId) || seen.has(categoryId)) continue;
+            if (!Number.isSafeInteger(categoryId) || categoryId < 1 || seen.has(categoryId)) continue;
             seen.add(categoryId);
-            options.push(domEl("option", { value: categoryId, text: category.label }));
+            options.push(domEl("option", {
+                value: categoryId, text: category.label || `Категория ${categoryId}`,
+            }));
         }
         elements.editCategorySelect.replaceChildren(...options);
-        elements.editCategorySelect.value = tracker.category_id == null ? "" : String(tracker.category_id);
+        elements.editCategorySelect.value = selected;
+    }
+
+    async function loadEditCategories(tracker) {
+        const select = elements.editCategorySelect;
+        if (!select) return;
+        editCategoriesController?.abort();
+        const controller = new AbortController();
+        editCategoriesController = controller;
+        const { signal } = controller;
+        const status = elements.editCategoryStatus;
+        const setStatus = (message) => {
+            if (!status) return;
+            status.textContent = message;
+            status.hidden = !message;
+        };
+        const sameQuery = state.search.activeQuery?.trim().toLowerCase()
+            === tracker.query.trim().toLowerCase();
+        const knownCategories = sameQuery ? state.filters.categories || [] : [];
+        populateEditCategorySelect(tracker, knownCategories, String(tracker.category_id ?? ""));
+        setStatus("Загружаем категории…");
+        const params = new URLSearchParams({ query: tracker.query, strict_search: "false" });
+        try {
+            const stats = await getJson(`/api/v1/price-stats?${params}`, { signal });
+            if (signal.aborted) return;
+            populateEditCategorySelect(tracker, [...(stats.categories || []), ...knownCategories], select.value);
+            setStatus(select.options.length > 1 ? "" : "По этому запросу категории не найдены.");
+        } catch {
+            if (!signal.aborted) setStatus("Не удалось загрузить категории. Откройте настройки ещё раз.");
+        } finally {
+            if (editCategoriesController === controller) editCategoriesController = null;
+        }
     }
 
     function editCategoryPayload() {
@@ -230,7 +263,6 @@ function createApiTrackers(context) {
                 seller_type: state.trackers.sellerType || null,
                 condition: state.trackers.condition || null,
                 region_name: state.trackers.regionName || null,
-                config_keyword: state.trackers.configKeyword || null,
             });
             showToast("Трекер добавлен", "success");
             await loadTrackers();
@@ -311,8 +343,7 @@ function createApiTrackers(context) {
         if (elements.editSellerSelect) elements.editSellerSelect.value = tracker.seller_type || "";
         if (elements.editConditionSelect) elements.editConditionSelect.value = tracker.condition || "";
         if (elements.editRegionSelect) elements.editRegionSelect.value = tracker.region_name || "";
-        if (elements.editConfigInput) elements.editConfigInput.value = tracker.config_keyword || "";
-        populateEditCategorySelect(tracker);
+        void loadEditCategories(tracker);
 
         if (elements.editTrackerModal) {
             if (state.misc.modalCleanup) {
@@ -330,6 +361,8 @@ function createApiTrackers(context) {
     }
 
     function closeEditTracker() {
+        editCategoriesController?.abort();
+        editCategoriesController = null;
         if (state.misc.modalCleanup) {
             state.misc.modalCleanup();
             state.misc.modalCleanup = null;
@@ -358,7 +391,6 @@ function createApiTrackers(context) {
                     seller_type: elements.editSellerSelect?.value || null,
                     condition: elements.editConditionSelect?.value || null,
                     region_name: elements.editRegionSelect?.value || null,
-                    config_keyword: elements.editConfigInput?.value || null,
                 }),
             });
 

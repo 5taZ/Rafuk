@@ -33,7 +33,6 @@ def test_tracker_columns_and_types() -> None:
     assert "seller_type" in columns
     assert "condition" in columns
     assert "region_name" in columns
-    assert "config_keyword" in columns
     assert "exclude_duplicates" in columns
     assert "last_seen_ad_id" in columns and columns["last_seen_ad_id"].nullable
     assert "last_seen_price_byn" in columns and columns["last_seen_price_byn"].nullable

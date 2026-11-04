@@ -7,15 +7,11 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    transition: background var(--tr-fast), transform var(--tr-fast);
+    transition: background var(--tr-fast);
 }
 
 .watchlist-card:hover {
     background: var(--bg-hover);
-}
-
-.watchlist-card:active {
-    transform: scale(0.995);
 }
 
 .watchlist-card:focus {
@@ -194,9 +190,16 @@
     font-weight: 600;
     padding: 2px 7px;
     border-radius: var(--radius-full);
-    white-space: nowrap;
     margin-top: 4px;
     display: inline-block;
+}
+
+.watchlist-comparison-note {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    line-height: 1.4;
 }
 
 .watchlist-profit.profit-positive {
@@ -337,17 +340,6 @@
     border-color: var(--danger-border);
 }
 
-.wl-btn--detail {
-    color: var(--accent);
-    border-color: var(--accent);
-}
-
-.wl-btn--detail:hover {
-    background: var(--accent);
-    color: var(--white);
-    border-color: var(--accent);
-}
-
 /* Watchlist card fields — status + notes */
 .watchlist-card-fields {
     display: grid;
@@ -426,17 +418,13 @@
     flex-direction: column;
     gap: 12px;
     border: 1px solid var(--border);
-    transition: background var(--tr-fast), transform var(--tr-fast), border-color var(--tr-fast);
+    transition: background var(--tr-fast), border-color var(--tr-fast);
     position: relative;
 }
 
 .lead-card:hover {
     background: var(--bg-hover);
     border-color: var(--border-hover);
-}
-
-.lead-card:active {
-    transform: scale(0.995);
 }
 
 .lead-card:focus {
@@ -1073,14 +1061,6 @@
         height: 64px;
     }
 
-    .watchlist-card-actions {
-        flex-wrap: wrap;
-    }
-
-    .watchlist-card-actions .wl-btn {
-        min-width: calc(50% - 2px);
-    }
-
     .lead-card-fields {
         grid-template-columns: 1fr;
     }
@@ -1111,12 +1091,6 @@
 }
 
 @media (max-width: 500px) {
-    .summary-pill-value {
-        white-space: normal;
-        word-break: break-word;
-        font-size: var(--text-sm);
-    }
-
     .history-deal-card {
         grid-template-columns: 48px 1fr auto;
         grid-template-rows: auto auto;

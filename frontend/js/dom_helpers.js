@@ -368,8 +368,7 @@ function openModalAnimated(modalEl, { lockScroll = true } = {}) {
     if (wasHidden && document.activeElement && document.activeElement !== document.body) {
         modalEl._previousFocus = document.activeElement;
     }
-    // Make sure no leftover closing class from a previous run blocks the
-    // entry animation.
+    modalEl._cancelModalClose?.();
     modalEl.classList.remove("is-closing");
     modalEl.hidden = false;
     if (lockScroll && wasHidden) lockBodyScroll();
@@ -385,8 +384,8 @@ function openModalAnimated(modalEl, { lockScroll = true } = {}) {
     }
 }
 
-function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
-    if (!modalEl || modalEl.hidden) return;
+function closeModalAnimated(modalEl, { lockScroll = true, onClosed } = {}) {
+    if (!modalEl || modalEl.hidden || modalEl.classList.contains("is-closing")) return;
 
     // Bottom-sheet modals use `.detail-sheet`; centred dialogs use
     // `.modal-content`. Either way we wait for the inner panel's
@@ -413,6 +412,7 @@ function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
             try { prev.focus(); } catch (_) { /* element may have been removed */ }
         }
         modalEl._previousFocus = null;
+        onClosed?.();
     };
 
     if (prefersReducedMotion || !inner) {
@@ -420,27 +420,23 @@ function closeModalAnimated(modalEl, { lockScroll = true } = {}) {
         return;
     }
 
-    let done = false;
+    const cancel = () => {
+        clearTimeout(timer);
+        inner.removeEventListener("animationend", onEnd);
+        modalEl._cancelModalClose = null;
+    };
     const onEnd = (event) => {
         if (event && event.target !== inner) return;
-        if (done) return;
-        done = true;
-        inner.removeEventListener("animationend", onEnd);
+        cancel();
         finalize();
     };
     inner.addEventListener("animationend", onEnd);
 
     modalEl.classList.add("is-closing");
 
-    // Belt-and-braces: even if animationend never fires (e.g. another
-    // CSS animation overrides ours mid-run), finalise after the longest
-    // animation we've defined (~280ms) + some slack.
-    setTimeout(() => {
-        if (done) return;
-        done = true;
-        inner.removeEventListener("animationend", onEnd);
-        finalize();
-    }, 360);
+    // Fallback for interrupted animations that never emit animationend.
+    const timer = setTimeout(onEnd, 400);
+    modalEl._cancelModalClose = cancel;
 }
 
 /* ─── Pull-to-refresh (page-level, view-aware) ──────────────────────────

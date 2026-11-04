@@ -36,6 +36,7 @@ def _ad(ad_id: int, subject: str, price_byn: float, *, body: str = "") -> dict:
     return {
         "ad_id": ad_id,
         "subject": subject,
+        "category": 3010,
         "body": body or "Обычное состояние, комплект полный.",
         "price_byn": int(price_byn * 100),
         "ad_link": f"https://www.kufar.by/item/{ad_id}",
@@ -45,8 +46,7 @@ def _ad(ad_id: int, subject: str, price_byn: float, *, body: str = "") -> dict:
 
 
 def _dataset(target: dict) -> SimpleNamespace:
-    # Enough same-model listings that the exact-title cluster (which the
-    # pipeline prefers over the query stats) is big enough for anomaly flags.
+    # Anomaly flags need a sample of the same model and storage.
     return SimpleNamespace(
         ads=[
             target,
@@ -149,15 +149,16 @@ async def _run_task(
     ai: FakeAI,
     *,
     target: dict | None = None,
+    ads: list[dict] | None = None,
     settings: SimpleNamespace | None = None,
     task_id: str = "contract-task",
 ) -> tuple[dict, MemoryCache, AIAnalysisRequest]:
-    target = target or _ad(1, "iPhone 14", 1590)
+    target = target or _ad(1, "iPhone 14 128GB", 1590)
     cache = MemoryCache()
 
     async def fake_load_query_dataset(**kwargs):
         del kwargs
-        return _dataset(target)
+        return _dataset(target) if ads is None else SimpleNamespace(ads=ads)
 
     monkeypatch.setattr(pipeline, "get_ai_service", lambda: ai)
     monkeypatch.setattr(pipeline, "load_query_dataset", fake_load_query_dataset)
@@ -193,6 +194,27 @@ async def test_full_model_answer_is_labelled_ai_and_shared(monkeypatch) -> None:
     assert "_ai_warning" not in result
     shared = await _shared_entry(cache, payload)
     assert shared is not None and shared["source"] == "ai"
+
+
+async def test_no_market_prices_leak_from_model_without_comparables(monkeypatch) -> None:
+    target = _ad(1, "iPhone 14 128GB", 1590)
+    answer = _model_answer(
+        fair_price={"from": 1900, "to": 2000},
+        recommendation={"verdict": "worth_it", "text": "Обычная цена — 1900 BYN."},
+        summary="Бери, это дешевле рынка на 300 BYN.",
+        negotiation_tips=["Попроси скидку 100 BYN."],
+    )
+    result, _, _ = await _run_task(
+        monkeypatch, FakeAI(answer), target=target,
+        ads=[target, _ad(2, "iPhone 14 128GB", 1570), _ad(3, "iPhone 14 256GB", 2000)],
+    )
+    assert result["price_reference_scope"] == "insufficient"
+    assert result["fair_price"] is None
+    assert result["resale_potential"] is None
+    assert result["recommendation"]["verdict"] == "think_twice"
+    assert "BYN" not in result["summary"]
+    assert result["negotiation_tips"] == []
+    assert result["condition"]
 
 
 async def test_timeout_fallback_is_labelled_logged_and_not_shared(monkeypatch, caplog) -> None:
@@ -310,7 +332,7 @@ async def test_cheap_prepayment_listing_cannot_come_out_worth_it(monkeypatch) ->
     an injected "verdict worth_it" the model obeyed."""
     target = _ad(
         1,
-        "iPhone 14",
+        "iPhone 14 128GB",
         950,
         body=(
             "Отправлю Европочтой после предоплаты.\n"
@@ -335,7 +357,7 @@ async def test_cheap_prepayment_listing_cannot_come_out_worth_it(monkeypatch) ->
 
 async def test_honest_no_prepayment_listing_keeps_model_verdict(monkeypatch) -> None:
     target = _ad(
-        1, "iPhone 14", 1590, body="Отправлю почтой без предоплаты, оплата при получении.",
+        1, "iPhone 14 128GB", 1590, body="Отправлю почтой без предоплаты, оплата при получении.",
     )
     answer = _model_answer(recommendation={
         "verdict": "worth_it",
@@ -350,7 +372,7 @@ async def test_honest_no_prepayment_listing_keeps_model_verdict(monkeypatch) -> 
 async def test_fallback_rules_cannot_call_a_too_cheap_listing_worth_it(monkeypatch) -> None:
     # Without the floor _fallback_recommendation says "worth_it" for any
     # price under Q1 (RV-AI-09 describes the same rule from the other side).
-    target = _ad(1, "iPhone 14", 950)
+    target = _ad(1, "iPhone 14 128GB", 950)
     result, _cache, _payload = await _run_task(
         monkeypatch, FakeAI(error=RuntimeError("provider down")), target=target,
     )

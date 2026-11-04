@@ -1047,6 +1047,11 @@ class AIService:
         ctx_lines.append("## РЫНОК (Kufar.by, BYN)")
         if market_median:
             ctx_lines.append(f"Медиана: {market_median:.0f}")
+        else:
+            ctx_lines.append(
+                "Сопоставимых цен недостаточно. Подготовь текст объявления и общие советы. "
+                "Не предлагай ценовые ориентиры и не делай числовых заявлений о рынке."
+            )
         if market_q1 and market_q3:
             ctx_lines.append(f"Q1-Q3: {market_q1:.0f}-{market_q3:.0f}")
         if market_min is not None and market_max is not None:
@@ -1374,6 +1379,11 @@ class AIService:
                 parts.append("Наблюдения: " + "; ".join(note for note in notes if note))
 
         # Market statistics
+        if not market_median:
+            parts.append(
+                "\nРыночной оценки нет: сопоставимых цен недостаточно. "
+                "Не придумывай диапазон цены, размер скидки или сумму перепродажи."
+            )
         if market_median:
             parts.append("\n## РЫНОК")
             # Cluster-aware comparison note: when the listing belongs to

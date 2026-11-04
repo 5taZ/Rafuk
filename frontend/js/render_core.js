@@ -4,7 +4,7 @@
  */
 
 function createRenderCore(context) {
-    const { state, elements, logClientError = () => {} } = context;
+    const { state, elements, formatPrice, formatPriceRange, logClientError = () => {} } = context;
 
     const _APP_URL_BASE = "https://rafuk.local";
     const _KUFAR_LINK_HOSTS = new Set(["kufar.by", "www.kufar.by", "re.kufar.by", "auto.kufar.by"]);
@@ -462,11 +462,10 @@ function createRenderCore(context) {
             }
             if (state.ui.loading) {
                 elements.searchButtonLabel.replaceChildren(domEl("span", { className: "spin" }));
-                elements.listingsSection?.setAttribute('aria-busy', 'true');
                 elements.statsSection?.setAttribute('aria-busy', 'true');
 
                 // Show skeleton cards in listing containers during initial load
-                if (!state.listings.items.length && elements.listingsList) {
+                if (state.listings._pending && !state.listings.items.length && elements.listingsList) {
                     domClear(elements.listingsList);
                     for (let i = 0; i < 3; i++) {
                         elements.listingsList.appendChild(buildSkeletonCard());
@@ -475,8 +474,12 @@ function createRenderCore(context) {
                 }
             } else {
                 elements.searchButtonLabel.textContent = "Найти";
-                elements.listingsSection?.removeAttribute('aria-busy');
                 elements.statsSection?.removeAttribute('aria-busy');
+            }
+            if (state.listings._pending) {
+                elements.listingsSection?.setAttribute('aria-busy', 'true');
+            } else {
+                elements.listingsSection?.removeAttribute('aria-busy');
             }
         });
     }
@@ -670,20 +673,13 @@ function createRenderCore(context) {
             const mixed = state.filters.category == null && (state.misc.stats.categories?.length || 0) > 1;
             elements.summarySignal.textContent = `${scope}Объявлений с ценой в расчёте: ${analyzedCount}. ` +
                 (mixed ? "В выдаче несколько категорий. Уточните категорию для оценки цены." : signal);
-            function shortPrice(v) {
-                if (v == null || v === 0) return "—";
-                const n = Number(v);
-                if (Number.isNaN(n)) return "—";
-                return `${Math.round(n)} BYN`;
-            }
-
-            elements.summaryMedian.textContent = shortPrice(state.misc.stats.median);
+            elements.summaryMedian.textContent = Number.isFinite(marketMedian) && marketMedian > 0
+                ? formatPrice(marketMedian)
+                : "—";
             elements.summaryRange.textContent = marketMin > 0 && marketMax > 0
-                ? `${shortPrice(marketMin)} — ${shortPrice(marketMax)}`
+                ? formatPriceRange(marketMin, marketMax)
                 : "—";
-            elements.summaryFair.textContent = fairFrom != null && fairTo != null
-                ? `${shortPrice(fairFrom)} — ${shortPrice(fairTo)}`
-                : "—";
+            elements.summaryFair.textContent = formatPriceRange(fairFrom, fairTo);
             elements.summaryStrip.hidden = false;
         });
     }

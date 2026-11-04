@@ -4,10 +4,9 @@ function createRenderCardBuilders(context) {
         elements,
         actions,
         formatPrice,
+        formatMarketDelta,
         formatCondition,
         formatSeller,
-        formatDelta,
-        deltaClass,
         hasTelegramInitData,
         safeKufarUrl,
         openExternalLink,
@@ -157,7 +156,7 @@ function createRenderCardBuilders(context) {
         );
     }
 
-    function buildListingNode(item, verdictClassName) {
+    function buildListingNode(item) {
         // RV-UI-02: a list item instead of ``role=button`` with the
         // title as its only accessible name — price, condition, seller
         // and badges were never announced, and the nested buttons made
@@ -167,62 +166,22 @@ function createRenderCardBuilders(context) {
             attrs: { role: "listitem" },
         });
         const cardId = `listing-card-${++_cardSeq}`;
-        const resolveVerdictClassName =
-            typeof verdictClassName === "function" ? verdictClassName : function () { return "neutral"; };
-
         const badges = [];
-        if (item.list_time) {
-            const hours = (Date.now() - new Date(item.list_time).getTime()) / 3600000;
-            if (hours <= 3) {
-                badges.push(domEl("span", { className: "listing-badge fresh-hot", text: "Новое" }));
-            } else if (hours <= 24) {
-                badges.push(domEl("span", { className: "listing-badge fresh-warm", text: "Сегодня" }));
-            }
-        }
-        if (item.deal_verdict) {
+        const comparison = item.market_comparison;
+        const marketDelta = comparison?.delta_percent == null ? "" : formatMarketDelta(comparison);
+        if (marketDelta) {
             badges.push(domEl("span", {
-                className: `listing-badge verdict-${resolveVerdictClassName(item.deal_verdict)}`,
-                text: item.deal_verdict,
+                className: "listing-badge",
+                text: marketDelta,
+                attrs: { title: `Медиана аналогов ${formatPrice(comparison.median_byn)}` },
             }));
-        }
-
-        let delta = item.price_vs_median;
-        if (delta == null && item.price != null && state.misc.stats?.median && Number(state.misc.stats.median) > 0) {
-            delta = Math.round(((Number(item.price) - Number(state.misc.stats.median)) / Number(state.misc.stats.median)) * 100 * 100) / 100;
-        }
-        if (delta != null) {
-            const absDelta = Math.abs(delta);
-            if (absDelta < 0.5) {
-                const approxTitle = item.price_reference_label
-                    ? `По рынку (${item.price_reference_label})`
-                    : "По рынку";
-                badges.push(domEl(
-                    "span",
-                    {
-                        className: "listing-badge delta-approx",
-                        text: "≈",
-                        attrs: { title: approxTitle },
-                    },
-                    // RV-UI-02: the tooltip is not announced; say it.
-                    domEl("span", { className: "sr-only", text: ` ${approxTitle.toLowerCase()}` }),
-                ));
-            } else {
-                const tooltipPrefix = delta > 0 ? "Выше" : "Ниже";
-                const refLabel = item.price_reference_scope === "category"
-                    ? (item.price_reference_label || "категории")
-                    : "среднего по запросу";
-                badges.push(domEl(
-                    "span",
-                    {
-                        className: `listing-badge ${deltaClass(delta)}`.trim(),
-                        text: formatDelta(delta),
-                        attrs: { title: `${tooltipPrefix} ${refLabel}` },
-                    },
-                    domEl("span", { className: "sr-only", text: ` ${tooltipPrefix.toLowerCase()} ${refLabel}` }),
-                ));
+            if (comparison.sample_limited) {
+                badges.push(domEl("span", {
+                    className: "listing-badge",
+                    text: "Часть рынка",
+                }));
             }
         }
-
         const tags = domEl("div", { className: "listing-tags" });
         if (item.condition) tags.appendChild(domEl("span", { className: "tag", text: formatCondition(item.condition) }));
         if (item.seller_type) tags.appendChild(domEl("span", { className: "tag", text: formatSeller(item.seller_type) }));
@@ -492,19 +451,36 @@ function createRenderCardBuilders(context) {
     }
 
     /** Watchlist potential profit (median - current) — null in lead mode. */
-    function _buildPotentialProfitNode(item) {
-        const current = item.current_price_byn || item.initial_price_byn;
-        if (!item.market_median_byn || !current || Number(item.market_median_byn) <= 0) {
-            return null;
+    function _buildPotentialProfitNode(price, comparison) {
+        const current = Number(price);
+        if (!(current > 0)) return null;
+        const median = Number(comparison?.median_byn);
+        if (!(median > 0)) {
+            const text = comparison === undefined ? "Ищем аналоги…"
+                : comparison === null ? "Оценка пока недоступна"
+                : "Нет надёжной оценки по аналогам";
+            return domEl("span", { className: "watchlist-comparison-note", text });
         }
-        const profitByn = Number(item.market_median_byn) - Number(current);
-        const profitPercent = current > 0 ? Math.round((profitByn / Number(current)) * 100) : 0;
-        const className = profitByn >= 0 ? "profit-positive" : "profit-negative";
-        const sign = profitByn >= 0 ? "+" : "";
-        return domEl("span", {
-            className: `watchlist-profit ${className}`,
-            text: `Потенциал: ${sign}${Math.round(profitByn)} BYN (${sign}${profitPercent}%)`,
-        });
+        const profitByn = median - current;
+        const className = profitByn > 0 ? "profit-positive" : profitByn < 0 ? "profit-negative" : "";
+        const sign = profitByn > 0 ? "+" : "";
+        return domEl("div", { className: "watchlist-comparison" },
+            domEl("span", {
+                className: `watchlist-profit ${className}`.trim(),
+                text: `До медианы: ${sign}${Math.round(profitByn)} BYN`,
+            }),
+            domEl("span", {
+                className: "watchlist-comparison-note",
+                text: [
+                    comparison.category_label,
+                    `медиана ${formatPrice(median)}`,
+                    comparison.delta_percent == null
+                        ? `Аналогов: ${comparison.comparable_count}`
+                        : formatMarketDelta(comparison),
+                    comparison.sample_limited ? "Часть рынка" : "",
+                ].filter(Boolean).join(" · "),
+            }),
+        );
     }
 
     /** Lead profit/potential ("Результат" if sold, "Потенциал" if active). */
@@ -712,13 +688,6 @@ function createRenderCardBuilders(context) {
         return domEl(
             "div",
             { className: "watchlist-card-actions" },
-            domEl("button", {
-                className: "wl-btn wl-btn--detail",
-                type: "button",
-                dataset: { role: "detail" },
-                text: "Подробнее",
-                attrs: { "aria-label": `Подробнее о «${itemTitle}»` },
-            }),
             !isMissing
                 ? domEl("button", {
                     className: "wl-btn wl-btn--accent",
@@ -755,6 +724,13 @@ function createRenderCardBuilders(context) {
 
     /** Wire DOM-event handlers based on the card's mode. */
     function _wireCardHandlers(card, item, mode, signal) {
+        card.querySelector(".card-open")?.addEventListener("click", () => {
+            if (mode === "lead") {
+                void actions.openLeadDetail(item);
+            } else {
+                void actions.openWatchlistDetail(item);
+            }
+        }, { signal });
         if (mode === "lead") {
             card.querySelector('[data-role="confirm"]')?.addEventListener("click", () => {
                 void actions.confirmLead(item, card);
@@ -769,13 +745,6 @@ function createRenderCardBuilders(context) {
                 void actions.revertLeadStage(item.id, item.status);
             }, { signal });
         } else if (mode === "watching") {
-            // RV-UI-02: the title button is the card's primary action.
-            card.querySelector(".card-open")?.addEventListener("click", () => {
-                void actions.openWatchlistDetail(item);
-            }, { signal });
-            card.querySelector('[data-role="detail"]')?.addEventListener("click", () => {
-                void actions.openWatchlistDetail(item);
-            }, { signal });
             card.querySelector('[data-role="lead"]')?.addEventListener("click", (event) => {
                 if (event.currentTarget.disabled) return;
                 void actions.promoteWatchlistToLead(item);
@@ -797,18 +766,12 @@ function createRenderCardBuilders(context) {
         const { mode = "lead", marketLabel, signal } = options;
         const isWatching = mode === "watching";
         const isLead = mode === "lead";
-        const isMissing = item.market_status === "missing";
+        const comparison = isWatching ? state.watchlist?.comparisons?.[item.id] : undefined;
+        const isMissing = item.market_status === "missing" && !comparison?.ad_found;
 
         const outerClass = isLead
             ? `lead-card status-${item.status}`
             : "watchlist-card";
-        // RV-UI-02: both cards are list items. The watching card used to
-        // be role=button around a note input and four buttons; its
-        // primary action is now the title button (hit area stretched over
-        // the top block in CSS). The lead card has no single primary
-        // action, so it is just an item: no extra tab stop, and its
-        // status is read from the content instead of an aria-label that
-        // hid the price and fields behind the title.
         const card = domEl("div", {
             className: outerClass,
             attrs: isLead
@@ -818,27 +781,25 @@ function createRenderCardBuilders(context) {
         card.style.overflow = "hidden";
         const cardId = `item-card-${++_cardSeq}`;
 
-        // Price for the header. Lead reads price_byn directly; watchlist
-        // prefers the live current_price_byn, falling back to the price
-        // captured at watchlist-add time.
-        const priceSource = isLead
-            ? item.price_byn
-            : item.current_price_byn || item.initial_price_byn;
+        const savedPrice = item.current_price_byn ?? item.initial_price_byn;
+        const priceSource = isLead ? item.price_byn
+            : comparison?.ad_found ? comparison.current_price_byn : savedPrice;
         const priceDisplay = _roundOrNull(priceSource);
 
         const priceRow = isLead
             ? domEl("span", {
                 className: "lead-card-price mono",
-                text: priceDisplay ? `${priceDisplay} BYN` : "без цены",
+                text: priceDisplay ? formatPrice(priceSource) : "без цены",
             })
             : domEl(
                 "div",
                 { className: "watchlist-card-price-row" },
                 domEl("span", {
                     className: "watchlist-card-price mono",
-                    text: priceDisplay ? `${priceDisplay} BYN` : "Договорная",
+                    text: comparison?.ad_found && priceSource === 0 ? "Бесплатно"
+                        : priceDisplay ? formatPrice(priceSource) : "Договорная",
                 }),
-                _buildPriceDeltaNode(item),
+                priceSource === savedPrice ? _buildPriceDeltaNode(item) : null,
                 // 30-day price-trend sparkline next to the current price.
                 // Returns null until the row has ≥2 history points so a
                 // freshly-added watchlist item shows the price + delta
@@ -852,10 +813,13 @@ function createRenderCardBuilders(context) {
             ? domEl("span", { className: "market-badge missing", text: "Пропало" })
             : null;
         const watchingMarketBadge = isWatching
-            ? domEl("div", { className: "watchlist-card-meta" }, _buildMarketBadge(item, marketLabel))
+            ? domEl("div", { className: "watchlist-card-meta" },
+                comparison?.ad_found && item.market_status === "missing"
+                    ? null : _buildMarketBadge(item, marketLabel))
             : null;
 
-        const profitNode = isLead ? _buildLeadProfitNode(item) : _buildPotentialProfitNode(item);
+        const profitNode = isLead ? _buildLeadProfitNode(item)
+            : isMissing ? null : _buildPotentialProfitNode(priceSource, comparison);
 
         priceRow.id = `${cardId}-price`;
         if (profitNode) profitNode.id = `${cardId}-profit`;
@@ -863,22 +827,16 @@ function createRenderCardBuilders(context) {
             watchingMarketBadge.id = `${cardId}-market`;
         }
         const itemTitle = item.title || "Без названия";
-        const titleNode = isLead
-            ? domEl(
-                "div",
-                { className: "lead-card-title-row" },
-                domEl(
-                    "h3",
-                    { className: "card-heading" },
+        const titleNode = _buildCardOpenButton(
+            isLead
+                ? domFragment(
                     domEl("strong", { className: "lead-card-title", text: itemTitle }),
                     domEl("span", { className: "sr-only", text: `, ${_leadStatusLabel(item.status)}` }),
-                ),
-            )
-            : _buildCardOpenButton(
-                domEl("span", { className: "watchlist-card-title", text: itemTitle }),
-                "watchlist-card-heading",
-                _describedBy(priceRow, profitNode, watchingMarketBadge),
-            );
+                )
+                : domEl("span", { className: "watchlist-card-title", text: itemTitle }),
+            isLead ? "lead-card-title-row" : "watchlist-card-heading",
+            _describedBy(priceRow, profitNode, watchingMarketBadge),
+        );
 
         const bodyClass = isLead ? "lead-card-body" : "watchlist-card-body";
         const topClass = isLead ? "lead-card-top" : "watchlist-card-top";

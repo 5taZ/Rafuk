@@ -46,10 +46,9 @@ function createRenderCharts(context) {
         elements,
         actions,
         formatPrice,
+        formatPriceRange,
         formatCondition,
         formatSeller,
-        formatDelta,
-        deltaClass,
         formatDate,
         trapFocus,
         hasTelegramInitData,
@@ -264,7 +263,10 @@ function createRenderCharts(context) {
             },
             {
                 label: "Диапазон",
-                value: `${formatPrice(state.charts.historyData.reduce((min, p) => Math.min(min, p.median), Infinity))} - ${formatPrice(state.charts.historyData.reduce((max, p) => Math.max(max, p.median), -Infinity))}`,
+                value: formatPriceRange(
+                    state.charts.historyData.reduce((min, p) => Math.min(min, p.median), Infinity),
+                    state.charts.historyData.reduce((max, p) => Math.max(max, p.median), -Infinity),
+                ),
                 meta: "по медиане",
             },
         ];
@@ -365,24 +367,24 @@ function createRenderCharts(context) {
     /* ===== Profit Dashboard ===== */
 
     function _renderDashboardCards(dashboard) {
-        const profit = Number(dashboard.total_profit_byn || 0);
+        const profit = Math.round(Number(dashboard.total_profit_byn || 0));
         const revenue = Number(dashboard.total_revenue_byn || 0);
-        const roi = Number(dashboard.average_roi_percent || 0);
+        const roi = Number(Number(dashboard.average_roi_percent || 0).toFixed(1));
         const sold = Number(dashboard.sold_leads || 0);
         const expenses = Number(dashboard.total_expenses_byn || 0);
 
         return [
             {
                 label: "Прибыль",
-                value: `${profit >= 0 ? "+" : ""}${Math.round(profit)} BYN`,
+                value: `${profit > 0 ? "+" : ""}${profit} BYN`,
                 sub: `выручка ${Math.round(revenue)} · расходы ${Math.round(expenses)}`,
-                className: profit >= 0 ? "is-accent" : "is-warning",
+                className: profit > 0 ? "is-positive" : profit < 0 ? "is-negative" : "",
             },
             {
                 label: "ROI",
-                value: `${roi >= 0 ? "+" : ""}${roi.toFixed(1)}%`,
+                value: `${roi > 0 ? "+" : ""}${roi.toFixed(1)}%`,
                 sub: `средний по ${sold} продажам`,
-                className: roi >= 0 ? "is-accent" : "is-warning",
+                className: roi > 0 ? "is-positive" : roi < 0 ? "is-negative" : "",
             },
         ];
     }

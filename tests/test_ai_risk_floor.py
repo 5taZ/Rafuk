@@ -342,13 +342,17 @@ def test_listing_assistant_scrubs_links_and_contacts_from_the_draft(monkeypatch)
     async def fake_load_query_dataset(**kwargs):
         del kwargs
         return SimpleNamespace(
-            ads=[{
-                "ad_id": 501,
-                "subject": "Велосипед Stels Navigator",
-                "price_byn": 30000,
-                "ad_link": "https://www.kufar.by/item/501",
-                "ad_parameters": [],
-            }],
+            ads=[
+                {
+                    "ad_id": ad_id,
+                    "subject": "Велосипед Stels Navigator",
+                    "category": 8030,
+                    "price_byn": price * 100,
+                    "ad_link": f"https://www.kufar.by/item/{ad_id}",
+                    "ad_parameters": [],
+                }
+                for ad_id, price in enumerate((300, 280, 320), 501)
+            ],
             price_stats=SimpleNamespace(
                 median=300.0, count=6, q1=280.0, q3=320.0, min=250.0, max=350.0,
             ),

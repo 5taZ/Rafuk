@@ -109,7 +109,10 @@ function createApiEvents(context) {
         clearTimeout(entry.timer);
         entry.timer = undefined;
         entry.armed = false;
-        if (entry.button) entry.button.textContent = "Очистить";
+        if (entry.button) {
+            entry.button.textContent = entry.label;
+            entry.button.classList.remove("is-confirming");
+        }
     }
 
     function _resetAllConfirms() {
@@ -118,15 +121,17 @@ function createApiEvents(context) {
 
     // Returns true on the confirming (second) tap.
     function _confirmTap(key, button) {
-        if (!_confirms[key]) _confirms[key] = { armed: false, timer: undefined, button };
+        if (!_confirms[key]) _confirms[key] = { armed: false, timer: undefined, button, label: button?.textContent };
         const entry = _confirms[key];
-        entry.button = button;
         if (entry.armed) {
             _resetConfirm(key);
             return true;
         }
         entry.armed = true;
-        if (button) button.textContent = "Удалить все?";
+        if (button) {
+            button.textContent = "Удалить всё?";
+            button.classList.add("is-confirming");
+        }
         showToast("Нажмите ещё раз для подтверждения");
         entry.timer = setTimeout(() => _resetConfirm(key), 3000);
         return false;
@@ -341,6 +346,7 @@ function createApiEvents(context) {
             button.addEventListener("click", () => {
                 const filter = button.dataset.itemsFilter;
                 if (!filter) return;
+                _resetAllConfirms();
                 state.leads.itemsFilter = filter;
                 renderLeads();
 
@@ -749,7 +755,7 @@ function createApiEvents(context) {
         // ── Clear events button (double-confirm) ─────────────────────
         elements.clearEventsButton?.addEventListener("click", () => {
             void (async () => {
-                if (state.trackers.events.length === 0) {
+                if (elements.clearEventsButton.hidden || state.trackers.events.length === 0) {
                     showToast("Нет событий для удаления");
                     return;
                 }
@@ -776,8 +782,7 @@ function createApiEvents(context) {
         // ── Clear all leads button (double-confirm) ──────────────────
         elements.clearAllLeadsButton?.addEventListener("click", () => {
             void (async () => {
-                const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
-                if (activeLeads.length === 0) {
+                if (!state.leads.items.some(lead => lead.status !== "closed" && lead.status !== "skipped")) {
                     showToast("Нет активных сделок для удаления");
                     return;
                 }
@@ -826,10 +831,6 @@ function createApiEvents(context) {
             state.trackers.regionName = elements.trackerRegionSelect.value;
         });
 
-        elements.trackerConfigInput?.addEventListener("input", () => {
-            state.trackers.configKeyword = elements.trackerConfigInput.value.trim();
-        });
-
         // ── Edit tracker modal ───────────────────────────────────────
         elements.closeEditModal?.addEventListener("click", () => {
             closeEditTrackerAction();
@@ -863,6 +864,7 @@ function createApiEvents(context) {
         // ── Tracker event filter buttons ─────────────────────────────
         for (const button of elements.trackerEventFilterButtons || []) {
             button.addEventListener("click", () => {
+                _resetConfirm("events");
                 state.trackers.eventFilter = button.dataset.eventFilter || "all";
                 renderTrackerEventFilters();
                 renderTrackerEvents();

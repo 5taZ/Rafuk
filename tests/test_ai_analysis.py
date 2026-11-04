@@ -244,24 +244,36 @@ def test_ai_analyze_endpoint_returns_payload(monkeypatch) -> None:
             ads=[
                 {
                     "ad_id": 1,
-                    "subject": "iPhone 14",
+                    "subject": "iPhone 14 128GB",
+                    "category": 3010,
                     "body": "Отличное состояние",
                     "price_byn": 160000,
                     "ad_link": "https://www.kufar.by/item/1",
                     "images": [{"path": "adim1/test.jpg"}],
                     "ad_parameters": [
                         {"p": "condition", "vl": "Б/у"},
-                        {"p": "memory", "pl": "Память", "vl": "128 Гб"},
                     ],
                 },
                 {
                     "ad_id": 2,
                     "subject": "iPhone 14 128GB",
+                    "category": 3010,
                     "price_byn": 158000,
                     "ad_link": "https://www.kufar.by/item/2",
                     "images": [{"path": "adim1/test2.jpg"}],
-                    "ad_parameters": [],
+                    "ad_parameters": [{"p": "condition", "vl": "Б/у"}],
                 },
+                *[
+                    {
+                        "ad_id": ad_id,
+                        "subject": "iPhone 14 128GB",
+                        "category": 3010,
+                        "price_byn": price,
+                        "ad_link": f"https://www.kufar.by/item/{ad_id}",
+                        "ad_parameters": [{"p": "condition", "vl": "Б/у"}],
+                    }
+                    for ad_id, price in [(3, 150000), (4, 162000), (5, 170000)]
+                ],
             ],
             price_stats=SimpleNamespace(
                 median=1590.0,
@@ -568,12 +580,13 @@ def test_stage_extract_classifies_three_price_states_correctly() -> None:
     assert c.price_byn == 1500.0  # 150000 kopecks -> 1500 BYN
 
 
-def test_stage_extract_keeps_query_market_anchor_when_exact_title_cluster_is_noisy() -> None:
+def test_stage_extract_withholds_market_anchor_when_comparables_are_noisy() -> None:
     from api.services.aggregator import PriceStats
     from api.services.ai_analysis_pipeline import _AC, _stage_extract
 
     target = {
         "ad_id": 101,
+        "category": 3010,
         "subject": "iPhone 14 Pro 128 Deep Purple",
         "body": "Минимальное описание",
         "price_byn": 114000,
@@ -583,6 +596,7 @@ def test_stage_extract_keeps_query_market_anchor_when_exact_title_cluster_is_noi
     same_title_expensive = [
         {
             "ad_id": 102 + idx,
+            "category": 3010,
             "subject": "iPhone 14 Pro 128 Deep Purple",
             "body": "Похожее объявление",
             "price_byn": price,
@@ -594,6 +608,7 @@ def test_stage_extract_keeps_query_market_anchor_when_exact_title_cluster_is_noi
     broad_market = [
         {
             "ad_id": 201 + idx,
+            "category": 3010,
             "subject": f"iPhone 14 Pro {storage}",
             "body": "Обычное объявление",
             "price_byn": price,
@@ -601,7 +616,7 @@ def test_stage_extract_keeps_query_market_anchor_when_exact_title_cluster_is_noi
             "images": [],
         }
         for idx, (storage, price) in enumerate(
-            (("128", 139000), ("256", 155000), ("128", 170000))
+            (("128", 60000), ("256", 155000), ("128", 75000))
         )
     ]
 
@@ -625,10 +640,10 @@ def test_stage_extract_keeps_query_market_anchor_when_exact_title_cluster_is_noi
 
     _stage_extract(c)
 
-    assert c.median == 1550.0
-    assert c.q1 == 1390.0
-    assert c.q3 == 1700.0
-    assert c.count == 133
+    assert c.median is None
+    assert c.reference.scope == "insufficient"
+    assert c.reference.stats.count == 4
+    assert c.similar == []
 
 
 def test_stage_extract_keeps_product_type_cluster_for_mixed_parts_market() -> None:
@@ -677,6 +692,10 @@ def test_stage_extract_keeps_product_type_cluster_for_mixed_parts_market() -> No
             "images": [],
         },
     ]
+    for ad in ads:
+        ad["category"] = 2120
+    ads.append({**ads[0], "ad_id": 306, "price_byn": 200000})
+    ads.append({**ads[0], "ad_id": 307, "subject": "Volkswagen Polo", "category": 2010})
     mixed_parts_stats = PriceStats(
         mean=900.0,
         median=180.0,
@@ -730,35 +749,33 @@ def test_ai_guardrails_clamp_outlier_price_for_negotiable_financing_bait(monkeyp
     from api.routers import ai_analysis
     from api.services import ai_analysis_pipeline, ai_service
 
+    params = [{"p": "condition", "vl": "Б/у"}, {"p": "regdate", "vl": "2020"}]
+
     async def fake_load_query_dataset(**kwargs):
         del kwargs
         return SimpleNamespace(
             ads=[
                 {
                     "ad_id": 10,
-                    "subject": "БЕЗ ВЗНОСА НА 10 ЛЕТ AUDI Q7 4M Рестайлинг",
+                    "subject": "Audi Q7 4M Рестайлинг БЕЗ ВЗНОСА НА 10 ЛЕТ",
+                    "category": 2010,
                     "body": "Цена договорная, возможен кредит.",
                     "price_byn": 0,
                     "ad_link": "https://www.kufar.by/item/10",
                     "images": [{"path": "adim1/test.jpg"}],
-                    "ad_parameters": [{"p": "condition", "vl": "Б/у"}],
+                    "ad_parameters": params,
                 },
-                {
-                    "ad_id": 11,
-                    "subject": "Audi Q7 3.0 tdi",
-                    "price_byn": 4469200,
-                    "ad_link": "https://www.kufar.by/item/11",
-                    "images": [{"path": "adim1/test2.jpg"}],
-                    "ad_parameters": [{"p": "condition", "vl": "Б/у"}],
-                },
-                {
-                    "ad_id": 12,
-                    "subject": "Audi Q7 (4L) Рестайлинг",
-                    "price_byn": 4005400,
-                    "ad_link": "https://www.kufar.by/item/12",
-                    "images": [{"path": "adim1/test3.jpg"}],
-                    "ad_parameters": [{"p": "condition", "vl": "Б/у"}],
-                },
+                *[
+                    {
+                        "ad_id": ad_id,
+                        "subject": "Audi Q7 4M Рестайлинг",
+                        "category": 2010,
+                        "price_byn": price * 100,
+                        "ad_link": f"https://www.kufar.by/item/{ad_id}",
+                        "ad_parameters": params,
+                    }
+                    for ad_id, price in enumerate((39000, 40054, 42373, 44692, 47000), 11)
+                ],
             ],
             price_stats=SimpleNamespace(
                 median=44411.0,
@@ -854,6 +871,7 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
         "ad_parameters": [
             {"p": "condition", "vl": "Б/у"},
             {"p": "generation", "pl": "Поколение", "vl": "4L"},
+            {"p": "regdate", "vl": "2013"},
             {"p": "engine", "pl": "Двигатель", "vl": "3.0"},
             {"p": "fuel", "pl": "Топливо", "vl": "Дизель"},
             {"p": "category", "pl": "Категория", "vl": "Легковые авто"},
@@ -871,6 +889,7 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
         "ad_parameters": [
             {"p": "condition", "vl": "Б/у"},
             {"p": "generation", "pl": "Поколение", "vl": "4L"},
+            {"p": "regdate", "vl": "2013"},
             {"p": "engine", "pl": "Двигатель", "vl": "3.0"},
             {"p": "fuel", "pl": "Топливо", "vl": "Дизель"},
             {"p": "category", "pl": "Категория", "vl": "Легковые авто"},
@@ -897,11 +916,13 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
 
     async def fake_load_query_dataset(**kwargs):
         strict_search = kwargs.get("strict_search", False)
-        ads = (
-            [target_ad, precise_analog]
-            if strict_search
-            else [target_ad, precise_analog, weak_broad]
-        )
+        ads = [
+            target_ad, precise_analog,
+            {**precise_analog, "ad_id": 13, "price_byn": 3600000},
+            {**precise_analog, "ad_id": 14, "price_byn": 3650000},
+        ]
+        if not strict_search:
+            ads.append(weak_broad)
         return SimpleNamespace(
             ads=ads,
             price_stats=SimpleNamespace(
@@ -956,7 +977,7 @@ def test_ai_analyze_prefers_precise_analogs_and_adds_marketplace_red_flag(monkey
         payload = _wait_for_task_result(client, response.json()["task_id"])
 
     assert payload["best_alternative"]["ad_id"] == 11
-    assert len(payload["similar_listings"]) == 1
+    assert {ad["ad_id"] for ad in payload["similar_listings"]} == {11, 13, 14}
     assert any(
         "автохаус" in flag.lower() or "кредит" in flag.lower() for flag in payload["red_flags"]
     )
@@ -1431,29 +1452,23 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
 
     async def fake_load_query_dataset(**kwargs):
         # The endpoint must search by the user's draft title, not "iphone 14".
-        captured["query"] = kwargs.get("query")
+        captured.setdefault("searches", []).append((kwargs["query"], kwargs.get("category")))
         return SimpleNamespace(
             ads=[
                 {
-                    "ad_id": 401,
+                    "ad_id": ad_id,
                     "subject": "iPhone 14 Pro Max 256",
-                    # Kufar API returns prices in kopecks; normalize_price_byn /100.
-                    "price_byn": 250000,
-                    "ad_parameters": [
-                        {"p": "seller_type", "v": "Частное лицо"},
-                        {"p": "condition", "v": "Б/у"},
-                    ],
-                },
-                {
-                    "ad_id": 402,
-                    "subject": "iPhone 14 Pro Max 256",
-                    "price_byn": 270000,
-                    "ad_parameters": [{"p": "seller_type", "v": "Магазин"}],
-                },
+                    "category": 3010,
+                    "price_byn": price * 100,
+                    "ad_parameters": [{"p": "condition", "v": "Б/у"}],
+                }
+                for ad_id, price in enumerate(
+                    (2500, 2200, 2300, 2400, 2600, 2700, 2800, 2900, 3200), 401,
+                )
             ],
             price_stats=SimpleNamespace(
                 median=2600.0,
-                count=14,
+                count=9,
                 q1=2400.0,
                 q3=2800.0,
                 min=2200.0,
@@ -1544,13 +1559,15 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
     payload = response.json()
 
     # Search must use the seller's draft title to fetch market data.
-    assert captured["query"] == "iPhone 14 Pro Max 256GB"
+    assert captured["searches"] == [
+        ("iPhone 14 Pro Max 256GB", None), ("iphone 14 pro max 256", 3010),
+    ]
 
     # Market anchors propagate to the response.
     assert payload["pricing"]["market_median_byn"] == 2600.0
     assert payload["pricing"]["market_q1_byn"] == 2400.0
     assert payload["pricing"]["market_q3_byn"] == 2800.0
-    assert payload["pricing"]["competing_count"] == 14
+    assert payload["pricing"]["competing_count"] == 9
 
     # AI tiers are coerced into the contract shape.
     assert payload["pricing"]["fast"]["price_byn"] == 2450.0
@@ -1574,7 +1591,7 @@ def test_listing_assistant_endpoint_returns_grounded_pricing(monkeypatch) -> Non
     assert call["market_median"] == 2600.0
     assert call["market_q1"] == 2400.0
     assert call["market_q3"] == 2800.0
-    assert call["market_count"] == 14
+    assert call["market_count"] == 9
     # Competitor list is built from dataset ads.
     assert call["similar_listings"]
     assert call["similar_listings"][0]["price_byn"] == 2500.0
@@ -1590,12 +1607,14 @@ def test_listing_assistant_returns_market_fallback_when_ai_fails(monkeypatch) ->
         return SimpleNamespace(
             ads=[
                 {
-                    "ad_id": 501,
+                    "ad_id": ad_id,
                     "subject": "Volkswagen Polo 2012",
-                    "price_byn": 1850000,
-                    "ad_link": "https://www.kufar.by/item/501",
-                    "ad_parameters": [{"p": "condition", "v": "Б/у"}],
-                },
+                    "category": 2010,
+                    "price_byn": price * 100,
+                    "ad_link": f"https://www.kufar.by/item/{ad_id}",
+                    "ad_parameters": [{"p": "condition", "v": "С пробегом"}],
+                }
+                for ad_id, price in enumerate((16000, 17000, 18500, 19900, 22000), 501)
             ],
             price_stats=SimpleNamespace(
                 median=18500.0,
@@ -1628,6 +1647,7 @@ def test_listing_assistant_returns_market_fallback_when_ai_fails(monkeypatch) ->
                 "title": "Volkswagen Polo",
                 "draft_price_byn": 19000,
                 "condition": "Хорошее",
+                "extra_notes": "2012 год выпуска",
                 "is_negotiable": True,
             },
         )
@@ -1812,6 +1832,9 @@ def test_listing_assistant_handles_empty_market_gracefully(monkeypatch) -> None:
     payload = response.json()
     assert payload["pricing"]["market_median_byn"] is None
     assert payload["pricing"]["competing_count"] == 0
+    for key in ("fast", "market", "patient", "floor_byn"):
+        assert payload["pricing"][key] is None
+    assert "Недостаточно сопоставимых" in payload["market_summary"]
     assert payload["title_suggestion"]
     # Empty competitors list — AI got no similar_listings.
     assert fake_ai.calls[0]["similar_listings"] is None

@@ -102,7 +102,6 @@ function cacheAppElements(elements) {
     elements.trackerSellerSelect = document.getElementById("tracker-seller-select");
     elements.trackerConditionSelect = document.getElementById("tracker-condition-select");
     elements.trackerRegionSelect = document.getElementById("tracker-region-select");
-    elements.trackerConfigInput = document.getElementById("tracker-config-input");
     elements.trackerStatus = document.getElementById("tracker-status");
     elements.trackersList = document.getElementById("trackers-list");
     elements.trackerEventsList = document.getElementById("tracker-events-list");
@@ -111,6 +110,7 @@ function cacheAppElements(elements) {
     elements.leadInboxSection = document.getElementById("lead-inbox-section");
     elements.leadFilterButtons = Array.from(document.querySelectorAll("[data-lead-filter]"));
     elements.leadInboxList = document.getElementById("lead-inbox-list");
+    elements.itemsClearHeader = document.getElementById("items-clear-header");
     elements.clearAllLeadsButton = document.getElementById("clear-all-leads-btn");
     // Watchlist section is gone — its items live inside the unified
     // "Мои объявления" list now. We keep the deleteAllWatchlistButton
@@ -202,7 +202,7 @@ function cacheAppElements(elements) {
     elements.editConditionSelect = document.getElementById("edit-condition-select");
     elements.editRegionSelect = document.getElementById("edit-region-select");
     elements.editCategorySelect = document.getElementById("edit-category-select");
-    elements.editConfigInput = document.getElementById("edit-config-input");
+    elements.editCategoryStatus = document.getElementById("edit-category-status");
     elements.closeEditModal = document.getElementById("close-edit-modal");
     elements.saveTrackerBtn = document.getElementById("save-tracker-btn");
     elements.cancelEditBtn = document.getElementById("cancel-edit-btn");

@@ -117,6 +117,16 @@ class LiquidityInsight(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class WatchlistComparison(BaseModel):
+    ad_found: bool = False
+    current_price_byn: float | None = None
+    category_label: str | None = None
+    comparable_count: int = 0
+    median_byn: float | None = None
+    delta_percent: float | None = None
+    sample_limited: bool = False
+
+
 class ListingItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -134,6 +144,7 @@ class ListingItem(BaseModel):
     price_vs_median: float | None = None
     price_reference_scope: str = "query"
     price_reference_label: str | None = None
+    market_comparison: WatchlistComparison | None = None
     region_name: str | None = None
     area_name: str | None = None
     config_summary: str | None = None
@@ -177,6 +188,7 @@ class ListingDetailResponse(BaseModel):
     price_vs_median: float | None = None
     price_reference_scope: str = "query"
     price_reference_label: str | None = None
+    market_comparison: WatchlistComparison | None = None
     region_name: str | None = None
     area_name: str | None = None
     fair_price_band: str | None = None
@@ -316,13 +328,6 @@ def _tracker_filter_value(
     return value.strip() or None
 
 
-def _optional_config_keyword(value: str | None) -> str | None:
-    # RV-BE-04: blank means "no extra keyword filter" (stored as NULL).
-    if value is None:
-        return None
-    return value.strip() or None
-
-
 class TrackerCreate(BaseModel):
     query: str = Field(min_length=1, max_length=255)
     strict_mode: bool = False
@@ -334,7 +339,6 @@ class TrackerCreate(BaseModel):
     seller_type: str | None = Field(default=None, max_length=32)
     condition: str | None = Field(default=None, max_length=32)
     region_name: str | None = Field(default=None, max_length=64)
-    config_keyword: str | None = Field(default=None, max_length=128)
     alert_price_threshold: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
     alert_discount_percent: float | None = Field(default=None, ge=0, le=100)
 
@@ -347,11 +351,6 @@ class TrackerCreate(BaseModel):
     @classmethod
     def _validate_condition(cls, value: str | None) -> str | None:
         return _tracker_filter_value(value, canonical_condition_filter)
-
-    @field_validator("config_keyword")
-    @classmethod
-    def _validate_config_keyword(cls, value: str | None) -> str | None:
-        return _optional_config_keyword(value)
 
 
 class TrackerUpdate(BaseModel):
@@ -366,7 +365,6 @@ class TrackerUpdate(BaseModel):
     seller_type: str | None = Field(default=None, max_length=32)
     condition: str | None = Field(default=None, max_length=32)
     region_name: str | None = Field(default=None, max_length=64)
-    config_keyword: str | None = Field(default=None, max_length=128)
     alert_price_threshold: float | None = Field(default=None, ge=0, le=9_999_999_999.99)
     alert_discount_percent: float | None = Field(default=None, ge=0, le=100)
 
@@ -379,11 +377,6 @@ class TrackerUpdate(BaseModel):
     @classmethod
     def _validate_condition(cls, value: str | None) -> str | None:
         return _tracker_filter_value(value, canonical_condition_filter)
-
-    @field_validator("config_keyword")
-    @classmethod
-    def _validate_config_keyword(cls, value: str | None) -> str | None:
-        return _optional_config_keyword(value)
 
 
 class TrackerRead(BaseModel):
@@ -406,7 +399,6 @@ class TrackerRead(BaseModel):
     seller_type: str | None = None
     condition: str | None = None
     region_name: str | None = None
-    config_keyword: str | None = None
     alert_price_threshold: float | None = None
     alert_discount_percent: float | None = None
     last_seen_ad_id: int | None = None

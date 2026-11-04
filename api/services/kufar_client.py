@@ -400,6 +400,7 @@ class KufarClient:
         seller_type: str | None = None,
         price_range: str | None = None,
         category: int | None = None,
+        page_limit: int | None = None,
     ) -> dict[str, Any]:
         response = await self.search(
             query=query,
@@ -414,17 +415,17 @@ class KufarClient:
             category=category,
         )
         ads = list(response.get("ads", []))
-        total = self.extract_total(response) or len(ads)
+        upstream_total = self.extract_total(response)
         cursor = self.extract_next_cursor(response)
         pages_fetched = 1
         seen_cursors: set[str] = set()
         seen_ids = {ad.get("ad_id") for ad in ads if isinstance(ad, dict)}
 
-        # Safety cap: KUFAR_MAX_PAGES pages or configured max ads (whichever comes first)
+        max_pages = page_limit or KUFAR_MAX_PAGES
         max_ads = self._settings.kufar_max_ads_per_query
         while (
             cursor and cursor not in seen_cursors
-            and pages_fetched < KUFAR_MAX_PAGES and len(ads) < max_ads
+            and pages_fetched < max_pages and len(ads) < max_ads
         ):
             seen_cursors.add(cursor)
             page = await self.search(
@@ -448,14 +449,17 @@ class KufarClient:
                 ads.append(ad)
             cursor = self.extract_next_cursor(page)
             pages_fetched += 1
-            if total and len(ads) >= total:
+            if upstream_total and len(ads) >= upstream_total:
                 break
 
         return {
             **response,
             "ads": ads,
-            "total": total,
+            "total": upstream_total or len(ads),
             "fetched_count": len(ads),
+            "has_more": (
+                len(ads) < upstream_total if upstream_total else bool(cursor)
+            ),
         }
 
     @staticmethod

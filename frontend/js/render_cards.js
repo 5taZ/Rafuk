@@ -58,27 +58,6 @@ function createRenderCards(context) {
         return skel;
     }
 
-    // M5: map verdict to CSS class. Tries backend-provided verdict_key
-    // first (enum like "good"/"below_market"/"average"/"above_market"),
-    // falls back to Russian substring matching for backward compat.
-    var _VERDICT_KEY_MAP = {
-        good: "zabirat",
-        below_market: "smotret",
-        average: "norm",
-        above_market: "mimo",
-    };
-    function verdictClassName(verdict, verdictKey) {
-        if (verdictKey && _VERDICT_KEY_MAP[verdictKey]) {
-            return _VERDICT_KEY_MAP[verdictKey];
-        }
-        if (!verdict) return "neutral";
-        if (verdict.includes("Хорошая")) return "zabirat";
-        if (verdict.includes("Ниже")) return "smotret";
-        if (verdict.includes("Средняя")) return "norm";
-        if (verdict.includes("Выше")) return "mimo";
-        return "neutral";
-    }
-
     function matchesFilters(item) {
         // SEARCH-8: the filter dropdown labels its inputs "Цена, BYN"
         // and stores `state.filters.minPrice` / `maxPrice` as raw BYN.
@@ -292,7 +271,7 @@ function createRenderCards(context) {
 
             const list = _buildCardList();
             for (const item of filtered) {
-                list.appendChild(buildListingNode(item, verdictClassName));
+                list.appendChild(buildListingNode(item));
             }
             container.appendChild(list);
 
@@ -393,9 +372,6 @@ function createRenderCards(context) {
 
     function renderListings() {
         return safeRender('renderListings', () => {
-            if (state.ui.loading) {
-                return;
-            }
             // Keep skeletons while listings request is in flight
             if (state.listings._pending) {
                 return;
@@ -665,14 +641,13 @@ function createRenderCards(context) {
         }
         container.setAttribute("aria-labelledby", `items-tab-${filter}`);
 
-        if (elements.clearAllLeadsButton) {
-            elements.clearAllLeadsButton.hidden = filter === "watching";
-        }
-        if (elements.deleteAllWatchlistButton) {
-            elements.deleteAllWatchlistButton.hidden = filter !== "watching";
-        }
+        const inTelegram = hasTelegramInitData();
+        const canClear = inTelegram && counts[filter] > 0;
+        if (elements.itemsClearHeader) elements.itemsClearHeader.hidden = !canClear;
+        if (elements.clearAllLeadsButton) elements.clearAllLeadsButton.hidden = !canClear || filter !== "purchases";
+        if (elements.deleteAllWatchlistButton) elements.deleteAllWatchlistButton.hidden = !canClear || filter !== "watching";
 
-        if (!hasTelegramInitData()) {
+        if (!inTelegram) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
             note.textContent = "Раздел «Мои объявления» доступен внутри Telegram Mini App.";

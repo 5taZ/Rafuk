@@ -16,8 +16,6 @@ function createAppRenderers(baseContext) {
         formatPrice,
         formatCondition,
         formatSeller,
-        formatDelta,
-        deltaClass,
         formatDate,
         trapFocus,
         hasTelegramInitData,
@@ -348,5 +346,6 @@ function createAppRenderers(baseContext) {
         // OPUS-13 wave 73: expose the cards stub's preload hook so
         // app.js can warm the cards chunk right after composition.
         _cardsEnsureLoaded: cards && cards._ensureLoaded,
+        _modalsEnsureLoaded: modals._ensureLoaded,
     };
 }

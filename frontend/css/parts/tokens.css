@@ -262,10 +262,7 @@ a,
 }
 
 /* Pressed state for cards */
-.listing-card:active,
-.tracker-card:active,
-.lead-card:active,
-.watchlist-card:active {
+.tracker-card:active {
     transform: scale(0.995);
     transition: transform 100ms ease-out;
 }
@@ -287,14 +284,8 @@ a,
 }
 
 @keyframes viewEnter {
-    from {
-        opacity: 0;
-        transform: translateY(6px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -494,7 +485,7 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-shrink: 0;
+    min-width: 0;
 }
 
 .logo {

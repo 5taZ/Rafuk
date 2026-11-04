@@ -58,10 +58,7 @@ def test_trackers_crud() -> None:
         assert created["seller_type"] == "Частное лицо"
         assert created["category_id"] == 17010
         assert created["category_label"] == "Мобильные телефоны"
-        # RV-BE-04: no implicit config_keyword any more — the old default
-        # (the whole normalised query, matched as a substring) dropped most
-        # alerts. NULL means "no extra keyword filter".
-        assert created["config_keyword"] is None
+        assert "config_keyword" not in created
 
         list_response = client.get("/api/v1/trackers")
         assert list_response.status_code == 200
@@ -110,10 +107,9 @@ def test_trackers_crud() -> None:
 
 
 def test_tracker_filters_validated_and_stored_as_sent() -> None:
-    """RV-BE-03/RV-BE-04 through the HTTP layer: the Mini App labels are
+    """RV-BE-03 through the HTTP layer: the Mini App labels are
     accepted and echoed back verbatim (the edit form preselects by them),
-    junk is a 422 instead of a silently ignored filter, and an explicit
-    config keyword is kept while an absent one stays NULL."""
+    invalid labels return 422, and old clients can still send the removed field."""
     from api.dependencies import get_telegram_user
     from api.main import create_app
 
@@ -134,7 +130,7 @@ def test_tracker_filters_validated_and_stored_as_sent() -> None:
         body = created.json()
         assert body["seller_type"] == "Частное лицо"
         assert body["condition"] == "Б/у"
-        assert body["config_keyword"] == "8/256"
+        assert "config_keyword" not in body
 
         bad_create = client.post(
             "/api/v1/trackers",
@@ -153,7 +149,7 @@ def test_tracker_filters_validated_and_stored_as_sent() -> None:
         assert cleared.status_code == 200
         assert cleared.json()["seller_type"] == "shop"
         assert cleared.json()["condition"] is None
-        assert cleared.json()["config_keyword"] is None
+        assert "config_keyword" not in cleared.json()
 
 
 async def seed_tracker_event(session_factory) -> None:

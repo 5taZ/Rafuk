@@ -961,6 +961,12 @@ def test_summary_refinement_chips_are_compact_scroll_row(css_text: str) -> None:
     assert "scroll-snap-align: start" in chip_block
 
 
+def test_privacy_policy_is_available_from_profile(soup: BeautifulSoup) -> None:
+    assert soup.select_one("#profile-view #privacy-btn") is not None
+    assert soup.select_one("header #privacy-btn") is None
+    assert soup.select_one("#consent-privacy-link") is not None
+
+
 def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
     assert ".empty-state-action" in css_text
     assert ".list-pagination-button" in css_text
@@ -979,7 +985,8 @@ def test_small_action_targets_keep_44px_minimum(css_text: str) -> None:
 
     for selector in (
         ".theme-toggle",
-        ".header-privacy-btn",
+        ".profile-chip {",
+        ".ghost-btn.clear-list-btn {",
         ".empty-state-action",
         ".list-pagination-button",
         ".filter-chip",

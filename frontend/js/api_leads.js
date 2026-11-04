@@ -11,11 +11,9 @@ function createApiLeads(context) {
         elements,
         hasTelegramInitData,
         renderAll,
-        renderError,
         renderLeads,
         renderDealsHeroStats,
         renderProfitDashboard,
-        renderDetailModal,
         showToast,
         getJson,
         postJson,
@@ -26,7 +24,6 @@ function createApiLeads(context) {
         validVersion,
     } = context;
 
-    let _leadDetailAbortController = null;
     let _analyticsAbortController = null;
 
     function _findLeadSnapshot(leadOrId) {
@@ -424,76 +421,12 @@ function createApiLeads(context) {
             showToast("Не удалось открыть: нет ID объявления");
             return;
         }
-        const queryToUse = lead.query || state.search.activeQuery || "";
-        if (!queryToUse) {
-            showToast("Не удалось открыть: нет привязки к запросу");
-            return;
-        }
-
-        // Abort previous in-flight lead detail request
-        if (_leadDetailAbortController) {
-            _leadDetailAbortController.abort();
-        }
-        _leadDetailAbortController = new AbortController();
-        const signal = _leadDetailAbortController.signal;
-
-        // Shared stale-response guard with openListingDetail and
-        // openWatchlistDetail — only the latest tap wins, older
-        // listing-detail responses are dropped.
-        const requestId = (state.detail._requestId =
-            (state.detail._requestId + 1) % 1_000_000);
-
-        // Show modal immediately with data we already have from the
-        // lead item — avoids waiting for the full Kufar dataset.
-        const instantDetail = {
-            ad_id: lead.ad_id,
-            title: lead.title || "Объявление",
-            price: lead.price_byn ?? null,
-            price_type: null,
-            currency: state.misc.currency || "BYN",
-            link: lead.link || "",
-            query: queryToUse,
-            images: lead.thumbnail ? [lead.thumbnail] : [],
-            description: null,
-            parameters: [],
-            seller_fields: [],
-        };
-        state.detail.data = instantDetail;
-        state.detail.imageIndex = 0;
-        state.detail.fromWatchlist = false;
-        state.detail.ai = {
-            adId: lead.ad_id,
-            loading: false,
-            result: null,
-            error: "",
-            source: "",
-        };
-        renderDetailModal();
-
-        // Enrich with full Kufar data in background
-        state.ui.error = null;
-        renderError();
-        try {
-            const catParam = state.filters.category != null ? `&category=${state.filters.category}` : "";
-            const fullDetail = await getJson(
-                `/api/v1/listing-detail?query=${encodeURIComponent(queryToUse)}&currency=${state.misc.currency}&strict_search=${state.search.strictSearch}&ad_id=${lead.ad_id}${catParam}`,
-                { signal }
-            );
-            if (requestId !== state.detail._requestId) return;
-            state.detail.data = fullDetail;
-            state.detail.imageIndex = 0;
-            state.detail.ai = {
-                adId: fullDetail.ad_id || lead.ad_id,
-                loading: false,
-                result: null,
-                error: "",
-                source: "",
-            };
-            // Mirror the server-side backfill in local state so the
-            // lead card preview updates without a full reload — the
-            // server already updated the DB row in listing-detail.
-            const newThumb = (fullDetail.images && fullDetail.images[0]) || null;
-            if (newThumb && !lead.thumbnail && state.leads?.items) {
+        return context.openListingDetail(lead, {
+            referenceContext: "current",
+            onLoaded(fullDetail) {
+                // Mirror the server-side thumbnail backfill without reloading the list.
+                const newThumb = fullDetail.images?.[0];
+                if (!newThumb || lead.thumbnail || !state.leads?.items) return;
                 const matchingLead = state.leads.items.find(
                     (l) => sameAdId(l.ad_id, lead.ad_id) && !l.thumbnail
                 );
@@ -501,14 +434,8 @@ function createApiLeads(context) {
                     matchingLead.thumbnail = newThumb;
                     renderLeads();
                 }
-            }
-            renderDetailModal();
-        } catch (error) {
-            if (error.name === "AbortError") return;
-            if (requestId !== state.detail._requestId) return;
-            // Keep the instant detail visible — don't show error if we
-            // already have basic data displayed.
-        }
+            },
+        });
     }
 
     return {

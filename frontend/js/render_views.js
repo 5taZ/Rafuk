@@ -8,6 +8,7 @@ function createRenderViews(context) {
         state,
         elements,
         formatPrice,
+        formatPriceRange,
         safeRender: safeRender,
     } = context;
 
@@ -202,9 +203,6 @@ function createRenderViews(context) {
         if (elements.trackerRegionSelect) {
             elements.trackerRegionSelect.value = state.trackers.regionName || "";
         }
-        if (elements.trackerConfigInput) {
-            elements.trackerConfigInput.value = state.trackers.configKeyword || "";
-        }
     }
 
     /* ===== Stats ===== */
@@ -222,15 +220,9 @@ function createRenderViews(context) {
         elements.stats.mean.textContent = formatPrice(state.misc.stats.mean);
         elements.stats.min.textContent = formatPrice(state.misc.stats.min);
         elements.stats.max.textContent = formatPrice(state.misc.stats.max);
-        if (state.misc.stats.fair_price_from != null && state.misc.stats.fair_price_to != null) {
-            elements.stats.fairRange.replaceChildren(
-                domEl("span", { className: "stat-range-item", text: formatPrice(state.misc.stats.fair_price_from) }),
-                domEl("span", { className: "stat-range-sep", text: "-" }),
-                domEl("span", { className: "stat-range-item", text: formatPrice(state.misc.stats.fair_price_to) }),
-            );
-        } else {
-            elements.stats.fairRange.textContent = "—";
-        }
+        elements.stats.fairRange.textContent = formatPriceRange(
+            state.misc.stats.fair_price_from, state.misc.stats.fair_price_to,
+        );
         const totalResults = Number(state.misc.stats.total_results || 0);
         const analyzedCount = Number(state.misc.stats.analyzed_count || state.misc.stats.count || 0);
         elements.stats.coverage.textContent =

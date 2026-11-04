@@ -231,25 +231,6 @@ def analyze_query_text(value: str) -> QueryInsights:
     )
 
 
-def default_config_keyword(query: str) -> str:
-    # RV-BE-04: no longer applied on tracker creation (NULL = no extra
-    # filter). Kept so legacy rows that still carry this value can be
-    # recognised, e.g. by a future clean-up migration.
-    return analyze_query_text(query).normalized_query[:128]
-
-
-def config_keyword_matches(title: str, keyword: str | None) -> bool:
-    # RV-BE-04: every keyword token must appear among the title tokens, in
-    # any order, with the normalisation is_strict_match uses. The old
-    # substring test rejected "Samsung Galaxy S23 8/256" for "samsung s23"
-    # and "MacBook Air 13 M2" for "macbook air m2"; since every tracker got
-    # the whole query as its default keyword, alerts were silently lost.
-    keyword_tokens = set(tokenize_search_text(keyword or ""))
-    if not keyword_tokens:
-        return True
-    return keyword_tokens <= set(tokenize_search_text(title))
-
-
 def profile_match_bonus(query: str, title: str) -> tuple[int, str | None, str | None]:
     query_profile = analyze_query_text(query)
     title_profile = analyze_query_text(title)
@@ -395,7 +376,6 @@ def matches_tracker_filters(
     seller_type: str | None = None,
     condition: str | None = None,
     region_name: str | None = None,
-    config_keyword: str | None = None,
 ) -> bool:
     price_byn = normalize_price_byn(ad.get("price_byn"))
     if max_price_byn is not None and price_byn is not None and price_byn > max_price_byn:
@@ -422,8 +402,6 @@ def matches_tracker_filters(
     # D-2: region comparison is now case-insensitive and
     # whitespace-tolerant — matches /listings behaviour.
     if not match_region_filter(ad, region_name):
-        return False
-    if config_keyword and not config_keyword_matches(str(ad.get("subject", "")), config_keyword):
         return False
     if min_discount_percent is not None:
         delta = compute_price_vs_reference(ad, market_stats, category_price_stats)

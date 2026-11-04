@@ -63,6 +63,32 @@ body.modal-open {
     animation: modal-sheet-out 240ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
 }
 
+#detail-modal {
+    animation-duration: 340ms;
+}
+
+#detail-modal.is-closing {
+    animation-duration: 320ms;
+}
+
+#detail-modal .detail-sheet {
+    animation: listing-sheet-in 340ms cubic-bezier(0.2, 0.7, 0.25, 1) both;
+}
+
+#detail-modal.is-closing .detail-sheet {
+    animation: listing-sheet-out 320ms cubic-bezier(0.4, 0, 0.65, 1) both;
+}
+
+@keyframes listing-sheet-in {
+    from { transform: translateY(36px); }
+    to   { transform: translateY(0); }
+}
+
+@keyframes listing-sheet-out {
+    from { transform: translateY(0); }
+    to   { transform: translateY(36px); }
+}
+
 .typed-confirm-modal {
     display: flex;
     align-items: center;
@@ -781,36 +807,6 @@ body.modal-open {
     flex-direction: column;
     gap: var(--space-1);
     border: 1px solid var(--border);
-    position: relative;
-    overflow: hidden;
-}
-
-.profit-card::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: var(--border);
-}
-
-.profit-card.is-accent {
-    background: var(--green-soft);
-    border-color: color-mix(in srgb, var(--green) 18%, var(--border));
-}
-
-.profit-card.is-accent::after {
-    background: var(--green);
-}
-
-.profit-card.is-warning {
-    background: var(--accent-soft);
-    border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
-}
-
-.profit-card.is-warning::after {
-    background: var(--accent);
 }
 
 .profit-card-label {
@@ -829,12 +825,12 @@ body.modal-open {
     line-height: 1.2;
 }
 
-.profit-card.is-accent .profit-card-value {
+.profit-card.is-positive .profit-card-value {
     color: var(--green-text);
 }
 
-.profit-card.is-warning .profit-card-value {
-    color: var(--accent);
+.profit-card.is-negative .profit-card-value {
+    color: var(--red-text);
 }
 
 .profit-card-sub {
@@ -861,11 +857,6 @@ body.modal-open {
     width: 60%;
     height: 12px;
     margin-top: 8px;
-}
-
-.lead-actions-wrap {
-    display: flex;
-    gap: var(--space-2);
 }
 
 /* ===== Expenses Modal ===== */
@@ -1004,10 +995,6 @@ body.modal-open {
     box-shadow: var(--shadow-toast-subtle);
 }
 
-[data-theme="light"] .profit-card::after {
-    opacity: 0.5;
-}
-
 [data-theme="light"] .expense-row {
     background: var(--surface-empty-subtle);
 }
@@ -1094,28 +1081,6 @@ body.modal-open {
 
     .summary-top {
         flex-direction: column;
-    }
-
-    .summary-metrics {
-        width: 100%;
-        justify-content: flex-start;
-        flex-wrap: wrap;
-    }
-
-    .summary-pill {
-        flex: 1 1 calc(50% - 4px);
-        min-width: 0;
-    }
-
-    .summary-pill--hero {
-        flex: 1 1 calc(50% - 4px);
-        min-width: 0;
-    }
-
-    .summary-pill-value {
-        white-space: normal;
-        word-break: break-word;
-        font-size: var(--text-sm);
     }
 
     .stats-grid {
@@ -1528,29 +1493,4 @@ body.lp-menu-open {
 
 [data-theme="light"] .privacy-table th {
     color: var(--text-secondary);
-}
-
-/* ===== Header Privacy Button ===== */
-.header-privacy-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
-    min-height: 44px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: background var(--tr-base), color var(--tr-base), border-color var(--tr-base);
-    flex-shrink: 0;
-    padding: 0;
-}
-
-.header-privacy-btn:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: var(--accent-soft);
 }

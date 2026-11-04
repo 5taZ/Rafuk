@@ -18,9 +18,9 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261103-market-filters";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261103-market-filters";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261103-market-filters";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261104-unified-card-detail";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261104-unified-card-detail";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261104-unified-card-detail";
 
 function _lazyLoadDealsSources(context) {
     if (_loadPromises.has("deals")) return _loadPromises.get("deals");
@@ -116,7 +116,7 @@ function createRenderModals(context) {
     // here answers a tap, so a failure retries on the next tap (no
     // cooldown) and tells the user instead of silently doing nothing.
     const lazy = _createLazyModule(context, {
-        load: _lazyLoadDealsSources,
+        load: () => context._loadScript(_LAZY_DEALS_RENDER_MODALS_URL),
         factoryKey: "_realCreateRenderModals",
         label: "render_modals.js",
     });
@@ -138,16 +138,24 @@ function createRenderModals(context) {
                 // The detail modal never opened: don't leave state
                 // claiming it is on screen (Escape / back would chase it).
                 if (method === "renderDetailModal" && context.state?.detail) {
-                    context.state.detail.data = null;
+                    if (!context.state.detail.data) return;
+                    closeDetailModal();
                 }
                 _showLazyLoadToast(context);
             });
         return undefined;
     }
 
+    function closeDetailModal() {
+        const loaded = lazy.current();
+        if (loaded) return loaded.closeDetailModal();
+        context.actions?.abortDetailRequest?.();
+        if (context.state?.detail) context.state.detail.data = null;
+    }
+
     return {
         renderDetailModal: (...args) => _delegate("renderDetailModal", args),
-        closeDetailModal: (...args) => _lazyTeardownCall(lazy, "closeDetailModal", args),
+        closeDetailModal,
         renderExpensesModal: (...args) => _delegate("renderExpensesModal", args),
         openExpensesModal: (...args) => _delegate("openExpensesModal", args),
         closeExpensesModal: (...args) => _lazyTeardownCall(lazy, "closeExpensesModal", args),

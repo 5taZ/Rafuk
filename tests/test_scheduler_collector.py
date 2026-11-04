@@ -366,7 +366,6 @@ def test_detect_threshold_alerts_ignores_overpriced_listings():
     tracker.seller_type = None
     tracker.condition = None
     tracker.region_name = None
-    tracker.config_keyword = None
     tracker.category_id = None
 
     market_stats = PriceStats(
@@ -3063,7 +3062,6 @@ def _threshold_tracker(**overrides) -> MagicMock:
     tracker.seller_type = None
     tracker.condition = None
     tracker.region_name = None
-    tracker.config_keyword = None
     tracker.category_id = None
     for key, value in overrides.items():
         setattr(tracker, key, value)

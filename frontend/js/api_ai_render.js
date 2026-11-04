@@ -19,6 +19,7 @@ function createAiRender(context, aiCtx) {
         safeKufarUrl,
         safeImageUrl,
         formatPrice,
+        formatPriceRange,
         postJson,
         showToast,
         logClientError = () => {},
@@ -319,9 +320,9 @@ function createAiRender(context, aiCtx) {
             const toPrice = fairPrice.to || fairPrice.to_price;
             let priceText = "";
             if (fromPrice != null && toPrice != null) {
-                priceText = `${Math.round(fromPrice)} — ${Math.round(toPrice)} BYN`;
+                priceText = formatPriceRange(fromPrice, toPrice);
             } else if (fromPrice != null) {
-                priceText = `~${Math.round(fromPrice)} BYN`;
+                priceText = `~${formatPrice(fromPrice)}`;
             }
             nodes.push(
                 _buildAiSection(
@@ -351,7 +352,7 @@ function createAiRender(context, aiCtx) {
                                     "div",
                                     { className: "ai-resale-row" },
                                     domEl("span", { className: "ai-resale-label", text: price.label }),
-                                    domEl("span", { className: "ai-resale-price mono", text: `${Math.round(price.price_byn)} BYN` }),
+                                    domEl("span", { className: "ai-resale-price mono", text: formatPrice(price.price_byn) }),
                                     price.reasoning ? domEl("span", { className: "ai-resale-note", text: price.reasoning }) : null,
                                 ))
                             ),
@@ -482,7 +483,7 @@ function createAiRender(context, aiCtx) {
                                             "span",
                                             {
                                                 className: "ai-similar-price mono",
-                                                text: `${Math.round(item.price_byn)} BYN${item.condition ? ` · ${item.condition}` : ""}`,
+                                                text: `${formatPrice(item.price_byn)}${item.condition ? ` · ${item.condition}` : ""}`,
                                             },
                                         ),
                                     ),

@@ -282,10 +282,6 @@ async def create_tracker(
             seller_type=payload.seller_type,
             condition=payload.condition,
             region_name=payload.region_name,
-            # RV-BE-04: no default_config_keyword(query) any more — that put
-            # the whole query in as a substring filter and dropped most
-            # matches. NULL means "no extra keyword filter".
-            config_keyword=payload.config_keyword,
             alert_price_threshold=payload.alert_price_threshold,
             alert_discount_percent=payload.alert_discount_percent,
         )
@@ -386,7 +382,6 @@ async def update_tracker(
             "seller_type",
             "condition",
             "region_name",
-            "config_keyword",
             "alert_price_threshold",
             "alert_discount_percent",
         }

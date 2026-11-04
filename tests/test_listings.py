@@ -53,6 +53,75 @@ FAKE_ADS = [
 VERDICTS = {"Хорошая цена", "Ниже рынка", "Средняя цена", "Выше рынка"}
 
 
+def test_listing_prices_use_the_shared_comparable_market() -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+    from api.services.watchlist_market import build_market_comparables, compare_watchlist_ad
+
+    def laptop(ad_id: int, title: str, price: int) -> dict:
+        return {
+            "ad_id": ad_id, "subject": title, "category": 16040, "price_byn": price * 100,
+            "ad_link": f"https://www.kufar.by/item/{ad_id}",
+            "ad_parameters": [{"p": "condition", "v": "Б/у"}],
+        }
+
+    ads = [
+        laptop(1, "Apple MacBook Air 13 M4 16/256", 3200),
+        laptop(2, "MacBook Air M4 2025", 3200),
+        laptop(3, 'MacBook Air M4 13" 16/256', 3400),
+        laptop(4, "MacBook Air 13 M4 16/256 Sky Blue", 3600),
+        laptop(5, "Apple MacBook Air 13 M4 16/256 в отличном состоянии", 3800),
+        laptop(6, "MacBook Air 15 M4 16/256", 5100),
+        laptop(7, "MacBook Air 13 M4 16/512", 4900),
+        laptop(8, "MacBook Air 13 M4 16/256GB или 512GB", 2200),
+    ]
+
+    market_requests = []
+
+    class LaptopClient(FakeKufarClient):
+        async def search_all_ads(self, **kwargs) -> dict:
+            if kwargs.get("page_limit"):
+                market_requests.append(kwargs)
+                return {"ads": ads, "total": len(ads), "has_more": False}
+            if kwargs.get("price_range"):
+                return {"ads": ads[:2], "total": 2}
+            return {"ads": ads, "total": len(ads)}
+
+    app = create_app()
+    cache = MemoryCache()
+    app.dependency_overrides[get_kufar_client] = lambda: LaptopClient(None)
+    app.dependency_overrides[get_cache] = lambda: cache
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    params = {"query": "MacBook Air M4", "strict_search": "false"}
+    with TestClient(app) as client:
+        fast = client.get("/api/v1/listings", params={**params, "include_market": "false"})
+        assert fast.status_code == 200, fast.text
+        assert len(fast.json()["listings"]) == len(ads)
+        assert all(item["market_comparison"] is None for item in fast.json()["listings"])
+        assert market_requests == []
+        response = client.get("/api/v1/listings", params=params)
+        assert response.status_code == 200, response.text
+        items = {item["ad_id"]: item for item in response.json()["listings"]}
+        detail = client.get("/api/v1/listing-detail", params={**params, "ad_id": 1})
+        assert detail.status_code == 200, detail.text
+        filtered = client.get("/api/v1/listings", params={**params, "max_price": 3200})
+        assert filtered.status_code == 200, filtered.text
+        filtered_items = {item["ad_id"]: item for item in filtered.json()["listings"]}
+
+    ai_market = build_market_comparables(ads[0], ads)
+    assert {ad["ad_id"] for ad in ai_market.ads} == {3, 4, 5}
+    comparison = compare_watchlist_ad(ads[0], ads).model_dump()
+    assert comparison["median_byn"] == ai_market.stats.median == 3600
+    assert comparison["delta_percent"] == -11.11
+    assert items[1]["market_comparison"] == detail.json()["market_comparison"] == comparison
+    assert filtered_items[1]["market_comparison"] == comparison
+    assert 3 not in filtered_items
+    assert items[2]["market_comparison"] is None
+    assert market_requests == [{
+        "query": "MacBook Air M4", "currency": "BYN", "category": 16040, "page_limit": 8,
+    }]
+
+
 def test_listings_endpoint_returns_items(monkeypatch) -> None:
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
@@ -1072,13 +1141,7 @@ def test_listings_pagination_validates_bounds(monkeypatch) -> None:
 
 
 def test_listings_caches_kufar_dataset_for_repeat_calls(monkeypatch) -> None:
-    """First /listings request paginates Kufar; the second on the same
-    query should hit the dataset cache and skip the upstream entirely.
-
-    This is the cross-endpoint sharing path: when a frontend search
-    fires /price-stats + /listings + /geography in parallel, only the
-    first to land actually pages Kufar — the rest hit the cache.
-    """
+    """Both the visible dataset and the category market are reused across pages."""
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
     from api.routers import listings
@@ -1108,13 +1171,12 @@ def test_listings_caches_kufar_dataset_for_repeat_calls(monkeypatch) -> None:
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        # First call — cold cache, paginates Kufar (1 search_all_ads).
         first = client.get(
             "/api/v1/listings",
-            params={"query": "iphone", "limit": 20, "offset": 0},
+            params={"query": "iphone", "limit": 1, "offset": 0},
         )
         assert first.status_code == 200
-        assert fetch_calls == 1, "first call should paginate Kufar exactly once"
+        assert fetch_calls == 2
 
         # Different page of the SAME query — must reuse the cached
         # raw Kufar dataset; the listings response cache is keyed on
@@ -1122,26 +1184,17 @@ def test_listings_caches_kufar_dataset_for_repeat_calls(monkeypatch) -> None:
         # to load_query_dataset, and there hit the dataset cache.
         second = client.get(
             "/api/v1/listings",
-            params={"query": "iphone", "limit": 20, "offset": 20},
+            params={"query": "iphone", "limit": 1, "offset": 1},
         )
         assert second.status_code == 200
-        assert fetch_calls == 1, (
+        assert fetch_calls == 2, (
             f"second call hit Kufar {fetch_calls} times — dataset cache "
             f"should have caught it"
         )
 
 
 def test_listings_singleflight_collapses_concurrent_kufar_fetches(monkeypatch) -> None:
-    """Six concurrent endpoint requests for the same query should all
-    share ONE Kufar pagination, not each kick off their own.
-
-    Without singleflight, ``cache.get_json`` returned None for every
-    parallel caller before any of them had time to write a result —
-    they all started their own pagination behind the 1s rate-limit
-    delay, summing to ~9 s of wall-clock for "samsung" sort queries.
-    Singleflight makes the second-through-N callers await the same
-    in-flight Future the first arrival created.
-    """
+    """Six concurrent requests share one visible fetch and one category fetch."""
     import asyncio as _asyncio
 
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
@@ -1175,7 +1228,7 @@ def test_listings_singleflight_collapses_concurrent_kufar_fetches(monkeypatch) -
     app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
 
     with TestClient(app) as client:
-        # Issue 6 parallel requests — same query, different offsets so
+        # Issue 6 parallel requests — same query, different page sizes so
         # the per-page response cache doesn't short-circuit them.
         from concurrent.futures import ThreadPoolExecutor
 
@@ -1184,18 +1237,16 @@ def test_listings_singleflight_collapses_concurrent_kufar_fetches(monkeypatch) -
                 pool.submit(
                     client.get,
                     "/api/v1/listings",
-                    params={"query": "iphone", "limit": 10, "offset": offset},
+                    params={"query": "iphone", "limit": limit},
                 )
-                for offset in (0, 10, 20, 30, 40, 50)
+                for limit in range(1, 7)
             ]
             responses = [f.result(timeout=10) for f in futures]
 
     assert all(r.status_code == 200 for r in responses), [r.status_code for r in responses]
-    # Exactly one Kufar pagination across all 6 concurrent calls —
-    # the whole point of singleflight.
-    assert fetch_calls == 1, (
+    assert fetch_calls == 2, (
         f"singleflight failed: 6 concurrent calls triggered {fetch_calls} "
-        f"Kufar paginations; expected exactly 1"
+        f"Kufar paginations; expected exactly 2"
     )
 
 

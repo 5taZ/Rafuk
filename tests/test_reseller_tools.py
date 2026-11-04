@@ -12,8 +12,6 @@ from api.services.reseller_tools import (
     SCORING,
     analyze_query_text,
     compute_deal_score,
-    config_keyword_matches,
-    default_config_keyword,
     matches_tracker_filters,
 )
 
@@ -175,20 +173,6 @@ def test_matches_tracker_filters_condition() -> None:
     assert matches_tracker_filters(ad_used, market_stats=stats, condition="used") is True
 
 
-def test_matches_tracker_filters_config_keyword() -> None:
-    ad_match = _make_ad(price_byn=100000, subject="iPhone 15 Pro Max 256GB")
-    ad_no_match = _make_ad(price_byn=100000, subject="Samsung Galaxy S25")
-    stats = _make_stats(median=1000.0)
-    assert (
-        matches_tracker_filters(ad_match, market_stats=stats, config_keyword="iphone 15 pro")
-        is True
-    )
-    assert (
-        matches_tracker_filters(ad_no_match, market_stats=stats, config_keyword="iphone 15 pro")
-        is False
-    )
-
-
 def test_matches_tracker_filters_combined_filters() -> None:
     ad = _make_ad(price_byn=90000, subject="iPhone 15 128GB", condition="1")
     stats = _make_stats(median=1000.0)
@@ -198,7 +182,6 @@ def test_matches_tracker_filters_combined_filters() -> None:
             market_stats=stats,
             max_price_byn=1000.0,
             condition="used",
-            config_keyword="iphone 15",
         )
         is True
     )
@@ -495,53 +478,3 @@ def test_blank_filters_mean_no_filter() -> None:
     stats = _make_stats(median=1000.0)
     for ad in _ADS.values():
         assert matches_tracker_filters(ad, market_stats=stats, seller_type="", condition="  ")
-
-
-# ---------------------------------------------------------------------------
-# RV-BE-04: config_keyword matches a token set, not a substring
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("title", "keyword"),
-    [
-        ("Samsung Galaxy S23 8/256", "samsung s23"),
-        ("MacBook Air 13 M2", "macbook air m2"),
-        ("iPhone 13 Pro Max 256GB", "pro max 256"),
-        ("MacBook Air M1 8GB/256GB", "m1 8 256"),
-        ("Galaxy S23 Samsung", "S23 SAMSUNG"),
-    ],
-)
-def test_config_keyword_matches_tokens_in_any_order(title: str, keyword: str) -> None:
-    """RV-BE-04: the old substring check rejected all of these."""
-    assert config_keyword_matches(title, keyword) is True
-
-
-@pytest.mark.parametrize(
-    ("title", "keyword"),
-    [
-        ("Samsung Galaxy S22 8/256", "samsung s23"),
-        ("MacBook Pro 14 M2", "macbook air m2"),
-        ("iPhone 13 Pro 256GB", "pro max 256"),
-    ],
-)
-def test_config_keyword_still_requires_every_token(title: str, keyword: str) -> None:
-    assert config_keyword_matches(title, keyword) is False
-
-
-def test_config_keyword_blank_means_no_filter() -> None:
-    assert config_keyword_matches("Anything", None) is True
-    assert config_keyword_matches("Anything", "") is True
-    assert config_keyword_matches("Anything", " / ") is True
-
-
-def test_legacy_default_config_keyword_no_longer_drops_reordered_titles() -> None:
-    """Trackers created before RV-BE-04 still carry the whole normalised
-    query as config_keyword; token matching makes those rows work too."""
-    stats = _make_stats(median=1000.0)
-    legacy_keyword = default_config_keyword("Samsung S23")
-    ad = _make_ad(subject="Samsung Galaxy S23 8/256", price_byn=100000)
-    assert matches_tracker_filters(ad, market_stats=stats, config_keyword=legacy_keyword)
-    legacy_keyword = default_config_keyword("macbook air m2")
-    ad = _make_ad(subject="MacBook Air 13 M2", price_byn=100000)
-    assert matches_tracker_filters(ad, market_stats=stats, config_keyword=legacy_keyword)

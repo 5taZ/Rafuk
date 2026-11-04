@@ -6,8 +6,10 @@ import asyncio
 import hashlib
 import logging
 import re as _re
+import time
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
@@ -25,9 +27,7 @@ from api.schemas import (
     AINegotiationCounter,
 )
 from api.services.aggregator import (
-    compute_price_stats,
-    extract_prices,
-    filter_ads_for_accessory_category,
+    get_category_id,
     normalize_price_byn,
 )
 from api.services.ai_analysis_pipeline import _AI_ANALYSIS_ERRORS
@@ -58,6 +58,13 @@ from api.services.ai_sanitize import (
 from api.services.client_ip import get_client_ip
 from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.query_pipeline import load_query_dataset
+from api.services.watchlist_market import (
+    MARKET_ESTIMATE_TTL,
+    NO_COMPARABLE_PRICES,
+    build_market_comparables,
+    listing_draft_target,
+    watchlist_comparison_query,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +247,7 @@ def _listing_assistant_cache_key(
     canonical_notes = " ".join((payload.extra_notes or "").lower().split())
     photo_hashes = [hashlib.sha256(p.encode("utf-8")).hexdigest()[:16] for p in photos]
     parts = [
-        ("v", "4"),
+        ("v", "6"),
         ("title", canonical_title),
         ("category", str(payload.category or "")),
         ("condition", (payload.condition or "").strip().lower()),
@@ -266,6 +273,10 @@ def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[s
         "screen_size", "diagonal", "processor", "cpu", "gpu",
         "drive_type", "ssd_capacity", "hdd_capacity",
         "mileage", "engine_volume", "year", "year_of_manufacture",
+        "regdate", "cars_engine", "cars_capacity", "cars_gearbox", "cars_type",
+        "phablet_phones_memory", "phablet_phones_ram",
+        "computers_laptop_processor", "computer_equipment_laptops_ram",
+        "computers_laptop_hdd_volume",
         "rooms", "area", "floor", "total_floors",
         "frame_size", "wheel_size",
     }
@@ -284,7 +295,7 @@ def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[s
         key_params: list[str] = []
         for p in params:
             label = str(p.get("p") or "").lower()
-            value = str(p.get("v") or p.get("vl") or "").strip()
+            value = str(p.get("vl") or p.get("v") or "").strip()
             if not value:
                 continue
             if label == "seller_type" and value:
@@ -292,7 +303,7 @@ def _build_listing_competitors(dataset_ads: list[dict[str, Any]]) -> list[dict[s
             elif label in {"condition", "cond"} and value:
                 condition = value
             elif label in _pricing_params:
-                key_params.append(f"{label}={value}")
+                key_params.append(f"{p.get('pl') or label}={value}")
         out.append(
             {
                 "title": title_text[:120],
@@ -340,8 +351,6 @@ def _build_listing_fallback_response(
     q1 = _coerce_price(market_anchors.get("q1"))
     q3 = _coerce_price(market_anchors.get("q3"))
     count = int(market_anchors.get("count") or 0)
-    draft = _coerce_price(payload.draft_price_byn)
-    anchor = median or draft
 
     pricing = AIListingPricing(
         market_median_byn=median,
@@ -349,10 +358,10 @@ def _build_listing_fallback_response(
         market_q3_byn=q3,
         competing_count=count,
     )
-    if anchor:
-        fast = q1 or round(anchor * 0.92, 2)
-        market = median or anchor
-        patient = q3 or round(anchor * 1.08, 2)
+    if median:
+        fast = q1 or round(median * 0.92, 2)
+        market = median
+        patient = q3 or round(median * 1.08, 2)
         pricing.fast = AIListingPriceTier(
             label="Быстро",
             price_byn=fast,
@@ -411,15 +420,10 @@ def _build_listing_fallback_response(
             f"по данным Kufar: {count} похожих объявлений, медианный ориентир "
             f"около {round(median)} BYN."
         )
-    elif draft:
-        market_summary = (
-            "AI-сервис сейчас недоступен, поэтому показан базовый черновик от вашей цены. "
-            "Уточните название или категорию, чтобы получить больше рыночных аналогов."
-        )
     else:
         market_summary = (
             "AI-сервис сейчас недоступен, поэтому показан базовый черновик. "
-            "Добавьте цену, состояние или больше характеристик для точнее ориентира."
+            + NO_COMPARABLE_PRICES
         )
 
     playbook = []
@@ -552,6 +556,7 @@ async def _draft_listing(
     audit_model: str,
     client_ip: str | None,
 ) -> AIListingAssistantResponse:
+    started_at = time.monotonic()
     # AI audit trail (Belarus Law No. 99-З) — cache miss path.
     await _log_ai_audit(
         request.app.state.session_factory,
@@ -562,55 +567,33 @@ async def _draft_listing(
         ip_address=client_ip,
     )
 
-    try:
-        dataset = await load_query_dataset(
-            query=title,
-            currency="BYN",
-            strict_search=True,
-            settings=settings,
-            client=kufar_client,
-            category=payload.category,
-        )
-    except KufarAPIError as exc:
-        logger.warning("Listing assistant: Kufar strict search failed: %s", exc)
-        dataset = None
-
-    if dataset is None or not dataset.ads:
+    async def search(query: str, category: int | None) -> list[dict[str, Any]]:
         try:
             dataset = await load_query_dataset(
-                query=title,
-                currency="BYN",
-                strict_search=False,
-                settings=settings,
-                client=kufar_client,
-                category=payload.category,
+                query=query, currency="BYN", strict_search=False,
+                settings=settings, client=kufar_client, category=category,
             )
-        except KufarAPIError as exc:
-            logger.warning("Listing assistant: Kufar broad search also failed: %s", exc)
-            dataset = None
+        except (KufarAPIError, httpx.HTTPError) as exc:
+            logger.warning("Listing assistant market search failed: %s", type(exc).__name__)
+            return []
+        return dataset.ads
 
-    market_stats = dataset.price_stats if dataset is not None else None
+    ads = await search(title, payload.category)
+    target = listing_draft_target(
+        title, payload.condition, payload.extra_notes, payload.category, ads,
+    )
+    category = get_category_id(target)
+    focused_query = watchlist_comparison_query(target)[:255] or title
+    if category is not None and (category, focused_query.casefold()) != (
+        payload.category, title.casefold(),
+    ):
+        ads = [*(await search(focused_query, category)), *ads]
 
-    # Detect category early so we can filter ads for accessories.
-    # When searching "чехол iPhone", Kufar returns phones + cases;
-    # filtering by price cap keeps only accessory-priced listings.
-    parameters = []
-    if payload.condition:
-        parameters.append({"label": "condition", "value": payload.condition})
+    market = build_market_comparables(target, ads)
+    market_stats = market.stats if market.reliable else None
+    competitors = _build_listing_competitors(market.ads) if market.reliable else []
+    parameters = [{"label": "condition", "value": payload.condition}] if payload.condition else []
     category_key = detect_category(title, parameters)
-    filtered_ads = dataset.ads if dataset is not None else []
-    if dataset is not None and category_key in {
-        "phone_accessory", "auto_accessory", "computer_accessory",
-        "photo_accessory", "gaming_accessory", "home_accessory",
-        "bicycle_accessory", "watch_accessory",
-    }:
-        filtered_ads = filter_ads_for_accessory_category(dataset.ads, category_key)
-        if filtered_ads is not dataset.ads:
-            filtered_prices = extract_prices(filtered_ads)
-            if filtered_prices:
-                market_stats = compute_price_stats(filtered_prices)
-
-    competitors = _build_listing_competitors(filtered_ads)
 
     market_anchors: dict[str, float | int | None] = {
         "median": market_stats.median if market_stats and market_stats.count else None,
@@ -660,7 +643,10 @@ async def _draft_listing(
     # in a draft the seller will paste into Kufar. Competitor links are
     # rebuilt from the dataset in _coerce_competitors.
     ai_result = scrub_model_payload(ai_result)
-    raw_pricing = ai_result.get("pricing") if isinstance(ai_result.get("pricing"), dict) else {}
+    raw_pricing = (
+        ai_result["pricing"] if market.reliable and isinstance(ai_result.get("pricing"), dict)
+        else {}
+    )
     normalised_pricing = normalize_listing_pricing(
         raw_pricing,
         market_median=market_anchors["median"],
@@ -672,8 +658,13 @@ async def _draft_listing(
     )
     pricing = _coerce_pricing(normalised_pricing, market_anchors=market_anchors)
 
-    market_summary = str(ai_result.get("market_summary") or "").strip()
-    warning = thin_market_warning(int(market_anchors["count"] or 0))
+    market_summary = NO_COMPARABLE_PRICES
+    if market.reliable:
+        market_summary = (
+            f"Медианная цена предложений Kufar — {round(market.stats.median)} BYN. "
+            f"Сопоставимых объявлений с ценой: {market.stats.count}."
+        )
+    warning = thin_market_warning(market.stats.count) if market.reliable else None
     if warning:
         market_summary = f"{warning}\n\n{market_summary}".strip() if market_summary else warning
     selling_points, photo_tips = repair_seller_advice(
@@ -690,7 +681,9 @@ async def _draft_listing(
         description_short=str(ai_result.get("description_short") or "").strip()[:400],
         selling_points=selling_points,
         pricing=pricing,
-        negotiation_playbook=_coerce_negotiation(ai_result.get("negotiation_playbook")),
+        negotiation_playbook=(
+            _coerce_negotiation(ai_result.get("negotiation_playbook")) if market.reliable else []
+        ),
         photo_tips=photo_tips,
         competitors=_coerce_competitors(
             ai_result.get("competitors"), dataset_competitors=competitors,
@@ -702,6 +695,7 @@ async def _draft_listing(
     serialized = sanitize_public_ai_payload(
         strip_html_in_payload(response.model_dump(mode="json"))
     )
-    cache_ttl = int(getattr(settings, "ai_listing_assistant_cache_ttl", 3600) or 3600)
-    await cache.set_json(cache_key, serialized, ttl=cache_ttl)
+    cache_ttl = int(MARKET_ESTIMATE_TTL - (time.monotonic() - started_at))
+    if cache_ttl > 0:
+        await cache.set_json(cache_key, serialized, ttl=cache_ttl)
     return AIListingAssistantResponse.model_validate(serialized)

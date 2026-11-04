@@ -76,7 +76,7 @@ def test_has_required_methods_and_endpoints() -> None:
     assert "Telegram.WebApp" in all_js
 
 
-def test_price_format_is_plain_byn_everywhere() -> None:
+def test_price_format_groups_amounts_and_keeps_byn_attached() -> None:
     dom_helpers_js = (JS_DIR / "dom_helpers.js").read_text(encoding="utf-8")
     app_core_dom_js = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
     app_core_js = (JS_DIR / "app_core.js").read_text(encoding="utf-8")
@@ -93,9 +93,21 @@ global.document = { documentElement: { setAttribute() {}, getAttribute() { retur
 global.localStorage = { getItem() { return null; }, setItem() {} };
 global.window = { Telegram: null, matchMedia: null };
 const core = createAppCore();
-assert.strictEqual(core.formatPrice(1150), "1150 BYN");
-assert.strictEqual(core.formatPrice(2500), "2500 BYN");
-assert.strictEqual(core.formatPrice(999.4), "999 BYN");
+assert.strictEqual(core.formatPrice(1150), "1\u202f150\u202fBYN");
+assert.strictEqual(core.formatPrice(2500), "2\u202f500\u202fBYN");
+assert.strictEqual(core.formatPrice(999.4), "999\u202fBYN");
+assert.strictEqual(core.formatPriceRange(2353, 55091), "2\u202f353\u00a0– 55\u202f091\u202fBYN");
+assert.strictEqual(core.formatPriceRange(0, 0), "0\u202fBYN");
+assert.strictEqual(core.formatPriceRange(null, 55091), "—");
+assert.strictEqual(core.formatMarketDelta({delta_percent: -11.11}), "−11% к медиане аналогов");
+assert.strictEqual(core.formatMarketDelta({delta_percent: 0}), "0% к медиане аналогов");
+assert.strictEqual(core.formatMarketDelta({delta_percent: null}), "");
+assert.strictEqual(core.formatMarketDelta({delta_percent: -8, comparable_count: 12}),
+    "−8% к медиане · 12\u202fаналогов");
+assert.strictEqual(core.formatMarketDelta({delta_percent: 0, comparable_count: 4}),
+    "0% к медиане · 4\u202fаналога");
+assert.strictEqual(core.formatMarketDelta({delta_percent: 8, comparable_count: 21}),
+    "+8% к медиане · 21\u202fаналог");
 assert.strictEqual(core.formatPrice(null), "Договорная");
 assert.strictEqual(core.formatPrice(0, "free"), "Бесплатно");
 """
@@ -2140,13 +2152,51 @@ def test_trackers_preserve_category_scope_in_frontend() -> None:
     assert "function currentCategoryPayload()" in api_trackers
     assert "category_id: categoryPayload.category_id" in api_trackers
     assert "category_label: categoryPayload.category_label" in api_trackers
-    assert "populateEditCategorySelect(tracker)" in api_trackers
+    assert "loadEditCategories(tracker)" in api_trackers
     assert "function editCategoryPayload()" in api_trackers
     assert 'document.getElementById("edit-category-select")' in app_core_dom
     assert "tracker.category_label || `категория ${tracker.category_id}`" in render_trackers
     assert "state.filters.category = tracker.category_id ?? null" in render_trackers
     assert 'actions.search("overview", { keepFilters: true })' in render_trackers
     assert "context._hooks.renderFilterDropdown = renderFilterDropdown" in app_renderers
+
+
+def test_tracker_editor_loads_categories_for_its_own_query() -> None:
+    api_trackers = (JS_DIR / "api_trackers.js").read_text(encoding="utf-8")
+    _node_ok(api_trackers + r"""
+const assert = require("node:assert/strict");
+const select = { value: "", replaceChildren(...options) { this.options = options; } };
+const status = {};
+const state = {
+    search: { activeQuery: "Volkswagen Polo" },
+    filters: { categories: [{ id: 2010, label: "Cars" }] },
+    trackers: { items: [{ id: 1, query: "iPhone 14 Pro" }, { id: 2, query: "iPad" }] },
+    misc: {},
+};
+const requests = [];
+const actions = createApiTrackers({
+    state, elements: { editCategorySelect: select, editCategoryStatus: status },
+    domEl: (_, option) => option,
+    getJson: (url, {signal}) => new Promise(resolve => requests.push({url, signal, resolve})),
+});
+(async () => {
+    actions.openEditTracker(2);
+    actions.openEditTracker(1);
+    assert.equal(requests[0].signal.aborted, true);
+    assert.equal(select.options.length, 1, "unrelated main-search categories are excluded");
+    const params = new URL(requests[1].url, "http://rafuk.test").searchParams;
+    assert.equal(params.get("query"), "iPhone 14 Pro");
+    assert.equal(params.get("strict_search"), "false");
+    assert.equal(params.has("category"), false);
+    requests[1].resolve({categories: [{id: 17010, label: "Phones"}, {id: 17500, label: "Cases"}]});
+    await Promise.resolve();
+    assert.deepEqual(select.options.map(option => option.value), ["", 17010, 17500]);
+    assert.equal(status.hidden, true);
+    requests[0].resolve({categories: [{id: 2010, label: "Wrong"}]});
+    await Promise.resolve();
+    assert.equal(select.options[1].value, 17010);
+})();
+""")
 
 
 def test_toasts_are_minimal_and_fast() -> None:
@@ -2241,29 +2291,83 @@ def test_make_swipeable_helper_kept_for_future_surfaces() -> None:
     )
 
 
-def test_listing_detail_loaders_share_stale_response_guard() -> None:
-    """Three loaders open the listing-detail modal: openListingDetail
-    (search results), openLeadDetail, openWatchlistDetail. They share
-    state.detail and state.detailAi, so without a unified guard the
-    older fetch can resolve last and pop the wrong content into the
-    modal. Ensure all three bump the same _detailRequestId."""
-    listings_js = (JS_DIR / "api_listings.js").read_text(encoding="utf-8")
-    leads_js = (JS_DIR / "api_leads.js").read_text(encoding="utf-8")
-    watchlist_js = (JS_DIR / "api_watchlist.js").read_text(encoding="utf-8")
+def test_listing_details_open_immediately_and_ignore_stale_responses() -> None:
+    scripts = _js("api_listings.js", "api_watchlist.js", "api_leads.js", "render_modals.js")
+    _node_ok(scripts + r"""
+const assert = require("node:assert/strict");
+const state = {
+    search: { activeQuery: "iPhone 14 Pro", strictSearch: false },
+    detail: { data: null },
+    ui: { error: "Search retry" }, filters: { category: 17010 }, misc: { currency: "BYN" },
+};
+const requests = [];
+let renders = 0;
+const context = {
+    state, renderDetailModal: () => renders++,
+    getJson: (url, {signal}) => new Promise((resolve, reject) => {
+        requests.push({signal, resolve, reject, params: new URLSearchParams(url.split("?")[1])});
+    }),
+};
+const listings = createApiListings(context);
+context.openListingDetail = listings.openListingDetail;
+const watchlist = createApiWatchlist(context);
+const leads = createApiLeads(context);
+const modals = createRenderModals({
+    state, elements: {}, actions: listings, closeModalAnimated() {},
+});
+(async () => {
+    const item = {ad_id: 1, title: "iPhone", thumbnail: "preview.jpg", price_byn: 100};
+    const openTrackerEvent = (event) => listings.openListingDetail(
+        {...event, query: "Tracker query"}, {category: null, strictSearch: true},
+    );
+    for (const [open, price] of [
+        [listings.openListingDetail, 100],
+        [openTrackerEvent, 100],
+        [leads.openLeadDetail, 100],
+        [(listing) => watchlist.openWatchlistDetail({...listing, current_price_byn: 80}), 80],
+    ]) {
+        const before = renders;
+        const pending = open(item);
+        assert.equal(renders, before + 1, "preview opens immediately");
+        assert.equal(state.detail.data.title, "iPhone");
+        assert.equal(state.detail.data.price, price);
+        assert.deepEqual(state.detail.data.images, ["preview.jpg"]);
+        const last = requests.at(-1);
+        if (open === openTrackerEvent) {
+            assert.equal(last.params.get("query"), "Tracker query");
+            assert.equal(last.params.get("strict_search"), "true");
+            assert.equal(last.params.has("category"), false);
+        }
+        modals.closeDetailModal();
+        assert.equal(last.signal.aborted, true);
+        last.resolve({ad_id: 1, title: "Late response"});
+        await pending;
+        assert.equal(renders, before + 1, "the late response cannot reopen the sheet");
+        assert.equal(state.detail.data, null);
+        assert.equal(state.ui.error, "Search retry");
+    }
 
-    surfaces = (
-        ("api_listings.js", listings_js),
-        ("api_leads.js", leads_js),
-        ("api_watchlist.js", watchlist_js),
-    )
-    for path, text in surfaces:
-        assert "state.detail._requestId" in text, f"{path} missing detail-request-id guard"
-        assert "if (requestId !== state.detail._requestId)" in text, (
-            f"{path} missing stale-response check"
-        )
+    const stale = listings.openListingDetail(item);
+    const oldRequest = requests.at(-1);
+    const latest = watchlist.openWatchlistDetail({
+        ...item, ad_id: 2, title: "New", initial_price_byn: 80,
+    });
+    const latestRequest = requests.at(-1);
+    assert.equal(oldRequest.signal.aborted, true);
+    oldRequest.resolve({ad_id: 1, title: "Stale"});
+    await stale;
+    assert.equal(state.detail.data.title, "New");
+    latestRequest.resolve({ad_id: 2, title: "Enriched"});
+    await latest;
+    assert.equal(state.detail.data.title, "Enriched");
+    assert.equal(state.detail.fromWatchlist, true);
 
-    # loadHistory has its own dedicated counter.
-    assert "state.charts._historyRequestId" in listings_js
+    const failed = listings.openListingDetail(item);
+    requests.at(-1).reject(new Error("Offline"));
+    await failed;
+    assert.equal(state.detail.data.title, "iPhone", "failed enrichment leaves the preview open");
+    assert.equal(state.ui.error, "Search retry");
+})()""" + _NODE_FAIL)
 
 
 def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:
@@ -2471,7 +2575,7 @@ def test_render_charts_hex_literals_only_in_token_fallbacks() -> None:
 def test_hot_path_view_switches_do_not_double_render() -> None:
     """FE-NEW-7: hot paths (view switch, tab click) must NOT call
     renderAll() immediately after setActiveView() — setActiveView
-    already calls markDirty('tabs', 'views') + renderAll() internally.
+    already marks the affected sections dirty and renders internally.
     A redundant renderAll doubles the frame work on budget Android
     Telegram WebView devices."""
     actions_js = (JS_DIR / "app_actions.js").read_text(encoding="utf-8")
@@ -3123,6 +3227,72 @@ const queryOf = (url) => new URLSearchParams(url.split("?")[1]).get("query");
     _node_ok(harness)
 
 
+def test_search_shows_listings_before_stats_and_only_merges_current_market_results() -> None:
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "app_core_dom.js", "app_core.js", "api_core.js", "api_listings.js",
+    ) + r"""
+const assert = require("node:assert/strict");
+const {state} = createAppCore();
+const elements = {searchInput: el("input")};
+const pending = new Map();
+const requestKey = (url) => {
+    const parsed = new URL(url, "http://rafuk.test");
+    const q = parsed.searchParams.get("query");
+    if (parsed.pathname.endsWith("/price-stats")) return q + "-stats";
+    if (parsed.pathname.endsWith("/listings") && !parsed.searchParams.has("include_market")) {
+        assert.equal(parsed.searchParams.has("force_refresh"), false);
+        return q + "-market";
+    }
+    return "";
+};
+const api = createApiListings({
+    state, elements, buildCommonQuery: createApiCore({state}).buildCommonQuery,
+    markDirty() {}, renderAll() {}, scheduleRender() {}, focusTarget() {},
+    getJson(url) {
+        const key = requestKey(url);
+        if (key) return new Promise((resolve, reject) => pending.set(key, {resolve, reject}));
+        if (url.startsWith("/api/v1/listings")) {
+            assert.match(url, /include_market=false/);
+            return Promise.resolve({listings: [{ad_id: 1, price_byn: 100}], total: 1});
+        }
+        return Promise.resolve({});
+    },
+});
+(async () => {
+    const first = api.search("ads", {query: "iphone"});
+    await tick();
+    assert.equal(state.ui.loading, true, "the analytics request is still open");
+    assert.equal(state.listings._pending, false);
+    assert.equal(state.listings.items[0].price_byn, 100);
+    assert.equal(state.listings.items[0].market_comparison, undefined);
+    pending.get("iphone-market").resolve({
+        listings: [{ad_id: 1, price_byn: 100, market_comparison: {delta_percent: -10}}],
+    });
+    await tick();
+    assert.equal(state.listings.items[0].market_comparison.delta_percent, -10);
+    pending.get("iphone-stats").reject(new Error("Overview failed"));
+    await first;
+    assert.equal(state.listings.items[0].ad_id, 1, "analytics failure keeps visible listings");
+
+    const older = api.search("ads", {query: "old"});
+    await tick();
+    const newer = api.search("ads", {query: "new"});
+    await tick();
+    pending.get("old-market").resolve({
+        listings: [{ad_id: 1, price_byn: 100, market_comparison: {delta_percent: 99}}],
+    });
+    pending.get("old-stats").resolve({});
+    pending.get("new-stats").resolve({});
+    pending.get("new-market").resolve({
+        listings: [{ad_id: 1, price_byn: 101, market_comparison: {delta_percent: 88}}],
+    });
+    await Promise.all([older, newer]);
+    await tick();
+    assert.equal(state.listings.items[0].market_comparison, undefined);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
 def test_rv_fe03_input_events_edit_only_the_draft() -> None:
     """RV-FE-03: keystrokes edit ``draft``; refinement chips, the error
     retry, the strict toggle, filters and sort act on ``activeQuery``."""
@@ -3406,6 +3576,7 @@ const modals = createRenderModals(context);
     modals.closeDetailModal();
     assert.strictEqual(loads.length, loadsBefore, "closing never-opened modals loads nothing");
 
+    state.detail.data = { ad_id: 7 };
     modals.renderDetailModal();
     await tick(5);
     assert.strictEqual(state.detail.data, null, "a detail that never opened is not left in state");
@@ -3414,6 +3585,23 @@ const modals = createRenderModals(context);
     fail = false;
     await leads.loadLeads();
     assert.deepStrictEqual(realLoads, ["leads"], "the next call retried the download");
+
+    let finishLoading;
+    let opened = false;
+    let aborted = false;
+    context._loadScript = () => new Promise((resolve) => { finishLoading = resolve; });
+    context.actions = { abortDetailRequest() { aborted = true; } };
+    window.App._realCreateRenderModals = () => ({
+        renderDetailModal() { opened = Boolean(state.detail.data); },
+    });
+    const coldModals = createRenderModals(context);
+    state.detail.data = { ad_id: 7 };
+    coldModals.renderDetailModal();
+    coldModals.closeDetailModal();
+    finishLoading();
+    await tick(5);
+    assert.equal(aborted, true, "closing cancels detail while the renderer loads");
+    assert.equal(opened, false, "loading the renderer cannot open a dismissed card");
 })()""" + _NODE_FAIL
     _node_ok(harness)
 
@@ -3561,6 +3749,8 @@ const domContext = {
     attachLongPress: () => {},
     safeRender: (_name, fn) => fn(),
     formatPrice: (value) => (value == null ? "Договорная" : `${value} BYN`),
+    formatMarketDelta: ({delta_percent, comparable_count}) =>
+        `${delta_percent}% · Аналогов: ${comparable_count}`,
     formatCondition: (value) => value,
     formatSeller: (value) => value,
     formatDelta: (value) => `${value > 0 ? "+" : ""}${value}%`,
@@ -3594,7 +3784,13 @@ const state = {
     misc: { stats: {} },
     filters: {},
 };
-const elements = { leadInboxList: el("div", { role: "tabpanel" }), itemsFilterButtons: [] };
+const elements = {
+    leadInboxList: el("div", { role: "tabpanel" }),
+    itemsFilterButtons: [],
+    itemsClearHeader: el("div"),
+    clearAllLeadsButton: el("button"),
+    deleteAllWatchlistButton: el("button"),
+};
 document.body.append(elements.leadInboxList);
 const actions = {
     loadLeads: () => reloads.push("leads"),
@@ -3607,6 +3803,7 @@ const list = elements.leadInboxList;
 
 cards.renderLeads();
 const errorState = list.querySelector(".empty-state--error");
+assert.strictEqual(elements.itemsClearHeader.hidden, true);
 assert.ok(errorState, "error state instead of the empty state");
 assert.ok(errorState.textContent.includes("Не удалось загрузить покупки"));
 assert.ok(errorState.textContent.includes("Нет соединения с сервером."));
@@ -3616,21 +3813,34 @@ assert.deepStrictEqual(reloads, ["leads"]);
 
 state.leads.items = [{ id: 1, ad_id: 9, title: "Лот", status: "new" }];
 cards.renderLeads();
+assert.strictEqual(elements.itemsClearHeader.hidden, false);
+assert.strictEqual(elements.clearAllLeadsButton.hidden, false);
+assert.strictEqual(elements.deleteAllWatchlistButton.hidden, true);
 const notice = list.querySelector(".collection-error-notice");
 assert.ok(notice, "a notice above the kept list");
 assert.strictEqual(notice.closest("[role=list]"), null, "the notice is not a list child");
 assert.strictEqual(list.querySelectorAll("[role=list] > [role=listitem]").length, 1);
 
 state.leads.error = null;
-state.leads.items = [];
+state.leads.items = [{ id: 1, ad_id: 9, title: "Лот", status: "skipped" }];
 cards.renderLeads();
 assert.ok(list.textContent.includes("Нет сделок в работе"));
+assert.strictEqual(elements.itemsClearHeader.hidden, true);
+assert.strictEqual(elements.clearAllLeadsButton.hidden, true);
 
 state.leads._loading = true;
 cards.renderLeads();
 assert.strictEqual(
     list.querySelectorAll(".skeleton-card").length, 3, "first load shows skeletons",
 );
+state.leads.itemsFilter = "watching";
+cards.renderLeads();
+assert.strictEqual(elements.deleteAllWatchlistButton.hidden, true);
+state.watchlist.items = [{ id: 3, ad_id: 8, title: "Ноутбук", current_price_byn: 900 }];
+cards.renderLeads();
+assert.strictEqual(elements.itemsClearHeader.hidden, false);
+assert.strictEqual(elements.clearAllLeadsButton.hidden, true);
+assert.strictEqual(elements.deleteAllWatchlistButton.hidden, false);
 """
     _node_ok(harness)
 
@@ -4023,7 +4233,7 @@ const assert = require("assert");
 const opened = [];
 const added = [];
 const state = {
-    leads: { items: [] }, watchlist: { items: [] }, misc: { stats: {} }, filters: {},
+    leads: { items: [] }, watchlist: { items: [] }, misc: { stats: { median: 1600 } }, filters: {},
     listings: { items: [] }, search: { activeQuery: "iphone" }, ui: {},
 };
 const actions = {
@@ -4038,10 +4248,11 @@ const builders = createRenderCardBuilders(context);
 const item = {
     ad_id: 11, title: "iPhone 14 Pro", price: 1200, condition: "Б/у", seller_type: "Частное",
     list_time: new Date().toISOString(),
-    price_vs_median: -15,
+    price_vs_median: -2, deal_verdict: "Средняя цена",
+    market_comparison: {delta_percent: -20, median_byn: 1500, comparable_count: 4},
     thumbnail: "https://rms.kufar.by/v1/gallery/a.jpg",
 };
-const card = builders.buildListingNode(item, () => "neutral");
+const card = builders.buildListingNode(item);
 document.body.append(card);
 assert.strictEqual(card.getAttribute("role"), "listitem");
 assert.strictEqual(card.getAttribute("tabindex"), null);
@@ -4053,7 +4264,7 @@ const described = open.getAttribute("aria-describedby").split(" ")
     .map((id) => document.getElementById(id))
     .map((node) => node && node.textContent)
     .join(" | ");
-for (const part of ["1200 BYN", "Б/у", "Частное", "Новое", "-15%", "ниже среднего по запросу"]) {
+for (const part of ["1200 BYN", "Б/у", "Частное", "-20% · Аналогов: 4"]) {
     assert.ok(described.includes(part), `${part} missing from "${described}"`);
 }
 const photoAlt = card.querySelector("img").getAttribute("alt");
@@ -4066,10 +4277,21 @@ for (const control of card.querySelectorAll("button, a, input")) {
 const container = el("div");
 document.body.append(container);
 const renderer = createRenderCards(context);
-renderer.renderListingsCollection([item, { ...item, ad_id: 12 }], container, null, "");
+renderer.renderListingsCollection([
+    item,
+    {
+        ...item, ad_id: 12, market_comparison: null,
+        price_vs_median: -26, deal_verdict: "Хорошая цена",
+        list_time: new Date(Date.now() - 10 * 3600 * 1000).toISOString(),
+    },
+    { ...item, ad_id: 13, market_comparison: null, price_vs_median: null, deal_verdict: null },
+], container, null, "");
 assert.strictEqual(container.children.length, 1);
 const list = container.firstElementChild;
 assert.strictEqual(list.getAttribute("role"), "list");
+assert.doesNotMatch(list.textContent, /-2%|-25%|-26%|Средняя цена|Хорошая цена/);
+assert.doesNotMatch(list.textContent, /Сегодня|Новое/);
+assert.equal(list.querySelectorAll(".listing-badge[title]").length, 1);
 const strayChildren = list.children.filter((node) => node.getAttribute("role") !== "listitem");
 assert.strictEqual(strayChildren.length, 0, "the list holds only list items");
 list.querySelector(".card-open").click();
@@ -4097,32 +4319,63 @@ const opened = [];
 const state = {
     leads: { items: [] }, watchlist: { items: [] }, misc: { stats: {} },
     trackers: {
-        items: [],
+        items: [{ id: 1, category_id: 17010 }],
         events: [{
             ad_id: 5, title: "Велосипед", event_type: "price_drop", price_byn: 300,
             delta_byn: 50, region_name: "Минск", query: "велосипед", tracker_id: 1,
-            created_at: "2026-10-20",
+            created_at: "2026-10-20", strict_mode: true, thumbnail: "preview.jpg",
         }],
         eventFilter: "all",
         eventFilterTrackerId: null,
     },
 };
 const actions = {
+    openLeadDetail: (item) => opened.push(`lead:${item.id}`),
     openWatchlistDetail: (item) => opened.push(`watch:${item.id}`),
-    openListingDetail: (item) => opened.push(`event:${item.ad_id}`),
+    openListingDetail: (item, options) => {
+        opened.push(`event:${item.ad_id}`);
+        assert.equal(item.thumbnail, "preview.jpg");
+        assert.deepStrictEqual(options, {
+            strictSearch: true, category: 17010, referenceContext: "current",
+        });
+    },
 };
-const elements = { trackerEventsList: el("div"), trackerEventFilterButtons: [] };
+const elements = {
+    trackerEventsList: el("div"), trackerEventFilterButtons: [], clearEventsButton: el("button"),
+};
 document.body.append(elements.trackerEventsList);
 const context = { ...domContext, state, elements, actions };
 context.buildEmptyState = createRenderCore(context).buildEmptyState;
 const builders = createRenderCardBuilders(context);
 
-const watchItem = { id: 3, ad_id: 8, title: "Ноутбук", current_price_byn: 900 };
+const watchItem = {
+    id: 3, ad_id: 8, title: "Ноутбук", current_price_byn: 900, market_median_byn: 39,
+};
 const watch = builders.buildWatchlistNode(watchItem, (value) => value);
 document.body.append(watch);
+assert.strictEqual(watch.querySelector(".watchlist-profit"), null, "ignore the old query median");
+state.watchlist.comparisons = {
+    3: {
+        ad_found: true, current_price_byn: 950, median_byn: 1100,
+        category_label: "Ноутбуки", comparable_count: 4,
+    },
+};
+const compared = builders.buildWatchlistNode(watchItem, (value) => value);
+assert.ok(compared.querySelector(".watchlist-card-price").textContent.includes("950 BYN"));
+assert.ok(compared.querySelector(".watchlist-profit").textContent.includes("+150 BYN"));
+const comparisonNote = compared.querySelector(".watchlist-comparison-note");
+assert.ok(comparisonNote.textContent.includes("Аналогов: 4"));
+state.watchlist.comparisons = {3: {median_byn: null, comparable_count: 2}};
+const insufficient = builders.buildWatchlistNode(watchItem, (value) => value);
+assert.strictEqual(insufficient.querySelector(".watchlist-profit"), null);
+state.watchlist.comparisons = {3: {ad_found: true, current_price_byn: null, median_byn: 1100}};
+const negotiable = builders.buildWatchlistNode(watchItem, (value) => value);
+assert.strictEqual(negotiable.querySelector(".watchlist-card-price").textContent, "Договорная");
+assert.strictEqual(negotiable.querySelector(".watchlist-profit"), null);
 assert.strictEqual(watch.getAttribute("role"), "listitem");
 assert.strictEqual(watch.getAttribute("tabindex"), null);
 assert.ok(watch.querySelector(".watchlist-card-top .card-open"));
+assert.strictEqual(watch.querySelector('[data-role="detail"]'), null);
 const watchDescribedBy = watch.querySelector(".card-open").getAttribute("aria-describedby");
 const firstDescription = document.getElementById(watchDescribedBy.split(" ")[0]);
 assert.ok(firstDescription.textContent.includes("900 BYN"));
@@ -4135,21 +4388,31 @@ assert.strictEqual(lead.getAttribute("role"), "listitem");
 assert.strictEqual(lead.getAttribute("tabindex"), null);
 assert.strictEqual(lead.getAttribute("aria-label"), null);
 assert.ok(lead.querySelector("h3 .sr-only").textContent.includes("ожидает подтверждения"));
+lead.querySelector(".card-open").click();
+assert.deepStrictEqual(opened, ["watch:3", "lead:4"]);
 
 const trackers = createRenderTrackers(context);
 trackers.renderTrackerEvents();
+assert.strictEqual(elements.clearEventsButton.hidden, false);
 const list = elements.trackerEventsList.querySelector("[role=list]");
 assert.ok(list);
 const eventCard = list.querySelector("[role=listitem]");
 assert.ok(eventCard);
 assert.strictEqual(elements.trackerEventsList.querySelectorAll("[role=button]").length, 0);
 eventCard.querySelector(".event-header .card-open").click();
-assert.deepStrictEqual(opened, ["watch:3", "event:5"]);
+assert.deepStrictEqual(opened, ["watch:3", "lead:4", "event:5"]);
 const eventDescribedBy = eventCard.querySelector(".card-open").getAttribute("aria-describedby");
 const description = eventDescribedBy.split(" ")
     .map((id) => document.getElementById(id).textContent)
     .join(" ");
 assert.ok(description.includes("Падение цены") && description.includes("300 BYN"), description);
+state.trackers.eventFilter = "new_listing";
+trackers.renderTrackerEvents();
+assert.strictEqual(elements.clearEventsButton.hidden, true);
+state.trackers.eventFilter = "all";
+state.trackers.events = [];
+trackers.renderTrackerEvents();
+assert.strictEqual(elements.clearEventsButton.hidden, true);
 """
     _node_ok(harness)
 
@@ -4472,7 +4735,7 @@ assert.strictEqual(document.documentElement.getAttribute("data-theme"), "dark");
 
 
 def test_rv2_clear_all_confirmation_is_disarmed_by_a_tab_switch() -> None:
-    """UI-08: a tab switch resets the armed "Удалить все?" state, so a
+    """UI-08: a tab switch resets the armed "Удалить всё?" state, so a
     single tap afterwards re-arms instead of wiping the list."""
     harness = _FAKE_DOM_JS + _js("dom_helpers.js") + r"""
 function _bindCarouselEvents() {}
@@ -4494,7 +4757,7 @@ const state = {
 const tab = el("button", { "data-view": "tracking" });
 const elements = {
     searchInput: el("input"),
-    deleteAllWatchlistButton: el("button"),
+    deleteAllWatchlistButton: el("button", {}, "Очистить избранное"),
     viewTabs: [tab],
 };
 document.body.append(elements.searchInput, elements.deleteAllWatchlistButton, tab);
@@ -4513,9 +4776,11 @@ createApiEvents({
 
 const button = elements.deleteAllWatchlistButton;
 button.click();
-assert.strictEqual(button.textContent, "Удалить все?");
+assert.strictEqual(button.textContent, "Удалить всё?");
+assert.ok(button.classList.contains("is-confirming"));
 tab.click();
-assert.strictEqual(button.textContent, "Очистить", "the tab switch disarms the button");
+assert.strictEqual(button.textContent, "Очистить избранное", "the tab switch restores the label");
+assert.ok(!button.classList.contains("is-confirming"));
 button.click();
 assert.strictEqual(cleared, 0, "one tap after the switch only re-arms");
 button.click();

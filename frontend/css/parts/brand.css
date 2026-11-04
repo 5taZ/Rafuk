@@ -137,8 +137,7 @@
 
 .summary-kicker,
 .sec-title,
-.stat-lbl,
-.summary-pill-label {
+.stat-lbl {
     letter-spacing: 0.09em;
 }
 
@@ -290,10 +289,8 @@
     position: sticky;
     top: 0;
     z-index: 2;
-    border-bottom: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
+    border-bottom: 1px solid var(--border);
     background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 90%, transparent);
-    backdrop-filter: blur(14px);
     margin-bottom: 0;
 }
 
@@ -315,6 +312,10 @@
 .la-tab.is-active {
     color: var(--text);
     border-bottom-color: var(--accent);
+}
+
+.la-tab:hover {
+    color: var(--text);
 }
 
 .la-tab-count {
@@ -445,20 +446,12 @@
 
 .la-form {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
 }
 
 .la-form--modal {
-    padding: var(--space-4);
     margin-top: var(--space-4);
-    border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 86%);
-    border-radius: var(--r-xl);
-    background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%);
-    box-shadow:
-        inset 0 1px 0 color-mix(in srgb, var(--white) 5%, transparent),
-        var(--shadow-panel-soft);
 }
 
 .la-row {
@@ -533,14 +526,11 @@
 
 .la-actions {
     grid-column: 1 / -1;
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
     margin-top: 4px;
 }
 
 .la-submit {
-    min-width: 220px;
+    width: 100%;
 }
 
 .la-submit.is-busy {
@@ -564,8 +554,7 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    background: var(--bg);
-    background: color-mix(in srgb, var(--bg) 96%, var(--accent) 4%);
+    background: var(--bg-card);
     animation: aiFadeIn 0.22s ease;
 }
 
@@ -576,10 +565,8 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    border-bottom: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
+    border-bottom: 1px solid var(--border);
     background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 92%, transparent);
-    backdrop-filter: blur(14px);
 }
 
 .la-result-title {
@@ -866,7 +853,7 @@
     font-size: var(--text-base);
     border: none;
     border-radius: var(--r-sm);
-    background: var(--accent-soft);
+    background: var(--bg-elevated);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -1009,39 +996,22 @@
 }
 
 .la-history-empty {
-    margin: 0;
-    padding: 34px 18px;
-    text-align: center;
-    color: var(--text-dim);
+    padding: var(--space-4);
+    color: var(--text-muted);
     font-size: var(--text-base);
     line-height: 1.5;
-    border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border) 90%);
-    border-radius: var(--r-xl);
-    background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 96%, var(--accent) 4%);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--bg-elevated);
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 8px;
+    gap: var(--space-1);
 }
 
 .la-history-empty strong {
     color: var(--text);
     font-size: var(--text-md);
     letter-spacing: -0.01em;
-}
-
-.la-history-empty-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    border-radius: var(--radius-full);
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
-    margin-bottom: 4px;
 }
 
 .la-pane--history {
@@ -1056,29 +1026,15 @@
 }
 
 .la-history-hero {
-    padding: 16px;
-    border: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border) 88%);
-    border-radius: var(--r-xl);
-    background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 94%, var(--accent) 6%);
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--white) 5%, transparent);
-}
-
-.la-history-kicker {
-    display: block;
-    margin-bottom: 8px;
-    color: var(--accent);
-    font: 700 var(--text-xs) var(--font-mono);
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border);
 }
 
 .la-history-heading {
     margin: 0;
     color: var(--text);
-    font-size: var(--text-lg);
-    line-height: 1.2;
-    letter-spacing: -0.03em;
+    font-size: var(--text-md);
+    line-height: 1.3;
 }
 
 .la-history-copy {
@@ -1093,10 +1049,8 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    background: var(--bg-surface-tint-soft);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
     color: var(--text-dim);
     font-size: var(--text-xs);
     line-height: 1.45;
@@ -1107,11 +1061,9 @@
     flex-direction: column;
     gap: 10px;
     padding: 14px;
-    border: 1px solid color-mix(in srgb, var(--accent) 9%, var(--border) 91%);
+    border: 1px solid var(--border);
     border-radius: var(--r-lg);
-    background: var(--bg-card);
-    background: color-mix(in srgb, var(--bg-card) 97%, var(--accent) 3%);
-    box-shadow: var(--shadow-card);
+    background: var(--bg-elevated);
 }
 
 .la-history-head {
@@ -1140,9 +1092,6 @@
     flex-shrink: 0;
     font-size: var(--text-xs);
     color: var(--text-dim);
-    padding: 4px 8px;
-    border-radius: var(--radius-full);
-    background: var(--bg-surface-tint-soft);
 }
 
 .la-history-meta {
@@ -1165,10 +1114,9 @@
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--accent);
     padding: 9px 14px;
-    border-radius: var(--radius-full);
+    border-radius: var(--r-md);
     font: 700 12px var(--font);
     cursor: pointer;
-    flex: 1;
 }
 
 .la-history-open:hover {
@@ -1180,7 +1128,7 @@
     min-width: 44px;
     min-height: 44px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-full);
+    border-radius: var(--r-md);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
@@ -1197,10 +1145,6 @@
 }
 
 @media (max-width: 480px) {
-    .la-submit {
-        width: 100%;
-        min-width: 0;
-    }
     .la-row {
         grid-template-columns: 1fr;
     }
@@ -1574,14 +1518,20 @@
 }
 
 .listing:hover,
+.listing:active,
 .lead-card:hover,
-.watchlist-card:hover {
+.lead-card:active,
+.watchlist-card:hover,
+.watchlist-card:active {
     background: var(--bg-hover);
 }
 
 [data-theme="light"] .listing:hover,
+[data-theme="light"] .listing:active,
 [data-theme="light"] .lead-card:hover,
-[data-theme="light"] .watchlist-card:hover {
+[data-theme="light"] .lead-card:active,
+[data-theme="light"] .watchlist-card:hover,
+[data-theme="light"] .watchlist-card:active {
     background: var(--surface-card-hover-subtle);
 }
 
@@ -1713,27 +1663,6 @@
     color: var(--text-dim);
 }
 
-/* --- Profit dashboard: cards lighter, label readable -------------- */
-.profit-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-}
-
-[data-theme="light"] .profit-card {
-    background: var(--bg-card);
-    border-color: var(--border-surface-subtle);
-}
-
-.profit-card.is-accent {
-    background: color-mix(in srgb, var(--green) 10%, var(--bg-card) 90%);
-    border-color: color-mix(in srgb, var(--green) 30%, var(--border) 70%);
-}
-
-[data-theme="light"] .profit-card.is-accent {
-    background: color-mix(in srgb, var(--green) 8%, var(--bg-card) 92%);
-    border-color: color-mix(in srgb, var(--green) 25%, transparent);
-}
-
 /* --- Helper panel on overview: balanced, less centred ------------- */
 .helper-panel {
     background: var(--bg-card);
@@ -1757,10 +1686,6 @@
 }
 
 .helper-examples {
-    justify-content: flex-start;
-}
-
-.helper-cta-row {
     justify-content: flex-start;
 }
 
@@ -2326,22 +2251,8 @@ button.active .filter-count {
     color: var(--accent);
 }
 
-/* Header container for the per-tab "Очистить" button. Sits above
-   the list, centered, with bottom spacing so it doesn't crowd the
-   first card. Only one of the two child buttons is visible at a
-   time, controlled by renderLeads based on the active tab. */
 .items-clear-header {
     display: flex;
-    justify-content: center;
-    margin-bottom: 16px;
-}
-
-.items-clear-btn {
-    /* Quieter than the action buttons inside the cards — the user
-       only reaches for it when intentionally wiping the list. */
-    opacity: 0.85;
-}
-
-.items-clear-btn:hover {
-    opacity: 1;
+    justify-content: flex-end;
+    margin-bottom: var(--space-3);
 }

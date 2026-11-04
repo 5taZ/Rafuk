@@ -27,6 +27,7 @@ from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_detail
 from api.services.query_pipeline import load_query_dataset_context_with_fallback
 from api.services.risk_detector import compute_risk_score, detect_risks
+from api.services.watchlist_market import MARKET_ESTIMATE_TTL, load_page_comparisons
 from api.services.workflow_store import ensure_user
 from api.validators import MAX_QUERY_LENGTH
 
@@ -103,6 +104,7 @@ async def get_listing_detail(
             "strict": strict_search,
             "cat": category,
             "ref": reference_context,
+            "market_comparison": 2,
         },
     )
     cached = await cache.get_json(cache_key)
@@ -165,7 +167,13 @@ async def get_listing_detail(
     risk_score = compute_risk_score(risk_factors)
     payload.risk_score = risk_score
     payload.risk_factors = risk_factors
-    await cache.set_json(cache_key, payload.model_dump(), ttl=settings.cache_ttl_seconds)
+    comparisons = await load_page_comparisons(
+        [ad], query=query, settings=settings, client=kufar_client, cache=cache,
+    )
+    payload.market_comparison = comparisons.get(ad_id)
+    await cache.set_json(
+        cache_key, payload.model_dump(), ttl=min(MARKET_ESTIMATE_TTL, settings.cache_ttl_seconds),
+    )
     # Backfill thumbnail on bot-added LeadItem rows that landed with
     # null thumbnail (pre-fix scheduler events). Best-effort: failure
     # logged but the response still returns 200.

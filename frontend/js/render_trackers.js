@@ -11,8 +11,6 @@ function createRenderTrackers(context) {
         formatPrice,
         formatCondition,
         formatSeller,
-        formatDelta,
-        deltaClass,
         formatDate,
         trapFocus,
         hasTelegramInitData,
@@ -400,7 +398,6 @@ function createRenderTrackers(context) {
                 state.trackers.sellerType = tracker.seller_type || "";
                 state.trackers.condition = tracker.condition || "";
                 state.trackers.regionName = tracker.region_name || "";
-                state.trackers.configKeyword = tracker.config_keyword || "";
                 if (context._hooks?.renderStrictSearch) context._hooks.renderStrictSearch();
                 if (context._hooks?.renderFilterDropdown) context._hooks.renderFilterDropdown();
                 if (context._hooks?.renderTrackerInputs) context._hooks.renderTrackerInputs();
@@ -430,6 +427,7 @@ function createRenderTrackers(context) {
         domClear(container);
 
         if (!hasTelegramInitData()) {
+            if (elements.clearEventsButton) elements.clearEventsButton.hidden = true;
             const note = document.createElement("p");
             note.className = "tracker-event-empty";
             note.textContent = "Откройте Mini App внутри Telegram, чтобы видеть события.";
@@ -526,6 +524,7 @@ function createRenderTrackers(context) {
             return event.event_type === state.trackers.eventFilter;
         });
 
+        if (elements.clearEventsButton) elements.clearEventsButton.hidden = filteredEvents.length === 0;
         if (!filteredEvents.length) {
             const buildEmpty = context.buildEmptyState;
             let title;
@@ -718,12 +717,13 @@ function createRenderTrackers(context) {
 
             card.dataset.adId = String(event.ad_id);
 
-            const detailItem = { ad_id: event.ad_id, title: event.title, link: event.link, price_byn: event.price_byn, query: event.query };
-
-            // The stretched title button covers the header, so taps,
-            // Enter and Space all arrive here as its click.
-            card.querySelector(".event-header")?.addEventListener("click", () => {
-                void actions.openListingDetail(detailItem);
+            card.querySelector(".card-open")?.addEventListener("click", () => {
+                const tracker = state.trackers.items.find((item) => item.id === event.tracker_id);
+                void actions.openListingDetail(event, {
+                    strictSearch: event.strict_mode,
+                    category: tracker?.category_id ?? null,
+                    referenceContext: "current",
+                });
             });
 
             card.querySelector('[data-role="lead"]')?.addEventListener("click", (clickEvent) => {

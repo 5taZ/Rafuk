@@ -20,16 +20,11 @@ from api.schemas import (
     AIResalePrice,
 )
 from api.services.aggregator import (
-    cluster_price_stats,
-    compute_category_price_stats,
-    compute_price_stats,
-    extract_prices,
-    filter_ads_for_accessory_category,
+    PriceReference,
+    get_category_id,
     normalize_price_byn,
-    product_cluster_key,
-    resolve_price_reference,
 )
-from api.services.ai_category_data import detect_category, normalize_condition_label
+from api.services.ai_category_data import normalize_condition_label
 from api.services.ai_dedupe import dedupe_analysis_payload
 from api.services.ai_guardrails import apply_ai_market_guardrails
 from api.services.ai_guards import QuotaCharge, _refund_quota
@@ -53,12 +48,19 @@ from api.services.ai_marketplace import (
 from api.services.ai_quality import sanitize_public_ai_payload
 from api.services.ai_sanitize import scrub_model_payload, strip_html_in_payload
 from api.services.ai_service import get_ai_service
-from api.services.ai_task_store import _get_task, _release_inflight, _task_ttl, _update_task
+from api.services.ai_task_store import _get_task, _release_inflight, _update_task
 from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS
 from api.services.market_signals import anomaly_labels, detect_anomaly_flags
 from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import compute_deal_score
+from api.services.watchlist_market import (
+    MARKET_ESTIMATE_TTL,
+    NO_COMPARABLE_PRICES,
+    build_market_comparables,
+    load_market_dataset,
+    market_sample_limited,
+)
 
 
 # AI-HIGH (issues §3.1): the previous cache key hard-coded a "v5" tag,
@@ -72,6 +74,7 @@ def _compute_ai_cache_version() -> str:
     sources = (
         Path(__file__),
         Path(__file__).parent / "ai_prompts.py",
+        Path(__file__).parent / "watchlist_market.py",
         Path(__file__).parent.parent / "schemas.py",
     )
     h = hashlib.sha256()
@@ -254,7 +257,7 @@ def _build_fallback_response(
     response = AIAnalysisResponse(
         ad_id=payload.ad_id,
         condition=fallback_result.get("condition"),
-        fair_price=fallback_result.get("fair_price"),
+        fair_price=fallback_result.get("fair_price") if median else None,
         resale_potential=None,
         watch_out=fallback_result.get("watch_out", []),
         recommendation=fallback_result.get("recommendation"),
@@ -263,7 +266,7 @@ def _build_fallback_response(
         meeting_checklist=fallback_result.get("meeting_checklist", []),
         negotiation_tips=fallback_result.get("negotiation_tips", []),
         red_flags=fallback_red_flags,
-        market_context=fallback_market_ctx,
+        market_context=fallback_market_ctx if median else NO_COMPARABLE_PRICES,
         price_reference_scope=ref_scope,
         price_reference_label=ref_label,
         best_pick_reason=fallback_best_decision.reason,
@@ -271,9 +274,10 @@ def _build_fallback_response(
         source="fallback",
         disclaimer=DISCLAIMER,
     )
-    response.resale_potential = _build_resale_potential(
-        fallback_result.get("resale_potential")
-    )
+    if median:
+        response.resale_potential = _build_resale_potential(
+            fallback_result.get("resale_potential")
+        )
     return response
 
 
@@ -473,48 +477,6 @@ def _init_analysis_state(
     return c
 
 
-def _cluster_stats_usable_for_ai(
-    *,
-    target_title: str,
-    query: str,
-    reference_stats: Any,
-    cluster_stats: Any,
-) -> bool:
-    """Decide whether exact-title stats are stable enough to replace query stats."""
-    if cluster_stats is None or not getattr(cluster_stats, "median", 0):
-        return False
-    if getattr(cluster_stats, "count", 0) < 3:
-        return False
-
-    if product_cluster_key(target_title, query):
-        return True
-
-    ref_median = float(getattr(reference_stats, "median", 0) or 0)
-    if ref_median <= 0:
-        return True
-
-    cluster_median = float(cluster_stats.median)
-    ref_q1 = float(getattr(reference_stats, "q1", 0) or ref_median * 0.85)
-    ref_q3 = float(getattr(reference_stats, "q3", 0) or ref_median * 1.15)
-    cluster_count = int(getattr(cluster_stats, "count", 0) or 0)
-
-    outside_reference = (
-        (ref_q1 > 0 and cluster_median < ref_q1 * 0.75)
-        or (ref_q3 > 0 and cluster_median > ref_q3 * 1.25)
-    )
-    if outside_reference and cluster_count < 10:
-        return False
-
-    cluster_q1 = float(getattr(cluster_stats, "q1", 0) or 0)
-    cluster_q3 = float(getattr(cluster_stats, "q3", 0) or 0)
-    spread = (
-        (cluster_q3 - cluster_q1) / cluster_median
-        if cluster_median > 0 and cluster_q3 >= cluster_q1
-        else float("inf")
-    )
-    return not (cluster_count < 5 and spread > 0.35)
-
-
 def _risk_floor(c: _AC) -> RiskFloor:
     return build_risk_floor(c.target_ad, anomaly_flags=c.target_anomaly_flags)
 
@@ -694,6 +656,17 @@ async def _stage_search(c: _AC) -> None:
     c.dataset = dataset
     c.target_ad = target_ad
     c.datasets_by_cohort = datasets_by_cohort
+    category = get_category_id(target_ad)
+    c.market_ads = []
+    if category is not None:
+        async with search_sem:
+            market = await load_market_dataset(
+                c.payload.query, category, settings=c.settings, client=c.kufar_client,
+                cache=c.cache, loader=load_query_dataset,
+            )
+        if market is not None:
+            c.market_ads = market.ads
+            c.market_sample_limited = market_sample_limited(market)
 
 
 def _stage_extract(c: _AC) -> None:
@@ -745,50 +718,29 @@ def _stage_extract(c: _AC) -> None:
         if path:
             c.images.append(f"https://rms.kufar.by/v1/gallery/{path}")
 
-    stats = c.dataset.price_stats
-    # Detect the product category so we can filter out irrelevant
-    # listings (e.g. phones mixed into a "чехол" search).
-    detected_cat = detect_category(c.title, c.parameters)
-    # When the detected category is an accessory type, filter ads
-    # by price cap so that phone-level prices don't skew the median.
-    # This prevents a 20 BYN case being compared against 2000 BYN phones.
-    filtered_ads = filter_ads_for_accessory_category(c.dataset.ads, detected_cat)
-    if filtered_ads is not c.dataset.ads:
-        # Recompute stats on the filtered subset
-        filtered_prices = extract_prices(filtered_ads)
-        if filtered_prices:
-            stats = compute_price_stats(filtered_prices)
-    # Compute category-aware price stats so that accessories (e.g. phone
-    # cases) are compared against other accessories, not against phones.
-    category_price_stats = compute_category_price_stats(filtered_ads)
-    c.reference = resolve_price_reference(
-        c.target_ad, stats, category_price_stats
+    cohorts = c.datasets_by_cohort or [("broad_category", c.dataset)]
+    market_ads = getattr(c, "market_ads", None)
+    if market_ads is None:
+        market_ads = (ad for _, dataset in cohorts for ad in dataset.ads)
+    market = build_market_comparables(c.target_ad, market_ads)
+    reference_label = market.category_label or ""
+    if market.reliable and getattr(c, "market_sample_limited", False):
+        reference_label = " · ".join(filter(None, (reference_label, "Часть рынка")))
+    c.reference = PriceReference(
+        stats=market.stats,
+        scope="category" if market.reliable else "insufficient",
+        label=reference_label,
     )
-    effective_stats = c.reference.stats
-    # Cluster-aware median: compare against listings that share
-    # the same variant tokens (generation, body type, etc.) as
-    # the target ad.  Falls back to the broad median when the
-    # cluster is too small (< 3 similar listings).
-    cluster_stats = cluster_price_stats(
-        str(c.target_ad.get("subject", "")), filtered_ads,
-    )
-    if _cluster_stats_usable_for_ai(
-        target_title=str(c.target_ad.get("subject", "")),
-        query=c.payload.query,
-        reference_stats=effective_stats,
-        cluster_stats=cluster_stats,
-    ):
-        effective_stats = cluster_stats
-    c.effective_stats = effective_stats
-    c.median = effective_stats.median if effective_stats else None
-    c.count = effective_stats.count if effective_stats else 0
-    c.q1 = effective_stats.q1 if effective_stats else None
-    c.q3 = effective_stats.q3 if effective_stats else None
-    c.price_min = effective_stats.min if effective_stats else None
-    c.price_max = effective_stats.max if effective_stats else None
+    c.effective_stats = market.stats if market.reliable else None
+    c.median = market.stats.median if market.reliable else None
+    c.count = market.stats.count if market.reliable else 0
+    c.q1 = market.stats.q1 if market.reliable else None
+    c.q3 = market.stats.q3 if market.reliable else None
+    c.price_min = market.stats.min if market.reliable else None
+    c.price_max = market.stats.max if market.reliable else None
 
     c.similar = collect_similar_listings_from_cohorts(
-        cohorts=c.datasets_by_cohort or [("broad_category", c.dataset)],
+        cohorts=[("strict_category", market)] if market.reliable else [],
         query=c.payload.query,
         target_ad=c.target_ad,
         target_ad_id=c.payload.ad_id,
@@ -1092,11 +1044,21 @@ async def _stage_response(c: _AC) -> None:
         best_alternative=best_alternative,
         is_negotiable_price=c.is_negotiable_price,
     )
+    if c.median is None:
+        risk_note = f" Проверьте этот риск: {final_red_flags[0]}" if final_red_flags else ""
+        c.result["recommendation"] = {
+            "verdict": "think_twice",
+            "text": "Сначала проверьте товар и условия сделки." + risk_note,
+        }
+        c.result["summary"] = NO_COMPARABLE_PRICES
+        c.result["negotiation_tips"] = []
     # RV-AI-03: a half-answered analysis is completed from market data
     # above; say so instead of passing it off as a full AI answer.
     source = "partial" if c.failed_sections else "ai"
 
-    resale_potential = _build_resale_potential(c.result.get("resale_potential"))
+    resale_potential = (
+        _build_resale_potential(c.result.get("resale_potential")) if c.median else None
+    )
 
     response = AIAnalysisResponse(
         ad_id=c.payload.ad_id,
@@ -1112,7 +1074,7 @@ async def _stage_response(c: _AC) -> None:
                 else None
             )
         ),
-        fair_price=c.result.get("fair_price"),
+        fair_price=c.result.get("fair_price") if c.median else None,
         resale_potential=resale_potential,
         watch_out=c.result.get("watch_out", []),
         recommendation=c.result.get("recommendation"),
@@ -1123,7 +1085,7 @@ async def _stage_response(c: _AC) -> None:
         red_flags=final_red_flags,
         scam_analysis=c.result.get("scam_analysis"),
         photo_authenticity=c.result.get("photo_authenticity"),
-        market_context=final_market_context,
+        market_context=final_market_context if c.median else NO_COMPARABLE_PRICES,
         price_reference_scope=c.reference.scope,
         price_reference_label=c.reference.label,
         best_pick_reason=best_pick_reason,
@@ -1141,8 +1103,9 @@ async def _stage_response(c: _AC) -> None:
         strip_html_in_payload(response.model_dump(by_alias=True))
     )
     if source == "ai":
-        # Only complete model answers are shared through the analysis cache.
-        await c.cache.set_json(_analysis_cache_key(c.payload), serialized, ttl=_task_ttl())
+        ttl = int(MARKET_ESTIMATE_TTL - (_time.monotonic() - c.started_at))
+        if ttl > 0:
+            await c.cache.set_json(_analysis_cache_key(c.payload), serialized, ttl=ttl)
     else:
         serialized["_ai_warning"] = " ".join(
             _PARTIAL_WARNINGS.get(section, _GENERIC_FALLBACK_WARNING)

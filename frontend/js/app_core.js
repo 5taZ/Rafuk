@@ -274,7 +274,6 @@ function createAppCore() {
             sellerType: "",
             condition: "",
             regionName: "",
-            configKeyword: "",
         },
         leads: {
             items: [],
@@ -298,7 +297,7 @@ function createAppCore() {
             data: null,
             imageIndex: 0,
             fromWatchlist: false,
-            _requestId: 0,
+            requestController: null,
             ai: {
                 adId: null,
                 loading: false,
@@ -512,12 +511,44 @@ function createAppCore() {
         for (const cb of _themeChangeCallbacks) cb();
     }
 
+    const priceNumberFormat = new Intl.NumberFormat("ru-BY", {
+        useGrouping: true,
+        maximumFractionDigits: 0,
+    });
+
+    function formatPriceNumber(value) {
+        return priceNumberFormat.format(Math.round(value)).replace(/\s/g, "\u202f");
+    }
+
     function formatPrice(value, priceType) {
         if (priceType === "negotiable" || (value == null && priceType !== "free")) return "Договорная";
         if (priceType === "free" || value === 0) return "Бесплатно";
         const numeric = Number(value);
-        if (Number.isNaN(numeric)) return "Договорная";
-        return `${Math.round(numeric)} BYN`;
+        if (!Number.isFinite(numeric)) return "Договорная";
+        return `${formatPriceNumber(numeric)}\u202fBYN`;
+    }
+
+    function formatPriceRange(from, to) {
+        if (from == null || to == null || !Number.isFinite(Number(from)) || !Number.isFinite(Number(to))) {
+            return "—";
+        }
+        const start = formatPriceNumber(from);
+        const end = formatPriceNumber(to);
+        return start === end ? `${end}\u202fBYN` : `${start}\u00a0– ${end}\u202fBYN`;
+    }
+
+    const analogCountRules = new Intl.PluralRules("ru");
+    const analogCountForms = { one: "аналог", few: "аналога", many: "аналогов" };
+
+    function formatMarketDelta(comparison) {
+        if (!Number.isFinite(comparison?.delta_percent)) return "";
+        const percent = Math.round(comparison.delta_percent);
+        const sign = percent < 0 ? "−" : percent > 0 ? "+" : "";
+        const delta = `${sign}${Math.abs(percent)}% к медиане`;
+        const count = comparison.comparable_count;
+        if (!Number.isSafeInteger(count) || count < 1) return `${delta} аналогов`;
+        const noun = analogCountForms[analogCountRules.select(count)] || "аналогов";
+        return `${delta} · ${formatPriceNumber(count)}\u202f${noun}`;
     }
 
     function formatCondition(condition) {
@@ -540,17 +571,6 @@ function createAppCore() {
             shop: "Магазин",
         };
         return map[seller] || "";
-    }
-
-    function formatDelta(delta) {
-        if (delta == null || Math.abs(delta) < 0.5) return "";
-        const sign = delta > 0 ? "+" : "";
-        return `${sign}${Math.round(delta)}%`;
-    }
-
-    function deltaClass(delta) {
-        if (!delta || Math.abs(delta) < 0.5) return "";
-        return delta > 0 ? "over" : "under";
     }
 
     const _dateFormatter = new Intl.DateTimeFormat("ru-BY", {
@@ -727,10 +747,11 @@ function createAppCore() {
         onThemeChange: (cb) => _themeChangeCallbacks.push(cb),
         syncTelegramChromeTheme,
         formatPrice,
+        formatPriceNumber,
+        formatPriceRange,
+        formatMarketDelta,
         formatCondition,
         formatSeller,
-        formatDelta,
-        deltaClass,
         formatDate,
         trapFocus,
         hasTelegramInitData,

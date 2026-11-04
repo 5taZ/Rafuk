@@ -31,7 +31,6 @@ from api.schemas import (
         ("seller_type", "x" * 33),
         ("condition", "x" * 33),
         ("region_name", "x" * 65),
-        ("config_keyword", "x" * 129),
         ("category_id", 0),
         ("category_label", "x" * 129),
         ("alert_price_threshold", -1),
@@ -96,14 +95,12 @@ def test_tracker_schemas_reject_unknown_filter_values(schema, field: str, value:
         ("condition", "б/у", "б/у"),
         ("seller_type", "", None),
         ("condition", "   ", None),
-        ("config_keyword", "  pro max 256 ", "pro max 256"),
-        ("config_keyword", "", None),
     ],
 )
 def test_tracker_schemas_accept_codes_and_ui_labels(
     schema, field: str, value: str, stored: str | None,
 ) -> None:
-    """RV-BE-03/RV-BE-04: codes and the Mini App labels are accepted and
+    """RV-BE-03: codes and the Mini App labels are accepted and
     stored as sent (trimmed); blank means "no filter"."""
     kwargs = {"query": "iphone"} if schema is TrackerCreate else {}
     assert getattr(schema(**kwargs, **{field: value}), field) == stored

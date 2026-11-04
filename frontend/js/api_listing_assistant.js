@@ -31,6 +31,9 @@ function createApiListingAssistant(context) {
         postJson,
         safeKufarUrl,
         safeImageUrl,
+        formatPrice,
+        formatPriceNumber,
+        formatPriceRange,
         checkAiConsent,
         logClientError = () => {},
     } = context;
@@ -461,8 +464,8 @@ function createApiListingAssistant(context) {
         row.appendChild(el("span", { className: "la-tier-kicker", text: tier.label || kind }));
         const priceWrap = el("div", { className: "la-tier-price" });
         priceWrap.appendChild(el("span", { className: "la-tier-price-num mono" },
-            document.createTextNode(`${Math.round(tier.price_byn)}`)));
-        priceWrap.appendChild(el("span", { className: "la-tier-price-unit", text: " BYN" }));
+            document.createTextNode(formatPriceNumber(tier.price_byn))));
+        priceWrap.appendChild(el("span", { className: "la-tier-price-unit", text: "BYN" }));
         row.appendChild(priceWrap);
         if (tier.weeks_to_sell) {
             row.appendChild(el("span", { className: "la-tier-weeks", text: tier.weeks_to_sell }));
@@ -481,7 +484,8 @@ function createApiListingAssistant(context) {
     }
 
     function buildPricingSection(pricing) {
-        if (!pricing) return null;
+        if (!pricing?.market_median_byn && !pricing?.fast && !pricing?.market
+            && !pricing?.patient && !pricing?.floor_byn) return null;
         const tiers = el(
             "div",
             { className: "la-tier-grid" },
@@ -492,11 +496,11 @@ function createApiListingAssistant(context) {
 
         const meta = [];
         if (pricing.market_median_byn) {
-            meta.push(`медиана ${Math.round(pricing.market_median_byn)} BYN`);
+            meta.push(`медиана ${formatPrice(pricing.market_median_byn)}`);
         }
         if (pricing.market_q1_byn && pricing.market_q3_byn) {
             meta.push(
-                `Q1-Q3: ${Math.round(pricing.market_q1_byn)}-${Math.round(pricing.market_q3_byn)} BYN`
+                `Q1–Q3: ${formatPriceRange(pricing.market_q1_byn, pricing.market_q3_byn)}`
             );
         }
         if (pricing.competing_count) {
@@ -512,7 +516,7 @@ function createApiListingAssistant(context) {
                 ? el("p", { className: "la-floor" },
                     el("span", { text: "Минимум, ниже не падать: " }),
                     el("strong", { className: "mono" },
-                        document.createTextNode(`${Math.round(pricing.floor_byn)} BYN`)),
+                        document.createTextNode(formatPrice(pricing.floor_byn))),
                 )
                 : null,
             meta.length
@@ -609,7 +613,7 @@ function createApiListingAssistant(context) {
             );
             info.appendChild(
                 el("span", { className: "la-competitor-price mono" },
-                    document.createTextNode(`${Math.round(comp.price_byn || 0)} BYN`)),
+                    document.createTextNode(formatPrice(comp.price_byn))),
             );
             if (comp.advantage) {
                 info.appendChild(
@@ -920,9 +924,9 @@ function createApiListingAssistant(context) {
             const meta = el("p", { className: "la-history-meta" });
             const bits = [];
             const market = entry.output?.pricing?.market?.price_byn;
-            if (market) bits.push(`рынок ${Math.round(market)} BYN`);
+            if (market) bits.push(`рынок ${formatPrice(market)}`);
             if (entry.input?.draft_price_byn) {
-                bits.push(`мой черновик ${Math.round(entry.input.draft_price_byn)} BYN`);
+                bits.push(`мой черновик ${formatPrice(entry.input.draft_price_byn)}`);
             }
             if (entry.photos_count) bits.push(`${entry.photos_count} фото`);
             meta.textContent = bits.join(" · ") || "без рынка";

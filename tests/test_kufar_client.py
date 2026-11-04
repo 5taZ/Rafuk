@@ -220,6 +220,7 @@ async def test_search_all_ads_stays_on_one_page_by_default(mock_settings: MagicM
 
     assert get.await_count == 1
     assert result["fetched_count"] == 1
+    assert result["has_more"] is True
 
 
 @pytest.mark.asyncio
@@ -246,8 +247,7 @@ async def test_search_all_ads_stops_on_repeated_cursor_and_dedupes(
 
 
 @pytest.mark.asyncio
-async def test_search_all_ads_collects_all_pages(mock_settings: MagicMock, monkeypatch) -> None:
-    monkeypatch.setattr(kufar_client_module, "KUFAR_MAX_PAGES", 25)
+async def test_search_all_ads_collects_all_pages(mock_settings: MagicMock) -> None:
     first = MagicMock(spec=httpx.Response)
     first.raise_for_status = MagicMock()
     first.json.return_value = {
@@ -264,10 +264,11 @@ async def test_search_all_ads_collects_all_pages(mock_settings: MagicMock, monke
     }
 
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=[first, second]):
-        result = await KufarClient(mock_settings).search_all_ads(query="test")
+        result = await KufarClient(mock_settings).search_all_ads(query="test", page_limit=8)
 
     assert result["total"] == 3
     assert result["fetched_count"] == 3
+    assert result["has_more"] is False
     assert [ad["ad_id"] for ad in result["ads"]] == [1, 2, 3]
 
 

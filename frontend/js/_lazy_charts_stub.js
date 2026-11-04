@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261103-market-filters";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261104-unified-card-detail";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");

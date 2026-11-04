@@ -73,29 +73,18 @@ function createRenderProfile(context) {
         const profile = state.profile.data;
         chip.className = "profile-chip";
         chip.removeAttribute("aria-busy");
-        chip.removeAttribute("data-accent");
+        chip.removeAttribute("title");
+        chip.setAttribute("aria-label", "Открыть профиль");
+        label.textContent = "Профиль";
         if (!profile && (state.profile.loading || !state.profile.error)) {
             chip.classList.add("profile-chip--loading");
             chip.setAttribute("aria-busy", "true");
-            label.textContent = "Профиль";
-            return;
         }
-        if (!profile) {
-            chip.classList.add("profile-chip--muted");
-            label.textContent = "Профиль";
-            return;
-        }
-        const status = profile.status || {};
-        const permissions = profile.permissions || {};
-        const aiRemaining = Number(profile.limits?.ai?.remaining || 0);
-        const parts = [status.display_name || "Профиль"];
-        if (permissions.is_admin) {
-            parts.push("Admin");
-        } else if (status.code !== "bare_search" && Number(profile.limits?.ai?.limit || 0) > 0) {
-            parts.push(`${aiRemaining} AI`);
-        }
-        chip.dataset.accent = _accent(status.accent);
-        label.textContent = parts.join(" · ");
+        const statusName = profile?.status?.display_name;
+        if (!statusName) return;
+        label.textContent = statusName;
+        chip.title = statusName;
+        chip.setAttribute("aria-label", `${statusName}. Открыть профиль`);
     }
 
     function _renderAiLocks() {
