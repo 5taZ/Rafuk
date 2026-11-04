@@ -1789,14 +1789,11 @@
     background: var(--bg-card);
 }
 
-#tracking-view .tracker-create-section {
-    margin: 0;
-}
-
-#tracking-view .tracker-create-section .primary-btn {
+#track-query-btn {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
     min-height: 44px;
-    border-radius: var(--radius-full);
-    box-shadow: none;
 }
 
 #tracking-view .tracker-form-grid {

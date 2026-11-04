@@ -527,7 +527,11 @@ def test_autosearch_surface_uses_flat_composer_and_accessible_filters(
     assert tracking is not None
     composer = tracking.select_one(".tracker-composer")
     assert composer is not None
-    assert composer.find(id="track-query-btn") is not None
+    track_button = composer.find(id="track-query-btn")
+    assert track_button is not None
+    assert track_button.get_text(strip=True) == "Следить за запросом"
+    assert "tracker-action-btn" in track_button["class"]
+    assert track_button.find_previous_sibling(class_="tracker-form-grid") is not None
 
     trackers_list = tracking.find(id="trackers-list")
     assert trackers_list is not None

@@ -1151,19 +1151,6 @@
 
 /* ===== Enhanced Tracker UI ===== */
 
-/* Tracker create section */
-.tracker-create-section {
-    margin-bottom: 16px;
-}
-
-.tracker-create-section .primary-btn {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-}
-
 .btn-icon {
     font-size: var(--text-sub);
     line-height: 1;
@@ -1393,12 +1380,6 @@
     background: var(--green);
 }
 
-.event-type-badge.alert {
-    background: var(--accent-soft);
-    color: var(--accent);
-    border: 1px solid var(--accent-glow);
-}
-
 .event-delta.event-delta--up {
     color: var(--amber-text);
     background: var(--amber-soft);
@@ -1459,26 +1440,10 @@
     margin-bottom: 4px;
 }
 
-.event-type-badge {
+.event-kind {
     font-size: var(--text-sm);
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: var(--r-sm);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    white-space: nowrap;
-}
-
-.event-type-badge.new {
-    background: var(--accent-soft);
-    color: var(--accent);
-    border: 1px solid var(--accent-glow);
-}
-
-.event-type-badge.drop {
-    background: var(--green-soft);
-    color: var(--green-text);
-    border: 1px solid var(--success-border);
+    font-weight: 600;
+    color: var(--text-secondary);
 }
 
 .event-time {
@@ -1528,27 +1493,15 @@
 }
 
 .event-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
     font-size: var(--text-sm);
     color: var(--text-muted);
-}
-
-.event-meta-item {
-    display: flex;
-    align-items: center;
-    gap: 3px;
 }
 
 .event-tracker-source {
     font-size: var(--text-sm);
     color: var(--text-muted);
-    background: var(--bg-elevated);
-    padding: 2px 6px;
-    border-radius: var(--r-sm);
-    margin-top: 6px;
-    display: inline-block;
+    margin-top: 4px;
+    display: block;
 }
 
 .event-actions {

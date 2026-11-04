@@ -317,7 +317,7 @@ def test_build_tracker_message_includes_trend_block_only_when_not_sent_yet() -> 
         trend_signal=_trend_signal(),
         trend_already_sent=False,
     )
-    assert msg == "📈 Цена снова растёт\niphone 13\n700 BYN → 770 BYN · +10.0%"
+    assert msg == "Цена снова растёт\niphone 13\n700 BYN → 770 BYN · +10.0%"
     # Already sent → trend block suppressed → message is None when there
     # are no other events to report.
     assert (

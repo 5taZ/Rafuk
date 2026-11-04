@@ -25,12 +25,12 @@ def _build_threshold_message(threshold_events: list[TrackerEvent]) -> str | None
     primary = threshold_events[0]
     price = _format_price_byn(primary.price_byn, primary.price_type)
     if primary.event_type == "price_threshold_alert":
-        heading = "🎯 Порог цены"
+        heading = "Порог цены"
         threshold = (primary.parameters or {}).get("threshold")
         if threshold:
             price += f" · порог {_format_price_byn(threshold)}"
     else:
-        heading = "📉 Скидка от медианы"
+        heading = "Скидка от медианы"
         if primary.delta_byn:
             price += f" · −{float(primary.delta_byn):.0f}%"
     lines = [heading, _notification_title(primary.title), price]
@@ -84,7 +84,7 @@ def _build_tracker_message(
         if lines:
             lines.append("")
         lines.extend((
-            "📈 Цена снова растёт",
+            "Цена снова растёт",
             query,
             f"{_format_price_byn(trend_signal.low_byn)} → "
             f"{_format_price_byn(trend_signal.today_byn)} · +{trend_signal.rebound_pct:.1f}%",
@@ -103,7 +103,7 @@ def _build_new_listing_message(
     price = _format_price_byn(state.last_price_byn, state.price_type)
     if discount_pct is not None and discount_pct > 0:
         price += f" · −{discount_pct:.0f}% к медиане"
-    return f"🔔 Новый лот\n{_notification_title(state.title)}\n{price}"
+    return f"{_notification_title(state.title)}\n{price}"
 
 
 def _build_price_drop_message(state: QueryListingState, delta: float) -> str:
@@ -111,4 +111,4 @@ def _build_price_drop_message(state: QueryListingState, delta: float) -> str:
     drop = round(float(delta))
     if drop > 0:
         price += f" · −{drop} BYN"
-    return f"📉 Цена снизилась\n{_notification_title(state.title)}\n{price}"
+    return f"Цена снизилась\n{_notification_title(state.title)}\n{price}"

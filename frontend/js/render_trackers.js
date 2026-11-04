@@ -33,25 +33,6 @@ function createRenderTrackers(context) {
         sameAdId,
     } = context;
 
-    // FE-05 / Wave 29: emoji-prefixed labels need a tiny shim so screen
-    // readers don't pronounce the emoji glyph (Unicode names like
-    // "BACKHAND INDEX POINTING DOWN" are unreadable as price-drop
-    // markers). Wrap the emoji in an aria-hidden span and let the
-    // following text node carry the meaningful label.
-    function emojiSpan(emoji) {
-        const span = document.createElement("span");
-        span.setAttribute("aria-hidden", "true");
-        span.textContent = emoji;
-        return span;
-    }
-
-    function emojiLabel(className, emoji, text) {
-        // Returns a span whose visible content is "📍 Минск" but whose
-        // accessible name reads as plain "Минск". Used for chip-style
-        // labels in tracker event cards.
-        return domEl("span", { className }, emojiSpan(emoji), ` ${text}`);
-    }
-
     // FE-08 / Wave 29: build SVG icons via createElementNS instead of
     // ``innerHTML = "<svg...>"``. The previous code worked because
     // every SVG payload was a hardcoded source-code constant, but a
@@ -353,7 +334,7 @@ function createRenderTrackers(context) {
                     buildStat("В среднем", `${tracker.avg_events_per_day || 0}/день`),
                     buildStat("Посл. событие", formatLastEventTime(tracker.last_event_at)),
                 ),
-                lastCheckedLabel ? emojiLabel("tracker-last-checked", "🕐", lastCheckedLabel) : null,
+                lastCheckedLabel ? domEl("span", { className: "tracker-last-checked", text: lastCheckedLabel }) : null,
                 domEl(
                     "div",
                     { className: "tracker-card-actions" },
@@ -589,9 +570,8 @@ function createRenderTrackers(context) {
                     node.appendChild(iconListingPlaceholder());
                     return node;
                 })();
-            const eventMeta = domEl("div", { className: "event-meta" });
-            if (event.region_name) eventMeta.appendChild(emojiLabel("event-meta-item", "📍", event.region_name));
-            if (event.seller_type) eventMeta.appendChild(emojiLabel("event-meta-item", "👤", event.seller_type));
+            const metaText = [event.region_name, event.seller_type].filter(Boolean).join(" · ");
+            const eventMeta = metaText ? domEl("div", { className: "event-meta", text: metaText }) : null;
             const priceRow = domEl(
                 "div",
                 { className: "event-price-row" },
@@ -607,30 +587,16 @@ function createRenderTrackers(context) {
                 priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `-${Math.round(event.parameters.discount_percent)}% от медианы` }));
             }
 
-            // FE-05: badges carry both an emoji and a text label; the
-            // emoji is decorative duplication of the label, so it goes
-            // into an aria-hidden span and screen readers announce
-            // only the meaningful suffix (e.g. "Новый лот").
-            let badgeClass = "new";
-            let badgeEmoji = "🆕";
-            let badgeLabel = "Новый лот";
+            let kindLabel = "";
             let cardModifier = "";
             if (isPriceDrop) {
-                badgeClass = "drop";
-                badgeEmoji = "🔽";
-                badgeLabel = "Падение цены";
+                kindLabel = "Цена снизилась";
                 cardModifier = " price-drop";
-            }
-            if (event.event_type === "price_threshold_alert") {
-                badgeClass = "alert";
-                badgeEmoji = "🎯";
-                badgeLabel = "Порог цены";
+            } else if (event.event_type === "price_threshold_alert") {
+                kindLabel = "Порог цены";
                 cardModifier = " threshold-alert";
-            }
-            if (event.event_type === "discount_alert") {
-                badgeClass = "alert";
-                badgeEmoji = "📉";
-                badgeLabel = "Скидка от медианы";
+            } else if (event.event_type === "discount_alert") {
+                kindLabel = "Скидка от медианы";
                 cardModifier = " discount-alert";
             }
             const inLeads = _isActiveLeadAd(event.ad_id);
@@ -645,12 +611,15 @@ function createRenderTrackers(context) {
             // of role=button around three more controls; the event type,
             // price and place are announced as the button's description.
             const cardId = `tracker-event-${++_eventCardSeq}`;
-            const typeBadge = emojiLabel(`event-type-badge ${badgeClass}`, badgeEmoji, badgeLabel);
-            typeBadge.id = `${cardId}-type`;
+            const kindNode = kindLabel ? domEl("span", {
+                className: "event-kind",
+                text: kindLabel,
+                attrs: { id: `${cardId}-type` },
+            }) : null;
             priceRow.id = `${cardId}-price`;
-            if (eventMeta.children.length) eventMeta.id = `${cardId}-meta`;
-            const describedBy = [typeBadge, priceRow, eventMeta]
-                .filter((node) => node.id)
+            if (eventMeta) eventMeta.id = `${cardId}-meta`;
+            const describedBy = [kindNode, priceRow, eventMeta]
+                .filter(Boolean)
                 .map((node) => node.id)
                 .join(" ");
 
@@ -664,12 +633,12 @@ function createRenderTrackers(context) {
                     domEl(
                         "div",
                         { className: "event-body" },
-                        domEl(
+                        kindNode || timeNode ? domEl(
                             "div",
                             { className: "event-top-row" },
-                            typeBadge,
+                            kindNode,
                             timeNode,
-                        ),
+                        ) : null,
                         domEl(
                             "h3",
                             { className: "card-heading event-heading" },
@@ -685,10 +654,7 @@ function createRenderTrackers(context) {
                         ),
                         priceRow,
                         eventMeta,
-                        domEl("span", { className: "event-tracker-source" },
-                            domEl("span", { attrs: { "aria-hidden": "true" }, text: "🔍 " }),
-                            event.query,
-                        ),
+                        domEl("span", { className: "event-tracker-source", text: event.query }),
                     ),
                 ),
                 domEl(

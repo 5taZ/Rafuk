@@ -233,7 +233,7 @@ def test_build_new_listing_message_basic():
         last_seen_at=now,
     )
     msg = _build_new_listing_message(state)
-    assert msg == "🔔 Новый лот\niPhone 15 256GB\n2000 BYN"
+    assert msg == "iPhone 15 256GB\n2000 BYN"
 
 
 def test_build_new_listing_message_with_discount():
@@ -249,7 +249,7 @@ def test_build_new_listing_message_with_discount():
         last_seen_at=now,
     )
     msg = _build_new_listing_message(state, discount_pct=10.0)
-    assert msg == "🔔 Новый лот\niPhone 15 256GB\n2000 BYN · −10% к медиане"
+    assert msg == "iPhone 15 256GB\n2000 BYN · −10% к медиане"
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +269,7 @@ def test_build_price_drop_message_basic():
         last_seen_at=now,
     )
     msg = _build_price_drop_message(state, 200.0)
-    assert msg == "📉 Цена снизилась\niPhone 15 Pro\n1800 BYN · −200 BYN"
+    assert msg == "Цена снизилась\niPhone 15 Pro\n1800 BYN · −200 BYN"
 
 
 def test_build_price_drop_message_omits_zero_rounded_delta():
@@ -285,7 +285,7 @@ def test_build_price_drop_message_omits_zero_rounded_delta():
         last_seen_at=now,
     )
     msg = _build_price_drop_message(state, 0.1)
-    assert msg == "📉 Цена снизилась\niPhone 15 Pro\n1800 BYN"
+    assert msg == "Цена снизилась\niPhone 15 Pro\n1800 BYN"
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +307,7 @@ def test_build_threshold_message_price_alerts():
 
     msg = _build_threshold_message([event])
     assert msg is not None
-    assert "Порог цены" in msg
+    assert msg.splitlines()[0] == "Порог цены"
 
 
 def test_build_threshold_message_discount_alerts():
@@ -321,7 +321,7 @@ def test_build_threshold_message_discount_alerts():
 
     msg = _build_threshold_message([event])
     assert msg is not None
-    assert "Скидка от медианы" in msg
+    assert msg.splitlines()[0] == "Скидка от медианы"
 
 
 # ---------------------------------------------------------------------------
@@ -434,31 +434,24 @@ async def test_send_message_classified_outcomes(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reject_emoji", [False, True])
-async def test_tracker_alert_animation_preserves_actions(mock_bot: AsyncMock, reject_emoji: bool):
-    from aiogram.exceptions import TelegramBadRequest
-
+@pytest.mark.parametrize(("heading", "expected_heading"), [
+    ("", ""),
+    ("🔔 Новый лот\n", ""),
+    ("📉 Цена снизилась\n", "Цена снизилась\n"),
+])
+async def test_tracker_alert_plain_text_preserves_actions(
+    mock_bot: AsyncMock, heading: str, expected_heading: str,
+):
     from bot.keyboards import enhanced_alert_keyboard
 
-    message = "🔔 Новый лот\niPhone 15\n900 BYN"
+    body = "iPhone 15\n900 BYN"
     markup = enhanced_alert_keyboard(ad_id=42, listing_url="https://www.kufar.by/item/42")
-    if reject_emoji:
-        mock_bot.send_message.side_effect = [
-            _make_tg_error(TelegramBadRequest, "custom emoji is not allowed"), None,
-        ]
     assert await collector._send_message_classified(
-        mock_bot, 123456, message, reply_markup=markup,
+        mock_bot, 123456, heading + body, reply_markup=markup,
     ) == ("sent", None)
-    calls = mock_bot.send_message.await_args_list
-    entities = calls[0].kwargs["entities"]
-    assert (entities[0].type, entities[0].offset, entities[0].length) == ("custom_emoji", 0, 2)
-    assert entities[0].custom_emoji_id == "5242628160297641831"
-    assert (entities[1].type, entities[1].offset, entities[1].length) == ("bold", 3, 9)
-    assert calls[0].kwargs["reply_markup"] is markup
-    assert len(calls) == (2 if reject_emoji else 1)
-    if reject_emoji:
-        assert calls[1].args == (123456, message)
-        assert calls[1].kwargs == {"reply_markup": markup}
+    mock_bot.send_message.assert_awaited_once_with(
+        123456, expected_heading + body, reply_markup=markup,
+    )
 
 
 @pytest.mark.asyncio
@@ -2739,7 +2732,7 @@ async def test_check_trackers_delivers_through_outbox_with_keyboard(
     assert mock_bot.send_message.await_count == 1
     call = mock_bot.send_message.await_args
     assert call.args[0] == 1301
-    assert "Новый лот" in call.args[1]
+    assert call.args[1] == "iPhone 13 128GB\n990 BYN"
     assert call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "add_lead:31"
     async with sf() as session:
         assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
@@ -2791,7 +2784,7 @@ async def test_check_trackers_unexpected_error_is_isolated_to_its_key(
     await check_trackers(mock_bot, sf, _TICK_SETTINGS)
 
     assert _sent_chats(mock_bot) == [1401]
-    assert "Новый лот" in mock_bot.send_message.await_args.args[1]
+    assert mock_bot.send_message.await_args.args[1] == "iPhone 13 128GB\n990 BYN"
     assert await _event_keys(sf) == {(healthy_id, 41, "new_listing")}
     async with sf() as session:
         cursors = dict((await session.execute(select(Tracker.id, Tracker.last_checked_at))).all())

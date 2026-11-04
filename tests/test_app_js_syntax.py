@@ -4417,13 +4417,15 @@ const eventDescribedBy = eventCard.querySelector(".card-open").getAttribute("ari
 const description = eventDescribedBy.split(" ")
     .map((id) => document.getElementById(id).textContent)
     .join(" ");
-assert.ok(description.includes("Падение цены") && description.includes("300 BYN"), description);
+assert.ok(description.includes("Цена снизилась") && description.includes("300 BYN"), description);
+assert.doesNotMatch(eventCard.textContent, /\p{Extended_Pictographic}/u);
 assert.equal(eventCard.querySelector(".event-time").textContent, "2026-10-20");
 state.trackers.eventFilter = "new_listing";
 trackers.renderTrackerEvents();
 assert.strictEqual(elements.clearEventsButton.hidden, true);
 state.trackers.events[0].event_type = "new_listing";
 trackers.renderTrackerEvents();
+assert.strictEqual(elements.trackerEventsList.querySelector(".event-kind"), null);
 const published = elements.trackerEventsList.querySelector(".event-time");
 assert.equal(published.textContent, "2026-10-19");
 assert.equal(published.getAttribute("datetime"), "2026-10-19");
