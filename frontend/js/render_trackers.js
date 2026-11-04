@@ -553,7 +553,18 @@ function createRenderTrackers(context) {
 
         // Build event card element — extracted for virtual scrolling
         function buildEventNode(event) {
+            const isNewListing = event.event_type === "new_listing";
             const isPriceDrop = event.event_type === "price_drop";
+            const publishedTime = isNewListing ? formatDate(event.list_time) : "";
+            const displayTime = publishedTime || formatDate(event.created_at);
+            const timeNode = displayTime ? domEl("time", {
+                className: "event-time",
+                text: isNewListing && !publishedTime ? `Найдено ${displayTime}` : displayTime,
+                attrs: {
+                    datetime: publishedTime ? event.list_time : event.created_at,
+                    title: publishedTime ? "Опубликовано на Kufar" : "Обнаружено автопоиском",
+                },
+            }) : null;
             const thumbSrc = (() => {
                 const validated = safeImageUrl(event.thumbnail);
                 if (!validated) return "";
@@ -657,7 +668,7 @@ function createRenderTrackers(context) {
                             "div",
                             { className: "event-top-row" },
                             typeBadge,
-                            domEl("span", { className: "event-time", text: formatDate(event.created_at) }),
+                            timeNode,
                         ),
                         domEl(
                             "h3",

@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261104-performance";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261104-kufar-listing-time";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");

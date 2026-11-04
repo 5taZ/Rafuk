@@ -4335,6 +4335,7 @@ const state = {
             ad_id: 5, title: "Велосипед", event_type: "price_drop", price_byn: 300,
             delta_byn: 50, region_name: "Минск", query: "велосипед", tracker_id: 1,
             created_at: "2026-10-20", strict_mode: true, thumbnail: "preview.jpg",
+            list_time: "2026-10-19",
         }],
         eventFilter: "all",
         eventFilterTrackerId: null,
@@ -4417,9 +4418,20 @@ const description = eventDescribedBy.split(" ")
     .map((id) => document.getElementById(id).textContent)
     .join(" ");
 assert.ok(description.includes("Падение цены") && description.includes("300 BYN"), description);
+assert.equal(eventCard.querySelector(".event-time").textContent, "2026-10-20");
 state.trackers.eventFilter = "new_listing";
 trackers.renderTrackerEvents();
 assert.strictEqual(elements.clearEventsButton.hidden, true);
+state.trackers.events[0].event_type = "new_listing";
+trackers.renderTrackerEvents();
+const published = elements.trackerEventsList.querySelector(".event-time");
+assert.equal(published.textContent, "2026-10-19");
+assert.equal(published.getAttribute("datetime"), "2026-10-19");
+state.trackers.events[0].list_time = null;
+trackers.renderTrackerEvents();
+assert.equal(
+    elements.trackerEventsList.querySelector(".event-time").textContent, "Найдено 2026-10-20",
+);
 state.trackers.eventFilter = "all";
 state.trackers.events = [];
 trackers.renderTrackerEvents();

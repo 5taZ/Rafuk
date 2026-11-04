@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -12,8 +12,9 @@ from api.config import get_settings
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import Tracker, TrackerEvent, User, UserConsent
+from api.models import QueryListingState, Tracker, TrackerEvent, User, UserConsent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead, TrackerUpdate
+from api.services.aggregator import build_query_key
 from api.services.workflow_store import ensure_user, resolve_user_id
 
 router = APIRouter(tags=["trackers"])
@@ -103,7 +104,8 @@ async def get_tracker_events(
         if user_id is None:
             return []
         stmt = (
-            select(TrackerEvent)
+            select(TrackerEvent, Tracker.category_id)
+            .join(Tracker, Tracker.id == TrackerEvent.tracker_id)
             .where(TrackerEvent.user_id == user_id)
             .order_by(TrackerEvent.created_at.desc(), TrackerEvent.id.desc())
             .limit(bounded_limit)
@@ -121,8 +123,30 @@ async def get_tracker_events(
             # dedup but must not pollute the frontend feed where they
             # would render as broken listing cards.
             stmt = stmt.where(TrackerEvent.event_type.in_(_LISTING_LEVEL_EVENT_TYPES))
-        result = await session.execute(stmt)
-        return list(result.scalars())
+        events = (await session.execute(stmt)).all()
+        listing_keys = {
+            event.id: (build_query_key(event.query, event.strict_mode, category_id), event.ad_id)
+            for event, category_id in events
+            if event.event_type == "new_listing" and event.ad_id is not None
+        }
+        listing_times = {}
+        if listing_keys:
+            states = await session.execute(
+                select(
+                    QueryListingState.query, QueryListingState.ad_id, QueryListingState.list_time,
+                ).where(
+                    tuple_(QueryListingState.query, QueryListingState.ad_id).in_(
+                        set(listing_keys.values())
+                    )
+                )
+            )
+            listing_times = {(query, ad_id): list_time for query, ad_id, list_time in states}
+        return [
+            TrackerEventRead.model_validate(event).model_copy(
+                update={"list_time": listing_times.get(listing_keys.get(event.id))}
+            )
+            for event, _ in events
+        ]
 
 
 @router.delete("/tracker-events", status_code=status.HTTP_204_NO_CONTENT)

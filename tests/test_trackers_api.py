@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from api.database import get_engine, get_session_factory
 from api.middleware.telegram_auth import TelegramInitData
 from api.models import Base, QueryListingState, Tracker, TrackerEvent
+from api.services.aggregator import build_query_key
 from api.services.history_service import QuerySyncResult, TrendReversal
 from scheduler.collector import (
     _build_tracker_message,
@@ -162,10 +163,27 @@ async def seed_tracker_event(session_factory) -> None:
 
         # RV-DB-01: Postgres enforces tracker_events.tracker_id; SQLite runs
         # without PRAGMA foreign_keys, so a bare tracker_id=1 passed only there.
-        tracker = Tracker(user_id=user_id, query="iphone 15", strict_mode=True)
+        tracker = Tracker(
+            user_id=user_id, query="iphone 15", strict_mode=True,
+            category_id=17010, category_label="Мобильные телефоны",
+        )
         session.add(tracker)
         await session.flush()
 
+        detected_at = datetime(2026, 11, 4, 19, 49, 57, tzinfo=UTC)
+        for category_id, list_time in [
+            (17010, "2026-11-04T19:36:03Z"),
+            (None, "2026-11-04T19:28:00Z"),
+        ]:
+            session.add(QueryListingState(
+                query=build_query_key(tracker.query, tracker.strict_mode, category_id),
+                ad_id=1,
+                title="iPhone 15 256GB",
+                link="https://www.kufar.by/item/1",
+                list_time=list_time,
+                first_seen_at=detected_at,
+                last_seen_at=detected_at,
+            ))
         session.add(
             TrackerEvent(
                 tracker_id=tracker.id,
@@ -177,7 +195,7 @@ async def seed_tracker_event(session_factory) -> None:
                 title="iPhone 15 256GB",
                 link="https://www.kufar.by/item/1",
                 price_byn=2400.0,
-                created_at=datetime.now(UTC),
+                created_at=detected_at,
             )
         )
         await session.commit()
@@ -202,6 +220,8 @@ def test_tracker_events_endpoint() -> None:
     assert payload[0]["event_type"] == "new_listing"
     assert payload[0]["strict_mode"] is True
     assert payload[0]["ad_id"] == 1
+    assert payload[0]["list_time"] == "2026-11-04T19:36:03Z"
+    assert payload[0]["created_at"].startswith("2026-11-04T19:49:57")
 
 
 @pytest.mark.asyncio
@@ -561,6 +581,7 @@ def test_tracker_events_endpoint_filters_out_trend_reversal_by_default() -> None
         assert len(default_payload) == 1
         assert default_payload[0]["event_type"] == "new_listing"
         assert default_payload[0]["ad_id"] == 42
+        assert default_payload[0]["list_time"] is None
 
         # Explicit filter: client can still request trend_reversal if it
         # really wants to (e.g. an admin/debug view).

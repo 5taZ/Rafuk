@@ -20,8 +20,8 @@
  */
 /* global window */
 
-const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20261104-performance";
-const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20261104-performance";
+const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20261104-kufar-listing-time";
+const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20261104-kufar-listing-time";
 
 function _lazyLoadCardsSources(context) {
     if (_loadPromises.has("cards")) return _loadPromises.get("cards");

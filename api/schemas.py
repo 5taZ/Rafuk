@@ -435,6 +435,7 @@ class TrackerEventRead(BaseModel):
     parameters: dict | None = None
     seller_type: str | None = None
     region_name: str | None = None
+    list_time: str | None = None
     created_at: datetime
 
 
