@@ -204,8 +204,7 @@ def test_build_api_headers_never_sends_a_blank_service_token(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("call", ["get", "post"])
-async def test_api_calls_return_none_when_headers_cannot_be_built(monkeypatch, call) -> None:
+async def test_api_post_returns_none_when_headers_cannot_be_built(monkeypatch) -> None:
     """TG-17: without a service token ``build_api_headers`` raises
     RuntimeError; it ran outside the try, so the handler died and the
     callback button span until Telegram timed it out."""
@@ -216,15 +215,11 @@ async def test_api_calls_return_none_when_headers_cannot_be_built(monkeypatch, c
 
     monkeypatch.setattr(api_client, "build_api_headers", _refuse)
 
-    if call == "get":
-        assert await api_client._api_get("/api/v1/analytics/leads", 123456) is None
-    else:
-        assert await api_client._api_post("/api/v1/leads", 123456, json_body={}) is None
+    assert await api_client._api_post("/api/v1/leads", 123456, json_body={}) is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("call", ["get", "post"])
-async def test_api_calls_return_none_on_non_json_success(monkeypatch, call) -> None:
+async def test_api_post_returns_none_on_non_json_success(monkeypatch) -> None:
     """TG-17: a 200 with an HTML body (a Cloudflare page) raised
     JSONDecodeError — a ValueError, not an ``httpx.HTTPError``."""
     import httpx
@@ -242,10 +237,7 @@ async def test_api_calls_return_none_on_non_json_success(monkeypatch, call) -> N
 
     monkeypatch.setattr(api_client, "get_http_client", _client)
     try:
-        if call == "get":
-            assert await api_client._api_get("/api/v1/analytics/leads", 123456) is None
-        else:
-            assert await api_client._api_post("/api/v1/leads", 123456, json_body={}) is None
+        assert await api_client._api_post("/api/v1/leads", 123456, json_body={}) is None
     finally:
         await client.aclose()
         from api.config import get_settings

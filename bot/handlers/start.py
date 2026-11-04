@@ -5,13 +5,12 @@ from datetime import UTC, datetime
 from urllib.parse import quote
 
 from aiogram import Router
-from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.types import Message
 from sqlalchemy import select, update
 
 from api.config import get_settings
 from api.models import TRACKER_PAUSE_REASON_BOT_BLOCKED, Tracker, User
-from bot.commands import BOT_HELP_TEXT
 from bot.database import get_bot_session_factory
 from bot.keyboards import mini_app_keyboard
 
@@ -121,7 +120,7 @@ async def cmd_start_deep(message: Message, command: CommandObject) -> None:
     await message.answer(f"Открыть «{label}» в Rafuk.", reply_markup=keyboard)
 
 
-@router.message(Command("start"))
+@router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await _resume_bot_blocked_trackers(message)
     settings = get_settings()
@@ -132,24 +131,3 @@ async def cmd_start(message: Message) -> None:
             "\nКнопка мини-аппа отключена локально — Telegram WebApp требует HTTPS."
         )
     await message.answer(text, reply_markup=keyboard)
-
-
-@router.message(Command("help"))
-async def cmd_help(message: Message) -> None:
-    await message.answer(BOT_HELP_TEXT)
-
-
-@router.message(Command("app"))
-async def cmd_app(message: Message) -> None:
-    settings = get_settings()
-    keyboard = mini_app_keyboard(settings.mini_app_url)
-    if keyboard is None:
-        await message.answer(
-            "Мини-апп отключён локально. Кнопки Telegram WebApp работают только "
-            "поверх HTTPS."
-        )
-        return
-    await message.answer(
-        "Открыть мини-апп Rafuk.",
-        reply_markup=keyboard,
-    )

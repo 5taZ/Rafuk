@@ -149,24 +149,6 @@ def build_api_headers(telegram_user_id: int, *, mutating: bool = False) -> dict[
 _API_CALL_ERRORS = (httpx.HTTPError, ValueError, RuntimeError)
 
 
-async def _api_get(
-    path: str,
-    telegram_user_id: int,
-    *,
-    params: dict | None = None,
-) -> dict[str, Any] | None:
-    """Make an authenticated GET request to the internal API."""
-    try:
-        headers = build_api_headers(telegram_user_id)
-        client = await get_http_client()
-        resp = await client.get(path, params=params, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
-    except _API_CALL_ERRORS:
-        logger.exception("API call failed: GET %s", path)
-        return None
-
-
 async def _api_post(
     path: str,
     telegram_user_id: int,

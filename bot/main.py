@@ -6,16 +6,20 @@ import os
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatType
-from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllPrivateChats,
+    MenuButtonDefault,
+    MenuButtonWebApp,
+    WebAppInfo,
+)
 from sqlalchemy import text
 
 from api.config import get_settings
 from api.healthcheck import start_health_server, stop_health_server
 from api.logging_config import configure_logging
 from bot.api_client import close_http_client
-from bot.commands import BOT_COMMANDS
 from bot.database import close_bot_engine, get_bot_engine, init_bot_engine
-from bot.handlers.analytics import router as analytics_router
 from bot.handlers.callbacks import router as callbacks_router
 from bot.handlers.start import router as start_router
 
@@ -27,28 +31,28 @@ configure_logging(service="bot")
 
 def build_dispatcher() -> Dispatcher:
     dispatcher = Dispatcher()
-    # TG-03: web_app buttons exist only in private chats (the answer failed
-    # with BadRequest in a group) and /deals, /profit would post the
-    # caller's finances to everyone there. A root filter stops the update
-    # before any router sees it.
+    # TG-03: web_app buttons in /start replies require a private chat.
     dispatcher.message.filter(F.chat.type == ChatType.PRIVATE)
     dispatcher.include_router(start_router)
-    dispatcher.include_router(analytics_router)
     dispatcher.include_router(callbacks_router)
     return dispatcher
 
 
-async def register_commands(bot: Bot) -> None:
+async def configure_bot_menu(bot: Bot, mini_app_url: str) -> None:
     # TG-03: the command menu belongs to private chats only; the default
     # scope (groups included) is cleared of what earlier versions set there.
     await bot.delete_my_commands()
+    open_label = "Открыть Rafuk"
     await bot.set_my_commands(
-        [
-            BotCommand(command=command, description=description)
-            for command, description in BOT_COMMANDS
-        ],
+        [BotCommand(command="start", description=open_label)],
         scope=BotCommandScopeAllPrivateChats(),
     )
+    menu_button = (
+        MenuButtonWebApp(text=open_label, web_app=WebAppInfo(url=mini_app_url))
+        if mini_app_url.startswith("https://")
+        else MenuButtonDefault()
+    )
+    await bot.set_chat_menu_button(menu_button=menu_button)
 
 
 async def _bot_readiness() -> bool:
@@ -76,7 +80,7 @@ async def main() -> None:
     settings = get_settings()
     await init_bot_engine()
     bot = Bot(settings.bot_token.get_secret_value())
-    await register_commands(bot)
+    await configure_bot_menu(bot, settings.mini_app_url)
     # INF-H6: run a tiny HTTP health server on a side port so Docker
     # can probe liveness/readiness directly instead of relying on
     # `pgrep python`, which only proves the interpreter exists — not

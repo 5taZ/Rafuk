@@ -5,29 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot.commands import BOT_COMMANDS
-from bot.handlers.start import _safe_start_param, cmd_app, cmd_help, cmd_start, cmd_start_deep
-
-
-@pytest.mark.asyncio
-async def test_cmd_help_answers() -> None:
-    message = SimpleNamespace(answer=AsyncMock())
-    await cmd_help(message)  # type: ignore[arg-type]
-    message.answer.assert_awaited()
-    text = message.answer.await_args.args[0]
-    for command, description in BOT_COMMANDS:
-        assert f"/{command}" in text
-        assert description in text
-
-
-@pytest.mark.asyncio
-async def test_cmd_start_and_app_include_keyboard() -> None:
-    message = SimpleNamespace(answer=AsyncMock())
-    await cmd_start(message)  # type: ignore[arg-type]
-    start_text = message.answer.await_args.args[0]
-    assert "/app" not in start_text and "/help" not in start_text
-    await cmd_app(message)  # type: ignore[arg-type]
-    assert message.answer.await_count == 2
+from bot.handlers.start import _safe_start_param, cmd_start, cmd_start_deep
 
 
 @pytest.mark.asyncio
@@ -190,12 +168,11 @@ def dispatcher():
 async def test_dispatcher_ignores_commands_outside_private_chats(
     dispatcher, chat_type: str,
 ) -> None:
-    """TG-03: web_app buttons fail in groups, and /profit answered there
-    with the caller's finances for everyone to read."""
+    """TG-03: web_app buttons in /start replies fail in groups."""
     from aiogram.dispatcher.event.bases import UNHANDLED
 
     result = await dispatcher.propagate_event(
-        update_type="message", event=_chat_message(chat_type, "/profit"), bot=AsyncMock(),
+        update_type="message", event=_chat_message(chat_type, "/start"), bot=AsyncMock(),
     )
 
     assert result is UNHANDLED
@@ -206,28 +183,62 @@ async def test_dispatcher_still_answers_private_chats(dispatcher) -> None:
     from aiogram.dispatcher.event.bases import UNHANDLED
 
     bot = AsyncMock()
-    message = _chat_message("private", "/help").as_(bot)
+    message = _chat_message("private", "/start").as_(bot)
     result = await dispatcher.propagate_event(
         update_type="message", event=message, bot=bot,
     )
 
     assert result is not UNHANDLED
-    bot.assert_awaited()
+    bot.assert_awaited_once()
+    reply = bot.await_args.args[0]
+    assert reply.reply_markup.inline_keyboard[0][0].web_app.url.startswith("https://")
 
 
 @pytest.mark.asyncio
-async def test_register_commands_scopes_the_menu_to_private_chats() -> None:
+@pytest.mark.parametrize("command", ["/app", "/help", "/deals", "/profit", "/stats iphone"])
+async def test_dispatcher_ignores_retired_commands(dispatcher, command: str) -> None:
+    from aiogram.dispatcher.event.bases import UNHANDLED
+
+    bot = AsyncMock()
+    message = _chat_message("private", command).as_(bot)
+    result = await dispatcher.propagate_event(
+        update_type="message", event=message, bot=bot,
+    )
+
+    assert result is UNHANDLED
+    bot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_configure_bot_menu_scopes_commands_to_private_chats() -> None:
     """TG-03: the command menu used to be set for the default scope, so
     groups listed /deals and /profit too."""
     from aiogram.types import BotCommandScopeAllPrivateChats
 
-    from bot.main import register_commands
+    from bot.main import configure_bot_menu
 
     bot = AsyncMock()
-    await register_commands(bot)
+    await configure_bot_menu(bot, "https://rafuk.test/")
 
     bot.delete_my_commands.assert_awaited_once_with()
     commands = bot.set_my_commands.await_args.args[0]
     assert [c.command for c in commands] == ["start"]
     scope = bot.set_my_commands.await_args.kwargs["scope"]
     assert isinstance(scope, BotCommandScopeAllPrivateChats)
+
+
+@pytest.mark.asyncio
+async def test_configure_bot_menu_refreshes_the_default_launch_button() -> None:
+    from aiogram.types import MenuButtonDefault, MenuButtonWebApp, WebAppInfo
+
+    from bot.main import configure_bot_menu
+
+    bot = AsyncMock()
+    for url in ("https://previous.rafuk.test/", "https://current.rafuk.test/"):
+        await configure_bot_menu(bot, url)
+        bot.set_chat_menu_button.assert_awaited_with(
+            menu_button=MenuButtonWebApp(text="Открыть Rafuk", web_app=WebAppInfo(url=url)),
+        )
+
+    await configure_bot_menu(bot, "http://localhost:8080/")
+    bot.set_chat_menu_button.assert_awaited_with(menu_button=MenuButtonDefault())

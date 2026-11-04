@@ -108,7 +108,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Rafuk is running locally at $url, but this PC could not verify the public HTTPS address $miniAppUrl. Try the address from your phone or run Start-Rafuk.cmd again."
     }
-    Write-Host "Telegram Mini App is ready at $miniAppUrl. Send /start in the bot's private chat."
+    Write-Host "Telegram Mini App is ready at $miniAppUrl. Use the Mini App menu button in the bot's private chat."
     if (-not $NoBrowser) { Start-Process $url }
 } catch {
     Write-Host $_.Exception.Message -ForegroundColor Red
