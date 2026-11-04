@@ -1790,9 +1790,10 @@
 }
 
 #track-query-btn {
-    align-self: flex-start;
-    display: inline-flex;
+    align-self: stretch;
+    display: flex;
     align-items: center;
+    justify-content: center;
     min-height: 44px;
 }
 

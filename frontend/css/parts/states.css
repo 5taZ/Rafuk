@@ -325,8 +325,7 @@
 }
 
 .primary-btn.loading::after,
-.primary-btn.is-loading::after,
-#track-query-btn.is-loading::after {
+.primary-btn.is-loading::after {
     content: '';
     display: inline-block;
     width: 14px;
