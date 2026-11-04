@@ -88,17 +88,17 @@ def enhanced_alert_keyboard(
     """Build an enriched inline keyboard for new listing / price drop alerts.
 
     Three action buttons:
-      - 📌 В покупки  — callback ``add_lead:<ad_id>`` to create a lead
-      - ⭐ В Избранное — callback ``add_watch:<ad_id>`` to add to watchlist
-      - 🔗 Открыть    — URL button linking to the Kufar listing
+      - В покупки — callback ``add_lead:<ad_id>`` to create a lead
+      - В избранное — callback ``add_watch:<ad_id>`` to add to watchlist
+      - Открыть на Kufar — URL button linking to the listing
     """
     row1: list[InlineKeyboardButton] = [
-        InlineKeyboardButton(text="📌 В покупки", callback_data=f"add_lead:{ad_id}"),
-        InlineKeyboardButton(text="⭐ В Избранное", callback_data=f"add_watch:{ad_id}"),
+        InlineKeyboardButton(text="В покупки", callback_data=f"add_lead:{ad_id}"),
+        InlineKeyboardButton(text="В избранное", callback_data=f"add_watch:{ad_id}"),
     ]
     row2: list[InlineKeyboardButton] = []
     if listing_url and listing_url.startswith(("http://", "https://")):
-        row2.append(InlineKeyboardButton(text="🔗 Открыть", url=listing_url))
+        row2.append(InlineKeyboardButton(text="Открыть на Kufar", url=listing_url))
     keyboard = [row1]
     if row2:
         keyboard.append(row2)

@@ -42,7 +42,7 @@ def test_tracker_alert_keyboard_returns_none_when_nothing_to_link() -> None:
 
 def test_enhanced_alert_keyboard_uses_favourites_label() -> None:
     """The watchlist button text was renamed from '👁 Отслеживать' to
-    '⭐ В Избранное'. callback_data still uses ``add_watch:<ad_id>`` so
+    'В избранное'. callback_data still uses ``add_watch:<ad_id>`` so
     the existing handler keeps routing it correctly."""
     from bot.keyboards import enhanced_alert_keyboard
 
@@ -53,14 +53,14 @@ def test_enhanced_alert_keyboard_uses_favourites_label() -> None:
 
     # First row: lead + favourites callbacks.
     row1 = keyboard.inline_keyboard[0]
-    assert row1[0].text == "📌 В покупки"
+    assert row1[0].text == "В покупки"
     assert row1[0].callback_data == "add_lead:4242"
-    assert row1[1].text == "⭐ В Избранное"
+    assert row1[1].text == "В избранное"
     assert row1[1].callback_data == "add_watch:4242"
 
     # Second row: link to Kufar.
     row2 = keyboard.inline_keyboard[1]
-    assert row2[0].text == "🔗 Открыть"
+    assert row2[0].text == "Открыть на Kufar"
     assert row2[0].url == "https://www.kufar.by/item/4242"
 
 

@@ -510,16 +510,18 @@ def test_nginx_api_upstream_is_rendered_from_the_environment() -> None:
             assert nginx_variable in rendered
 
 
-# OPS-07: Settings fields the compose services deliberately do not pass.
-SETTINGS_NOT_PASSED_TO_CONTAINERS = {
+# OPS-07: Settings fields that do not belong in the API environment.
+SETTINGS_NOT_PASSED_TO_API = {
     # The containers never run with auth bypass (ENV=production refuses it
     # anyway); without the confirmation flag AUTH_BYPASS=true fails at start.
     "AUTH_BYPASS_CONFIRM_RISK": "auth bypass is local-dev only",
+    "BOT_API_BASE_URL": "used only by the bot to reach the API service",
 }
 # OPS-07: compose defaults that differ from api/config.py on purpose.
 COMPOSE_DEFAULT_OVERRIDES = {
     ("*", "ENV"): "production",
     ("api", "KUFAR_PARALLEL_SEMAPHORE"): "3",
+    ("bot", "BOT_API_BASE_URL"): "http://api:8000",
 }
 
 
@@ -551,16 +553,19 @@ def test_compose_passes_every_settings_field_to_the_api() -> None:
     settings_fields = _settings_env_names()
     services = _services()
     api_env = services["api"]["environment"]
-    missing = set(settings_fields) - set(api_env) - set(SETTINGS_NOT_PASSED_TO_CONTAINERS)
+    missing = set(settings_fields) - set(api_env) - set(SETTINGS_NOT_PASSED_TO_API)
     assert not missing, f"Settings fields not passed to the api container: {sorted(missing)}"
-    assert set(SETTINGS_NOT_PASSED_TO_CONTAINERS) <= set(settings_fields)
-    assert not set(SETTINGS_NOT_PASSED_TO_CONTAINERS) & set(api_env)
+    assert set(SETTINGS_NOT_PASSED_TO_API) <= set(settings_fields)
+    assert not set(SETTINGS_NOT_PASSED_TO_API) & set(api_env)
     # Not Settings fields, but the image CMD (WORKERS, LOG_LEVEL) and
     # api/logging_config.py (LOG_LEVEL, LOG_FORMAT) read them.
     assert {"WORKERS", "LOG_LEVEL", "LOG_FORMAT"} <= set(api_env)
     # The bot and the scheduler get the settings they read.
     assert {"INTERNAL_SERVICE_TOKEN", "INTERNAL_SERVICE_TOKEN_REQUIRED",
             "ALLOW_LEGACY_BOT_INITDATA"} <= set(services["bot"]["environment"])
+    assert services["bot"]["environment"]["BOT_API_BASE_URL"] == (
+        "${DOCKER_BOT_API_BASE_URL:-http://api:8000}"
+    )
     assert {"KUFAR_REQUEST_DELAY", "KUFAR_PARALLEL_SEMAPHORE", "AUTO_REMOVE_MISSING_DAYS",
             "ALERT_CHECK_INTERVAL"} <= set(services["scheduler"]["environment"])
     for name in PYTHON_SERVICES:
@@ -587,7 +592,8 @@ def test_compose_defaults_match_the_settings_defaults() -> None:
             match = re.fullmatch(r"\$\{(\w+):-(.*)\}", str(value))
             if match is None:
                 continue
-            assert match.group(1) == name, (service, name, value)
+            env_name = "DOCKER_BOT_API_BASE_URL" if name == "BOT_API_BASE_URL" else name
+            assert match.group(1) == env_name, (service, name, value)
             expected = COMPOSE_DEFAULT_OVERRIDES.get(
                 (service, name), COMPOSE_DEFAULT_OVERRIDES.get(("*", name)),
             )

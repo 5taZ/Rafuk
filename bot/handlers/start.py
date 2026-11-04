@@ -126,11 +126,7 @@ async def cmd_start(message: Message) -> None:
     await _resume_bot_blocked_trackers(message)
     settings = get_settings()
     keyboard = mini_app_keyboard(settings.mini_app_url)
-    text = (
-        "Rafuk помогает анализировать цены, объявления и следить за рынком "
-        "на kufar.by.\n"
-        "Открой мини-апп через /app или посмотри список команд: /help"
-    )
+    text = "Rafuk — цены, объявления и автопоиск на Kufar."
     if keyboard is None:
         text += (
             "\nКнопка мини-аппа отключена локально — Telegram WebApp требует HTTPS."

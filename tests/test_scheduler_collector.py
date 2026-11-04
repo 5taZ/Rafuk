@@ -233,11 +233,10 @@ def test_build_new_listing_message_basic():
         last_seen_at=now,
     )
     msg = _build_new_listing_message(state)
-    assert "НОВЫЙ ЛОТ" in msg
-    assert "2000 BYN" in msg
+    assert msg == "🔔 Новый лот\niPhone 15 256GB\n2000 BYN"
 
 
-def test_build_new_listing_message_with_median():
+def test_build_new_listing_message_with_discount():
     now = datetime.now(UTC)
     state = QueryListingState(
         ad_id=1,
@@ -249,11 +248,8 @@ def test_build_new_listing_message_with_median():
         first_seen_at=now,
         last_seen_at=now,
     )
-    msg = _build_new_listing_message(state, median_byn=2200.0, discount_pct=10.0, liquidity="High")
-    assert "НОВЫЙ ЛОТ" in msg
-    assert "медиана" in msg
-    assert "-10%" in msg
-    assert "High" in msg
+    msg = _build_new_listing_message(state, discount_pct=10.0)
+    assert msg == "🔔 Новый лот\niPhone 15 256GB\n2000 BYN · −10% к медиане"
 
 
 # ---------------------------------------------------------------------------
@@ -273,11 +269,10 @@ def test_build_price_drop_message_basic():
         last_seen_at=now,
     )
     msg = _build_price_drop_message(state, 200.0)
-    assert "СНИЖЕНИЕ ЦЕНЫ" in msg
-    assert "1800 BYN" in msg
+    assert msg == "📉 Цена снизилась\niPhone 15 Pro\n1800 BYN · −200 BYN"
 
 
-def test_build_price_drop_message_with_median():
+def test_build_price_drop_message_omits_zero_rounded_delta():
     now = datetime.now(UTC)
     state = QueryListingState(
         ad_id=2,
@@ -289,10 +284,8 @@ def test_build_price_drop_message_with_median():
         first_seen_at=now,
         last_seen_at=now,
     )
-    msg = _build_price_drop_message(state, 200.0, median_byn=2200.0, discount_pct=10.0)
-    assert "СНИЖЕНИЕ ЦЕНЫ" in msg
-    assert "медиана" in msg
-    assert "-10%" in msg
+    msg = _build_price_drop_message(state, 0.1)
+    assert msg == "📉 Цена снизилась\niPhone 15 Pro\n1800 BYN"
 
 
 # ---------------------------------------------------------------------------
@@ -300,14 +293,10 @@ def test_build_price_drop_message_with_median():
 # ---------------------------------------------------------------------------
 
 def test_build_threshold_message_empty_returns_none():
-    assert _build_threshold_message(MagicMock(), []) is None
+    assert _build_threshold_message([]) is None
 
 
 def test_build_threshold_message_price_alerts():
-
-    tracker = MagicMock()
-    tracker.query = "iphone 15"
-    tracker.strict_mode = False
 
     event = MagicMock()
     event.event_type = "price_threshold_alert"
@@ -316,16 +305,12 @@ def test_build_threshold_message_price_alerts():
     event.link = "https://www.kufar.by/item/1"
     event.parameters = {"threshold": 1500.0}
 
-    msg = _build_threshold_message(tracker, [event])
+    msg = _build_threshold_message([event])
     assert msg is not None
-    assert "ПОРОГ ЦЕНЫ" in msg
+    assert "Порог цены" in msg
 
 
 def test_build_threshold_message_discount_alerts():
-    tracker = MagicMock()
-    tracker.query = "iphone 15"
-    tracker.strict_mode = False
-
     event = MagicMock()
     event.event_type = "discount_alert"
     event.price_byn = 1800.0
@@ -334,9 +319,9 @@ def test_build_threshold_message_discount_alerts():
     event.delta_byn = 15.0
     event.parameters = {"discount_percent": 15.0, "median_byn": 2200.0}
 
-    msg = _build_threshold_message(tracker, [event])
+    msg = _build_threshold_message([event])
     assert msg is not None
-    assert "СКИДКА ОТ МЕДИАНЫ" in msg
+    assert "Скидка от медианы" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +431,34 @@ async def test_send_message_classified_outcomes(
     assert outcome == expected
     mock_bot.send_message.assert_awaited_once_with(123456, "Hello", reply_markup=None)
     assert not collector._telegram_delivery_paused()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reject_emoji", [False, True])
+async def test_tracker_alert_animation_preserves_actions(mock_bot: AsyncMock, reject_emoji: bool):
+    from aiogram.exceptions import TelegramBadRequest
+
+    from bot.keyboards import enhanced_alert_keyboard
+
+    message = "🔔 Новый лот\niPhone 15\n900 BYN"
+    markup = enhanced_alert_keyboard(ad_id=42, listing_url="https://www.kufar.by/item/42")
+    if reject_emoji:
+        mock_bot.send_message.side_effect = [
+            _make_tg_error(TelegramBadRequest, "custom emoji is not allowed"), None,
+        ]
+    assert await collector._send_message_classified(
+        mock_bot, 123456, message, reply_markup=markup,
+    ) == ("sent", None)
+    calls = mock_bot.send_message.await_args_list
+    entities = calls[0].kwargs["entities"]
+    assert (entities[0].type, entities[0].offset, entities[0].length) == ("custom_emoji", 0, 2)
+    assert entities[0].custom_emoji_id == "5242628160297641831"
+    assert (entities[1].type, entities[1].offset, entities[1].length) == ("bold", 3, 9)
+    assert calls[0].kwargs["reply_markup"] is markup
+    assert len(calls) == (2 if reject_emoji else 1)
+    if reject_emoji:
+        assert calls[1].args == (123456, message)
+        assert calls[1].kwargs == {"reply_markup": markup}
 
 
 @pytest.mark.asyncio
@@ -2020,7 +2033,7 @@ def test_serialize_reply_markup_roundtrip() -> None:
     """``_serialize_reply_markup`` + ``_deserialize_reply_markup`` must
     produce a markup with the same button text/callback_data as the
     original — this is what makes a DLQ retry land with usable
-    "📌 В покупки" / "⭐ В Избранное" / "🔗 Открыть" buttons."""
+    "В покупки" / "В избранное" / "Открыть на Kufar" buttons."""
     from bot.keyboards import enhanced_alert_keyboard
 
     original = enhanced_alert_keyboard(
@@ -2034,11 +2047,11 @@ def test_serialize_reply_markup_roundtrip() -> None:
     restored = _deserialize_reply_markup(payload)
     assert restored is not None
     # Same shape as the original — first row has both action buttons.
-    assert restored.inline_keyboard[0][0].text == "📌 В покупки"
+    assert restored.inline_keyboard[0][0].text == "В покупки"
     assert restored.inline_keyboard[0][0].callback_data == "add_lead:4242"
-    assert restored.inline_keyboard[0][1].text == "⭐ В Избранное"
+    assert restored.inline_keyboard[0][1].text == "В избранное"
     # Second row has the URL button.
-    assert restored.inline_keyboard[1][0].text == "🔗 Открыть"
+    assert restored.inline_keyboard[1][0].text == "Открыть на Kufar"
     assert restored.inline_keyboard[1][0].url == "https://www.kufar.by/item/4242"
 
 
@@ -2221,14 +2234,14 @@ def test_new_listing_message_omits_discount_when_above_market() -> None:
     # producing a "-20% от медианы" line. Post-fix the collector passes
     # None for premium-priced listings, so the template never emits it.
     msg_premium = _build_new_listing_message(
-        state, median_byn=2000.0, discount_pct=None,
+        state, discount_pct=None,
     )
-    assert "% от медианы" not in msg_premium
+    assert "% к медиане" not in msg_premium
     # Genuine discount still renders as before.
     msg_discount = _build_new_listing_message(
-        state, median_byn=2000.0, discount_pct=20.0,
+        state, discount_pct=20.0,
     )
-    assert "-20% от медианы" in msg_discount
+    assert "−20% к медиане" in msg_discount
 
 
 @pytest.mark.asyncio
@@ -2726,7 +2739,7 @@ async def test_check_trackers_delivers_through_outbox_with_keyboard(
     assert mock_bot.send_message.await_count == 1
     call = mock_bot.send_message.await_args
     assert call.args[0] == 1301
-    assert "НОВЫЙ ЛОТ" in call.args[1]
+    assert "Новый лот" in call.args[1]
     assert call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "add_lead:31"
     async with sf() as session:
         assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
@@ -2778,7 +2791,7 @@ async def test_check_trackers_unexpected_error_is_isolated_to_its_key(
     await check_trackers(mock_bot, sf, _TICK_SETTINGS)
 
     assert _sent_chats(mock_bot) == [1401]
-    assert "НОВЫЙ ЛОТ" in mock_bot.send_message.await_args.args[1]
+    assert "Новый лот" in mock_bot.send_message.await_args.args[1]
     assert await _event_keys(sf) == {(healthy_id, 41, "new_listing")}
     async with sf() as session:
         cursors = dict((await session.execute(select(Tracker.id, Tracker.last_checked_at))).all())
@@ -3135,14 +3148,13 @@ def test_free_lot_alerts_threshold_once_and_never_as_discount():
 
 def test_threshold_message_labels_free_lots():
     """RV-SCH-05: a giveaway reads "бесплатно", not "0 BYN"."""
-    tracker = _threshold_tracker()
     event = TrackerEvent(
         event_type="price_threshold_alert", price_byn=0, price_type="free",
         title="Отдам даром диван", link="https://www.kufar.by/item/20",
         parameters={"threshold": 500.0},
     )
-    msg = _build_threshold_message(tracker, [event])
-    assert "💰 бесплатно (порог: 500 BYN)" in msg
+    msg = _build_threshold_message([event])
+    assert "бесплатно · порог 500 BYN" in msg
 
 
 @pytest.mark.asyncio
@@ -3197,7 +3209,7 @@ async def test_check_trackers_does_not_repeat_threshold_alert_after_24h(
 
     await check_trackers(mock_bot, sf, _TICK_SETTINGS)
     assert await _threshold_prices() == [450.0]
-    assert not any("ПОРОГ ЦЕНЫ" in call.args[1] for call in mock_bot.send_message.await_args_list)
+    assert not any("Порог цены" in call.args[1] for call in mock_bot.send_message.await_args_list)
 
     price["lot"] = 40_000
     async with sf() as session:
@@ -3209,7 +3221,7 @@ async def test_check_trackers_does_not_repeat_threshold_alert_after_24h(
         await session.commit()
     await check_trackers(mock_bot, sf, _TICK_SETTINGS)
     assert await _threshold_prices() == [450.0, 400.0]
-    assert any("ПОРОГ ЦЕНЫ" in call.args[1] for call in mock_bot.send_message.await_args_list)
+    assert any("Порог цены" in call.args[1] for call in mock_bot.send_message.await_args_list)
 
 
 # ── RV-SCH-04: reminder lifecycle ───────────────────────────────────────

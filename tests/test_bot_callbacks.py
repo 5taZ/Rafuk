@@ -330,20 +330,21 @@ async def test_add_watch_success_answers_with_favourites_text(
 
 
 @pytest.mark.asyncio
-async def test_add_watch_conflict_says_already_in_favourites(
-    patch_bot_session, captured_api_post
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ({"conflict": True}, "Уже в избранном"),
+        ({"conflict": True, "detail": "Этот лот уже в покупках"}, "Этот лот уже в покупках"),
+    ],
+)
+async def test_add_watch_conflict_identifies_the_existing_collection(
+    patch_bot_session, captured_api_post, response, expected,
 ) -> None:
-    """Watchlist conflict response must say 'Уже в избранном', not
-    'Уже в покупках' — the latter was the original copy bug surfaced
-    during the bot-thumbnail audit."""
     ad_id = 6363
     await _seed_tracker_event(ad_id=ad_id)
-    captured_api_post["_response"] = {"conflict": True}
+    captured_api_post["_response"] = response
     callback = _make_callback(f"add_watch:{ad_id}")
 
     await cb_module.cb_add_to_watchlist(callback)
 
-    args, kwargs = callback.answer.await_args
-    text = args[0] if args else kwargs.get("text", "")
-    assert "избранном" in text
-    assert "покупках" not in text
+    callback.answer.assert_awaited_once_with(expected, show_alert=False)

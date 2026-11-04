@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     api_base_url: str = Field(..., description="HTTPS URL for the API base")
+    bot_api_base_url: str | None = None
     mini_app_url: str = Field(..., description="HTTPS URL for the Telegram Mini App")
     kufar_request_delay: float = 1.0
     kufar_parallel_semaphore: int = 2
@@ -277,6 +278,22 @@ class Settings(BaseSettings):
             raise ValueError("AI service URLs must use HTTPS unless using localhost")
         if parsed.scheme not in {"http", "https"}:
             raise ValueError("AI service URLs must start with http:// or https://")
+        return v.rstrip("/")
+
+    @field_validator("bot_api_base_url")
+    @classmethod
+    def validate_bot_api_base_url(cls, v: str | None) -> str | None:
+        if not v:
+            return None
+        parsed = urlparse(v)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("BOT_API_BASE_URL must be an HTTP(S) service URL")
         return v.rstrip("/")
 
     @field_validator("api_base_url", "mini_app_url")

@@ -219,6 +219,7 @@ services:
     environment:
       <<: *app-env
       SERVICE: bot
+      BOT_API_BASE_URL: ${DOCKER_BOT_API_BASE_URL:-http://api:8000}
       # OPUS-12: shared with api via env so the bot can authenticate
       # callbacks against the API without forging initData.
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}

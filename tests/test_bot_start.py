@@ -24,6 +24,8 @@ async def test_cmd_help_answers() -> None:
 async def test_cmd_start_and_app_include_keyboard() -> None:
     message = SimpleNamespace(answer=AsyncMock())
     await cmd_start(message)  # type: ignore[arg-type]
+    start_text = message.answer.await_args.args[0]
+    assert "/app" not in start_text and "/help" not in start_text
     await cmd_app(message)  # type: ignore[arg-type]
     assert message.answer.await_count == 2
 
@@ -226,6 +228,6 @@ async def test_register_commands_scopes_the_menu_to_private_chats() -> None:
 
     bot.delete_my_commands.assert_awaited_once_with()
     commands = bot.set_my_commands.await_args.args[0]
-    assert [c.command for c in commands] == [command for command, _ in BOT_COMMANDS]
+    assert [c.command for c in commands] == ["start"]
     scope = bot.set_my_commands.await_args.kwargs["scope"]
     assert isinstance(scope, BotCommandScopeAllPrivateChats)

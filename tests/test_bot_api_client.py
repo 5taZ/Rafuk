@@ -48,31 +48,55 @@ def test_build_api_headers_keeps_legacy_initdata_fallback(monkeypatch) -> None:
     assert "X-Internal-Service-Token" not in headers
 
 
-def test_bot_mutating_headers_pass_real_csrf_and_service_auth(monkeypatch) -> None:
-    api_client = _reset_settings(monkeypatch, internal_token="svc-secret")
+@pytest.mark.parametrize("internal_token", ["svc-secret", None])
+def test_bot_mutating_headers_pass_real_csrf_and_auth(monkeypatch, internal_token) -> None:
+    monkeypatch.setenv("API_BASE_URL", "http://127.0.0.1:8010")
+    monkeypatch.setenv("BOT_API_BASE_URL", "http://api:8000")
+    api_client = _reset_settings(monkeypatch, internal_token=internal_token)
 
     from api.config import get_settings
     from api.main import create_app
 
     app = create_app()
     headers = api_client.build_api_headers(telegram_user_id=123456, mutating=True)
+    payload = {
+        "query": "iphone 15",
+        "ad_id": 960001,
+        "title": "iPhone 15 128GB",
+        "link": "https://www.kufar.by/item/960001",
+        "price_byn": 2000,
+    }
     with _OriginalTestClient(app) as client:
+        saved = client.post("/api/v1/watchlist", headers=headers, json=payload)
         response = client.post(
             "/api/v1/leads",
             headers=headers,
-            json={
-                "query": "iphone 15",
-                "ad_id": 960001,
-                "title": "iPhone 15 128GB",
-                "link": "https://www.kufar.by/item/960001",
-                "price_byn": 2000,
-                "source": "bot_callback",
-            },
+            json={**payload, "source": "bot_callback"},
         )
 
+    assert headers["Origin"] == "http://127.0.0.1:8010"
+    assert saved.status_code == 201
+    assert saved.json()["ad_id"] == 960001
     assert response.status_code == 201
     assert response.json()["ad_id"] == 960001
     get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_bot_uses_docker_transport_without_overwriting_csrf_origin(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_API_BASE_URL", "http://api:8000")
+    api_client = _reset_settings(monkeypatch, internal_token="svc-secret")
+    monkeypatch.setattr(api_client, "_client", None)
+    try:
+        client = await api_client.get_http_client()
+        request = client.build_request("POST", "/api/v1/leads")
+        assert str(request.url) == "http://api:8000/api/v1/leads"
+        assert (
+            api_client.build_api_headers(123456, mutating=True)["Origin"]
+            == "https://kufar-analytics.example.com"
+        )
+    finally:
+        await api_client.close_http_client()
 
 
 def test_service_auth_without_mutating_csrf_headers_is_rejected(monkeypatch) -> None:

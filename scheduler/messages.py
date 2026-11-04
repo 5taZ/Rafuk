@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from api.models import QueryListingState, Tracker, TrackerEvent
+from api.models import QueryListingState, TrackerEvent
 from api.services.history_service import QuerySyncResult, TrendReversal
 
 
@@ -14,54 +14,29 @@ def _format_price_byn(value: float | None, price_type: str | None = None) -> str
     return f"{round(float(value))} BYN"
 
 
-def _build_threshold_message(
-    tracker: Tracker,
-    threshold_events: list[TrackerEvent],
-) -> str | None:
-    """Format a Telegram notification for threshold alert events."""
+def _notification_title(value: str | None) -> str:
+    return " ".join((value or "").split())[:120] or "Без названия"
+
+
+def _build_threshold_message(threshold_events: list[TrackerEvent]) -> str | None:
     if not threshold_events:
         return None
 
-    lines: list[str] = []
-    label = f"{tracker.query} [строгий]" if tracker.strict_mode else tracker.query
-
-    price_alerts = [e for e in threshold_events if e.event_type == "price_threshold_alert"]
-    discount_alerts = [e for e in threshold_events if e.event_type == "discount_alert"]
-
-    if price_alerts:
-        lines.append(f'🎯 ПОРОГ ЦЕНЫ: "{label}"')
-        for event in price_alerts[:3]:
-            threshold = event.parameters.get("threshold") if event.parameters else None
-            threshold_str = f" (порог: {round(float(threshold))} BYN)" if threshold else ""
-            # RV-SCH-05: a giveaway reads "бесплатно", not "0 BYN".
-            price_label = _format_price_byn(event.price_byn, event.price_type)
-            lines.append(f"💰 {price_label}{threshold_str}")
-            lines.append(f"  {event.title}")
-            if event.link:
-                lines.append(event.link)
-        if len(price_alerts) > 3:
-            lines.append(f"  и ещё {len(price_alerts) - 3}")
-
-    if discount_alerts:
-        if lines:
-            lines.append("")
-        lines.append(f'📉 СКИДКА ОТ МЕДИАНЫ: "{label}"')
-        for event in discount_alerts[:3]:
-            discount_pct = event.delta_byn
-            median_byn = event.parameters.get("median_byn") if event.parameters else None
-            discount_str = f" (-{float(discount_pct):.0f}% от медианы" if discount_pct else ""
-            if median_byn:
-                discount_str += f" {round(float(median_byn))} BYN"
-            discount_str += ")" if discount_str else ""
-            lines.append(f"💰 {round(float(event.price_byn))} BYN{discount_str}")
-            lines.append(f"  {event.title}")
-            if event.link:
-                lines.append(event.link)
-        if len(discount_alerts) > 3:
-            lines.append(f"  и ещё {len(discount_alerts) - 3}")
-
-    if not lines:
-        return None
+    primary = threshold_events[0]
+    price = _format_price_byn(primary.price_byn, primary.price_type)
+    if primary.event_type == "price_threshold_alert":
+        heading = "🎯 Порог цены"
+        threshold = (primary.parameters or {}).get("threshold")
+        if threshold:
+            price += f" · порог {_format_price_byn(threshold)}"
+    else:
+        heading = "📉 Скидка от медианы"
+        if primary.delta_byn:
+            price += f" · −{float(primary.delta_byn):.0f}%"
+    lines = [heading, _notification_title(primary.title), price]
+    others = {event.ad_id for event in threshold_events[1:] if event.ad_id != primary.ad_id}
+    if others:
+        lines.append(f"Ещё {len(others)} в автопоиске")
     return "\n".join(lines)
 
 
@@ -108,20 +83,12 @@ def _build_tracker_message(
     if trend_signal is not None and not trend_already_sent:
         if lines:
             lines.append("")
-        if not sync_result.new_listings and not sync_result.price_drops:
-            lines.append(f'Запрос "{label}"')
-        lines.append(
-            f"📈 Цена снова растёт после падения на "
-            f"{trend_signal.decline_pct:.1f}%"
-        )
-        lines.append(
-            f"• минимум: {_format_price_byn(trend_signal.low_byn)} "
-            f"→ сейчас: {_format_price_byn(trend_signal.today_byn)} "
-            f"(+{trend_signal.rebound_pct:.1f}%)"
-        )
-        lines.append(
-            "• выкупайте до повторного роста, если ловили это окно"
-        )
+        lines.extend((
+            "📈 Цена снова растёт",
+            query,
+            f"{_format_price_byn(trend_signal.low_byn)} → "
+            f"{_format_price_byn(trend_signal.today_byn)} · +{trend_signal.rebound_pct:.1f}%",
+        ))
 
     if not lines:
         return None
@@ -131,52 +98,17 @@ def _build_tracker_message(
 def _build_new_listing_message(
     state: QueryListingState,
     *,
-    median_byn: float | None = None,
-    discount_pct: float | None = None,
-    liquidity: str | None = None,
-) -> str:
-    """Format a single new-listing notification with market context.
-
-    Includes median price, discount from median, and a liquidity hint
-    so the user can decide at a glance whether the deal is worth pursuing.
-    """
-    price = _format_price_byn(state.last_price_byn, state.price_type)
-    title = (state.title or "Без названия").replace("\n", " ")[:120]
-
-    lines = [f"🔔 НОВЫЙ ЛОТ: {title}"]
-    if median_byn is not None and median_byn > 0:
-        lines.append(f"💰 {price} (медиана: {_format_price_byn(median_byn)})")
-    else:
-        lines.append(f"💰 {price}")
-
-    if discount_pct is not None and discount_pct > 0:
-        lines.append(f"📉 -{discount_pct:.0f}% от медианы")
-
-    if liquidity:
-        lines.append(f"⚡ {liquidity}")
-
-    return "\n".join(lines)
-
-
-def _build_price_drop_message(
-    state: QueryListingState,
-    delta: float,
-    *,
-    median_byn: float | None = None,
     discount_pct: float | None = None,
 ) -> str:
-    """Format a single price-drop notification with market context."""
     price = _format_price_byn(state.last_price_byn, state.price_type)
-    title = (state.title or "Без названия").replace("\n", " ")[:120]
-    delta_str = f"(-{round(float(delta))} BYN)" if round(float(delta)) > 0 else ""
-
-    lines = [f"📉 СНИЖЕНИЕ ЦЕНЫ: {title}"]
-    if median_byn is not None and median_byn > 0:
-        lines.append(f"💰 {price} {delta_str} (медиана: {_format_price_byn(median_byn)})")
-    else:
-        lines.append(f"💰 {price} {delta_str}".rstrip())
-
     if discount_pct is not None and discount_pct > 0:
-        lines.append(f"📊 -{discount_pct:.0f}% от медианы")
+        price += f" · −{discount_pct:.0f}% к медиане"
+    return f"🔔 Новый лот\n{_notification_title(state.title)}\n{price}"
 
-    return "\n".join(lines)
+
+def _build_price_drop_message(state: QueryListingState, delta: float) -> str:
+    price = _format_price_byn(state.last_price_byn, state.price_type)
+    drop = round(float(delta))
+    if drop > 0:
+        price += f" · −{drop} BYN"
+    return f"📉 Цена снизилась\n{_notification_title(state.title)}\n{price}"

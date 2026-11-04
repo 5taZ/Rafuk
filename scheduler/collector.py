@@ -83,13 +83,14 @@ from api.services.history_service import (
 from api.services.kufar_client import KufarAPIError, KufarClient, KufarUnavailableError
 from api.services.listing_mapper import first_image_url
 from api.services.market_signals import region_label
-from api.services.reseller_tools import compute_deal_score, matches_tracker_filters
+from api.services.reseller_tools import matches_tracker_filters
 from bot.keyboards import (
     enhanced_alert_keyboard,
     inline_keyboard_from_json,
     lead_reminder_keyboard,
     tracker_alert_keyboard,
 )
+from bot.notifications import send_notification
 from scheduler.messages import (
     _build_new_listing_message,
     _build_price_drop_message,
@@ -182,7 +183,7 @@ async def _send_message_classified(
     """
     global _telegram_paused_until
     try:
-        await bot.send_message(telegram_user_id, message, reply_markup=reply_markup)
+        await send_notification(bot, telegram_user_id, message, reply_markup=reply_markup)
         return "sent", None
     except TelegramForbiddenError:
         return "blocked", None
@@ -1314,7 +1315,7 @@ async def _process_search_key(
         )
         if threshold_events:
             session.add_all(threshold_events)
-            threshold_msg = _build_threshold_message(tracker, threshold_events)
+            threshold_msg = _build_threshold_message(threshold_events)
             if threshold_msg:
                 primary = threshold_events[0]
                 jobs.append(_TrackerNotifyJob(
@@ -1357,7 +1358,6 @@ def _listing_notification_jobs(
     chat agree and the 24 h event dedup applies to Telegram too.
     """
     recorded = {(event.ad_id, event.event_type) for event in created}
-    median_byn = market_stats.median if market_stats.median > 0 else None
     jobs: list[_TrackerNotifyJob] = []
 
     new_states = [
@@ -1366,39 +1366,15 @@ def _listing_notification_jobs(
     ]
     for state in new_states[:3]:
         ad = ads_by_id.get(state.ad_id)
-        discount_pct = None
-        liquidity_label = None
-        if ad is not None:
-            # Sign matters: ``compute_price_vs_reference``
-            # returns negative for below-market and
-            # positive for above-market. Only show
-            # the "% от медианы" suffix when this
-            # ad is genuinely cheaper than the
-            # reference — otherwise the message
-            # template renders it as "📉 -X% от
-            # медианы" which IMPLIES a discount,
-            # so a +20% premium would falsely look
-            # like a deal. ``_detect_threshold_alerts``
-            # already uses this same guard.
-            delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
-            discount_pct = abs(delta) if delta is not None and delta < 0 else None
-            try:
-                deal = compute_deal_score(ad, query=tracker.query, market_stats=market_stats)
-                if deal.score >= 70:
-                    liquidity_label = "Высокая ликвидность"
-                elif deal.score >= 40:
-                    liquidity_label = "Средняя ликвидность"
-            except Exception:  # noqa: BLE001
-                pass
+        delta = (
+            compute_price_vs_reference(ad, market_stats, category_price_stats)
+            if ad is not None else None
+        )
+        discount_pct = -delta if delta is not None and delta < 0 else None
         jobs.append(_TrackerNotifyJob(
             telegram_user_id=tracker.user.telegram_user_id,
             internal_user_id=tracker.user_id,
-            message=_build_new_listing_message(
-                state,
-                median_byn=median_byn,
-                discount_pct=discount_pct,
-                liquidity=liquidity_label,
-            ),
+            message=_build_new_listing_message(state, discount_pct=discount_pct),
             reply_markup=enhanced_alert_keyboard(ad_id=state.ad_id, listing_url=state.link),
             # AUDIT-LOW: same (user, ad, event) across trackers → one
             # Telegram message.
@@ -1410,26 +1386,10 @@ def _listing_notification_jobs(
         if (state.ad_id, "price_drop") in recorded
     ]
     for state, delta in drops[:3]:
-        ad = ads_by_id.get(state.ad_id)
-        discount_pct = None
-        if ad is not None:
-            # Sign-aware: see new-listing branch
-            # above. A price drop on a listing
-            # that's still above market shouldn't
-            # be advertised as "📊 -X% от медианы".
-            delta_vs_ref = compute_price_vs_reference(ad, market_stats, category_price_stats)
-            discount_pct = (
-                abs(delta_vs_ref) if delta_vs_ref is not None and delta_vs_ref < 0 else None
-            )
         jobs.append(_TrackerNotifyJob(
             telegram_user_id=tracker.user.telegram_user_id,
             internal_user_id=tracker.user_id,
-            message=_build_price_drop_message(
-                state,
-                delta,
-                median_byn=median_byn,
-                discount_pct=discount_pct,
-            ),
+            message=_build_price_drop_message(state, delta),
             reply_markup=enhanced_alert_keyboard(ad_id=state.ad_id, listing_url=state.link),
             # AUDIT-LOW: dedup across same-user trackers.
             dedup_key=f"price_drop:{state.ad_id}",

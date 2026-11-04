@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -62,7 +63,8 @@ async def get_http_client(base_url: str | None = None) -> httpx.AsyncClient:
         # have created the client while we were waiting.
         if _client is not None and not _client.is_closed:
             return _client
-        resolved_base = base_url or get_settings().api_base_url
+        settings = get_settings()
+        resolved_base = base_url or settings.bot_api_base_url or settings.api_base_url
         # `limits` keeps the pool bounded — bot is mostly idle but a
         # callback storm could otherwise open hundreds of sockets.
         _client = httpx.AsyncClient(
@@ -131,9 +133,10 @@ def build_api_headers(telegram_user_id: int, *, mutating: bool = False) -> dict[
         headers = {"X-Telegram-Init-Data": build_init_data_header(telegram_user_id, bot_token)}
 
     if mutating:
+        origin = urlsplit(settings.api_base_url)
         headers.update(
             {
-                "Origin": settings.api_base_url,
+                "Origin": f"{origin.scheme}://{origin.netloc}",
                 "X-Requested-With": "XMLHttpRequest",
             }
         )
@@ -155,7 +158,7 @@ async def _api_get(
     """Make an authenticated GET request to the internal API."""
     try:
         headers = build_api_headers(telegram_user_id)
-        client = await get_http_client(get_settings().api_base_url)
+        client = await get_http_client()
         resp = await client.get(path, params=params, headers=headers)
         resp.raise_for_status()
         return resp.json()
@@ -173,10 +176,15 @@ async def _api_post(
     """Make an authenticated POST request to the internal API."""
     try:
         headers = build_api_headers(telegram_user_id, mutating=True)
-        client = await get_http_client(get_settings().api_base_url)
+        client = await get_http_client()
         resp = await client.post(path, json=json_body, headers=headers)
         if resp.status_code == 409:
-            return {"conflict": True}
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = None
+            detail = payload.get("detail") if isinstance(payload, dict) else None
+            return {"conflict": True, "detail": detail}
         resp.raise_for_status()
         return resp.json()
     except _API_CALL_ERRORS:
