@@ -64,6 +64,7 @@ body.modal-open {
 }
 
 #detail-modal {
+    --detail-gutter: clamp(16px, 5vw, 24px);
     --listing-sheet-time: var(--t-slow);
     animation-duration: var(--listing-sheet-time);
 }
@@ -73,6 +74,8 @@ body.modal-open {
 }
 
 #detail-modal .detail-sheet {
+    max-width: 520px;
+    margin-inline: auto;
     animation: listing-sheet-in var(--listing-sheet-time) var(--easing-decelerate) both;
 }
 
@@ -266,6 +269,24 @@ body.modal-open {
     margin-bottom: var(--space-2);
 }
 
+#detail-modal .detail-top-bar {
+    justify-content: space-between;
+    padding-inline: var(--detail-gutter);
+}
+
+#detail-modal .detail-sheet-content {
+    padding-inline: var(--detail-gutter);
+    overscroll-behavior: contain;
+}
+
+.detail-eyebrow {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
 .detail-close {
     display: grid;
     place-items: center;
@@ -282,6 +303,7 @@ body.modal-open {
 }
 
 .detail-media {
+    margin-top: var(--space-5);
     border-radius: var(--r-xl);
     overflow: hidden;
     background: var(--bg-card);
@@ -333,11 +355,6 @@ body.modal-open {
     }
 }
 
-.detail-no-image {
-    color: var(--text-dim);
-    font-size: var(--text-base);
-}
-
 .detail-thumbs {
     display: flex;
     gap: 6px;
@@ -347,6 +364,10 @@ body.modal-open {
 }
 
 .detail-thumbs::-webkit-scrollbar {
+    display: none;
+}
+
+.detail-thumbs:empty {
     display: none;
 }
 
@@ -374,45 +395,51 @@ body.modal-open {
 }
 
 .detail-head {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-3);
-    margin-top: var(--space-4);
-    align-items: flex-start;
-}
-
-.detail-head-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
+    padding-top: var(--space-2);
+    overflow-wrap: anywhere;
 }
 
 .detail-title {
     margin: 0;
-    font-size: var(--text-lg);
-    line-height: 1.3;
-    letter-spacing: -0.02em;
+    font-size: clamp(21px, 5.6vw, 26px);
+    line-height: 1.25;
+    letter-spacing: -0.035em;
 }
 
 .detail-price {
-    font-size: var(--text-2xl);
+    margin-top: var(--space-2);
+    font-size: clamp(26px, 7.4vw, 34px);
     font-weight: 700;
+    line-height: 1.15;
     color: var(--accent);
-    white-space: nowrap;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.045em;
 }
 
 .detail-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-2);
-    margin-top: var(--space-3);
+    gap: var(--space-1_5);
+    margin-top: var(--space-2);
+}
+
+.detail-meta:empty {
+    display: none;
+}
+
+.detail-market {
+    flex-basis: 100%;
+    margin-bottom: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--text-norm);
+    font-weight: 600;
+}
+
+.detail-market--below {
+    color: var(--green-text);
 }
 
 .detail-pill {
-    font-size: var(--text-sm);
+    font-size: var(--text-base);
     color: var(--text-muted);
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-full);
@@ -420,10 +447,12 @@ body.modal-open {
 }
 
 .detail-description {
-    margin: var(--space-3) 0 0;
+    margin: var(--space-5) 0 0;
     color: var(--text);
-    font-size: var(--text-base);
-    line-height: 1.7;
+    font-size: var(--text-norm);
+    line-height: 1.6;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
 }
 
 .detail-actions {
@@ -469,28 +498,102 @@ body.modal-open {
 }
 
 .detail-block {
-    margin-top: var(--space-4);
+    margin-top: var(--space-6);
 }
 
 .detail-block-title {
     margin: 0 0 var(--space-2);
-    font-size: var(--text-sm);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-size: var(--text-sub);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+}
+
+.detail-liquidity-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-xl);
+    padding: var(--space-4);
+}
+
+.detail-liquidity-card .detail-block-title {
+    font-size: var(--text-base);
     color: var(--text-muted);
+    letter-spacing: normal;
+}
+
+.detail-liquidity-summary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    font-size: var(--text-semi);
+    line-height: 1.25;
+}
+
+.detail-liquidity-score {
+    color: var(--text-muted);
+    font-size: var(--text-norm);
+    white-space: nowrap;
+}
+
+.detail-liquidity-meter {
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 5px;
+    margin-top: var(--space-3);
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--bg-hover);
+    overflow: hidden;
+}
+
+.detail-liquidity-meter::-webkit-meter-bar {
+    background: var(--bg-hover);
+    border: 0;
+}
+
+.detail-liquidity-meter::-webkit-meter-optimum-value {
+    background: var(--accent);
+    border-radius: var(--radius-full);
+}
+
+.detail-liquidity-meter::-moz-meter-bar {
+    background: var(--accent);
+    border-radius: var(--radius-full);
+}
+
+.detail-liquidity-reasons {
+    display: grid;
+    gap: var(--space-1);
+    margin: var(--space-3) 0 0;
+    padding-inline-start: var(--space-4);
+    color: var(--text-secondary);
+    font-size: var(--text-norm);
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.detail-liquidity-reasons li::marker {
+    color: var(--text-dim);
 }
 
 .detail-fields {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
+    margin: 0;
+    padding-inline: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--bg-card);
 }
 
 .detail-field {
     display: grid;
-    grid-template-columns: minmax(0, 110px) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
     gap: var(--space-3);
-    padding: var(--space-3) 0;
+    padding: var(--space-2_5) 0;
+    font-size: var(--text-norm);
+    overflow-wrap: anywhere;
 }
 
 .detail-field + .detail-field {
@@ -498,15 +601,13 @@ body.modal-open {
 }
 
 .detail-field-label {
-    color: var(--text-dim);
-    font-size: var(--text-sm);
+    color: var(--text-muted);
 }
 
 .detail-field-value {
+    margin: 0;
     color: var(--text);
-    font-size: var(--text-sm);
-    line-height: 1.5;
-    word-break: break-word;
+    font-weight: 600;
 }
 
 .bottom-spacer {
@@ -1100,9 +1201,7 @@ body.modal-open {
         flex-wrap: wrap;
     }
 
-    .tracker-row,
-    .detail-head,
-    .detail-field {
+    .tracker-row {
         grid-template-columns: 1fr;
         display: flex;
         flex-direction: column;

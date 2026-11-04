@@ -33,10 +33,10 @@ function createRenderModals(context) {
     function buildDetailField(label, value) {
         const item = document.createElement("div");
         item.className = "detail-field";
-        const labelEl = document.createElement("span");
+        const labelEl = document.createElement("dt");
         labelEl.className = "detail-field-label";
         labelEl.textContent = label;
-        const valueEl = document.createElement("span");
+        const valueEl = document.createElement("dd");
         valueEl.className = "detail-field-value";
         valueEl.textContent = value;
         item.append(labelEl, valueEl);
@@ -109,27 +109,57 @@ function createRenderModals(context) {
         elements.detailProfitBlock.hidden = true;
 
         domClear(elements.detailLiquidity);
-        if (detail.liquidity) {
-            elements.detailLiquidity.appendChild(buildDetailField(
-                "Оценка",
-                `${detail.liquidity.label} · ${Math.round(detail.liquidity.score)}/100`
-            ));
-            const reasons = (detail.liquidity.reasons || []).map(String).filter(Boolean);
+        const liquidity = detail.liquidity;
+        if (liquidity) {
+            const score = Math.round(liquidity.score);
+            const summary = document.createElement("div");
+            summary.className = "detail-liquidity-summary";
+            const label = document.createElement("strong");
+            label.textContent = liquidity.label;
+            const points = document.createElement("span");
+            points.className = "detail-liquidity-score mono";
+            points.textContent = `${score} / 100`;
+            summary.append(label, points);
+
+            const meter = document.createElement("meter");
+            meter.className = "detail-liquidity-meter";
+            meter.max = 100;
+            meter.value = score;
+            meter.setAttribute("aria-hidden", "true");
+            elements.detailLiquidity.append(summary, meter);
+
+            const reasons = (liquidity.reasons || []).map(String).filter(Boolean);
             if (reasons.length) {
-                elements.detailLiquidity.appendChild(buildDetailField("Факторы", reasons.join(" · ")));
+                const list = document.createElement("ul");
+                list.className = "detail-liquidity-reasons";
+                for (const reason of reasons) {
+                    const item = document.createElement("li");
+                    item.textContent = reason;
+                    list.appendChild(item);
+                }
+                elements.detailLiquidity.appendChild(list);
             }
         }
-        elements.detailLiquidityBlock.hidden = !detail.liquidity;
+        elements.detailLiquidityBlock.hidden = !liquidity;
 
+        domClear(elements.detailMeta);
+        const comparison = detail.market_comparison;
+        const marketDelta = comparison?.delta_percent == null ? "" : formatMarketDelta(comparison);
+        if (marketDelta) {
+            const market = document.createElement("div");
+            market.className = "detail-market";
+            if (Math.round(comparison.delta_percent) < 0) {
+                market.classList.add("detail-market--below");
+            }
+            market.textContent = marketDelta;
+            elements.detailMeta.appendChild(market);
+        }
         const metaItems = [
             detail.category,
             detail.condition ? formatCondition(detail.condition) : "",
             detail.seller_type ? formatSeller(detail.seller_type) : "",
-            detail.market_comparison?.delta_percent == null
-                ? "" : formatMarketDelta(detail.market_comparison),
-            detail.market_comparison?.sample_limited ? "Часть рынка" : "",
+            comparison?.sample_limited ? "Часть рынка" : "",
         ].filter(Boolean);
-        domClear(elements.detailMeta);
         for (const item of metaItems) {
             const pill = document.createElement("span");
             pill.className = "detail-pill";
@@ -138,10 +168,10 @@ function createRenderModals(context) {
         }
 
         elements.detailMainImage.hidden = !hasImages;
-        elements.detailNoImage.hidden = hasImages;
 
         // Update gallery aria-label with current image index
         if (elements.detailMedia) {
+            elements.detailMedia.hidden = !hasImages;
             const total = images.length || 1;
             const current = images.length ? (state.detail.imageIndex + 1) : 1;
             elements.detailMedia.setAttribute("aria-label", `Фото объявления ${current} из ${total}`);

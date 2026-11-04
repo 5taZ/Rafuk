@@ -130,7 +130,6 @@ function cacheAppElements(elements) {
     elements.detailClose = document.getElementById("detail-close");
     elements.detailMainImage = document.getElementById("detail-main-image");
     elements.detailMedia = document.getElementById("detail-media");
-    elements.detailNoImage = document.getElementById("detail-no-image");
     elements.detailThumbs = document.getElementById("detail-thumbs");
     elements.detailTitle = document.getElementById("detail-title");
     elements.detailPrice = document.getElementById("detail-price");
