@@ -38,6 +38,12 @@ async def get_rates_safe(currency_service: Any) -> dict[str, Any]:
         }
 
 
+async def get_conversion_rates(currency_service: Any, currency: str) -> dict[str, float]:
+    if currency == "BYN":
+        return {}
+    return (await get_rates_safe(currency_service))["rates"]
+
+
 class CurrencyService:
     def __init__(self, cache: CacheBackend, http_client: httpx.AsyncClient | None = None) -> None:
         self._cache = cache

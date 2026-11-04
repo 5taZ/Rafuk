@@ -94,7 +94,7 @@ async def test_currency_partial_nbrb_backfills_missing_currencies() -> None:
 @pytest.mark.asyncio
 async def test_get_rates_safe_never_raises_and_keeps_all_currencies() -> None:
     """CC-10: routers fell back to {"BYN": 1.0}, dropping USD/EUR/RUB."""
-    from api.services.currency_service import FALLBACK_RATES, get_rates_safe
+    from api.services.currency_service import FALLBACK_RATES, get_conversion_rates, get_rates_safe
 
     class _BrokenService:
         async def get_rates(self):
@@ -103,6 +103,8 @@ async def test_get_rates_safe_never_raises_and_keeps_all_currencies() -> None:
     payload = await get_rates_safe(_BrokenService())
     assert payload["source"] == "fallback"
     assert payload["rates"] == FALLBACK_RATES
+    assert await get_conversion_rates(None, "BYN") == {}
+    assert await get_conversion_rates(_BrokenService(), "USD") == FALLBACK_RATES
 
     cache = MemoryCache()
     await cache.set_json("currency:rates", {"rates": {"USD": 3.1}})

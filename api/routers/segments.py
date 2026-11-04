@@ -16,7 +16,7 @@ from api.limiter import limiter
 from api.schemas import SegmentsResponse
 from api.services.aggregator import PriceStats, compute_segments
 from api.services.cache import CacheBackend, digest_cache_key
-from api.services.currency_service import CurrencyService, get_rates_safe
+from api.services.currency_service import CurrencyService, get_conversion_rates
 from api.services.kufar_client import KufarClient
 from api.services.query_pipeline import (
     claim_force_refresh,
@@ -91,8 +91,7 @@ async def get_segments(
 
     # BE-MEDIUM (issues §2.2): NBRB outage → fallback rates
     # rather than 500'ing the segment endpoint.
-    rates_payload = await get_rates_safe(currency_service)
-    rates = rates_payload["rates"]
+    rates = await get_conversion_rates(currency_service, currency)
 
     def _segment_payload(name: str) -> dict:
         seg = raw_segments.get(name)

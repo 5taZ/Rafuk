@@ -4300,6 +4300,17 @@ list.querySelector('[data-role="lead"]').click();
 assert.deepStrictEqual(opened, [11, 11], "title and badges open the detail, actions don't");
 assert.deepStrictEqual(added, [11]);
 
+context.elements.listingsList = container;
+const renderedCard = list.firstElementChild;
+const titleButton = renderedCard.querySelector(".card-open");
+titleButton.focus();
+item.market_comparison = {delta_percent: -15, median_byn: 1410, comparable_count: 8};
+renderer.renderListingMarket();
+assert.equal(list.firstElementChild, renderedCard);
+assert.equal(document.activeElement, titleButton);
+const badgeId = titleButton.getAttribute("aria-describedby").split(" ").at(-1);
+assert.match(renderedCard.querySelector(`#${badgeId}`).textContent, /-15%.*8/);
+
 renderer.renderListingsCollection([], container, null, "Пусто");
 assert.strictEqual(
     container.querySelector("[role=list]"), null, "the empty state is not inside a list",

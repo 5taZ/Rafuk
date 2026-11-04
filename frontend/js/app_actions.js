@@ -283,10 +283,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261104-unified-card-detail"),
-                context._loadScript("js/api_ai_render.js?v=20261104-unified-card-detail"),
-                context._loadScript("js/api_ai.js?v=20261104-unified-card-detail"),
-                context._loadScript("js/api_listing_assistant.js?v=20261104-unified-card-detail"),
+                context._loadScript("js/api_ai_modal.js?v=20261104-performance"),
+                context._loadScript("js/api_ai_render.js?v=20261104-performance"),
+                context._loadScript("js/api_ai.js?v=20261104-performance"),
+                context._loadScript("js/api_listing_assistant.js?v=20261104-performance"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -581,10 +581,7 @@ function createAppActions(baseContext) {
         if (view && elements.views[view]) {
             context.setActiveView(view);
         }
-        if (!query) {
-            renderAll();
-            return;
-        }
+        if (!query) return;
         elements.searchInput.value = query;
         state.search.draft = query;
         await listings.search(view);

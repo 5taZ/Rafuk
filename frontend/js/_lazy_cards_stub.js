@@ -20,8 +20,8 @@
  */
 /* global window */
 
-const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20261104-unified-card-detail";
-const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20261104-unified-card-detail";
+const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20261104-performance";
+const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20261104-performance";
 
 function _lazyLoadCardsSources(context) {
     if (_loadPromises.has("cards")) return _loadPromises.get("cards");
@@ -76,6 +76,7 @@ function createRenderCards(context) {
         buildListingNode: (...args) => _delegate("buildListingNode", args),
         renderListingsCollection: (...args) => _delegate("renderListingsCollection", args),
         renderListings: (...args) => _delegate("renderListings", args),
+        renderListingMarket: () => lazy.current()?.renderListingMarket(),
         renderLeads: (...args) => _delegate("renderLeads", args),
         _ensureLoaded: lazy.ensure,
     };

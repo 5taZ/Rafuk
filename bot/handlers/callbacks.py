@@ -39,7 +39,11 @@ async def _resolve_listing_context(
         # back). Without the id tie-breaker the user could get the
         # older row and a stale price.
         result = await session.execute(
-            select(TrackerEvent)
+            select(
+                TrackerEvent.query, TrackerEvent.title, TrackerEvent.link,
+                TrackerEvent.price_byn, TrackerEvent.thumbnail,
+            )
+            .select_from(TrackerEvent)
             .join(User, User.id == TrackerEvent.user_id)
             .where(
                 User.telegram_user_id == telegram_user_id,
@@ -48,7 +52,7 @@ async def _resolve_listing_context(
             .order_by(TrackerEvent.created_at.desc(), TrackerEvent.id.desc())
             .limit(1)
         )
-        event = result.scalar_one_or_none()
+        event = result.one_or_none()
         if event is None:
             return None
         return {

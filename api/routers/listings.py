@@ -22,7 +22,7 @@ from api.services.aggregator import (
     sort_listings,
 )
 from api.services.cache import CacheBackend, digest_cache_key
-from api.services.currency_service import CurrencyService, get_rates_safe
+from api.services.currency_service import CurrencyService, get_conversion_rates
 from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.kufar_filters import build_kufar_search_filters
@@ -235,8 +235,7 @@ async def get_listings(
                 category: visible_dataset.price_stats,
             }
     liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats)
-    rates_payload = await get_rates_safe(currency_service)
-    rates = rates_payload["rates"]
+    rates = await get_conversion_rates(currency_service, currency)
     insights = analyze_query_text(query)
 
     deal_ads = (
@@ -260,7 +259,6 @@ async def get_listings(
         category_price_stats=category_price_stats,
     )
     capped_ads = sorted_ads[:_MAX_LISTINGS_PAGE]
-    cluster_cache = await precompute_cluster_stats(capped_ads, query=query)
     # Build ListingItem only for the slice the client is going to
     # actually render — saves several ms per skipped ad on big
     # result sets, since build_listing_item normalises params,
@@ -300,6 +298,7 @@ async def get_listings(
             return None
 
     if sort in {"cheap", "deal_score"}:
+        cluster_cache = await precompute_cluster_stats(capped_ads, query=query)
         ranked_ads: list[tuple[tuple[float, float, str], dict[str, Any]]] = []
         for ad in capped_ads:
             try:
@@ -322,15 +321,11 @@ async def get_listings(
         ranked_ads.sort(key=lambda item: item[0])
         page_slice = [ad for _, ad in ranked_ads[offset : offset + limit]]
     else:
-        # newest / nearest_to_median etc. — sort_listings already
-        # ordered the underlying ads, so we can slice before
-        # building items.
-        page_slice = sorted_ads[offset : offset + limit]
-        # Don't extend past the cap.
-        if offset >= _MAX_LISTINGS_PAGE:
-            page_slice = []
-        elif offset + limit > _MAX_LISTINGS_PAGE:
-            page_slice = sorted_ads[offset:_MAX_LISTINGS_PAGE]
+        page_slice = capped_ads[offset : offset + limit]
+        cluster_cache = await precompute_cluster_stats(
+            capped_ads, query=query,
+            target_ids={int(ad.get("ad_id", 0)) for ad in page_slice},
+        ) if page_slice else {}
     built = (_safe_build(ad) for ad in page_slice)
     listings = [item for item in built if item is not None]
     if include_market and listings:

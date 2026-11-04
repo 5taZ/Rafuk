@@ -117,14 +117,14 @@ function createApiListings(context) {
                     .map((item) => [String(item.ad_id), item]),
             );
             let changed = false;
-            state.listings.items = state.listings.items.map((item) => {
+            for (const item of state.listings.items) {
                 const result = comparisons.get(String(item.ad_id));
-                if (!targets.has(item) || !result || result.price_byn !== item.price_byn) return item;
+                if (!targets.has(item) || !result || result.price_byn !== item.price_byn) continue;
                 changed = true;
-                return { ...item, market_comparison: result.market_comparison };
-            });
+                item.market_comparison = result.market_comparison;
+            }
             if (changed) {
-                markDirty('listings');
+                markDirty('listingMarket');
                 scheduleRender();
             }
         }).catch(() => {});

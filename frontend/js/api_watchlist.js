@@ -80,7 +80,8 @@ function createApiWatchlist(context) {
     }
 
     // ── Load watchlist ───────────────────────────────────────────────────
-    async function loadWatchlist() {
+    async function loadWatchlist({ skipIfLoading = false } = {}) {
+        if (skipIfLoading && state.watchlist._loading) return;
         if (!hasTelegramInitData()) {
             state.watchlist.items = [];
             state.watchlist.comparisons = {};

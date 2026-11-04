@@ -23,6 +23,7 @@ function createRenderCards(context) {
     const builders = createRenderCardBuilders(context);
     const {
         buildListingNode,
+        updateListingMarket,
         buildLeadNode,
         buildWatchlistNode,
     } = builders;
@@ -479,6 +480,13 @@ function createRenderCards(context) {
         });
     }
 
+    function renderListingMarket() {
+        safeRender('renderListingMarket', () => {
+            const list = elements.listingsList?.querySelector(".card-list");
+            for (const card of list?.children || []) updateListingMarket(card);
+        });
+    }
+
     /* ===== Leads (Deals) ===== */
 
     function workflowLabel(value) {
@@ -748,6 +756,7 @@ function createRenderCards(context) {
         buildListingNode,
         renderListingsCollection,
         renderListings,
+        renderListingMarket,
         renderLeads,
     };
 }

@@ -416,82 +416,69 @@ def product_cluster_key(title: str, query: str | None = None) -> tuple[str, ...]
 def _precompute_cluster_stats_sync(
     all_ads: list[dict[str, Any]],
     query: str | None = None,
+    target_ids: set[int] | None = None,
 ) -> dict[int, PriceStats | None]:
-    """Synchronous CPU-bound implementation — run via asyncio.to_thread()."""
-    # Step 1: tokenise + extract variant set for each ad once.
-    # ad_id_list[i] keeps ad_id for index lookup; tokens_list[i] is None
-    # when the title was empty (those ads can never match anything).
-    n = len(all_ads)
-    ad_id_list: list[int] = [0] * n
-    token_sets: list[set[str] | None] = [None] * n
-    variant_sets: list[set[str] | None] = [None] * n
+    """Index the reference sample once, then compute only the requested clusters."""
+    ad_ids: list[int] = []
+    token_sets: list[frozenset[str]] = []
+    variant_sets: list[frozenset[str]] = []
+    prices: list[float | None] = []
+    postings: dict[str, list[int]] = {}
     query_tokens = set(tokenize_search_text(query or ""))
-    product_keys: list[tuple[str, ...]] = [()] * n
+    product_keys: list[tuple[str, ...]] = []
     product_groups: dict[tuple[str, ...], list[int]] = {}
     for i, ad in enumerate(all_ads):
-        ad_id_list[i] = int(ad.get("ad_id", 0))
+        ad_ids.append(int(ad.get("ad_id", 0)))
         tokens = tokenize_search_text(str(ad.get("subject", "")))
-        if not tokens:
-            continue
-        token_sets[i] = set(tokens)
-        variant_sets[i] = {t for t in tokens if t in STRICT_VARIANT_TOKENS}
+        token_set = frozenset(tokens)
+        token_sets.append(token_set)
+        variant_sets.append(token_set & STRICT_VARIANT_TOKENS)
+        prices.append(normalize_price_byn(ad.get("price_byn"), ad) if tokens else None)
+        for token in token_set:
+            postings.setdefault(token, []).append(i)
         product_key = _product_cluster_key(tokens, query_tokens)
-        product_keys[i] = product_key
+        product_keys.append(product_key)
         if product_key:
             product_groups.setdefault(product_key, []).append(i)
 
-    # Step 2: per ad, find the cluster of similar ads using only set ops.
-    # Collect prices in one pass (avoid re-walking the cluster).
+    def stats_for(indices: list[int]) -> PriceStats | None:
+        if len(indices) < MIN_CLUSTER_SIZE:
+            return None
+        cluster_prices = [prices[i] for i in indices if prices[i] is not None]
+        return compute_price_stats(cluster_prices) if cluster_prices else None
+
+    strict_stats: dict[frozenset[str], PriceStats | None] = {}
+    product_stats: dict[tuple[str, ...], PriceStats | None] = {}
     result: dict[int, PriceStats | None] = {}
-    for i in range(n):
-        target_tokens = token_sets[i]
-        target_variants = variant_sets[i]
-        if target_tokens is None or target_variants is None:
-            result[ad_id_list[i]] = None
+    for i, ad_id in enumerate(ad_ids):
+        if target_ids is not None and ad_id not in target_ids:
+            continue
+        tokens = token_sets[i]
+        if not tokens:
+            result[ad_id] = None
             continue
 
-        cluster_prices: list[float] = []
-        cluster_size = 0
-        for j in range(n):
-            j_tokens = token_sets[j]
-            j_variants = variant_sets[j]
-            if j_tokens is None or j_variants is None:
-                continue
-            # Mirrors is_strict_match: every target token must appear in
-            # j; j must not carry extra variant tokens vs. target.
-            if not target_tokens.issubset(j_tokens):
-                continue
-            if j_variants - target_variants:
-                continue
-            cluster_size += 1
-            price = normalize_price_byn(all_ads[j].get("price_byn"), all_ads[j])
-            if price is not None:
-                cluster_prices.append(price)
-
-        if cluster_size >= MIN_CLUSTER_SIZE and cluster_prices:
-            result[ad_id_list[i]] = compute_price_stats(cluster_prices)
-        else:
-            product_key = product_keys[i]
-            product_indexes = product_groups.get(product_key, [])
-            product_prices: list[float] = []
-            for idx in product_indexes:
-                price = normalize_price_byn(all_ads[idx].get("price_byn"), all_ads[idx])
-                if price is not None:
-                    product_prices.append(price)
-            product_stats = (
-                compute_price_stats(product_prices)
-                if len(product_indexes) >= MIN_CLUSTER_SIZE and product_prices
-                else None
-            )
-            product_stats_is_usable = (
-                product_stats is not None
-                and _cluster_spread(product_stats) <= MAX_CLUSTER_PRICE_SPREAD
-            )
-            result[ad_id_list[i]] = (
-                product_stats
-                if product_stats_is_usable
-                else None
-            )
+        if tokens not in strict_stats:
+            # Every strict match must appear in the shortest posting list
+            # and have exactly the target's variant tokens.
+            candidates = min((postings[token] for token in tokens), key=len)
+            strict_stats[tokens] = stats_for([
+                j for j in candidates
+                if variant_sets[j] == variant_sets[i] and tokens.issubset(token_sets[j])
+            ])
+        stats = strict_stats[tokens]
+        if stats is None:
+            key = product_keys[i]
+            if key not in product_stats:
+                fallback = stats_for(product_groups.get(key, []))
+                product_stats[key] = (
+                    fallback
+                    if fallback is not None
+                    and _cluster_spread(fallback) <= MAX_CLUSTER_PRICE_SPREAD
+                    else None
+                )
+            stats = product_stats[key]
+        result[ad_id] = stats
 
     return result
 
@@ -499,31 +486,11 @@ def _precompute_cluster_stats_sync(
 async def precompute_cluster_stats(
     all_ads: list[dict[str, Any]],
     query: str | None = None,
+    *,
+    target_ids: set[int] | None = None,
 ) -> dict[int, PriceStats | None]:
-    """Async wrapper — offloads the O(n²) CPU work to a thread.
-
-    Returns a dict mapping ``ad_id`` → ``PriceStats | None`` so callers
-    can look up per-ad cluster stats in O(1) instead of calling
-    :func:`cluster_price_stats` per listing.
-
-    Performance contract
-    --------------------
-    The naive implementation called :func:`cluster_price_stats` n times,
-    each of which iterates ``all_ads`` again calling ``is_strict_match``,
-    which itself calls ``normalize_search_text`` twice (each touching
-    150+ string operations). That made the function quadratic *and*
-    multiplied by a heavy per-pair constant — for 1500 ads this blocked
-    the event loop for several seconds.
-
-    The sync helper tokenises every ad **once** up-front, then walks
-    the n×n pairs over already-built sets so the inner loop is just two
-    O(k) set comparisons (k = number of tokens, typically <10). On a
-    1500-ad fan-out this drops from ~340M string ops to ~22M set ops —
-    roughly 100× faster in practice. M9: the CPU-bound work is now
-    offloaded via ``asyncio.to_thread`` so it never blocks the event
-    loop.
-    """
-    return await asyncio.to_thread(_precompute_cluster_stats_sync, all_ads, query)
+    """Build cluster stats off the event loop using the full reference sample."""
+    return await asyncio.to_thread(_precompute_cluster_stats_sync, all_ads, query, target_ids)
 
 
 # ── Price-type detection (free vs negotiable) ─────────────────────────

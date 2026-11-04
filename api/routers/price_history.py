@@ -17,7 +17,7 @@ from api.limiter import limiter
 from api.schemas import PriceHistoryPoint, PriceHistoryResponse
 from api.services.aggregator import build_query_key
 from api.services.cache import CacheBackend, digest_cache_key
-from api.services.currency_service import CurrencyService, get_rates_safe
+from api.services.currency_service import CurrencyService, get_conversion_rates
 from api.services.history_service import load_query_snapshots
 from api.validators import MAX_QUERY_LENGTH
 
@@ -57,8 +57,7 @@ async def get_price_history(
         snapshots = await load_query_snapshots(session, query=search_key, days=bounded_days)
 
     # BE-MEDIUM (issues §2.2): NBRB outage shouldn't 500 the chart.
-    rates_payload = await get_rates_safe(currency_service)
-    rates = rates_payload["rates"]
+    rates = await get_conversion_rates(currency_service, currency)
     points = [
         PriceHistoryPoint(
             snapshot_at=snapshot.snapshot_at,

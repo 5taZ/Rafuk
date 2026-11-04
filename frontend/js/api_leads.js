@@ -44,7 +44,8 @@ function createApiLeads(context) {
     }
 
     // ── Load leads ───────────────────────────────────────────────────────
-    async function loadLeads() {
+    async function loadLeads({ skipIfLoading = false } = {}) {
+        if (skipIfLoading && state.leads._loading) return;
         if (!hasTelegramInitData()) {
             state.leads.items = [];
             renderLeads();

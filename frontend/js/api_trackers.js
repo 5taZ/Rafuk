@@ -137,7 +137,7 @@ function createApiTrackers(context) {
         if (!hasTelegramInitData()) return;
         if (state.ui.activeView !== "tracking") return;
         // FR-12: no background polling while hidden or still in flight.
-        if (document.hidden || trackerRefreshInFlight) return;
+        if (document.hidden || trackerRefreshInFlight || state.trackers._loading) return;
         trackerRefreshInFlight = true;
         // FR-02: a loadTrackers() started meanwhile owns the list.
         const requestId = state.trackers._requestId;
@@ -172,7 +172,8 @@ function createApiTrackers(context) {
     }
 
     // ── Load trackers + events ───────────────────────────────────────────
-    async function loadTrackers() {
+    async function loadTrackers({ skipIfLoading = false } = {}) {
+        if (skipIfLoading && state.trackers._loading) return;
         if (!hasTelegramInitData()) {
             state.trackers.items = [];
             state.trackers.events = [];

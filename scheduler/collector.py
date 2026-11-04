@@ -414,7 +414,7 @@ async def _recent_trend_event_tracker_ids(
     for i in range(0, len(tracker_ids), batch_size):
         batch = tracker_ids[i : i + batch_size]
         result = await session.execute(
-            select(TrackerEvent.tracker_id).where(
+            select(TrackerEvent.tracker_id).distinct().where(
                 TrackerEvent.tracker_id.in_(batch),
                 TrackerEvent.event_type == "trend_reversal",
                 TrackerEvent.created_at >= cutoff,
@@ -446,14 +446,14 @@ async def _recent_events_by_tracker(
         result = await session.execute(
             select(
                 TrackerEvent.tracker_id, TrackerEvent.ad_id, TrackerEvent.event_type
-            ).where(
+            ).distinct().where(
                 TrackerEvent.tracker_id.in_(batch),
                 TrackerEvent.created_at >= cutoff,
+                TrackerEvent.ad_id.is_not(None),
             )
         )
         for row in result:
-            if row.ad_id is not None:
-                out[row.tracker_id].add((row.ad_id, row.event_type))
+            out[row.tracker_id].add((row.ad_id, row.event_type))
     return out
 
 
@@ -1030,7 +1030,7 @@ async def _check_trackers_inner(
             # outbox rows of a key commit or vanish together.
             try:
                 async with session.begin_nested():
-                    total_queued += await _process_search_key(
+                    group_queued = await _process_search_key(
                         session,
                         ctx,
                         search_key=search_key,
@@ -1061,6 +1061,7 @@ async def _check_trackers_inner(
                 )
                 await _record_key_failure(session, key_tracker_ids, advance_to=observed_at)
             else:
+                total_queued += group_queued
                 # C-04: success path — clear failure counters for every
                 # tracker in this group so transient outages don't
                 # accumulate across long runtimes.
@@ -1262,8 +1263,8 @@ async def _process_search_key(
             trend_signal=trend_signal,
             trend_already_sent=trend_already_sent,
         )
-        await session.flush()
-
+        # Jobs use the event fields already set in memory. The savepoint
+        # flushes the group's events, tracker updates and outbox together.
         jobs = _listing_notification_jobs(
             tracker,
             tracker_sync_result,
@@ -1313,7 +1314,6 @@ async def _process_search_key(
         )
         if threshold_events:
             session.add_all(threshold_events)
-            await session.flush()
             threshold_msg = _build_threshold_message(tracker, threshold_events)
             if threshold_msg:
                 primary = threshold_events[0]

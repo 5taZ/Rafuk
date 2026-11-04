@@ -253,6 +253,7 @@ function createAppRenderers(baseContext) {
         recent: renderRecentSearches,
         categories: renderFilterDropdown,
         listings: renderListings,
+        listingMarket: cards.renderListingMarket,
         trackerStatus: renderTrackerStatus,
         trackers: renderTrackers,
         trackerEvents: renderTrackerEvents,

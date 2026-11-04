@@ -27,7 +27,7 @@ from api.services.aggregator import (
     extract_search_refinements,
 )
 from api.services.cache import CacheBackend, digest_cache_key
-from api.services.currency_service import CurrencyService, get_rates_safe
+from api.services.currency_service import CurrencyService, get_conversion_rates
 from api.services.history_service import snapshot_bucket, upsert_query_snapshot
 from api.services.kufar_client import KufarClient
 from api.services.kufar_filters import build_kufar_search_filters
@@ -155,12 +155,9 @@ async def get_price_stats(
         )
         return fb.dataset
 
-    async def _fetch_rates():
-        return await get_rates_safe(currency_service)
-
-    dataset, rates_payload = await asyncio.gather(
+    dataset, rates = await asyncio.gather(
         _fetch_dataset(),
-        _fetch_rates(),
+        get_conversion_rates(currency_service, currency),
     )
     ads = filter_listing_ads(
         dataset.ads, min_price=None, max_price=None, condition=condition,
@@ -170,7 +167,7 @@ async def get_price_stats(
     converted = convert_price_stats(
         stats,
         currency=currency,
-        rates=rates_payload["rates"],
+        rates=rates,
         currency_service=currency_service,
     )
     converted.pop("count", None)

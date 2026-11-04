@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import chain
@@ -280,6 +280,7 @@ class MarketComparables:
 
 def build_market_comparables(
     target: dict[str, Any], ads: Iterable[dict[str, Any]],
+    *, _specs_for: Callable[[dict[str, Any]], dict[str, str]] = _specs,
 ) -> MarketComparables:
     category = get_category_id(target)
     label = get_category_label(target)
@@ -290,7 +291,7 @@ def build_market_comparables(
     macbook = _macbook_model(title)
     device_model = macbook or _iphone_model(title)
     identity = device_model or _identity(target, category)
-    specs = _specs(target)
+    specs = _specs_for(target)
     rental = _is_rental(title)
     model_codes = _model_codes(title)
     year = _year(target, specs) if category == _CAR_CATEGORY or "regdate" in specs else None
@@ -327,7 +328,7 @@ def build_market_comparables(
                 continue
         if product_cluster_key(candidate_title, title):
             continue
-        candidate_specs = _specs(ad)
+        candidate_specs = _specs_for(ad)
         if (
             not target.get("draft")
             and specs.get("condition") != candidate_specs.get("condition")
@@ -367,8 +368,9 @@ def build_market_comparables(
 
 def compare_listing_market(
     target: dict[str, Any], ads: Iterable[dict[str, Any]],
+    *, _specs_for: Callable[[dict[str, Any]], dict[str, str]] = _specs,
 ) -> WatchlistComparison:
-    result = build_market_comparables(target, ads)
+    result = build_market_comparables(target, ads, _specs_for=_specs_for)
     current_price = normalize_price_byn(target.get("price_byn"), target)
     return WatchlistComparison(
         ad_found=True,
@@ -399,12 +401,23 @@ def compare_listing_page(
         if ad_id and ad_id not in seen and (category := get_category_id(ad)) is not None:
             by_category[category].append(ad)
             seen.add(ad_id)
+    specs_by_object: dict[int, tuple[dict[str, Any], dict[str, str]]] = {}
+
+    def specs_for(ad: dict[str, Any]) -> dict[str, str]:
+        key = id(ad)
+        if key not in specs_by_object:
+            # Keep the ad alive for the page even when targets is a generator.
+            specs_by_object[key] = (ad, _specs(ad))
+        return specs_by_object[key][1]
+
     comparisons = {}
     for target in targets:
         category = get_category_id(target)
         if category is None or not normalize_price_byn(target.get("price_byn")):
             continue
-        comparison = compare_listing_market(target, by_category.get(category, []))
+        comparison = compare_listing_market(
+            target, by_category.get(category, []), _specs_for=specs_for,
+        )
         if comparison.delta_percent is not None:
             comparisons[int(target["ad_id"])] = comparison
     return comparisons

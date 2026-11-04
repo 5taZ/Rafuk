@@ -18,9 +18,9 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261104-unified-card-detail";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261104-unified-card-detail";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261104-unified-card-detail";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261104-performance";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261104-performance";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261104-performance";
 
 function _lazyLoadDealsSources(context) {
     if (_loadPromises.has("deals")) return _loadPromises.get("deals");
@@ -126,12 +126,7 @@ function createRenderModals(context) {
         const loaded = lazy.current();
         if (loaded) return loaded[method].apply(null, args);
         lazy.ensure()
-            .then((real) => {
-                real[method].apply(null, args);
-                if (typeof context.scheduleRender === "function") {
-                    context.scheduleRender();
-                }
-            })
+            .then((real) => real[method].apply(null, args))
             .catch((err) => {
                 logClientError("modals lazy-load failed:", err);
                 if (lazy.current()) return;

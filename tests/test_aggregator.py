@@ -264,6 +264,9 @@ def test_product_cluster_groups_vehicle_engines_in_mixed_parts_query() -> None:
     assert clusters[1].count == 3
     assert clusters[1].median == pytest.approx(1960.0)
     assert clusters[4] is None
+    assert _precompute_cluster_stats_sync(
+        ads, query="Volkswagen Polo", target_ids={1, 4},
+    ) == {1: clusters[1], 4: None}
 
 
 def test_extract_search_refinements_returns_top_recurring_tokens() -> None:

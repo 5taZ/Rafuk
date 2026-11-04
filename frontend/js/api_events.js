@@ -324,7 +324,7 @@ function createApiEvents(context) {
                 setActiveView(view);
                 // FE-NEW-7: setActiveView already calls markDirty + renderAll
                 if (view === "tracking") {
-                    void loadTrackers();
+                    void loadTrackers({ skipIfLoading: true });
                     startTrackerRefresh();
                 } else {
                     stopTrackerRefresh();
@@ -334,8 +334,8 @@ function createApiEvents(context) {
                     // watchlist (formerly the Избранное view) in parallel
                     // so any filter chip ("Слежу" / "В работе" / …)
                     // has data to render against.
-                    void loadLeads();
-                    void loadWatchlist();
+                    void loadLeads({ skipIfLoading: true });
+                    void loadWatchlist({ skipIfLoading: true });
                 }
             });
         }

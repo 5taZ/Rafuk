@@ -156,6 +156,35 @@ function createRenderCardBuilders(context) {
         );
     }
 
+    function _buildListingMarketBadges(comparison, id) {
+        const marketDelta = comparison?.delta_percent == null ? "" : formatMarketDelta(comparison);
+        if (!marketDelta) return null;
+        return domEl(
+            "div",
+            { className: "listing-badges", attrs: { id } },
+            domEl("span", {
+                className: "listing-badge",
+                text: marketDelta,
+                attrs: { title: `Медиана аналогов ${formatPrice(comparison.median_byn)}` },
+            }),
+            comparison.sample_limited
+                ? domEl("span", { className: "listing-badge", text: "Часть рынка" })
+                : null,
+        );
+    }
+
+    function updateListingMarket(card) {
+        const comparison = card._item.market_comparison;
+        if (card._marketComparison === comparison) return;
+        const priceNode = card.querySelector(".listing-price");
+        const tags = card.querySelector(".listing-tags");
+        const badges = _buildListingMarketBadges(comparison, `${priceNode.id}-badges`);
+        card.querySelector(".listing-badges")?.remove();
+        if (badges) card.insertBefore(badges, card.querySelector(".listing-actions"));
+        card.querySelector(".card-open").setAttribute("aria-describedby", _describedBy(priceNode, tags, badges));
+        card._marketComparison = comparison;
+    }
+
     function buildListingNode(item) {
         // RV-UI-02: a list item instead of ``role=button`` with the
         // title as its only accessible name — price, condition, seller
@@ -166,22 +195,6 @@ function createRenderCardBuilders(context) {
             attrs: { role: "listitem" },
         });
         const cardId = `listing-card-${++_cardSeq}`;
-        const badges = [];
-        const comparison = item.market_comparison;
-        const marketDelta = comparison?.delta_percent == null ? "" : formatMarketDelta(comparison);
-        if (marketDelta) {
-            badges.push(domEl("span", {
-                className: "listing-badge",
-                text: marketDelta,
-                attrs: { title: `Медиана аналогов ${formatPrice(comparison.median_byn)}` },
-            }));
-            if (comparison.sample_limited) {
-                badges.push(domEl("span", {
-                    className: "listing-badge",
-                    text: "Часть рынка",
-                }));
-            }
-        }
         const tags = domEl("div", { className: "listing-tags" });
         if (item.condition) tags.appendChild(domEl("span", { className: "tag", text: formatCondition(item.condition) }));
         if (item.seller_type) tags.appendChild(domEl("span", { className: "tag", text: formatSeller(item.seller_type) }));
@@ -189,8 +202,7 @@ function createRenderCardBuilders(context) {
 
         const priceNode = domEl("span", { className: "listing-price mono", text: formatPrice(item.price, item.price_type) });
         priceNode.id = `${cardId}-price`;
-        const badgesNode = badges.length ? domEl("div", { className: "listing-badges" }, badges) : null;
-        if (badgesNode) badgesNode.id = `${cardId}-badges`;
+        const badgesNode = _buildListingMarketBadges(item.market_comparison, `${priceNode.id}-badges`);
 
         const actionState = _listingActionState(item);
         listing.dataset.collectionState = actionState.inLeads
@@ -260,6 +272,7 @@ function createRenderCardBuilders(context) {
         );
 
         listing._item = item;
+        listing._marketComparison = item.market_comparison;
 
         if (typeof attachLongPress === "function") {
             attachLongPress(listing, () => {
@@ -889,6 +902,7 @@ function createRenderCardBuilders(context) {
 
     return {
         buildListingNode,
+        updateListingMarket,
         buildItemCard,
         buildLeadNode,
         buildWatchlistNode,

@@ -1172,7 +1172,7 @@ async def _run_analysis(
         try:
             async with run_sem:
                 await _stage_search(c)
-                _stage_extract(c)
+                await asyncio.to_thread(_stage_extract, c)
                 _stage_scoring(c)
                 await _stage_photo(c)
                 await _stage_ai(c)

@@ -1890,6 +1890,9 @@ def collect_similar_listings_from_cohorts(
     target_condition = _ad_condition(target_ad)
     target_category = target_ad.get("category")
     target_segment = _detect_market_segment(target_ad)
+    target_generation = (
+        _parameter_generation_value(target_params) if target_segment == "auto" else None
+    )
 
     ranked: dict[int, dict[str, Any]] = {}
 
@@ -1914,7 +1917,8 @@ def collect_similar_listings_from_cohorts(
             score = _cohort_weight(cohort_key)
             score += _query_similarity_bonus(query_tokens, candidate_tokens)
             score += _title_similarity_bonus(target_tokens, candidate_tokens)
-            score += _parameter_similarity_bonus(target_params, _ad_param_map(ad))
+            candidate_params = _ad_param_map(ad)
+            score += _parameter_similarity_bonus(target_params, candidate_params)
             score += _price_tiebreaker(target_price, candidate_price, market_median)
             score += _color_similarity_bonus(target_text, candidate_text)
 
@@ -1922,7 +1926,8 @@ def collect_similar_listings_from_cohorts(
             if target_condition and candidate_condition:
                 score += 4.0 if target_condition == candidate_condition else -2.0
 
-            if first_image_url(ad):
+            image_url = first_image_url(ad)
+            if image_url:
                 score += 1.0
             if str(ad.get("body", "") or ad.get("description", "")).strip():
                 score += 1.0
@@ -1953,8 +1958,7 @@ def collect_similar_listings_from_cohorts(
                 score += part_score
 
             if target_segment == "auto":
-                target_generation = _parameter_generation_value(target_params)
-                candidate_generation = _parameter_generation_value(_ad_param_map(ad))
+                candidate_generation = _parameter_generation_value(candidate_params)
                 if (
                     target_generation
                     and candidate_generation
@@ -1978,7 +1982,7 @@ def collect_similar_listings_from_cohorts(
                 "ad_id": ad_id,
                 "title": candidate_title[:80],
                 "price_byn": candidate_price,
-                "image_url": first_image_url(ad),
+                "image_url": image_url,
                 "image_urls": [
                     f"https://rms.kufar.by/v1/gallery/{img.get('path')}"
                     for img in (ad.get("images") or [])[:3]
