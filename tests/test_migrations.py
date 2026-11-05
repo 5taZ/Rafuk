@@ -42,7 +42,7 @@ from sqlalchemy.pool import NullPool
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "migrations" / "alembic.ini"
 # Bump together with docs/BACKUP_RUNBOOK.md ("Expected Alembic head").
-EXPECTED_HEAD = "20261105_0028"
+EXPECTED_HEAD = "20261105_0029"
 
 
 def _alembic_config() -> Config:
@@ -189,6 +189,64 @@ def test_scheduler_delivery_state_migration_round_trips_on_sqlite(tmp_path: Path
         ]
         with pytest.raises(sqlite3.IntegrityError):
             con.execute("UPDATE lead_reminders SET status = 'bogus'")
+
+
+@pytest.mark.parametrize("customized_builtin", [False, True])
+def test_account_status_names_migration_preserves_access_and_round_trips(
+    tmp_path: Path, customized_builtin: bool,
+) -> None:
+    from api.models import Base
+
+    old_names = {
+        "bare_search": "Голый Поиск", "scout": "Скаут Барахолки", "flipper": "Флиппер",
+        "shark": "Куфарная Акула", "market_maker": "Имба Маркетмейкер",
+    }
+    new_names = dict(zip(old_names, ["Free", "Pro", "Pro Max", "Pro Max Ultra",
+                                   "Pro Max Ultra Duo"], strict=True))
+    if customized_builtin:
+        old_names["scout"] = new_names["scout"] = "Личный уровень"
+    db_path = tmp_path / "status-names.db"
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    engine.dispose()
+    with sqlite3.connect(db_path) as con:
+        con.execute("PRAGMA foreign_keys=ON")
+        con.executemany("UPDATE account_statuses SET display_name=? WHERE code=?",
+                        [(name, code) for code, name in old_names.items()])
+        con.execute("UPDATE account_statuses SET ai_daily_limit=17 WHERE code='scout'")
+        con.execute(
+            "INSERT INTO account_statuses (code,display_name,tagline,accent,sort_order) "
+            "VALUES ('custom','Партнёр','custom tier','blue',99)"
+        )
+        con.execute(
+            "INSERT INTO users (id,telegram_user_id,first_name,account_status_code,status_note) "
+            "VALUES (1,42,'A','scout','keep assignment')"
+        )
+        fields = "code,tagline,accent,sort_order,ai_daily_limit,assistant_daily_limit"
+        access = con.execute(f"SELECT {fields} FROM account_statuses ORDER BY code").fetchall()
+        users = con.execute("SELECT * FROM users").fetchall()
+    old_names["custom"] = new_names["custom"] = "Партнёр"
+
+    _run_alembic(db_path, ("stamp", "20261105_0028"), ("upgrade", EXPECTED_HEAD))
+    with sqlite3.connect(db_path) as con:
+        assert dict(con.execute("SELECT code,display_name FROM account_statuses")) == new_names
+        current_access = con.execute(
+            f"SELECT {fields} FROM account_statuses ORDER BY code",
+        ).fetchall()
+        assert current_access == access
+        assert con.execute("SELECT * FROM users").fetchall() == users
+
+    _run_alembic(db_path, ("downgrade", "-1"))
+    with sqlite3.connect(db_path) as con:
+        assert dict(con.execute("SELECT code,display_name FROM account_statuses")) == old_names
+    _run_alembic(db_path, ("upgrade", EXPECTED_HEAD))
+    with sqlite3.connect(db_path) as con:
+        assert dict(con.execute("SELECT code,display_name FROM account_statuses")) == new_names
+        current_access = con.execute(
+            f"SELECT {fields} FROM account_statuses ORDER BY code",
+        ).fetchall()
+        assert current_access == access
+        assert con.execute("SELECT * FROM users").fetchall() == users
 
 
 # ── Postgres checks (dedicated scratch database) ─────────────────────────

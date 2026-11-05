@@ -192,8 +192,8 @@ function createAppActions(baseContext) {
         if (allowed) return true;
         showToast(
             isAssistant
-                ? "AI-помощник продавца доступен со статуса Скаут Барахолки"
-                : "AI доступен со статуса Скаут Барахолки",
+                ? "AI-помощник продавца доступен со статуса Pro"
+                : "AI доступен со статуса Pro",
             "info",
             3200,
         );
@@ -207,7 +207,7 @@ function createAppActions(baseContext) {
         if (code !== "premium_required" && code !== "quota_exceeded") return false;
         const message = detail.message || error.message || (
             code === "premium_required"
-                ? "AI доступен со статуса Скаут Барахолки"
+                ? "AI доступен со статуса Pro"
                 : "Лимит AI-запросов на сегодня закончился"
         );
         showToast(message, code === "quota_exceeded" ? "error" : "info", 3600);
@@ -283,10 +283,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261105-status-entry"),
-                context._loadScript("js/api_ai_render.js?v=20261105-status-entry"),
-                context._loadScript("js/api_ai.js?v=20261105-status-entry"),
-                context._loadScript("js/api_listing_assistant.js?v=20261105-status-entry"),
+                context._loadScript("js/api_ai_modal.js?v=20261105-status-neutral"),
+                context._loadScript("js/api_ai_render.js?v=20261105-status-neutral"),
+                context._loadScript("js/api_ai.js?v=20261105-status-neutral"),
+                context._loadScript("js/api_listing_assistant.js?v=20261105-status-neutral"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {

@@ -30,7 +30,7 @@ class Base(DeclarativeBase):
 ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
     {
         "code": "bare_search",
-        "display_name": "Голый Поиск",
+        "display_name": "Free",
         "tagline": "базовый режим: ищешь руками, без магии",
         "accent": "gray",
         "sort_order": 10,
@@ -39,7 +39,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
     },
     {
         "code": "scout",
-        "display_name": "Скаут Барахолки",
+        "display_name": "Pro",
         "tagline": "попробовать AI, понять ценность",
         "accent": "blue",
         "sort_order": 20,
@@ -48,7 +48,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
     },
     {
         "code": "flipper",
-        "display_name": "Флиппер",
+        "display_name": "Pro Max",
         "tagline": "регулярный поиск выгодных лотов",
         "accent": "violet",
         "sort_order": 30,
@@ -57,7 +57,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
     },
     {
         "code": "shark",
-        "display_name": "Куфарная Акула",
+        "display_name": "Pro Max Ultra",
         "tagline": "активный ресейл / постоянные сделки",
         "accent": "amber",
         "sort_order": 40,
@@ -66,7 +66,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
     },
     {
         "code": "market_maker",
-        "display_name": "Имба Маркетмейкер",
+        "display_name": "Pro Max Ultra Duo",
         "tagline": "почти “god mode”, высокий лимит",
         "accent": "red",
         "sort_order": 50,

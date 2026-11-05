@@ -190,6 +190,7 @@ def test_ai_endpoint_rejects_bare_search_with_premium_required(monkeypatch) -> N
     assert resp.status_code == 403
     assert resp.json()["detail"]["error"] == "premium_required"
     assert resp.json()["detail"]["bucket"] == "ai"
+    assert resp.json()["detail"]["message"] == "AI доступен со статуса Pro"
     assert fake_ai.calls == []
     assert not [k for k in cache._storage if k.startswith("quota:")]
 

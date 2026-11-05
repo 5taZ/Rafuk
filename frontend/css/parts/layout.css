@@ -2308,18 +2308,19 @@
     gap: 8px;
     padding: 6px 10px;
     border-radius: var(--radius-md);
-    border: 1px solid var(--info-border);
-    background: var(--accent-soft);
-    color: var(--text);
+    border: 1px solid var(--border);
+    background: var(--bg-subtle);
+    color: var(--text-muted);
     font-family: var(--font);
     text-align: left;
     cursor: pointer;
-    transition: background var(--tr-fast), border-color var(--tr-fast);
+    transition: background var(--tr-base), color var(--tr-base), border-color var(--tr-base);
 }
 
 .profile-chip:hover {
     border-color: var(--accent);
-    background: var(--accent-glow);
+    color: var(--text);
+    background: var(--accent-soft);
 }
 
 .profile-chip:focus-visible {
@@ -2329,7 +2330,7 @@
 
 .profile-chip-icon,
 .profile-chip-chevron {
-    color: var(--accent);
+    color: inherit;
     flex: 0 0 auto;
 }
 

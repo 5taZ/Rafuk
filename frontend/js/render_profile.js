@@ -210,7 +210,7 @@ function createRenderProfile(context) {
                 "section",
                 { className: "profile-locked" },
                 domEl("span", { className: "profile-locked-kicker", text: "AI закрыт" }),
-                domEl("h3", { className: "profile-locked-title", text: "AI доступен со статуса Скаут Барахолки" }),
+                domEl("h3", { className: "profile-locked-title", text: "AI доступен со статуса Pro" }),
                 domEl("p", { className: "profile-locked-copy", text: "Попроси доступ у владельца — обычный поиск, объявления и автопоиск остаются доступными." }),
             ));
         }

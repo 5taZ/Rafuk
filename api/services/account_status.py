@@ -345,9 +345,9 @@ def _validate_quota_bucket(bucket: str) -> None:
 def _quota_error_message(bucket: str, *, premium_required: bool) -> str:
     if premium_required:
         return (
-            "AI-помощник продавца доступен со статуса Скаут Барахолки"
+            "AI-помощник продавца доступен со статуса Pro"
             if bucket == QUOTA_BUCKET_ASSISTANT
-            else "AI доступен со статуса Скаут Барахолки"
+            else "AI доступен со статуса Pro"
         )
     return (
         "Лимит AI-помощника продавца на сегодня закончился"

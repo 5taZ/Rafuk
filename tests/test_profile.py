@@ -67,6 +67,7 @@ async def test_profile_me_creates_new_user_with_bare_search(profile_client) -> N
     assert data["user"]["first_name"] == "Staz"
     assert data["user"]["username"] == "staz"
     assert data["status"]["code"] == "bare_search"
+    assert data["status"]["display_name"] == "Free"
     assert data["limits"]["ai"] == {
         "used": 0,
         "limit": 0,
