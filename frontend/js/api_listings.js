@@ -38,6 +38,104 @@ function createApiListings(context) {
 
     let _historyAbortController = null;
     let _detailItem = null;
+    const _detailCache = new Map();
+    const _detailPreloadQueue = [];
+    let _detailPreloadsActive = 0;
+
+    function _detailQuery(item, {
+        category = state.filters.category,
+        strictSearch = state.search.strictSearch,
+        referenceContext = "base_query",
+    } = {}) {
+        const query = (item?.query || state.search.activeQuery || "").trim();
+        if (!item?.ad_id || !query) return null;
+        const params = new URLSearchParams({
+            query, currency: state.misc.currency, strict_search: String(strictSearch),
+            ad_id: String(item.ad_id),
+        });
+        if (category != null) {
+            params.set("category", String(category));
+            if (referenceContext !== "current") params.set("reference_context", referenceContext);
+        }
+        return params;
+    }
+
+    function _cachedDetail(key) {
+        const cached = _detailCache.get(key);
+        if (cached && Date.now() - cached.createdAt < 60_000
+            && (!cached.controller.signal.aborted || cached.complete)) return cached;
+        _detailCache.delete(key);
+        return null;
+    }
+
+    function _loadDetail(item, params, retry = true) {
+        const key = params.toString();
+        const cached = _cachedDetail(key);
+        if (cached) return cached;
+        const entry = {
+            controller: new AbortController(), createdAt: Date.now(), complete: false,
+            data: null, description: item.description || null, descriptionError: false,
+        };
+        _detailCache.set(key, entry);
+        if (_detailCache.size > 32) _detailCache.delete(_detailCache.keys().next().value);
+        const signal = entry.controller.signal;
+        const discard = () => {
+            if (_detailCache.get(key) === entry) _detailCache.delete(key);
+        };
+        entry.descriptionRequest = item.description ? Promise.resolve(item.description) : getJson(
+            `/api/v1/listing-description?ad_id=${encodeURIComponent(item.ad_id)}`,
+            { signal, retry: false },
+        ).then(({ description }) => {
+            if (signal.aborted) return null;
+            entry.description = description;
+            return description;
+        }).catch(() => {
+            entry.descriptionError = true;
+            discard();
+            return null;
+        });
+        entry.detailRequest = getJson(`/api/v1/listing-detail?${key}`, { signal, retry }).then((data) => {
+            if (signal.aborted) {
+                discard();
+                throw new DOMException("Detail request aborted", "AbortError");
+            }
+            entry.data = data;
+            if (data.liquidity?.basis !== "current_market") discard();
+            return data;
+        }).catch((error) => {
+            discard();
+            throw error;
+        });
+        entry.finished = Promise.allSettled([entry.detailRequest, entry.descriptionRequest])
+            .then(() => { entry.complete = true; });
+        return entry;
+    }
+
+    function _preloadNextDetails() {
+        if (state.ui.activeView !== "tracking" || document.hidden) {
+            _detailPreloadQueue.length = 0;
+            return;
+        }
+        while (_detailPreloadsActive < 2 && _detailPreloadQueue.length) {
+            const { item, params } = _detailPreloadQueue.shift();
+            if (_cachedDetail(params.toString())) continue;
+            const entry = _loadDetail(item, params, false);
+            _detailPreloadsActive++;
+            void entry.finished.finally(() => {
+                _detailPreloadsActive--;
+                _preloadNextDetails();
+            });
+        }
+    }
+
+    function preloadListingDetail(item, options) {
+        const params = _detailQuery(item, options);
+        if (!params || _cachedDetail(params.toString())) return;
+        if (_detailPreloadQueue.some((queued) => queued.params.toString() === params.toString())) return;
+        _detailPreloadQueue.push({ item, params });
+        if (_detailPreloadQueue.length > 6) _detailPreloadQueue.shift();
+        _preloadNextDetails();
+    }
 
     // RV-FE-04: a forced refresh must bypass the browser HTTP cache as
     // well — /listings and /price-stats are served with max-age=60, and
@@ -510,26 +608,32 @@ function createApiListings(context) {
         fromWatchlist = false,
         onLoaded,
     } = {}) {
-        const queryToUse = (item?.query || state.search.activeQuery || "").trim();
+        const params = _detailQuery(item, { category, strictSearch, referenceContext });
         if (!item?.ad_id) return;
-        if (!queryToUse) {
+        if (!params) {
             showToast("Не удалось открыть: нет привязки к запросу");
             return;
         }
 
         abortDetailRequest();
         _detailItem = item;
-        const controller = new AbortController();
+        const entry = _loadDetail(item, params);
+        const controller = entry.complete ? new AbortController() : entry.controller;
         state.detail.requestController = controller;
         const { signal } = controller;
 
         state.detail.data = {
             ...item,
-            title: item.title || "Объявление",
-            price: item.price_byn ?? item.price ?? null,
-            query: queryToUse,
-            images: item.thumbnail ? [item.thumbnail] : [],
+            ...entry.data,
+            title: entry.data?.title || item.title || "Объявление",
+            price: entry.data?.price ?? item.price_byn ?? item.price ?? null,
+            query: params.get("query"),
+            description: entry.description || entry.data?.description || item.description,
+            images: entry.data?.images || (item.thumbnail ? [item.thumbnail] : []),
         };
+        state.detail.loading = !entry.complete;
+        state.detail.loadError = false;
+        state.detail.descriptionError = entry.descriptionError;
         state.detail.imageIndex = 0;
         state.detail.fromWatchlist = fromWatchlist;
         state.detail.ai = {
@@ -541,30 +645,14 @@ function createApiListings(context) {
         };
         renderDetailModal();
 
-        const descriptionRequest = item.description ? null : getJson(
-            `/api/v1/listing-description?ad_id=${encodeURIComponent(item.ad_id)}`,
-            { signal, retry: false },
-        ).then(({ description }) => {
+        const descriptionRequest = entry.descriptionRequest.then((description) => {
             if (signal.aborted || !description || !state.detail.data || state.detail.data.description) return;
             state.detail.data.description = description;
             renderDetailModal();
         }).catch(() => {});
 
         try {
-            const params = new URLSearchParams({
-                query: queryToUse,
-                currency: state.misc.currency,
-                strict_search: String(strictSearch),
-                ad_id: String(item.ad_id),
-            });
-            if (category != null) {
-                params.set("category", String(category));
-                if (referenceContext !== "current") params.set("reference_context", referenceContext);
-            }
-            const fullDetail = await getJson(
-                `/api/v1/listing-detail?${params.toString()}`,
-                { signal }
-            );
+            const fullDetail = await entry.detailRequest;
             if (signal.aborted) return;
             const preview = state.detail.data;
             if (!fullDetail.market_comparison && preview.market_comparison
@@ -581,10 +669,15 @@ function createApiListings(context) {
             renderDetailModal();
             onLoaded?.(state.detail.data);
         } catch {
-            // The listing preview stays usable if enrichment fails.
+            if (!signal.aborted) state.detail.loadError = true;
         } finally {
             await descriptionRequest;
-            if (state.detail.requestController === controller) state.detail.requestController = null;
+            if (state.detail.requestController === controller && !signal.aborted) {
+                state.detail.loading = false;
+                state.detail.descriptionError = entry.descriptionError;
+                renderDetailModal();
+                state.detail.requestController = null;
+            }
         }
     }
 
@@ -716,6 +809,7 @@ function createApiListings(context) {
         loadListings,
         loadMoreListings,
         openListingDetail,
+        preloadListingDetail,
         loadSearchDependencies,
         clearSearchData,
         resetCategoryFilter,

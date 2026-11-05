@@ -283,10 +283,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261105-shared-liquidity"),
-                context._loadScript("js/api_ai_render.js?v=20261105-shared-liquidity"),
-                context._loadScript("js/api_ai.js?v=20261105-shared-liquidity"),
-                context._loadScript("js/api_listing_assistant.js?v=20261105-shared-liquidity"),
+                context._loadScript("js/api_ai_modal.js?v=20261105-autosearch-details"),
+                context._loadScript("js/api_ai_render.js?v=20261105-autosearch-details"),
+                context._loadScript("js/api_ai.js?v=20261105-autosearch-details"),
+                context._loadScript("js/api_listing_assistant.js?v=20261105-autosearch-details"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -340,6 +340,7 @@ function createAppActions(baseContext) {
         loadListings: listings.loadListings,
         loadMoreListings: listings.loadMoreListings,
         openListingDetail: listings.openListingDetail,
+        preloadListingDetail: listings.preloadListingDetail,
         loadSearchDependencies: listings.loadSearchDependencies,
         clearSearchData: listings.clearSearchData,
         // SEARCH-9: render_cards.js reads this off `context.actions`
@@ -1181,6 +1182,7 @@ function createAppActions(baseContext) {
         startTrackerRefresh: trackers.startTrackerRefresh,
         stopTrackerRefresh: trackers.stopTrackerRefresh,
         openListingDetail: listings.openListingDetail,
+        preloadListingDetail: listings.preloadListingDetail,
         // FE-C4: expose abort hooks so closeDetailModal and any
         // future cleanup paths (view tab change, route navigation)
         // can drop pending fetches before clearing UI state.

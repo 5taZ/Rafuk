@@ -295,6 +295,9 @@ function createAppCore() {
         },
         detail: {
             data: null,
+            loading: false,
+            loadError: false,
+            descriptionError: false,
             imageIndex: 0,
             fromWatchlist: false,
             requestController: null,

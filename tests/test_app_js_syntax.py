@@ -959,7 +959,7 @@ function makeElement() {
         className: "",
         children: [],
         style: {},
-        classList: { contains: () => false, add() {}, remove() {} },
+        classList: { contains: () => false, add() {}, remove() {}, toggle() {} },
         append(...items) { this.children.push(...items); },
         appendChild(item) { this.children.push(item); return item; },
         prepend(item) { this.children.unshift(item); return item; },
@@ -1322,6 +1322,20 @@ assert.strictEqual(elements.detailAddLeadButton.disabled, false);
 assert.strictEqual(elements.detailAddWatchlistButton.hidden, false);
 assert.strictEqual(elements.detailAddWatchlistButton.textContent, "В избранном");
 assert.strictEqual(elements.detailAddWatchlistButton.disabled, true);
+
+state.detail.data.liquidity = null;
+state.detail.loading = true;
+renderer.renderDetailModal();
+assert.strictEqual(elements.detailDescription.hidden, false);
+assert.match(elements.detailDescription.textContent, /Загружаем описание/);
+assert.strictEqual(elements.detailLiquidityBlock.hidden, false);
+assert.match(elements.detailLiquidity.children[0].textContent, /Оцениваем рынок/);
+state.detail.loading = false;
+state.detail.loadError = true;
+state.detail.descriptionError = true;
+renderer.renderDetailModal();
+assert.match(elements.detailDescription.textContent, /временно недоступно/);
+assert.match(elements.detailLiquidity.children[0].textContent, /Не удалось загрузить оценку/);
 """
     )
     result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
@@ -2397,11 +2411,86 @@ const modals = createRenderModals({
     assert.equal(descriptionRequest.path, "/api/v1/listing-description");
     assert.equal(state.detail.data.liquidity, liquidity);
     descriptionRequest.resolve({description: "Описание со страницы Kufar"});
-    await Promise.resolve();
+    await new Promise(setImmediate);
     assert.equal(state.detail.data.description, "Описание со страницы Kufar");
     detailRequest.resolve({ad_id: 1, title: "Enriched"});
     await separate;
     assert.equal(state.detail.data.description, "Описание со страницы Kufar");
+})()""" + _NODE_FAIL)
+
+
+def test_autosearch_preloads_are_bounded_shared_with_click_and_cached_by_context() -> None:
+    _node_ok(_js("api_listings.js") + r"""
+const assert = require("node:assert/strict");
+global.document = {hidden: false};
+const state = {
+    search: {activeQuery: "Unrelated search", strictSearch: false},
+    filters: {category: 2040}, misc: {currency: "BYN"},
+    ui: {activeView: "tracking"}, detail: {data: null},
+};
+const requests = [];
+const api = createApiListings({
+    state, renderDetailModal() {},
+    getJson: (url, {signal}) => new Promise((resolve, reject) => {
+        requests.push({url: new URL(url, "http://rafuk.test"), signal, resolve, reject});
+    }),
+});
+const options = {category: 17010, strictSearch: true, referenceContext: "current"};
+const event = (ad_id) => ({ad_id, query: "iphone 14 pro 256", price_byn: 1000});
+const liquidity = {basis: "current_market", label: "Средняя", sample_size: 12};
+function finish(adId) {
+    const pair = requests.filter((r) => r.url.searchParams.get("ad_id") === String(adId));
+    pair.find((r) => r.url.pathname.endsWith("/listing-description"))
+        .resolve({description: "Полное описание продавца"});
+    pair.find((r) => r.url.pathname.endsWith("/listing-detail")).resolve({
+        ad_id: adId, title: "iPhone 14 Pro 256", price: 990, price_byn: 990,
+        images: ["first.jpg", "second.jpg"], liquidity,
+    });
+}
+(async () => {
+    api.preloadListingDetail(event(1), options);
+    api.preloadListingDetail(event(1), options);
+    api.preloadListingDetail(event(2), options);
+    api.preloadListingDetail(event(3), options);
+    assert.equal(requests.length, 4, "only two background cards start loading");
+
+    const opened = api.openListingDetail(event(2), options);
+    assert.equal(requests.length, 4, "opening joins the existing requests");
+    finish(2);
+    await opened;
+    assert.equal(state.detail.loading, false);
+    assert.equal(state.detail.data.description, "Полное описание продавца");
+    assert.equal(state.detail.data.liquidity.sample_size, 12);
+    assert.equal(state.detail.data.images.length, 2);
+    await new Promise(setImmediate);
+    assert.equal(requests.length, 6, "the next visible card starts after a slot frees");
+
+    const count = requests.length;
+    const reopened = api.openListingDetail(event(2), options);
+    assert.equal(requests.length, count);
+    assert.equal(state.detail.loading, false);
+    assert.equal(state.detail.data.price, 990);
+    assert.equal(state.detail.data.description, "Полное описание продавца");
+    assert.equal(state.detail.data.liquidity, liquidity);
+    assert.deepEqual(state.detail.data.images, ["first.jpg", "second.jpg"]);
+    await reopened;
+
+    state.misc.currency = "USD";
+    const changed = api.openListingDetail(event(2), options);
+    assert.equal(requests.length, count + 2, "currency has a separate cache entry");
+    const latest = requests.at(-1);
+    assert.equal(latest.url.searchParams.get("category"), "17010");
+    assert.equal(latest.url.searchParams.get("strict_search"), "true");
+    assert.equal(latest.url.searchParams.get("query"), "iphone 14 pro 256");
+    assert.equal(latest.url.searchParams.get("currency"), "USD");
+    api.abortDetailRequest();
+    state.detail.data = null;
+    requests.at(-2).resolve({description: "Late"});
+    latest.resolve({ad_id: 2, title: "Late"});
+    await changed;
+    assert.equal(state.detail.data, null);
+    finish(1);
+    finish(3);
 })()""" + _NODE_FAIL)
 
 
@@ -4396,6 +4485,12 @@ const state = {
 const actions = {
     openLeadDetail: (item) => opened.push(`lead:${item.id}`),
     openWatchlistDetail: (item) => opened.push(`watch:${item.id}`),
+    preloadListingDetail: (item, options) => {
+        warmed.push(item.ad_id);
+        assert.deepStrictEqual(options, {
+            strictSearch: true, category: 17010, referenceContext: "current",
+        });
+    },
     openListingDetail: (item, options) => {
         opened.push(`event:${item.ad_id}`);
         assert.equal(item.thumbnail, "preview.jpg");
@@ -4456,6 +4551,14 @@ lead.querySelector(".card-open").click();
 assert.deepStrictEqual(opened, ["watch:3", "lead:4"]);
 
 const trackers = createRenderTrackers(context);
+const warmed = [];
+let visibleEvents;
+global.IntersectionObserver = class {
+    constructor(callback) { this.callback = callback; visibleEvents = this; }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+};
 trackers.renderTrackerEvents();
 assert.strictEqual(elements.clearEventsButton.hidden, false);
 const list = elements.trackerEventsList.querySelector("[role=list]");
@@ -4463,6 +4566,10 @@ assert.ok(list);
 const eventCard = list.querySelector("[role=listitem]");
 assert.ok(eventCard);
 assert.strictEqual(elements.trackerEventsList.querySelectorAll("[role=button]").length, 0);
+visibleEvents.callback([{target: eventCard, isIntersecting: false}]);
+assert.deepStrictEqual(warmed, []);
+visibleEvents.callback([{target: eventCard, isIntersecting: true}]);
+assert.deepStrictEqual(warmed, [5]);
 eventCard.querySelector(".event-header .card-open").click();
 assert.deepStrictEqual(opened, ["watch:3", "lead:4", "event:5"]);
 const eventDescribedBy = eventCard.querySelector(".card-open").getAttribute("aria-describedby");

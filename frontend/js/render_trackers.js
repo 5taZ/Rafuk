@@ -33,6 +33,8 @@ function createRenderTrackers(context) {
         sameAdId,
     } = context;
 
+    let eventDetailObserver = null;
+
     // FE-08 / Wave 29: build SVG icons via createElementNS instead of
     // ``innerHTML = "<svg...>"``. The previous code worked because
     // every SVG payload was a hardcoded source-code constant, but a
@@ -394,6 +396,8 @@ function createRenderTrackers(context) {
 
     function renderTrackerEvents() {
         return safeRender('renderTrackerEvents', () => {
+        eventDetailObserver?.disconnect();
+        eventDetailObserver = null;
         const container = elements.trackerEventsList;
         if (!container) return;
 
@@ -533,6 +537,15 @@ function createRenderTrackers(context) {
         }
 
         // Build event card element — extracted for virtual scrolling
+        if (typeof IntersectionObserver === "function" && actions.preloadListingDetail) {
+            eventDetailObserver = new IntersectionObserver((entries) => {
+                for (const entry of entries) {
+                    if (!entry.isIntersecting) continue;
+                    entry.target._preloadDetail?.();
+                    eventDetailObserver?.unobserve(entry.target);
+                }
+            }, { rootMargin: "160px" });
+        }
         function buildEventNode(event) {
             const isNewListing = event.event_type === "new_listing";
             const isPriceDrop = event.event_type === "price_drop";
@@ -694,13 +707,22 @@ function createRenderTrackers(context) {
 
             card.dataset.adId = String(event.ad_id);
 
-            card.querySelector(".card-open")?.addEventListener("click", () => {
+            const detailOptions = () => {
                 const tracker = state.trackers.items.find((item) => item.id === event.tracker_id);
-                void actions.openListingDetail(event, {
+                return {
                     strictSearch: event.strict_mode,
                     category: tracker?.category_id ?? null,
                     referenceContext: "current",
-                });
+                };
+            };
+            const openButton = card.querySelector(".card-open");
+            card._preloadDetail = () => actions.preloadListingDetail?.(event, detailOptions());
+            eventDetailObserver?.observe(card);
+            openButton?.addEventListener("pointerenter", card._preloadDetail);
+            openButton?.addEventListener("focus", card._preloadDetail);
+            openButton?.addEventListener("pointerdown", card._preloadDetail);
+            openButton?.addEventListener("click", () => {
+                void actions.openListingDetail(event, detailOptions());
             });
 
             card.querySelector('[data-role="lead"]')?.addEventListener("click", (clickEvent) => {

@@ -102,8 +102,11 @@ function createRenderModals(context) {
             domClear(elements.detailAiContent);
         }
 
-        elements.detailDescription.textContent = detail.description || "";
-        elements.detailDescription.hidden = !detail.description;
+        const descriptionStatus = state.detail.loading ? "Загружаем описание…"
+            : state.detail.descriptionError ? "Описание временно недоступно." : "";
+        elements.detailDescription.textContent = detail.description || descriptionStatus;
+        elements.detailDescription.hidden = !elements.detailDescription.textContent;
+        elements.detailDescription.classList.toggle("detail-loading", !detail.description);
 
         // Flip estimates hidden — resale info now shown in AI analysis
         elements.detailProfitBlock.hidden = true;
@@ -139,7 +142,16 @@ function createRenderModals(context) {
                 elements.detailLiquidity.appendChild(list);
             }
         }
-        elements.detailLiquidityBlock.hidden = !liquidity;
+        if (!liquidity && (state.detail.loading || state.detail.loadError)) {
+            const status = document.createElement("p");
+            status.className = "detail-loading";
+            status.setAttribute("role", "status");
+            status.textContent = state.detail.loading ? "Оцениваем рынок…"
+                : "Не удалось загрузить оценку. Откройте объявление ещё раз.";
+            elements.detailLiquidity.appendChild(status);
+        }
+        elements.detailLiquidityBlock.hidden = !liquidity
+            && !state.detail.loading && !state.detail.loadError;
 
         domClear(elements.detailMeta);
         const comparison = detail.market_comparison;
@@ -351,6 +363,9 @@ function createRenderModals(context) {
             state.misc.modalCleanup = null;
         }
         state.detail.data = null;
+        state.detail.loading = false;
+        state.detail.loadError = false;
+        state.detail.descriptionError = false;
         state.detail.imageIndex = 0;
         state.detail.fromWatchlist = false;
         state.detail.ai = {
