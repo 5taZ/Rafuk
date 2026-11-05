@@ -2305,20 +2305,21 @@
     max-width: 240px;
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 7px 10px;
+    gap: 8px;
+    padding: 6px 10px;
     border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: var(--bg-subtle);
+    border: 1px solid var(--info-border);
+    background: var(--accent-soft);
     color: var(--text);
-    font: 600 var(--text-xs) var(--font);
+    font-family: var(--font);
+    text-align: left;
     cursor: pointer;
     transition: background var(--tr-fast), border-color var(--tr-fast);
 }
 
 .profile-chip:hover {
-    border-color: var(--border-hover);
-    background: var(--bg-hover);
+    border-color: var(--accent);
+    background: var(--accent-glow);
 }
 
 .profile-chip:focus-visible {
@@ -2326,14 +2327,34 @@
     outline-offset: 2px;
 }
 
-.profile-chip-icon {
-    color: var(--text-muted);
+.profile-chip-icon,
+.profile-chip-chevron {
+    color: var(--accent);
     flex: 0 0 auto;
+}
+
+.profile-chip-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.profile-chip-heading {
+    color: var(--text);
+    font-size: var(--text-sm);
+    font-weight: 650;
+    line-height: 1.2;
+    white-space: nowrap;
 }
 
 .profile-chip-label {
     min-width: 0;
     overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    font-weight: 400;
+    line-height: 1.2;
     white-space: nowrap;
     text-overflow: ellipsis;
 }

@@ -74,17 +74,17 @@ function createRenderProfile(context) {
         chip.className = "profile-chip";
         chip.removeAttribute("aria-busy");
         chip.removeAttribute("title");
-        chip.setAttribute("aria-label", "Открыть профиль");
-        label.textContent = "Профиль";
+        chip.setAttribute("aria-label", "Открыть статус и лимиты");
+        label.textContent = "Посмотреть роль";
         if (!profile && (state.profile.loading || !state.profile.error)) {
             chip.classList.add("profile-chip--loading");
             chip.setAttribute("aria-busy", "true");
         }
         const statusName = profile?.status?.display_name;
         if (!statusName) return;
-        label.textContent = statusName;
-        chip.title = statusName;
-        chip.setAttribute("aria-label", `${statusName}. Открыть профиль`);
+        label.textContent = `Роль: ${statusName}`;
+        chip.title = `Статус и лимиты · Роль: ${statusName}`;
+        chip.setAttribute("aria-label", `Открыть статус и лимиты. Текущая роль: ${statusName}`);
     }
 
     function _renderAiLocks() {

@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261105-price-alerts";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261105-status-entry";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");
