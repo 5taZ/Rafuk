@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261105-autosearch-ui";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261105-feed-refresh";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");

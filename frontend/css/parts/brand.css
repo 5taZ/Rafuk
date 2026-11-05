@@ -2054,20 +2054,28 @@
 
 .tracker-feed-filters {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr)) 44px;
     align-items: end;
     gap: 7px;
 }
 
 .tracker-refresh {
     width: 44px;
-    flex: none;
+}
+
+.tracker-refresh.ghost-btn:not(:hover) {
+    background: var(--bg-input);
+    border-color: var(--border-control-strong);
 }
 
 .tracker-feed-meta {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.tracker-feed-meta .tracker-note:not(:empty),
+.tracker-feed-meta .clear-list-btn {
     margin-top: 6px;
 }
 
@@ -2436,9 +2444,13 @@ select.tracker-control {
     font-size: var(--text-sm);
 }
 
-@media (max-width: 350px) {
+@media (max-width: 419px) {
     .tracker-feed-filters {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr) 44px;
+    }
+
+    .tracker-feed-filters > :first-child {
+        grid-column: 1 / -1;
     }
 }
 
