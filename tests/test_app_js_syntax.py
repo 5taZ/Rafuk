@@ -1289,11 +1289,11 @@ state.detail.data = {
     images: [],
     parameters: [],
     seller_fields: [],
-    liquidity: { label: "Недостаточно наблюдений", score: null, sample_size: 0 },
+    liquidity: { basis: "current_market", label: "Недостаточно аналогов", sample_size: 0 },
 };
 renderer.renderDetailModal();
 assert.strictEqual(elements.detailLiquidityBlock.hidden, false);
-assert.strictEqual(elements.detailLiquidity.children.length, 1);
+assert.strictEqual(elements.detailLiquidity.children.length, 2);
 assert.strictEqual(elements.detailLiquidity.children[0].children.length, 1);
 assert.strictEqual(elements.detailAddLeadButton.textContent, "В покупках");
 assert.strictEqual(elements.detailAddLeadButton.disabled, true);
@@ -1308,14 +1308,15 @@ state.detail.data = {
     parameters: [],
     seller_fields: [],
     liquidity: {
-        label: "Низкая", score: 0, sample_size: 15, unavailable_count: 0, window_days: 7,
+        basis: "current_market", label: "Низкая", sample_size: 15,
+        reasons: ["Цена выше медианы аналогов."],
     },
 };
 state.detail.fromWatchlist = true;
 renderer.renderDetailModal();
-assert.strictEqual(elements.detailLiquidity.children[1].tagName, "meter");
-assert.strictEqual(elements.detailLiquidity.children[1].value, 0);
-assert.match(elements.detailLiquidity.children[2].children[0].textContent, /0 из 15/);
+assert.strictEqual(elements.detailLiquidity.children[0].children[1].textContent, "15 в выборке");
+assert.match(elements.detailLiquidity.children[1].textContent, /текущим объявлениям Kufar/);
+assert.match(elements.detailLiquidity.children[2].children[0].textContent, /выше медианы/);
 assert.strictEqual(elements.detailAddLeadButton.textContent, "В покупки");
 assert.strictEqual(elements.detailAddLeadButton.disabled, false);
 assert.strictEqual(elements.detailAddWatchlistButton.hidden, false);
@@ -2315,7 +2316,8 @@ let renders = 0;
 const context = {
     state, renderDetailModal: () => renders++,
     getJson: (url, {signal}) => new Promise((resolve, reject) => {
-        requests.push({signal, resolve, reject, params: new URLSearchParams(url.split("?")[1])});
+        const [path, params] = url.split("?");
+        requests.push({path, signal, resolve, reject, params: new URLSearchParams(params)});
     }),
 };
 const listings = createApiListings(context);
@@ -2326,7 +2328,11 @@ const modals = createRenderModals({
     state, elements: {}, actions: listings, closeModalAnimated() {},
 });
 (async () => {
-    const item = {ad_id: 1, title: "iPhone", thumbnail: "preview.jpg", price_byn: 100};
+    const liquidity = {basis: "current_market", label: "Высокая", sample_size: 8};
+    const item = {
+        ad_id: 1, title: "iPhone", thumbnail: "preview.jpg", price_byn: 100,
+        description: "Описание из результатов поиска", liquidity,
+    };
     const openTrackerEvent = (event) => listings.openListingDetail(
         {...event, query: "Tracker query"}, {category: null, strictSearch: true},
     );
@@ -2342,6 +2348,8 @@ const modals = createRenderModals({
         assert.equal(state.detail.data.title, "iPhone");
         assert.equal(state.detail.data.price, price);
         assert.deepEqual(state.detail.data.images, ["preview.jpg"]);
+        assert.equal(state.detail.data.description, item.description);
+        assert.equal(state.detail.data.liquidity, liquidity);
         const last = requests.at(-1);
         if (open === openTrackerEvent) {
             assert.equal(last.params.get("query"), "Tracker query");
@@ -2377,6 +2385,23 @@ const modals = createRenderModals({
     await failed;
     assert.equal(state.detail.data.title, "iPhone", "failed enrichment leaves the preview open");
     assert.equal(state.ui.error, "Search retry");
+
+    const legacy = listings.openListingDetail(item);
+    requests.at(-1).resolve({ad_id: 1, title: "iPhone", liquidity: {score: 15}});
+    await legacy;
+    assert.equal(state.detail.data.description, item.description);
+    assert.equal(state.detail.data.liquidity, liquidity);
+
+    const separate = listings.openListingDetail({...item, description: null});
+    const [descriptionRequest, detailRequest] = requests.slice(-2);
+    assert.equal(descriptionRequest.path, "/api/v1/listing-description");
+    assert.equal(state.detail.data.liquidity, liquidity);
+    descriptionRequest.resolve({description: "Описание со страницы Kufar"});
+    await Promise.resolve();
+    assert.equal(state.detail.data.description, "Описание со страницы Kufar");
+    detailRequest.resolve({ad_id: 1, title: "Enriched"});
+    await separate;
+    assert.equal(state.detail.data.description, "Описание со страницы Kufar");
 })()""" + _NODE_FAIL)
 
 
@@ -3218,7 +3243,10 @@ const queryOf = (url) => new URLSearchParams(url.split("?")[1]).get("query");
     await api.search("ads", { keepFilters: true, query: state.search.activeQuery });
     await tick(5);
     assert.ok(requests.length >= 8, requests.join("\n"));
-    for (const url of requests) assert.strictEqual(queryOf(url), "iphone 13", url);
+    for (const url of requests) {
+        if (url.startsWith("/api/v1/listing-description?")) continue;
+        assert.strictEqual(queryOf(url), "iphone 13", url);
+    }
     assert.strictEqual(state.search.draft, "i", "re-running the results keeps the draft");
 
     // Only an explicit search of the typed text commits it.
@@ -3249,6 +3277,7 @@ const requestKey = (url) => {
     const parsed = new URL(url, "http://rafuk.test");
     const q = parsed.searchParams.get("query");
     if (parsed.pathname.endsWith("/price-stats")) return q + "-stats";
+    if (parsed.pathname.endsWith("/listing-detail")) return q + "-detail";
     if (parsed.pathname.endsWith("/listings") && !parsed.searchParams.has("include_market")) {
         assert.equal(parsed.searchParams.has("force_refresh"), false);
         return q + "-market";
@@ -3257,7 +3286,7 @@ const requestKey = (url) => {
 };
 const api = createApiListings({
     state, elements, buildCommonQuery: createApiCore({state}).buildCommonQuery,
-    markDirty() {}, renderAll() {}, scheduleRender() {}, focusTarget() {},
+    markDirty() {}, renderAll() {}, scheduleRender() {}, focusTarget() {}, renderDetailModal() {},
     getJson(url) {
         const key = requestKey(url);
         if (key) return new Promise((resolve, reject) => pending.set(key, {resolve, reject}));
@@ -3275,11 +3304,24 @@ const api = createApiListings({
     assert.equal(state.listings._pending, false);
     assert.equal(state.listings.items[0].price_byn, 100);
     assert.equal(state.listings.items[0].market_comparison, undefined);
+    const opened = api.openListingDetail(state.listings.items[0]);
+    const liquidity = {basis: "current_market", label: "Высокая", sample_size: 33};
     pending.get("iphone-market").resolve({
-        listings: [{ad_id: 1, price_byn: 100, market_comparison: {delta_percent: -10}}],
+        listings: [{ad_id: 1, price_byn: 100, liquidity,
+            market_comparison: {delta_percent: -10, comparable_count: 33}}],
     });
     await tick();
     assert.equal(state.listings.items[0].market_comparison.delta_percent, -10);
+    assert.equal(state.listings.items[0].liquidity.sample_size, 33);
+    assert.equal(state.detail.data.liquidity.sample_size, 33);
+    assert.equal(state.detail.data.market_comparison.comparable_count, 33);
+    pending.get("iphone-detail").resolve({
+        ad_id: 1, price_byn: 100,
+        liquidity: {basis: "current_market", label: "Недостаточно аналогов", sample_size: 1},
+    });
+    await opened;
+    assert.equal(state.detail.data.liquidity.sample_size, 33);
+    assert.equal(state.detail.data.market_comparison.comparable_count, 33);
     pending.get("iphone-stats").reject(new Error("Overview failed"));
     await first;
     assert.equal(state.listings.items[0].ad_id, 1, "analytics failure keeps visible listings");

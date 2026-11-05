@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from api.config import Settings
+from api.services.kufar_description import fetch_listing_description
 from api.services.kufar_filters import KUFAR_CONDITION_VALUES, KUFAR_SELLER_VALUES
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ class KufarClient:
         self._client_lock = asyncio.Lock()
         # Limit parallel HTTP requests across all KufarClient users
         self._semaphore = asyncio.Semaphore(settings.kufar_parallel_semaphore)
+        self._description_semaphore = asyncio.Semaphore(2)
         # Simple circuit breaker: after 5 consecutive errors open the
         # circuit for 30 seconds and fail fast with KufarUnavailableError
         # (RV-BE-05: it used to return an empty result instead).
@@ -387,6 +389,12 @@ class KufarClient:
             f"Kufar API request failed after {attempts} attempt{'' if attempts == 1 else 's'}",
             retry_after=self._open_remaining(),
         ) from last_error
+
+    async def get_listing_description(self, ad_id: int) -> str | None:
+        # Separate the small page lookup from queued search pagination.
+        async with asyncio.timeout(4), self._description_semaphore:
+            client = await self._get_client()
+            return await fetch_listing_description(client, ad_id, user_agent=USER_AGENT)
 
     async def search_all_ads(
         self,

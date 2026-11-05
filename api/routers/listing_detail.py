@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
-from typing import Any, Literal
+from itertools import chain
+from typing import Literal
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import update
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -20,19 +20,20 @@ from api.dependencies import (
 )
 from api.limiter import limiter
 from api.models import LeadItem
-from api.schemas import LiquidityInsight, ListingDetailResponse
+from api.schemas import ListingDetailResponse
 from api.services.aggregator import compute_category_price_stats, precompute_cluster_stats
 from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService, get_conversion_rates
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_detail
-from api.services.market_liquidity import load_liquidity_insight, observe_market_listings
+from api.services.market_liquidity import estimate_liquidity
 from api.services.query_pipeline import load_query_dataset_context_with_fallback
 from api.services.risk_detector import compute_risk_score, detect_risks
 from api.services.watchlist_market import (
     MARKET_ESTIMATE_TTL,
-    liquidity_segment,
-    load_page_comparisons,
+    build_market_comparables,
+    comparison_from_comparables,
+    load_page_comparables,
 )
 from api.services.workflow_store import ensure_user
 from api.validators import MAX_QUERY_LENGTH
@@ -42,23 +43,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
 
 
-async def _listing_liquidity(
-    session_factory: async_sessionmaker[AsyncSession],
-    ad: dict[str, Any],
-    ads: list[dict[str, Any]],
-) -> LiquidityInsight:
-    now = datetime.now(UTC)
-    segment = liquidity_segment(ad)
+@router.get("/listing-description")
+@limiter.limit("30/minute")
+async def get_listing_description(
+    request: Request,
+    ad_id: int = Query(..., ge=1, le=2**63 - 1),
+    cache: CacheBackend = Depends(get_cache),
+    kufar_client: KufarClient = Depends(get_kufar_client),
+    _user=Depends(get_telegram_user),
+) -> dict[str, str | None]:
+    key = digest_cache_key("listing-description", {"ad": ad_id})
+    cached = await cache.get_json(key)
+    if cached is not None:
+        return cached
     try:
-        async with session_factory() as session:
-            if segment is not None:
-                await observe_market_listings(session, ads, now=now, only_segment=segment)
-            insight = await load_liquidity_insight(session, ad, segment=segment, now=now)
-            await session.commit()
-            return insight
-    except SQLAlchemyError:
-        logger.warning("Failed to load liquidity for ad_id=%s", ad.get("ad_id"), exc_info=True)
-        return LiquidityInsight(label="Оценка временно недоступна")
+        description = await kufar_client.get_listing_description(ad_id)
+    except (httpx.HTTPError, TimeoutError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Kufar description unavailable",
+        ) from exc
+    payload = {"description": description}
+    await cache.set_json(key, payload, ttl=MARKET_ESTIMATE_TTL)
+    return payload
 
 
 async def _backfill_lead_thumbnail(
@@ -130,7 +137,7 @@ async def get_listing_detail(
             "cat": category,
             "ref": reference_context,
             "market_comparison": 2,
-            "liquidity": 2,
+            "liquidity": 4,
         },
     )
     cached = await cache.get_json(cache_key)
@@ -173,7 +180,17 @@ async def get_listing_detail(
     cluster_cache = await precompute_cluster_stats(
         visible_dataset.ads, query=query, target_ids={ad_id},
     )
-    liquidity = await _listing_liquidity(session_factory, ad, visible_dataset.ads)
+    market = await load_page_comparables(
+        [ad], query=query, settings=settings, client=kufar_client, cache=cache,
+    )
+    peers = market.get(ad_id)
+    if peers is None:
+        peers = build_market_comparables(
+            ad,
+            chain(
+                visible_dataset.response.get("ads", []), reference_dataset.response.get("ads", []),
+            ),
+        )
     # BE-MEDIUM (issues §2.2): NBRB outage shouldn't 500 the detail.
     rates = await get_conversion_rates(currency_service, currency)
     payload = build_listing_detail(
@@ -185,7 +202,7 @@ async def get_listing_detail(
         median_byn=median_byn,
         market_stats=reference_dataset.price_stats,
         category_price_stats=category_price_stats,
-        liquidity=liquidity,
+        liquidity=estimate_liquidity(ad, peers),
         cluster_stats=cluster_cache.get(ad_id),
     )
     # Risk detection — runs after the listing detail is built so we can
@@ -195,10 +212,9 @@ async def get_listing_detail(
     risk_score = compute_risk_score(risk_factors)
     payload.risk_score = risk_score
     payload.risk_factors = risk_factors
-    comparisons = await load_page_comparisons(
-        [ad], query=query, settings=settings, client=kufar_client, cache=cache,
-    )
-    payload.market_comparison = comparisons.get(ad_id)
+    if ad_id in market:
+        comparison = comparison_from_comparables(ad, peers)
+        payload.market_comparison = comparison if comparison.delta_percent is not None else None
     await cache.set_json(
         cache_key, payload.model_dump(), ttl=min(MARKET_ESTIMATE_TTL, settings.cache_ttl_seconds),
     )

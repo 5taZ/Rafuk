@@ -112,12 +112,10 @@ class FlipEstimate(BaseModel):
 
 
 class LiquidityInsight(BaseModel):
-    score: float | None = None
+    basis: Literal["current_market"] = "current_market"
     label: str
     reasons: list[str] = Field(default_factory=list)
     sample_size: int = 0
-    unavailable_count: int = 0
-    window_days: int = 7
 
 
 class WatchlistComparison(BaseModel):
@@ -160,6 +158,7 @@ class ListingItem(BaseModel):
     deal_reasons: list[str] = Field(default_factory=list)
     price_byn: float | None = None
     liquidity: LiquidityInsight | None = None
+    description: str | None = None
     flip_estimates: list[FlipEstimate] = Field(default_factory=list)
     thumbnail: str | None = None
     seller_rating: float | None = None

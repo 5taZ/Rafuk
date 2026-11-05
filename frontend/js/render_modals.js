@@ -109,35 +109,25 @@ function createRenderModals(context) {
         elements.detailProfitBlock.hidden = true;
 
         domClear(elements.detailLiquidity);
-        const liquidity = detail.liquidity;
+        const liquidity = detail.liquidity?.basis === "current_market" ? detail.liquidity : null;
         if (liquidity) {
             const summary = document.createElement("div");
             summary.className = "detail-liquidity-summary";
             const label = document.createElement("strong");
             label.textContent = liquidity.label;
             summary.append(label);
-            elements.detailLiquidity.appendChild(summary);
-
-            const reasons = [...(liquidity.reasons || [])];
-            if (Number.isFinite(liquidity.score) && liquidity.sample_size > 0) {
-                const points = document.createElement("span");
-                points.className = "detail-liquidity-score mono";
-                points.textContent = new Intl.NumberFormat("ru-BY", {
-                    style: "percent", maximumFractionDigits: 1,
-                }).format(liquidity.score / 100);
-                summary.appendChild(points);
-
-                const meter = document.createElement("meter");
-                meter.className = "detail-liquidity-meter";
-                meter.max = 100;
-                meter.value = liquidity.score;
-                meter.setAttribute("aria-hidden", "true");
-                elements.detailLiquidity.appendChild(meter);
-                reasons.unshift(
-                    `${liquidity.unavailable_count} из ${liquidity.sample_size} похожих объявлений `
-                    + `с близкой ценой были недоступны при проверке примерно через ${liquidity.window_days} дней.`,
-                );
+            if (liquidity.sample_size > 0) {
+                const sample = document.createElement("span");
+                sample.className = "detail-liquidity-sample mono";
+                sample.textContent = `${liquidity.sample_size} в выборке`;
+                summary.appendChild(sample);
             }
+            const source = document.createElement("p");
+            source.className = "detail-liquidity-source";
+            source.textContent = "Оценка по текущим объявлениям Kufar";
+            elements.detailLiquidity.append(summary, source);
+
+            const reasons = liquidity.reasons || [];
             if (reasons.length) {
                 const list = document.createElement("ul");
                 list.className = "detail-liquidity-reasons";

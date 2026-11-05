@@ -63,6 +63,30 @@ class FakeKufarClient:
         return None
 
 
+def test_listing_description_returns_and_caches_text_without_search() -> None:
+    from api.dependencies import get_cache, get_kufar_client
+    from api.main import create_app
+
+    class DescriptionClient:
+        calls: list[int] = []
+
+        async def get_listing_description(self, ad_id: int) -> str:
+            self.calls.append(ad_id)
+            return "Описание продавца"
+
+    app = create_app()
+    kufar = DescriptionClient()
+    cache = MemoryCache()
+    app.dependency_overrides[get_kufar_client] = lambda: kufar
+    app.dependency_overrides[get_cache] = lambda: cache
+    with TestClient(app) as client:
+        for _ in range(2):
+            response = client.get("/api/v1/listing-description", params={"ad_id": 12345})
+            assert response.status_code == 200
+            assert response.json() == {"description": "Описание продавца"}
+    assert kufar.calls == [12345]
+
+
 def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
     from api.dependencies import get_cache, get_currency_service, get_kufar_client
     from api.main import create_app
@@ -92,8 +116,8 @@ def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
     assert payload["normalized_query"] == "iphone"
     assert payload["deal_verdict"] in VERDICTS
     assert payload["price_byn"] == 2000
-    assert payload["liquidity"]["label"] == "Недостаточно наблюдений"
-    assert payload["liquidity"]["score"] is None
+    assert payload["liquidity"]["label"] == "Недостаточно аналогов"
+    assert payload["liquidity"]["basis"] == "current_market"
     assert payload["flip_estimates"] is not None
 
 

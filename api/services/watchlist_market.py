@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from itertools import chain
 from typing import Any
@@ -40,7 +38,6 @@ _PHONE_CATEGORY = 17010
 _DEVICE_CATEGORIES = {16040, _PHONE_CATEGORY}
 _YEAR = re.compile(r"\b(?:19\d{2}|20\d{2})\b")
 _IPHONE = re.compile(r"^iphone \d{1,2}(?: (?:pro max|pro|plus|mini|air|e))?\b")
-_PHONE_TITLE_PREFIX = re.compile(r"^(?:(?:apple|смартфон|мобильный|телефон) )+")
 _MACBOOK = re.compile(r"\bmacbook (?:air|pro)\b")
 _MAC_CHIP = re.compile(r"\bm\d+(?: (?:pro|max))?\b")
 _MACBOOK_SCREEN = re.compile(r"""\b(13|14|15|16)(?:[.,]\d+)?\s*(?:["″]|'')""")
@@ -203,43 +200,6 @@ def watchlist_comparison_query(ad: dict[str, Any]) -> str:
     return " ".join(filter(None, (iphone, _specs(ad).get("storage")))) if iphone else title
 
 
-def liquidity_segment(ad: dict[str, Any]) -> str | None:
-    category = get_category_id(ad)
-    title = _title(ad)
-    if category is None or not title or _is_rental(title):
-        return None
-    normalized_title = normalize_search_text(title)
-    if set(normalized_title.split()) & {
-        "обмен", "куплю", "нерабочий", "неисправный", "запчасти", "разбор", "trade",
-    }:
-        return None
-    specs = _specs(ad)
-    iphone = _iphone_model(_PHONE_TITLE_PREFIX.sub("", normalized_title))
-    macbook = _macbook_model(title)
-    identity = iphone or macbook or _identity(ad, category)
-    if (
-        not identity
-        or (iphone and "storage" not in specs)
-        or (macbook and not _MACBOOK_REQUIRED.issubset(specs))
-        or ((iphone or macbook) and product_cluster_key(title, identity))
-    ):
-        return None
-    if iphone:
-        specs = {key: specs[key] for key in ("storage", "condition") if key in specs}
-    elif macbook:
-        specs = {key: specs[key] for key in _MACBOOK_REQUIRED | {"condition"} if key in specs}
-    elif category == _CAR_CATEGORY:
-        if (year := _year(ad, specs)) is None:
-            return None
-        specs["regdate"] = str(year)
-        specs["title_generation"] = _generation(title) or ""
-    # The exact signature keeps variants apart even after their raw ads leave the feed.
-    fingerprint = json.dumps(
-        [category, identity, bool(ad.get("company_ad")), specs], sort_keys=True,
-    )
-    return hashlib.sha256(fingerprint.encode()).hexdigest()
-
-
 def listing_draft_target(
     title: str,
     condition: str | None,
@@ -312,6 +272,7 @@ class MarketComparables:
     ads: list[dict[str, Any]]
     stats: PriceStats
     category_label: str | None = None
+    sample_limited: bool = False
 
     @property
     def reliable(self) -> bool:
@@ -411,6 +372,12 @@ def compare_listing_market(
     *, _specs_for: Callable[[dict[str, Any]], dict[str, str]] = _specs,
 ) -> WatchlistComparison:
     result = build_market_comparables(target, ads, _specs_for=_specs_for)
+    return comparison_from_comparables(target, result)
+
+
+def comparison_from_comparables(
+    target: dict[str, Any], result: MarketComparables,
+) -> WatchlistComparison:
     current_price = normalize_price_byn(target.get("price_byn"), target)
     return WatchlistComparison(
         ad_found=True,
@@ -422,6 +389,7 @@ def compare_listing_market(
             compute_price_vs_median(target, result.stats.median)
             if current_price and result.reliable else None
         ),
+        sample_limited=result.sample_limited,
     )
 
 
@@ -429,9 +397,9 @@ def compare_listing_market(
 compare_watchlist_ad = compare_listing_market
 
 
-def compare_listing_page(
+def build_page_comparables(
     targets: Iterable[dict[str, Any]], ads: Iterable[dict[str, Any]],
-) -> dict[int, WatchlistComparison]:
+) -> dict[int, MarketComparables]:
     by_category: dict[int, list[dict[str, Any]]] = defaultdict(list)
     seen = set()
     for ad in ads:
@@ -450,17 +418,29 @@ def compare_listing_page(
             specs_by_object[key] = (ad, _specs(ad))
         return specs_by_object[key][1]
 
-    comparisons = {}
+    comparables = {}
     for target in targets:
         category = get_category_id(target)
-        if category is None or not normalize_price_byn(target.get("price_byn")):
-            continue
-        comparison = compare_listing_market(
+        comparables[int(target["ad_id"])] = build_market_comparables(
             target, by_category.get(category, []), _specs_for=specs_for,
         )
-        if comparison.delta_percent is not None:
-            comparisons[int(target["ad_id"])] = comparison
-    return comparisons
+    return comparables
+
+
+def compare_listing_page(
+    targets: Iterable[dict[str, Any]], ads: Iterable[dict[str, Any]],
+) -> dict[int, WatchlistComparison]:
+    targets = list(targets)
+    comparables = build_page_comparables(targets, ads)
+    comparisons = {
+        int(target["ad_id"]): comparison_from_comparables(
+            target, comparables[int(target["ad_id"])],
+        )
+        for target in targets
+    }
+    return {
+        ad_id: result for ad_id, result in comparisons.items() if result.delta_percent is not None
+    }
 
 
 async def load_market_dataset(
@@ -486,14 +466,14 @@ def market_sample_limited(dataset: QueryDataset) -> bool:
     return bool(getattr(dataset, "response", {}).get("has_more"))
 
 
-async def load_page_comparisons(
+async def load_page_comparables(
     targets: list[dict[str, Any]],
     *,
     query: str,
     settings: Settings,
     client: SupportsSearchAllAds,
     cache: CacheBackend,
-) -> dict[int, WatchlistComparison]:
+) -> dict[int, MarketComparables]:
     frequencies = Counter(
         category for ad in targets
         if (category := get_category_id(ad)) is not None
@@ -508,14 +488,37 @@ async def load_page_comparisons(
         category: dataset for category, dataset in zip(categories, datasets, strict=True)
         if dataset is not None
     }
-    comparisons = await asyncio.to_thread(
-        compare_listing_page, targets,
+    comparables = await asyncio.to_thread(
+        build_page_comparables,
+        [ad for ad in targets if get_category_id(ad) in available],
         chain.from_iterable(dataset.ads for dataset in available.values()),
     )
     for ad in targets:
-        comparison = comparisons.get(int(ad["ad_id"]))
-        if comparison is not None:
+        ad_id = int(ad["ad_id"])
+        result = comparables.get(ad_id)
+        if result is not None:
             dataset = available.get(get_category_id(ad))
             if dataset is not None:
-                comparison.sample_limited = market_sample_limited(dataset)
+                comparables[ad_id] = replace(result, sample_limited=market_sample_limited(dataset))
+    return comparables
+
+
+async def load_page_comparisons(
+    targets: list[dict[str, Any]],
+    *,
+    query: str,
+    settings: Settings,
+    client: SupportsSearchAllAds,
+    cache: CacheBackend,
+) -> dict[int, WatchlistComparison]:
+    comparables = await load_page_comparables(
+        targets, query=query, settings=settings, client=client, cache=cache,
+    )
+    comparisons = {}
+    for target in targets:
+        ad_id = int(target["ad_id"])
+        if ad_id in comparables:
+            comparison = comparison_from_comparables(target, comparables[ad_id])
+            if comparison.delta_percent is not None:
+                comparisons[ad_id] = comparison
     return comparisons

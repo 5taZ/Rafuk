@@ -43,6 +43,20 @@ SAMPLE_RESPONSE = {
 }
 
 
+async def test_listing_description_extracts_public_item_text(mock_settings) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://www.kufar.by/item/12345"
+        return httpx.Response(200, text=(
+            '<meta name="description" content="Preview">'
+            '<div itemprop="description">Первый &amp; второй<br><div>Абзац</div></div>'
+            '<div>Следующий блок</div>'
+        ))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        kufar = KufarClient(mock_settings, http_client=client)
+        assert await kufar.get_listing_description(12345) == "Первый & второй\nАбзац"
+
+
 @pytest.fixture
 def mock_settings() -> MagicMock:
     settings = MagicMock()

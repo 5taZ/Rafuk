@@ -37,6 +37,7 @@ function createApiListings(context) {
     const PAGE_SIZE = 50;
 
     let _historyAbortController = null;
+    let _detailItem = null;
 
     // RV-FE-04: a forced refresh must bypass the browser HTTP cache as
     // well — /listings and /price-stats are served with max-age=60, and
@@ -60,6 +61,7 @@ function createApiListings(context) {
     function abortDetailRequest() {
         state.detail.requestController?.abort();
         state.detail.requestController = null;
+        _detailItem = null;
     }
     function abortHistoryRequest() {
         if (_historyAbortController) {
@@ -113,8 +115,7 @@ function createApiListings(context) {
             if (signal?.aborted || requestId !== state.listings._requestId) return;
             const targets = new Set(items);
             const comparisons = new Map(
-                (payload.listings || []).filter((item) => item.market_comparison)
-                    .map((item) => [String(item.ad_id), item]),
+                (payload.listings || []).map((item) => [String(item.ad_id), item]),
             );
             let changed = false;
             for (const item of state.listings.items) {
@@ -122,6 +123,12 @@ function createApiListings(context) {
                 if (!targets.has(item) || !result || result.price_byn !== item.price_byn) continue;
                 changed = true;
                 item.market_comparison = result.market_comparison;
+                item.liquidity = result.liquidity;
+                if (item === _detailItem && state.detail.data) {
+                    state.detail.data.market_comparison = item.market_comparison;
+                    state.detail.data.liquidity = item.liquidity;
+                    renderDetailModal();
+                }
             }
             if (changed) {
                 markDirty('listingMarket');
@@ -511,6 +518,7 @@ function createApiListings(context) {
         }
 
         abortDetailRequest();
+        _detailItem = item;
         const controller = new AbortController();
         state.detail.requestController = controller;
         const { signal } = controller;
@@ -533,6 +541,15 @@ function createApiListings(context) {
         };
         renderDetailModal();
 
+        const descriptionRequest = item.description ? null : getJson(
+            `/api/v1/listing-description?ad_id=${encodeURIComponent(item.ad_id)}`,
+            { signal, retry: false },
+        ).then(({ description }) => {
+            if (signal.aborted || !description || !state.detail.data || state.detail.data.description) return;
+            state.detail.data.description = description;
+            renderDetailModal();
+        }).catch(() => {});
+
         try {
             const params = new URLSearchParams({
                 query: queryToUse,
@@ -549,12 +566,24 @@ function createApiListings(context) {
                 { signal }
             );
             if (signal.aborted) return;
-            state.detail.data = fullDetail;
+            const preview = state.detail.data;
+            if (!fullDetail.market_comparison && preview.market_comparison
+                && fullDetail.price_byn === preview.price_byn) {
+                fullDetail.market_comparison = preview.market_comparison;
+                fullDetail.liquidity = preview.liquidity;
+            }
+            state.detail.data = {
+                ...fullDetail,
+                description: fullDetail.description || state.detail.data.description,
+                liquidity: fullDetail.liquidity?.basis === "current_market"
+                    ? fullDetail.liquidity : item.liquidity,
+            };
             renderDetailModal();
-            onLoaded?.(fullDetail);
+            onLoaded?.(state.detail.data);
         } catch {
             // The listing preview stays usable if enrichment fails.
         } finally {
+            await descriptionRequest;
             if (state.detail.requestController === controller) state.detail.requestController = null;
         }
     }

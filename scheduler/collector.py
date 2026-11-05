@@ -83,7 +83,6 @@ from api.services.history_service import (
 )
 from api.services.kufar_client import KufarAPIError, KufarClient, KufarUnavailableError
 from api.services.listing_mapper import first_image_url
-from api.services.market_liquidity import RETENTION, observe_market_listings
 from api.services.market_signals import region_label
 from api.services.reseller_tools import matches_tracker_filters
 from bot.keyboards import (
@@ -93,7 +92,6 @@ from bot.keyboards import (
     tracker_alert_keyboard,
 )
 from bot.notifications import send_notification
-from scheduler.market_liquidity import check_market_liquidity
 from scheduler.messages import (
     _build_new_listing_message,
     _build_price_drop_message,
@@ -1216,12 +1214,6 @@ async def _process_search_key(
     # Hoist these out of the per-tracker loop — they
     # depend only on the query result, not the tracker.
     ads_list = list(ads_by_id.values())
-    if ads_list:
-        try:
-            async with session.begin_nested():
-                await observe_market_listings(session, ads_list, now=datetime.now(UTC))
-        except SQLAlchemyError:
-            logger.warning("Could not record liquidity observations", exc_info=True)
     market_stats = compute_price_stats(extract_prices(ads_list))
     category_price_stats = compute_category_price_stats(ads_list)
 
@@ -1761,15 +1753,6 @@ def create_scheduler(
         replace_existing=True,
         **_job_defaults,
     )
-    scheduler.add_job(
-        check_market_liquidity,
-        trigger="interval",
-        minutes=15,
-        kwargs={"session_factory": session_factory, "settings": settings},
-        id="market-liquidity",
-        replace_existing=True,
-        **_job_defaults,
-    )
     # Daily cleanup of old events and inactive listings
     scheduler.add_job(
         run_cleanup,
@@ -1821,7 +1804,7 @@ async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None
             await cleanup_stale_missing_watchlist(session, days=settings.auto_remove_missing_days)
             await cleanup_old_snapshots(session, days=90)
             await session.execute(delete(MarketLiquidityObservation).where(
-                MarketLiquidityObservation.first_seen_at < datetime.now(UTC) - RETENTION,
+                MarketLiquidityObservation.first_seen_at < datetime.now(UTC) - timedelta(days=45),
             ))
             # DB-HIGH (issues §4.3): apply the same 90-day rolling
             # window to LeadItemPriceSnapshot — the table grew

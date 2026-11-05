@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from itertools import chain
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -30,12 +32,18 @@ from api.services.listing_filters import (
     normalize_filter_text,
 )
 from api.services.listing_mapper import build_listing_item, compute_listing_sort_key
+from api.services.market_liquidity import estimate_liquidity
 from api.services.query_pipeline import (
     claim_force_refresh,
     load_query_dataset_context_with_fallback,
 )
 from api.services.reseller_tools import analyze_query_text
-from api.services.watchlist_market import MARKET_ESTIMATE_TTL, load_page_comparisons
+from api.services.watchlist_market import (
+    MARKET_ESTIMATE_TTL,
+    build_page_comparables,
+    comparison_from_comparables,
+    load_page_comparables,
+)
 from api.validators import MAX_QUERY_LENGTH
 
 logger = logging.getLogger(__name__)
@@ -93,7 +101,7 @@ def _listings_cache_key(
             "offset": offset,
             "total_semantics": 4,
             "market_comparison": 2,
-            "liquidity": 2,
+            "liquidity": 4,
             "include_market": include_market,
         },
     )
@@ -285,6 +293,10 @@ async def get_listings(
                 median_byn=median_byn,
                 market_stats=reference_dataset.price_stats,
                 category_price_stats=category_price_stats,
+                liquidity=estimate_liquidity(
+                    ad, comparables[int(ad["ad_id"])],
+                    price_filtered=bool(upstream_filter_kwargs.get("price_range")),
+                ),
                 cluster_cache=cluster_cache,
             )
         except Exception as exc:  # noqa: BLE001 — graceful per-ad degrade
@@ -324,16 +336,29 @@ async def get_listings(
             capped_ads, query=query,
             target_ids={int(ad.get("ad_id", 0)) for ad in page_slice},
         ) if page_slice else {}
+    comparables = await asyncio.to_thread(
+        build_page_comparables,
+        page_slice,
+        chain(visible_dataset.response.get("ads", []), reference_dataset.response.get("ads", [])),
+    ) if page_slice else {}
     built = (_safe_build(ad) for ad in page_slice)
     listings = [item for item in built if item is not None]
     if include_market and listings:
         returned_ids = {str(item.ad_id) for item in listings}
-        comparisons = await load_page_comparisons(
+        market = await load_page_comparables(
             [ad for ad in page_slice if str(ad.get("ad_id")) in returned_ids],
             query=query, settings=settings, client=kufar_client, cache=cache,
         )
+        ads_by_id = {int(ad["ad_id"]): ad for ad in page_slice}
         for item in listings:
-            item.market_comparison = comparisons.get(item.ad_id)
+            if item.ad_id in market:
+                ad = ads_by_id[item.ad_id]
+                peers = market[item.ad_id]
+                comparison = comparison_from_comparables(ad, peers)
+                item.market_comparison = (
+                    comparison if comparison.delta_percent is not None else None
+                )
+                item.liquidity = estimate_liquidity(ad, peers)
 
     # `total` is what the pill above the cards shows.
     #  - Cheap sort: show the post-discount count, not Kufar's raw

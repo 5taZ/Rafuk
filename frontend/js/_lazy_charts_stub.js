@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261105-market-liquidity";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261105-shared-liquidity";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");

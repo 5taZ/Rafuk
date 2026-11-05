@@ -436,6 +436,7 @@ def build_listing_item(
         liquidity=liquidity,
         flip_estimates=compute_flip_estimates(ad, price_ctx.active_reference),
         thumbnail=first_image_url(ad),
+        description=_stringify_value(ad.get("body")) or _stringify_value(ad.get("body_short")),
         seller_rating=extract_seller_rating(ad),
         risk_factors=detect_risks(ad, market_stats={"median": price_ctx.active_reference.median}),
     )

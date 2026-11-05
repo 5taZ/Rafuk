@@ -531,37 +531,16 @@ body.modal-open {
     line-height: 1.25;
 }
 
-.detail-liquidity-score {
+.detail-liquidity-sample {
     color: var(--text-muted);
     font-size: var(--text-norm);
     white-space: nowrap;
 }
 
-.detail-liquidity-meter {
-    appearance: none;
-    display: block;
-    width: 100%;
-    height: 5px;
-    margin-top: var(--space-3);
-    border: 0;
-    border-radius: var(--radius-full);
-    background: var(--bg-hover);
-    overflow: hidden;
-}
-
-.detail-liquidity-meter::-webkit-meter-bar {
-    background: var(--bg-hover);
-    border: 0;
-}
-
-.detail-liquidity-meter::-webkit-meter-optimum-value {
-    background: var(--accent);
-    border-radius: var(--radius-full);
-}
-
-.detail-liquidity-meter::-moz-meter-bar {
-    background: var(--accent);
-    border-radius: var(--radius-full);
+.detail-liquidity-source {
+    margin: var(--space-1) 0 0;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
 }
 
 .detail-liquidity-reasons {

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
 
 from api.services.cache import MemoryCache
@@ -58,11 +60,14 @@ def test_listing_prices_use_the_shared_comparable_market() -> None:
     from api.main import create_app
     from api.services.watchlist_market import build_market_comparables, compare_watchlist_ad
 
+    list_time = datetime.now(UTC).isoformat()
+
     def laptop(ad_id: int, title: str, price: int) -> dict:
         return {
             "ad_id": ad_id, "subject": title, "category": 16040, "price_byn": price * 100,
             "ad_link": f"https://www.kufar.by/item/{ad_id}",
             "ad_parameters": [{"p": "condition", "v": "Б/у"}],
+            "body": "Описание ноутбука", "list_time": list_time,
         }
 
     ads = [
@@ -98,6 +103,10 @@ def test_listing_prices_use_the_shared_comparable_market() -> None:
         assert fast.status_code == 200, fast.text
         assert len(fast.json()["listings"]) == len(ads)
         assert all(item["market_comparison"] is None for item in fast.json()["listings"])
+        first = next(item for item in fast.json()["listings"] if item["ad_id"] == 1)
+        assert first["description"] == "Описание ноутбука"
+        assert first["liquidity"]["label"] == "Высокая"
+        assert first["liquidity"]["sample_size"] == 3
         assert market_requests == []
         response = client.get("/api/v1/listings", params=params)
         assert response.status_code == 200, response.text
@@ -114,12 +123,59 @@ def test_listing_prices_use_the_shared_comparable_market() -> None:
     assert comparison["median_byn"] == ai_market.stats.median == 3600
     assert comparison["delta_percent"] == -11.11
     assert items[1]["market_comparison"] == detail.json()["market_comparison"] == comparison
+    assert items[1]["liquidity"] == detail.json()["liquidity"] == first["liquidity"]
     assert filtered_items[1]["market_comparison"] == comparison
+    assert filtered_items[1]["liquidity"] == items[1]["liquidity"]
     assert 3 not in filtered_items
     assert items[2]["market_comparison"] is None
     assert market_requests == [{
         "query": "MacBook Air M4", "currency": "BYN", "category": 16040, "page_limit": 8,
     }]
+
+
+def test_polo_liquidity_and_price_use_the_same_nationwide_sample() -> None:
+    from api.dependencies import get_cache, get_currency_service, get_kufar_client
+    from api.main import create_app
+
+    def polo(ad_id: int, year: int) -> dict:
+        return {
+            "ad_id": ad_id, "subject": "Volkswagen Polo", "category": 2010,
+            "price_byn": (19_500 if ad_id == 1 else 23_000) * 100,
+            "ad_link": f"https://www.kufar.by/item/{ad_id}",
+            "list_time": datetime.now(UTC).isoformat(),
+            "ad_parameters": [
+                {"p": "regdate", "v": str(year)}, {"p": "condition", "vl": "Б/у"},
+            ],
+        }
+
+    ads = [polo(1, 2012), *[polo(ad_id, 2010 + ad_id % 5) for ad_id in range(2, 35)]]
+
+    class PoloClient(FakeKufarClient):
+        async def search_all_ads(self, **kwargs) -> dict:
+            selected = ads if kwargs.get("page_limit") else ads[:2]
+            return {"ads": selected, "total": len(ads), "has_more": len(selected) < len(ads)}
+
+    app = create_app()
+    cache = MemoryCache()
+    app.dependency_overrides[get_kufar_client] = lambda: PoloClient(None)
+    app.dependency_overrides[get_cache] = lambda: cache
+    app.dependency_overrides[get_currency_service] = lambda: FakeCurrencyService()
+    params = {"query": "Volkswagen Polo", "category": 2010, "strict_search": "false"}
+    with TestClient(app) as client:
+        fast = client.get("/api/v1/listings", params={**params, "include_market": "false"})
+        assert fast.status_code == 200
+        fast_item = next(item for item in fast.json()["listings"] if item["ad_id"] == 1)
+        assert fast_item["liquidity"]["sample_size"] == 1
+        response = client.get("/api/v1/listings", params=params)
+        assert response.status_code == 200
+        item = next(item for item in response.json()["listings"] if item["ad_id"] == 1)
+        detail = client.get("/api/v1/listing-detail", params={**params, "ad_id": 1})
+        assert detail.status_code == 200
+
+    assert item["market_comparison"]["comparable_count"] == item["liquidity"]["sample_size"] == 33
+    assert detail.json()["market_comparison"] == item["market_comparison"]
+    assert detail.json()["liquidity"] == item["liquidity"]
+    assert item["liquidity"]["label"] == "Высокая"
 
 
 def test_listings_endpoint_returns_items(monkeypatch) -> None:
@@ -143,7 +199,7 @@ def test_listings_endpoint_returns_items(monkeypatch) -> None:
     assert payload["normalized_query"] == "iphone"
     assert payload["listings"][0]["deal_verdict"] in VERDICTS
     assert isinstance(payload["listings"][0]["deal_reasons"], list)
-    assert payload["listings"][0]["liquidity"] is None
+    assert payload["listings"][0]["liquidity"]["basis"] == "current_market"
     assert payload["listings"][0]["flip_estimates"] is not None
 
 
@@ -448,7 +504,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
     assert first_item["fair_price_label"] is not None
     assert first_item["deal_score"] >= 0
     assert first_item["deal_verdict"] in VERDICTS
-    assert first_item["liquidity"] is None
+    assert first_item["liquidity"]["basis"] == "current_market"
     assert anomaly_item["anomaly_flags"] == ["too_expensive"]
     assert anomaly_item["region_name"] == "Регион 6"
 
