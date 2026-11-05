@@ -66,7 +66,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
     },
     {
         "code": "market_maker",
-        "display_name": "Pro Max Ultra Duo",
+        "display_name": "Pro Max Ultra Max",
         "tagline": "почти “god mode”, высокий лимит",
         "accent": "red",
         "sort_order": 50,

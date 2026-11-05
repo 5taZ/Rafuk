@@ -352,7 +352,7 @@ def test_admin_can_get_status_list() -> None:
     codes = [item["code"] for item in resp.json()]
     assert codes == ["bare_search", "scout", "flipper", "shark", "market_maker"]
     assert [item["display_name"] for item in resp.json()] == [
-        "Free", "Pro", "Pro Max", "Pro Max Ultra", "Pro Max Ultra Duo",
+        "Free", "Pro", "Pro Max", "Pro Max Ultra", "Pro Max Ultra Max",
     ]
 
 

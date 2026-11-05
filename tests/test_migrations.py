@@ -42,7 +42,7 @@ from sqlalchemy.pool import NullPool
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "migrations" / "alembic.ini"
 # Bump together with docs/BACKUP_RUNBOOK.md ("Expected Alembic head").
-EXPECTED_HEAD = "20261105_0029"
+EXPECTED_HEAD = "20261105_0030"
 
 
 def _alembic_config() -> Config:
@@ -227,7 +227,7 @@ def test_account_status_names_migration_preserves_access_and_round_trips(
         users = con.execute("SELECT * FROM users").fetchall()
     old_names["custom"] = new_names["custom"] = "Партнёр"
 
-    _run_alembic(db_path, ("stamp", "20261105_0028"), ("upgrade", EXPECTED_HEAD))
+    _run_alembic(db_path, ("stamp", "20261105_0028"), ("upgrade", "20261105_0029"))
     with sqlite3.connect(db_path) as con:
         assert dict(con.execute("SELECT code,display_name FROM account_statuses")) == new_names
         current_access = con.execute(
@@ -239,7 +239,7 @@ def test_account_status_names_migration_preserves_access_and_round_trips(
     _run_alembic(db_path, ("downgrade", "-1"))
     with sqlite3.connect(db_path) as con:
         assert dict(con.execute("SELECT code,display_name FROM account_statuses")) == old_names
-    _run_alembic(db_path, ("upgrade", EXPECTED_HEAD))
+    _run_alembic(db_path, ("upgrade", "20261105_0029"))
     with sqlite3.connect(db_path) as con:
         assert dict(con.execute("SELECT code,display_name FROM account_statuses")) == new_names
         current_access = con.execute(
