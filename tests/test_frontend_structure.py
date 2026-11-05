@@ -447,15 +447,15 @@ def test_frontend_composition_clones_mutable_contexts() -> None:
 def test_chart_js_loads_lazily_only_on_first_chart_paint() -> None:
     """Chart.js is ~80 KB gzipped — users who only use watchlist /
     trackers / leads should never download it. render_charts.js must
-    fetch it on demand the first time renderChart / renderHistoryChart
-    needs to paint, and cache the resulting promise so a second chart
-    on the same page doesn't trigger a second download."""
+    fetch it on demand when renderHistoryChart needs to paint, and cache
+    the resulting promise so a second chart on the same page doesn't
+    trigger a second download."""
     text = (Path("frontend/js/render_charts.js")).read_text(encoding="utf-8")
     assert "ensureChartLib" in text
     assert "_chartLibPromise" in text
     assert "js/vendor/chart.umd.min.js" in text
-    # Both renderers must guard on window.Chart being available.
-    assert text.count('typeof window.Chart !== "function"') >= 2
+    # UI-PRICE-01: the distribution uses native HTML; only history needs Chart.js.
+    assert text.count('typeof window.Chart !== "function"') == 1
 
 
 def test_chart_js_is_vendored_without_unconditional_preload(soup: BeautifulSoup) -> None:
@@ -624,8 +624,9 @@ def test_ai_loading_motion_avoids_layout_property_animation(css_text: str) -> No
 
 
 def test_html_has_stats_and_listings(soup: BeautifulSoup) -> None:
-    canvases = soup.find_all("canvas")
-    assert len(canvases) >= 2
+    # UI-PRICE-01: price bins are an accessible HTML list, history remains a canvas.
+    assert soup.find(id="price-distribution", attrs={"role": "group"}) is not None
+    assert soup.find("canvas", id="historyChart") is not None
     assert soup.find(attrs={"data-view": "deals"}) is not None
 
 

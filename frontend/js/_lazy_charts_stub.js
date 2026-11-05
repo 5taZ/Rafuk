@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261105-overview-analytics";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261105-price-alerts";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");
@@ -34,7 +34,7 @@ function createRenderCharts(context) {
         label: "render_charts.js",
     });
 
-    // FR-08: the distribution / history panels hold a <canvas> the real
+    // FR-08: the distribution / history panels hold containers the real
     // renderer needs later, so their error state goes into a slot in
     // front of it, removed once the chunk has loaded.
     let errorSlotsShown = false;

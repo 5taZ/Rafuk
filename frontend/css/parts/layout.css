@@ -1504,6 +1504,121 @@
     min-height: 190px;
 }
 
+.price-distribution {
+    padding: 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-xl);
+    font-variant-numeric: tabular-nums;
+}
+
+.distribution-kicker {
+    margin: 0 0 6px;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.distribution-insight {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+}
+
+.distribution-range {
+    color: var(--text);
+    font-size: var(--text-semi);
+    font-weight: 650;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.distribution-share {
+    color: var(--accent);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.distribution-columns {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 20px 0 14px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.distribution-list {
+    display: grid;
+    gap: 16px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.distribution-row-labels {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 6px 12px;
+    flex-wrap: wrap;
+    margin-bottom: 7px;
+    font-size: var(--text-base);
+    line-height: 1.4;
+}
+
+.distribution-price {
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+
+.distribution-count {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-left: auto;
+    color: var(--text);
+    white-space: nowrap;
+}
+
+.distribution-percent {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 400;
+}
+
+.distribution-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-hover);
+    overflow: hidden;
+}
+
+.distribution-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--accent) 55%, var(--bg-card));
+}
+
+.distribution-row.is-peak .distribution-fill {
+    background: var(--accent);
+}
+
+.distribution-row.is-peak .distribution-price {
+    font-weight: 650;
+}
+
+#distribution-note {
+    margin-top: 12px;
+}
+
+@media (max-width: 420px) {
+    .price-distribution { padding: 16px; }
+}
+
 .history-range-row {
     margin-bottom: 10px;
 }

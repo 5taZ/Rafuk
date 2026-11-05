@@ -18,22 +18,37 @@ def _notification_title(value: str | None) -> str:
     return " ".join((value or "").split())[:120] or "Без названия"
 
 
+def _notification_number(value: float) -> str:
+    return f"{float(value):,.2f}".rstrip("0").rstrip(".").replace(
+        ",", "\u00a0",
+    ).replace(".", ",")
+
+
+def _notification_price(value: float | None, price_type: str | None = None) -> str:
+    if value is None or value == 0 or price_type in {"free", "negotiable"}:
+        return _format_price_byn(value, price_type)
+    return f"{_notification_number(value)} BYN"
+
+
 def _build_threshold_message(threshold_events: list[TrackerEvent]) -> str | None:
     if not threshold_events:
         return None
 
     primary = threshold_events[0]
-    price = _format_price_byn(primary.price_byn, primary.price_type)
+    price = _notification_price(primary.price_byn, primary.price_type)
+    detail = ""
     if primary.event_type == "price_threshold_alert":
         heading = "Порог цены"
         threshold = (primary.parameters or {}).get("threshold")
         if threshold:
-            price += f" · порог {_format_price_byn(threshold)}"
+            detail = f"Ваш порог: {_notification_price(threshold)}"
     else:
         heading = "Скидка от медианы"
         if primary.delta_byn:
-            price += f" · −{float(primary.delta_byn):.0f}%"
+            detail = f"На {_notification_number(primary.delta_byn)}% ниже медианы"
     lines = [heading, _notification_title(primary.title), price]
+    if detail:
+        lines.append(detail)
     others = {event.ad_id for event in threshold_events[1:] if event.ad_id != primary.ad_id}
     if others:
         lines.append(f"Ещё {len(others)} в автопоиске")
@@ -100,15 +115,22 @@ def _build_new_listing_message(
     *,
     discount_pct: float | None = None,
 ) -> str:
-    price = _format_price_byn(state.last_price_byn, state.price_type)
+    price = _notification_price(state.last_price_byn, state.price_type)
+    lines = ["Новое объявление", _notification_title(state.title), price]
     if discount_pct is not None and discount_pct > 0:
-        price += f" · −{discount_pct:.0f}% к медиане"
-    return f"{_notification_title(state.title)}\n{price}"
+        lines.append(f"На {_notification_number(discount_pct)}% ниже медианы")
+    return "\n".join(lines)
 
 
 def _build_price_drop_message(state: QueryListingState, delta: float) -> str:
-    price = _format_price_byn(state.last_price_byn, state.price_type)
-    drop = round(float(delta))
-    if drop > 0:
-        price += f" · −{drop} BYN"
-    return f"Цена снизилась\n{_notification_title(state.title)}\n{price}"
+    price = _notification_price(state.last_price_byn, state.price_type)
+    lines = ["Цена снизилась", _notification_title(state.title), price]
+    drop = round(float(delta), 2)
+    if drop > 0 and state.last_price_byn is not None and state.price_type != "negotiable":
+        previous = float(state.last_price_byn) + drop
+        detail = f"Было {_notification_price(previous)} · −{_notification_number(drop)} BYN"
+        percent = round(drop / previous * 100, 1)
+        if percent > 0:
+            detail += f" (−{_notification_number(percent)}%)"
+        lines.append(detail)
+    return "\n".join(lines)

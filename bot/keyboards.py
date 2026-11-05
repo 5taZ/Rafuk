@@ -93,12 +93,14 @@ def enhanced_alert_keyboard(
       - Открыть на Kufar — URL button linking to the listing
     """
     row1: list[InlineKeyboardButton] = [
-        InlineKeyboardButton(text="В покупки", callback_data=f"add_lead:{ad_id}"),
+        InlineKeyboardButton(text="В покупки", callback_data=f"add_lead:{ad_id}", style="success"),
         InlineKeyboardButton(text="В избранное", callback_data=f"add_watch:{ad_id}"),
     ]
     row2: list[InlineKeyboardButton] = []
     if listing_url and listing_url.startswith(("http://", "https://")):
-        row2.append(InlineKeyboardButton(text="Открыть на Kufar", url=listing_url))
+        row2.append(InlineKeyboardButton(
+            text="Открыть на Kufar", url=listing_url, style="primary",
+        ))
     keyboard = [row1]
     if row2:
         keyboard.append(row2)

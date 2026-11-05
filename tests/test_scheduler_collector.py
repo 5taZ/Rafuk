@@ -233,7 +233,8 @@ def test_build_new_listing_message_basic():
         last_seen_at=now,
     )
     msg = _build_new_listing_message(state)
-    assert msg == "iPhone 15 256GB\n2000 BYN"
+    # TG-UI-01: event, title and price are separate fields in the queued plain-text alert.
+    assert msg == "Новое объявление\niPhone 15 256GB\n2\u00a0000 BYN"
 
 
 def test_build_new_listing_message_with_discount():
@@ -249,7 +250,7 @@ def test_build_new_listing_message_with_discount():
         last_seen_at=now,
     )
     msg = _build_new_listing_message(state, discount_pct=10.0)
-    assert msg == "iPhone 15 256GB\n2000 BYN · −10% к медиане"
+    assert msg == "Новое объявление\niPhone 15 256GB\n2\u00a0000 BYN\nНа 10% ниже медианы"
 
 
 # ---------------------------------------------------------------------------
@@ -269,10 +270,12 @@ def test_build_price_drop_message_basic():
         last_seen_at=now,
     )
     msg = _build_price_drop_message(state, 200.0)
-    assert msg == "Цена снизилась\niPhone 15 Pro\n1800 BYN · −200 BYN"
+    assert msg == (
+        "Цена снизилась\niPhone 15 Pro\n1\u00a0800 BYN\nБыло 2\u00a0000 BYN · −200 BYN (−10%)"
+    )
 
 
-def test_build_price_drop_message_omits_zero_rounded_delta():
+def test_build_price_drop_message_preserves_kopecks():
     now = datetime.now(UTC)
     state = QueryListingState(
         ad_id=2,
@@ -285,7 +288,7 @@ def test_build_price_drop_message_omits_zero_rounded_delta():
         last_seen_at=now,
     )
     msg = _build_price_drop_message(state, 0.1)
-    assert msg == "Цена снизилась\niPhone 15 Pro\n1800 BYN"
+    assert msg == "Цена снизилась\niPhone 15 Pro\n1\u00a0800 BYN\nБыло 1\u00a0800,1 BYN · −0,1 BYN"
 
 
 # ---------------------------------------------------------------------------
@@ -435,8 +438,8 @@ async def test_send_message_classified_outcomes(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("heading", "expected_heading"), [
-    ("", ""),
-    ("🔔 Новый лот\n", ""),
+    ("", "Новое объявление\n"),
+    ("🔔 Новый лот\n", "Новое объявление\n"),
     ("📉 Цена снизилась\n", "Цена снизилась\n"),
 ])
 async def test_tracker_alert_plain_text_preserves_actions(
@@ -449,8 +452,14 @@ async def test_tracker_alert_plain_text_preserves_actions(
     assert await collector._send_message_classified(
         mock_bot, 123456, heading + body, reply_markup=markup,
     ) == ("sent", None)
+    from aiogram.enums import ParseMode
+    from aiogram.types import LinkPreviewOptions
+
+    # TG-UI-01: persisted old alerts receive the same typography as new alerts.
     mock_bot.send_message.assert_awaited_once_with(
-        123456, expected_heading + body, reply_markup=markup,
+        123456, expected_heading + "<b>iPhone 15</b>\n\n<b>900 BYN</b>",
+        reply_markup=markup, parse_mode=ParseMode.HTML,
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
 
 
@@ -2229,12 +2238,12 @@ def test_new_listing_message_omits_discount_when_above_market() -> None:
     msg_premium = _build_new_listing_message(
         state, discount_pct=None,
     )
-    assert "% к медиане" not in msg_premium
+    assert "% ниже медианы" not in msg_premium
     # Genuine discount still renders as before.
     msg_discount = _build_new_listing_message(
         state, discount_pct=20.0,
     )
-    assert "−20% к медиане" in msg_discount
+    assert "На 20% ниже медианы" in msg_discount
 
 
 @pytest.mark.asyncio
@@ -2732,7 +2741,7 @@ async def test_check_trackers_delivers_through_outbox_with_keyboard(
     assert mock_bot.send_message.await_count == 1
     call = mock_bot.send_message.await_args
     assert call.args[0] == 1301
-    assert call.args[1] == "iPhone 13 128GB\n990 BYN"
+    assert call.args[1] == "Новое объявление\n<b>iPhone 13 128GB</b>\n\n<b>990 BYN</b>"
     assert call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "add_lead:31"
     async with sf() as session:
         assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
@@ -2784,7 +2793,9 @@ async def test_check_trackers_unexpected_error_is_isolated_to_its_key(
     await check_trackers(mock_bot, sf, _TICK_SETTINGS)
 
     assert _sent_chats(mock_bot) == [1401]
-    assert mock_bot.send_message.await_args.args[1] == "iPhone 13 128GB\n990 BYN"
+    assert mock_bot.send_message.await_args.args[1] == (
+        "Новое объявление\n<b>iPhone 13 128GB</b>\n\n<b>990 BYN</b>"
+    )
     assert await _event_keys(sf) == {(healthy_id, 41, "new_listing")}
     async with sf() as session:
         cursors = dict((await session.execute(select(Tracker.id, Tracker.last_checked_at))).all())
@@ -3147,7 +3158,7 @@ def test_threshold_message_labels_free_lots():
         parameters={"threshold": 500.0},
     )
     msg = _build_threshold_message([event])
-    assert "бесплатно · порог 500 BYN" in msg
+    assert "бесплатно\nВаш порог: 500 BYN" in msg
 
 
 @pytest.mark.asyncio

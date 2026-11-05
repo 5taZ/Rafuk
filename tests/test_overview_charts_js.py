@@ -14,7 +14,7 @@ const {state} = createAppCore();
 state.search.activeQuery = "phone";
 state.panels.distribution = state.panels.history = true;
 const elements = {
-    chartSection: el("section"), priceChartCanvas: el("canvas"), distributionNote: el("p"),
+    chartSection: el("section"), priceDistribution: el("div"), distributionNote: el("p"),
     historySection: el("section"), historyChartCanvas: el("canvas"), historyNote: el("p"),
     historyEmpty: el("p", {}, "История ещё копится"), historySummary: el("div"),
     segmentsGrid: el("div"), segmentsSection: el("section"), statsSection: el("section"),
@@ -41,6 +41,7 @@ def _chart_harness() -> str:
 
 
 def test_distribution_renders_counts_and_refreshes_an_open_panel() -> None:
+    # UI-PRICE-01: native bars expose counts/shares directly and refresh with the active filters.
     _node_ok(_chart_harness() + r"""
 state.misc.stats = {
     count: 4, analyzed_count: 4, total_results: 4, min: 10, max: 30, median: 20,
@@ -48,21 +49,55 @@ state.misc.stats = {
                 {from_price: 20, to_price: 30, count: 3}],
 };
 views.renderStats();
-const original = state.charts.distribution;
-assert.deepEqual(original.config.data.datasets[0].data, [1, 3]);
-assert.equal(original.config.options.scales.y.beginAtZero, true);
-assert.equal(original.config.options.scales.y.ticks.precision, 0);
-assert.match(original.config.options.plugins.tooltip.callbacks.label({parsed: {y: 3}}), /75\.0%/);
-assert.match(elements.priceChartCanvas.getAttribute("aria-label"), /20 – 30: 3/);
+const distribution = elements.priceDistribution;
+const rows = () => distribution.querySelectorAll(".distribution-row");
+assert.deepEqual(rows().map(row => row.querySelector("strong").textContent), ["1", "3"]);
+const widths = () => rows().map(row => row.querySelector(".distribution-fill").style.width);
+assert.deepEqual(widths(), ["25%", "75%"]);
+assert.match(rows()[0].getAttribute("aria-label"), /не включая верхнюю границу/);
+assert.match(rows()[1].getAttribute("aria-label"), /включительно: 3 объявления, 75/);
+assert.equal(distribution.querySelector(".distribution-range").textContent, "20–30 BYN");
+assert.match(distribution.querySelector(".distribution-share").textContent, /75/);
 state.misc.stats = {...state.misc.stats, count: 2,
     histogram: [{from_price: 50, to_price: 50, count: 2}]};
 views.renderStats();
-assert.equal(original.destroyed, true);
-assert.deepEqual(state.charts.distribution.config.data.datasets[0].data, [2]);
+assert.equal(rows().length, 1);
+assert.equal(rows()[0].querySelector("strong").textContent, "2");
+assert.equal(rows()[0].querySelector(".distribution-fill").style.width, "100%");
+assert.equal(distribution.querySelector(".distribution-range").textContent, "50 BYN");
 state.misc.stats = {...state.misc.stats, count: 0, histogram: []};
 views.renderStats();
-assert.equal(state.charts.distribution, null);
+assert.equal(distribution.children.length, 0);
 assert.equal(elements.stats.median.textContent, "—");
+""")
+
+
+def test_distribution_is_readable_without_chart_library_and_handles_empty_bins() -> None:
+    _node_ok(_chart_harness() + r"""
+delete globalThis.Chart;
+state.misc.currency = "USD";
+charts.renderChart({count: 2, fallback_used: true, histogram: [
+    {from_price: 0.01, to_price: 0.02, count: 1},
+    {from_price: 0.02, to_price: 0.03, count: 0},
+    {from_price: 0.03, to_price: 0.04, count: 1},
+]});
+const distribution = elements.priceDistribution;
+assert.equal(distribution.querySelectorAll(".distribution-row").length, 3);
+assert.equal(distribution.querySelectorAll(".is-peak").length, 2);
+assert.match(distribution.querySelector(".distribution-kicker").textContent, /Один из/);
+assert.equal(distribution.querySelectorAll(".distribution-fill")[1].style.width, "0%");
+assert.equal(distribution.querySelector(".distribution-range").textContent, "0,01–0,02 USD");
+assert.match(elements.distributionNote.textContent, /похожие объявления/);
+assert.match(elements.distributionNote.textContent, /Мало данных/);
+assert.equal(document.head.children.length, 0, "HTML distribution needs no Chart.js download");
+state.panels.distribution = false;
+charts.renderChart();
+assert.equal(distribution.children.length, 0);
+state.panels.distribution = true;
+charts.renderChart();
+assert.equal(distribution.querySelectorAll(".distribution-row").length, 3);
+charts.renderChart({count: 2, histogram: []});
+assert.equal(distribution.children.length, 0);
 """)
 
 

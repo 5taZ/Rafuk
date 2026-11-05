@@ -55,13 +55,16 @@ def test_enhanced_alert_keyboard_uses_favourites_label() -> None:
     row1 = keyboard.inline_keyboard[0]
     assert row1[0].text == "В покупки"
     assert row1[0].callback_data == "add_lead:4242"
+    assert row1[0].style == "success"
     assert row1[1].text == "В избранное"
     assert row1[1].callback_data == "add_watch:4242"
+    assert row1[1].style is None
 
     # Second row: link to Kufar.
     row2 = keyboard.inline_keyboard[1]
     assert row2[0].text == "Открыть на Kufar"
     assert row2[0].url == "https://www.kufar.by/item/4242"
+    assert row2[0].style == "primary"
 
 
 def test_enhanced_alert_keyboard_omits_link_row_when_no_url() -> None:

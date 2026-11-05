@@ -1,7 +1,7 @@
 /**
  * render_charts.js — Price chart, history chart, profit dashboard, history deals.
  *
- * Chart.js is loaded lazily on first chart paint instead of being a
+ * Chart.js is loaded lazily on first history chart paint instead of being a
  * blocking <script> tag in the document head. That's ~80 KB of JS
  * that the watchlist / trackers / leads users never need.
  */
@@ -70,6 +70,7 @@ function createRenderCharts(context) {
             state.charts.distribution.destroy();
             state.charts.distribution = null;
         }
+        if (elements.priceDistribution) domClear(elements.priceDistribution);
     }
 
     function destroyHistoryChart() {
@@ -95,116 +96,66 @@ function createRenderCharts(context) {
             return;
         }
 
-        const canvas = elements.priceChartCanvas;
-        if (!canvas) return;
+        const container = elements.priceDistribution;
+        if (!container) return;
         const bins = state.misc.stats.histogram || [];
         if (!bins.length) {
             destroyChart();
             return;
         }
+        const countRules = new Intl.PluralRules("ru");
+        const listingCount = (count) => `${count} ${{ one: "объявление", few: "объявления", many: "объявлений", other: "объявления" }[countRules.select(count)]}`;
         if (elements.distributionNote) {
-            elements.distributionNote.textContent = `${state.misc.stats.count} с ценой после исключения выбросов. Учитываются состояние, продавец и регион.`
+            elements.distributionNote.textContent = `${listingCount(state.misc.stats.count)} с ценой · выбросы исключены. Учтены состояние, продавец и регион. Длина полосы — доля объявлений.`
                 + (state.misc.stats.fallback_used ? " Мало точных совпадений — показаны похожие объявления." : "")
                 + (state.misc.stats.count < 3 ? " Мало данных для оценки рынка." : "");
         }
 
-        // Lazy-load Chart.js on demand. If the library hasn't arrived
-        // yet, paint a quiet skeleton (the existing aria-busy state on
-        // .chart-section is enough — we just bail and re-enter once
-        // the lib resolves).
-        if (typeof window.Chart !== "function") {
-            ensureChartLib()
-                .then(() => renderChart())
-                .catch(() => {
-                    if (elements.distributionNote) elements.distributionNote.textContent = "Не удалось загрузить график. Сверните и откройте блок повторно.";
-                });
-            return;
-        }
-
-        destroyChart();
-
-        // FE-NEW-5: read colors from CSS tokens at render time so dark/light theme + future brand refresh propagate.
-        const _root = document.documentElement;
-        const _style = getComputedStyle(_root);
-        const _token = (name, fallback) => (_style.getPropertyValue(name).trim() || fallback);
-
-        const isDark = _root.getAttribute("data-theme") !== "light";
-        const muted = isDark ? "rgba(136,128,120,0.6)" : "rgba(114,105,94,0.6)";
-        const grid = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
-        const tooltipBackground = _token("--bg-hover", isDark ? "#1A1A1D" : "#FFFFFF");
-        const tooltipText = _token("--text", isDark ? "#F2EFE8" : "#1A1917");
-        const accentColor = _token("--accent", isDark ? "#3B82F6" : "#2563EB");
         const priceNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
-        const labels = bins.map((bin, index) => bin.from_price === bin.to_price
+        const percent = new Intl.NumberFormat("ru-RU", { style: "percent", maximumFractionDigits: 1 });
+        const labels = bins.map((bin) => bin.from_price === bin.to_price
             ? priceNumber.format(bin.from_price)
-            : `${priceNumber.format(bin.from_price)} – ${index === bins.length - 1 ? "" : "< "}${priceNumber.format(bin.to_price)}`);
-        canvas.removeAttribute("aria-hidden");
-        canvas.setAttribute("aria-label", `Распределение цен, ${state.misc.currency}: ${bins.map((bin, i) => `${labels[i]}: ${bin.count}`).join("; ")}`);
-
-        state.charts.distribution = new Chart(canvas, {
-            type: "bar",
-            data: {
-                labels,
-                datasets: [
-                    {
-                        label: "Объявлений",
-                        data: bins.map((bin) => bin.count),
-                        backgroundColor: "rgba(59,130,246,0.45)",
-                        borderColor: accentColor,
-                        borderWidth: 1.5,
-                        borderRadius: 5,
-                        borderSkipped: false,
-                    },
-                ],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: tooltipBackground,
-                        titleColor: tooltipText,
-                        bodyColor: accentColor,
-                        borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
-                        borderWidth: 1,
-                        padding: 10,
-                        callbacks: {
-                            label(context) {
-                                const count = context.parsed.y;
-                                const share = count / state.misc.stats.count * 100;
-                                return ` Объявлений: ${count} (${share.toFixed(1)}% выборки)`;
-                            },
-                        },
-                    },
-                },
-                scales: {
-                    x: {
-                        title: { display: true, text: `Цена, ${state.misc.currency}`, color: muted },
-                        grid: { display: false },
-                        border: { display: false },
-                        ticks: {
-                            color: muted,
-                            font: { family: "'JetBrains Mono'", size: 10 },
-                            maxRotation: 45,
-                            maxTicksLimit: 6,
-                        },
-                    },
-                    y: {
-                        beginAtZero: true,
-                        title: { display: true, text: "Объявлений", color: muted },
-                        grid: { color: grid },
-                        border: { display: false },
-                        ticks: {
-                            color: muted,
-                            font: { family: "'JetBrains Mono'", size: 9 },
-                            maxTicksLimit: 4,
-                            precision: 0,
-                        },
-                    },
+            : `${priceNumber.format(bin.from_price)}–${priceNumber.format(bin.to_price)}`);
+        const peakCount = Math.max(...bins.map((bin) => bin.count));
+        const peakIndex = bins.findIndex((bin) => bin.count === peakCount);
+        const tied = bins.filter((bin) => bin.count === peakCount).length > 1;
+        const share = (bin) => bin.count / state.misc.stats.count;
+        const rows = bins.map((bin, index) => {
+            // The API uses half-open bins; retain exact bounds for assistive tech
+            // while the visible ranges stay short enough for a phone screen.
+            const bounds = bin.from_price === bin.to_price ? `${labels[index]} ${state.misc.currency}`
+                : `От ${priceNumber.format(bin.from_price)} до ${priceNumber.format(bin.to_price)} ${state.misc.currency}, ${index === bins.length - 1 ? "включительно" : "не включая верхнюю границу"}`;
+            const fill = domEl("div", { className: "distribution-fill" });
+            fill.style.width = `${share(bin) * 100}%`;
+            return domEl("li", {
+                className: `distribution-row${bin.count === peakCount ? " is-peak" : ""}`,
+                attrs: {
+                    "aria-label": `${bounds}: ${listingCount(bin.count)}, ${percent.format(share(bin))}`,
+                    title: bounds,
                 },
             },
+                domEl("div", { className: "distribution-row-labels", attrs: { "aria-hidden": "true" } },
+                    domEl("span", { className: "distribution-price", text: labels[index] }),
+                    domEl("span", { className: "distribution-count" },
+                        domEl("strong", { text: String(bin.count) }),
+                        domEl("span", { className: "distribution-percent", text: `· ${percent.format(share(bin))}` }),
+                    ),
+                ),
+                domEl("div", { className: "distribution-track", attrs: { "aria-hidden": "true" } }, fill),
+            );
         });
+        container.replaceChildren(
+            domEl("p", { className: "distribution-kicker", text: bins.length === 1 ? "Все объявления в одном диапазоне" : tied ? "Один из частых диапазонов" : "Самый частый диапазон" }),
+            domEl("div", { className: "distribution-insight" },
+                domEl("strong", { className: "distribution-range", text: `${labels[peakIndex]} ${state.misc.currency}` }),
+                domEl("span", { className: "distribution-share", text: `${percent.format(share(bins[peakIndex]))} выборки` }),
+            ),
+            domEl("div", { className: "distribution-columns", attrs: { "aria-hidden": "true" } },
+                domEl("span", { text: `Цена, ${state.misc.currency}` }),
+                domEl("span", { text: "Кол-во · доля" }),
+            ),
+            domEl("ol", { className: "distribution-list", attrs: { role: "list", "aria-label": "Объявления по ценовым диапазонам" } }, ...rows),
+        );
     }
 
     /* ===== History ===== */
@@ -255,7 +206,7 @@ function createRenderCharts(context) {
             return;
         }
 
-        // Lazy-load Chart.js — mirrors the guard in renderChart().
+        // Distribution uses native HTML; only history needs Chart.js.
         if (typeof window.Chart !== "function") {
             ensureChartLib()
                 .then(() => renderHistory())
