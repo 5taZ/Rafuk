@@ -97,6 +97,16 @@ function createRenderCharts(context) {
 
         const canvas = elements.priceChartCanvas;
         if (!canvas) return;
+        const bins = state.misc.stats.histogram || [];
+        if (!bins.length) {
+            destroyChart();
+            return;
+        }
+        if (elements.distributionNote) {
+            elements.distributionNote.textContent = `${state.misc.stats.count} с ценой после исключения выбросов. Учитываются состояние, продавец и регион.`
+                + (state.misc.stats.fallback_used ? " Мало точных совпадений — показаны похожие объявления." : "")
+                + (state.misc.stats.count < 3 ? " Мало данных для оценки рынка." : "");
+        }
 
         // Lazy-load Chart.js on demand. If the library hasn't arrived
         // yet, paint a quiet skeleton (the existing aria-busy state on
@@ -106,8 +116,7 @@ function createRenderCharts(context) {
             ensureChartLib()
                 .then(() => renderChart())
                 .catch(() => {
-                    /* Network failure surfaces via the regular error
-                       toast on the next render attempt. */
+                    if (elements.distributionNote) elements.distributionNote.textContent = "Не удалось загрузить график. Сверните и откройте блок повторно.";
                 });
             return;
         }
@@ -125,27 +134,23 @@ function createRenderCharts(context) {
         const tooltipBackground = _token("--bg-hover", isDark ? "#1A1A1D" : "#FFFFFF");
         const tooltipText = _token("--text", isDark ? "#F2EFE8" : "#1A1917");
         const accentColor = _token("--accent", isDark ? "#3B82F6" : "#2563EB");
-        const values = [
-            state.misc.stats.min,
-            state.misc.stats.q1,
-            state.misc.stats.median,
-            state.misc.stats.q3,
-            state.misc.stats.max,
-        ];
-        const alphas = [0.22, 0.4, 0.9, 0.4, 0.22];
-
-        // Canvas is marked aria-hidden; the wrapper div carries the accessible label
-        canvas.setAttribute("aria-hidden", "true");
+        const priceNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
+        const labels = bins.map((bin, index) => bin.from_price === bin.to_price
+            ? priceNumber.format(bin.from_price)
+            : `${priceNumber.format(bin.from_price)} – ${index === bins.length - 1 ? "" : "< "}${priceNumber.format(bin.to_price)}`);
+        canvas.removeAttribute("aria-hidden");
+        canvas.setAttribute("aria-label", `Распределение цен, ${state.misc.currency}: ${bins.map((bin, i) => `${labels[i]}: ${bin.count}`).join("; ")}`);
 
         state.charts.distribution = new Chart(canvas, {
             type: "bar",
             data: {
-                labels: ["Мин", "Q1", "Медиана", "Q3", "Макс"],
+                labels,
                 datasets: [
                     {
-                        data: values,
-                        backgroundColor: alphas.map((alpha) => `rgba(59,146,246,${alpha})`),
-                        borderColor: alphas.map((alpha) => `rgba(59,146,246,${Math.min(alpha + 0.3, 1)})`),
+                        label: "Объявлений",
+                        data: bins.map((bin) => bin.count),
+                        backgroundColor: "rgba(59,130,246,0.45)",
+                        borderColor: accentColor,
                         borderWidth: 1.5,
                         borderRadius: 5,
                         borderSkipped: false,
@@ -166,30 +171,35 @@ function createRenderCharts(context) {
                         padding: 10,
                         callbacks: {
                             label(context) {
-                                return ` ${formatPrice(context.parsed.y)}`;
+                                const count = context.parsed.y;
+                                const share = count / state.misc.stats.count * 100;
+                                return ` Объявлений: ${count} (${share.toFixed(1)}% выборки)`;
                             },
                         },
                     },
                 },
                 scales: {
                     x: {
+                        title: { display: true, text: `Цена, ${state.misc.currency}`, color: muted },
                         grid: { display: false },
                         border: { display: false },
                         ticks: {
                             color: muted,
                             font: { family: "'JetBrains Mono'", size: 10 },
+                            maxRotation: 45,
+                            maxTicksLimit: 6,
                         },
                     },
                     y: {
+                        beginAtZero: true,
+                        title: { display: true, text: "Объявлений", color: muted },
                         grid: { color: grid },
                         border: { display: false },
                         ticks: {
                             color: muted,
                             font: { family: "'JetBrains Mono'", size: 9 },
                             maxTicksLimit: 4,
-                            callback(value) {
-                                return formatPrice(value);
-                            },
+                            precision: 0,
                         },
                     },
                 },
@@ -207,11 +217,20 @@ function createRenderCharts(context) {
         elements.historyEmpty.hidden = hasHistory;
         // FR-02: tell a failed load apart from "history still accumulating".
         const emptyEl = elements.historyEmpty;
+        const loading = Boolean(state.charts.historyLoading || state.ui.loading);
+        if (elements.historyNote) {
+            elements.historyNote.textContent = "Замеры по запросу и категории, без фильтров состояния, продавца и региона. Промежутки без замеров не заполняются."
+                + (state.misc.currency !== "BYN" ? " Все цены пересчитаны по текущему курсу НБРБ." : "")
+                + (state.misc.stats?.fallback_used ? " Показана история похожих объявлений." : "");
+        }
         if (emptyEl && !emptyEl.dataset.defaultText) emptyEl.dataset.defaultText = emptyEl.textContent.trim();
         if (emptyEl) {
-            emptyEl.textContent = state.charts.historyError
+            emptyEl.textContent = loading ? "Загружаю историю цен…" : state.charts.historyError
                 ? "Не удалось загрузить историю цен. Потяните вниз или повторите поиск."
                 : emptyEl.dataset.defaultText;
+        }
+        if (elements.historyChartCanvas?.parentElement) {
+            elements.historyChartCanvas.parentElement.hidden = !hasHistory;
         }
         elements.historySummary.hidden = !hasHistory;
         domClear(elements.historySummary);
@@ -230,7 +249,8 @@ function createRenderCharts(context) {
     function renderHistoryChart() {
         return safeRender('renderHistoryChart', () => {
         const canvas = elements.historyChartCanvas;
-        if (!canvas || !state.charts.historyData.length) {
+        if (!canvas || !state.search.activeQuery || !state.panels.history
+            || elements.historySection.hidden || !state.charts.historyData.length) {
             destroyHistoryChart();
             return;
         }
@@ -238,34 +258,47 @@ function createRenderCharts(context) {
         // Lazy-load Chart.js — mirrors the guard in renderChart().
         if (typeof window.Chart !== "function") {
             ensureChartLib()
-                .then(() => renderHistoryChart())
+                .then(() => renderHistory())
                 .catch(() => {
-                    /* error surfaced via toast on next attempt */
+                    elements.historyEmpty.hidden = false;
+                    elements.historyEmpty.textContent = "Не удалось загрузить график. Сверните и откройте блок повторно.";
+                    elements.historySummary.hidden = true;
                 });
             return;
         }
 
-        const firstPoint = state.charts.historyData[0];
-        const lastPoint = state.charts.historyData[state.charts.historyData.length - 1];
-        const delta = firstPoint && lastPoint && firstPoint.median
+        const points = state.charts.historyData
+            .filter((point) => Number.isFinite(Date.parse(point.snapshot_at))
+                && Number.isFinite(point.median) && point.analyzed_count > 0)
+            .slice().sort((a, b) => Date.parse(a.snapshot_at) - Date.parse(b.snapshot_at));
+        if (!points.length) {
+            elements.historySummary.hidden = true;
+            destroyHistoryChart();
+            return;
+        }
+        const firstPoint = points[0];
+        const lastPoint = points[points.length - 1];
+        const hasTrend = points.length > 1 && firstPoint.median > 0;
+        const delta = hasTrend
             ? ((lastPoint.median - firstPoint.median) / firstPoint.median) * 100
             : 0;
         const summaryItems = [
             {
-                label: "Сейчас",
+                label: "Последний замер",
                 value: formatPrice(lastPoint?.median),
-                meta: `${state.charts.historyData.length} точек`,
+                meta: `${formatDate(lastPoint.snapshot_at)} · ${lastPoint.analyzed_count} с ценой`,
             },
             {
-                label: "Тренд",
-                value: `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%`,
-                meta: `${state.misc.historyDays} дней`,
+                label: "Изменение",
+                value: hasTrend ? `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%` : "—",
+                meta: hasTrend ? "между первым и последним замером"
+                    : points.length < 2 ? "Нужны минимум два замера" : "Начальная медиана равна нулю",
             },
             {
                 label: "Диапазон",
                 value: formatPriceRange(
-                    state.charts.historyData.reduce((min, p) => Math.min(min, p.median), Infinity),
-                    state.charts.historyData.reduce((max, p) => Math.max(max, p.median), -Infinity),
+                    points.reduce((min, p) => Math.min(min, p.median), Infinity),
+                    points.reduce((max, p) => Math.max(max, p.median), -Infinity),
                 ),
                 meta: "по медиане",
             },
@@ -297,21 +330,20 @@ function createRenderCharts(context) {
         const tooltipBackground = _token("--bg-hover", isDark ? "#1A1A1D" : "#FFFFFF");
         const tooltipText = _token("--text", isDark ? "#F2EFE8" : "#1A1917");
 
-        // Canvas is marked aria-hidden; the wrapper div carries the accessible label
-        canvas.setAttribute("aria-hidden", "true");
+        canvas.removeAttribute("aria-hidden");
+        canvas.setAttribute("aria-label", `Динамика медианы: ${points.length} замеров, с ${formatDate(firstPoint.snapshot_at)} по ${formatDate(lastPoint.snapshot_at)}. Последняя медиана: ${formatPrice(lastPoint.median)}. Изменение: ${hasTrend ? `${delta.toFixed(1)}%` : "недостаточно данных"}.`);
 
         state.charts.history = new Chart(canvas, {
             type: "line",
             data: {
-                labels: state.charts.historyData.map((point) => formatDate(point.snapshot_at) || ""),
                 datasets: [
                     {
                         label: "Медиана",
-                        data: state.charts.historyData.map((point) => point.median),
+                        data: points.map((point) => ({ x: Date.parse(point.snapshot_at), y: point.median })),
                         borderColor: lineColor,
                         backgroundColor: fillColor,
-                        fill: true,
-                        tension: 0.28,
+                        fill: false,
+                        tension: 0,
                         pointRadius: 2.5,
                         pointHoverRadius: 4,
                     },
@@ -330,20 +362,30 @@ function createRenderCharts(context) {
                         borderWidth: 1,
                         padding: 10,
                         callbacks: {
+                            title(items) {
+                                return items.length ? formatDate(new Date(items[0].parsed.x).toISOString()) : "";
+                            },
                             label(context) {
-                                return ` ${formatPrice(context.parsed.y)}`;
+                                const point = points[context.dataIndex];
+                                return ` ${formatPrice(context.parsed.y)} · ${point.analyzed_count} с ценой`;
                             },
                         },
                     },
                 },
                 scales: {
                     x: {
+                        type: "linear",
+                        min: Date.parse(firstPoint.snapshot_at) - (points.length === 1 ? 1_800_000 : 0),
+                        max: Date.parse(lastPoint.snapshot_at) + (points.length === 1 ? 1_800_000 : 0),
                         grid: { display: false },
                         border: { display: false },
                         ticks: {
                             color: muted,
                             font: { family: "'JetBrains Mono'", size: 9 },
                             maxTicksLimit: 6,
+                            callback(value) {
+                                return formatDate(new Date(value).toISOString());
+                            },
                         },
                     },
                     y: {

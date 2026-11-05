@@ -212,7 +212,9 @@ def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
         )
         history_response = client.get(
             "/api/v1/price-history",
-            params={"query": "iphone 16 fresh", "currency": "BYN", "days": 1},
+            # RV-BE-05: a broad fallback must not contaminate strict history.
+            params={"query": "iphone 16 fresh", "currency": "BYN", "days": 1,
+                    "strict_search": stats_response.json()["strict_search"]},
         )
 
     assert stats_response.status_code == 200
@@ -220,6 +222,7 @@ def test_price_stats_request_persists_snapshot(monkeypatch) -> None:
     payload = history_response.json()
     assert len(payload["points"]) == 1
     assert payload["points"][0]["median"] == 2500
+    assert stats_response.json()["fallback_used"] is True
 
 
 def test_price_history_includes_q1_q3() -> None:

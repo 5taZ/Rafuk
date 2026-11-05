@@ -75,6 +75,12 @@ class CategoryBucket(BaseModel):
     count: int
 
 
+class PriceHistogramBin(BaseModel):
+    from_price: float
+    to_price: float
+    count: int
+
+
 class PriceStatsResponse(BaseModel):
     query: str
     currency: str
@@ -89,6 +95,10 @@ class PriceStatsResponse(BaseModel):
     min: float
     max: float
     count: int
+    reliable: bool = True
+    strict_search: bool = True
+    fallback_used: bool = False
+    histogram: list[PriceHistogramBin] = Field(default_factory=list)
     total_results: int = 0
     analyzed_count: int = 0
     fair_price_from: float | None = None
@@ -250,6 +260,7 @@ class SegmentStats(BaseModel):
     min: float
     max: float
     count: int
+    reliable: bool = True
 
 
 class SegmentsResponse(BaseModel):
@@ -259,6 +270,9 @@ class SegmentsResponse(BaseModel):
     new_shop: SegmentStats
     used_private: SegmentStats
     used_shop: SegmentStats
+    reference: SegmentStats | None = None
+    sample_count: int = 0
+    fallback_used: bool = False
 
 
 class PriceHistoryPoint(BaseModel):

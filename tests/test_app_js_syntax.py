@@ -3376,6 +3376,8 @@ const requestKey = (url) => {
 const api = createApiListings({
     state, elements, buildCommonQuery: createApiCore({state}).buildCommonQuery,
     markDirty() {}, renderAll() {}, scheduleRender() {}, focusTarget() {}, renderDetailModal() {},
+    // FR-02: search requests history after the stats snapshot is saved.
+    renderHistory() {},
     getJson(url) {
         const key = requestKey(url);
         if (key) return new Promise((resolve, reject) => pending.set(key, {resolve, reject}));

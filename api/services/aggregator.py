@@ -714,6 +714,28 @@ def compute_price_stats(prices: list[float]) -> PriceStats:
     )
 
 
+def compute_price_histogram(prices: list[float]) -> list[dict[str, float | int]]:
+    """Equal-width bins; the last bin includes its upper bound."""
+    if not prices:
+        return []
+    cents = [round(price * 100) for price in prices]
+    low, high = min(cents), max(cents)
+    if low == high:
+        return [{"from_price": low / 100, "to_price": high / 100, "count": len(cents)}]
+    raw_width = max(1, math.ceil((high - low) / min(10, math.ceil(math.sqrt(len(cents))))))
+    magnitude = 10 ** math.floor(math.log10(raw_width))
+    width = next(step * magnitude for step in (1, 2, 5, 10) if step * magnitude >= raw_width)
+    size = math.ceil((high - low) / width)
+    counts = [0] * size
+    for price in cents:
+        counts[min((price - low) // width, size - 1)] += 1
+    return [
+        {"from_price": (low + i * width) / 100,
+         "to_price": min(low + (i + 1) * width, high) / 100, "count": count}
+        for i, count in enumerate(counts)
+    ]
+
+
 def compute_price_vs_median(ad: dict[str, Any], median: float) -> float | None:
     """Percentage delta of ad price vs median. None if price is missing (negotiable)."""
     if not median:
@@ -1106,7 +1128,8 @@ def compute_segments(ads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     # every query. Numeric codes restore segmentation. Seller type
     # comes from the top-level ``company_ad`` flag because the API
     # no longer surfaces a "seller_type" ad parameter.
-    condition_map = {"1": "used", "2": "new", "Новый": "new", "Б/у": "used"}
+    condition_map = {"1": "used", "2": "new", "новый": "new", "б/у": "used",
+                     "new": "new", "used": "used", "бу": "used"}
     grouped: dict[str, list[float]] = {}
 
     for ad in ads:
@@ -1116,10 +1139,12 @@ def compute_segments(ads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         price_byn = normalize_price_byn(ad.get("price_byn"), ad)
         if price_byn is None:
             continue
-        condition = condition_map.get(get_param(ad, "condition") or "")
+        condition = condition_map.get(str(get_param(ad, "condition") or "").strip().casefold())
         if not condition:
             continue
-        seller_type = "shop" if ad.get("company_ad") else "private"
+        seller = str(get_param(ad, "seller_type") or "").strip().casefold()
+        is_shop = bool(ad.get("company_ad")) or seller in {"магазин", "shop"}
+        seller_type = "shop" if is_shop else "private"
         grouped.setdefault(f"{condition}_{seller_type}", []).append(price_byn)
 
     return {name: compute_price_stats(prices).model_dump() for name, prices in grouped.items()}

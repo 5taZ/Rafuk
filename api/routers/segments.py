@@ -56,6 +56,7 @@ async def get_segments(
             "cur": currency,
             "strict": strict_search,
             "cat": category,
+            "summary_semantics": 1,
         },
     )
     cached = await cache.get_json(cache_key) if not force_refresh else None
@@ -83,6 +84,7 @@ async def get_segments(
         settings=settings,
         client=kufar_client,
         category=category,
+        allow_low_result_fallback=category is None,
         cache=cache,
         force_refresh=refetch_upstream,
     )
@@ -110,6 +112,11 @@ async def get_segments(
         new_shop=_segment_payload("new_shop"),
         used_private=_segment_payload("used_private"),
         used_shop=_segment_payload("used_shop"),
+        reference=convert_price_stats(
+            dataset.price_stats, currency=currency, rates=rates, currency_service=currency_service,
+        ),
+        sample_count=sum(segment["count"] for segment in raw_segments.values()),
+        fallback_used=fb.fallback_used,
     )
     # RV-BE-05: don't pin a response built from an empty upstream answer.
     if dataset.cacheable:

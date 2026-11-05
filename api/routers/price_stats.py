@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -20,7 +20,9 @@ from api.dependencies import (
 from api.limiter import limiter
 from api.schemas import PriceStatsResponse
 from api.services.aggregator import (
+    _remove_outliers,
     build_query_key,
+    compute_price_histogram,
     compute_price_stats,
     extract_category_distribution,
     extract_prices,
@@ -68,6 +70,7 @@ def _price_stats_cache_key(
             "seller_type": seller_type,
             "region_name": region_name,
             "category_total_semantics": 2,
+            "distribution_semantics": 1,
         },
     )
 
@@ -99,7 +102,6 @@ async def _persist_snapshot_safe(
 @limiter.limit("30/minute")
 async def get_price_stats(
     request: Request,
-    background_tasks: BackgroundTasks,
     query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
     currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
     strict_search: bool = True,
@@ -153,17 +155,23 @@ async def get_price_stats(
             cache=cache,
             force_refresh=refetch_upstream,
         )
-        return fb.dataset
+        return fb
 
-    dataset, rates = await asyncio.gather(
+    fb, rates = await asyncio.gather(
         _fetch_dataset(),
         get_conversion_rates(currency_service, currency),
     )
+    dataset = fb.dataset
     ads = filter_listing_ads(
         dataset.ads, min_price=None, max_price=None, condition=condition,
         seller_type=seller_type, region_name=region_name,
     )
-    stats = compute_price_stats(extract_prices(ads)) if market_filtered else dataset.price_stats
+    prices = extract_prices(ads) if market_filtered else dataset.prices_byn
+    stats = compute_price_stats(prices) if market_filtered else dataset.price_stats
+    histogram = compute_price_histogram([
+        currency_service.convert_from_byn(price, currency, rates)
+        for price in _remove_outliers(prices)
+    ])
     converted = convert_price_stats(
         stats,
         currency=currency,
@@ -233,6 +241,9 @@ async def get_price_stats(
         count=stats.count,
         total_results=effective_total,
         analyzed_count=stats.count,
+        strict_search=dataset.strict_search,
+        fallback_used=fb.fallback_used,
+        histogram=histogram,
         fair_price_from=converted.get("q1"),
         fair_price_to=converted.get("q3"),
         categories=category_distribution,
@@ -246,17 +257,12 @@ async def get_price_stats(
     # (it charted as a zero median) nor worth caching for a whole TTL.
     if not dataset.cacheable:
         return payload
-    # Persist snapshot via FastAPI BackgroundTasks — runs after the
-    # response is sent but is awaited by the framework before the
-    # request fully tears down. That keeps cold-cache latency down
-    # without leaking pending writes into pytest fixture teardowns
-    # (which previously deadlocked on "database is locked" with the
-    # bare asyncio.create_task variant).
-    if not market_filtered:
-        background_tasks.add_task(
-            _persist_snapshot_safe,
+    # History is requested after this response; commit its point before
+    # replying so the first search can see it. Broad fallback has its own key.
+    if not market_filtered and stats.count:
+        await _persist_snapshot_safe(
             session_factory,
-            query_key=build_query_key(query, strict_search, category),
+            query_key=build_query_key(query, dataset.strict_search, category),
             ads=ads,
             total_results=payload.total_results,
             bucket_at=snapshot_bucket(datetime.now(UTC)),

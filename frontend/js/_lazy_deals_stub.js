@@ -18,9 +18,9 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261105-autosearch-details";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261105-autosearch-details";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261105-autosearch-details";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261105-overview-analytics";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261105-overview-analytics";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261105-overview-analytics";
 
 function _lazyLoadDealsSources(context) {
     if (_loadPromises.has("deals")) return _loadPromises.get("deals");

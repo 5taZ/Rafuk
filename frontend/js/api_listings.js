@@ -162,6 +162,7 @@ function createApiListings(context) {
         _detailItem = null;
     }
     function abortHistoryRequest() {
+        state.charts._historyRequestId = ((state.charts._historyRequestId || 0) + 1) % 1_000_000;
         if (_historyAbortController) {
             _historyAbortController.abort();
             _historyAbortController = null;
@@ -237,9 +238,13 @@ function createApiListings(context) {
 
     // ── Clear search-dependent state ─────────────────────────────────────
     function clearSearchData() {
+        abortHistoryRequest();
         state.misc.stats = null;
         state.charts.historyData = [];
+        state.charts.historyError = false;
+        state.charts.historyLoading = false;
         state.misc.segments = null;
+        state.misc.segmentsError = false;
         state.misc.geography = [];
         state.listings.items = [];
         state.listings.error = null;
@@ -313,14 +318,13 @@ function createApiListings(context) {
 
     // ── Load price history (standalone) ──────────────────────────────────
     async function loadHistory() {
+        abortHistoryRequest();
         if (!state.search.activeQuery) {
             state.charts.historyData = [];
+            state.charts.historyLoading = false;
+            state.charts.historyError = false;
             renderHistory();
             return;
-        }
-        // Abort previous in-flight history request
-        if (_historyAbortController) {
-            _historyAbortController.abort();
         }
         _historyAbortController = new AbortController();
         const signal = _historyAbortController.signal;
@@ -330,12 +334,21 @@ function createApiListings(context) {
         // overwrite the freshly-requested points.
         const requestId = (state.charts._historyRequestId =
             (state.charts._historyRequestId + 1) % 1_000_000);
+        const searchRequestId = state.search.searchRequestId;
+        state.charts.historyData = [];
+        state.charts.historyLoading = true;
+        state.charts.historyError = false;
+        renderHistory();
         let nextHistory;
         let failed = false;
         try {
             const payload = await getJson(
-                `/api/v1/price-history?${buildCommonQuery({ days: state.misc.historyDays })}`,
-                { signal }
+                `/api/v1/price-history?${buildCommonQuery({
+                    days: state.misc.historyDays,
+                    strict_search: state.misc.stats?.strict_search ?? state.search.strictSearch,
+                    force_refresh: "1",
+                })}`,
+                _requestOptions(signal, true),
             );
             nextHistory = payload.points || [];
         } catch (err) {
@@ -343,9 +356,11 @@ function createApiListings(context) {
             nextHistory = [];
             failed = true;
         }
-        if (requestId !== state.charts._historyRequestId) return;
+        if (signal.aborted || requestId !== state.charts._historyRequestId
+            || searchRequestId !== state.search.searchRequestId) return;
         state.charts.historyData = nextHistory;
         state.charts.historyError = failed;
+        state.charts.historyLoading = false;
         renderHistory();
     }
 
@@ -375,17 +390,14 @@ function createApiListings(context) {
 
         const dependencies = [
             {
-                dirty: ['history'],
-                request: getJson(`/api/v1/price-history?${buildCommonQuery({ days: state.misc.historyDays })}`, { signal }),
-                apply(payload) {
-                    state.charts.historyData = payload.points || [];
-                },
-            },
-            {
                 dirty: ['segments'],
                 request: getJson(`/api/v1/segments?${buildCommonQuery({ force_refresh: forceRefresh ? "1" : "" })}`, refreshOptions),
                 apply(payload) {
                     state.misc.segments = payload;
+                    state.misc.segmentsError = false;
+                },
+                fail() {
+                    state.misc.segmentsError = true;
                 },
             },
             {
@@ -737,7 +749,7 @@ function createApiListings(context) {
         state.ui.loading = true;
         state.search.searchRequestId = (state.search.searchRequestId + 1) % 1_000_000;
         const requestId = state.search.searchRequestId;
-        markDirty('loading', 'error', 'summary', 'helper', 'stats');
+        markDirty('loading', 'error', 'summary', 'helper', 'stats', 'history', 'segments', 'geography');
         renderAll();
 
         // Cancel the previous query's stats, listings and market requests together.
@@ -801,6 +813,8 @@ function createApiListings(context) {
             state.ui.loading = false;
             markDirty('loading', 'error', 'summary', 'helper', 'listings');
             renderAll();
+        } finally {
+            if (isActiveRequest(requestId) && !searchSignal.aborted) void loadHistory();
         }
     }
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -28,8 +31,17 @@ while (($#)); do
 done
 exit 2
 """,
+        newline="\n",
     )
     fake_pg_dump.chmod(0o755)
+    if os.name == "nt":
+        # RV-OPS-06: Windows venvs expose python.exe; the shell script calls python3.
+        python_shim = bin_dir / "python3"
+        python_shim.write_text(
+            f'#!/usr/bin/env bash\nexec {shlex.quote(Path(sys.executable).as_posix())} "$@"\n',
+            encoding="utf-8", newline="\n",
+        )
+        python_shim.chmod(0o755)
 
     env = {
         **os.environ,
@@ -37,10 +49,10 @@ exit 2
         "BACKUP_DIR": str(backup_dir),
         "RETENTION_DAYS": "30",
         "PGDUMP_CAPTURE": str(capture),
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
     }
     result = subprocess.run(
-        ["bash", "scripts/backup.sh"],
+        [shutil.which("bash") or "bash", "scripts/backup.sh"],
         cwd=Path(__file__).resolve().parents[1],
         env=env,
         text=True,

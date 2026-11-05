@@ -356,12 +356,14 @@ function createAppCore() {
             historyData: [],
             // FR-02: the last /price-history load failed (vs. no points yet).
             historyError: false,
+            historyLoading: false,
             _historyRequestId: 0,
         },
         misc: {
             historyDays: 7,
             currency: "BYN",
             segments: null,
+            segmentsError: false,
             geography: [],
             listingAssistantResult: null,
             modalCleanup: null,

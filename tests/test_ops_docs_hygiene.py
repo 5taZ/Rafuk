@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import runpy
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -256,6 +257,7 @@ def test_static_version_bump_updates_service_worker_cache(tmp_path: Path) -> Non
     (work / "scripts" / "bump_static_version.sh").write_text(
         Path("scripts/bump_static_version.sh").read_text(encoding="utf-8"),
         encoding="utf-8",
+        newline="\n",
     )
     (work / "frontend" / "index.html").write_text(
         '<script defer src="js/app_bundle.js?v=old-tag"></script>',
@@ -271,7 +273,7 @@ def test_static_version_bump_updates_service_worker_cache(tmp_path: Path) -> Non
     )
 
     subprocess.run(
-        ["bash", "scripts/bump_static_version.sh", "new-tag"],
+        [shutil.which("bash") or "bash", "scripts/bump_static_version.sh", "new-tag"],
         cwd=work,
         check=True,
         capture_output=True,

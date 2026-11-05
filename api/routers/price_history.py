@@ -18,7 +18,7 @@ from api.schemas import PriceHistoryPoint, PriceHistoryResponse
 from api.services.aggregator import build_query_key
 from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService, get_conversion_rates
-from api.services.history_service import load_query_snapshots
+from api.services.history_service import as_utc, load_query_snapshots
 from api.validators import MAX_QUERY_LENGTH
 
 router = APIRouter(tags=["analytics"])
@@ -33,6 +33,7 @@ async def get_price_history(
     days: int = Query(default=7, ge=1, le=90),
     strict_search: bool = True,
     category: int | None = None,
+    force_refresh: bool = False,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
@@ -47,9 +48,10 @@ async def get_price_history(
             "search": search_key,
             "cur": currency,
             "days": bounded_days,
+            "history_semantics": 1,
         },
     )
-    cached = await cache.get_json(cache_key)
+    cached = await cache.get_json(cache_key) if not force_refresh else None
     if cached:
         return PriceHistoryResponse(**cached)
 
@@ -60,7 +62,7 @@ async def get_price_history(
     rates = await get_conversion_rates(currency_service, currency)
     points = [
         PriceHistoryPoint(
-            snapshot_at=snapshot.snapshot_at,
+            snapshot_at=as_utc(snapshot.snapshot_at),
             mean=currency_service.convert_from_byn(float(snapshot.mean_byn), currency, rates),
             median=currency_service.convert_from_byn(float(snapshot.median_byn), currency, rates),
             q1=(
@@ -78,6 +80,7 @@ async def get_price_history(
             fetched_count=snapshot.fetched_count,
         )
         for snapshot in snapshots
+        if snapshot.analyzed_count > 0
     ]
     payload = PriceHistoryResponse(
         query=query,
@@ -85,9 +88,10 @@ async def get_price_history(
         days=bounded_days,
         points=points,
     )
-    await cache.set_json(
-        cache_key,
-        payload.model_dump(mode="json"),
-        ttl=settings.cache_ttl_seconds,
-    )
+    if points:
+        await cache.set_json(
+            cache_key,
+            payload.model_dump(mode="json"),
+            ttl=settings.cache_ttl_seconds,
+        )
     return payload

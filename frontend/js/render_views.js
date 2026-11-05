@@ -216,23 +216,26 @@ function createRenderViews(context) {
             return;
         }
 
-        elements.stats.median.textContent = formatPrice(state.misc.stats.median);
-        elements.stats.mean.textContent = formatPrice(state.misc.stats.mean);
-        elements.stats.min.textContent = formatPrice(state.misc.stats.min);
-        elements.stats.max.textContent = formatPrice(state.misc.stats.max);
-        elements.stats.fairRange.textContent = formatPriceRange(
+        const hasPrices = state.misc.stats.count > 0;
+        elements.stats.median.textContent = hasPrices ? formatPrice(state.misc.stats.median) : "—";
+        elements.stats.mean.textContent = hasPrices ? formatPrice(state.misc.stats.mean) : "—";
+        elements.stats.min.textContent = hasPrices ? formatPrice(state.misc.stats.min) : "—";
+        elements.stats.max.textContent = hasPrices ? formatPrice(state.misc.stats.max) : "—";
+        elements.stats.fairRange.textContent = hasPrices ? formatPriceRange(
             state.misc.stats.fair_price_from, state.misc.stats.fair_price_to,
-        );
+        ) : "—";
         const totalResults = Number(state.misc.stats.total_results || 0);
         const analyzedCount = Number(state.misc.stats.analyzed_count || state.misc.stats.count || 0);
         elements.stats.coverage.textContent =
-            `${analyzedCount} с ценой / ${totalResults}`;
+            `${analyzedCount} / ${totalResults}`;
         // Show total with priced count in badge for better clarity
         elements.marketTotalBadge.textContent = `${totalResults} (${analyzedCount} с ценой)`;
         elements.statsSection.hidden = false;
         elements.chartSection.hidden = state.misc.stats.count <= 0;
         if (elements.chartSection.hidden || !state.panels.distribution) {
             if (context._hooks?.destroyChart) context._hooks.destroyChart();
+        } else {
+            if (context._hooks?.renderChart) context._hooks.renderChart();
         }
         });
     }
@@ -243,7 +246,13 @@ function createRenderViews(context) {
         return safeRender('renderSegments', () => {
         domClear(elements.segmentsGrid);
         if (!state.misc.segments) {
-            elements.segmentsSection.hidden = true;
+            elements.segmentsSection.hidden = !state.misc.segmentsError;
+            if (state.misc.segmentsError) {
+                elements.segmentsGrid.appendChild(domEl("p", {
+                    className: "section-note",
+                    text: "Не удалось загрузить сегменты. Повторите поиск.",
+                }));
+            }
             return;
         }
 
@@ -275,22 +284,28 @@ function createRenderViews(context) {
         ].filter((segment) => segment.data && segment.data.count > 0);
 
         if (segments.length === 0) {
-            elements.segmentsSection.hidden = true;
+            elements.segmentsSection.hidden = false;
+            elements.segmentsGrid.appendChild(domEl("p", {
+                className: "section-note",
+                text: "В выборке нет объявлений с указанными состоянием и ценой.",
+            }));
             return;
         }
 
+        const totalAnalyzed = segments.reduce((sum, segment) => sum + Number(segment.data.count), 0);
+        const reference = state.misc.segments.reference;
         for (const segment of segments) {
-            const totalAnalyzed = Number(state.misc.stats?.analyzed_count || state.misc.stats?.count || 0);
             const share = totalAnalyzed
-                ? Math.round((Number(segment.data.count || 0) / totalAnalyzed) * 100)
+                ? Math.round((Number(segment.data.count || 0) / totalAnalyzed) * 1000) / 10
                 : 0;
-            const marketMedian = Number(state.misc.stats?.median || 0);
+            const marketMedian = Number(reference?.median || 0);
             const segmentMedian = Number(segment.data.median || 0);
-            const delta = marketMedian && segmentMedian
+            const comparable = marketMedian > 0 && reference?.count >= 3 && segment.data.count >= 3;
+            const delta = comparable
                 ? ((segmentMedian - marketMedian) / marketMedian) * 100
                 : 0;
-            const deltaClassName = Math.abs(delta) < 0.5 ? "neutral" : (delta >= 0 ? "over" : "under");
-            const deltaText = Math.abs(delta) < 0.5
+            const deltaClassName = !comparable || Math.abs(delta) < 0.5 ? "neutral" : (delta >= 0 ? "over" : "under");
+            const deltaText = !comparable ? "Мало данных для сравнения" : Math.abs(delta) < 0.5
                 ? "≈ рынок"
                 : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}% к рынку`;
             const card = domEl(
@@ -307,11 +322,16 @@ function createRenderViews(context) {
                     "div",
                     { className: "seg-meta-row" },
                     domEl("span", { className: "seg-count", text: `${segment.data.count} с ценой` }),
-                    domEl("span", { className: "seg-share", text: `${share}% выборки` }),
+                    domEl("span", { className: "seg-share", text: `${share}% сегментов` }),
                 ),
                 domEl("span", { className: `seg-delta ${deltaClassName}`, text: deltaText }),
             );
             elements.segmentsGrid.appendChild(card);
+        }
+        if (state.misc.segments.fallback_used) {
+            elements.segmentsGrid.appendChild(domEl("p", {
+                className: "section-note", text: "Мало точных совпадений — сегменты по похожим объявлениям.",
+            }));
         }
 
         elements.segmentsSection.hidden = false;
