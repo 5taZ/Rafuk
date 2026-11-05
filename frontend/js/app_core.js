@@ -320,8 +320,8 @@ function createAppCore() {
             loading: false,
         },
         panels: {
-            distribution: false,
-            history: true,
+            distribution: true,
+            history: false,
             segments: false,
             geography: false,
             historyDeals: false,
