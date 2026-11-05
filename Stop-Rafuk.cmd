@@ -2,9 +2,6 @@
 setlocal
 pushd "%~dp0" || exit /b 1
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Start-Rafuk.ps1" -StopLocalhostRunTunnel
-if errorlevel 1 goto failed
-
 docker info >nul 2>&1
 if errorlevel 1 (
     echo Docker is unavailable. If Docker Desktop is closed, Rafuk is already offline.

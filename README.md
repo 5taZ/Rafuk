@@ -83,14 +83,6 @@ the `api` service instead.
 local stack but preserves PostgreSQL data in the `myprojetctkufar_pgdata`
 Docker volume, so restarts keep your saved searches, trackers, and deals.
 
-On Windows with Docker Desktop, `Start-Rafuk.cmd` starts the Compose stack and
-opens a public HTTPS tunnel for the Telegram menu. Run
-`Start-Rafuk.cmd -TunnelProvider localhost-run` to use Windows OpenSSH and
-localhost.run. The launcher remembers the provider and updates the menu on
-startup. Run it again if the free address expires. Use
-`Start-Rafuk.cmd -TunnelProvider cloudflare`
-to switch providers and `Stop-Rafuk.cmd` to stop the stack and tunnels.
-
 ## Tests
 
 ```bash
