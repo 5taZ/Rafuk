@@ -104,8 +104,7 @@ from scheduler.messages import (
 # it is spent no new key is started; the key in flight finishes and commits
 # (the old 600 s ``wait_for`` cancelled it mid-way and, with it, every alert
 # collected so far). Deferred keys stay due and lead the next tick — the
-# due query orders by last_checked_at. Kept under the 5-minute tick
-# interval together with the outbox drain below.
+# due query orders by last_checked_at.
 _CYCLE_BUDGET_SECONDS = 240
 # RV-SCH-02: how long a tick keeps draining the notification outbox after
 # its key loop; whatever is left goes out with the per-minute DLQ pump.
@@ -900,13 +899,17 @@ async def _check_trackers_inner(
         intervals = (
             await session.execute(select(Tracker.interval_min).where(*eligible).distinct())
         ).scalars().all()
+        # Compare by minute so a check that started a few milliseconds late
+        # is still due on its scheduled minute. Keep the precise cursor for
+        # detecting listing changes since the previous check.
+        minute_end = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
         due = or_(
             Tracker.last_checked_at.is_(None),
             *(
                 and_(
                     Tracker.interval_min == interval,
                     Tracker.last_checked_at
-                    <= now - timedelta(minutes=max(interval, _MIN_CHECK_INTERVAL_MIN)),
+                    < minute_end - timedelta(minutes=max(interval, _MIN_CHECK_INTERVAL_MIN)),
                 )
                 for interval in intervals
             ),
@@ -952,7 +955,7 @@ async def _check_trackers_inner(
         )
 
         client = _get_kufar_client(settings)
-        observed_at = datetime.now(UTC)
+        observed_at = now
         ctx = _TickContext(
             settings=settings,
             observed_at=observed_at,
@@ -1089,7 +1092,7 @@ def _is_kufar_outage(exc: Exception) -> bool:
     asking us to back off (``retry_after``), is an upstream-wide outage —
     not the key's fault, so it earns no C-04 strike. Before RV-BE-05 the
     breaker returned an empty "success"; counting it now would auto-pause
-    every tracker after a ~25 min outage."""
+    every tracker during an outage."""
     return isinstance(exc, KufarUnavailableError) or (
         isinstance(exc, KufarAPIError) and exc.retry_after is not None
     )
@@ -1735,10 +1738,6 @@ def create_scheduler(
     settings: Settings,
 ) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Minsk")
-    # Base tick interval: run frequently enough to respect the shortest
-    # per-tracker interval_min.  Each tick skips trackers whose interval
-    # hasn't elapsed yet, so a 30-min tracker is only checked every 30 min.
-    tick_minutes = min(settings.alert_check_interval, 5)
     # SCH-MEDIUM (issues §5.1): APScheduler defaults misfire_grace_time
     # to 1s, so a long tick (slow Kufar, big DB cleanup) marks the next
     # fire as "misfired" and skips it. Set 60s grace + coalesce=True so
@@ -1746,8 +1745,9 @@ def create_scheduler(
     _job_defaults = {"misfire_grace_time": 60, "coalesce": True}
     scheduler.add_job(
         check_trackers,
-        trigger="interval",
-        minutes=tick_minutes,
+        trigger="cron",
+        minute="*",
+        next_run_time=datetime.now(UTC),
         kwargs={"bot": bot, "session_factory": session_factory, "settings": settings},
         id="tracker-check",
         replace_existing=True,

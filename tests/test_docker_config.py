@@ -566,8 +566,9 @@ def test_compose_passes_every_settings_field_to_the_api() -> None:
     assert services["bot"]["environment"]["BOT_API_BASE_URL"] == (
         "${DOCKER_BOT_API_BASE_URL:-http://api:8000}"
     )
-    assert {"KUFAR_REQUEST_DELAY", "KUFAR_PARALLEL_SEMAPHORE", "AUTO_REMOVE_MISSING_DAYS",
-            "ALERT_CHECK_INTERVAL"} <= set(services["scheduler"]["environment"])
+    assert {"KUFAR_REQUEST_DELAY", "KUFAR_PARALLEL_SEMAPHORE", "AUTO_REMOVE_MISSING_DAYS"} <= set(
+        services["scheduler"]["environment"],
+    )
     for name in PYTHON_SERVICES:
         assert services[name]["environment"]["BOT_TOKEN"].startswith("${BOT_TOKEN:?"), name
 

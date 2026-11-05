@@ -2611,6 +2611,51 @@ def _sent_chats(mock_bot: AsyncMock) -> list[int]:
 
 
 @pytest.mark.asyncio
+async def test_tracker_checks_at_15_minutes_after_a_late_start(monkeypatch, mock_bot, tick_db):
+    first_check = datetime.now(UTC).replace(second=9, microsecond=880_000)
+    now = first_check
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz):
+            return now.astimezone(tz)
+
+    monkeypatch.setattr(collector, "datetime", Clock)
+    calls: list[dict] = []
+    page = [_ad(1, 120_000)]
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(lambda q: page, calls))
+    async with tick_db() as session:
+        user = make_user(telegram_user_id=1015, first_name="Tracker")
+        session.add(user)
+        await session.flush()
+        tracker = Tracker(user_id=user.id, query="iPhone 13")
+        session.add(tracker)
+        await session.commit()
+
+    job = collector.create_scheduler(mock_bot, tick_db, _TICK_SETTINGS).get_job("tracker-check")
+    assert job.trigger.get_next_fire_time(now, now) == (
+        now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    )
+    await check_trackers(mock_bot, tick_db, _TICK_SETTINGS)
+    assert not mock_bot.send_message.await_count
+    page.insert(0, _ad(2, 135_000))
+
+    scheduled_minute = first_check.replace(second=0, microsecond=0) + timedelta(minutes=15)
+    now = scheduled_minute - timedelta(microseconds=1)
+    await check_trackers(mock_bot, tick_db, _TICK_SETTINGS)
+    assert len(calls) == 1
+
+    now = scheduled_minute
+    await check_trackers(mock_bot, tick_db, _TICK_SETTINGS)
+    assert len(calls) == 2
+    assert await _event_keys(tick_db) == {(tracker.id, 2, "new_listing")}
+    assert _sent_chats(mock_bot) == [1015]
+    async with tick_db() as session:
+        stored = await session.get(Tracker, tracker.id)
+        assert as_utc(stored.last_checked_at) == now
+
+
+@pytest.mark.asyncio
 async def test_check_trackers_each_tracker_gets_changes_since_its_own_check(
     monkeypatch, mock_bot: AsyncMock, tick_db,
 ):

@@ -806,7 +806,7 @@ function createApiEvents(context) {
         // ── Tracker filter inputs ────────────────────────────────────
         elements.trackerMinDiscountInput?.addEventListener("input", () => {
             const nextValue = Number(elements.trackerMinDiscountInput.value);
-            state.trackers.minDiscountPercent = Number.isFinite(nextValue) ? Math.abs(nextValue) : 10;
+            state.trackers.minDiscountPercent = nextValue > 0 ? nextValue : null;
         });
 
         elements.trackerMaxPriceInput?.addEventListener("input", () => {

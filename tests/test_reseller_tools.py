@@ -332,12 +332,13 @@ def test_compute_deal_score_negotiable_returns_dogovornaya_verdict() -> None:
     assert result.score == SCORING.base_score
 
 
-def test_matches_tracker_filters_negotiable_with_min_discount_returns_false() -> None:
-    """B-09: negotiable ad cannot satisfy min_discount_percent filter."""
+def test_matches_tracker_filters_negotiable_with_optional_discount() -> None:
+    """B-09: a negotiable ad cannot satisfy a positive discount threshold."""
     ad = _make_ad(price_byn=0)
     ad["body"] = "Цена договорная"
     stats = _make_stats(median=1000.0)
     assert matches_tracker_filters(ad, market_stats=stats, min_discount_percent=5.0) is False
+    assert matches_tracker_filters(ad, market_stats=stats, min_discount_percent=0.0) is True
 
 
 # ---------------------------------------------------------------------------

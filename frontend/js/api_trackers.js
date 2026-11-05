@@ -339,7 +339,7 @@ function createApiTrackers(context) {
 
         if (elements.editTrackerQuery) elements.editTrackerQuery.value = tracker.query;
         if (elements.editStrictModeToggle) elements.editStrictModeToggle.checked = Boolean(tracker.strict_mode);
-        if (elements.editMinDiscountInput) elements.editMinDiscountInput.value = tracker.min_discount_percent ?? 10;
+        if (elements.editMinDiscountInput) elements.editMinDiscountInput.value = tracker.min_discount_percent || "";
         if (elements.editMaxPriceInput) elements.editMaxPriceInput.value = tracker.max_price_byn ?? "";
         if (elements.editSellerSelect) elements.editSellerSelect.value = tracker.seller_type || "";
         if (elements.editConditionSelect) elements.editConditionSelect.value = tracker.condition || "";

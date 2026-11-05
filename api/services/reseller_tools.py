@@ -403,7 +403,7 @@ def matches_tracker_filters(
     # whitespace-tolerant — matches /listings behaviour.
     if not match_region_filter(ad, region_name):
         return False
-    if min_discount_percent is not None:
+    if min_discount_percent is not None and min_discount_percent > 0:
         delta = compute_price_vs_reference(ad, market_stats, category_price_stats)
         # B-09: negotiable (delta=None) cannot match a discount filter.
         if delta is None:

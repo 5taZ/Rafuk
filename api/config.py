@@ -87,7 +87,6 @@ class Settings(BaseSettings):
     # 1500 prices is statistically indistinguishable from 5000, but
     # the wall-clock saving is roughly 3× on broad queries.
     kufar_max_ads_per_query: int = 1500
-    alert_check_interval: int = 30
     cache_ttl_seconds: int = 300
     auto_remove_missing_days: int = 7
     max_trackers_per_user: int = 50

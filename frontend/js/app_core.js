@@ -269,7 +269,7 @@ function createAppCore() {
             statusKind: "info",
             editingId: null,
             creating: false,
-            minDiscountPercent: 10,
+            minDiscountPercent: null,
             maxPriceByn: null,
             sellerType: "",
             condition: "",

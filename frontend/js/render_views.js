@@ -186,7 +186,7 @@ function createRenderViews(context) {
 
     function renderTrackerInputs() {
         if (elements.trackerMinDiscountInput) {
-            elements.trackerMinDiscountInput.value = String(state.trackers.minDiscountPercent ?? 10);
+            elements.trackerMinDiscountInput.value = state.trackers.minDiscountPercent ?? "";
         }
         if (elements.trackerMaxPriceInput) {
             elements.trackerMaxPriceInput.value = state.trackers.maxPriceByn ?? "";

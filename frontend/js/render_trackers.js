@@ -274,7 +274,7 @@ function createRenderTrackers(context) {
             );
             if (tracker.category_id) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: tracker.category_label || `категория ${tracker.category_id}` }));
             if (tracker.strict_mode) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: "строгий" }));
-            if (tracker.min_discount_percent) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `от -${Math.round(tracker.min_discount_percent)}%` }));
+            if (tracker.min_discount_percent) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `скидка от ${tracker.min_discount_percent.toLocaleString("ru-RU")}%` }));
             if (tracker.max_price_byn) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `до ${Math.round(tracker.max_price_byn)} BYN` }));
             if (tracker.seller_type === "Частное лицо") trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: "частники" }));
             if (tracker.condition) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: tracker.condition }));
@@ -376,7 +376,7 @@ function createRenderTrackers(context) {
                         ...state.filters.categories,
                     ];
                 }
-                state.trackers.minDiscountPercent = Math.round(tracker.min_discount_percent || 10);
+                state.trackers.minDiscountPercent = tracker.min_discount_percent || null;
                 state.trackers.maxPriceByn = tracker.max_price_byn ?? null;
                 state.trackers.sellerType = tracker.seller_type || "";
                 state.trackers.condition = tracker.condition || "";

@@ -2224,6 +2224,42 @@ const actions = createApiTrackers({
 """)
 
 
+def test_tracker_discount_stays_optional_on_create_and_edit() -> None:
+    modules = ("dom_helpers.js", "app_core_dom.js", "app_core.js", "api_trackers.js")
+    source = "\n".join((JS_DIR / name).read_text(encoding="utf-8") for name in modules)
+    _node_ok(source + r"""
+const assert = require("node:assert/strict");
+global.document = { documentElement: { setAttribute() {}, getAttribute() { return "dark"; } } };
+global.localStorage = { getItem() { return null; }, setItem() {} };
+global.window = { Telegram: null, matchMedia: null };
+const { state } = createAppCore();
+state.search.activeQuery = "iPhone 14 Pro";
+const input = { value: "" };
+const payloads = [];
+const noop = () => {};
+const api = createApiTrackers({
+    state, elements: { editMinDiscountInput: input },
+    hasTelegramInitData: () => true, getJson: async () => [],
+    postJson: async (_, payload) => payloads.push(payload.min_discount_percent),
+    requestJson: async (_, { body }) => payloads.push(JSON.parse(body).min_discount_percent),
+    renderAll: noop, renderTrackers: noop, renderTrackerEvents: noop,
+    renderTrackerStatus: noop, showToast: noop,
+});
+(async () => {
+    await api.createTracker();
+    state.trackers.items = [{ id: 1, query: "iPhone 14 Pro", min_discount_percent: null }];
+    api.openEditTracker(1);
+    assert.equal(input.value, "");
+    await api.saveTracker();
+    state.trackers.items = [{ id: 1, query: "iPhone 14 Pro", min_discount_percent: 10 }];
+    api.openEditTracker(1);
+    assert.equal(Number(input.value), 10);
+    await api.saveTracker();
+    assert.deepEqual(payloads, [null, null, 10]);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+""")
+
+
 def test_toasts_are_minimal_and_fast() -> None:
     render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     css = _read_all_css()

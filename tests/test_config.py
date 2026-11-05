@@ -42,7 +42,6 @@ def test_settings_applies_defaults() -> None:
         "KUFAR_REQUEST_DELAY",
         "KUFAR_PARALLEL_SEMAPHORE",
         "SCHEDULER_SNAPSHOT_HOUR",
-        "ALERT_CHECK_INTERVAL",
     ]
     original_env = {}
     for key in _config_keys:
@@ -67,7 +66,6 @@ def test_settings_applies_defaults() -> None:
             s = config.Settings(_env_file=None)  # Ignore .env file
             assert s.kufar_request_delay == 1.0
             assert s.kufar_parallel_semaphore == 2
-            assert s.alert_check_interval == 30
     finally:
         # Restore original env vars
         for key, value in original_env.items():
