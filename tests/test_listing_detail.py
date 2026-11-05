@@ -92,7 +92,8 @@ def test_listing_detail_endpoint_returns_full_card(monkeypatch) -> None:
     assert payload["normalized_query"] == "iphone"
     assert payload["deal_verdict"] in VERDICTS
     assert payload["price_byn"] == 2000
-    assert payload["liquidity"] is not None
+    assert payload["liquidity"]["label"] == "Недостаточно наблюдений"
+    assert payload["liquidity"]["score"] is None
     assert payload["flip_estimates"] is not None
 
 

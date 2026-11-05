@@ -465,6 +465,23 @@ class QueryListingState(Base):
     )
 
 
+class MarketLiquidityObservation(Base):
+    __tablename__ = "market_liquidity_observations"
+
+    ad_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    segment: Mapped[str] = mapped_column(String(64), nullable=False)
+    price_byn: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    available: Mapped[bool | None] = mapped_column(Boolean)
+
+    __table_args__ = (
+        Index("idx_market_liquidity_first_seen", "first_seen_at"),
+        Index("idx_market_liquidity_segment_seen", "segment", "first_seen_at"),
+    )
+
+
 class TrackerEvent(Base, UserIDMixin):
     __tablename__ = "tracker_events"
 

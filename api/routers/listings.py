@@ -23,7 +23,6 @@ from api.services.aggregator import (
 )
 from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService, get_conversion_rates
-from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.kufar_filters import build_kufar_search_filters
 from api.services.listing_filters import (
@@ -94,6 +93,7 @@ def _listings_cache_key(
             "offset": offset,
             "total_semantics": 4,
             "market_comparison": 2,
+            "liquidity": 2,
             "include_market": include_market,
         },
     )
@@ -234,7 +234,6 @@ async def get_listings(
                 **category_price_stats,
                 category: visible_dataset.price_stats,
             }
-    liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats)
     rates = await get_conversion_rates(currency_service, currency)
     insights = analyze_query_text(query)
 
@@ -286,7 +285,6 @@ async def get_listings(
                 median_byn=median_byn,
                 market_stats=reference_dataset.price_stats,
                 category_price_stats=category_price_stats,
-                liquidity=liquidity,
                 cluster_cache=cluster_cache,
             )
         except Exception as exc:  # noqa: BLE001 — graceful per-ad degrade

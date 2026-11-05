@@ -42,7 +42,7 @@ from sqlalchemy.pool import NullPool
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "migrations" / "alembic.ini"
 # Bump together with docs/BACKUP_RUNBOOK.md ("Expected Alembic head").
-EXPECTED_HEAD = "20261021_0027"
+EXPECTED_HEAD = "20261105_0028"
 
 
 def _alembic_config() -> Config:
@@ -270,6 +270,12 @@ _KNOWN_DRIFT: dict[tuple[str, str, str], str] = {
     ("modify_type", "lead_items", "updated_at"): (
         "RV-DB-04: still timestamp without time zone; converting it needs "
         "the timezone of the stored values confirmed on prod first"
+    ),
+    ("remove_column", "saved_searches", "config_keyword"): (
+        "Removed from the ORM in 8e182cc; the legacy column may still hold saved data."
+    ),
+    ("remove_column", "trackers", "config_keyword"): (
+        "Removed from the ORM in 8e182cc; the legacy column may still hold saved data."
     ),
 }
 

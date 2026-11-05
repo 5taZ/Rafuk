@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
@@ -18,22 +20,45 @@ from api.dependencies import (
 )
 from api.limiter import limiter
 from api.models import LeadItem
-from api.schemas import ListingDetailResponse
+from api.schemas import LiquidityInsight, ListingDetailResponse
 from api.services.aggregator import compute_category_price_stats, precompute_cluster_stats
 from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService, get_conversion_rates
-from api.services.deal_workflow import compute_liquidity_insight
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_detail
+from api.services.market_liquidity import load_liquidity_insight, observe_market_listings
 from api.services.query_pipeline import load_query_dataset_context_with_fallback
 from api.services.risk_detector import compute_risk_score, detect_risks
-from api.services.watchlist_market import MARKET_ESTIMATE_TTL, load_page_comparisons
+from api.services.watchlist_market import (
+    MARKET_ESTIMATE_TTL,
+    liquidity_segment,
+    load_page_comparisons,
+)
 from api.services.workflow_store import ensure_user
 from api.validators import MAX_QUERY_LENGTH
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["analytics"])
+
+
+async def _listing_liquidity(
+    session_factory: async_sessionmaker[AsyncSession],
+    ad: dict[str, Any],
+    ads: list[dict[str, Any]],
+) -> LiquidityInsight:
+    now = datetime.now(UTC)
+    segment = liquidity_segment(ad)
+    try:
+        async with session_factory() as session:
+            if segment is not None:
+                await observe_market_listings(session, ads, now=now, only_segment=segment)
+            insight = await load_liquidity_insight(session, ad, segment=segment, now=now)
+            await session.commit()
+            return insight
+    except SQLAlchemyError:
+        logger.warning("Failed to load liquidity for ad_id=%s", ad.get("ad_id"), exc_info=True)
+        return LiquidityInsight(label="Оценка временно недоступна")
 
 
 async def _backfill_lead_thumbnail(
@@ -105,6 +130,7 @@ async def get_listing_detail(
             "cat": category,
             "ref": reference_context,
             "market_comparison": 2,
+            "liquidity": 2,
         },
     )
     cached = await cache.get_json(cache_key)
@@ -147,7 +173,7 @@ async def get_listing_detail(
     cluster_cache = await precompute_cluster_stats(
         visible_dataset.ads, query=query, target_ids={ad_id},
     )
-    liquidity = compute_liquidity_insight(visible_dataset.ads, visible_dataset.price_stats, ad=ad)
+    liquidity = await _listing_liquidity(session_factory, ad, visible_dataset.ads)
     # BE-MEDIUM (issues §2.2): NBRB outage shouldn't 500 the detail.
     rates = await get_conversion_rates(currency_service, currency)
     payload = build_listing_detail(

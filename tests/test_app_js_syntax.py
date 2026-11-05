@@ -1289,8 +1289,12 @@ state.detail.data = {
     images: [],
     parameters: [],
     seller_fields: [],
+    liquidity: { label: "Недостаточно наблюдений", score: null, sample_size: 0 },
 };
 renderer.renderDetailModal();
+assert.strictEqual(elements.detailLiquidityBlock.hidden, false);
+assert.strictEqual(elements.detailLiquidity.children.length, 1);
+assert.strictEqual(elements.detailLiquidity.children[0].children.length, 1);
 assert.strictEqual(elements.detailAddLeadButton.textContent, "В покупках");
 assert.strictEqual(elements.detailAddLeadButton.disabled, true);
 assert.strictEqual(elements.detailAddWatchlistButton.textContent, "В избранное");
@@ -1303,9 +1307,15 @@ state.detail.data = {
     images: [],
     parameters: [],
     seller_fields: [],
+    liquidity: {
+        label: "Низкая", score: 0, sample_size: 15, unavailable_count: 0, window_days: 7,
+    },
 };
 state.detail.fromWatchlist = true;
 renderer.renderDetailModal();
+assert.strictEqual(elements.detailLiquidity.children[1].tagName, "meter");
+assert.strictEqual(elements.detailLiquidity.children[1].value, 0);
+assert.match(elements.detailLiquidity.children[2].children[0].textContent, /0 из 15/);
 assert.strictEqual(elements.detailAddLeadButton.textContent, "В покупки");
 assert.strictEqual(elements.detailAddLeadButton.disabled, false);
 assert.strictEqual(elements.detailAddWatchlistButton.hidden, false);

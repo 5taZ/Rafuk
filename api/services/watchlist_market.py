@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
 from collections import Counter, defaultdict
@@ -38,6 +40,7 @@ _PHONE_CATEGORY = 17010
 _DEVICE_CATEGORIES = {16040, _PHONE_CATEGORY}
 _YEAR = re.compile(r"\b(?:19\d{2}|20\d{2})\b")
 _IPHONE = re.compile(r"^iphone \d{1,2}(?: (?:pro max|pro|plus|mini|air|e))?\b")
+_PHONE_TITLE_PREFIX = re.compile(r"^(?:(?:apple|смартфон|мобильный|телефон) )+")
 _MACBOOK = re.compile(r"\bmacbook (?:air|pro)\b")
 _MAC_CHIP = re.compile(r"\bm\d+(?: (?:pro|max))?\b")
 _MACBOOK_SCREEN = re.compile(r"""\b(13|14|15|16)(?:[.,]\d+)?\s*(?:["″]|'')""")
@@ -198,6 +201,43 @@ def watchlist_comparison_query(ad: dict[str, Any]) -> str:
     if macbook := _macbook_model(title):
         return macbook
     return " ".join(filter(None, (iphone, _specs(ad).get("storage")))) if iphone else title
+
+
+def liquidity_segment(ad: dict[str, Any]) -> str | None:
+    category = get_category_id(ad)
+    title = _title(ad)
+    if category is None or not title or _is_rental(title):
+        return None
+    normalized_title = normalize_search_text(title)
+    if set(normalized_title.split()) & {
+        "обмен", "куплю", "нерабочий", "неисправный", "запчасти", "разбор", "trade",
+    }:
+        return None
+    specs = _specs(ad)
+    iphone = _iphone_model(_PHONE_TITLE_PREFIX.sub("", normalized_title))
+    macbook = _macbook_model(title)
+    identity = iphone or macbook or _identity(ad, category)
+    if (
+        not identity
+        or (iphone and "storage" not in specs)
+        or (macbook and not _MACBOOK_REQUIRED.issubset(specs))
+        or ((iphone or macbook) and product_cluster_key(title, identity))
+    ):
+        return None
+    if iphone:
+        specs = {key: specs[key] for key in ("storage", "condition") if key in specs}
+    elif macbook:
+        specs = {key: specs[key] for key in _MACBOOK_REQUIRED | {"condition"} if key in specs}
+    elif category == _CAR_CATEGORY:
+        if (year := _year(ad, specs)) is None:
+            return None
+        specs["regdate"] = str(year)
+        specs["title_generation"] = _generation(title) or ""
+    # The exact signature keeps variants apart even after their raw ads leave the feed.
+    fingerprint = json.dumps(
+        [category, identity, bool(ad.get("company_ad")), specs], sort_keys=True,
+    )
+    return hashlib.sha256(fingerprint.encode()).hexdigest()
 
 
 def listing_draft_target(

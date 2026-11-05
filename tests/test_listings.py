@@ -143,7 +143,7 @@ def test_listings_endpoint_returns_items(monkeypatch) -> None:
     assert payload["normalized_query"] == "iphone"
     assert payload["listings"][0]["deal_verdict"] in VERDICTS
     assert isinstance(payload["listings"][0]["deal_reasons"], list)
-    assert payload["listings"][0]["liquidity"] is not None
+    assert payload["listings"][0]["liquidity"] is None
     assert payload["listings"][0]["flip_estimates"] is not None
 
 
@@ -448,7 +448,7 @@ def test_listings_endpoint_returns_market_signals(monkeypatch) -> None:
     assert first_item["fair_price_label"] is not None
     assert first_item["deal_score"] >= 0
     assert first_item["deal_verdict"] in VERDICTS
-    assert first_item["liquidity"] is not None
+    assert first_item["liquidity"] is None
     assert anomaly_item["anomaly_flags"] == ["too_expensive"]
     assert anomaly_item["region_name"] == "Регион 6"
 

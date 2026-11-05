@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from api.schemas import ListingDetailResponse, ListingField, ListingItem
+from api.schemas import LiquidityInsight, ListingDetailResponse, ListingField, ListingItem
 from api.services.aggregator import (
     PriceStats,
     cluster_price_stats,
@@ -16,7 +16,7 @@ from api.services.aggregator import (
     resolve_price_reference,
 )
 from api.services.currency_service import CurrencyService
-from api.services.deal_workflow import LiquidityInsight, compute_flip_estimates
+from api.services.deal_workflow import compute_flip_estimates
 from api.services.market_signals import (
     anomaly_labels,
     area_label,

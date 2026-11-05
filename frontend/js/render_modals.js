@@ -111,30 +111,39 @@ function createRenderModals(context) {
         domClear(elements.detailLiquidity);
         const liquidity = detail.liquidity;
         if (liquidity) {
-            const score = Math.round(liquidity.score);
             const summary = document.createElement("div");
             summary.className = "detail-liquidity-summary";
             const label = document.createElement("strong");
             label.textContent = liquidity.label;
-            const points = document.createElement("span");
-            points.className = "detail-liquidity-score mono";
-            points.textContent = `${score} / 100`;
-            summary.append(label, points);
+            summary.append(label);
+            elements.detailLiquidity.appendChild(summary);
 
-            const meter = document.createElement("meter");
-            meter.className = "detail-liquidity-meter";
-            meter.max = 100;
-            meter.value = score;
-            meter.setAttribute("aria-hidden", "true");
-            elements.detailLiquidity.append(summary, meter);
+            const reasons = [...(liquidity.reasons || [])];
+            if (Number.isFinite(liquidity.score) && liquidity.sample_size > 0) {
+                const points = document.createElement("span");
+                points.className = "detail-liquidity-score mono";
+                points.textContent = new Intl.NumberFormat("ru-BY", {
+                    style: "percent", maximumFractionDigits: 1,
+                }).format(liquidity.score / 100);
+                summary.appendChild(points);
 
-            const reasons = (liquidity.reasons || []).map(String).filter(Boolean);
+                const meter = document.createElement("meter");
+                meter.className = "detail-liquidity-meter";
+                meter.max = 100;
+                meter.value = liquidity.score;
+                meter.setAttribute("aria-hidden", "true");
+                elements.detailLiquidity.appendChild(meter);
+                reasons.unshift(
+                    `${liquidity.unavailable_count} из ${liquidity.sample_size} похожих объявлений `
+                    + `с близкой ценой были недоступны при проверке примерно через ${liquidity.window_days} дней.`,
+                );
+            }
             if (reasons.length) {
                 const list = document.createElement("ul");
                 list.className = "detail-liquidity-reasons";
                 for (const reason of reasons) {
                     const item = document.createElement("li");
-                    item.textContent = reason;
+                    item.textContent = String(reason);
                     list.appendChild(item);
                 }
                 elements.detailLiquidity.appendChild(list);

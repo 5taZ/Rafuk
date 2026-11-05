@@ -112,9 +112,12 @@ class FlipEstimate(BaseModel):
 
 
 class LiquidityInsight(BaseModel):
-    score: float
+    score: float | None = None
     label: str
     reasons: list[str] = Field(default_factory=list)
+    sample_size: int = 0
+    unavailable_count: int = 0
+    window_days: int = 7
 
 
 class WatchlistComparison(BaseModel):
