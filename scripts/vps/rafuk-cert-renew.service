@@ -1,0 +1,12 @@
+[Unit]
+Description=Renew the Rafuk public IP HTTPS certificate
+Requires=docker.service
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker run --rm -v /etc/letsencrypt:/etc/letsencrypt -v /var/www/rafuk-acme:/var/www/rafuk-acme certbot/certbot:v5.4.0 renew --quiet --no-random-sleep-on-renew
+ExecStartPost=/usr/sbin/nginx -t
+ExecStartPost=/usr/bin/systemctl reload nginx.service
+TimeoutStartSec=300

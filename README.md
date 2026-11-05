@@ -111,6 +111,9 @@ together and re-run `uv lock`.
 
 ## Production deployment
 
+The configured LC-1 VPS and Windows `host` commands are documented in
+[`docs/VPS.md`](./docs/VPS.md).
+
 Requires Docker Compose 2.20 or newer. Set `BOT_TOKEN`,
 `POSTGRES_PASSWORD` and `REDIS_PASSWORD` in `.env` (compose refuses to
 start without them); use URL-safe passwords such as `openssl rand -hex

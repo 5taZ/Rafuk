@@ -34,6 +34,32 @@ uv run alembic -c migrations/alembic.ini current
 If the test suite goes red, fix the code or roll back the change.
 Do **not** commit a red suite.
 
+## Live server — required deployment after changes
+
+The user's Mini App runs on the LC-1 VPS at **https://2.27.206.15**.
+Local edits, commits, `Start-Rafuk.cmd` and `host restart` do not upload
+new code. A task that changes the running application is complete only
+after its tested changes have been deployed and verified on this VPS.
+
+The user has authorized deploying completed changes to this existing
+server as part of each task. Do not ask again for ordinary deployments.
+After the required checks, rebuild frontend assets and bump their cache
+versions when applicable, then run `host deploy` from the repository root
+(or `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+Manage-RafukVps.ps1 deploy`). This uploads the current working files,
+builds the images, updates the running services and verifies public
+assets and readiness. Read `docs/VPS.md` for the deployment procedure.
+
+Deploy after a coherent, verified change, before the final reply; do not
+publish intermediate edits on every file save. Preserve other tasks'
+working changes. Keep production settings in `/opt/rafuk/shared/.env`;
+never upload the local `.env`, rotate secrets, delete volumes, or restore
+a database as part of an ordinary deployment. The existing permission
+rule for destructive migrations and new external services still applies.
+Report the deployed release and actual server verification. If deployment
+fails or access is unavailable, say explicitly that the VPS is not updated;
+do not report local success as a completed server change.
+
 ## Project shape
 
 | Folder | Role |

@@ -1,0 +1,19 @@
+x-python-image: &python-image
+  image: rafuk-app:${RAFUK_RELEASE:?Set RAFUK_RELEASE in the VPS environment}
+
+services:
+  migrate:
+    <<: *python-image
+  api:
+    <<: *python-image
+    deploy:
+      resources:
+        limits:
+          memory: 640M
+          cpus: "1.0"
+  bot:
+    <<: *python-image
+  scheduler:
+    <<: *python-image
+  frontend:
+    image: rafuk-frontend:${RAFUK_FRONTEND_RELEASE:-${RAFUK_RELEASE:?Set RAFUK_RELEASE in the VPS environment}}

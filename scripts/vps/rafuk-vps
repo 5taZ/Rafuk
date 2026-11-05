@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd /opt/rafuk/current
+compose=(docker compose --env-file /opt/rafuk/shared/.env -p rafuk-vps
+    -f docker-compose.yml -f /opt/rafuk/shared/compose.vps.yml --profile local-db)
+
+check_https() {
+    curl --fail --silent --show-error --retry 4 --retry-connrefused --retry-delay 2 \
+        --connect-timeout 5 --max-time 15 https://2.27.206.15/api/v1/health/ready >/dev/null
+    printf 'Rafuk is ready at https://2.27.206.15\n'
+}
+
+case "${1:-status}" in
+    up) "${compose[@]}" up -d --no-build --wait --wait-timeout 180 ;;
+    down) "${compose[@]}" stop --timeout 40 ;;
+    start)
+        systemctl start rafuk.service
+        check_https
+        ;;
+    restart)
+        systemctl restart rafuk.service
+        check_https
+        ;;
+    stop)
+        systemctl stop rafuk.service
+        printf 'Rafuk is stopped. The database and backups are saved.\n'
+        ;;
+    status)
+        "${compose[@]}" ps -a
+        if systemctl is-active --quiet rafuk.service; then check_https; fi
+        ;;
+    logs) "${compose[@]}" logs --tail 60 --no-color api bot scheduler frontend ;;
+    *) printf 'Usage: rafuk-vps {start|stop|restart|status|logs}\n' >&2; exit 2 ;;
+esac
