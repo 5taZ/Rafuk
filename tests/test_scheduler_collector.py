@@ -2845,7 +2845,8 @@ async def test_check_trackers_unexpected_error_is_isolated_to_its_key(
     async with sf() as session:
         cursors = dict((await session.execute(select(Tracker.id, Tracker.last_checked_at))).all())
     assert cursors[fresh_id] is None
-    assert as_utc(cursors[poisoned_id]) > now
+    # RV-SCH-02: the fixture and scheduler can read the same clock tick.
+    assert as_utc(cursors[poisoned_id]) >= now
     assert collector._tracker_failure_counts == {fresh_id: 1, poisoned_id: 1}
 
 
@@ -2888,7 +2889,7 @@ async def test_check_trackers_budget_defers_new_keys_but_finishes_current(
     assert _sent_chats(mock_bot) == [1501]
     async with sf() as session:
         rows = dict((await session.execute(select(Tracker.id, Tracker.last_checked_at))).all())
-    assert as_utc(rows[first_id]) > now
+    assert as_utc(rows[first_id]) >= now
     # Not touched — still due, it leads the next tick.
     assert as_utc(rows[deferred_id]) < now
 

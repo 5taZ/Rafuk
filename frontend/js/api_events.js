@@ -23,12 +23,8 @@ function createApiEvents(context) {
         renderSortButtons,
         renderDiscountButtons,
         renderDealInputs,
-        renderTrackerInputs,
         renderHistory,
         renderProfitDashboard,
-        renderTrackerEventFilters,
-        renderTrackerEvents,
-        renderTrackingHeroStats,
         renderLeads,
         setActiveView,
         setPanelOpen,
@@ -52,13 +48,8 @@ function createApiEvents(context) {
         clearAllLeads,
         loadWatchlist,
         clearAllWatchlist,
-        createTracker,
-        deleteTracker,
-        pauseTracker,
-        resumeTracker,
         openEditTracker,
         closeEditTracker: closeEditTrackerAction,
-        saveTracker,
         openListingDetail,
         openLeadDetail,
         openWatchlistDetail,
@@ -91,6 +82,8 @@ function createApiEvents(context) {
         loadAdminAudit,
         loadAIAnalysis,
         closeAIModal,
+        refreshTrackerEvents,
+        clearTrackerEvents,
         startTrackerRefresh,
         stopTrackerRefresh,
     } = context;
@@ -325,6 +318,7 @@ function createApiEvents(context) {
                 // FE-NEW-7: setActiveView already calls markDirty + renderAll
                 if (view === "tracking") {
                     void loadTrackers({ skipIfLoading: true });
+                    if (state.trackers.pane === "events") void refreshTrackerEvents();
                     startTrackerRefresh();
                 } else {
                     stopTrackerRefresh();
@@ -733,50 +727,59 @@ function createApiEvents(context) {
         });
     }
 
-    function bindTrackerEvents() {
-        // ── Tracker create button ────────────────────────────────────
-        elements.trackQueryButton?.addEventListener("click", () => {
-            const button = elements.trackQueryButton;
-            button.disabled = true;
-            button.classList.add('is-loading');
-            const originalText = button.textContent;
-            button.textContent = 'Создаю...';
-            void (async () => {
-                try {
-                    await createTracker();
-                } finally {
-                    button.disabled = false;
-                    button.classList.remove('is-loading');
-                    button.textContent = originalText;
-                }
-            })().catch((err) => { logClientError("tracker create failed", err); });
-        });
+    function selectTrackingPane(pane) {
+        state.trackers.pane = pane;
+        const tabs = elements.trackingTabs?.querySelectorAll("[data-tracking-pane]") || [];
+        for (const tab of tabs) {
+            const selected = tab.dataset.trackingPane === pane;
+            tab.setAttribute("aria-selected", String(selected));
+            tab.tabIndex = selected ? 0 : -1;
+        }
+        if (elements.trackerPanel) elements.trackerPanel.hidden = pane !== "trackers";
+        if (elements.trackerEventsSection) elements.trackerEventsSection.hidden = pane !== "events";
+        _resetConfirm("events");
+    }
+    context.selectTrackingPane = selectTrackingPane;
 
-        // ── Clear events button (double-confirm) ─────────────────────
+    function showTrackerEvents(trackerId = null) {
+        state.trackers.eventFilterTrackerId = trackerId;
+        state.trackers.eventFilter = "all";
+        selectTrackingPane("events");
+        elements.trackingTabs?.querySelector('[data-tracking-pane="events"]')?.focus();
+        void refreshTrackerEvents();
+    }
+
+    function bindTrackerEvents() {
+        elements.trackQueryButton?.addEventListener("click", () => { void openEditTracker(); });
+        if (elements.trackingTabs) bindRovingTablist(elements.trackingTabs);
+        for (const tab of elements.trackingTabs?.querySelectorAll("[data-tracking-pane]") || []) {
+            tab.addEventListener("click", () => {
+                const pane = tab.dataset.trackingPane;
+                if (state.trackers.pane === pane) return;
+                selectTrackingPane(pane);
+                if (pane === "events") void refreshTrackerEvents();
+            });
+        }
+
+        elements.trackerEventTrackerSelect?.addEventListener("change", (event) => {
+            const value = event.currentTarget.value;
+            state.trackers.eventFilterTrackerId = value ? Number(value) : null;
+            _resetConfirm("events");
+            void refreshTrackerEvents();
+        });
+        elements.trackerEventTypeSelect?.addEventListener("change", (event) => {
+            state.trackers.eventFilter = event.currentTarget.value;
+            _resetConfirm("events");
+            void refreshTrackerEvents();
+        });
+        elements.refreshTrackerEventsButton?.addEventListener("click", () => {
+            _resetConfirm("events");
+            void refreshTrackerEvents();
+        });
         elements.clearEventsButton?.addEventListener("click", () => {
-            void (async () => {
-                if (elements.clearEventsButton.hidden || state.trackers.events.length === 0) {
-                    showToast("Нет событий для удаления");
-                    return;
-                }
-                if (!_confirmTap("events", elements.clearEventsButton)) return;
-                try {
-                    await deleteJson("/api/v1/tracker-events");
-                } catch (err) {
-                    // FR-10: clearing only locally claimed success, then the
-                    // next 30 s refresh brought every event back.
-                    showToast(err?.message || "Не удалось очистить события", "error");
-                    return;
-                }
-                state.trackers.events = [];
-                showToast("События очищены");
-                renderTrackerEvents();
-                // Refresh the "N событий" hero badge so the count drops
-                // to 0 immediately instead of waiting for a page reload.
-                if (typeof renderTrackingHeroStats === "function") {
-                    renderTrackingHeroStats();
-                }
-            })();
+            const button = elements.clearEventsButton;
+            if (button.hidden || button.disabled || !_confirmTap("events", button)) return;
+            void clearTrackerEvents();
         });
 
         // ── Clear all leads button (double-confirm) ──────────────────
@@ -803,73 +806,6 @@ function createApiEvents(context) {
             })();
         });
 
-        // ── Tracker filter inputs ────────────────────────────────────
-        elements.trackerMinDiscountInput?.addEventListener("input", () => {
-            const nextValue = Number(elements.trackerMinDiscountInput.value);
-            state.trackers.minDiscountPercent = nextValue > 0 ? nextValue : null;
-        });
-
-        elements.trackerMaxPriceInput?.addEventListener("input", () => {
-            const rawValue = elements.trackerMaxPriceInput.value.trim();
-            if (!rawValue) {
-                state.trackers.maxPriceByn = null;
-                return;
-            }
-            const nextValue = Number(rawValue);
-            state.trackers.maxPriceByn = Number.isFinite(nextValue) ? Math.abs(nextValue) : null;
-        });
-
-        elements.trackerSellerSelect?.addEventListener("change", () => {
-            state.trackers.sellerType = elements.trackerSellerSelect.value;
-        });
-
-        elements.trackerConditionSelect?.addEventListener("change", () => {
-            state.trackers.condition = elements.trackerConditionSelect.value;
-        });
-
-        elements.trackerRegionSelect?.addEventListener("change", () => {
-            state.trackers.regionName = elements.trackerRegionSelect.value;
-        });
-
-        // ── Edit tracker modal ───────────────────────────────────────
-        elements.closeEditModal?.addEventListener("click", () => {
-            closeEditTrackerAction();
-        });
-        elements.cancelEditBtn?.addEventListener("click", () => {
-            closeEditTrackerAction();
-        });
-        elements.saveTrackerBtn?.addEventListener("click", () => {
-            const button = elements.saveTrackerBtn;
-            button.disabled = true;
-            button.classList.add('is-loading');
-            const originalText = button.textContent;
-            button.textContent = 'Сохраняю...';
-            void (async () => {
-                try {
-                    await saveTracker();
-                } finally {
-                    button.disabled = false;
-                    button.classList.remove('is-loading');
-                    button.textContent = originalText;
-                }
-            })().catch((err) => { logClientError("save tracker failed", err); });
-        });
-
-        elements.editTrackerModal?.addEventListener("click", (event) => {
-            if (event.target === elements.editTrackerModal) {
-                closeEditTrackerAction();
-            }
-        });
-
-        // ── Tracker event filter buttons ─────────────────────────────
-        for (const button of elements.trackerEventFilterButtons || []) {
-            button.addEventListener("click", () => {
-                _resetConfirm("events");
-                state.trackers.eventFilter = button.dataset.eventFilter || "all";
-                renderTrackerEventFilters();
-                renderTrackerEvents();
-            });
-        }
     }
 
     function bindModalEvents() {
@@ -1058,5 +994,6 @@ function createApiEvents(context) {
 
     return {
         bindEvents,
+        showTrackerEvents,
     };
 }

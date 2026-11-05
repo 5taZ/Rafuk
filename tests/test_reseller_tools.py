@@ -352,16 +352,11 @@ _UI_SELLER_MEANING = {"Частное лицо": "private", "Магазин": "s
 _UI_CONDITION_MEANING = {"Новый": "new", "Б/у": "used"}
 
 
-def _ui_option_values(*select_ids: str) -> set[str]:
+def _ui_option_values(select_id: str) -> set[str]:
     soup = BeautifulSoup(_INDEX_HTML.read_text(encoding="utf-8"), "html.parser")
-    values: set[str] = set()
-    for select_id in select_ids:
-        select = soup.find("select", id=select_id)
-        assert select is not None, select_id
-        values |= {
-            option.get("value", "") for option in select.find_all("option")
-        } - {""}
-    return values
+    select = soup.find("select", id=select_id)
+    assert select is not None, select_id
+    return {option.get("value", "") for option in select.find_all("option")} - {""}
 
 
 def _kufar_ad(*, shop: bool, condition_code: str) -> dict:
@@ -389,8 +384,8 @@ def test_ui_seller_and_condition_values_reach_matches_tracker_filters() -> None:
     "new"/"used", so a "private + new" tracker alerted on used shop lots.
     Values are read from frontend/index.html, pushed through the create
     schema like the API does, and then matched."""
-    seller_values = _ui_option_values("tracker-seller-select", "edit-seller-select")
-    condition_values = _ui_option_values("tracker-condition-select", "edit-condition-select")
+    seller_values = _ui_option_values("edit-seller-select")
+    condition_values = _ui_option_values("edit-condition-select")
     assert seller_values == set(_UI_SELLER_MEANING)
     assert condition_values == set(_UI_CONDITION_MEANING)
 

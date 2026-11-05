@@ -1,426 +1,448 @@
 /**
- * api_trackers.js — Tracker CRUD, event feed, and auto-refresh.
- *
- * Manages tracker lifecycle: create, pause, resume, delete, edit,
- * plus the periodic background refresh of the tracker event feed.
+ * Tracker setup, lifecycle and feed requests.
  */
-
 function createApiTrackers(context) {
     const {
-        state,
-        elements,
-        hasTelegramInitData,
-        trapFocus,
-        renderAll,
-        renderTrackers,
-        renderTrackerEvents,
-        renderTrackerEventFilters,
-        renderTrackerStatus,
-        showToast,
-        getJson,
-        postJson,
-        deleteJson,
-        requestJson,
-        // OPUS-13 wave 74: dom_helpers ride through context because
-        // this file loads as a lazy <script> in _lazy_trackers_stub
-        // and can't see bundle-IIFE-scoped callables.
-        domEl,
-        openModalAnimated,
-        closeModalAnimated,
+        state, elements, hasTelegramInitData, renderTrackers, renderTrackerEvents,
+        showToast, getJson, postJson, deleteJson, requestJson, domEl,
+        openModalAnimated, closeModalAnimated,
     } = context;
+    const tracking = state.trackers;
+    let refreshTimer = null;
+    let feedRequest = null;
+    let feedScope = null;
+    let categoriesRequest = null;
+    let formBusy = false;
 
-    // ── Auto-refresh state ───────────────────────────────────────────────
-    let trackerRefreshTimer = null;
-    let trackerRefreshInFlight = false;
-    let editCategoriesController = null;
-    const TRACKER_REFRESH_MS = 30_000;
-
-    function categoryLabelFor(categoryId, fallback = null) {
-        if (categoryId == null) return null;
-        const category = state.filters.categories.find((cat) => Number(cat.id) === Number(categoryId));
-        return category?.label || fallback || null;
-    }
-
-    function currentCategoryPayload() {
-        const categoryId = state.filters.category == null ? null : Number(state.filters.category);
-        return {
-            category_id: Number.isFinite(categoryId) ? categoryId : null,
-            category_label: Number.isFinite(categoryId) ? categoryLabelFor(categoryId) : null,
-        };
-    }
-
-    function populateEditCategorySelect(tracker, categories, selected) {
-        const options = [domEl("option", { value: "", text: "Любая категория" })];
-        const seen = new Set();
-        if (tracker.category_id != null) {
-            seen.add(Number(tracker.category_id));
-            options.push(domEl("option", {
-                value: tracker.category_id,
-                text: tracker.category_label || `Категория ${tracker.category_id}`,
-            }));
-        }
-        for (const category of categories) {
-            const categoryId = Number(category.id);
-            if (!Number.isSafeInteger(categoryId) || categoryId < 1 || seen.has(categoryId)) continue;
-            seen.add(categoryId);
-            options.push(domEl("option", {
-                value: categoryId, text: category.label || `Категория ${categoryId}`,
-            }));
-        }
-        elements.editCategorySelect.replaceChildren(...options);
-        elements.editCategorySelect.value = selected;
-    }
-
-    async function loadEditCategories(tracker) {
-        const select = elements.editCategorySelect;
-        if (!select) return;
-        editCategoriesController?.abort();
-        const controller = new AbortController();
-        editCategoriesController = controller;
-        const { signal } = controller;
-        const status = elements.editCategoryStatus;
-        const setStatus = (message) => {
-            if (!status) return;
-            status.textContent = message;
-            status.hidden = !message;
-        };
-        const sameQuery = state.search.activeQuery?.trim().toLowerCase()
-            === tracker.query.trim().toLowerCase();
-        const knownCategories = sameQuery ? state.filters.categories || [] : [];
-        populateEditCategorySelect(tracker, knownCategories, String(tracker.category_id ?? ""));
-        setStatus("Загружаем категории…");
-        const params = new URLSearchParams({ query: tracker.query, strict_search: "false" });
-        try {
-            const stats = await getJson(`/api/v1/price-stats?${params}`, { signal });
-            if (signal.aborted) return;
-            populateEditCategorySelect(tracker, [...(stats.categories || []), ...knownCategories], select.value);
-            setStatus(select.options.length > 1 ? "" : "По этому запросу категории не найдены.");
-        } catch {
-            if (!signal.aborted) setStatus("Не удалось загрузить категории. Откройте настройки ещё раз.");
-        } finally {
-            if (editCategoriesController === controller) editCategoriesController = null;
-        }
-    }
-
-    function editCategoryPayload() {
-        const value = elements.editCategorySelect?.value || "";
-        if (!value) {
-            return { category_id: null, category_label: null };
-        }
-        const categoryId = Number(value);
-        if (!Number.isFinite(categoryId)) {
-            return { category_id: null, category_label: null };
-        }
-        const option = elements.editCategorySelect?.selectedOptions?.[0];
-        const label = option?.textContent?.trim() || categoryLabelFor(categoryId);
-        return {
-            category_id: categoryId,
-            category_label: label || null,
-        };
+    function stopTrackerRefresh() {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
     }
 
     function startTrackerRefresh() {
         stopTrackerRefresh();
-        trackerRefreshTimer = setInterval(() => {
-            void refreshTrackerEvents();
-        }, TRACKER_REFRESH_MS);
-    }
-
-    function stopTrackerRefresh() {
-        if (trackerRefreshTimer) {
-            clearInterval(trackerRefreshTimer);
-            trackerRefreshTimer = null;
-        }
-    }
-
-    async function refreshTrackerEvents() {
         if (!hasTelegramInitData()) return;
-        if (state.ui.activeView !== "tracking") return;
-        // FR-12: no background polling while hidden or still in flight.
-        if (document.hidden || trackerRefreshInFlight || state.trackers._loading) return;
-        trackerRefreshInFlight = true;
-        // FR-02: a loadTrackers() started meanwhile owns the list.
-        const requestId = state.trackers._requestId;
-        try {
-            const [trackersResult, eventsResult] = await Promise.allSettled([
-                getJson("/api/v1/trackers"),
-                getJson("/api/v1/tracker-events"),
-            ]);
-            // TG-16: once initData has expired every poll is another 401
-            // (and a WARNING in the API log); the session banner already
-            // asks the user to reopen the Mini App.
-            if ([trackersResult, eventsResult].some((r) => r.status === "rejected"
-                && (r.reason?.sessionExpired || r.reason?.accountDeleted))) {
-                stopTrackerRefresh();
-                return;
-            }
-            if (requestId !== state.trackers._requestId) return;
-            if (trackersResult.status === "fulfilled") {
-                state.trackers.items = trackersResult.value;
-                renderTrackers();
-            }
-            if (eventsResult.status === "fulfilled") {
-                state.trackers.events = eventsResult.value;
-                renderTrackerEvents();
-                renderTrackerEventFilters();
-            }
-        } catch (err) {
-            // Background refresh failed — will retry on next interval
-        } finally {
-            trackerRefreshInFlight = false;
-        }
+        refreshTimer = setInterval(() => {
+            if (state.ui.activeView !== "tracking" || document.hidden) return;
+            void loadTrackers({ skipIfLoading: true, background: true });
+            if (tracking.pane === "events") void refreshTrackerEvents({ background: true });
+        }, 30_000);
     }
 
-    // ── Load trackers + events ───────────────────────────────────────────
-    async function loadTrackers({ skipIfLoading = false } = {}) {
-        if (skipIfLoading && state.trackers._loading) return;
+    async function loadTrackers({ skipIfLoading = false, background = false } = {}) {
         if (!hasTelegramInitData()) {
-            state.trackers.items = [];
-            state.trackers.events = [];
-            state.trackers.status = "";
             renderTrackers();
-            renderTrackerEvents();
-            renderTrackerStatus();
             return;
         }
-
-        // FR-02: keep the last good list on screen (skeletons only when
-        // there is nothing to show yet) — wiping it first made the
-        // duplicate check in createTracker() look at [] after a failed
-        // reload. Stale-response guard as in loadLeads().
-        const requestId = (state.trackers._requestId = ((state.trackers._requestId || 0) + 1) % 1_000_000);
-        state.trackers._loading = true;
-        renderTrackers();
-
-        const [trackersResult, eventsResult] = await Promise.allSettled([
-            getJson("/api/v1/trackers"),
-            getJson("/api/v1/tracker-events"),
-        ]);
-        if (requestId !== state.trackers._requestId) return;
-
-        state.trackers._loading = false;
-        if (trackersResult.status === "fulfilled") state.trackers.items = trackersResult.value;
-        if (eventsResult.status === "fulfilled") state.trackers.events = eventsResult.value;
-        state.trackers.loadError = trackersResult.status === "rejected"
-            ? (trackersResult.reason?.message || "Не удалось загрузить трекеры.")
-            : null;
-
-        const failures = [trackersResult, eventsResult].filter((r) => r.status === "rejected");
-        if (failures.length > 0 && context.showToast) {
-            context.showToast("Не удалось загрузить некоторые данные", "error", 3000);
-        }
-
-        if (trackersResult.status === "rejected") {
-            state.trackers.status = trackersResult.reason?.message || "Не удалось загрузить трекеры.";
-            state.trackers.statusKind = "error";
-        } else {
-            state.trackers.status = "";
-            state.trackers.statusKind = "info";
-        }
-
-        renderTrackers();
-        renderTrackerEvents();
-        renderTrackerStatus();
-    }
-
-    // ── Create tracker ───────────────────────────────────────────────────
-    async function createTracker() {
-        if (!hasTelegramInitData()) {
-            showToast("Доступно только в Telegram");
-            return;
-        }
-
-        // RV-FE-03: «Следить» tracks the results on screen; a draft that
-        // was never searched must not become a tracker.
-        const query = (state.search.activeQuery || "").trim();
-        if (!query) {
-            showToast(state.search.draft ? "Сначала найдите объявления по запросу" : "Сначала введите запрос");
-            return;
-        }
-
-        const normalizedQuery = query.toLocaleLowerCase("ru-RU");
-        const categoryPayload = currentCategoryPayload();
-        const duplicate = state.trackers.items.find(
-            (t) => t.query.trim().toLocaleLowerCase("ru-RU") === normalizedQuery
-                && Boolean(t.strict_mode) === Boolean(state.search.strictSearch)
-                && (t.category_id ?? null) === categoryPayload.category_id
-        );
-        if (duplicate) {
-            showToast("Такой трекер уже существует");
-            return;
-        }
-
+        if (skipIfLoading && tracking._loading) return;
+        const requestId = ++tracking._requestId;
+        tracking._loading = true;
+        if (!tracking.items.length && !background) renderTrackers();
+        let changed = !background;
         try {
-            state.trackers.creating = true;
-            if (context.renderAll) context.renderAll();
-            await postJson("/api/v1/trackers", {
-                query,
-                strict_mode: state.search.strictSearch,
-                interval_min: 15,
-                category_id: categoryPayload.category_id,
-                category_label: categoryPayload.category_label,
-                min_discount_percent: state.trackers.minDiscountPercent,
-                max_price_byn: state.trackers.maxPriceByn,
-                seller_type: state.trackers.sellerType || null,
-                condition: state.trackers.condition || null,
-                region_name: state.trackers.regionName || null,
-            });
-            showToast("Трекер добавлен", "success");
-            await loadTrackers();
-            renderAll();
+            const items = await getJson("/api/v1/trackers");
+            if (requestId !== tracking._requestId) return;
+            changed ||= Boolean(tracking.loadError) || JSON.stringify(items) !== JSON.stringify(tracking.items);
+            tracking.items = items;
+            tracking.loadError = null;
         } catch (error) {
-            state.trackers.status = error.message || "Не удалось создать трекер.";
-            state.trackers.statusKind = "error";
-            renderTrackerStatus();
-        } finally {
-            state.trackers.creating = false;
-            if (context.renderAll) context.renderAll();
-        }
-    }
-
-    // ── Delete tracker ───────────────────────────────────────────────────
-    async function deleteTracker(trackerId) {
-        if (!trackerId) {
-            return;
-        }
-
-        try {
-            await deleteJson(`/api/v1/trackers/${trackerId}`);
-            showToast("Трекер удалён");
-            await loadTrackers();
-            renderAll();
-        } catch (error) {
-            state.trackers.status = error.message || "Не удалось удалить трекер.";
-            state.trackers.statusKind = "error";
-            renderTrackerStatus();
-        }
-    }
-
-    // ── Pause / Resume tracker ───────────────────────────────────────────
-    async function pauseTracker(trackerId) {
-        if (!hasTelegramInitData()) {
-            showToast("Доступно только в Telegram");
-            return;
-        }
-        try {
-            await postJson(`/api/v1/trackers/${trackerId}/pause`);
-            showToast("Трекер приостановлен");
-            await loadTrackers();
-            renderAll();
-        } catch (error) {
-            showToast(error.message || "Не удалось приостановить трекер");
-        }
-    }
-
-    async function resumeTracker(trackerId) {
-        if (!hasTelegramInitData()) {
-            showToast("Доступно только в Telegram");
-            return;
-        }
-        try {
-            await postJson(`/api/v1/trackers/${trackerId}/resume`);
-            showToast("Трекер возобновлен");
-            await loadTrackers();
-            renderAll();
-        } catch (error) {
-            showToast(error.message || "Не удалось возобновить трекер");
-        }
-    }
-
-    // ── Edit tracker modal ───────────────────────────────────────────────
-    function openEditTracker(trackerId) {
-        const tracker = state.trackers.items.find((t) => t.id === trackerId);
-        if (!tracker) {
-            showToast("Трекер не найден");
-            return;
-        }
-
-        state.trackers.editingId = trackerId;
-
-        if (elements.editTrackerQuery) elements.editTrackerQuery.value = tracker.query;
-        if (elements.editStrictModeToggle) elements.editStrictModeToggle.checked = Boolean(tracker.strict_mode);
-        if (elements.editMinDiscountInput) elements.editMinDiscountInput.value = tracker.min_discount_percent || "";
-        if (elements.editMaxPriceInput) elements.editMaxPriceInput.value = tracker.max_price_byn ?? "";
-        if (elements.editSellerSelect) elements.editSellerSelect.value = tracker.seller_type || "";
-        if (elements.editConditionSelect) elements.editConditionSelect.value = tracker.condition || "";
-        if (elements.editRegionSelect) elements.editRegionSelect.value = tracker.region_name || "";
-        void loadEditCategories(tracker);
-
-        if (elements.editTrackerModal) {
-            if (state.misc.modalCleanup) {
-                state.misc.modalCleanup();
-                state.misc.modalCleanup = null;
+            if (requestId !== tracking._requestId) return;
+            if (error.sessionExpired || error.accountDeleted) stopTrackerRefresh();
+            if (!background || !tracking.items.length) {
+                tracking.loadError = "Не удалось загрузить трекеры.";
+                changed = true;
             }
-            // FE-H4/UX-H1: openModalAnimated() already installs a
-            // focus trap (see dom_helpers.js). The extra trapFocus()
-            // call we used to make here registered a second keydown
-            // listener that both handled Tab, leading to focus fights
-            // and a leaked listener once closeModalAnimated cleaned up
-            // only _focusTrapCleanup.
-            openModalAnimated(elements.editTrackerModal);
+        } finally {
+            if (requestId === tracking._requestId) {
+                tracking._loading = false;
+                if (changed) renderTrackers();
+            }
         }
     }
 
-    function closeEditTracker() {
-        editCategoriesController?.abort();
-        editCategoriesController = null;
-        if (state.misc.modalCleanup) {
-            state.misc.modalCleanup();
-            state.misc.modalCleanup = null;
-        }
-        state.trackers.editingId = null;
-        if (elements.editTrackerModal) closeModalAnimated(elements.editTrackerModal);
-    }
-
-    async function saveTracker() {
-        if (!hasTelegramInitData() || !state.trackers.editingId) {
-            showToast("Ошибка");
+    async function refreshTrackerEvents({ background = false } = {}) {
+        if (!hasTelegramInitData()) {
+            renderTrackerEvents();
             return;
+        }
+        if (tracking.clearingEvents || (background && feedRequest)) return;
+        const params = new URLSearchParams({ limit: String(tracking.eventLimit) });
+        if (tracking.eventFilterTrackerId != null) params.set("tracker_id", tracking.eventFilterTrackerId);
+        if (tracking.eventFilter !== "all") params.set("event_type", tracking.eventFilter);
+        const scope = params.toString();
+        if (feedRequest && feedScope === scope && tracking.eventsLoading) return;
+        if (scope !== feedScope) {
+            tracking.events = [];
+            tracking.eventsError = null;
+            feedScope = scope;
+        }
+        feedRequest?.abort();
+        const controller = new AbortController();
+        feedRequest = controller;
+        let changed = !background;
+        if (!background) {
+            tracking.eventsLoading = true;
+            tracking.eventsError = null;
+            renderTrackerEvents();
         }
 
         try {
-            const categoryPayload = editCategoryPayload();
-            await requestJson(`/api/v1/trackers/${state.trackers.editingId}`, {
+            const events = await getJson(`/api/v1/tracker-events?${scope}`, { signal: controller.signal });
+            if (controller.signal.aborted) return;
+            changed ||= Boolean(tracking.eventsError) || JSON.stringify(events) !== JSON.stringify(tracking.events);
+            tracking.events = events;
+            for (const event of events) tracking.eventSources.set(event.tracker_id, event.query);
+            tracking.eventsError = null;
+        } catch (error) {
+            if (controller.signal.aborted) return;
+            if (error.sessionExpired || error.accountDeleted) stopTrackerRefresh();
+            if (!background || !tracking.events.length) {
+                tracking.eventsError = "Не удалось загрузить ленту.";
+                changed = true;
+            }
+        } finally {
+            if (feedRequest === controller) {
+                feedRequest = null;
+                tracking.eventsLoading = false;
+                if (changed) renderTrackerEvents();
+            }
+        }
+    }
+
+    async function clearTrackerEvents() {
+        if (tracking.clearingEvents || tracking.eventFilterTrackerId != null || tracking.eventFilter !== "all") return;
+        tracking.clearingEvents = true;
+        renderTrackerEvents();
+        try {
+            await deleteJson("/api/v1/tracker-events");
+            feedRequest?.abort();
+            feedRequest = null;
+            tracking.eventsLoading = false;
+            tracking.eventsError = null;
+            tracking.events = [];
+            tracking.eventSources.clear();
+            showToast("Лента очищена", "success");
+        } catch (error) {
+            showToast(error.message || "Не удалось очистить ленту", "error");
+        } finally {
+            tracking.clearingEvents = false;
+            await Promise.all([loadTrackers(), refreshTrackerEvents()]);
+        }
+    }
+
+    const filterKey = (value) => String(value ?? "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/g, " ");
+    const sellerLabel = { private: "Частное лицо", "частное лицо": "Частное лицо", "частник": "Частное лицо", shop: "Магазин", "магазин": "Магазин" };
+    const conditionLabel = { new: "Новый", "новый": "Новый", used: "Б/у", "б/у": "Б/у" };
+    const displayFilter = (value, labels) => (labels && Object.hasOwn(labels, filterKey(value)) ? labels[filterKey(value)] : value) || "";
+
+    function setSelect(select, value, labels) {
+        select.querySelector("[data-legacy-option]")?.remove();
+        const label = displayFilter(value, labels);
+        if (label && !Array.from(select.options).some((option) => option.value === label)) {
+            select.appendChild(domEl("option", { value: label, text: label, dataset: { legacyOption: "true" } }));
+        }
+        select.value = label;
+    }
+
+    function setFormError(message = "") {
+        elements.trackerFormError.textContent = message;
+        elements.trackerFormError.hidden = !message;
+    }
+
+    function setCategoryStatus(message = "") {
+        elements.editCategoryStatus.textContent = message;
+        elements.editCategoryStatus.hidden = !message;
+    }
+
+    function showCategories(categories = [], selected = null) {
+        const options = [domEl("option", { value: "", text: "Любая категория" })];
+        const seen = new Set();
+        for (const category of categories) {
+            const id = Number(category.id);
+            if (!Number.isSafeInteger(id) || id < 1 || seen.has(id)) continue;
+            seen.add(id);
+            options.push(domEl("option", { value: id, text: category.label || `Категория ${id}` }));
+        }
+        elements.editCategorySelect.replaceChildren(...options);
+        elements.editCategorySelect.value = String(selected ?? "");
+    }
+
+    function cancelCategoryRequest() {
+        categoriesRequest?.abort();
+        categoriesRequest = null;
+        elements.trackerLoadCategories.disabled = false;
+        setCategoryStatus();
+    }
+
+    async function loadTrackerCategories() {
+        const query = elements.editTrackerQuery.value.trim();
+        if (!query) {
+            setCategoryStatus("Сначала введите запрос.");
+            elements.editTrackerQuery.focus();
+            return;
+        }
+        cancelCategoryRequest();
+        const controller = new AbortController();
+        categoriesRequest = controller;
+        elements.trackerLoadCategories.disabled = true;
+        setCategoryStatus("Ищем категории…");
+        try {
+            const params = new URLSearchParams({ query, strict_search: "false" });
+            const stats = await getJson(`/api/v1/price-stats?${params}`, { signal: controller.signal });
+            if (controller.signal.aborted) return;
+            const select = elements.editCategorySelect;
+            const selected = select.value;
+            const saved = selected ? [{ id: selected, label: select.selectedOptions[0].textContent }] : [];
+            showCategories([...saved, ...(stats.categories || [])], selected);
+            setCategoryStatus(select.options.length > 1 ? "" : "По этому запросу категории не найдены.");
+        } catch (error) {
+            if (!controller.signal.aborted) setCategoryStatus(error.message || "Не удалось подобрать категории.");
+        } finally {
+            if (categoriesRequest === controller) {
+                categoriesRequest = null;
+                elements.trackerLoadCategories.disabled = false;
+            }
+        }
+    }
+
+    function useCurrentSearch() {
+        const query = state.search.activeQuery?.trim();
+        if (!query) return;
+        cancelCategoryRequest();
+        elements.editTrackerQuery.value = query;
+        elements.editStrictModeToggle.checked = state.search.strictSearch;
+        const id = state.filters.category;
+        const known = state.filters.categories || [];
+        const missing = id != null && !known.some((category) => Number(category.id) === Number(id));
+        showCategories(missing ? [{ id }, ...known] : known, id);
+        if (id != null || state.search.strictSearch) elements.trackerAdvanced.open = true;
+        elements.editTrackerQuery.focus();
+    }
+
+    function openEditTracker(trackerId = null) {
+        if (!hasTelegramInitData() || formBusy) return;
+        const tracker = tracking.items.find((item) => item.id === trackerId);
+        if (trackerId != null && !tracker) return;
+        const editing = Boolean(tracker);
+        tracking.editingId = trackerId;
+        cancelCategoryRequest();
+        setFormError();
+        elements.editTrackerTitle.textContent = editing ? "Настройки трекера" : "Новый трекер";
+        elements.saveTrackerBtn.textContent = editing ? "Сохранить" : "Запустить автопоиск";
+        elements.editTrackerQuery.value = tracker?.query ?? "";
+        elements.editTrackerQuery.readOnly = editing;
+        elements.editMaxPriceInput.value = tracker?.max_price_byn ?? "";
+        elements.editMinDiscountInput.value = tracker?.min_discount_percent || "";
+        elements.editStrictModeToggle.checked = Boolean(tracker?.strict_mode);
+        setSelect(elements.editConditionSelect, tracker?.condition, conditionLabel);
+        setSelect(elements.editSellerSelect, tracker?.seller_type, sellerLabel);
+        setSelect(elements.editRegionSelect, tracker?.region_name);
+        const savedCategory = tracker?.category_id != null ? [{ id: tracker.category_id, label: tracker.category_label }] : [];
+        showCategories(savedCategory, tracker?.category_id);
+        elements.trackerAdvanced.open = Boolean(tracker?.condition || tracker?.seller_type ||
+            tracker?.strict_mode || tracker?.min_discount_percent || savedCategory.length);
+        const searchQuery = state.search.activeQuery?.trim();
+        elements.trackerUseSearch.hidden = editing || !searchQuery;
+        elements.trackerUseSearch.textContent = searchQuery ? `Из поиска · ${searchQuery}` : "";
+        elements.trackerManage.hidden = !editing;
+        elements.trackerDelete.open = false;
+        elements.toggleTrackerPause.textContent = tracker?.paused ? "Возобновить" : "Поставить на паузу";
+        const interval = tracker?.interval_min ?? 15;
+        elements.trackerFormNote.textContent = tracker?.paused
+            ? "Трекер на паузе. Возобновите его, чтобы снова получать уведомления."
+            : `Проверка каждые ${interval} мин. Уведомления приходят в чат бота.`;
+        openModalAnimated(elements.editTrackerModal);
+        if (!editing) elements.editTrackerQuery.focus();
+    }
+
+    function closeEditTracker(options) {
+        if (formBusy || elements.editTrackerModal?.hidden) return;
+        cancelCategoryRequest();
+        tracking.editingId = null;
+        closeModalAnimated(elements.editTrackerModal, options);
+    }
+
+    function readFilters() {
+        const select = elements.editCategorySelect;
+        const price = elements.editMaxPriceInput.value;
+        return {
+            strict_mode: elements.editStrictModeToggle.checked,
+            category_id: select.value ? Number(select.value) : null,
+            category_label: select.value ? select.selectedOptions[0].textContent : null,
+            min_discount_percent: Number(elements.editMinDiscountInput.value) || null,
+            max_price_byn: price === "" ? null : Number(price),
+            condition: elements.editConditionSelect.value || null,
+            seller_type: elements.editSellerSelect.value || null,
+            region_name: elements.editRegionSelect.value || null,
+        };
+    }
+
+    function matchesTracker(tracker, query, filters) {
+        return filterKey(tracker.query) === filterKey(query)
+            && Boolean(tracker.strict_mode) === filters.strict_mode
+            && (tracker.category_id ?? null) === filters.category_id
+            && (tracker.min_discount_percent || null) === filters.min_discount_percent
+            && (tracker.max_price_byn ?? null) === filters.max_price_byn
+            && displayFilter(tracker.seller_type, sellerLabel) === (filters.seller_type || "")
+            && displayFilter(tracker.condition, conditionLabel) === (filters.condition || "")
+            && filterKey(tracker.region_name) === filterKey(filters.region_name);
+    }
+
+    async function applyTrackerAction(action, { successMessage, button, pendingLabel, create = false, remove = false }) {
+        if (formBusy) return;
+        const id = tracking.editingId;
+        const label = button.textContent;
+        formBusy = true;
+        setFormError();
+        button.textContent = pendingLabel;
+        elements.trackerForm.setAttribute("aria-busy", "true");
+        const controls = [elements.saveTrackerBtn, elements.cancelEditBtn, elements.closeEditModal,
+            elements.toggleTrackerPause, elements.trackerMarket, elements.deleteTrackerButton];
+        for (const control of controls) control.disabled = true;
+        let success = false;
+        try {
+            const updated = await action();
+            if (remove) {
+                tracking.items = tracking.items.filter((item) => item.id !== id);
+            } else if (updated?.id != null) {
+                const previous = tracking.items.find((item) => item.id === updated.id);
+                if (previous) {
+                    const { event_count, avg_events_per_day, last_event_at } = previous;
+                    Object.assign(previous, updated, { event_count, avg_events_per_day, last_event_at });
+                } else {
+                    tracking.items = [updated, ...tracking.items];
+                }
+            }
+            success = true;
+        } catch (error) {
+            setFormError(error.status === 409 ? "Трекер с такими настройками уже есть."
+                : error.message || "Не удалось выполнить действие. Попробуйте ещё раз.");
+        } finally {
+            button.textContent = label;
+            for (const control of controls) control.disabled = false;
+            elements.trackerForm.removeAttribute("aria-busy");
+            formBusy = false;
+        }
+        if (success) {
+            if (create) context.selectTrackingPane?.("trackers");
+            closeEditTracker(id != null ? {
+                onClosed: () => {
+                    const edit = elements.trackersList?.querySelector(`[data-tracker-id="${id}"] [data-role="edit"]`);
+                    (remove ? elements.trackQueryButton : edit || elements.trackQueryButton)?.focus();
+                },
+            } : undefined);
+            showToast(successMessage, "success");
+            await loadTrackers();
+        }
+    }
+
+    function saveTracker() {
+        if (formBusy) return;
+        const query = elements.editTrackerQuery.value.trim();
+        if (!query) {
+            setFormError("Введите название или модель того, что хотите найти.");
+            elements.editTrackerQuery.focus();
+            return;
+        }
+        const id = tracking.editingId;
+        const filters = readFilters();
+        if (id == null && tracking.items.some((item) =>
+            matchesTracker(item, query, filters) && !item.alert_price_threshold && !item.alert_discount_percent)) {
+            setFormError("Трекер с такими настройками уже есть. Откройте его в списке «Мои трекеры».");
+            return;
+        }
+        const save = id == null
+            ? () => postJson("/api/v1/trackers", { query, interval_min: 15, ...filters })
+            : () => requestJson(`/api/v1/trackers/${id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    strict_mode: elements.editStrictModeToggle?.checked,
-                    category_id: categoryPayload.category_id,
-                    category_label: categoryPayload.category_label,
-                    min_discount_percent: Number(elements.editMinDiscountInput?.value) || null,
-                    max_price_byn: elements.editMaxPriceInput?.value ? Number(elements.editMaxPriceInput.value) : null,
-                    seller_type: elements.editSellerSelect?.value || null,
-                    condition: elements.editConditionSelect?.value || null,
-                    region_name: elements.editRegionSelect?.value || null,
-                }),
+                body: JSON.stringify(filters),
             });
-
-            showToast("Трекер обновлен");
-            closeEditTracker();
-            await loadTrackers();
-            renderAll();
-        } catch (error) {
-            showToast(error.message || "Не удалось обновить трекер");
-        }
+        return applyTrackerAction(save, {
+            successMessage: id == null ? "Автопоиск запущен" : "Настройки сохранены",
+            button: elements.saveTrackerBtn,
+            pendingLabel: "Сохраняем…",
+            create: id == null,
+        });
     }
 
+    function togglePause() {
+        const tracker = tracking.items.find((item) => item.id === tracking.editingId);
+        if (!tracker) return;
+        const action = tracker.paused ? "resume" : "pause";
+        void applyTrackerAction(() => postJson(`/api/v1/trackers/${tracker.id}/${action}`), {
+            successMessage: tracker.paused ? "Автопоиск возобновлён" : "Автопоиск на паузе",
+            button: elements.toggleTrackerPause,
+            pendingLabel: "Обновляем…",
+        });
+    }
+
+    function deleteTracker() {
+        const id = tracking.editingId;
+        if (id == null || !elements.trackerDelete.open) return;
+        void applyTrackerAction(() => deleteJson(`/api/v1/trackers/${id}`), {
+            successMessage: "Трекер удалён",
+            button: elements.deleteTrackerButton,
+            pendingLabel: "Удаляем…",
+            remove: true,
+        });
+    }
+
+    function openTrackerMarket() {
+        const tracker = tracking.items.find((item) => item.id === tracking.editingId);
+        if (!tracker) return;
+        elements.searchInput.value = tracker.query;
+        state.search.draft = tracker.query;
+        state.search.strictSearch = Boolean(tracker.strict_mode);
+        const seller = displayFilter(tracker.seller_type, sellerLabel);
+        const condition = displayFilter(tracker.condition, conditionLabel);
+        state.filters.category = tracker.category_id ?? null;
+        state.filters.pendingCategory = tracker.category_id ?? null;
+        state.filters.categories = tracker.category_id
+            ? [{ id: tracker.category_id, label: tracker.category_label || `Категория ${tracker.category_id}`, count: 0 }]
+            : [];
+        state.filters.sellerType = state.filters.pendingSellerType = seller === "Частное лицо" ? "private" : seller === "Магазин" ? "shop" : "";
+        state.filters.condition = state.filters.pendingCondition = condition === "Новый" ? "new" : condition === "Б/у" ? "used" : "";
+        state.filters.regionName = state.filters.pendingRegionName = tracker.region_name || "";
+        state.filters.maxPrice = state.filters.pendingMaxPrice = tracker.max_price_byn ?? null;
+        state.filters.minPrice = state.filters.pendingMinPrice = null;
+        state.filters.filterDropdownOpen = false;
+        closeEditTracker();
+        context.renderStrictSearch();
+        context.markDirty("categories");
+        void context.search("overview", { keepFilters: true });
+    }
+
+    elements.trackerForm?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        void saveTracker();
+    });
+    elements.trackerForm?.addEventListener("invalid", (event) => {
+        if (elements.trackerAdvanced.contains(event.target)) elements.trackerAdvanced.open = true;
+    }, true);
+    elements.editTrackerQuery?.addEventListener("input", () => {
+        cancelCategoryRequest();
+        showCategories();
+        setFormError();
+    });
+    elements.trackerUseSearch?.addEventListener("click", useCurrentSearch);
+    elements.trackerLoadCategories?.addEventListener("click", loadTrackerCategories);
+    elements.toggleTrackerPause?.addEventListener("click", togglePause);
+    elements.trackerMarket?.addEventListener("click", openTrackerMarket);
+    elements.deleteTrackerButton?.addEventListener("click", deleteTracker);
+    elements.closeEditModal?.addEventListener("click", () => closeEditTracker());
+    elements.cancelEditBtn?.addEventListener("click", () => closeEditTracker());
+    elements.editTrackerModal?.addEventListener("click", (event) => {
+        if (event.target === elements.editTrackerModal) closeEditTracker();
+    });
+
     return {
-        loadTrackers,
-        createTracker,
-        pauseTracker,
-        resumeTracker,
-        deleteTracker,
-        openEditTracker,
-        closeEditTracker,
-        saveTracker,
-        refreshTrackerEvents,
-        startTrackerRefresh,
-        stopTrackerRefresh,
+        loadTrackers, openEditTracker, closeEditTracker,
+        refreshTrackerEvents, clearTrackerEvents, startTrackerRefresh, stopTrackerRefresh,
     };
 }
 
-// OPUS-13: lazy-load registration; stub in the bundle proxies into
-// window.App._realCreateApiTrackers once this script lands.
+// OPUS-13: the lazy stub delegates here once this script lands.
 if (typeof window !== "undefined") {
     window.App = window.App || {};
     window.App._realCreateApiTrackers = createApiTrackers;

@@ -515,8 +515,7 @@ def test_cards_split_uses_lazy_stub_in_bundle() -> None:
     """OPUS-13 wave 73: render_card_builders.js + render_cards.js
     ship as ``_lazy_cards_stub.js`` and load in tandem (builders
     first, renderer second) on first use. virtual_list.js stays
-    in the bundle because trackers + cards both need
-    ``createVirtualList`` reachable through context.
+    in the bundle so cards can reach ``createVirtualList`` through context.
     """
     bundle = (JS_DIR / "app_bundle.js").read_text(encoding="utf-8")
     stub = (JS_DIR / "_lazy_cards_stub.js").read_text(encoding="utf-8")
@@ -539,8 +538,7 @@ def test_cards_split_uses_lazy_stub_in_bundle() -> None:
     for bare in ("render_card_builders", "render_cards"):
         leak = re.search(rf"^\s+{bare}\.js\s*$", build, re.MULTILINE)
         assert leak is None, f"{bare}.js leaked back into bundle modules list"
-    # virtual_list.js MUST remain in the bundle — both trackers (lazy)
-    # and cards (lazy) reach it through context.createVirtualList.
+    # The lazy card renderer reaches it through context.createVirtualList.
     assert re.search(r"^\s+virtual_list\.js\s*$", build, re.MULTILINE) is not None
 
     # Eager preload from app.js avoids a stub-returns-undefined flash
@@ -552,11 +550,6 @@ def test_cards_split_uses_lazy_stub_in_bundle() -> None:
     app_renderers = (JS_DIR / "app_renderers.js").read_text(encoding="utf-8")
     assert "_cardsEnsureLoaded: cards && cards._ensureLoaded" in app_renderers
 
-    # render_trackers / render_cards read createVirtualList from context.
-    trackers = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
-    assert "createVirtualList," in trackers, (
-        "render_trackers must destructure createVirtualList from context"
-    )
     assert "createVirtualList," in cards, (
         "render_cards must destructure createVirtualList from context"
     )
@@ -1879,16 +1872,6 @@ def test_deals_empty_state_has_no_icon_box() -> None:
 def test_tracker_empty_state_has_no_icon_box() -> None:
     trackers_js = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
     assert 'icon: "trackers"' not in trackers_js
-    empty_start = trackers_js.index("if (!state.trackers.items.length)")
-    title_start = trackers_js.index('title: "Создайте первый автопоиск"', empty_start)
-    block_start = trackers_js.rindex(
-        "buildEmpty({",
-        empty_start,
-        title_start,
-    )
-    block_end = trackers_js.index("});", title_start)
-    empty_block = trackers_js[block_start:block_end]
-    assert "icon:" not in empty_block
 
 
 def test_empty_states_do_not_render_decorative_icon_boxes() -> None:
@@ -2168,96 +2151,160 @@ def test_collection_actions_only_show_final_toasts() -> None:
         assert 'showToast("Загружаю..."' not in text
 
 
-def test_trackers_preserve_category_scope_in_frontend() -> None:
-    api_trackers = (JS_DIR / "api_trackers.js").read_text(encoding="utf-8")
-    render_trackers = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
-    app_core_dom = (JS_DIR / "app_core_dom.js").read_text(encoding="utf-8")
-    app_renderers = (JS_DIR / "app_renderers.js").read_text(encoding="utf-8")
-
-    assert "function currentCategoryPayload()" in api_trackers
-    assert "category_id: categoryPayload.category_id" in api_trackers
-    assert "category_label: categoryPayload.category_label" in api_trackers
-    assert "loadEditCategories(tracker)" in api_trackers
-    assert "function editCategoryPayload()" in api_trackers
-    assert 'document.getElementById("edit-category-select")' in app_core_dom
-    assert "tracker.category_label || `категория ${tracker.category_id}`" in render_trackers
-    assert "state.filters.category = tracker.category_id ?? null" in render_trackers
-    assert 'actions.search("overview", { keepFilters: true })' in render_trackers
-    assert "context._hooks.renderFilterDropdown = renderFilterDropdown" in app_renderers
-
-
-def test_tracker_editor_loads_categories_for_its_own_query() -> None:
-    api_trackers = (JS_DIR / "api_trackers.js").read_text(encoding="utf-8")
-    _node_ok(api_trackers + r"""
+def test_tracker_setup_uses_its_own_query_and_preserves_saved_filters() -> None:
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "app_core_dom.js", "app_core.js", "api_trackers.js",
+    ) + r"""
 const assert = require("node:assert/strict");
-const select = { value: "", replaceChildren(...options) { this.options = options; } };
-const status = {};
-const state = {
-    search: { activeQuery: "Volkswagen Polo" },
-    filters: { categories: [{ id: 2010, label: "Cars" }] },
-    trackers: { items: [{ id: 1, query: "iPhone 14 Pro" }, { id: 2, query: "iPad" }] },
-    misc: {},
-};
-const requests = [];
-const actions = createApiTrackers({
-    state, elements: { editCategorySelect: select, editCategoryStatus: status },
-    domEl: (_, option) => option,
-    getJson: (url, {signal}) => new Promise(resolve => requests.push({url, signal, resolve})),
-});
-(async () => {
-    actions.openEditTracker(2);
-    actions.openEditTracker(1);
-    assert.equal(requests[0].signal.aborted, true);
-    assert.equal(select.options.length, 1, "unrelated main-search categories are excluded");
-    const params = new URL(requests[1].url, "http://rafuk.test").searchParams;
-    assert.equal(params.get("query"), "iPhone 14 Pro");
-    assert.equal(params.get("strict_search"), "false");
-    assert.equal(params.has("category"), false);
-    requests[1].resolve({categories: [{id: 17010, label: "Phones"}, {id: 17500, label: "Cases"}]});
-    await Promise.resolve();
-    assert.deepEqual(select.options.map(option => option.value), ["", 17010, 17500]);
-    assert.equal(status.hidden, true);
-    requests[0].resolve({categories: [{id: 2010, label: "Wrong"}]});
-    await Promise.resolve();
-    assert.equal(select.options[1].value, 17010);
-})();
-""")
-
-
-def test_tracker_discount_stays_optional_on_create_and_edit() -> None:
-    modules = ("dom_helpers.js", "app_core_dom.js", "app_core.js", "api_trackers.js")
-    source = "\n".join((JS_DIR / name).read_text(encoding="utf-8") for name in modules)
-    _node_ok(source + r"""
-const assert = require("node:assert/strict");
-global.document = { documentElement: { setAttribute() {}, getAttribute() { return "dark"; } } };
-global.localStorage = { getItem() { return null; }, setItem() {} };
-global.window = { Telegram: null, matchMedia: null };
 const { state } = createAppCore();
-state.search.activeQuery = "iPhone 14 Pro";
-const input = { value: "" };
+state.search.activeQuery = "Volkswagen Polo";
+state.filters.categories = [{ id: 2010, label: "Автомобили" }];
+state.filters.category = 2010;
+
+function select(...values) {
+    const options = values.map((value) => domEl("option", { value, text: value }));
+    const field = el("select", {}, ...options);
+    Object.defineProperties(field, {
+        options: { get: () => field.children },
+        selectedOptions: {
+            get: () => field.children.filter((option) => option.value === field.value),
+        },
+    });
+    return field;
+}
+const elements = {
+    trackerForm: el("form"), editTrackerModal: el("div", {hidden: true}),
+    trackerFormError: el("p"), trackerFormNote: el("p"), trackerAdvanced: el("details"),
+    editTrackerTitle: el("h3"), editTrackerQuery: el("input"), searchInput: el("input"),
+    editMaxPriceInput: el("input"), editMinDiscountInput: el("input"),
+    editStrictModeToggle: el("input"),
+    editConditionSelect: select("", "Новый", "Б/у"),
+    editSellerSelect: select("", "Частное лицо", "Магазин"),
+    editRegionSelect: select("", "Минск"),
+    editCategorySelect: select(""), editCategoryStatus: el("small"),
+    trackerUseSearch: el("button"), trackerLoadCategories: el("button"), trackerManage: el("div"),
+    toggleTrackerPause: el("button"), trackerMarket: el("button"), trackerDelete: el("details"),
+    deleteTrackerButton: el("button"), saveTrackerBtn: el("button"), cancelEditBtn: el("button"),
+    closeEditModal: el("button"),
+};
 const payloads = [];
-const noop = () => {};
+const categories = [];
+const marketSearch = [];
 const api = createApiTrackers({
-    state, elements: { editMinDiscountInput: input },
-    hasTelegramInitData: () => true, getJson: async () => [],
-    postJson: async (_, payload) => payloads.push(payload.min_discount_percent),
-    requestJson: async (_, { body }) => payloads.push(JSON.parse(body).min_discount_percent),
-    renderAll: noop, renderTrackers: noop, renderTrackerEvents: noop,
-    renderTrackerStatus: noop, showToast: noop,
+    state, elements, domEl, hasTelegramInitData: () => true,
+    getJson(url, options) {
+        if (url === "/api/v1/trackers") return Promise.resolve(state.trackers.items);
+        return new Promise(resolve => categories.push({url, signal: options.signal, resolve}));
+    },
+    postJson: async (url, body) => { payloads.push({url, body}); },
+    requestJson: async (url, {body}) => { payloads.push({url, body: JSON.parse(body)}); },
+    openModalAnimated(modal) { modal.hidden = false; },
+    closeModalAnimated(modal) { modal.hidden = true; },
+    renderTrackers() {}, showToast() {}, renderStrictSearch() {}, markDirty() {},
+    search: (...args) => marketSearch.push(args),
+});
+const submit = () => elements.trackerForm.dispatchEvent(new FakeEvent("submit"));
+
+(async () => {
+    api.openEditTracker();
+    assert.equal(elements.editTrackerQuery.value, "", "the app-wide search is opt-in");
+    elements.trackerUseSearch.click();
+    assert.equal(elements.editTrackerQuery.value, "Volkswagen Polo");
+    assert.equal(elements.editCategorySelect.value, "2010");
+
+    elements.editTrackerQuery.value = "iPhone 15";
+    elements.editTrackerQuery.dispatchEvent(new FakeEvent("input"));
+    assert.equal(elements.editCategorySelect.value, "", "a changed query loses the old category");
+    elements.editMaxPriceInput.value = "1250.50";
+    submit();
+    submit();
+    await tick(5);
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].body.query, "iPhone 15");
+    assert.equal(payloads[0].body.interval_min, 15);
+    assert.equal(payloads[0].body.min_discount_percent, null);
+    assert.equal(payloads[0].body.max_price_byn, 1250.50);
+    assert.equal(payloads[0].body.category_id, null);
+
+    state.trackers.items = [{
+        id: 2, query: "Часы", category_id: 4010, category_label: "Аксессуары",
+        condition: "used", seller_type: "shop", region_name: "Старый регион",
+        min_discount_percent: 10,
+    }];
+    api.openEditTracker();
+    elements.editTrackerQuery.value = "Ноутбук";
+    elements.trackerLoadCategories.click();
+    api.closeEditTracker();
+    assert.ok(categories[0].signal.aborted);
+
+    api.openEditTracker(2);
+    assert.equal(elements.editTrackerQuery.readOnly, true);
+    assert.equal(elements.editConditionSelect.value, "Б/у");
+    assert.equal(elements.editSellerSelect.value, "Магазин");
+    assert.equal(elements.editRegionSelect.value, "Старый регион");
+    elements.trackerLoadCategories.click();
+    const params = new URL(categories[1].url, "http://rafuk.test").searchParams;
+    assert.equal(params.get("query"), "Часы");
+    assert.equal(params.has("category"), false);
+    categories[1].resolve({categories: [{id: 4020, label: "Часы"}]});
+    categories[0].resolve({categories: [{id: 3070, label: "Ноутбуки"}]});
+    await tick(5);
+    const categoryValues = elements.editCategorySelect.options.map(option => option.value);
+    assert.deepEqual(categoryValues, ["", "4010", "4020"]);
+    assert.equal(elements.editCategorySelect.value, "4010");
+
+    elements.editMinDiscountInput.value = "";
+    submit();
+    await tick(5);
+    assert.equal(payloads[1].url, "/api/v1/trackers/2");
+    assert.equal(payloads[1].body.min_discount_percent, null);
+    assert.equal(payloads[1].body.category_id, 4010);
+    assert.equal(payloads[1].body.category_label, "Аксессуары");
+
+    api.openEditTracker(2);
+    elements.trackerMarket.click();
+    assert.equal(state.filters.category, 4010);
+    assert.equal(state.filters.condition, "used");
+    assert.equal(state.filters.sellerType, "shop");
+    assert.equal(state.filters.regionName, "Старый регион");
+    assert.deepEqual(marketSearch, [["overview", {keepFilters: true}]]);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_tracker_feed_filters_server_results_and_ignores_stale_responses() -> None:
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "app_core_dom.js", "app_core.js", "api_trackers.js",
+    ) + r"""
+const assert = require("node:assert/strict");
+const { state } = createAppCore();
+const requests = [];
+const api = createApiTrackers({
+    state, elements: {}, hasTelegramInitData: () => true, renderTrackerEvents() {},
+    getJson(url, {signal}) {
+        return new Promise(resolve => requests.push({url, signal, resolve}));
+    },
 });
 (async () => {
-    await api.createTracker();
-    state.trackers.items = [{ id: 1, query: "iPhone 14 Pro", min_discount_percent: null }];
-    api.openEditTracker(1);
-    assert.equal(input.value, "");
-    await api.saveTracker();
-    state.trackers.items = [{ id: 1, query: "iPhone 14 Pro", min_discount_percent: 10 }];
-    api.openEditTracker(1);
-    assert.equal(Number(input.value), 10);
-    await api.saveTracker();
-    assert.deepEqual(payloads, [null, null, 10]);
-})().catch(error => { console.error(error); process.exitCode = 1; });
-""")
+    const initial = api.refreshTrackerEvents();
+    state.trackers.eventFilterTrackerId = 42;
+    state.trackers.eventFilter = "price_drop";
+    const scoped = api.refreshTrackerEvents();
+    assert.equal(requests[0].signal.aborted, true);
+    const params = new URL(requests[1].url, "http://rafuk.test").searchParams;
+    assert.deepEqual(Object.fromEntries(params), {
+        limit: "50", tracker_id: "42", event_type: "price_drop",
+    });
+    const result = [{id: 2, tracker_id: 42, query: "Часы"}];
+    requests[1].resolve(result);
+    await scoped;
+    requests[0].resolve([{id: 1, tracker_id: 8, query: "Телефон"}]);
+    await initial;
+    assert.deepEqual(state.trackers.events, result);
+    assert.deepEqual([...state.trackers.eventSources], [[42, "Часы"]]);
+    assert.equal(state.trackers.eventsLoading, false);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
 
 
 def test_toasts_are_minimal_and_fast() -> None:
@@ -4622,7 +4669,8 @@ trackers.renderTrackerEvents();
 assert.strictEqual(elements.clearEventsButton.hidden, true);
 state.trackers.events[0].event_type = "new_listing";
 trackers.renderTrackerEvents();
-assert.strictEqual(elements.trackerEventsList.querySelector(".event-kind"), null);
+const kind = elements.trackerEventsList.querySelector(".event-kind");
+assert.equal(kind.textContent, "Новое объявление");
 const published = elements.trackerEventsList.querySelector(".event-time");
 assert.equal(published.textContent, "2026-10-19");
 assert.equal(published.getAttribute("datetime"), "2026-10-19");

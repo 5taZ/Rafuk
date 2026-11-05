@@ -26,8 +26,8 @@
 // and the AI lazy-load URLs in app_actions.js. A template literal
 // over a separate version constant would be invisible to that
 // regex.
-const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20261105-autosearch-cadence";
-const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20261105-autosearch-cadence";
+const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20261105-autosearch-ui";
+const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20261105-autosearch-ui";
 
 function _lazyLoadTrackerSources(context) {
     if (_loadPromises.has("trackers")) return _loadPromises.get("trackers");
@@ -72,10 +72,8 @@ function createRenderTrackers(context) {
     }
 
     return {
-        renderTrackerStatus: (...args) => _delegate("renderTrackerStatus", args),
         renderTrackers: (...args) => _delegate("renderTrackers", args),
         renderTrackerEvents: (...args) => _delegate("renderTrackerEvents", args),
-        renderTrackerEventFilters: (...args) => _delegate("renderTrackerEventFilters", args),
         _ensureLoaded: lazy.ensure,
     };
 }
@@ -103,14 +101,10 @@ function createApiTrackers(context) {
 
     return {
         loadTrackers: (...args) => _delegate("loadTrackers", args),
-        createTracker: (...args) => _delegate("createTracker", args),
-        pauseTracker: (...args) => _delegate("pauseTracker", args),
-        resumeTracker: (...args) => _delegate("resumeTracker", args),
-        deleteTracker: (...args) => _delegate("deleteTracker", args),
         openEditTracker: (...args) => _delegate("openEditTracker", args),
         closeEditTracker: (...args) => _lazyTeardownCall(lazy, "closeEditTracker", args),
-        saveTracker: (...args) => _delegate("saveTracker", args),
         refreshTrackerEvents: (...args) => _delegate("refreshTrackerEvents", args),
+        clearTrackerEvents: (...args) => _delegate("clearTrackerEvents", args),
         startTrackerRefresh: (...args) => _delegate("startTrackerRefresh", args),
         // A refresh timer cannot be running before the module loaded.
         stopTrackerRefresh: (...args) => _lazyTeardownCall(lazy, "stopTrackerRefresh", args),

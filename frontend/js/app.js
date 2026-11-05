@@ -55,7 +55,10 @@ function analyticsApp() {
             ]);
         }
         if (view === "tracking") {
-            return () => actions.loadTrackers && actions.loadTrackers();
+            return () => Promise.all([
+                actions.loadTrackers(),
+                core.state.trackers.pane === "events" ? actions.refreshTrackerEvents() : null,
+            ]);
         }
         if (view === "overview" || view === "ads") {
             // Repeating the current search is the "refresh" everywhere
@@ -141,7 +144,6 @@ function analyticsApp() {
 
     function init() {
         core.cacheElements();
-        core.populateRegionSelect(core.elements.trackerRegionSelect);
         core.populateRegionSelect(core.elements.editRegionSelect);
         core.populateRegionSelect(core.elements.filterRegion);
         core.initTelegramTheme();

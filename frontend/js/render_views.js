@@ -1,6 +1,6 @@
 /**
  * render_views.js — Hero stats, Stats, segments, geography,
- * sort/discount buttons, tracker event filters, history range, deal/tracker inputs.
+ * sort/discount buttons, history range and deal inputs.
  */
 
 function createRenderViews(context) {
@@ -24,15 +24,6 @@ function createRenderViews(context) {
     }
 
     /* ===== Hero Stats ===== */
-
-    function renderTrackingHeroStats() {
-        if (!elements.trackingHeroStats) return;
-        const trackerCount = state.trackers.items.length;
-        const eventCount = state.trackers.events.length;
-        domClear(elements.trackingHeroStats);
-        appendHeroStat(elements.trackingHeroStats, String(trackerCount), "трекеров");
-        appendHeroStat(elements.trackingHeroStats, String(eventCount), "событий");
-    }
 
     function renderDealsHeroStats() {
         if (!elements.dealsHeroStats) return;
@@ -181,27 +172,6 @@ function createRenderViews(context) {
         }
         if (elements.dealToInput) {
             elements.dealToInput.value = String(state.filters.discountToPercent);
-        }
-    }
-
-    function renderTrackerInputs() {
-        if (elements.trackerMinDiscountInput) {
-            elements.trackerMinDiscountInput.value = state.trackers.minDiscountPercent ?? "";
-        }
-        if (elements.trackerMaxPriceInput) {
-            elements.trackerMaxPriceInput.value = state.trackers.maxPriceByn ?? "";
-        }
-        if (elements.trackerExcludeDuplicatesToggle) {
-            elements.trackerExcludeDuplicatesToggle.checked = Boolean(state.trackers.excludeDuplicates);
-        }
-        if (elements.trackerSellerSelect) {
-            elements.trackerSellerSelect.value = state.trackers.sellerType || "";
-        }
-        if (elements.trackerConditionSelect) {
-            elements.trackerConditionSelect.value = state.trackers.condition || "";
-        }
-        if (elements.trackerRegionSelect) {
-            elements.trackerRegionSelect.value = state.trackers.regionName || "";
         }
     }
 
@@ -400,13 +370,11 @@ function createRenderViews(context) {
     }
 
     return {
-        renderTrackingHeroStats,
         renderDealsHeroStats,
         renderSortButtons,
         renderDiscountButtons,
         renderHistoryRangeButtons,
         renderDealInputs,
-        renderTrackerInputs,
         renderStats,
         renderSegments,
         renderGeography,

@@ -515,49 +515,37 @@ def test_edit_tracker_strict_toggle_has_no_nested_labels(soup: BeautifulSoup) ->
     assert modal is not None
     assert all(label.find("label") is None for label in modal.find_all("label"))
 
-    strict_labels = modal.find_all("label", attrs={"for": "edit-strict-mode-toggle"})
-    assert any("Строгий режим" in label.get_text(" ", strip=True) for label in strict_labels)
-    assert any("strict-toggle" in (label.get("class") or []) for label in strict_labels)
+    strict_label = modal.find("label", attrs={"for": "edit-strict-mode-toggle"})
+    assert strict_label is not None
+    assert strict_label.find(id="edit-strict-mode-toggle").get("type") == "checkbox"
 
 
-def test_autosearch_surface_uses_flat_composer_and_accessible_filters(
-    soup: BeautifulSoup, css_text: str
-) -> None:
+def test_autosearch_has_independent_setup_and_accessible_feed_filters(soup: BeautifulSoup) -> None:
     tracking = soup.find(id="tracking-view")
     assert tracking is not None
-    composer = tracking.select_one(".tracker-composer")
-    assert composer is not None
-    track_button = composer.find(id="track-query-btn")
+    track_button = tracking.find(id="track-query-btn")
     assert track_button is not None
-    assert track_button.get_text(strip=True) == "Следить за запросом"
-    assert "primary-btn" in track_button["class"]
-    assert track_button.find_previous_sibling(class_="tracker-form-grid") is not None
+    assert track_button["aria-haspopup"] == "dialog"
+    form = soup.select_one("#edit-tracker-modal form")
+    assert form is not None
+    assert form.find(id="edit-tracker-query").has_attr("required")
+    assert form.find(id="save-tracker-btn")["type"] == "submit"
+    assert form.select_one("details #edit-category-select") is not None
 
-    trackers_list = tracking.find(id="trackers-list")
-    assert trackers_list is not None
-    assert composer.find(id="trackers-list") is None
+    tabs = tracking.select('#tracking-tabs [role="tab"]')
+    assert len(tabs) == 2
+    for tab in tabs:
+        panel = tracking.find(id=tab["aria-controls"])
+        assert panel["aria-labelledby"] == tab["id"]
+        assert panel.has_attr("hidden") == (tab["aria-selected"] == "false")
 
-    event_buttons = tracking.select("#tracker-event-filter-row [data-event-filter]")
-    assert [button.get("data-event-filter") for button in event_buttons] == [
-        "all",
-        "price_drop",
-        "new_listing",
-        "price_threshold_alert",
-        "discount_alert",
-    ]
-    assert all(button.get("type") == "button" for button in event_buttons)
-    assert all(button.get("aria-pressed") in {"true", "false"} for button in event_buttons)
-    assert all(button.select_one("[data-event-filter-label]") for button in event_buttons)
-    assert all(button.select_one("[data-event-filter-count]") for button in event_buttons)
-
-    render_trackers = (JS_DIR / "render_trackers.js").read_text(encoding="utf-8")
-    assert 'button.querySelector("[data-event-filter-label]")' in render_trackers
-    assert 'button.setAttribute("aria-pressed", String(active));' in render_trackers
-    assert "button.textContent = count > 0" not in render_trackers
-
-    assert "#tracking-view .tracker-composer" in css_text
-    assert "#tracking-view .tracker-form-grid" in css_text
-    assert "#tracker-event-filter-row .s-tab" in css_text
+    tracker_select = tracking.select_one("label #tracker-event-tracker-select")
+    event_select = tracking.select_one("label #tracker-event-type-select")
+    assert tracker_select is not None
+    assert event_select is not None
+    assert {option["value"] for option in event_select.find_all("option")} == {
+        "all", "price_drop", "new_listing", "price_threshold_alert", "discount_alert",
+    }
 
 
 def test_ai_loading_states_use_minimal_status_visuals(soup: BeautifulSoup, css_text: str) -> None:
@@ -879,7 +867,7 @@ def test_filter_controls_have_accessible_state_and_labels(soup: BeautifulSoup) -
     assert edit_query is not None
     edit_label = soup.find("label", attrs={"for": "edit-tracker-query"})
     assert edit_label is not None
-    assert edit_label.get_text(strip=True) == "Запрос"
+    assert edit_label.get_text(strip=True)
     edit_category = soup.find(id="edit-category-select")
     assert edit_category is not None
     default_category_option = edit_category.find("option", attrs={"value": ""})

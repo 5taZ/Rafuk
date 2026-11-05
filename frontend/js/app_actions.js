@@ -42,13 +42,10 @@ function createAppActions(baseContext) {
         renderSortButtons,
         renderDiscountButtons,
         renderDealInputs,
-        renderTrackerInputs,
         renderComparison,
         renderHistory,
-        renderTrackerStatus,
         renderTrackers,
         renderTrackerEvents,
-        renderTrackerEventFilters,
         renderLeads,
         renderDetailModal,
         closeDetailModal,
@@ -283,10 +280,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261105-autosearch-cadence"),
-                context._loadScript("js/api_ai_render.js?v=20261105-autosearch-cadence"),
-                context._loadScript("js/api_ai.js?v=20261105-autosearch-cadence"),
-                context._loadScript("js/api_listing_assistant.js?v=20261105-autosearch-cadence"),
+                context._loadScript("js/api_ai_modal.js?v=20261105-autosearch-ui"),
+                context._loadScript("js/api_ai_render.js?v=20261105-autosearch-ui"),
+                context._loadScript("js/api_ai.js?v=20261105-autosearch-ui"),
+                context._loadScript("js/api_listing_assistant.js?v=20261105-autosearch-ui"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -351,14 +348,10 @@ function createAppActions(baseContext) {
 
         // From trackers
         loadTrackers: trackers.loadTrackers,
-        createTracker: trackers.createTracker,
-        pauseTracker: trackers.pauseTracker,
-        resumeTracker: trackers.resumeTracker,
-        deleteTracker: trackers.deleteTracker,
         openEditTracker: trackers.openEditTracker,
         closeEditTracker: trackers.closeEditTracker,
-        saveTracker: trackers.saveTracker,
         refreshTrackerEvents: trackers.refreshTrackerEvents,
+        clearTrackerEvents: trackers.clearTrackerEvents,
         startTrackerRefresh: trackers.startTrackerRefresh,
         stopTrackerRefresh: trackers.stopTrackerRefresh,
 
@@ -581,6 +574,7 @@ function createAppActions(baseContext) {
         const view = normalizeView(params.get("view") || "overview");
         if (view && elements.views[view]) {
             context.setActiveView(view);
+            if (view === "tracking") void trackers.startTrackerRefresh();
         }
         if (!query) return;
         elements.searchInput.value = query;
@@ -1158,7 +1152,6 @@ function createAppActions(baseContext) {
         markLeadAsSold: leads.markLeadAsSold,
         openLeadDetail: leads.openLeadDetail,
         loadWatchlist: watchlist.loadWatchlist,
-        createTracker: trackers.createTracker,
         addLeadFromListing,
         addWatchlistFromListing: watchlist.addWatchlistFromListing,
         updateLeadStatus: leads.updateLeadStatus,
@@ -1171,12 +1164,10 @@ function createAppActions(baseContext) {
         refreshWatchlist: watchlist.refreshWatchlist,
         refreshLeads,
         openWatchlistDetail: watchlist.openWatchlistDetail,
-        deleteTracker: trackers.deleteTracker,
-        pauseTracker: trackers.pauseTracker,
-        resumeTracker: trackers.resumeTracker,
         openEditTracker: trackers.openEditTracker,
         closeEditTracker: trackers.closeEditTracker,
-        saveTracker: trackers.saveTracker,
+        refreshTrackerEvents: trackers.refreshTrackerEvents,
+        showTrackerEvents: events.showTrackerEvents,
         // RV-FE-02: the trackers render stub restarts the feed refresh
         // after a successful chunk retry.
         startTrackerRefresh: trackers.startTrackerRefresh,

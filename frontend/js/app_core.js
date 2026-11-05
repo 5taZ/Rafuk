@@ -203,9 +203,9 @@ function createAppCore() {
         search: {
             // RV-FE-03: ``draft`` mirrors the search input on every
             // keystroke; ``activeQuery`` is the query of the results on
-            // screen. Detail, paging, sort, filters, saving, trackers and
-            // price history must read activeQuery — a half-typed draft
-            // used to leak into all of them.
+            // screen. Detail, paging, sort, filters, saving and price
+            // history must read activeQuery — a half-typed draft used to
+            // leak into all of them.
             draft: "",
             activeQuery: "",
             strictSearch: true,
@@ -258,22 +258,20 @@ function createAppCore() {
         trackers: {
             items: [],
             events: [],
+            eventLimit: 50,
+            eventSources: new Map(),
             _requestId: 0,
             _loading: false,
             // FR-02: message of the last failed list load; the previous
             // items stay on screen (same contract as leads.error).
             loadError: null,
+            pane: "trackers",
             eventFilter: "all",
             eventFilterTrackerId: null,
-            status: "",
-            statusKind: "info",
+            eventsLoading: false,
+            eventsError: null,
+            clearingEvents: false,
             editingId: null,
-            creating: false,
-            minDiscountPercent: null,
-            maxPriceByn: null,
-            sellerType: "",
-            condition: "",
-            regionName: "",
         },
         leads: {
             items: [],
@@ -646,10 +644,10 @@ function createAppCore() {
     /**
      * Mark one or more views as needing re-render.
      * Views: 'error','loading','currency','strict','tabs','panels','summary',
-     * 'helper','views','trackingHero','dealsHero',
-     * 'sort','discount','eventFilters','dealInputs','trackerInputs','stats',
+     * 'helper','views','dealsHero',
+     * 'sort','discount','dealInputs','stats',
      * 'history','segments','geography','recent','listings','deals',
-     * 'rates','trackerStatus','trackers','trackerEvents','leads','watchlist',
+     * 'rates','trackers','trackerEvents','leads','watchlist',
      * 'profit','profile','adminUsers','adminStatuses','adminAudit'.
      * Call without args or with 'all' to mark everything dirty.
      */

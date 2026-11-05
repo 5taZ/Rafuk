@@ -1,6 +1,5 @@
 /**
- * render_trackers.js — Tracker status, tracker events, tracker filters,
- * tracker management UI, watchlist filters.
+ * Tracker cards and listing events.
  */
 
 function createRenderTrackers(context) {
@@ -9,23 +8,15 @@ function createRenderTrackers(context) {
         elements,
         actions,
         formatPrice,
+        formatPriceNumber,
         formatCondition,
         formatSeller,
         formatDate,
-        trapFocus,
         hasTelegramInitData,
         safeKufarUrl,
         safeImageUrl,
         optimizedImage,
-        safeRender: safeRender,
-        // OPUS-13 wave 73/74: dom_helpers / virtual_list callables
-        // ride through context because this file loads as a lazy
-        // <script> and no longer shares the bundle IIFE scope. Bare
-        // references produced ``ReferenceError: domClear is not
-        // defined`` / ``createVirtualList is not defined`` the first
-        // time the trackers list painted past the virtual-list
-        // threshold.
-        createVirtualList,
+        safeRender,
         domEl,
         domClear,
         // FR-18: shared lead / ad identity rules (dom_helpers.js).
@@ -60,7 +51,7 @@ function createRenderTrackers(context) {
         return svg;
     }
 
-    // Common attribute presets for the action / search icons.
+    // Common attribute presets for the action icons.
     const _STROKE_ATTRS = {
         fill: "none",
         stroke: "currentColor",
@@ -69,40 +60,11 @@ function createRenderTrackers(context) {
         "stroke-linejoin": "round",
     };
 
-    function iconPlay() {
-        return buildSvgIcon("0 0 24 24",
-            { width: 14, height: 14, fill: "currentColor" },
-            [{ tag: "path", d: "M8 5v14l11-7z" }]);
-    }
-    function iconPause() {
-        return buildSvgIcon("0 0 24 24",
-            { width: 14, height: 14, fill: "currentColor" },
-            [{ tag: "path", d: "M6 4h4v16H6zM14 4h4v16h-4z" }]);
-    }
-    function iconEdit() {
+    function iconOpen() {
         return buildSvgIcon("0 0 24 24",
             { width: 14, height: 14, ..._STROKE_ATTRS },
             [
-                { tag: "path", d: "M12 20h9" },
-                { tag: "path", d: "M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z" },
-            ]);
-    }
-    function iconDelete() {
-        return buildSvgIcon("0 0 24 24",
-            { width: 14, height: 14, ..._STROKE_ATTRS },
-            [
-                { tag: "polyline", points: "3 6 5 6 21 6" },
-                { tag: "path", d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" },
-                { tag: "path", d: "M10 11v6M14 11v6" },
-                { tag: "path", d: "M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" },
-            ]);
-    }
-    function iconSearch() {
-        return buildSvgIcon("0 0 24 24",
-            { width: 16, height: 16, ..._STROKE_ATTRS },
-            [
-                { tag: "circle", cx: "11", cy: "11", r: "7" },
-                { tag: "line", x1: "21", y1: "21", x2: "16.65", y2: "16.65" },
+                { tag: "path", d: "M5 12h14M12 5l7 7-7 7" },
             ]);
     }
     function iconListingPlaceholder() {
@@ -131,721 +93,472 @@ function createRenderTrackers(context) {
     // RV-UI-02: ids tying an event card's button to its description.
     let _eventCardSeq = 0;
 
-    /* ===== Tracker Status ===== */
-
-    function renderTrackerStatus() {
-        return safeRender('renderTrackerStatus', () => {
-            const message = typeof state.trackers.status === "string" ? state.trackers.status.trim() : "";
-        if (!message) {
-            elements.trackerStatus.hidden = true;
-            elements.trackerStatus.textContent = "";
-            elements.trackerStatus.className = "tracker-status";
-            return;
-        }
-
-        elements.trackerStatus.textContent = message;
-        elements.trackerStatus.className = `tracker-status is-visible ${state.trackers.statusKind}`;
-        elements.trackerStatus.hidden = false;
-        });
+    function relativeTime(isoDate) {
+        if (!isoDate) return "";
+        const timestamp = Date.parse(isoDate);
+        if (!Number.isFinite(timestamp)) return "";
+        const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+        if (minutes === 0) return "только что";
+        if (minutes < 60) return `${minutes} мин назад`;
+        if (minutes < 1440) return `${Math.floor(minutes / 60)} ч назад`;
+        return `${Math.floor(minutes / 1440)} дн. назад`;
     }
 
-    /* ===== Tracker Cards ===== */
+    function trackerFilters(tracker) {
+        return [
+            tracker.max_price_byn != null ? `до ${formatPriceNumber(tracker.max_price_byn)} BYN` : "",
+            tracker.region_name,
+            formatCondition(tracker.condition) || tracker.condition,
+            formatSeller(tracker.seller_type) || tracker.seller_type,
+            tracker.min_discount_percent > 0 ? `скидка от ${tracker.min_discount_percent.toLocaleString("ru-RU")}%` : "",
+            tracker.category_id ? tracker.category_label || `категория ${tracker.category_id}` : "",
+            tracker.strict_mode ? "Точное совпадение" : "",
+        ].filter(Boolean);
+    }
 
-    /**
-     * Format a relative time from an ISO date string for display.
-     */
-    function formatLastEventTime(isoDate) {
-        if (!isoDate) return "нет";
-        const date = new Date(isoDate);
-        if (isNaN(date.getTime())) return "нет";
-        const diffMs = Math.max(0, Date.now() - date.getTime());
-        const diffMin = Math.floor(diffMs / 60000);
-        if (diffMin < 1) return "только что";
-        if (diffMin < 60) return `${diffMin} мин`;
-        const diffHr = Math.floor(diffMin / 60);
-        if (diffHr < 24) return `${diffHr} ч`;
-        const diffDays = Math.floor(diffHr / 24);
-        return `${diffDays} д`;
+    function renderTrackerSourceFilter() {
+        const select = elements.trackerEventTrackerSelect;
+        if (!select) return;
+        const sources = new Map(state.trackers.items.map((tracker) =>
+            [tracker.id, [tracker.query, ...trackerFilters(tracker)].join(" · ")]));
+        for (const [id, label] of state.trackers.eventSources || []) {
+            if (!sources.has(id)) sources.set(id, label);
+        }
+        const selected = state.trackers.eventFilterTrackerId;
+        if (selected != null && !sources.has(selected)) sources.set(selected, `Трекер №${selected}`);
+        const sourceKey = JSON.stringify([...sources]);
+        if (sourceKey !== select._sourceKey) {
+            select.replaceChildren(domEl("option", { value: "", text: "Все трекеры" }),
+                ...Array.from(sources, ([id, label]) => domEl("option", { value: id, text: label })));
+            select._sourceKey = sourceKey;
+        }
+        select.value = String(selected ?? "");
+    }
+
+    function trackerStat(label, value) {
+        return domEl("div", { className: "tracker-stat" },
+            domEl("dt", { text: label }),
+            domEl("dd", { text: value, className: "mono" }));
+    }
+
+    function buildTrackerCard(tracker) {
+        const filters = trackerFilters(tracker);
+        const checked = relativeTime(tracker.last_checked_at);
+        const lastEvent = relativeTime(tracker.last_event_at);
+        const pauseState = tracker.paused ? "На паузе" : "Активен";
+        const eventsButton = domEl("button", {
+            className: "ghost-btn tracker-action-primary",
+            type: "button",
+            text: "События",
+            dataset: { role: "view-events" },
+            attrs: { "aria-label": `События трекера «${tracker.query}»` },
+        }, iconOpen());
+        eventsButton.addEventListener("click", () => actions.showTrackerEvents(tracker.id));
+        const editButton = domEl("button", {
+            className: "ghost-btn",
+            type: "button",
+            text: "Настроить",
+            dataset: { role: "edit" },
+            attrs: { "aria-label": `Настроить трекер «${tracker.query}»`, "aria-haspopup": "dialog" },
+        });
+        editButton.addEventListener("click", () => actions.openEditTracker(tracker.id));
+
+        return domEl("article", {
+            className: "tracker-card-enhanced",
+            attrs: { role: "listitem" },
+            dataset: { trackerId: tracker.id },
+        },
+            domEl("div", { className: "tracker-card-top" },
+                domEl("h3", { className: "tracker-query-title", text: tracker.query }),
+                domEl("span", {
+                    className: `tracker-state${tracker.paused ? " tracker-state--paused" : ""}`,
+                    text: pauseState,
+                })),
+            domEl("p", { className: "tracker-check-info" },
+                domEl("span", { text: `Каждые ${tracker.interval_min} мин` }),
+                checked ? domEl("time", {
+                    text: `Проверен ${checked}`,
+                    attrs: { datetime: tracker.last_checked_at, title: formatDate(tracker.last_checked_at) },
+                }) : domEl("span", { text: "Первой проверки ещё не было" })),
+            filters.length ? domEl("div", { className: "tracker-filters", attrs: { "aria-label": "Фильтры" } },
+                ...filters.map((text) => domEl("span", { className: "tracker-filter-tag", text })))
+                : domEl("p", { className: "tracker-note tracker-no-filters", text: "Без дополнительных фильтров" }),
+            domEl("dl", { className: "tracker-stats" },
+                trackerStat("События", (tracker.event_count || 0).toLocaleString("ru-RU")),
+                trackerStat("В день", (tracker.avg_events_per_day || 0).toLocaleString("ru-RU")),
+                trackerStat("Последнее", lastEvent || "—")),
+            domEl("div", { className: "tracker-card-actions" }, eventsButton, editButton));
     }
 
     function renderTrackers() {
-        return safeRender('renderTrackers', () => {
-        domClear(elements.trackersList);
-
-        const buildEmpty = context.buildEmptyState;
-        if (!hasTelegramInitData()) {
-            if (typeof buildEmpty === "function") {
-                elements.trackersList.appendChild(
-                    buildEmpty({
-                        title: "Открывайте Mini App в Telegram",
-                        hint: "Автопоиск работает с Telegram-аккаунтом — только так трекер сможет прислать уведомление о новых лотах.",
-                    })
-                );
-            } else {
-                const note = document.createElement("p");
-                note.className = "tracker-empty";
-                note.textContent = "Откройте Mini App внутри Telegram, чтобы управлять трекерами.";
-                elements.trackersList.appendChild(note);
+        return safeRender("renderTrackers", () => {
+            const { trackersList, trackQueryButton, trackingTabs, trackingCount } = elements;
+            if (!trackersList) return;
+            const tracking = state.trackers;
+            const authenticated = hasTelegramInitData();
+            if (trackQueryButton) trackQueryButton.hidden = !authenticated;
+            if (trackingTabs) trackingTabs.hidden = !authenticated;
+            if (trackingCount) {
+                trackingCount.hidden = !tracking.items.length;
+                trackingCount.textContent = String(tracking.items.length);
             }
-            return;
-        }
+            renderTrackerSourceFilter();
 
-        // Show skeleton cards while loading — FR-02: only when there is no
-        // previous list to keep on screen.
-        if (state.trackers._loading && !state.trackers.items.length) {
-            for (let i = 0; i < 3; i++) {
-                const skel = document.createElement("div");
-                skel.className = "skeleton-card";
-                skel.setAttribute("aria-hidden", "true");
-                // FE-08: build children via DOM API instead of innerHTML.
-                for (const width of ["60%", "40%", "30%"]) {
-                    const bar = document.createElement("div");
-                    bar.className = "skel-bar";
-                    bar.style.width = width;
-                    skel.appendChild(bar);
-                }
-                elements.trackersList.appendChild(skel);
+            const focusedButton = document.activeElement?.closest?.(".tracker-card-enhanced button");
+            const focusedCard = focusedButton?.closest("[data-tracker-id]");
+            domClear(trackersList);
+            const buildEmpty = context.buildEmptyState;
+            if (!authenticated) {
+                trackersList.appendChild(buildEmpty({
+                    title: "Откройте Rafuk в Telegram",
+                    hint: "В мини-приложении можно создавать трекеры и получать уведомления в чате с ботом.",
+                }));
+                return;
             }
-            return;
-        }
-
-        // FR-02: a failed load is not "no trackers yet".
-        if (!state.trackers.items.length && state.trackers.loadError && typeof buildEmpty === "function") {
-            elements.trackersList.appendChild(
-                buildEmpty({
-                    title: "Не удалось загрузить трекеры",
-                    hint: state.trackers.loadError,
+            if (tracking._loading && !tracking.items.length) {
+                trackersList.appendChild(domEl("p", { className: "tracker-note tracker-loading", text: "Загружаем трекеры…", attrs: { role: "status" } }));
+                return;
+            }
+            if (tracking.loadError) {
+                trackersList.appendChild(buildEmpty({
+                    title: tracking.loadError,
+                    hint: tracking.items.length ? "Показан последний загруженный список." : "Попробуйте загрузить список ещё раз.",
                     actionLabel: "Повторить",
-                    onAction: () => { void actions?.loadTrackers?.(); },
+                    onAction: () => { void actions.loadTrackers(); },
                     tone: "error",
-                })
-            );
-            return;
-        }
-
-        if (!state.trackers.items.length) {
-            if (typeof buildEmpty === "function") {
-                elements.trackersList.appendChild(
-                    buildEmpty({
-                        title: "Создайте первый автопоиск",
-                        hint: "Сохраните любой запрос как трекер — и Telegram пришлёт уведомление, когда появятся новые объявления или цена пойдёт вниз.",
-                        actionLabel: "Создать автопоиск",
-                        onAction: () => {
-                            const input = document.querySelector(".tracker-input");
-                            if (input) input.focus();
-                        },
-                    })
-                );
-            } else {
-                const note = document.createElement("p");
-                note.className = "tracker-empty";
-                note.textContent = "Активных трекеров пока нет.";
-                elements.trackersList.appendChild(note);
+                }));
             }
-            return;
-        }
-
-        // RV-UI-02: tracker cards are items of their own list, so the
-        // empty state above never sits inside role=list.
-        const trackerList = domEl("div", { className: "card-list", attrs: { role: "list" } });
-        elements.trackersList.appendChild(trackerList);
-        for (const tracker of state.trackers.items) {
-            let lastCheckedLabel = "";
-            if (tracker.last_checked_at) {
-                const checkedDate = new Date(tracker.last_checked_at);
-                if (!isNaN(checkedDate.getTime())) {
-                    const diffMs = Math.max(0, Date.now() - checkedDate.getTime());
-                    const diffMin = Math.floor(diffMs / 60000);
-                    if (diffMin < 1) {
-                        lastCheckedLabel = "проверено только что";
-                    } else if (diffMin < 60) {
-                        lastCheckedLabel = `${diffMin} мин назад`;
-                    } else {
-                        const diffHr = Math.floor(diffMin / 60);
-                        lastCheckedLabel = `${diffHr} ч назад`;
-                    }
+            if (tracking.items.length) {
+                trackersList.appendChild(domEl("div", { className: "tracker-cards", attrs: { role: "list" } },
+                    ...tracking.items.map(buildTrackerCard)));
+                if (focusedCard) {
+                    const selector = `[data-tracker-id="${focusedCard.dataset.trackerId}"] [data-role="${focusedButton.dataset.role}"]`;
+                    trackersList.querySelector(selector)?.focus({ preventScroll: true });
                 }
+            } else if (!tracking.loadError) {
+                trackersList.appendChild(buildEmpty({
+                    title: "У вас пока нет трекеров",
+                    hint: "Нажмите «Новый трекер» и введите название вещи. При необходимости укажите бюджет или город.",
+                }));
             }
-
-            const trackerFilters = domEl(
-                "div",
-                { className: "tracker-filters" },
-                domEl("span", { className: "tracker-filter-tag", text: `каждые ${tracker.interval_min} мин` }),
-            );
-            if (tracker.category_id) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: tracker.category_label || `категория ${tracker.category_id}` }));
-            if (tracker.strict_mode) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: "строгий" }));
-            if (tracker.min_discount_percent) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `скидка от ${tracker.min_discount_percent.toLocaleString("ru-RU")}%` }));
-            if (tracker.max_price_byn) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: `до ${Math.round(tracker.max_price_byn)} BYN` }));
-            if (tracker.seller_type === "Частное лицо") trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: "частники" }));
-            if (tracker.condition) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: tracker.condition }));
-            if (tracker.region_name) trackerFilters.appendChild(domEl("span", { className: "tracker-filter-tag", text: tracker.region_name }));
-
-            const buildStat = (label, value, className) => domEl(
-                "div",
-                { className: "tracker-stat" },
-                domEl("span", { className: "tracker-stat-label", text: label }),
-                domEl("span", { className: `tracker-stat-value${className ? ` ${className}` : ""}`.trim(), text: value }),
-            );
-
-            const actionRole = tracker.paused ? "resume" : "pause";
-            const actionLabel = tracker.paused ? "Возобновить" : "Пауза";
-            // FE-08: SVG icons constructed via createElementNS (see
-            // helpers at top of module). Picked at render time so the
-            // button gets a clean monochrome glyph instead of a
-            // platform-specific emoji.
-            const actionIconNode = tracker.paused ? iconPlay() : iconPause();
-
-            const buildIconButton = (className, role, label, iconNode) => {
-                const btn = domEl(
-                    "button",
-                    { className, type: "button", dataset: { role } },
-                );
-                const icon = document.createElement("span");
-                icon.className = "tracker-action-icon";
-                icon.appendChild(iconNode);
-                btn.append(icon, document.createTextNode(label));
-                return btn;
-            };
-            const card = domEl(
-                "div",
-                {
-                    className: `tracker-card-enhanced${tracker.paused ? " paused" : ""}`,
-                    attrs: { role: "listitem" },
-                },
-                domEl(
-                    "div",
-                    { className: "tracker-header" },
-                    (() => {
-                        const iconWrap = document.createElement("div");
-                        iconWrap.className = "tracker-icon";
-                        // FE-08: see iconSearch() at top of module.
-                        iconWrap.appendChild(iconSearch());
-                        return iconWrap;
-                    })(),
-                    domEl(
-                        "div",
-                        { className: "tracker-title-wrap" },
-                        domEl("h4", { className: "tracker-query-title", text: tracker.query }),
-                    ),
-                ),
-                trackerFilters,
-                domEl(
-                    "div",
-                    { className: "tracker-stats" },
-                    buildStat("События", tracker.event_count || 0, "highlight"),
-                    buildStat("В среднем", `${tracker.avg_events_per_day || 0}/день`),
-                    buildStat("Посл. событие", formatLastEventTime(tracker.last_event_at)),
-                ),
-                lastCheckedLabel ? domEl("span", { className: "tracker-last-checked", text: lastCheckedLabel }) : null,
-                domEl(
-                    "div",
-                    { className: "tracker-card-actions" },
-                    buildIconButton("ghost-btn small tracker-action-btn", "open", "Открыть", iconSearch()),
-                    buildIconButton("ghost-btn small tracker-action-btn", actionRole, actionLabel, actionIconNode),
-                    buildIconButton("ghost-btn small tracker-action-btn", "edit", "Изменить", iconEdit()),
-                    buildIconButton("ghost-btn small tracker-action-btn danger", "delete", "Удалить", iconDelete()),
-                ),
-            );
-
-            card.querySelector('[data-role="pause"]')?.addEventListener("click", () => {
-                void actions.pauseTracker(tracker.id);
-            });
-            card.querySelector('[data-role="resume"]')?.addEventListener("click", () => {
-                void actions.resumeTracker(tracker.id);
-            });
-            card.querySelector('[data-role="edit"]')?.addEventListener("click", () => {
-                actions.openEditTracker(tracker.id);
-            });
-            card.querySelector('[data-role="view-events"]')?.addEventListener("click", () => {
-                state.trackers.events = state.trackers.events || [];
-                state.trackers.eventFilterTrackerId = tracker.id;
-                if (context._hooks?.renderTrackerEvents) context._hooks.renderTrackerEvents();
-            });
-            card.querySelector('[data-role="delete"]')?.addEventListener("click", () => {
-                void actions.deleteTracker(tracker.id);
-            });
-            card.querySelector('[data-role="open"]')?.addEventListener("click", () => {
-                elements.searchInput.value = tracker.query;
-                state.search.draft = tracker.query;
-                state.search.strictSearch = Boolean(tracker.strict_mode);
-                state.filters.category = tracker.category_id ?? null;
-                state.filters.pendingCategory = tracker.category_id ?? null;
-                if (tracker.category_id && tracker.category_label && !state.filters.categories.some((cat) => Number(cat.id) === Number(tracker.category_id))) {
-                    state.filters.categories = [
-                        { id: tracker.category_id, label: tracker.category_label, count: 0 },
-                        ...state.filters.categories,
-                    ];
-                }
-                state.trackers.minDiscountPercent = tracker.min_discount_percent || null;
-                state.trackers.maxPriceByn = tracker.max_price_byn ?? null;
-                state.trackers.sellerType = tracker.seller_type || "";
-                state.trackers.condition = tracker.condition || "";
-                state.trackers.regionName = tracker.region_name || "";
-                if (context._hooks?.renderStrictSearch) context._hooks.renderStrictSearch();
-                if (context._hooks?.renderFilterDropdown) context._hooks.renderFilterDropdown();
-                if (context._hooks?.renderTrackerInputs) context._hooks.renderTrackerInputs();
-                if (context._hooks?.renderLoading) context._hooks.renderLoading();
-                void actions.search("overview", { keepFilters: true });
-            });
-            trackerList.appendChild(card);
-        }
         });
     }
-
-    /* ===== Tracker Events ===== */
 
     function renderTrackerEvents() {
-        return safeRender('renderTrackerEvents', () => {
-        eventDetailObserver?.disconnect();
-        eventDetailObserver = null;
-        const container = elements.trackerEventsList;
-        if (!container) return;
+        return safeRender("renderTrackerEvents", () => {
+            const container = elements.trackerEventsList;
+            if (!container) return;
+            eventDetailObserver?.disconnect();
+            eventDetailObserver = null;
+            domClear(container);
 
-        // Destroy existing virtual list if present and reset container
-        if (container._virtualList) {
-            container._virtualList.destroy();
-            container._virtualList = null;
-        }
-        container.style.overflowY = "";
-        container.style.maxHeight = "";
+            const tracking = state.trackers;
+            const authenticated = hasTelegramInitData();
+            if (elements.trackerFeedTools) elements.trackerFeedTools.hidden = !authenticated;
+            if (!authenticated) return;
 
-        domClear(container);
-
-        if (!hasTelegramInitData()) {
-            if (elements.clearEventsButton) elements.clearEventsButton.hidden = true;
-            const note = document.createElement("p");
-            note.className = "tracker-event-empty";
-            note.textContent = "Откройте Mini App внутри Telegram, чтобы видеть события.";
-            container.appendChild(note);
-            return;
-        }
-
-        const trackerScopedEvents = state.trackers.eventFilterTrackerId
-            ? state.trackers.events.filter((event) => event.tracker_id === state.trackers.eventFilterTrackerId)
-            : state.trackers.events.slice();
-
-        // Defense in depth: query-level market signals (e.g.
-        // ``trend_reversal``) have no ad_id / link — they must never
-        // be rendered as listing cards because the action buttons
-        // (Открыть / В покупки / Kufar →) all silently no-op without
-        // a real listing behind them. The API already filters these
-        // out by default, but skip-on-render here keeps any stale or
-        // explicit-filter responses from leaking into the feed.
-        const renderableEvents = trackerScopedEvents.filter(
-            (event) => event && event.ad_id != null && event.event_type !== "trend_reversal",
-        );
-
-        let dropCount = 0, newCount = 0, thresholdCount = 0, discountAlertCount = 0;
-        for (const e of renderableEvents) {
-            if (e.event_type === "price_drop") dropCount++;
-            else if (e.event_type === "new_listing") newCount++;
-            else if (e.event_type === "price_threshold_alert") thresholdCount++;
-            else if (e.event_type === "discount_alert") discountAlertCount++;
-        }
-        const totalCount = renderableEvents.length;
-
-        if (elements.trackerEventsBadge) {
-            elements.trackerEventsBadge.textContent = totalCount > 0 ? `${totalCount} событий` : "чат + Mini App";
-        }
-
-        const FILTER_LABELS = {
-            all: "Все",
-            price_drop: "Упали в цене",
-            new_listing: "Новые лоты",
-            price_threshold_alert: "Порог цены",
-            discount_alert: "Скидка",
-        };
-        const FILTER_COUNTS = {
-            all: totalCount,
-            price_drop: dropCount,
-            new_listing: newCount,
-            price_threshold_alert: thresholdCount,
-            discount_alert: discountAlertCount,
-        };
-        for (const button of elements.trackerEventFilterButtons) {
-            const filter = button.dataset.eventFilter;
-            const count = FILTER_COUNTS[filter] ?? 0;
-            const label = FILTER_LABELS[filter] ?? filter;
-            const active = filter === state.trackers.eventFilter;
-            const labelNode = button.querySelector("[data-event-filter-label]");
-            const badge = button.querySelector("[data-event-filter-count]");
-            if (labelNode) {
-                labelNode.textContent = label;
+            renderTrackerSourceFilter();
+            if (elements.trackerEventTypeSelect) elements.trackerEventTypeSelect.value = tracking.eventFilter;
+            if (elements.refreshTrackerEventsButton) elements.refreshTrackerEventsButton.disabled = tracking.eventsLoading || tracking.clearingEvents;
+            const filtered = tracking.eventFilterTrackerId != null || tracking.eventFilter !== "all";
+            const filteredEvents = tracking.events.filter((event) => event?.ad_id != null && event.event_type !== "trend_reversal"
+                && (tracking.eventFilterTrackerId == null || event.tracker_id === tracking.eventFilterTrackerId)
+                && (tracking.eventFilter === "all" || event.event_type === tracking.eventFilter));
+            const count = filteredEvents.length;
+            if (elements.clearEventsButton) {
+                elements.clearEventsButton.hidden = filtered || count === 0;
+                elements.clearEventsButton.disabled = tracking.clearingEvents || tracking.eventsLoading || Boolean(tracking.eventsError);
             }
-            if (badge) {
-                badge.textContent = String(count);
-                badge.hidden = count === 0;
+            if (elements.trackerFeedNote) {
+                let text = count ? `${count} в ленте` : "";
+                if (count >= tracking.eventLimit) text = `Последние ${count} событий`;
+                if (tracking.eventsError && count) text = "Не удалось обновить. Показаны ранее загруженные события.";
+                if (tracking.eventsLoading) text = "Обновляем ленту…";
+                if (tracking.clearingEvents) text = "Очищаем ленту…";
+                if (elements.trackerFeedNote.textContent !== text) elements.trackerFeedNote.textContent = text;
             }
-            button.classList.toggle("active", active);
-            button.setAttribute("aria-pressed", String(active));
-        }
 
-        // Populate tracker dropdown filter
-        if (elements.trackerEventTrackerSelect) {
-            const select = elements.trackerEventTrackerSelect;
-            const prevValue = select.value;
-            const uniqueTrackers = new Map();
-            for (const evt of state.trackers.events) {
-                if (!uniqueTrackers.has(evt.tracker_id)) {
-                    uniqueTrackers.set(evt.tracker_id, evt.query);
+            if (!count) {
+                if (tracking.eventsLoading || tracking.clearingEvents) return;
+                const buildEmpty = context.buildEmptyState;
+                if (tracking.eventsError) {
+                    container.appendChild(buildEmpty({
+                        title: tracking.eventsError,
+                        hint: "Повторите загрузку, чтобы увидеть события.",
+                        actionLabel: "Повторить",
+                        onAction: () => { void actions.refreshTrackerEvents(); },
+                        tone: "error",
+                    }));
+                } else if (filtered) {
+                    container.appendChild(buildEmpty({
+                        title: "Событий по этим фильтрам пока нет",
+                        hint: "Выберите другой трекер или тип события.",
+                        actionLabel: "Сбросить фильтры",
+                        onAction: () => actions.showTrackerEvents(),
+                    }));
+                } else {
+                    container.appendChild(buildEmpty({
+                        title: "Лента пока пуста",
+                        hint: "Здесь будут новые объявления и изменения цены, которые найдёт автопоиск.",
+                    }));
                 }
+                return;
             }
-            const options = [domEl("option", { value: "", text: "Все трекеры" })];
-            for (const [id, query] of uniqueTrackers) {
-                const option = domEl("option", { value: id, text: query });
-                if (String(id) === prevValue) option.selected = true;
-                options.push(option);
-            }
-            select.replaceChildren(...options);
-            // Restore selection from state
-            select.value = state.trackers.eventFilterTrackerId || "";
-        }
 
-        // Filter events by selected tracker first, then by event type
-        let filteredEvents = renderableEvents.filter((event) => {
-            if (state.trackers.eventFilter === "all") {
-                return true;
+            // Warm only cards close to the viewport.
+            if (typeof IntersectionObserver === "function" && actions.preloadListingDetail) {
+                eventDetailObserver = new IntersectionObserver((entries) => {
+                    for (const entry of entries) {
+                        if (!entry.isIntersecting) continue;
+                        entry.target._preloadDetail?.();
+                        eventDetailObserver?.unobserve(entry.target);
+                    }
+                }, { rootMargin: "160px" });
             }
-            return event.event_type === state.trackers.eventFilter;
-        });
-
-        if (elements.clearEventsButton) elements.clearEventsButton.hidden = filteredEvents.length === 0;
-        if (!filteredEvents.length) {
-            const buildEmpty = context.buildEmptyState;
-            let title;
-            let hint;
-            if (state.trackers.eventFilterTrackerId) {
-                const tracker = state.trackers.items.find((t) => t.id === state.trackers.eventFilterTrackerId);
-                title = tracker ? `Тихо по запросу "${tracker.query}"` : "Тихо по этому трекеру";
-                hint = "Дайте трекеру несколько часов — Kufar обновляется неравномерно.";
-            } else if (state.trackers.eventFilter === "all") {
-                title = "Событий пока нет";
-                hint = "Они появятся после первой проверки планировщика. Свежие лоты и падения цен прилетят в этот раздел и в чат бота.";
-            } else {
-                title = "По этому фильтру пусто";
-                hint = "Переключитесь на «Все», чтобы увидеть остальные сигналы.";
-            }
-            if (typeof buildEmpty === "function") {
-                container.appendChild(buildEmpty({ title, hint }));
-            } else {
-                const note = document.createElement("p");
-                note.className = "tracker-event-empty";
-                note.textContent = `${title}. ${hint}`;
-                container.appendChild(note);
-            }
-            return;
-        }
-
-        // Build event card element — extracted for virtual scrolling
-        if (typeof IntersectionObserver === "function" && actions.preloadListingDetail) {
-            eventDetailObserver = new IntersectionObserver((entries) => {
-                for (const entry of entries) {
-                    if (!entry.isIntersecting) continue;
-                    entry.target._preloadDetail?.();
-                    eventDetailObserver?.unobserve(entry.target);
-                }
-            }, { rootMargin: "160px" });
-        }
-        function buildEventNode(event) {
-            const isNewListing = event.event_type === "new_listing";
-            const isPriceDrop = event.event_type === "price_drop";
-            const publishedTime = isNewListing ? formatDate(event.list_time) : "";
-            const displayTime = publishedTime || formatDate(event.created_at);
-            const timeNode = displayTime ? domEl("time", {
-                className: "event-time",
-                text: isNewListing && !publishedTime ? `Найдено ${displayTime}` : displayTime,
-                attrs: {
-                    datetime: publishedTime ? event.list_time : event.created_at,
-                    title: publishedTime ? "Опубликовано на Kufar" : "Обнаружено автопоиском",
-                },
-            }) : null;
-            const thumbSrc = (() => {
-                const validated = safeImageUrl(event.thumbnail);
-                if (!validated) return "";
-                return typeof optimizedImage === "function"
-                    ? optimizedImage(validated, { width: 200 })
-                    : validated;
-            })();
-            const thumbnailNode = thumbSrc
-                ? domEl("img", {
-                    className: "event-thumbnail",
-                    // RV-UI-02: the title is the next node; the alt would
-                    // only repeat it.
-                    attrs: { src: thumbSrc, alt: "", loading: "lazy" },
-                })
-                // FE-05: aria-label exposes "Нет фото" while the
-                // decorative SVG stays hidden from screen readers.
-                : (() => {
-                    const node = domEl("div", {
-                        className: "event-thumbnail-placeholder",
-                        attrs: { "aria-label": "Нет фото", role: "img" },
-                    });
-                    node.appendChild(iconListingPlaceholder());
-                    return node;
+            function buildEventNode(event) {
+                const isNewListing = event.event_type === "new_listing";
+                const isPriceDrop = event.event_type === "price_drop";
+                const publishedTime = isNewListing ? formatDate(event.list_time) : "";
+                const displayTime = publishedTime || formatDate(event.created_at);
+                const timeNode = displayTime ? domEl("time", {
+                    className: "event-time",
+                    text: isNewListing && !publishedTime ? `Найдено ${displayTime}` : displayTime,
+                    attrs: {
+                        datetime: publishedTime ? event.list_time : event.created_at,
+                        title: publishedTime ? "Опубликовано на Kufar" : "Обнаружено автопоиском",
+                    },
+                }) : null;
+                const thumbSrc = (() => {
+                    const validated = safeImageUrl(event.thumbnail);
+                    if (!validated) return "";
+                    return typeof optimizedImage === "function"
+                        ? optimizedImage(validated, { width: 200 })
+                        : validated;
                 })();
-            const metaText = [event.region_name, event.seller_type].filter(Boolean).join(" · ");
-            const eventMeta = metaText ? domEl("div", { className: "event-meta", text: metaText }) : null;
-            const priceRow = domEl(
-                "div",
-                { className: "event-price-row" },
-                domEl("span", { className: "event-price mono", text: event.price_byn ? formatPrice(event.price_byn) : "без цены" }),
-            );
-            if (event.delta_byn && event.event_type === "price_drop") {
-                priceRow.appendChild(domEl("span", { className: "event-delta", text: `-${formatPrice(event.delta_byn)}` }));
-            }
-            if (event.event_type === "price_threshold_alert" && event.parameters?.threshold) {
-                priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `порог: ${formatPrice(event.parameters.threshold)}` }));
-            }
-            if (event.event_type === "discount_alert" && event.parameters?.discount_percent) {
-                priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `-${Math.round(event.parameters.discount_percent)}% от медианы` }));
-            }
-
-            let kindLabel = "";
-            let cardModifier = "";
-            if (isPriceDrop) {
-                kindLabel = "Цена снизилась";
-                cardModifier = " price-drop";
-            } else if (event.event_type === "price_threshold_alert") {
-                kindLabel = "Порог цены";
-                cardModifier = " threshold-alert";
-            } else if (event.event_type === "discount_alert") {
-                kindLabel = "Скидка от медианы";
-                cardModifier = " discount-alert";
-            }
-            const inLeads = _isActiveLeadAd(event.ad_id);
-            const inWatchlist = _isActiveWatchAd(event.ad_id);
-            const leadText = inLeads ? "В покупках" : "В покупки";
-            const watchText = inWatchlist ? "В избранном" : "В избранное";
-            const watchDisabled = inLeads || inWatchlist;
-            const eventTitle = event.title || "лот";
-
-            // RV-UI-02: a list item whose title button is the primary
-            // action (hit area stretched over the header in CSS) instead
-            // of role=button around three more controls; the event type,
-            // price and place are announced as the button's description.
-            const cardId = `tracker-event-${++_eventCardSeq}`;
-            const kindNode = kindLabel ? domEl("span", {
-                className: "event-kind",
-                text: kindLabel,
-                attrs: { id: `${cardId}-type` },
-            }) : null;
-            priceRow.id = `${cardId}-price`;
-            if (eventMeta) eventMeta.id = `${cardId}-meta`;
-            const describedBy = [kindNode, priceRow, eventMeta]
-                .filter(Boolean)
-                .map((node) => node.id)
-                .join(" ");
-
-            const card = domEl(
-                "div",
-                { className: `tracker-event-card${cardModifier}`, attrs: { role: "listitem" } },
-                domEl(
+                const thumbnailNode = thumbSrc
+                    ? domEl("img", {
+                        className: "event-thumbnail",
+                        // RV-UI-02: the title is the next node; the alt would
+                        // only repeat it.
+                        attrs: { src: thumbSrc, alt: "", loading: "lazy" },
+                    })
+                    // FE-05: aria-label exposes "Нет фото" while the
+                    // decorative SVG stays hidden from screen readers.
+                    : (() => {
+                        const node = domEl("div", {
+                            className: "event-thumbnail-placeholder",
+                            attrs: { "aria-label": "Нет фото", role: "img" },
+                        });
+                        node.appendChild(iconListingPlaceholder());
+                        return node;
+                    })();
+                const metaText = [event.region_name, event.seller_type].filter(Boolean).join(" · ");
+                const eventMeta = metaText ? domEl("div", { className: "event-meta", text: metaText }) : null;
+                const priceRow = domEl(
                     "div",
-                    { className: "event-header" },
-                    thumbnailNode,
+                    { className: "event-price-row" },
+                    domEl("span", { className: "event-price mono", text: formatPrice(event.price_byn, event.parameters?.price_type) }),
+                );
+                if (event.delta_byn && event.event_type === "price_drop") {
+                    priceRow.appendChild(domEl("span", { className: "event-delta", text: `-${formatPrice(event.delta_byn)}` }));
+                }
+                if (event.event_type === "price_threshold_alert" && event.parameters?.threshold != null) {
+                    priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `порог: ${formatPrice(event.parameters.threshold)}` }));
+                }
+                if (event.event_type === "discount_alert" && event.parameters?.discount_percent) {
+                    priceRow.appendChild(domEl("span", { className: "event-delta event-delta--alert", text: `−${Math.round(event.parameters.discount_percent)}% от медианы` }));
+                }
+
+                let kindLabel = "";
+                let cardModifier = "";
+                if (isPriceDrop) {
+                    kindLabel = "Цена снизилась";
+                    cardModifier = " price-drop";
+                } else if (isNewListing) {
+                    kindLabel = "Новое объявление";
+                    cardModifier = " new-listing";
+                } else if (event.event_type === "price_threshold_alert") {
+                    kindLabel = "Достигнут порог цены";
+                    cardModifier = " threshold-alert";
+                } else if (event.event_type === "discount_alert") {
+                    kindLabel = "Скидка от медианы";
+                    cardModifier = " discount-alert";
+                }
+                const inLeads = _isActiveLeadAd(event.ad_id);
+                const inWatchlist = _isActiveWatchAd(event.ad_id);
+                const leadText = inLeads ? "В покупках" : "В покупки";
+                const watchText = inWatchlist ? "В избранном" : "В избранное";
+                const watchDisabled = inLeads || inWatchlist;
+                const eventTitle = event.title || "объявление";
+                const listingUrl = safeKufarUrl(event.link);
+
+                // RV-UI-02: a list item whose title button is the primary
+                // action (hit area stretched over the header in CSS) instead
+                // of role=button around three more controls; the event type,
+                // price and place are announced as the button's description.
+                const cardId = `tracker-event-${++_eventCardSeq}`;
+                const kindNode = kindLabel ? domEl("span", {
+                    className: "event-kind",
+                    text: kindLabel,
+                    attrs: { id: `${cardId}-type` },
+                }) : null;
+                priceRow.id = `${cardId}-price`;
+                if (eventMeta) eventMeta.id = `${cardId}-meta`;
+                const describedBy = [kindNode, priceRow, eventMeta]
+                    .filter(Boolean)
+                    .map((node) => node.id)
+                    .join(" ");
+
+                const card = domEl(
+                    "div",
+                    { className: `tracker-event-card${cardModifier}`, attrs: { role: "listitem" } },
                     domEl(
                         "div",
-                        { className: "event-body" },
-                        kindNode || timeNode ? domEl(
-                            "div",
-                            { className: "event-top-row" },
-                            kindNode,
-                            timeNode,
-                        ) : null,
+                        { className: "event-header" },
+                        thumbnailNode,
                         domEl(
-                            "h3",
-                            { className: "card-heading event-heading" },
+                            "div",
+                            { className: "event-body" },
+                            kindNode || timeNode ? domEl(
+                                "div",
+                                { className: "event-top-row" },
+                                kindNode,
+                                timeNode,
+                            ) : null,
                             domEl(
-                                "button",
-                                {
-                                    className: "card-open",
-                                    type: "button",
-                                    attrs: { "aria-describedby": describedBy || null },
-                                },
-                                domEl("span", { className: "event-title", text: event.title || "Объявление" }),
+                                "h3",
+                                { className: "card-heading event-heading" },
+                                domEl(
+                                    "button",
+                                    {
+                                        className: "card-open",
+                                        type: "button",
+                                        attrs: { "aria-describedby": describedBy || null },
+                                    },
+                                    domEl("span", { className: "event-title", text: event.title || "Объявление" }),
+                                ),
                             ),
+                            priceRow,
+                            eventMeta,
+                            domEl("span", { className: "event-tracker-source" },
+                                domEl("span", { className: "event-tracker-label", text: "Трекер" }),
+                                domEl("span", { text: event.query })),
                         ),
-                        priceRow,
-                        eventMeta,
-                        domEl("span", { className: "event-tracker-source", text: event.query }),
                     ),
-                ),
-                domEl(
-                    "div",
-                    { className: "event-actions" },
-                    domEl("button", {
-                        className: "listing-btn",
-                        type: "button",
-                        dataset: { role: "lead" },
-                        text: leadText,
-                        attrs: inLeads
-                            ? { disabled: true, "aria-disabled": "true", "aria-label": `«${eventTitle}» уже в покупках` }
-                            : { "aria-label": `Добавить «${eventTitle}» в покупки` },
-                    }),
-                    domEl("button", {
-                        className: "listing-btn",
-                        type: "button",
-                        dataset: { role: "watch" },
-                        text: watchText,
-                        attrs: watchDisabled
-                            ? {
-                                disabled: true,
-                                "aria-disabled": "true",
-                                "aria-label": inLeads
-                                    ? `«${eventTitle}» уже в покупках`
-                                    : `«${eventTitle}» уже в избранном`,
-                            }
-                            : { "aria-label": `Добавить «${eventTitle}» в избранное` },
-                    }),
-                    domEl("a", {
-                        className: "listing-btn listing-btn--kufar",
-                        text: "Kufar →",
-                        attrs: { href: safeKufarUrl(event.link) || null, target: "_blank", rel: "noreferrer noopener" },
-                    }),
-                ),
-            );
+                    domEl(
+                        "div",
+                        { className: "event-actions" },
+                        domEl("button", {
+                            className: "listing-btn",
+                            type: "button",
+                            dataset: { role: "lead" },
+                            text: leadText,
+                            attrs: inLeads
+                                ? { disabled: true, "aria-disabled": "true", "aria-label": `«${eventTitle}» уже в покупках` }
+                                : { "aria-label": `Добавить «${eventTitle}» в покупки` },
+                        }),
+                        domEl("button", {
+                            className: "listing-btn",
+                            type: "button",
+                            dataset: { role: "watch" },
+                            text: watchText,
+                            attrs: watchDisabled
+                                ? {
+                                    disabled: true,
+                                    "aria-disabled": "true",
+                                    "aria-label": inLeads
+                                        ? `«${eventTitle}» уже в покупках`
+                                        : `«${eventTitle}» уже в избранном`,
+                                }
+                                : { "aria-label": `Добавить «${eventTitle}» в избранное` },
+                        }),
+                        listingUrl ? domEl("a", {
+                            className: "listing-btn listing-btn--kufar",
+                            text: "Kufar →",
+                            attrs: { href: listingUrl, target: "_blank", rel: "noreferrer noopener" },
+                        }) : null,
+                    ),
+                );
 
-            card.dataset.adId = String(event.ad_id);
+                card.dataset.adId = String(event.ad_id);
 
-            const detailOptions = () => {
-                const tracker = state.trackers.items.find((item) => item.id === event.tracker_id);
-                return {
-                    strictSearch: event.strict_mode,
-                    category: tracker?.category_id ?? null,
-                    referenceContext: "current",
+                const detailOptions = () => {
+                    const tracker = state.trackers.items.find((item) => item.id === event.tracker_id);
+                    return {
+                        strictSearch: event.strict_mode,
+                        category: tracker?.category_id ?? null,
+                        referenceContext: "current",
+                    };
                 };
-            };
-            const openButton = card.querySelector(".card-open");
-            card._preloadDetail = () => actions.preloadListingDetail?.(event, detailOptions());
-            eventDetailObserver?.observe(card);
-            openButton?.addEventListener("pointerenter", card._preloadDetail);
-            openButton?.addEventListener("focus", card._preloadDetail);
-            openButton?.addEventListener("pointerdown", card._preloadDetail);
-            openButton?.addEventListener("click", () => {
-                void actions.openListingDetail(event, detailOptions());
-            });
-
-            card.querySelector('[data-role="lead"]')?.addEventListener("click", (clickEvent) => {
-                clickEvent.stopPropagation();
-                const button = clickEvent.currentTarget;
-                if (button.disabled) return;
-                void Promise.resolve(actions.addLeadFromListing(
-                    {
-                        ad_id: event.ad_id,
-                        title: event.title,
-                        link: event.link,
-                        price_byn: event.price_byn,
-                        thumbnail: event.thumbnail || null,
-                        flip_estimates: [],
-                    },
-                    "tracker_event",
-                    event.query
-                )).then((changed) => {
-                    if (!changed) return;
-                    button.textContent = "В покупках";
-                    button.disabled = true;
-                    button.setAttribute("aria-disabled", "true");
-                    button.setAttribute("aria-label", `«${eventTitle}» уже в покупках`);
-                    const watchButton = card.querySelector('[data-role="watch"]');
-                    if (watchButton) {
-                        watchButton.textContent = "В избранное";
-                        watchButton.disabled = true;
-                        watchButton.setAttribute("aria-disabled", "true");
-                        watchButton.setAttribute("aria-label", `«${eventTitle}» уже в покупках`);
-                    }
+                const openButton = card.querySelector(".card-open");
+                card._preloadDetail = () => actions.preloadListingDetail?.(event, detailOptions());
+                eventDetailObserver?.observe(card);
+                openButton?.addEventListener("pointerenter", card._preloadDetail);
+                openButton?.addEventListener("focus", card._preloadDetail);
+                openButton?.addEventListener("pointerdown", card._preloadDetail);
+                openButton?.addEventListener("click", () => {
+                    void actions.openListingDetail(event, detailOptions());
                 });
-            });
 
-            card.querySelector('[data-role="watch"]')?.addEventListener("click", (clickEvent) => {
-                clickEvent.stopPropagation();
-                const button = clickEvent.currentTarget;
-                if (button.disabled) return;
-                void Promise.resolve(actions.addWatchlistFromListing(
-                    { ad_id: event.ad_id, title: event.title, link: event.link, price_byn: event.price_byn, thumbnail: event.thumbnail || null },
-                    event.query
-                )).then((changed) => {
-                    if (!changed) return;
-                    button.textContent = "В избранном";
-                    button.disabled = true;
-                    button.setAttribute("aria-disabled", "true");
-                    button.setAttribute("aria-label", `«${eventTitle}» уже в избранном`);
-                    // Mutual exclusion: if watchlist accepted, lead button stays enabled
-                    // (addWatchlistFromListing already rejects if in leads).
+                card.querySelector('[data-role="lead"]')?.addEventListener("click", (clickEvent) => {
+                    clickEvent.stopPropagation();
+                    const button = clickEvent.currentTarget;
+                    if (button.disabled) return;
+                    void Promise.resolve(actions.addLeadFromListing(
+                        {
+                            ad_id: event.ad_id,
+                            title: event.title,
+                            link: event.link,
+                            price_byn: event.price_byn,
+                            thumbnail: event.thumbnail || null,
+                            flip_estimates: [],
+                        },
+                        "tracker_event",
+                        event.query
+                    )).then((changed) => {
+                        if (!changed) return;
+                        button.textContent = "В покупках";
+                        button.disabled = true;
+                        button.setAttribute("aria-disabled", "true");
+                        button.setAttribute("aria-label", `«${eventTitle}» уже в покупках`);
+                        const watchButton = card.querySelector('[data-role="watch"]');
+                        if (watchButton) {
+                            watchButton.textContent = "В избранное";
+                            watchButton.disabled = true;
+                            watchButton.setAttribute("aria-disabled", "true");
+                            watchButton.setAttribute("aria-label", `«${eventTitle}» уже в покупках`);
+                        }
+                    });
                 });
-            });
 
-            return card;
-        }
+                card.querySelector('[data-role="watch"]')?.addEventListener("click", (clickEvent) => {
+                    clickEvent.stopPropagation();
+                    const button = clickEvent.currentTarget;
+                    if (button.disabled) return;
+                    void Promise.resolve(actions.addWatchlistFromListing(
+                        { ad_id: event.ad_id, title: event.title, link: event.link, price_byn: event.price_byn, thumbnail: event.thumbnail || null },
+                        event.query
+                    )).then((changed) => {
+                        if (!changed) return;
+                        button.textContent = "В избранном";
+                        button.disabled = true;
+                        button.setAttribute("aria-disabled", "true");
+                        button.setAttribute("aria-label", `«${eventTitle}» уже в избранном`);
+                        // Mutual exclusion: if watchlist accepted, lead button stays enabled
+                        // (addWatchlistFromListing already rejects if in leads).
+                    });
+                });
 
-        const VIRTUAL_LIST_THRESHOLD = 50;
-        if (filteredEvents.length > VIRTUAL_LIST_THRESHOLD) {
-            container._virtualList = createVirtualList(container, {
-                itemHeight: 160,
-                bufferSize: 5,
-                renderFn: (event, index) => buildEventNode(event),
-            });
-            container._virtualList.setItems(filteredEvents);
-        } else {
-            const list = domEl("div", { className: "card-list", attrs: { role: "list" } });
-            for (const event of filteredEvents) {
-                list.appendChild(buildEventNode(event));
+                return card;
             }
+
+            const list = domEl("div", { className: "tracker-feed-list", attrs: { role: "list" } });
+            for (const event of filteredEvents) list.appendChild(buildEventNode(event));
             container.appendChild(list);
-        }
         });
     }
 
-    /* ===== Tracker Event Filter Buttons (standalone call) ===== */
-
-    function renderTrackerEventFilters() {
-        // Tally events by event_type so each filter chip can show how
-        // many alerts it represents — gives the user a sense of where
-        // the action is before they tap. "all" mirrors the total of
-        // listing-level events only — query-level signals like
-        // ``trend_reversal`` have no ad_id and would render as broken
-        // cards, so they're excluded from the feed counters too.
-        const events = (state.trackers.events || []).filter(
-            (event) => event && event.ad_id != null && event.event_type !== "trend_reversal",
-        );
-        const total = events.length;
-        let priceDrops = 0;
-        let newListings = 0;
-        let thresholdAlerts = 0;
-        let discountAlerts = 0;
-        for (const event of events) {
-            if (event?.event_type === "price_drop") priceDrops += 1;
-            else if (event?.event_type === "new_listing") newListings += 1;
-            else if (event?.event_type === "price_threshold_alert") thresholdAlerts += 1;
-            else if (event?.event_type === "discount_alert") discountAlerts += 1;
-        }
-        const counts = {
-            all: total,
-            price_drop: priceDrops,
-            new_listing: newListings,
-            price_threshold_alert: thresholdAlerts,
-            discount_alert: discountAlerts,
-        };
-
-        for (const button of elements.trackerEventFilterButtons) {
-            const active = button.dataset.eventFilter === state.trackers.eventFilter;
-            button.classList.toggle("active", active);
-            button.setAttribute("aria-pressed", String(active));
-        }
-        const badges = elements.trackerEventFilterCounts || {};
-        for (const [key, badge] of Object.entries(badges)) {
-            if (!badge) continue;
-            const value = counts[key] ?? 0;
-            badge.textContent = String(value);
-            badge.hidden = value === 0;
-        }
-    }
-
-    return {
-        renderTrackerStatus,
-        renderTrackers,
-        renderTrackerEvents,
-        renderTrackerEventFilters,
-    };
+    return { renderTrackers, renderTrackerEvents };
 }
 
 // OPUS-13: lazy-load registration. The bundle ships a stub for

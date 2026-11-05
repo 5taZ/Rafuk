@@ -86,29 +86,22 @@ function cacheAppElements(elements) {
     elements.listingsList = document.getElementById("listings-list");
     elements.sortButtons = Array.from(document.querySelectorAll("[data-sort]"));
     elements.discountButtons = Array.from(document.querySelectorAll("[data-discount-from]"));
-    elements.trackerEventFilterButtons = Array.from(document.querySelectorAll("[data-event-filter]"));
-    // Per-filter count badges, keyed by filter name ("all" | "price_drop" |
-    // "new_listing"). Updated in renderTrackerEventFilters so the user
-    // sees how many alerts each tab represents before tapping it.
-    elements.trackerEventFilterCounts = {};
-    for (const node of document.querySelectorAll("[data-event-filter-count]")) {
-        elements.trackerEventFilterCounts[node.dataset.eventFilterCount] = node;
-    }
     elements.dealFromInput = document.getElementById("deal-from-input");
     elements.dealToInput = document.getElementById("deal-to-input");
     elements.dealApplyButton = document.getElementById("deal-apply-btn");
     elements.trackerPanel = document.getElementById("tracker-panel");
+    elements.trackingTabs = document.getElementById("tracking-tabs");
+    elements.trackingCount = document.getElementById("tracking-count");
     elements.trackQueryButton = document.getElementById("track-query-btn");
-    elements.trackerMinDiscountInput = document.getElementById("tracker-min-discount-input");
-    elements.trackerMaxPriceInput = document.getElementById("tracker-max-price-input");
-    elements.trackerSellerSelect = document.getElementById("tracker-seller-select");
-    elements.trackerConditionSelect = document.getElementById("tracker-condition-select");
-    elements.trackerRegionSelect = document.getElementById("tracker-region-select");
-    elements.trackerStatus = document.getElementById("tracker-status");
     elements.trackersList = document.getElementById("trackers-list");
+    elements.trackerEventsSection = document.getElementById("tracker-events-section");
     elements.trackerEventsList = document.getElementById("tracker-events-list");
+    elements.trackerFeedTools = document.getElementById("tracker-feed-tools");
+    elements.trackerFeedNote = document.getElementById("tracker-feed-note");
+    elements.refreshTrackerEventsButton = document.getElementById("refresh-tracker-events-btn");
     elements.clearEventsButton = document.getElementById("clear-events-btn");
     elements.trackerEventTrackerSelect = document.getElementById("tracker-event-tracker-select");
+    elements.trackerEventTypeSelect = document.getElementById("tracker-event-type-select");
     elements.leadInboxSection = document.getElementById("lead-inbox-section");
     elements.leadFilterButtons = Array.from(document.querySelectorAll("[data-lead-filter]"));
     elements.leadInboxList = document.getElementById("lead-inbox-list");
@@ -125,7 +118,6 @@ function cacheAppElements(elements) {
     for (const node of document.querySelectorAll("[data-items-count]")) {
         elements.itemsCountBadges[node.dataset.itemsCount] = node;
     }
-    elements.trackingHeroStats = document.getElementById("tracking-hero-stats");
     elements.dealsHeroStats = document.getElementById("deals-hero-stats");
     elements.detailModal = document.getElementById("detail-modal");
     elements.detailOverlay = document.getElementById("detail-overlay");
@@ -195,6 +187,18 @@ function cacheAppElements(elements) {
     elements.filterApplyBtn = document.querySelector(".filter-btn--apply");
     elements.filterCancelBtn = document.querySelector(".filter-btn--cancel");
     elements.editTrackerModal = document.getElementById("edit-tracker-modal");
+    elements.editTrackerTitle = document.getElementById("edit-tracker-title");
+    elements.trackerForm = document.getElementById("tracker-form");
+    elements.trackerFormError = document.getElementById("tracker-form-error");
+    elements.trackerFormNote = document.getElementById("tracker-form-note");
+    elements.trackerAdvanced = document.getElementById("tracker-advanced");
+    elements.trackerUseSearch = document.getElementById("tracker-use-search-btn");
+    elements.trackerLoadCategories = document.getElementById("tracker-load-categories-btn");
+    elements.trackerManage = document.getElementById("tracker-manage");
+    elements.toggleTrackerPause = document.getElementById("toggle-tracker-pause-btn");
+    elements.trackerMarket = document.getElementById("tracker-market-btn");
+    elements.trackerDelete = document.getElementById("tracker-delete");
+    elements.deleteTrackerButton = document.getElementById("delete-tracker-btn");
     elements.editTrackerQuery = document.getElementById("edit-tracker-query");
     elements.editStrictModeToggle = document.getElementById("edit-strict-mode-toggle");
     elements.editMinDiscountInput = document.getElementById("edit-min-discount-input");
@@ -222,7 +226,8 @@ function populateRegionSelectOptions(selectEl, currentValue) {
     // Requires: domEl() from dom_helpers.js (loaded before this file)
     const prev = currentValue || "";
     const fragment = document.createDocumentFragment();
-    fragment.appendChild(domEl("option", { value: "", text: "Любой" }));
+    const emptyLabel = selectEl.querySelector('option[value=""]')?.textContent || "Любой";
+    fragment.appendChild(domEl("option", { value: "", text: emptyLabel }));
     for (const [region, cities] of Object.entries(APP_REGIONS)) {
         const group = domEl("optgroup", { attrs: { label: region } });
         group.appendChild(domEl("option", { value: region, text: `${region} (все)` }));

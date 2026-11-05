@@ -706,7 +706,7 @@ function createRenderCore(context) {
     function renderViews() {
         return safeRender('renderViews', () => {
             const isUtilityView = state.ui.activeView === "profile" || state.ui.activeView === "admin";
-            if (elements.searchSection) elements.searchSection.hidden = isUtilityView;
+            if (elements.searchSection) elements.searchSection.hidden = isUtilityView || state.ui.activeView === "tracking";
             if (elements.viewNav) elements.viewNav.hidden = isUtilityView;
             for (const [name, panel] of Object.entries(elements.views)) {
                 if (!panel) continue;

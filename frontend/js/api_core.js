@@ -14,7 +14,6 @@ function createApiCore(context) {
         renderError,
         renderStrictSearch,
         renderDealInputs,
-        renderTrackerInputs,
         setActiveView,
         clearSearchData,
         search,

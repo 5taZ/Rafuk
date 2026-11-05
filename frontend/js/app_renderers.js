@@ -116,7 +116,6 @@ function createAppRenderers(baseContext) {
         renderHistoryDeals: charts.renderHistoryDeals,
         renderTrackerEvents: trackers.renderTrackerEvents,
         renderStrictSearch: core.renderStrictSearch,
-        renderTrackerInputs: views.renderTrackerInputs,
         renderLoading: core.renderLoading,
         // renderRecentSearches will be added after declarations below
     };
@@ -171,13 +170,11 @@ function createAppRenderers(baseContext) {
     } = cards;
 
     const {
-        renderTrackingHeroStats,
         renderDealsHeroStats,
         renderSortButtons,
         renderDiscountButtons,
         renderHistoryRangeButtons,
         renderDealInputs,
-        renderTrackerInputs,
         renderStats,
         renderSegments,
         renderGeography,
@@ -214,10 +211,8 @@ function createAppRenderers(baseContext) {
     } = charts;
 
     const {
-        renderTrackerStatus,
         renderTrackers,
         renderTrackerEvents,
-        renderTrackerEventFilters,
     } = trackers;
 
     // Add renderRecentSearches to hooks now that it's declared
@@ -239,13 +234,10 @@ function createAppRenderers(baseContext) {
         summary: renderSummary,
         helper: renderHelper,
         views: renderViews,
-        trackingHero: renderTrackingHeroStats,
         dealsHero: renderDealsHeroStats,
         sort: renderSortButtons,
         discount: renderDiscountButtons,
-        eventFilters: renderTrackerEventFilters,
         dealInputs: renderDealInputs,
-        trackerInputs: renderTrackerInputs,
         stats: renderStats,
         history: renderHistory,
         segments: renderSegments,
@@ -254,7 +246,6 @@ function createAppRenderers(baseContext) {
         categories: renderFilterDropdown,
         listings: renderListings,
         listingMarket: cards.renderListingMarket,
-        trackerStatus: renderTrackerStatus,
         trackers: renderTrackers,
         trackerEvents: renderTrackerEvents,
         leads: renderLeads,
@@ -310,13 +301,10 @@ function createAppRenderers(baseContext) {
         renderHelper,
         renderViews,
         showSessionBanner,
-        renderTrackingHeroStats,
         renderDealsHeroStats,
         renderSortButtons,
         renderDiscountButtons,
-        renderTrackerEventFilters,
         renderDealInputs,
-        renderTrackerInputs,
         renderStats,
         renderSegments,
         renderGeography,
@@ -326,7 +314,6 @@ function createAppRenderers(baseContext) {
         renderAdminStatuses,
         renderListingsCollection,
         renderListings,
-        renderTrackerStatus,
         renderTrackers,
         renderTrackerEvents,
         renderLeads,
