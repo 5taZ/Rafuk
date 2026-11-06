@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -173,12 +174,17 @@ def image_url(image: dict[str, Any]) -> str | None:
     return f"{IMAGE_BASE_URL}{path}"
 
 
+def iter_image_urls(ad: dict[str, Any]) -> Iterator[str]:
+    images = ad.get("images")
+    if not isinstance(images, list):
+        return
+    for image in images:
+        if isinstance(image, dict) and (url := image_url(image)):
+            yield url
+
+
 def first_image_url(ad: dict[str, Any]) -> str | None:
-    for image in ad.get("images", []):
-        url = image_url(image)
-        if url:
-            return url
-    return None
+    return next(iter_image_urls(ad), None)
 
 
 def collect_fields(
@@ -301,7 +307,7 @@ def build_listing_detail(
         company_ad=bool(ad.get("company_ad")),
         phone_hidden=bool(ad.get("phone_hidden", True)),
         description=description,
-        images=[url for image in ad.get("images", []) if (url := image_url(image))],
+        images=list(iter_image_urls(ad)),
         parameters=collect_fields(
             ad.get("ad_parameters", []), ignored=SENSITIVE_AD_PARAMETER_KEYS,
         ),

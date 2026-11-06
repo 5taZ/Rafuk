@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import NotRequired, TypedDict
 
 from sqlalchemy import (
     JSON,
@@ -834,6 +835,13 @@ class LeadReminder(Base):
     )
 
 
+class TrackerListingPayload(TypedDict):
+    ad_id: int
+    photo_urls: list[str]
+    description: str | None
+    album_message_id: NotRequired[int]
+
+
 class TelegramNotificationDLQ(Base):
     __tablename__ = "telegram_notification_dlq"
 
@@ -868,6 +876,9 @@ class TelegramNotificationDLQ(Base):
     # plain text retry, matching pre-fix behaviour.
     reply_markup_json: Mapped[str | None] = mapped_column(
         Text, nullable=True,
+    )
+    listing_payload: Mapped[TrackerListingPayload | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True,
     )
     # RV-SCH-02: the table is also the tracker-alert outbox (rows written in
     # the tick's group transaction, error_kind='pending'). Rows sharing a

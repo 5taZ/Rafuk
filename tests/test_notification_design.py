@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import LinkPreviewOptions
 
 from bot.keyboards import enhanced_alert_keyboard, inline_keyboard_from_json
@@ -84,3 +85,37 @@ async def test_old_price_drop_keeps_amount_and_non_alert_messages_stay_plain():
     message = 'Напоминание\nЗапрос "iPhone <Pro>"'
     await send_notification(bot, 123, message, reply_markup=None)
     bot.send_message.assert_awaited_once_with(123, message, reply_markup=None)
+
+
+@pytest.mark.parametrize(("photo_count", "photo_accepted"), [
+    (0, False), (1, True), (3, True), (3, False),
+])
+async def test_listing_alert_keeps_description_and_buttons_when_album_is_unavailable(
+    photo_count, photo_accepted,
+):
+    bot = AsyncMock()
+    rejected = TelegramBadRequest(method=MagicMock(), message="failed to get HTTP URL content")
+    bot.send_media_group.side_effect = rejected
+    if not photo_accepted:
+        bot.send_photo.side_effect = rejected
+    keyboard = enhanced_alert_keyboard(ad_id=42, listing_url="https://www.kufar.by/item/42")
+    photos = [f"https://rms.kufar.by/v1/gallery/{i}.jpg" for i in range(photo_count)]
+
+    assert await send_notification(
+        bot, 123, "Новое объявление\niPhone\n700 BYN", reply_markup=keyboard,
+        description="Чехол & коробка", photo_urls=photos,
+    ) is None
+
+    assert bot.send_media_group.await_count == (1 if photo_count > 1 else 0)
+    assert bot.send_photo.await_count == (1 if photo_count else 0)
+    formatted = "Новое объявление\n<b>iPhone</b>\n\n<b>700 BYN</b>\n\nЧехол &amp; коробка"
+    if photo_accepted:
+        bot.send_photo.assert_awaited_once_with(
+            123, photos[0], caption=formatted, parse_mode=ParseMode.HTML, reply_markup=keyboard,
+        )
+        bot.send_message.assert_not_awaited()
+    else:
+        bot.send_message.assert_awaited_once_with(
+            123, formatted, reply_markup=keyboard, parse_mode=ParseMode.HTML,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )

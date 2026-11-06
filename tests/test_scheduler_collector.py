@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import sys
 from datetime import UTC, datetime, timedelta
+from html import unescape
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -2577,6 +2579,9 @@ def _kufar_stub(ads_for, calls: list[dict]):
                 raise page
             return {"ads": page, "total": len(page)}
 
+        async def get_listing_description(self, ad_id):
+            return None
+
         async def aclose(self):
             return None
 
@@ -2790,6 +2795,65 @@ async def test_check_trackers_delivers_through_outbox_with_keyboard(
     assert call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "add_lead:31"
     async with sf() as session:
         assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
+
+
+async def test_tracker_album_keeps_ten_photos_and_retries_only_the_buttons(
+    monkeypatch, mock_bot: AsyncMock, tick_db,
+):
+    from aiogram.exceptions import TelegramRetryAfter
+    from sqlalchemy import update
+
+    photos = [{"path": f"{index}.jpg"} for index in range(12)]
+    ad = {**_ad(32, 99_000), "images": [None, photos[0], *photos, {"path": ""}]}
+    stub = _kufar_stub(lambda _query: [ad], [])
+    description = AsyncMock(return_value="\n Чехол <новый>  & коробка\n" + "а" * 300)
+    stub.get_listing_description = description
+    monkeypatch.setattr(collector, "KufarClient", stub)
+    mock_bot.send_media_group.return_value = [SimpleNamespace(message_id=47)]
+    mock_bot.send_message.side_effect = [
+        TelegramRetryAfter(method=MagicMock(), message="flood control", retry_after=30),
+        MagicMock(),
+    ]
+
+    async with tick_db() as session:
+        user = make_user(telegram_user_id=1302, first_name="Album")
+        session.add(user)
+        await session.flush()
+        session.add(Tracker(
+            user_id=user.id, query="iphone 13", strict_mode=False,
+            last_checked_at=datetime.now(UTC) - timedelta(minutes=20),
+        ))
+        await session.commit()
+
+    await check_trackers(mock_bot, tick_db, _TICK_SETTINGS)
+
+    chat_id, media = mock_bot.send_media_group.await_args.args
+    assert chat_id == 1302
+    assert [item.media for item in media] == [
+        f"https://rms.kufar.by/v1/gallery/{i}.jpg" for i in range(10)
+    ]
+    assert all(item.caption is None for item in media[1:])
+    excerpt = media[0].caption.split("\n\n")[-1]
+    assert excerpt.startswith("Чехол &lt;новый&gt; &amp; коробка ")
+    assert len(unescape(excerpt)) == 300 and excerpt.endswith("…")
+    assert "<b>990 BYN</b>" in media[0].caption
+    row, = await _outbox_rows(tick_db)
+    assert row.listing_payload["album_message_id"] == 47
+    assert row.retry_count == 0 and row.error_kind == "rate_limited"
+
+    async with tick_db() as session:
+        await session.execute(update(TelegramNotificationDLQ).values(next_retry_at=None))
+        await session.commit()
+    assert await retry_telegram_notification_dlq(mock_bot, tick_db) == 1
+
+    assert await _outbox_rows(tick_db) == []
+    assert mock_bot.send_media_group.await_count == 1
+    description.assert_awaited_once_with(32)
+    assert mock_bot.send_message.await_count == 2
+    actions = mock_bot.send_message.await_args.kwargs
+    assert actions["disable_notification"] is True
+    assert actions["reply_parameters"].message_id == 47
+    assert actions["reply_markup"].inline_keyboard[0][0].callback_data == "add_lead:32"
 
 
 @pytest.mark.asyncio
@@ -3214,18 +3278,26 @@ async def test_check_trackers_does_not_repeat_threshold_alert_after_24h(
     """RV-SCH-05: the dedup now covers every retained event, not the last
     24 h — a lot alerted two days ago at the same price stays quiet; once
     its price drops further it is alerted again."""
-    from sqlalchemy import select, update
+    from sqlalchemy import select
 
     sf = tick_db
+    now = datetime.now(UTC)
     price = {"lot": 45_000}
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz):
+            return now.astimezone(tz)
 
     def _pages(query):
         return [
-            _ad(10, price["lot"], "Диван угловой"),
+            {**_ad(10, price["lot"], "Диван угловой"), "body_short": "Самовывоз",
+             "images": [{"path": "sofa.jpg"}]},
             _ad(11, 90_000, "Диван кожаный"),
             _ad(12, 100_000, "Диван раскладной"),
         ]
 
+    monkeypatch.setattr(collector, "datetime", Clock)
     monkeypatch.setattr(collector, "KufarClient", _kufar_stub(_pages, []))
     async with sf() as session:
         user = make_user(telegram_user_id=2101, first_name="Threshold")
@@ -3234,7 +3306,7 @@ async def test_check_trackers_does_not_repeat_threshold_alert_after_24h(
         tracker = Tracker(
             user_id=user.id, query="диван", strict_mode=False,
             alert_price_threshold=500,
-            last_checked_at=datetime.now(UTC) - timedelta(minutes=20),
+            last_checked_at=now - timedelta(minutes=20),
         )
         session.add(tracker)
         await session.flush()
@@ -3243,10 +3315,9 @@ async def test_check_trackers_does_not_repeat_threshold_alert_after_24h(
             strict_mode=False, event_type="price_threshold_alert",
             title="Диван угловой", link="https://www.kufar.by/item/10",
             price_byn=450, price_type="fixed", parameters={"threshold": 500.0},
-            created_at=datetime.now(UTC) - timedelta(days=2),
+            created_at=now - timedelta(days=2),
         ))
         await session.commit()
-        tracker_id = tracker.id
 
     async def _threshold_prices():
         async with sf() as session:
@@ -3259,19 +3330,22 @@ async def test_check_trackers_does_not_repeat_threshold_alert_after_24h(
 
     await check_trackers(mock_bot, sf, _TICK_SETTINGS)
     assert await _threshold_prices() == [450.0]
-    assert not any("Порог цены" in call.args[1] for call in mock_bot.send_message.await_args_list)
+    assert not any(
+        call.kwargs["caption"].startswith("Порог цены")
+        for call in mock_bot.send_photo.await_args_list
+    )
 
     price["lot"] = 40_000
-    async with sf() as session:
-        await session.execute(
-            update(Tracker)
-            .where(Tracker.id == tracker_id)
-            .values(last_checked_at=datetime.now(UTC) - timedelta(minutes=20))
-        )
-        await session.commit()
+    now += timedelta(minutes=20)
     await check_trackers(mock_bot, sf, _TICK_SETTINGS)
     assert await _threshold_prices() == [450.0, 400.0]
-    assert any("Порог цены" in call.args[1] for call in mock_bot.send_message.await_args_list)
+    captions = {
+        call.kwargs["caption"].splitlines()[0]: call.kwargs["caption"]
+        for call in mock_bot.send_photo.await_args_list
+        if call.args[1].endswith("/sofa.jpg")
+    }
+    assert captions["Порог цены"].endswith("Ваш порог: 500 BYN\n\nСамовывоз")
+    assert captions["Цена снизилась"].endswith("\n\nСамовывоз")
 
 
 # ── RV-SCH-04: reminder lifecycle ───────────────────────────────────────

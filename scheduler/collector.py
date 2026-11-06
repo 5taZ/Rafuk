@@ -6,7 +6,7 @@ import logging
 import signal
 import time
 from collections import defaultdict
-from collections.abc import Collection, Mapping
+from collections.abc import Awaitable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -57,6 +57,7 @@ from api.models import (
     TelegramNotificationDLQ,
     Tracker,
     TrackerEvent,
+    TrackerListingPayload,
     User,
     UserConsent,
 )
@@ -82,7 +83,7 @@ from api.services.history_service import (
     upsert_query_snapshot,
 )
 from api.services.kufar_client import KufarAPIError, KufarClient, KufarUnavailableError
-from api.services.listing_mapper import first_image_url
+from api.services.listing_mapper import first_image_url, iter_image_urls
 from api.services.market_signals import region_label
 from api.services.reseller_tools import matches_tracker_filters
 from bot.keyboards import (
@@ -91,12 +92,13 @@ from bot.keyboards import (
     lead_reminder_keyboard,
     tracker_alert_keyboard,
 )
-from bot.notifications import send_notification
+from bot.notifications import MAX_NOTIFICATION_PHOTOS, send_album_actions, send_notification
 from scheduler.messages import (
     _build_new_listing_message,
     _build_price_drop_message,
     _build_threshold_message,
     _build_tracker_message,
+    _description_preview,
     _format_price_byn,  # noqa: F401 — back-compat import for tests/external callers
 )
 
@@ -165,9 +167,16 @@ async def _send_message_classified(
     *,
     reply_markup: object | None = None,
 ) -> tuple[str, int | None]:
-    """PERF-M3 helper: send one Telegram message and classify the outcome —
-    pure I/O, no SQLAlchemy session touched, so it is safe inside
-    ``asyncio.gather`` (the AsyncSession isn't safe under concurrent access).
+    return await _classify_telegram_send(
+        telegram_user_id,
+        send_notification(bot, telegram_user_id, message, reply_markup=reply_markup),
+    )
+
+
+async def _classify_telegram_send(
+    telegram_user_id: int, send: Awaitable[object],
+) -> tuple[str, int | None]:
+    """PERF-M3: classify Telegram outcomes for concurrent delivery tasks.
 
     Returns ``(outcome, retry_after_seconds)``; the delay is set only for
     ``rate_limited``. Outcomes:
@@ -183,7 +192,7 @@ async def _send_message_classified(
     """
     global _telegram_paused_until
     try:
-        await send_notification(bot, telegram_user_id, message, reply_markup=reply_markup)
+        await send
         return "sent", None
     except TelegramForbiddenError:
         return "blocked", None
@@ -290,6 +299,7 @@ def _queue_notification_dlq(
     retry_after_seconds: int | None = None,
     reply_markup: object | None = None,
     dedup_key: str | None = None,
+    listing_payload: TrackerListingPayload | None = None,
 ) -> None:
     session.add(
         TelegramNotificationDLQ(
@@ -302,6 +312,7 @@ def _queue_notification_dlq(
             retry_after_seconds=retry_after_seconds,
             reply_markup_json=_serialize_reply_markup(reply_markup),
             dedup_key=dedup_key[:128] if dedup_key else None,
+            listing_payload=listing_payload,
         )
     )
 
@@ -1331,6 +1342,7 @@ async def _process_search_key(
                         query=primary.query,
                         listing_url=primary.link,
                     ),
+                    listing_payload=_listing_payload(primary.ad_id, ads_by_id),
                 ))
                 logger.info(
                     "Tracker %d (user %d): threshold alert queued (%d events)",
@@ -1343,6 +1355,21 @@ async def _process_search_key(
             session, jobs, skip_keys=skip_keys, queued_keys=group_keys,
         )
     return queued
+
+
+def _listing_payload(
+    ad_id: int | None, ads_by_id: dict[int, dict[str, object]],
+) -> TrackerListingPayload | None:
+    if ad_id is None or (ad := ads_by_id.get(ad_id)) is None:
+        return None
+    description = _description_preview(ad.get("body")) or _description_preview(
+        ad.get("body_short"),
+    )
+    return {
+        "ad_id": ad_id,
+        "photo_urls": list(dict.fromkeys(iter_image_urls(ad)))[:MAX_NOTIFICATION_PHOTOS],
+        "description": description,
+    }
 
 
 def _listing_notification_jobs(
@@ -1383,6 +1410,7 @@ def _listing_notification_jobs(
             # AUDIT-LOW: same (user, ad, event) across trackers → one
             # Telegram message.
             dedup_key=f"new_listing:{state.ad_id}",
+            listing_payload=_listing_payload(state.ad_id, ads_by_id),
         ))
 
     drops = [
@@ -1397,6 +1425,7 @@ def _listing_notification_jobs(
             reply_markup=enhanced_alert_keyboard(ad_id=state.ad_id, listing_url=state.link),
             # AUDIT-LOW: dedup across same-user trackers.
             dedup_key=f"price_drop:{state.ad_id}",
+            listing_payload=_listing_payload(state.ad_id, ads_by_id),
         ))
     return jobs
 
@@ -1446,6 +1475,7 @@ class _TrackerNotifyJob:
     message: str
     reply_markup: object | None
     dedup_key: str | None = None
+    listing_payload: TrackerListingPayload | None = None
 
 
 # Width of ``telegram_notification_dlq.dedup_key``.
@@ -1500,6 +1530,7 @@ def _enqueue_tracker_notifications(
             # sends the same "📌 В покупки" / "⭐ В Избранное" buttons.
             reply_markup=job.reply_markup,
             dedup_key=dedup_key,
+            listing_payload=job.listing_payload,
         )
         if key is not None:
             queued_keys.add(key)
@@ -2141,6 +2172,25 @@ class _DrainOutcome:
     blocked_internal_id: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _QueuedNotification:
+    id: int
+    user_id: int | None
+    message: str
+    retry_count: int
+    markup_json: str | None
+    listing_payload: TrackerListingPayload | None
+
+
+async def _load_alert_description(ad_id: int) -> str | None:
+    try:
+        description = await _get_kufar_client(get_settings()).get_listing_description(ad_id)
+    except (httpx.HTTPError, TimeoutError):
+        logger.debug("Could not load description for listing %d", ad_id)
+        return None
+    return _description_preview(description)
+
+
 async def _delete_outbox_rows(
     session_factory: async_sessionmaker[AsyncSession], row_ids: Collection[int],
 ) -> None:
@@ -2176,27 +2226,14 @@ async def _pump_notification_queue_locked(
         withdrawn = await _telegram_ids_with_withdrawn_pd_consent(
             session, {row.telegram_user_id for row in rows},
         )
-        # Snapshot the bytes we need before we leave the session — the
-        # async send loop runs without a session open so we don't block
-        # connections on outbound I/O.
-        # AUDIT-LOW (audit follow-up): also snapshot the serialized
-        # keyboard so the retry can rebuild the inline buttons. We
-        # keep it as raw JSON in the snapshot tuple and deserialize
-        # lazily on the send side — that way pympling 50 rows doesn't
-        # do 50 InlineKeyboardMarkup constructions if most of them
-        # never get sent (e.g. a user blocks the bot mid-pump).
-        snapshots: list[tuple[int, int, int | None, str, int, str | None]] = [
-            (
-                row.id,
-                row.telegram_user_id,
-                row.user_id,
-                row.message,
-                row.retry_count,
-                row.reply_markup_json,
-            )
-            for row in rows
-            if row.telegram_user_id not in withdrawn
-        ]
+        # Outbound I/O must not keep the database connection checked out.
+        by_user: dict[int, list[_QueuedNotification]] = defaultdict(list)
+        for row in rows:
+            if row.telegram_user_id not in withdrawn:
+                by_user[row.telegram_user_id].append(_QueuedNotification(
+                    row.id, row.user_id, row.message, row.retry_count, row.reply_markup_json,
+                    row.listing_payload,
+                ))
         if withdrawn:
             await session.execute(
                 delete(TelegramNotificationDLQ).where(
@@ -2210,57 +2247,81 @@ async def _pump_notification_queue_locked(
                 len(withdrawn),
             )
 
-    by_user: dict[int, list[tuple[int, int | None, str, int, str | None]]] = defaultdict(list)
-    for row_id, tg_id, user_id, message, retry_count, markup_json in snapshots:
-        by_user[tg_id].append((row_id, user_id, message, retry_count, markup_json))
-
     sem = asyncio.Semaphore(_TRACKER_USER_CONCURRENCY)
+    descriptions: dict[int, asyncio.Task[str | None]] = {}
 
-    async def _drain(
-        tg_user_id: int,
-        items: list[tuple[int, int | None, str, int, str | None]],
-    ) -> _DrainOutcome:
+    async def _send_listing(
+        tg_user_id: int, item: _QueuedNotification, listing: TrackerListingPayload,
+        reply_markup: object | None,
+    ) -> None:
+        album_id = listing.get("album_message_id")
+        if album_id is None:
+            description = listing["description"]
+            if description is None:
+                ad_id = listing["ad_id"]
+                if ad_id not in descriptions:
+                    descriptions[ad_id] = asyncio.create_task(_load_alert_description(ad_id))
+                description = await descriptions[ad_id]
+            album_id = await send_notification(
+                bot, tg_user_id, item.message, reply_markup=reply_markup,
+                description=description, photo_urls=listing["photo_urls"],
+            )
+            if album_id is None or reply_markup is None:
+                return
+            # Albums cannot carry buttons. Checkpoint delivery so retrying
+            # the separate keyboard message does not resend the photos.
+            async with session_factory() as session:
+                await session.execute(
+                    update(TelegramNotificationDLQ).where(TelegramNotificationDLQ.id == item.id)
+                    .values(listing_payload={**listing, "album_message_id": album_id})
+                )
+                await session.commit()
+        if reply_markup is not None:
+            await send_album_actions(bot, tg_user_id, album_id, reply_markup=reply_markup)
+
+    async def _drain(tg_user_id: int, items: list[_QueuedNotification]) -> _DrainOutcome:
         """Send every queued message for one user, serially."""
         drained = _DrainOutcome()
         async with sem:
-            for index, (row_id, user_id, message, retry_count, markup_json) in enumerate(items):
-                outcome, retry_after = await _send_message_classified(
-                    bot,
-                    tg_user_id,
-                    message,
-                    # AUDIT-LOW: rebuild the inline keyboard from JSON
-                    # so the retried message carries its action
-                    # buttons (📌 В покупки / ⭐ В Избранное / 🔗
-                    # Открыть, or the trend-alert pair). Falls back to
-                    # plain text if the JSON is missing/malformed.
-                    reply_markup=_deserialize_reply_markup(markup_json),
-                )
+            for index, item in enumerate(items):
+                reply_markup = _deserialize_reply_markup(item.markup_json)
+                listing = item.listing_payload
+                if listing is None:
+                    outcome, retry_after = await _send_message_classified(
+                        bot, tg_user_id, item.message, reply_markup=reply_markup,
+                    )
+                else:
+                    outcome, retry_after = await _classify_telegram_send(
+                        tg_user_id, _send_listing(tg_user_id, item, listing, reply_markup),
+                    )
                 if outcome == "sent":
                     # RV2-DS-02: gone the moment it is delivered. The batch
                     # used to be deleted in one commit after every send, so
                     # a pump cancelled mid-batch (SIGTERM on deploy) re-sent
                     # everything already delivered.
-                    await _delete_outbox_rows(session_factory, [row_id])
+                    await _delete_outbox_rows(session_factory, [item.id])
                     drained.sent += 1
                 elif outcome == "blocked":
                     # User no longer reachable — pointless to keep any of
                     # their queued rows; the caller wipes them all.
                     drained.blocked = True
-                    drained.blocked_internal_id = user_id
-                    drained.delete_ids.append(row_id)
+                    drained.blocked_internal_id = item.user_id
+                    drained.delete_ids.append(item.id)
                     return drained
                 elif outcome == "permanent_error":
                     # RV-SCH-02: a payload Telegram rejects (BadRequest)
                     # used to burn all retries before being dropped.
-                    drained.delete_ids.append(row_id)
+                    drained.delete_ids.append(item.id)
                 elif outcome in ("unauthorized", "rate_limited"):
                     # RV2-DS-03: not this row's failure — park the chat's
                     # remaining rows without spending their retry budget.
                     delay = retry_after or int(_TELEGRAM_UNAUTHORIZED_PAUSE.total_seconds())
-                    drained.deferred.extend((item[0], delay, outcome) for item in items[index:])
+                    drained.deferred.extend(
+                        (pending.id, delay, outcome) for pending in items[index:]
+                    )
                     return drained
                 else:
-                    drained.bump_ids.append((row_id, retry_count + 1))
+                    drained.bump_ids.append((item.id, item.retry_count + 1))
         return drained
 
     results = await asyncio.gather(

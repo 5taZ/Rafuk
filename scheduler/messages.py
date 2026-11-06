@@ -5,6 +5,17 @@ import math
 from api.models import QueryListingState, TrackerEvent
 from api.services.history_service import QuerySyncResult, TrendReversal
 
+_DESCRIPTION_PREVIEW_LIMIT = 300
+
+
+def _description_preview(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    description = " ".join(value.split())
+    if len(description) > _DESCRIPTION_PREVIEW_LIMIT:
+        return description[:_DESCRIPTION_PREVIEW_LIMIT - 1].rstrip() + "…"
+    return description or None
+
 
 def _format_price_byn(value: float | None, price_type: str | None = None) -> str:
     if price_type == "negotiable" or (value is None and price_type != "free"):
