@@ -5,7 +5,6 @@ import sys
 from datetime import UTC, datetime, timedelta
 from html import unescape
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -2797,7 +2796,7 @@ async def test_check_trackers_delivers_through_outbox_with_keyboard(
         assert (await session.execute(select(TelegramNotificationDLQ))).first() is None
 
 
-async def test_tracker_album_keeps_ten_photos_and_retries_only_the_buttons(
+async def test_tracker_photo_card_keeps_ten_photos_and_buttons_together_on_retry(
     monkeypatch, mock_bot: AsyncMock, tick_db,
 ):
     from aiogram.exceptions import TelegramRetryAfter
@@ -2809,8 +2808,7 @@ async def test_tracker_album_keeps_ten_photos_and_retries_only_the_buttons(
     description = AsyncMock(return_value="\n Чехол <новый>  & коробка\n" + "а" * 300)
     stub.get_listing_description = description
     monkeypatch.setattr(collector, "KufarClient", stub)
-    mock_bot.send_media_group.return_value = [SimpleNamespace(message_id=47)]
-    mock_bot.send_message.side_effect = [
+    mock_bot.send_rich_message.side_effect = [
         TelegramRetryAfter(method=MagicMock(), message="flood control", retry_after=30),
         MagicMock(),
     ]
@@ -2827,18 +2825,22 @@ async def test_tracker_album_keeps_ten_photos_and_retries_only_the_buttons(
 
     await check_trackers(mock_bot, tick_db, _TICK_SETTINGS)
 
-    chat_id, media = mock_bot.send_media_group.await_args.args
+    first_attempt = mock_bot.send_rich_message.await_args
+    chat_id, card = first_attempt.args
     assert chat_id == 1302
-    assert [item.media for item in media] == [
-        f"https://rms.kufar.by/v1/gallery/{i}.jpg" for i in range(10)
-    ]
-    assert all(item.caption is None for item in media[1:])
-    excerpt = media[0].caption.split("\n\n")[-1]
+    images = "".join(f'<img src="https://rms.kufar.by/v1/gallery/{i}.jpg"/>' for i in range(10))
+    assert card.html.startswith(f"<tg-collage>{images}<figcaption>")
+    assert card.html.endswith("</figcaption></tg-collage>")
+    caption = card.html.split("<figcaption>")[1].split("</figcaption>")[0]
+    excerpt = caption.split("<br><br>")[-1]
     assert excerpt.startswith("Чехол &lt;новый&gt; &amp; коробка ")
     assert len(unescape(excerpt)) == 300 and excerpt.endswith("…")
-    assert "<b>990 BYN</b>" in media[0].caption
+    assert "<b>990 BYN</b>" in caption
+    keyboard = first_attempt.kwargs["reply_markup"].inline_keyboard
+    assert [button.callback_data for button in keyboard[0]] == ["add_lead:32", "add_watch:32"]
+    assert keyboard[1][0].url == ad["ad_link"]
     row, = await _outbox_rows(tick_db)
-    assert row.listing_payload["album_message_id"] == 47
+    assert "album_message_id" not in row.listing_payload
     assert row.retry_count == 0 and row.error_kind == "rate_limited"
 
     async with tick_db() as session:
@@ -2847,13 +2849,38 @@ async def test_tracker_album_keeps_ten_photos_and_retries_only_the_buttons(
     assert await retry_telegram_notification_dlq(mock_bot, tick_db) == 1
 
     assert await _outbox_rows(tick_db) == []
-    assert mock_bot.send_media_group.await_count == 1
-    description.assert_awaited_once_with(32)
-    assert mock_bot.send_message.await_count == 2
+    assert mock_bot.send_rich_message.await_args_list == [first_attempt, first_attempt]
+    assert description.await_count == 2
+    mock_bot.send_media_group.assert_not_awaited()
+    mock_bot.send_photo.assert_not_awaited()
+    mock_bot.send_message.assert_not_awaited()
+
+
+async def test_outbox_completes_legacy_album_without_resending_photos(mock_bot, tick_db):
+    from bot.keyboards import enhanced_alert_keyboard
+
+    async with tick_db() as session:
+        user = make_user(telegram_user_id=1303, first_name="Legacy album")
+        session.add(user)
+        await session.flush()
+        keyboard = enhanced_alert_keyboard(ad_id=32, listing_url="https://www.kufar.by/item/32")
+        _enqueue_tracker_notifications(session, [_TrackerNotifyJob(
+            telegram_user_id=1303, internal_user_id=user.id,
+            message="Новое объявление\niPhone\n990 BYN", reply_markup=keyboard,
+            listing_payload={"ad_id": 32, "photo_urls": [], "description": None,
+                             "album_message_id": 47},
+        )])
+        await session.commit()
+
+    assert await retry_telegram_notification_dlq(mock_bot, tick_db) == 1
+    assert await _outbox_rows(tick_db) == []
+    mock_bot.send_rich_message.assert_not_awaited()
+    mock_bot.send_photo.assert_not_awaited()
+    assert mock_bot.send_message.await_count == 1
     actions = mock_bot.send_message.await_args.kwargs
     assert actions["disable_notification"] is True
     assert actions["reply_parameters"].message_id == 47
-    assert actions["reply_markup"].inline_keyboard[0][0].callback_data == "add_lead:32"
+    assert actions["reply_markup"] == keyboard
 
 
 @pytest.mark.asyncio

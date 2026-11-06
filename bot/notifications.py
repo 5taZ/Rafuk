@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     InlineKeyboardMarkup,
-    InputMediaPhoto,
+    InputRichMessage,
     LinkPreviewOptions,
     ReplyParameters,
 )
@@ -65,25 +65,27 @@ async def send_notification(
     reply_markup: object | None,
     description: str | None = None,
     photo_urls: Sequence[str] = (),
-) -> int | None:
-    """Send the alert and return the first message ID if it was sent as an album."""
+) -> None:
     formatted = _format_alert(message, reply_markup)
     if formatted is None:
         await bot.send_message(telegram_user_id, message, reply_markup=reply_markup)
-        return None
+        return
     if description:
         formatted += f"\n\n{escape(description)}"
 
     photos = photo_urls[:MAX_NOTIFICATION_PHOTOS]
     if len(photos) > 1:
-        media = [InputMediaPhoto(media=photos[0], caption=formatted, parse_mode=ParseMode.HTML)]
-        media.extend(InputMediaPhoto(media=url) for url in photos[1:])
+        images = "".join(f'<img src="{escape(url)}"/>' for url in photos)
+        caption = formatted.replace("\n", "<br>")
+        card = InputRichMessage(
+            html=f"<tg-collage>{images}<figcaption>{caption}</figcaption></tg-collage>",
+        )
         try:
-            album = await bot.send_media_group(telegram_user_id, media)
+            await bot.send_rich_message(telegram_user_id, card, reply_markup=reply_markup)
         except TelegramBadRequest as exc:
-            logger.info("Telegram rejected the album. Trying the first photo: %s", exc.message)
+            logger.info("Telegram rejected the collage. Trying the first photo: %s", exc.message)
         else:
-            return album[0].message_id
+            return
     if photos:
         try:
             await bot.send_photo(
@@ -93,12 +95,11 @@ async def send_notification(
         except TelegramBadRequest as exc:
             logger.info("Telegram rejected the listing photo. Sending text: %s", exc.message)
         else:
-            return None
+            return
     await bot.send_message(
         telegram_user_id, formatted, reply_markup=reply_markup, parse_mode=ParseMode.HTML,
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
-    return None
 
 
 async def send_album_actions(

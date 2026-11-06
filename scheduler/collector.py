@@ -2254,30 +2254,21 @@ async def _pump_notification_queue_locked(
         tg_user_id: int, item: _QueuedNotification, listing: TrackerListingPayload,
         reply_markup: object | None,
     ) -> None:
-        album_id = listing.get("album_message_id")
-        if album_id is None:
-            description = listing["description"]
-            if description is None:
-                ad_id = listing["ad_id"]
-                if ad_id not in descriptions:
-                    descriptions[ad_id] = asyncio.create_task(_load_alert_description(ad_id))
-                description = await descriptions[ad_id]
-            album_id = await send_notification(
-                bot, tg_user_id, item.message, reply_markup=reply_markup,
-                description=description, photo_urls=listing["photo_urls"],
-            )
-            if album_id is None or reply_markup is None:
-                return
-            # Albums cannot carry buttons. Checkpoint delivery so retrying
-            # the separate keyboard message does not resend the photos.
-            async with session_factory() as session:
-                await session.execute(
-                    update(TelegramNotificationDLQ).where(TelegramNotificationDLQ.id == item.id)
-                    .values(listing_payload={**listing, "album_message_id": album_id})
-                )
-                await session.commit()
-        if reply_markup is not None:
-            await send_album_actions(bot, tg_user_id, album_id, reply_markup=reply_markup)
+        if (album_id := listing.get("album_message_id")) is not None:
+            # An album sent by a previous release may still be waiting for its buttons.
+            if reply_markup is not None:
+                await send_album_actions(bot, tg_user_id, album_id, reply_markup=reply_markup)
+            return
+        description = listing["description"]
+        if description is None:
+            ad_id = listing["ad_id"]
+            if ad_id not in descriptions:
+                descriptions[ad_id] = asyncio.create_task(_load_alert_description(ad_id))
+            description = await descriptions[ad_id]
+        await send_notification(
+            bot, tg_user_id, item.message, reply_markup=reply_markup,
+            description=description, photo_urls=listing["photo_urls"],
+        )
 
     async def _drain(tg_user_id: int, items: list[_QueuedNotification]) -> _DrainOutcome:
         """Send every queued message for one user, serially."""

@@ -90,23 +90,23 @@ async def test_old_price_drop_keeps_amount_and_non_alert_messages_stay_plain():
 @pytest.mark.parametrize(("photo_count", "photo_accepted"), [
     (0, False), (1, True), (3, True), (3, False),
 ])
-async def test_listing_alert_keeps_description_and_buttons_when_album_is_unavailable(
+async def test_listing_alert_keeps_description_and_buttons_when_collage_is_unavailable(
     photo_count, photo_accepted,
 ):
     bot = AsyncMock()
     rejected = TelegramBadRequest(method=MagicMock(), message="failed to get HTTP URL content")
-    bot.send_media_group.side_effect = rejected
+    bot.send_rich_message.side_effect = rejected
     if not photo_accepted:
         bot.send_photo.side_effect = rejected
     keyboard = enhanced_alert_keyboard(ad_id=42, listing_url="https://www.kufar.by/item/42")
     photos = [f"https://rms.kufar.by/v1/gallery/{i}.jpg" for i in range(photo_count)]
 
-    assert await send_notification(
+    await send_notification(
         bot, 123, "Новое объявление\niPhone\n700 BYN", reply_markup=keyboard,
         description="Чехол & коробка", photo_urls=photos,
-    ) is None
+    )
 
-    assert bot.send_media_group.await_count == (1 if photo_count > 1 else 0)
+    assert bot.send_rich_message.await_count == (1 if photo_count > 1 else 0)
     assert bot.send_photo.await_count == (1 if photo_count else 0)
     formatted = "Новое объявление\n<b>iPhone</b>\n\n<b>700 BYN</b>\n\nЧехол &amp; коробка"
     if photo_accepted:
