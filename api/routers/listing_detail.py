@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from itertools import chain
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -20,14 +20,21 @@ from api.dependencies import (
 )
 from api.limiter import limiter
 from api.models import LeadItem
-from api.schemas import ListingDetailResponse
-from api.services.aggregator import compute_category_price_stats, precompute_cluster_stats
+from api.schemas import ListingDetailResponse, ListingMarketResponse
+from api.services.aggregator import (
+    compute_category_price_stats,
+    normalize_price_byn,
+    precompute_cluster_stats,
+)
 from api.services.cache import CacheBackend, digest_cache_key
 from api.services.currency_service import CurrencyService, get_conversion_rates
 from api.services.kufar_client import KufarClient
 from api.services.listing_mapper import build_listing_detail
 from api.services.market_liquidity import estimate_liquidity
-from api.services.query_pipeline import load_query_dataset_context_with_fallback
+from api.services.query_pipeline import (
+    QueryDatasetContext,
+    load_query_dataset_context_with_fallback,
+)
 from api.services.risk_detector import compute_risk_score, detect_risks
 from api.services.watchlist_market import (
     MARKET_ESTIMATE_TTL,
@@ -110,6 +117,90 @@ async def _backfill_lead_thumbnail(
         logger.warning("Failed to backfill thumbnail for ad_id=%s", ad_id, exc_info=True)
 
 
+async def _load_listing_context(
+    ad_id: int, **kwargs: Any,
+) -> tuple[dict[str, Any], QueryDatasetContext]:
+    context = (await load_query_dataset_context_with_fallback(**kwargs)).context
+    ad = next((item for item in context.visible.ads if int(item.get("ad_id", 0)) == ad_id), None)
+    if ad is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Listing not found for this query",
+        )
+    return ad, context
+
+
+async def _load_listing_market(
+    ad: dict[str, Any],
+    context: QueryDatasetContext,
+    *,
+    query: str,
+    settings: Settings,
+    client: KufarClient,
+    cache: CacheBackend,
+) -> ListingMarketResponse:
+    market = await load_page_comparables(
+        [ad], query=query, settings=settings, client=client, cache=cache,
+    )
+    peers = market.get(int(ad["ad_id"]))
+    comparison = None
+    if peers is None:
+        peers = build_market_comparables(
+            ad,
+            chain(
+                context.visible.response.get("ads", []), context.reference.response.get("ads", []),
+            ),
+        )
+    else:
+        comparison = comparison_from_comparables(ad, peers)
+    return ListingMarketResponse(
+        price_byn=normalize_price_byn(ad.get("price_byn"), ad),
+        liquidity=estimate_liquidity(ad, peers),
+        market_comparison=(
+            comparison if comparison and comparison.delta_percent is not None else None
+        ),
+    )
+
+
+@router.get("/listing-market", response_model=ListingMarketResponse)
+@limiter.limit("30/minute")
+async def get_listing_market(
+    request: Request,
+    ad_id: int,
+    query: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH, description="Search query"),
+    currency: Literal["BYN", "USD", "EUR", "RUB"] = "BYN",
+    strict_search: bool = True,
+    category: int | None = None,
+    reference_context: Literal["current", "base_query"] = "current",
+    settings: Settings = Depends(get_settings_dependency),
+    cache: CacheBackend = Depends(get_cache),
+    kufar_client: KufarClient = Depends(get_kufar_client),
+    _user=Depends(get_telegram_user),
+) -> ListingMarketResponse:
+    cache_key = digest_cache_key(
+        "listing-market",
+        {
+            "ad": ad_id, "q": query, "cur": currency, "strict": strict_search,
+            "cat": category, "ref": reference_context,
+        },
+    )
+    cached = await cache.get_json(cache_key)
+    if cached is not None:
+        return ListingMarketResponse(**cached)
+
+    ad, context = await _load_listing_context(
+        ad_id, query=query, currency=currency, strict_search=strict_search, category=category,
+        reference_context=reference_context, settings=settings, client=kufar_client, cache=cache,
+    )
+    payload = await _load_listing_market(
+        ad, context, query=query, settings=settings, client=kufar_client, cache=cache,
+    )
+    await cache.set_json(
+        cache_key, payload.model_dump(), ttl=min(MARKET_ESTIMATE_TTL, settings.cache_ttl_seconds),
+    )
+    return payload
+
+
 @router.get("/listing-detail", response_model=ListingDetailResponse)
 @limiter.limit("30/minute")
 async def get_listing_detail(
@@ -120,6 +211,7 @@ async def get_listing_detail(
     strict_search: bool = True,
     category: int | None = None,
     reference_context: Literal["current", "base_query"] = "current",
+    include_market: bool = True,
     settings: Settings = Depends(get_settings_dependency),
     cache: CacheBackend = Depends(get_cache),
     currency_service: CurrencyService = Depends(get_currency_service),
@@ -138,6 +230,7 @@ async def get_listing_detail(
             "ref": reference_context,
             "market_comparison": 2,
             "liquidity": 4,
+            "include_market": include_market,
         },
     )
     cached = await cache.get_json(cache_key)
@@ -155,42 +248,18 @@ async def get_listing_detail(
         )
         return cached_response
 
-    fb = await load_query_dataset_context_with_fallback(
-        query=query,
-        currency=currency,
-        strict_search=strict_search,
-        settings=settings,
-        client=kufar_client,
-        reference_context=reference_context,
-        category=category,
-        cache=cache,
+    ad, context = await _load_listing_context(
+        ad_id, query=query, currency=currency, strict_search=strict_search, category=category,
+        reference_context=reference_context, settings=settings, client=kufar_client, cache=cache,
     )
-    context = fb.context
     visible_dataset = context.visible
     reference_dataset = context.reference
-    ad = next((item for item in visible_dataset.ads if int(item.get("ad_id", 0)) == ad_id), None)
-    if ad is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Listing not found for this query",
-        )
 
     median_byn = visible_dataset.price_stats.median
     category_price_stats = compute_category_price_stats(reference_dataset.ads)
     cluster_cache = await precompute_cluster_stats(
         visible_dataset.ads, query=query, target_ids={ad_id},
     )
-    market = await load_page_comparables(
-        [ad], query=query, settings=settings, client=kufar_client, cache=cache,
-    )
-    peers = market.get(ad_id)
-    if peers is None:
-        peers = build_market_comparables(
-            ad,
-            chain(
-                visible_dataset.response.get("ads", []), reference_dataset.response.get("ads", []),
-            ),
-        )
     # BE-MEDIUM (issues §2.2): NBRB outage shouldn't 500 the detail.
     rates = await get_conversion_rates(currency_service, currency)
     payload = build_listing_detail(
@@ -202,7 +271,6 @@ async def get_listing_detail(
         median_byn=median_byn,
         market_stats=reference_dataset.price_stats,
         category_price_stats=category_price_stats,
-        liquidity=estimate_liquidity(ad, peers),
         cluster_stats=cluster_cache.get(ad_id),
     )
     # Risk detection — runs after the listing detail is built so we can
@@ -212,9 +280,12 @@ async def get_listing_detail(
     risk_score = compute_risk_score(risk_factors)
     payload.risk_score = risk_score
     payload.risk_factors = risk_factors
-    if ad_id in market:
-        comparison = comparison_from_comparables(ad, peers)
-        payload.market_comparison = comparison if comparison.delta_percent is not None else None
+    if include_market:
+        market = await _load_listing_market(
+            ad, context, query=query, settings=settings, client=kufar_client, cache=cache,
+        )
+        payload.liquidity = market.liquidity
+        payload.market_comparison = market.market_comparison
     await cache.set_json(
         cache_key, payload.model_dump(), ttl=min(MARKET_ESTIMATE_TTL, settings.cache_ttl_seconds),
     )

@@ -1317,18 +1317,28 @@ assert.strictEqual(elements.detailAddWatchlistButton.textContent, "В избра
 assert.strictEqual(elements.detailAddWatchlistButton.disabled, true);
 
 state.detail.data.liquidity = null;
-state.detail.loading = true;
+state.detail.data.parameters = [{label: "Память", value: "256 Гб"}];
+state.detail.descriptionLoading = true;
+state.detail.marketLoading = true;
 renderer.renderDetailModal();
 assert.strictEqual(elements.detailDescription.hidden, false);
 assert.match(elements.detailDescription.textContent, /Загружаем описание/);
 assert.strictEqual(elements.detailLiquidityBlock.hidden, false);
 assert.match(elements.detailLiquidity.children[0].textContent, /Оцениваем рынок/);
-state.detail.loading = false;
-state.detail.loadError = true;
+assert.strictEqual(elements.detailParamsBlock.hidden, false);
+const parameter = elements.detailParams.children[0];
+assert.equal(parameter.children[1].textContent, "256 Гб");
+
+state.detail.marketLoading = false;
+state.detail.marketError = true;
+renderer.renderDetailModal({marketOnly: true});
+assert.strictEqual(elements.detailParams.children[0], parameter);
+assert.match(elements.detailLiquidity.children[0].textContent, /Не удалось загрузить оценку/);
+
+state.detail.descriptionLoading = false;
 state.detail.descriptionError = true;
 renderer.renderDetailModal();
 assert.match(elements.detailDescription.textContent, /временно недоступно/);
-assert.match(elements.detailLiquidity.children[0].textContent, /Не удалось загрузить оценку/);
 """
     )
     result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
@@ -2448,6 +2458,7 @@ const modals = createRenderModals({
         assert.equal(state.detail.data.description, item.description);
         assert.equal(state.detail.data.liquidity, liquidity);
         const last = requests.at(-1);
+        assert.equal(last.params.get("include_market"), "false");
         if (open === openTrackerEvent) {
             assert.equal(last.params.get("query"), "Tracker query");
             assert.equal(last.params.get("strict_search"), "true");
@@ -2472,7 +2483,10 @@ const modals = createRenderModals({
     oldRequest.resolve({ad_id: 1, title: "Stale"});
     await stale;
     assert.equal(state.detail.data.title, "New");
-    latestRequest.resolve({ad_id: 2, title: "Enriched"});
+    latestRequest.resolve({ad_id: 2, title: "Enriched", price_byn: 80});
+    await new Promise(setImmediate);
+    assert.equal(requests.at(-1).path, "/api/v1/listing-market");
+    requests.at(-1).resolve({price_byn: 80, liquidity});
     await latest;
     assert.equal(state.detail.data.title, "Enriched");
     assert.equal(state.detail.fromWatchlist, true);
@@ -2483,22 +2497,40 @@ const modals = createRenderModals({
     assert.equal(state.detail.data.title, "iPhone", "failed enrichment leaves the preview open");
     assert.equal(state.ui.error, "Search retry");
 
-    const legacy = listings.openListingDetail(item);
-    requests.at(-1).resolve({ad_id: 1, title: "iPhone", liquidity: {score: 15}});
-    await legacy;
-    assert.equal(state.detail.data.description, item.description);
-    assert.equal(state.detail.data.liquidity, liquidity);
-
-    const separate = listings.openListingDetail({...item, description: null});
+    const separate = listings.openListingDetail({...item, description: null, liquidity: null});
     const [descriptionRequest, detailRequest] = requests.slice(-2);
     assert.equal(descriptionRequest.path, "/api/v1/listing-description");
-    assert.equal(state.detail.data.liquidity, liquidity);
+    assert.equal(state.detail.marketLoading, true);
+    const parameters = [{label: "Память", value: "256 Гб"}];
+    const beforeDetail = renders;
+    detailRequest.resolve({ad_id: 1, title: "Enriched", price_byn: 100, parameters});
+    await new Promise(setImmediate);
+    const marketRequest = requests.at(-1);
+    assert.equal(marketRequest.path, "/api/v1/listing-market");
+    assert.equal(marketRequest.params.get("category"), "17010");
+    assert.ok(renders > beforeDetail, "the card renders while market and description are pending");
+    assert.equal(state.detail.data.parameters, parameters);
+    assert.equal(state.detail.marketLoading, true);
     descriptionRequest.resolve({description: "Описание со страницы Kufar"});
     await new Promise(setImmediate);
     assert.equal(state.detail.data.description, "Описание со страницы Kufar");
-    detailRequest.resolve({ad_id: 1, title: "Enriched"});
+    assert.equal(state.detail.descriptionLoading, false);
+    assert.equal(state.detail.marketLoading, true);
+    marketRequest.reject(new Error("Market unavailable"));
     await separate;
-    assert.equal(state.detail.data.description, "Описание со страницы Kufar");
+    assert.equal(state.detail.marketLoading, false);
+    assert.equal(state.detail.marketError, true);
+    assert.equal(state.detail.data.parameters, parameters);
+
+    const reopened = listings.openListingDetail(item);
+    await new Promise(setImmediate);
+    const lateMarket = requests.at(-1);
+    assert.equal(lateMarket.path, "/api/v1/listing-market");
+    modals.closeDetailModal();
+    assert.equal(lateMarket.signal.aborted, true);
+    lateMarket.resolve({price_byn: 100, liquidity});
+    await reopened;
+    assert.equal(state.detail.data, null);
 })()""" + _NODE_FAIL)
 
 
@@ -2527,7 +2559,7 @@ function finish(adId) {
         .resolve({description: "Полное описание продавца"});
     pair.find((r) => r.url.pathname.endsWith("/listing-detail")).resolve({
         ad_id: adId, title: "iPhone 14 Pro 256", price: 990, price_byn: 990,
-        images: ["first.jpg", "second.jpg"], liquidity,
+        images: ["first.jpg", "second.jpg"],
     });
 }
 (async () => {
@@ -2540,18 +2572,24 @@ function finish(adId) {
     const opened = api.openListingDetail(event(2), options);
     assert.equal(requests.length, 4, "opening joins the existing requests");
     finish(2);
+    await new Promise(setImmediate);
+    assert.equal(requests.length, 7, "market loading does not occupy a preload slot");
+    const market = requests.find((r) => r.url.pathname.endsWith("/listing-market"));
+    assert.equal(market.url.searchParams.get("ad_id"), "2");
+    assert.equal(state.detail.marketLoading, true);
+    assert.equal(state.detail.data.images.length, 2);
+    market.resolve({price_byn: 990, liquidity});
     await opened;
-    assert.equal(state.detail.loading, false);
+    assert.equal(state.detail.marketLoading, false);
+    assert.equal(state.detail.descriptionLoading, false);
     assert.equal(state.detail.data.description, "Полное описание продавца");
     assert.equal(state.detail.data.liquidity.sample_size, 12);
     assert.equal(state.detail.data.images.length, 2);
-    await new Promise(setImmediate);
-    assert.equal(requests.length, 6, "the next visible card starts after a slot frees");
 
     const count = requests.length;
     const reopened = api.openListingDetail(event(2), options);
     assert.equal(requests.length, count);
-    assert.equal(state.detail.loading, false);
+    assert.equal(state.detail.marketLoading, false);
     assert.equal(state.detail.data.price, 990);
     assert.equal(state.detail.data.description, "Полное описание продавца");
     assert.equal(state.detail.data.liquidity, liquidity);
@@ -3450,6 +3488,7 @@ const requestKey = (url) => {
     const q = parsed.searchParams.get("query");
     if (parsed.pathname.endsWith("/price-stats")) return q + "-stats";
     if (parsed.pathname.endsWith("/listing-detail")) return q + "-detail";
+    if (parsed.pathname.endsWith("/listing-market")) return q + "-detail-market";
     if (parsed.pathname.endsWith("/listings") && !parsed.searchParams.has("include_market")) {
         assert.equal(parsed.searchParams.has("force_refresh"), false);
         return q + "-market";
@@ -3489,8 +3528,10 @@ const api = createApiListings({
     assert.equal(state.listings.items[0].liquidity.sample_size, 33);
     assert.equal(state.detail.data.liquidity.sample_size, 33);
     assert.equal(state.detail.data.market_comparison.comparable_count, 33);
-    pending.get("iphone-detail").resolve({
-        ad_id: 1, price_byn: 100,
+    pending.get("iphone-detail").resolve({ad_id: 1, price_byn: 100});
+    await tick();
+    pending.get("iphone-detail-market").resolve({
+        price_byn: 100,
         liquidity: {basis: "current_market", label: "Недостаточно аналогов", sample_size: 1},
     });
     await opened;

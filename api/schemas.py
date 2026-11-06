@@ -138,6 +138,12 @@ class WatchlistComparison(BaseModel):
     sample_limited: bool = False
 
 
+class ListingMarketResponse(BaseModel):
+    price_byn: float | None
+    liquidity: LiquidityInsight
+    market_comparison: WatchlistComparison | None = None
+
+
 class ListingItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

@@ -68,49 +68,7 @@ function createRenderModals(context) {
         button.setAttribute("aria-label", label);
     }
 
-    /* ===== Detail Modal ===== */
-
-    function renderDetailModal() {
-        return safeRender('renderDetailModal', () => {
-            if (!state.detail.data) {
-            // Don't toggle .hidden here — closeDetailModal animates it
-            // out and a stray render call would otherwise abort that
-            // transition. The modal starts hidden in HTML and is only
-            // opened through an explicit openModalAnimated call below.
-            return;
-        }
-
-        const detail = state.detail.data;
-        const images = detail.images || [];
-        const hasImages = images.length > 0;
-        const currentImage = hasImages ? images[state.detail.imageIndex] || images[0] : null;
-
-        elements.detailTitle.textContent = detail.title || "Объявление";
-        elements.detailPrice.textContent = formatPrice(detail.price, detail.price_type);
-        const detailLink = safeKufarUrl(detail.link);
-        if (detailLink) {
-            elements.detailLink.href = detailLink;
-            elements.detailLink.removeAttribute("aria-disabled");
-        } else {
-            elements.detailLink.removeAttribute("href");
-            elements.detailLink.setAttribute("aria-disabled", "true");
-        }
-
-        const aiState = state.detail.ai || {};
-        if (elements.detailAiBlock && elements.detailAiContent) {
-            elements.detailAiBlock.hidden = true;
-            domClear(elements.detailAiContent);
-        }
-
-        const descriptionStatus = state.detail.loading ? "Загружаем описание…"
-            : state.detail.descriptionError ? "Описание временно недоступно." : "";
-        elements.detailDescription.textContent = detail.description || descriptionStatus;
-        elements.detailDescription.hidden = !elements.detailDescription.textContent;
-        elements.detailDescription.classList.toggle("detail-loading", !detail.description);
-
-        // Flip estimates hidden — resale info now shown in AI analysis
-        elements.detailProfitBlock.hidden = true;
-
+    function renderDetailMarket(detail) {
         domClear(elements.detailLiquidity);
         const liquidity = detail.liquidity?.basis === "current_market" ? detail.liquidity : null;
         if (liquidity) {
@@ -142,16 +100,16 @@ function createRenderModals(context) {
                 elements.detailLiquidity.appendChild(list);
             }
         }
-        if (!liquidity && (state.detail.loading || state.detail.loadError)) {
+        if (!liquidity && (state.detail.marketLoading || state.detail.marketError)) {
             const status = document.createElement("p");
             status.className = "detail-loading";
             status.setAttribute("role", "status");
-            status.textContent = state.detail.loading ? "Оцениваем рынок…"
+            status.textContent = state.detail.marketLoading ? "Оцениваем рынок…"
                 : "Не удалось загрузить оценку. Откройте объявление ещё раз.";
             elements.detailLiquidity.appendChild(status);
         }
         elements.detailLiquidityBlock.hidden = !liquidity
-            && !state.detail.loading && !state.detail.loadError;
+            && !state.detail.marketLoading && !state.detail.marketError;
 
         domClear(elements.detailMeta);
         const comparison = detail.market_comparison;
@@ -177,6 +135,53 @@ function createRenderModals(context) {
             pill.textContent = item;
             elements.detailMeta.appendChild(pill);
         }
+    }
+
+    /* ===== Detail Modal ===== */
+
+    function renderDetailModal({ marketOnly = false } = {}) {
+        return safeRender('renderDetailModal', () => {
+            if (!state.detail.data) {
+            // Don't toggle .hidden here — closeDetailModal animates it
+            // out and a stray render call would otherwise abort that
+            // transition. The modal starts hidden in HTML and is only
+            // opened through an explicit openModalAnimated call below.
+            return;
+        }
+
+        const detail = state.detail.data;
+        renderDetailMarket(detail);
+        if (marketOnly) return;
+
+        const images = detail.images || [];
+        const hasImages = images.length > 0;
+        const currentImage = hasImages ? images[state.detail.imageIndex] || images[0] : null;
+
+        elements.detailTitle.textContent = detail.title || "Объявление";
+        elements.detailPrice.textContent = formatPrice(detail.price, detail.price_type);
+        const detailLink = safeKufarUrl(detail.link);
+        if (detailLink) {
+            elements.detailLink.href = detailLink;
+            elements.detailLink.removeAttribute("aria-disabled");
+        } else {
+            elements.detailLink.removeAttribute("href");
+            elements.detailLink.setAttribute("aria-disabled", "true");
+        }
+
+        const aiState = state.detail.ai || {};
+        if (elements.detailAiBlock && elements.detailAiContent) {
+            elements.detailAiBlock.hidden = true;
+            domClear(elements.detailAiContent);
+        }
+
+        const descriptionStatus = state.detail.descriptionLoading ? "Загружаем описание…"
+            : state.detail.descriptionError ? "Описание временно недоступно." : "";
+        elements.detailDescription.textContent = detail.description || descriptionStatus;
+        elements.detailDescription.hidden = !elements.detailDescription.textContent;
+        elements.detailDescription.classList.toggle("detail-loading", !detail.description);
+
+        // Flip estimates hidden — resale info now shown in AI analysis
+        elements.detailProfitBlock.hidden = true;
 
         elements.detailMainImage.hidden = !hasImages;
 
@@ -363,8 +368,9 @@ function createRenderModals(context) {
             state.misc.modalCleanup = null;
         }
         state.detail.data = null;
-        state.detail.loading = false;
-        state.detail.loadError = false;
+        state.detail.marketLoading = false;
+        state.detail.marketError = false;
+        state.detail.descriptionLoading = false;
         state.detail.descriptionError = false;
         state.detail.imageIndex = 0;
         state.detail.fromWatchlist = false;

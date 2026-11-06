@@ -144,15 +144,19 @@ def test_polo_liquidity_and_price_use_the_same_nationwide_sample() -> None:
             "ad_link": f"https://www.kufar.by/item/{ad_id}",
             "list_time": datetime.now(UTC).isoformat(),
             "ad_parameters": [
-                {"p": "regdate", "v": str(year)}, {"p": "condition", "vl": "Б/у"},
+                {"p": "regdate", "pl": "Год", "v": str(year)}, {"p": "condition", "vl": "Б/у"},
             ],
         }
 
     ads = [polo(1, 2012), *[polo(ad_id, 2010 + ad_id % 5) for ad_id in range(2, 35)]]
+    market_requests = []
 
     class PoloClient(FakeKufarClient):
         async def search_all_ads(self, **kwargs) -> dict:
-            selected = ads if kwargs.get("page_limit") else ads[:2]
+            selected = ads[:2]
+            if kwargs.get("page_limit"):
+                market_requests.append(kwargs)
+                selected = ads
             return {"ads": selected, "total": len(ads), "has_more": len(selected) < len(ads)}
 
     app = create_app()
@@ -166,15 +170,27 @@ def test_polo_liquidity_and_price_use_the_same_nationwide_sample() -> None:
         assert fast.status_code == 200
         fast_item = next(item for item in fast.json()["listings"] if item["ad_id"] == 1)
         assert fast_item["liquidity"]["sample_size"] == 1
+        detail_params = {**params, "ad_id": 1}
+        card = client.get(
+            "/api/v1/listing-detail", params={**detail_params, "include_market": False},
+        )
+        assert card.status_code == 200
+        assert {"label": "Год", "value": "2012"} in card.json()["parameters"]
+        assert card.json()["liquidity"] is None
+        assert market_requests == []
+
+        market = client.get("/api/v1/listing-market", params=detail_params)
+        assert market.status_code == 200
+        assert market.json()["price_byn"] == card.json()["price_byn"]
         response = client.get("/api/v1/listings", params=params)
         assert response.status_code == 200
         item = next(item for item in response.json()["listings"] if item["ad_id"] == 1)
-        detail = client.get("/api/v1/listing-detail", params={**params, "ad_id": 1})
+        detail = client.get("/api/v1/listing-detail", params=detail_params)
         assert detail.status_code == 200
 
     assert item["market_comparison"]["comparable_count"] == item["liquidity"]["sample_size"] == 33
-    assert detail.json()["market_comparison"] == item["market_comparison"]
-    assert detail.json()["liquidity"] == item["liquidity"]
+    for field in ("market_comparison", "liquidity"):
+        assert market.json()[field] == detail.json()[field] == item[field]
     assert item["liquidity"]["label"] == "Высокая"
 
 

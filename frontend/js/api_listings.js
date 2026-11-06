@@ -74,7 +74,7 @@ function createApiListings(context) {
         if (cached) return cached;
         const entry = {
             controller: new AbortController(), createdAt: Date.now(), complete: false,
-            data: null, description: item.description || null, descriptionError: false,
+            data: null, market: null, description: item.description || null, descriptionError: false,
         };
         _detailCache.set(key, entry);
         if (_detailCache.size > 32) _detailCache.delete(_detailCache.keys().next().value);
@@ -94,13 +94,14 @@ function createApiListings(context) {
             discard();
             return null;
         });
-        entry.detailRequest = getJson(`/api/v1/listing-detail?${key}`, { signal, retry }).then((data) => {
+        entry.detailRequest = getJson(
+            `/api/v1/listing-detail?${key}&include_market=false`, { signal, retry },
+        ).then((data) => {
             if (signal.aborted) {
                 discard();
                 throw new DOMException("Detail request aborted", "AbortError");
             }
             entry.data = data;
-            if (data.liquidity?.basis !== "current_market") discard();
             return data;
         }).catch((error) => {
             discard();
@@ -206,6 +207,14 @@ function createApiListings(context) {
         return { query, request };
     }
 
+    function _applyDetailMarket(detail, market) {
+        if (detail.price_byn !== market.price_byn || market.liquidity?.basis !== "current_market"
+            || (detail.market_comparison && !market.market_comparison)) return false;
+        detail.market_comparison = market.market_comparison;
+        detail.liquidity = market.liquidity;
+        return true;
+    }
+
     function _loadPageMarket(query, items, requestId, signal) {
         if (!items.some((item) => Number(item.price_byn) > 0)) return;
         const params = new URLSearchParams(query);
@@ -223,10 +232,8 @@ function createApiListings(context) {
                 changed = true;
                 item.market_comparison = result.market_comparison;
                 item.liquidity = result.liquidity;
-                if (item === _detailItem && state.detail.data) {
-                    state.detail.data.market_comparison = item.market_comparison;
-                    state.detail.data.liquidity = item.liquidity;
-                    renderDetailModal();
+                if (item === _detailItem && state.detail.data && _applyDetailMarket(state.detail.data, item)) {
+                    renderDetailModal({ marketOnly: true });
                 }
             }
             if (changed) {
@@ -643,8 +650,11 @@ function createApiListings(context) {
             description: entry.description || entry.data?.description || item.description,
             images: entry.data?.images || (item.thumbnail ? [item.thumbnail] : []),
         };
-        state.detail.loading = !entry.complete;
-        state.detail.loadError = false;
+        _applyDetailMarket(state.detail.data, item);
+        if (entry.market) _applyDetailMarket(state.detail.data, entry.market);
+        state.detail.marketLoading = !entry.market;
+        state.detail.marketError = false;
+        state.detail.descriptionLoading = !state.detail.data.description && !entry.complete;
         state.detail.descriptionError = entry.descriptionError;
         state.detail.imageIndex = 0;
         state.detail.fromWatchlist = fromWatchlist;
@@ -658,36 +668,47 @@ function createApiListings(context) {
         renderDetailModal();
 
         const descriptionRequest = entry.descriptionRequest.then((description) => {
-            if (signal.aborted || !description || !state.detail.data || state.detail.data.description) return;
-            state.detail.data.description = description;
-            renderDetailModal();
-        }).catch(() => {});
+            if (signal.aborted || !state.detail.descriptionLoading) return;
+            state.detail.descriptionLoading = false;
+            state.detail.descriptionError = entry.descriptionError;
+            if (!state.detail.data.description) {
+                state.detail.data.description = description;
+                renderDetailModal();
+            }
+        });
 
         try {
             const fullDetail = await entry.detailRequest;
             if (signal.aborted) return;
-            const preview = state.detail.data;
-            if (!fullDetail.market_comparison && preview.market_comparison
-                && fullDetail.price_byn === preview.price_byn) {
-                fullDetail.market_comparison = preview.market_comparison;
-                fullDetail.liquidity = preview.liquidity;
-            }
-            state.detail.data = {
+            const detail = {
                 ...fullDetail,
                 description: fullDetail.description || state.detail.data.description,
-                liquidity: fullDetail.liquidity?.basis === "current_market"
-                    ? fullDetail.liquidity : item.liquidity,
             };
+            _applyDetailMarket(detail, state.detail.data);
+            state.detail.data = detail;
             renderDetailModal();
-            onLoaded?.(state.detail.data);
+            onLoaded?.(detail);
+
+            if (entry.market || signal.aborted) return;
+            const market = await getJson(`/api/v1/listing-market?${params}`, { signal, retry: false });
+            if (signal.aborted) return;
+            if (market.price_byn === detail.price_byn) {
+                entry.market = market;
+                _applyDetailMarket(detail, market);
+            } else {
+                const key = params.toString();
+                if (_detailCache.get(key) === entry) _detailCache.delete(key);
+                state.detail.marketError = true;
+            }
         } catch {
-            if (!signal.aborted) state.detail.loadError = true;
+            if (!signal.aborted) state.detail.marketError = true;
         } finally {
+            if (!signal.aborted && state.detail.marketLoading) {
+                state.detail.marketLoading = false;
+                renderDetailModal({ marketOnly: true });
+            }
             await descriptionRequest;
-            if (state.detail.requestController === controller && !signal.aborted) {
-                state.detail.loading = false;
-                state.detail.descriptionError = entry.descriptionError;
-                renderDetailModal();
+            if (state.detail.requestController === controller) {
                 state.detail.requestController = null;
             }
         }

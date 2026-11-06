@@ -26,8 +26,8 @@
 // and the AI lazy-load URLs in app_actions.js. A template literal
 // over a separate version constant would be invisible to that
 // regex.
-const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20261105-feed-refresh";
-const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20261105-feed-refresh";
+const _LAZY_TRACKERS_RENDER_URL = "js/render_trackers.js?v=20261106-listing-details";
+const _LAZY_TRACKERS_API_URL = "js/api_trackers.js?v=20261106-listing-details";
 
 function _lazyLoadTrackerSources(context) {
     if (_loadPromises.has("trackers")) return _loadPromises.get("trackers");

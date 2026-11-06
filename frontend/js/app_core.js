@@ -293,8 +293,9 @@ function createAppCore() {
         },
         detail: {
             data: null,
-            loading: false,
-            loadError: false,
+            marketLoading: false,
+            marketError: false,
+            descriptionLoading: false,
             descriptionError: false,
             imageIndex: 0,
             fromWatchlist: false,
