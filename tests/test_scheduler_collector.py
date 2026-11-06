@@ -2829,13 +2829,14 @@ async def test_tracker_photo_card_keeps_ten_photos_and_buttons_together_on_retry
     chat_id, card = first_attempt.args
     assert chat_id == 1302
     images = "".join(f'<img src="https://rms.kufar.by/v1/gallery/{i}.jpg"/>' for i in range(10))
-    assert card.html.startswith(f"<tg-collage>{images}<figcaption>")
-    assert card.html.endswith("</figcaption></tg-collage>")
-    caption = card.html.split("<figcaption>")[1].split("</figcaption>")[0]
-    excerpt = caption.split("<br><br>")[-1]
+    body_start = f"<tg-collage>{images}</tg-collage><p>"
+    assert card.html.startswith(body_start) and card.html.endswith("</p>")
+    body = card.html.removeprefix(body_start).removesuffix("</p>")
+    excerpt = body.split("<br><br>")[-1]
     assert excerpt.startswith("Чехол &lt;новый&gt; &amp; коробка ")
     assert len(unescape(excerpt)) == 300 and excerpt.endswith("…")
-    assert "<b>990 BYN</b>" in caption
+    assert "<b>iPhone 13 128GB</b>" in body
+    assert "<b>990 BYN</b>" in body
     keyboard = first_attempt.kwargs["reply_markup"].inline_keyboard
     assert [button.callback_data for button in keyboard[0]] == ["add_lead:32", "add_watch:32"]
     assert keyboard[1][0].url == ad["ad_link"]

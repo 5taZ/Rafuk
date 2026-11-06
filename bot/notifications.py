@@ -76,9 +76,10 @@ async def send_notification(
     photos = photo_urls[:MAX_NOTIFICATION_PHOTOS]
     if len(photos) > 1:
         images = "".join(f'<img src="{escape(url)}"/>' for url in photos)
-        caption = formatted.replace("\n", "<br>")
+        # Telegram renders media captions in its secondary text color.
+        body = formatted.replace("\n", "<br>")
         card = InputRichMessage(
-            html=f"<tg-collage>{images}<figcaption>{caption}</figcaption></tg-collage>",
+            html=f"<tg-collage>{images}</tg-collage><p>{body}</p>",
         )
         try:
             await bot.send_rich_message(telegram_user_id, card, reply_markup=reply_markup)
