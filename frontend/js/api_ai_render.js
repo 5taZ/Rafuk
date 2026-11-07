@@ -161,11 +161,26 @@ function createAiRender(context, aiCtx) {
         return text;
     }
 
-    function _buildAiResultNodes(data) {
+    function _buildAiResultNodes(data, onRetry) {
         const nodes = [];
         const aiWarning = _formatAiWarning(data._ai_warning);
+        const fallback = data.source === "fallback";
+        const incomplete = fallback || data.source === "partial";
 
-        if (aiWarning) {
+        if (incomplete) {
+            const retry = onRetry ? domEl("button", {
+                className: "ai-retry-btn",
+                type: "button",
+                text: "Повторить AI-анализ",
+            }) : null;
+            retry?.addEventListener("click", onRetry);
+            nodes.push(domEl("div", { className: "ai-warning-banner ai-draft-banner", attrs: { role: "status" } },
+                domEl("strong", { text: fallback ? "Рыночная справка" : "Частичный AI-анализ" }),
+                aiWarning ? domEl("p", { text: aiWarning }) : null,
+                domEl("p", { text: "Состояние товара и риски сделки требуют отдельной проверки." }),
+                retry,
+            ));
+        } else if (aiWarning) {
             nodes.push(
                 domEl("div", { className: "ai-warning-banner" },
                     domEl("span", { className: "ai-warning-icon", attrs: { "aria-hidden": "true" }, text: "i" }),
@@ -174,7 +189,7 @@ function createAiRender(context, aiCtx) {
             );
         }
 
-        if (data.recommendation) {
+        if (!incomplete && data.recommendation) {
             const verdictMap = {
                 worth_it: { text: "Стоит брать", cls: "ai-badge--good" },
                 think_twice: { text: "Проверь детали", cls: "ai-badge--warn" },
@@ -280,7 +295,7 @@ function createAiRender(context, aiCtx) {
             );
         }
 
-        if (data.condition) {
+        if (!fallback && data.condition) {
             const cond = data.condition;
             // Defensive: condition might be a string from cached/poll result
             const condObj = typeof cond === "string" ? { label: cond } : cond;
@@ -326,7 +341,7 @@ function createAiRender(context, aiCtx) {
             }
             nodes.push(
                 _buildAiSection(
-                    "Справедливая цена",
+                    fallback ? "Рыночный диапазон" : "Справедливая цена",
                     domFragment(
                         priceText ? domEl("div", { className: "ai-fair-price", text: priceText }) : null,
                         fairPrice.reasoning ? domEl("p", { className: "ai-reasoning", text: fairPrice.reasoning }) : null,
@@ -544,7 +559,7 @@ function createAiRender(context, aiCtx) {
             );
         }
 
-        if (data.recommendation?.text) {
+        if (!incomplete && data.recommendation?.text) {
             nodes.push(
                 _buildAiSection(
                     "Рекомендация",
@@ -565,7 +580,7 @@ function createAiRender(context, aiCtx) {
         return nodes;
     }
 
-    function renderAIModalResult(data) {
+    function renderAIModalResult(data, onRetry) {
         if (elements.aiModalLoading) elements.aiModalLoading.hidden = true;
         if (elements.aiModalError) elements.aiModalError.hidden = true;
 
@@ -579,7 +594,7 @@ function createAiRender(context, aiCtx) {
 
         // Build content area with all sections
         const contentArea = domEl("div", { className: "ai-content-area" });
-        const resultNodes = _buildAiResultNodes(data);
+        const resultNodes = _buildAiResultNodes(data, onRetry);
         for (const node of resultNodes) {
             contentArea.appendChild(node);
         }

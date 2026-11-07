@@ -15,6 +15,8 @@ function createApiLeads(context) {
         renderDealsHeroStats,
         renderProfitDashboard,
         showToast,
+        confirmAction,
+        formatDealAmount,
         getJson,
         postJson,
         deleteJson,
@@ -25,6 +27,8 @@ function createApiLeads(context) {
     } = context;
 
     let _analyticsAbortController = null;
+    const pendingLeadActions = new Set();
+    let clearingLeads = false;
 
     function _findLeadSnapshot(leadOrId) {
         const leadId = typeof leadOrId === "object" ? leadOrId?.id : leadOrId;
@@ -43,8 +47,15 @@ function createApiLeads(context) {
         showToast("Данные устарели. Обновите список и попробуйте ещё раз.", "error");
     }
 
+    function parseDealPrice(value) {
+        const amount = value.trim().replace(/[\u00a0\u202f]/g, " ");
+        if (!/^(?:\d+|\d{1,3}(?: \d{3})+)(?:[.,]\d{1,2})?$/.test(amount)) return null;
+        const number = Number(amount.replaceAll(" ", "").replace(",", "."));
+        return number > 0 && number <= 10_000_000 ? number : null;
+    }
+
     // ── Load leads ───────────────────────────────────────────────────────
-    async function loadLeads({ skipIfLoading = false } = {}) {
+    async function loadLeads({ skipIfLoading = false, refreshAnalytics = false } = {}) {
         if (skipIfLoading && state.leads._loading) return;
         if (!hasTelegramInitData()) {
             state.leads.items = [];
@@ -86,7 +97,7 @@ function createApiLeads(context) {
         // Refresh server-side analytics in parallel with the lead list —
         // the dashboard depends on lead-mutating endpoints (sale, expense)
         // so any reload of leads should also refresh aggregates.
-        if (!state.analytics.loading) {
+        if (refreshAnalytics || !state.analytics.loading) {
             void loadAnalytics();
         }
     }
@@ -131,74 +142,67 @@ function createApiLeads(context) {
 
     // ── Clear all leads (active only) ────────────────────────────────────
     async function clearAllLeads() {
+        if (clearingLeads || pendingLeadActions.size) return;
         const activeLeads = state.leads.items.filter((l) => l.status !== "closed");
         if (!activeLeads.length) {
             showToast("Нет активных сделок для удаления");
             return;
         }
+        clearingLeads = true;
         try {
-            await deleteJson("/api/v1/leads/all");
             const count = activeLeads.length;
+            if (!await confirmAction({
+                title: "Очистить покупки?",
+                message: `Записей к удалению — ${count}. Завершённые сделки останутся в истории.`,
+                confirmLabel: "Очистить покупки",
+                destructive: true,
+            })) return;
+            await deleteJson("/api/v1/leads/all");
             state.leads.items = state.leads.items.filter((l) => l.status === "closed");
             renderLeads();
-            showToast(`Удалено ${count} сделок`);
-            await loadLeads();
+            showToast("Покупки очищены");
+            await loadLeads({ refreshAnalytics: true });
         } catch (error) {
             showToast(error.message || "Не удалось очистить список");
-            await loadLeads();
+            await loadLeads({ refreshAnalytics: true });
+        } finally {
+            clearingLeads = false;
         }
     }
 
     // ── Confirm lead (sold stage with prices) ────────────────────────────
     async function confirmLead(lead, cardElement) {
+        if (clearingLeads || pendingLeadActions.has(lead.id)) return;
         const buyPriceInput = cardElement.querySelector('[data-role="buy-price"]');
         const soldPriceInput = cardElement.querySelector('[data-role="sold-price"]');
-
-        const buyPriceRaw = buyPriceInput?.value?.trim();
-        const soldPriceRaw = soldPriceInput?.value?.trim();
-
-        if (!buyPriceRaw || !soldPriceRaw) {
-            showToast("Заполните оба поля: цена покупки и цена продажи");
-            if (!buyPriceRaw) {
-                buyPriceInput?.focus();
-            } else {
-                soldPriceInput?.focus();
-            }
+        const priceError = cardElement.querySelector('[data-role="price-error"]');
+        const buyPriceNum = parseDealPrice(buyPriceInput.value);
+        const soldPriceNum = parseDealPrice(soldPriceInput.value);
+        const invalidInput = buyPriceNum === null ? buyPriceInput : soldPriceNum === null ? soldPriceInput : null;
+        buyPriceInput.setAttribute("aria-invalid", String(buyPriceNum === null));
+        soldPriceInput.setAttribute("aria-invalid", String(soldPriceNum === null));
+        priceError.hidden = !invalidInput;
+        if (invalidInput) {
+            const field = invalidInput === buyPriceInput ? "покупки" : "продажи";
+            priceError.textContent = `Введите цену ${field} от 0,01 до 10 000 000 BYN. Например, 1000,50.`;
+            invalidInput.focus();
             return;
         }
+        priceError.textContent = "";
 
-        const buyPriceNum = parseInt(buyPriceRaw, 10);
-        const soldPriceNum = parseInt(soldPriceRaw, 10);
-
-        if (!Number.isInteger(buyPriceNum) || buyPriceNum <= 0) {
-            showToast("Введите целую цену покупки больше 0");
-            buyPriceInput?.focus();
-            return;
-        }
-        if (buyPriceNum > 10_000_000) {
-            showToast("Цена покупки слишком большая (макс. 10 000 000 BYN)");
-            buyPriceInput?.focus();
-            return;
-        }
-
-        if (!Number.isInteger(soldPriceNum) || soldPriceNum <= 0) {
-            showToast("Введите целую цену продажи больше 0");
-            soldPriceInput?.focus();
-            return;
-        }
-        if (soldPriceNum > 10_000_000) {
-            showToast("Цена продажи слишком большая (макс. 10 000 000 BYN)");
-            soldPriceInput?.focus();
-            return;
-        }
-
-        const version = await _resolveLeadVersion(lead);
-        if (!version) {
-            _showStaleLeadToast();
-            return;
-        }
-
+        pendingLeadActions.add(lead.id);
         try {
+            const version = await _resolveLeadVersion(lead);
+            if (!version) {
+                _showStaleLeadToast();
+                return;
+            }
+            if (!await confirmAction({
+                title: "Подтвердить продажу?",
+                message: `Покупка — ${formatDealAmount(buyPriceNum)}\u202fBYN\nПродажа — ${formatDealAmount(soldPriceNum)}\u202fBYN`,
+                confirmLabel: "Подтвердить продажу",
+            })) return;
+
             const payload = {
                 buy_price_byn: buyPriceNum,
                 sold_price_byn: soldPriceNum,
@@ -219,12 +223,10 @@ function createApiLeads(context) {
 
             renderLeads();
 
-            const profit = soldPriceNum - buyPriceNum;
-            const profitSign = profit >= 0 ? "+" : "";
-            showToast(`Сделка подтверждена: ${profitSign}${Math.round(profit)} BYN`, "success");
+            showToast("Продажа подтверждена", "success");
 
             // Full reload to refresh analytics/profit dashboard data
-            await loadLeads();
+            await loadLeads({ refreshAnalytics: true });
 
             setTimeout(() => {
                 const updatedCard = elements.leadInboxList?.querySelector(
@@ -237,25 +239,16 @@ function createApiLeads(context) {
         } catch (error) {
             // Revert optimistic state by reloading from server
             showToast(error.message || "Не удалось подтвердить сделку", "error");
-            await loadLeads();
+            await loadLeads({ refreshAnalytics: true });
+        } finally {
+            pendingLeadActions.delete(lead.id);
         }
     }
 
-    // ── Cancel lead (delete) ─────────────────────────────────────────────
-    async function cancelLead(leadId) {
-        try {
-            await deleteJson(`/api/v1/leads/${leadId}`);
-            state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
-            renderLeads();
-            showToast("Сделка отменена", "info");
-            await loadLeads();
-        } catch (error) {
-            showToast(error.message || "Не удалось отменить сделку");
-        }
-    }
-
-    // ── Close deal (mark closed, show profit) ────────────────────────────
+    // ── Close deal (move to history) ─────────────────────────────────────
     async function closeDeal(leadId) {
+        if (clearingLeads || pendingLeadActions.has(leadId)) return;
+        pendingLeadActions.add(leadId);
         try {
             const lead = state.leads.items.find((l) => l.id === leadId);
             const version = await _resolveLeadVersion(lead || leadId);
@@ -263,11 +256,6 @@ function createApiLeads(context) {
                 _showStaleLeadToast();
                 return;
             }
-            const buyPriceByn = lead?.buy_price_byn || 0;
-            const soldPriceByn = lead?.sold_price_byn || 0;
-
-            const profit = soldPriceByn - buyPriceByn;
-
             const updatedLead = await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
@@ -278,47 +266,53 @@ function createApiLeads(context) {
             });
 
             if (lead) {
-                Object.assign(lead, updatedLead);
+                Object.assign(lead, { status: updatedLead.status, version: updatedLead.version, updated_at: updatedLead.updated_at });
             }
             renderLeads();
 
-            const profitSign = profit >= 0 ? "+" : "";
-            if (profit >= 0) {
-                showToast(`Сделка закрыта: ${profitSign}${Math.round(profit)} BYN`);
-            } else {
-                showToast(`Сделка закрыта: ${Math.round(profit)} BYN`);
-            }
+            showToast("Сделка завершена", "success");
         } catch (error) {
             showToast(error.message || "Не удалось закрыть сделку");
+        } finally {
+            pendingLeadActions.delete(leadId);
         }
     }
 
-    // ── Revert lead stage (back to new) ──────────────────────────────────
-    async function revertLeadStage(leadId, currentStatus) {
+    // ── Revert a sale ────────────────────────────────────────────────────
+    async function revertLeadStage(leadId) {
+        if (clearingLeads || pendingLeadActions.has(leadId)) return;
+        pendingLeadActions.add(leadId);
         try {
-            const leadInState = state.leads.items.find((l) => l.id === leadId);
-            const version = await _resolveLeadVersion(leadInState || leadId);
+            const lead = _findLeadSnapshot(leadId);
+            if (lead?.status !== "sold") return;
+            const version = await _resolveLeadVersion(lead);
             if (!version) {
                 _showStaleLeadToast();
                 return;
             }
+            if (!await confirmAction({
+                title: "Отменить продажу?",
+                message: "Цена продажи будет сброшена. Цена покупки и расходы сохранятся.",
+                confirmLabel: "Отменить продажу",
+            })) return;
+            // The workflow API reverses the sale when only the sale price is cleared.
             const updatedLead = await requestJson(`/api/v1/leads/${leadId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    status: "new",
-                    buy_price_byn: null,
                     sold_price_byn: null,
                     version,
                 }),
             });
 
+            const leadInState = _findLeadSnapshot(leadId);
             if (leadInState) {
                 Object.assign(leadInState, updatedLead);
             }
             renderLeads();
 
-            showToast("Сделка возвращена");
+            showToast("Продажа отменена", "success");
+            await loadLeads({ refreshAnalytics: true });
 
             setTimeout(() => {
                 const updatedCard = elements.leadInboxList?.querySelector(
@@ -329,20 +323,38 @@ function createApiLeads(context) {
                 }
             }, 100);
         } catch (error) {
-            showToast(error.message || "Не удалось вернуть сделку");
+            if (error.status === 409) _showStaleLeadToast();
+            else showToast("Не удалось отменить продажу. Попробуйте ещё раз.", "error");
+            await loadLeads({ refreshAnalytics: true });
+        } finally {
+            pendingLeadActions.delete(leadId);
         }
     }
 
     // ── Delete single lead ───────────────────────────────────────────────
     async function deleteLead(leadId) {
+        const lead = _findLeadSnapshot(leadId);
+        if (!lead || clearingLeads || pendingLeadActions.has(leadId)) return;
+        pendingLeadActions.add(leadId);
         try {
+            const fromHistory = lead.status === "closed";
+            if (!await confirmAction({
+                title: fromHistory ? "Удалить сделку из истории?" : "Удалить сделку?",
+                message: fromHistory
+                    ? `«${lead.title}» исчезнет из истории и расчёта прибыли.`
+                    : `«${lead.title}» будет удалено из покупок.`,
+                confirmLabel: "Удалить",
+                destructive: true,
+            })) return;
             await deleteJson(`/api/v1/leads/${leadId}`);
             state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
             renderLeads();
             showToast("Сделка удалена");
-            await loadLeads();
+            await loadLeads({ refreshAnalytics: true });
         } catch (error) {
             showToast(error.message || "Не удалось удалить");
+        } finally {
+            pendingLeadActions.delete(leadId);
         }
     }
 
@@ -444,7 +456,7 @@ function createApiLeads(context) {
         loadAnalytics,
         clearAllLeads,
         confirmLead,
-        cancelLead,
+        cancelLead: deleteLead,
         closeDeal,
         revertLeadStage,
         deleteLead,

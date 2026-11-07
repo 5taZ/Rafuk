@@ -88,7 +88,7 @@ def _check_ai_available():
 
     service = _aa.get_ai_service()
     if not service.available:
-        raise HTTPException(status_code=503, detail="AI analysis is not configured")
+        raise HTTPException(status_code=503, detail="AI-сервис не настроен. Попробуйте позже.")
     return service
 
 

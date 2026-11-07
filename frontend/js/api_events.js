@@ -782,28 +782,12 @@ function createApiEvents(context) {
             void clearTrackerEvents();
         });
 
-        // ── Clear all leads button (double-confirm) ──────────────────
         elements.clearAllLeadsButton?.addEventListener("click", () => {
-            void (async () => {
-                if (!state.leads.items.some(lead => lead.status !== "closed" && lead.status !== "skipped")) {
-                    showToast("Нет активных сделок для удаления");
-                    return;
-                }
-                if (!_confirmTap("leads", elements.clearAllLeadsButton)) return;
-                await clearAllLeads();
-            })();
+            void clearAllLeads();
         });
 
-        // ── Clear all watchlist button (double-confirm) ──────────────
         elements.deleteAllWatchlistButton?.addEventListener("click", () => {
-            void (async () => {
-                if (state.watchlist.items.length === 0) {
-                    showToast("Список уже пуст");
-                    return;
-                }
-                if (!_confirmTap("watchlist", elements.deleteAllWatchlistButton)) return;
-                await clearAllWatchlist();
-            })();
+            void clearAllWatchlist();
         });
 
     }

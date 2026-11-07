@@ -483,7 +483,7 @@ function createApiListingAssistant(context) {
         return row;
     }
 
-    function buildPricingSection(pricing) {
+    function buildPricingSection(pricing, fallback) {
         if (!pricing?.market_median_byn && !pricing?.fast && !pricing?.market
             && !pricing?.patient && !pricing?.floor_byn) return null;
         const tiers = el(
@@ -510,11 +510,11 @@ function createApiListingAssistant(context) {
         return el(
             "section",
             { className: "la-section" },
-            el("span", { className: "la-section-title", text: "Цена" }),
+            el("span", { className: "la-section-title", text: fallback ? "Ориентиры по рынку" : "Цена" }),
             tiers,
             pricing.floor_byn
                 ? el("p", { className: "la-floor" },
-                    el("span", { text: "Минимум, ниже не падать: " }),
+                    el("span", { text: fallback ? "Нижний ориентир — " : "Минимум, ниже не падать: " }),
                     el("strong", { className: "mono" },
                         document.createTextNode(formatPrice(pricing.floor_byn))),
                 )
@@ -639,9 +639,29 @@ function createApiListingAssistant(context) {
     }
 
     function renderError(message) {
-        resultBox.replaceChildren();
-        resultBox.appendChild(el("div", { className: "la-error", text: message }));
+        resultBox.replaceChildren(
+            el("div", { className: "la-error", text: message }),
+            buildRetryButton("Повторить"),
+        );
         showResultOverlay();
+    }
+
+    function buildRetryButton(label) {
+        const fromHistory = _resultSource === "history";
+        const button = el("button", {
+            className: "ai-retry-btn",
+            attrs: { type: "button" },
+            text: fromHistory ? "Новый запрос" : label,
+        });
+        button.addEventListener("click", () => {
+            if (fromHistory) {
+                hideResultOverlay();
+                switchTab("form");
+            } else {
+                form.requestSubmit();
+            }
+        });
+        return button;
     }
 
     function showResultOverlay() {
@@ -814,9 +834,18 @@ function createApiListingAssistant(context) {
 
     function renderResult(data) {
         resultBox.replaceChildren();
+        const fallback = data.source === "fallback";
+        if (fallback) {
+            resultBox.appendChild(el("div", { className: "ai-warning-banner ai-draft-banner", attrs: { role: "status" } },
+                el("strong", { text: "Черновик без AI" }),
+                el("p", { text: "AI недоступен. Заголовок и описание собраны из введённых данных." }),
+                buildRetryButton("Повторить AI-запрос"),
+            ));
+        }
 
         const summary = (data.market_summary || "").trim();
-        if (summary) {
+        const pricing = buildPricingSection(data.pricing, fallback);
+        if (summary && (!fallback || pricing)) {
             resultBox.appendChild(
                 el(
                     "section",
@@ -860,8 +889,10 @@ function createApiListingAssistant(context) {
         const sp = buildSellingPoints(data.selling_points);
         if (sp) resultBox.appendChild(sp);
 
-        const pricing = buildPricingSection(data.pricing);
-        if (pricing) resultBox.appendChild(pricing);
+        resultBox.appendChild(pricing || el("section", { className: "la-section" },
+            el("span", { className: "la-section-title", text: "Цена пока недоступна" }),
+            el("p", { className: "la-summary", text: "Недостаточно сопоставимых объявлений для оценки. Уточните модель и характеристики товара и повторите запрос." }),
+        ));
 
         const playbook = buildPlaybook(data.negotiation_playbook);
         if (playbook) resultBox.appendChild(playbook);
@@ -983,6 +1014,7 @@ function createApiListingAssistant(context) {
 
     async function handleSubmit(event) {
         event.preventDefault();
+        if (submitBtn?.disabled) return;
         if (typeof context.canUseAiFeature === "function" && !context.canUseAiFeature("assistant")) return;
         const title = (titleInput.value || "").trim();
         if (title.length < 3) {
@@ -1020,6 +1052,7 @@ function createApiListingAssistant(context) {
             }
         }
 
+        if (submitBtn?.disabled) return;
         setBusy(true);
         _resultSource = "form";
         const myId = ++_analysisId;

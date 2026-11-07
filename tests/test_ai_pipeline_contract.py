@@ -238,6 +238,8 @@ async def test_provider_error_fallback_is_labelled_and_not_shared(monkeypatch) -
 
     assert result["source"] == "fallback"
     assert result["_ai_warning"] == "AI не ответил. Показан рыночный черновик по данным рынка."
+    assert result["recommendation"]["verdict"] == "think_twice"
+    assert not result["summary"]
     assert await _shared_entry(cache, payload) is None
 
 

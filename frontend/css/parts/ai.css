@@ -1053,6 +1053,22 @@
     background: var(--bg-hover);
 }
 
+.ai-draft-banner {
+    display: grid;
+    align-items: start;
+    color: var(--text);
+    font-size: var(--text-sm);
+}
+
+.ai-draft-banner p {
+    margin: 0;
+    color: var(--text-muted);
+}
+
+.ai-draft-banner .ai-retry-btn {
+    justify-self: start;
+}
+
 /* ── AI: Light theme adjustments ── */
 [data-theme="light"] .ai-section--best {
     background: none;

@@ -24,6 +24,7 @@ function createAppActions(baseContext) {
     context.closeModalAnimated = closeModalAnimated;
     context.bindRovingTablist = bindRovingTablist;
     context._prefersReducedMotion = _prefersReducedMotion;
+    context.confirmAction = async (options) => (await _showConfirmDialog(options)) !== null;
     const inflightGuardMs = typeof INFLIGHT_GUARD_MS === "number" ? INFLIGHT_GUARD_MS : 30_000;
     context.inflightGuardMs = inflightGuardMs;
     const logClientError = context.logClientError || (() => {});
@@ -280,10 +281,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261106-listing-details"),
-                context._loadScript("js/api_ai_render.js?v=20261106-listing-details"),
-                context._loadScript("js/api_ai.js?v=20261106-listing-details"),
-                context._loadScript("js/api_listing_assistant.js?v=20261106-listing-details"),
+                context._loadScript("js/api_ai_modal.js?v=20261107-p1-wave1"),
+                context._loadScript("js/api_ai_render.js?v=20261107-p1-wave1"),
+                context._loadScript("js/api_ai.js?v=20261107-p1-wave1"),
+                context._loadScript("js/api_listing_assistant.js?v=20261107-p1-wave1"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -523,18 +524,6 @@ function createAppActions(baseContext) {
     context.addLeadFromListing = addLeadFromListing;
 
     // ── Additional actions not in any module ──────────────────────────────
-
-    async function deleteHistoryDeal(leadId) {
-        try {
-            await core.deleteJson(`/api/v1/leads/${leadId}`);
-            state.leads.items = state.leads.items.filter((l) => l.id !== leadId);
-            renderLeads();
-            showToast("Сделка удалена из истории");
-            await leads.loadLeads();
-        } catch (error) {
-            showToast(error.message || "Не удалось удалить сделку");
-        }
-    }
 
     async function refreshLeads() {
         try {
@@ -959,11 +948,13 @@ function createAppActions(baseContext) {
             showToast("Не удалось определить пользователя");
             return;
         }
-        const typed = await _showTypedConfirmDialog(
-            "Удалить аккаунт?",
-            "Все ваши данные будут безвозвратно удалены. Это действие нельзя отменить.",
-            expected,
-        );
+        const typed = await _showConfirmDialog({
+            title: "Удалить аккаунт?",
+            message: "Все ваши данные будут безвозвратно удалены. Это действие нельзя отменить.",
+            confirmLabel: "Удалить",
+            destructive: true,
+            expectedText: expected,
+        });
         if (typed === null) return;
         try {
             await core.deleteJson("/api/v1/account", { confirmation: typed });
@@ -975,12 +966,8 @@ function createAppActions(baseContext) {
         _finishAccountDeletion();
     }
 
-    function _showTypedConfirmDialog(title, message, expectedText) {
-        // BE-M3: typed-input variant of the confirm dialog. Resolves to
-        // the entered text on confirm, or ``null`` on cancel. The input
-        // has to *exactly* match ``expectedText`` (case-insensitive,
-        // stripped) before the confirm button activates — clients that
-        // skip this check still hit the server-side validator.
+    function _showConfirmDialog({ title, message, confirmLabel, destructive = false, expectedText = null }) {
+        if (document.querySelector(".typed-confirm-modal")) return Promise.resolve(null);
         return new Promise((resolve) => {
             const overlay = document.createElement("div");
             overlay.className = "detail-modal typed-confirm-modal";
@@ -1003,25 +990,6 @@ function createAppActions(baseContext) {
             p.id = "typed-confirm-message";
             p.textContent = message;
 
-            const hint = document.createElement("label");
-            hint.className = "typed-confirm-hint";
-            hint.htmlFor = "typed-confirm-input";
-            // Build via DOM (not innerHTML) — keeps user-controlled
-            // ``expectedText`` away from the HTML parser entirely.
-            hint.append("Введите ");
-            const expectedSpan = document.createElement("strong");
-            expectedSpan.className = "typed-confirm-expected";
-            expectedSpan.textContent = expectedText;
-            hint.append(expectedSpan, " для подтверждения:");
-
-            const input = document.createElement("input");
-            input.type = "text";
-            input.autocomplete = "off";
-            input.autocapitalize = "off";
-            input.spellcheck = false;
-            input.className = "typed-confirm-input";
-            input.id = "typed-confirm-input";
-
             const btnRow = document.createElement("div");
             btnRow.className = "typed-confirm-actions";
 
@@ -1034,12 +1002,38 @@ function createAppActions(baseContext) {
             const confirmBtn = document.createElement("button");
             confirmBtn.type = "button";
             confirmBtn.setAttribute("data-role", "confirm");
-            confirmBtn.className = "typed-confirm-btn typed-confirm-btn--danger";
-            confirmBtn.textContent = "Удалить";
-            confirmBtn.disabled = true;
+            confirmBtn.className = destructive ? "typed-confirm-btn typed-confirm-btn--danger" : "primary-btn typed-confirm-btn";
+            confirmBtn.textContent = confirmLabel;
 
+            sheet.append(h3, p);
+            let input = null;
+            if (expectedText !== null) {
+                const hint = document.createElement("label");
+                hint.className = "typed-confirm-hint";
+                hint.htmlFor = "typed-confirm-input";
+                const expectedSpan = document.createElement("strong");
+                expectedSpan.className = "typed-confirm-expected";
+                expectedSpan.textContent = expectedText;
+                hint.append("Введите ", expectedSpan, " для подтверждения:");
+                input = document.createElement("input");
+                input.type = "text";
+                input.autocomplete = "off";
+                input.autocapitalize = "off";
+                input.spellcheck = false;
+                input.className = "typed-confirm-input";
+                input.id = "typed-confirm-input";
+                confirmBtn.disabled = true;
+                const expectedNorm = expectedText.trim().toLowerCase();
+                input.addEventListener("input", () => {
+                    confirmBtn.disabled = input.value.trim().toLowerCase() !== expectedNorm;
+                });
+                input.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter" && !confirmBtn.disabled) close(input.value);
+                });
+                sheet.append(hint, input);
+            }
             btnRow.append(cancelBtn, confirmBtn);
-            sheet.append(h3, p, hint, input, btnRow);
+            sheet.append(btnRow);
             overlay.appendChild(sheet);
             const previousFocus = document.activeElement;
             document.body.appendChild(overlay);
@@ -1054,20 +1048,7 @@ function createAppActions(baseContext) {
             // overlay was just appended to body so it's a body
             // child by the time we apply.
             if (typeof _applyInertToSiblings === "function") _applyInertToSiblings(overlay);
-            // Focus the input so the user can start typing immediately —
-            // a typed-confirm dialog where you have to click into the
-            // box first is hostile UX.
-            setTimeout(() => input.focus(), 0);
-
-            const expectedNorm = expectedText.trim().toLowerCase();
-            function refreshConfirm() {
-                const matches = input.value.trim().toLowerCase() === expectedNorm;
-                confirmBtn.disabled = !matches;
-            }
-            input.addEventListener("input", refreshConfirm);
-            input.addEventListener("keydown", (e) => {
-                if (e.key === "Enter" && !confirmBtn.disabled) close(input.value);
-            });
+            (input || cancelBtn).focus();
 
             // FR-05: Escape cancels; capture + stopPropagation so the sheet
             // underneath doesn't close on the same keypress.
@@ -1098,7 +1079,7 @@ function createAppActions(baseContext) {
 
             cancelBtn.addEventListener("click", () => close(null));
             confirmBtn.addEventListener("click", () => {
-                if (!confirmBtn.disabled) close(input.value);
+                if (!confirmBtn.disabled) close(input?.value ?? "");
             });
             overlay.addEventListener("click", (e) => {
                 if (e.target === overlay) close(null);
@@ -1147,7 +1128,7 @@ function createAppActions(baseContext) {
         confirmLead: leads.confirmLead,
         cancelLead: leads.cancelLead,
         closeDeal: leads.closeDeal,
-        deleteHistoryDeal,
+        deleteHistoryDeal: leads.deleteLead,
         revertLeadStage: leads.revertLeadStage,
         markLeadAsSold: leads.markLeadAsSold,
         openLeadDetail: leads.openLeadDetail,

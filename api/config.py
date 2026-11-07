@@ -229,15 +229,10 @@ class Settings(BaseSettings):
     # deprecation warning so existing deployments keep working.
     internal_service_token: SecretStr | None = None
 
-    @field_validator("internal_service_token", mode="before")
+    @field_validator("ai_api_key", "internal_service_token", mode="before")
     @classmethod
-    def _blank_internal_service_token_is_unset(cls, v: object) -> object:
-        """RV-SCH-06: docker-compose passes ``${INTERNAL_SERVICE_TOKEN:-}``,
-        i.e. an empty string when the variable is not set. As ``SecretStr('')``
-        it counted as configured: the bot sent an empty service token, the
-        API ignored the empty header and answered 401. Blank means unset;
-        surrounding whitespace is dropped (HTTP strips it from the header).
-        """
+    def _blank_header_secret_is_unset(cls, v: object) -> object:
+        """Compose passes empty strings for unset credentials used in headers."""
         raw = v.get_secret_value() if isinstance(v, SecretStr) else v
         if isinstance(raw, str):
             return raw.strip() or None

@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261106-listing-details";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261107-p1-wave1";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");

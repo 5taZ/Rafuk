@@ -4,6 +4,7 @@ function createRenderCardBuilders(context) {
         elements,
         actions,
         formatPrice,
+        formatDealAmount,
         formatMarketDelta,
         formatCondition,
         formatSeller,
@@ -498,12 +499,13 @@ function createRenderCardBuilders(context) {
 
     /** Lead profit/potential ("Результат" if sold, "Потенциал" if active). */
     function _buildLeadProfitNode(lead) {
-        const buy = _roundOrNull(lead.buy_price_byn);
-        const sold = _roundOrNull(lead.sold_price_byn);
-        if (!buy || !sold) return null;
-        const profitRaw = sold - buy;
-        const percent = buy > 0 ? ((profitRaw / buy) * 100).toFixed(0) : "0";
-        const sign = profitRaw >= 0 ? "+" : "";
+        const buy = lead.buy_price_byn;
+        const sold = lead.sold_price_byn;
+        if (buy == null || sold == null) return null;
+        const cost = Number(buy) + Number(lead.total_expenses || 0);
+        const profitRaw = lead.actual_profit ?? Math.round((sold - cost) * 100) / 100;
+        const percent = cost > 0 ? ((profitRaw / cost) * 100).toFixed(0) : "0";
+        const sign = profitRaw > 0 ? "+" : "";
         const cls = profitRaw >= 0 ? "profit-positive" : "profit-negative";
         const isSold = lead.status === "sold";
         const showPotential = !isSold && (lead.status === "new" || lead.status === "bought");
@@ -511,7 +513,7 @@ function createRenderCardBuilders(context) {
         const label = isSold ? "Результат" : "Потенциал";
         return domEl("div", {
             className: `lead-financial-item ${cls}`,
-            text: `${label}: ${sign}${Math.round(profitRaw)} BYN (${sign}${percent}%)`,
+            text: `${label}: ${sign}${formatDealAmount(profitRaw)} BYN (${sign}${percent}%)`,
         });
     }
 
@@ -535,39 +537,53 @@ function createRenderCardBuilders(context) {
 
     /** Lead-specific buy/sold price input fields. */
     function _buildLeadFields(lead, { signal } = {}) {
-        const priceByn = _roundOrNull(lead.price_byn);
+        const priceByn = Number(lead.price_byn);
+        const priceText = priceByn > 0 ? formatDealAmount(priceByn) : "";
+        const isSold = lead.status === "sold";
+        const priceError = domEl("p", {
+            className: "lead-price-error",
+            dataset: { role: "price-error" },
+            attrs: { id: `lead-price-error-${lead.id}`, role: "alert", hidden: true },
+        });
+        const priceAttrs = {
+            inputmode: "decimal",
+            readonly: isSold || null,
+            "aria-describedby": priceError.id,
+        };
         const buyInput = domEl("input", {
             type: "text",
-            attrs: { min: "0", placeholder: "цена покупки" },
+            attrs: { ...priceAttrs, placeholder: "цена покупки" },
             dataset: { role: "buy-price" },
         });
-        buyInput.value = lead.buy_price_byn ?? "";
-        buyInput.addEventListener("input", (e) => {
-            const next = e.target.value.replace(/[^\d]/g, "");
-            if (next !== e.target.value) e.target.value = next;
-        }, { signal });
-
         const soldInput = domEl("input", {
             type: "text",
-            attrs: { min: "0", placeholder: "цена продажи" },
+            attrs: { ...priceAttrs, placeholder: "цена продажи" },
             dataset: { role: "sold-price" },
         });
-        soldInput.value = lead.sold_price_byn ?? "";
-        soldInput.addEventListener("input", (e) => {
-            const next = e.target.value.replace(/[^\d]/g, "");
-            if (next !== e.target.value) e.target.value = next;
-        }, { signal });
+        buyInput.value = lead.buy_price_byn == null ? "" : formatDealAmount(lead.buy_price_byn);
+        soldInput.value = lead.sold_price_byn == null ? "" : formatDealAmount(lead.sold_price_byn);
+        function clearPriceError() {
+            priceError.hidden = true;
+            priceError.textContent = "";
+            buyInput.removeAttribute("aria-invalid");
+            soldInput.removeAttribute("aria-invalid");
+        }
+        buyInput.addEventListener("input", clearPriceError, { signal });
+        soldInput.addEventListener("input", clearPriceError, { signal });
 
         const fillBuy = domEl("button", {
             className: "lead-field-chip",
             type: "button",
             dataset: { role: "fill-buy-price" },
-            text: priceByn ? `${priceByn}` : "Договорная",
-            attrs: !priceByn ? { disabled: true } : {},
+            text: priceText || "Договорная",
+            attrs: priceText
+                ? { "aria-label": `Подставить цену объявления ${priceText} BYN` }
+                : { disabled: true },
         });
         fillBuy.addEventListener("click", () => {
-            if (priceByn) {
-                buyInput.value = String(priceByn);
+            if (priceText) {
+                buyInput.value = priceText;
+                clearPriceError();
                 buyInput.focus();
             }
         }, { signal });
@@ -583,7 +599,7 @@ function createRenderCardBuilders(context) {
                     "div",
                     { className: "lead-field-wrap" },
                     buyInput,
-                    fillBuy,
+                    isSold ? null : fillBuy,
                     domEl("span", { className: "unit", text: "BYN" }),
                 ),
             ),
@@ -598,6 +614,7 @@ function createRenderCardBuilders(context) {
                     domEl("span", { className: "unit", text: "BYN" }),
                 ),
             ),
+            priceError,
         );
     }
 
@@ -658,15 +675,15 @@ function createRenderCardBuilders(context) {
                         className: "lead-btn lead-btn--confirm",
                         type: "button",
                         dataset: { role: "confirm" },
-                        text: "✓",
-                        attrs: { "aria-label": `Подтвердить «${leadTitle}»` },
+                        text: "Подтвердить продажу",
+                        attrs: { "aria-label": `Подтвердить продажу «${leadTitle}»` },
                     }),
                     domEl("button", {
                         className: "lead-btn lead-btn--delete",
                         type: "button",
                         dataset: { role: "cancel" },
-                        text: "✕",
-                        attrs: { "aria-label": `Удалить «${leadTitle}»` },
+                        text: "Удалить сделку",
+                        attrs: { "aria-label": `Удалить сделку «${leadTitle}»` },
                     }),
                 )
                 : null,
@@ -678,15 +695,15 @@ function createRenderCardBuilders(context) {
                         className: "lead-btn lead-btn--success",
                         type: "button",
                         dataset: { role: "close-deal" },
-                        text: "✓ Готово",
+                        text: "Завершить сделку",
                         attrs: { "aria-label": `Завершить сделку «${leadTitle}»` },
                     }),
                     domEl("button", {
                         className: "lead-btn lead-btn--revert",
                         type: "button",
                         dataset: { role: "revert" },
-                        text: "↩ Назад",
-                        attrs: { "aria-label": `Вернуть «${leadTitle}» в работу` },
+                        text: "Отменить продажу",
+                        attrs: { "aria-label": `Отменить продажу «${leadTitle}»` },
                     }),
                 )
                 : null,
@@ -755,7 +772,7 @@ function createRenderCardBuilders(context) {
                 void actions.closeDeal(item.id);
             }, { signal });
             card.querySelector('[data-role="revert"]')?.addEventListener("click", () => {
-                void actions.revertLeadStage(item.id, item.status);
+                void actions.revertLeadStage(item.id);
             }, { signal });
         } else if (mode === "watching") {
             card.querySelector('[data-role="lead"]')?.addEventListener("click", (event) => {

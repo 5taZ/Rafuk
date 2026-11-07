@@ -700,6 +700,17 @@
     height: 34px;
 }
 
+.lead-field-wrap:has(input[aria-invalid="true"]) {
+    border-color: var(--danger);
+}
+
+.lead-price-error {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--red-text);
+    font-size: var(--text-sm);
+}
+
 .lead-field-wrap input {
     width: 100%;
     min-width: 0;
@@ -764,10 +775,10 @@
     background: transparent;
     color: var(--text-muted);
     border-radius: var(--r-md);
-    padding: 9px 0;
+    padding: 8px;
     font: 600 12px var(--font);
     cursor: pointer;
-    white-space: nowrap;
+    white-space: normal;
     transition: background var(--tr-fast), color var(--tr-fast), border-color var(--tr-fast), transform var(--tr-fast);
     flex: 1;
     text-align: center;
@@ -854,7 +865,6 @@
     color: var(--green-text);
     border-color: var(--green);
     background: transparent;
-    font-size: var(--text-semi);
     font-weight: 700;
 }
 
@@ -867,7 +877,6 @@
     color: var(--red-text);
     border-color: var(--red);
     background: transparent;
-    font-size: var(--text-semi);
     font-weight: 700;
 }
 
@@ -1031,7 +1040,8 @@
     border: none;
     background: transparent;
     color: var(--text-dim);
-    font-size: var(--text-sub);
+    min-height: 44px;
+    font: 600 var(--text-xs) var(--font);
     cursor: pointer;
     padding: 4px 8px;
     border-radius: var(--r-sm);
@@ -1106,8 +1116,13 @@
     }
 
     .history-deal-meta {
+        flex-wrap: wrap;
         gap: 8px;
         font-size: var(--text-sm);
+    }
+
+    .history-deal-price {
+        white-space: normal;
     }
 
     .history-deal-date {

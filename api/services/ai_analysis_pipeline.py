@@ -260,7 +260,13 @@ def _build_fallback_response(
         fair_price=fallback_result.get("fair_price") if median else None,
         resale_potential=None,
         watch_out=fallback_result.get("watch_out", []),
-        recommendation=fallback_result.get("recommendation"),
+        recommendation={
+            "verdict": "think_twice",
+            "text": (
+                "Рыночные данные помогают сравнить цены. "
+                "Состояние товара и риски сделки требуют проверки."
+            ),
+        },
         similar_listings=similar,
         best_alternative=fallback_best_alt,
         meeting_checklist=fallback_result.get("meeting_checklist", []),
@@ -270,7 +276,6 @@ def _build_fallback_response(
         price_reference_scope=ref_scope,
         price_reference_label=ref_label,
         best_pick_reason=fallback_best_decision.reason,
-        summary=fallback_result.get("summary", ""),
         source="fallback",
         disclaimer=DISCLAIMER,
     )

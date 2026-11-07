@@ -543,6 +543,9 @@ class AIService:
         for attempt in range(max_attempts):
             try:
                 resp = await client.post(url, headers=headers, json=json)
+            except httpx.LocalProtocolError:
+                # HTTPX can include the Authorization header in this exception.
+                raise RuntimeError("Некорректные параметры подключения к AI-сервису") from None
             except httpx.HTTPError as e:
                 last_exc = e
                 logger.warning(

@@ -41,20 +41,22 @@ function createApiAi(context) {
     const modal = app.createAiModal(context, aiCtx);
     const render = app.createAiRender(context, aiCtx);
 
-    async function loadAIAnalysis(adId) {
+    async function loadAIAnalysis(adId, { retry = false } = {}) {
         const query = (state.detail.data?.query || state.search.activeQuery || "").trim();
         if (!adId || !query) return;
         if (typeof context.canUseAiFeature === "function" && !context.canUseAiFeature("ai")) return;
 
+        const showResult = (data) => render.renderAIModalResult(data, () => loadAIAnalysis(adId, { retry: true }));
         const cached = state.detail.ai;
         if (
+            !retry &&
             cached &&
             cached.adId === adId &&
             cached.result &&
             !cached.error
         ) {
             modal.openAIModal(state.detail.data?.title || "", { startLoading: false });
-            render.renderAIModalResult(cached.result);
+            showResult(cached.result);
             return;
         }
 
@@ -109,7 +111,7 @@ function createApiAi(context) {
                         const cachedResult = startResp.result;
                         state.detail.ai = { adId, loading: false, result: cachedResult, error: "", source: "ai" };
                         modal.stopLoadingAnimation(false);
-                        render.renderAIModalResult(cachedResult);
+                        showResult(cachedResult);
                         return;
                     }
                     if (!startResp.task_id) {
@@ -144,7 +146,7 @@ function createApiAi(context) {
             state.detail.ai = { adId, loading: false, result, error: "", source: "ai" };
             modal.showCompletionThen(() => {
                 if (isCancelled()) return;
-                render.renderAIModalResult(result);
+                showResult(result);
             });
         } catch (err) {
             if (isCancelled()) return;

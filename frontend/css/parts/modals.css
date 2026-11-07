@@ -129,6 +129,8 @@ body.modal-open {
 .typed-confirm-message {
     font-size: var(--text-norm);
     line-height: 1.5;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
 }
 
 .typed-confirm-hint {

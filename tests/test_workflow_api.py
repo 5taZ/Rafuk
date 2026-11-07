@@ -551,8 +551,8 @@ def test_lead_double_sale_protection(monkeypatch) -> None:
             f"/api/v1/leads/{lead['id']}",
             json={
                 "status": "sold",
-                "buy_price_byn": 1400,
-                "sold_price_byn": 1700,
+                "buy_price_byn": 1400.50,
+                "sold_price_byn": 1700.25,
                 "version": lead["version"],
             },
         )
@@ -569,7 +569,7 @@ def test_lead_double_sale_protection(monkeypatch) -> None:
         # Same amount is idempotent: 200.
         idem = client.patch(
             f"/api/v1/leads/{sold_lead['id']}",
-            json={"sold_price_byn": 1700, "version": sold_lead["version"]},
+            json={"sold_price_byn": 1700.25, "version": sold_lead["version"]},
         )
         assert idem.status_code == 200
 
@@ -579,7 +579,12 @@ def test_lead_double_sale_protection(monkeypatch) -> None:
             json={"sold_price_byn": None, "version": idem.json()["version"]},
         )
         assert revert.status_code == 200
-        assert revert.json()["status"] == "bought"
+        reverted = revert.json()
+        assert reverted["status"] == "bought"
+        assert reverted["buy_price_byn"] == 1400.50
+        assert reverted["bought_at"] == sold_lead["bought_at"]
+        assert reverted["sold_price_byn"] is None
+        assert reverted["sold_at"] is None
         re_sold = client.patch(
             f"/api/v1/leads/{revert.json()['id']}",
             json={

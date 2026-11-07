@@ -1837,7 +1837,7 @@ def test_watchlist_reload_does_not_flash_empty_state() -> None:
     assert "state.watchlist.items = []" not in load_body[loading_start:stale_guard_start]
 
     delete_start = watchlist_js.index("async function deleteWatchlistItem")
-    delete_end = watchlist_js.index("\n    // ── Delete all", delete_start)
+    delete_end = watchlist_js.index("\n    // ── Refresh watchlist", delete_start)
     delete_body = watchlist_js[delete_start:delete_end]
     assert delete_body.index("_nextWatchlistRequestId();") < delete_body.index(
         "state.watchlist.items ="
@@ -2113,7 +2113,7 @@ def test_delete_account_clears_local_data_and_never_reloads() -> None:
 
     delete_start = actions_js.index("async function deleteAccount()")
     delete_body = actions_js[
-        delete_start:actions_js.index("\n    function _showTypedConfirmDialog", delete_start)
+        delete_start:actions_js.index("\n    function _showConfirmDialog", delete_start)
     ]
     server_delete = delete_body.index('await core.deleteJson("/api/v1/account"')
     local_cleanup = delete_body.index("clearLocalAccountData();")
@@ -2159,6 +2159,68 @@ def test_collection_actions_only_show_final_toasts() -> None:
     assert 'showToast(error.message || "Не удалось подтвердить сделку", "error")' in confirm_body
     for text in (actions_js, watchlist_js, leads_js, listings_js, trackers_js):
         assert 'showToast("Загружаю..."' not in text
+
+
+def test_p1_sale_uses_confirmed_decimal_prices_and_can_be_reversed() -> None:
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "api_leads.js") + r"""
+const assert = require("node:assert/strict");
+let saved = { id: 4, title: "Тестовый лот", status: "new", version: 1 };
+const state = { leads: { items: [{ ...saved }], _requestId: 0 }, analytics: {} };
+const writes = [];
+const dialogs = [];
+const noop = () => {};
+let confirm = false;
+const api = createApiLeads({
+    state, elements: {}, validVersion,
+    hasTelegramInitData: () => true,
+    renderLeads: noop, renderDealsHeroStats: noop, renderProfitDashboard: noop, showToast: noop,
+    formatDealAmount: (value) => new Intl.NumberFormat("ru-BY").format(value),
+    confirmAction: async (dialog) => { dialogs.push(dialog); return confirm; },
+    getJson: async (url) => url === "/api/v1/leads" ? (saved ? [{ ...saved }] : []) : {},
+    requestJson: async (url, options) => {
+        const data = JSON.parse(options.body);
+        writes.push([url, data]);
+        saved = { ...saved, ...data, status: data.status || "bought", version: saved.version + 1 };
+        return { ...saved };
+    },
+    deleteJson: async (url) => { writes.push([url]); saved = null; },
+});
+const buy = el("input", { "data-role": "buy-price" });
+const sold = el("input", { "data-role": "sold-price" });
+const error = el("p", { "data-role": "price-error" });
+const card = el("div", {}, buy, sold, error);
+document.body.append(card);
+
+(async () => {
+    buy.value = "1000.505";
+    sold.value = "1 300,25";
+    await api.confirmLead(state.leads.items[0], card);
+    assert.equal(error.hidden, false);
+    assert.equal(buy.getAttribute("aria-invalid"), "true");
+    assert.equal(dialogs.length, 0);
+
+    buy.value = "1000.50";
+    await api.confirmLead(state.leads.items[0], card);
+    assert.equal(writes.length, 0);
+    assert.match(dialogs.at(-1).message, /1\D000,5\b/);
+    confirm = true;
+    await api.confirmLead(state.leads.items[0], card);
+    assert.deepEqual(writes[0][1], {
+        buy_price_byn: 1000.50, sold_price_byn: 1300.25, status: "sold", version: 1,
+    });
+    await api.revertLeadStage(4);
+    assert.deepEqual(writes[1][1], { sold_price_byn: null, version: 2 });
+    assert.equal(state.leads.items[0].buy_price_byn, 1000.50);
+
+    confirm = false;
+    await api.cancelLead(4);
+    assert.equal(writes.length, 2);
+    assert.match(dialogs.at(-1).message, /Тестовый лот/);
+    confirm = true;
+    await api.cancelLead(4);
+    assert.deepEqual(writes[2], ["/api/v1/leads/4"]);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
 
 
 def test_tracker_setup_uses_its_own_query_and_preserves_saved_filters() -> None:
@@ -4016,6 +4078,7 @@ const domContext = {
     attachLongPress: () => {},
     safeRender: (_name, fn) => fn(),
     formatPrice: (value) => (value == null ? "Договорная" : `${value} BYN`),
+    formatDealAmount: (value) => String(value),
     formatMarketDelta: ({delta_percent, comparable_count}) =>
         `${delta_percent}% · Аналогов: ${comparable_count}`,
     formatCondition: (value) => value,
@@ -4897,6 +4960,7 @@ globalThis.setTimeout = (fn, ms = 0) => realSetTimeout(() => { now += ms; fn(); 
 globalThis.window = globalThis;
 const posts = [];
 const results = [];
+const retries = [];
 const errors = [];
 let taskResponder = () => ({ status: "processing", stage: "calling_ai" });
 let startResponder = () => ({ task_id: `task-${posts.length}` });
@@ -4906,7 +4970,7 @@ window.App = {
         setStageLabel() {}, showCompletionThen(cb) { cb(); },
     }),
     createAiRender: () => ({
-        renderAIModalResult: (result) => results.push(result),
+        renderAIModalResult: (result, retry) => { results.push(result); retries.push(retry); },
         renderAiErrorState: (_node, message) => errors.push(message),
     }),
 };
@@ -4926,6 +4990,20 @@ const api = window.App.createApiAi({
     logClientError() {},
 });
 """
+
+
+def test_p1_retry_after_market_draft_starts_another_analysis() -> None:
+    harness = _AI_HARNESS + _js("api_ai.js") + _AI_CONTEXT + r"""
+(async () => {
+    taskResponder = () => ({ status: "done", result: { source: "fallback" } });
+    await api.loadAIAnalysis(42);
+    assert.equal(results.at(-1).source, "fallback");
+    taskResponder = () => ({ status: "done", result: { source: "ai" } });
+    await retries.at(-1)();
+    assert.deepEqual(posts, [42, 42]);
+    assert.equal(results.at(-1).source, "ai");
+})()""" + _NODE_FAIL
+    _node_ok(harness)
 
 
 def test_rv_ai07_analysis_waits_for_backend_budget_and_resumes_the_same_task() -> None:
@@ -5045,7 +5123,7 @@ assert.strictEqual(document.documentElement.getAttribute("data-theme"), "dark");
     _node_ok(harness)
 
 
-def test_rv2_clear_all_confirmation_is_disarmed_by_a_tab_switch() -> None:
+def test_rv2_clear_events_confirmation_is_disarmed_by_a_tab_switch() -> None:
     """UI-08: a tab switch resets the armed "Удалить всё?" state, so a
     single tap afterwards re-arms instead of wiping the list."""
     harness = _FAKE_DOM_JS + _js("dom_helpers.js") + r"""
@@ -5068,10 +5146,10 @@ const state = {
 const tab = el("button", { "data-view": "tracking" });
 const elements = {
     searchInput: el("input"),
-    deleteAllWatchlistButton: el("button", {}, "Очистить избранное"),
+    clearEventsButton: el("button", {}, "Очистить всю ленту"),
     viewTabs: [tab],
 };
-document.body.append(elements.searchInput, elements.deleteAllWatchlistButton, tab);
+document.body.append(elements.searchInput, elements.clearEventsButton, tab);
 createApiEvents({
     state,
     elements,
@@ -5081,16 +5159,16 @@ createApiEvents({
     loadTrackers() {},
     startTrackerRefresh() {},
     stopTrackerRefresh() {},
-    clearAllWatchlist: async () => { cleared += 1; },
+    clearTrackerEvents: async () => { cleared += 1; },
     showToast: (...args) => toasts.push(args),
 }).bindEvents();
 
-const button = elements.deleteAllWatchlistButton;
+const button = elements.clearEventsButton;
 button.click();
 assert.strictEqual(button.textContent, "Удалить всё?");
 assert.ok(button.classList.contains("is-confirming"));
 tab.click();
-assert.strictEqual(button.textContent, "Очистить избранное", "the tab switch restores the label");
+assert.strictEqual(button.textContent, "Очистить всю ленту", "the tab switch restores the label");
 assert.ok(!button.classList.contains("is-confirming"));
 button.click();
 assert.strictEqual(cleared, 0, "one tap after the switch only re-arms");

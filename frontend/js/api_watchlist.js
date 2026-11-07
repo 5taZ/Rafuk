@@ -14,6 +14,7 @@ function createApiWatchlist(context) {
         renderLeads,
         renderDetailModal,
         showToast,
+        confirmAction,
         getJson,
         postJson,
         deleteJson,
@@ -44,6 +45,7 @@ function createApiWatchlist(context) {
     // user otherwise sees doubled toasts and one round-trip is wasted.
     const _inflightAd = new Set();
     const _inflightWatchId = new Set();
+    let clearingWatchlist = false;
 
     // FE-M14: keep the lazy-loaded watchlist dedupe window in sync
     // with the cross-pipeline guard supplied by app_actions.
@@ -129,19 +131,28 @@ function createApiWatchlist(context) {
 
     // ── Clear entire watchlist ───────────────────────────────────────────
     async function clearAllWatchlist() {
+        if (clearingWatchlist || _inflightWatchId.size) return;
         if (!state.watchlist.items.length) {
             showToast("Список уже пуст");
             return;
         }
+        clearingWatchlist = true;
         try {
+            if (!await confirmAction({
+                title: "Очистить избранное?",
+                message: `Записей к удалению — ${state.watchlist.items.length}. Лоты исчезнут из избранного.`,
+                confirmLabel: "Очистить избранное",
+                destructive: true,
+            })) return;
             await deleteJson("/api/v1/watchlist/all");
-            const count = state.watchlist.items.length;
             state.watchlist.items = [];
             await loadWatchlist();
-            showToast(`Удалено ${count} лотов`);
+            showToast("Избранное очищено");
         } catch (error) {
             showToast(error.message || "Не удалось очистить список");
             await loadWatchlist();
+        } finally {
+            clearingWatchlist = false;
         }
     }
 
@@ -314,9 +325,15 @@ function createApiWatchlist(context) {
 
     // ── Delete single watchlist item ─────────────────────────────────────
     async function deleteWatchlistItem(watchlistId) {
-        if (_inflightWatchId.has(watchlistId)) {
-            return;
-        }
+        const item = _findWatchlistSnapshot(watchlistId);
+        if (!item || clearingWatchlist || _inflightWatchId.has(watchlistId)) return;
+        if (!await confirmAction({
+            title: "Удалить из избранного?",
+            message: `«${item.title}» исчезнет из избранного.`,
+            confirmLabel: "Удалить",
+            destructive: true,
+        })) return;
+        if (clearingWatchlist || _inflightWatchId.has(watchlistId)) return;
         _guardInflightWatchId(watchlistId);
         _nextWatchlistRequestId();
         // Optimistic remove so the card disappears immediately even
@@ -340,24 +357,6 @@ function createApiWatchlist(context) {
             showToast(error.message || "Не удалось удалить", "error");
         } finally {
             _inflightWatchId.delete(watchlistId);
-        }
-    }
-
-    // ── Delete all watchlist ─────────────────────────────────────────────
-    async function deleteAllWatchlist() {
-        if (!state.watchlist.items.length) {
-            showToast("Список уже пуст");
-            return;
-        }
-        const count = state.watchlist.items.length;
-        try {
-            await deleteJson("/api/v1/watchlist/all");
-            state.watchlist.items = [];
-            await loadWatchlist();
-            showToast(`Удалено ${count} лотов`);
-        } catch (error) {
-            showToast(error.message || "Не удалось очистить");
-            await loadWatchlist();
         }
     }
 
@@ -402,7 +401,7 @@ function createApiWatchlist(context) {
         promoteWatchlistToLead,
         openWatchlistDetail,
         deleteWatchlistItem,
-        deleteAllWatchlist,
+        deleteAllWatchlist: clearAllWatchlist,
         refreshWatchlist,
     };
 }

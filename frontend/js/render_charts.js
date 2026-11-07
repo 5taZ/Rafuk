@@ -46,6 +46,7 @@ function createRenderCharts(context) {
         elements,
         actions,
         formatPrice,
+        formatDealAmount,
         formatPriceRange,
         formatCondition,
         formatSeller,
@@ -360,7 +361,7 @@ function createRenderCharts(context) {
     /* ===== Profit Dashboard ===== */
 
     function _renderDashboardCards(dashboard) {
-        const profit = Math.round(Number(dashboard.total_profit_byn || 0));
+        const profit = Number(dashboard.total_profit_byn || 0);
         const revenue = Number(dashboard.total_revenue_byn || 0);
         const roi = Number(Number(dashboard.average_roi_percent || 0).toFixed(1));
         const sold = Number(dashboard.sold_leads || 0);
@@ -369,8 +370,8 @@ function createRenderCharts(context) {
         return [
             {
                 label: "Прибыль",
-                value: `${profit > 0 ? "+" : ""}${profit} BYN`,
-                sub: `выручка ${Math.round(revenue)} · расходы ${Math.round(expenses)}`,
+                value: `${profit > 0 ? "+" : ""}${formatDealAmount(profit)} BYN`,
+                sub: `выручка ${formatDealAmount(revenue)} · расходы ${formatDealAmount(expenses)}`,
                 className: profit > 0 ? "is-positive" : profit < 0 ? "is-negative" : "",
             },
             {
@@ -466,14 +467,11 @@ function createRenderCharts(context) {
             card.setAttribute("role", "listitem");
             card.dataset.leadId = lead.id;
 
-            const buyPriceBynRaw = lead.buy_price_byn ? Number(lead.buy_price_byn) : null;
-            const soldPriceBynRaw = lead.sold_price_byn ? Number(lead.sold_price_byn) : null;
-
-            const buyPrice = buyPriceBynRaw ? Math.round(buyPriceBynRaw) : "?";
-            const soldPrice = soldPriceBynRaw ? Math.round(soldPriceBynRaw) : "?";
-            const profit = soldPriceBynRaw && buyPriceBynRaw ? soldPriceBynRaw - buyPriceBynRaw : null;
-            const profitSign = profit && profit >= 0 ? "+" : "";
-            const profitClass = profit && profit >= 0 ? "history-profit-positive" : "history-profit-negative";
+            const buyPrice = lead.buy_price_byn == null ? "—" : formatDealAmount(lead.buy_price_byn);
+            const soldPrice = lead.sold_price_byn == null ? "—" : formatDealAmount(lead.sold_price_byn);
+            const profit = lead.actual_profit;
+            const profitSign = profit > 0 ? "+" : "";
+            const profitClass = profit > 0 ? "history-profit-positive" : profit < 0 ? "history-profit-negative" : "";
 
             const dateStr = lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("ru-RU") : "";
 
@@ -512,7 +510,7 @@ function createRenderCharts(context) {
                             "div",
                             {
                                 className: `history-deal-profit ${profitClass}`.trim(),
-                                text: profit !== null ? `${profitSign}${Math.round(profit)}` : "—",
+                                text: profit != null ? `${profitSign}${formatDealAmount(profit)}` : "—",
                             },
                         ),
                         domEl("span", { className: "history-deal-profit-currency", text: "BYN" }),
@@ -520,9 +518,9 @@ function createRenderCharts(context) {
                     domEl("button", {
                         className: "history-deal-delete",
                         type: "button",
-                        text: "✕",
+                        text: "Удалить",
                         dataset: { role: "delete-history-deal" },
-                        attrs: { "aria-label": "Удалить из истории" },
+                        attrs: { "aria-label": `Удалить «${lead.title}» из истории` },
                     }),
                 )
             );

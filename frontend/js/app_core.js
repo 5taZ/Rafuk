@@ -524,6 +524,12 @@ function createAppCore() {
         return priceNumberFormat.format(Math.round(value)).replace(/\s/g, "\u202f");
     }
 
+    const dealAmountFormat = new Intl.NumberFormat("ru-BY", { maximumFractionDigits: 2 });
+
+    function formatDealAmount(value) {
+        return dealAmountFormat.format(value).replace(/\s/g, "\u202f");
+    }
+
     function formatPrice(value, priceType) {
         if (priceType === "negotiable" || (value == null && priceType !== "free")) return "Договорная";
         if (priceType === "free" || value === 0) return "Бесплатно";
@@ -752,6 +758,7 @@ function createAppCore() {
         syncTelegramChromeTheme,
         formatPrice,
         formatPriceNumber,
+        formatDealAmount,
         formatPriceRange,
         formatMarketDelta,
         formatCondition,
