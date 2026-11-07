@@ -220,7 +220,6 @@ function cacheAppElements(elements) {
     elements.trackerManage = document.getElementById("tracker-manage");
     elements.toggleTrackerPause = document.getElementById("toggle-tracker-pause-btn");
     elements.trackerMarket = document.getElementById("tracker-market-btn");
-    elements.trackerDelete = document.getElementById("tracker-delete");
     elements.deleteTrackerButton = document.getElementById("delete-tracker-btn");
     elements.editTrackerQuery = document.getElementById("edit-tracker-query");
     elements.editStrictModeToggle = document.getElementById("edit-strict-mode-toggle");

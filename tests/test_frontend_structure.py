@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 from pathlib import Path
 
 import pytest
@@ -476,6 +477,20 @@ def test_chart_js_is_vendored_without_unconditional_preload(soup: BeautifulSoup)
     assert "cdn.jsdelivr.net" not in nginx_conf
     assert "connect-src 'self';" in index_text
     assert "connect-src 'self';" in nginx_conf
+
+
+def test_confirmation_dialog_stacks_above_other_modals(css_text: str) -> None:
+    """UI-08: nested confirmations must remain visible over their inert parent dialog."""
+    def layer(selector: str) -> int:
+        blocks = re.findall(rf"{re.escape(selector)}\s*\{{([^}}]+)\}}", css_text)
+        values = [int(m[1]) for block in blocks if (m := re.search(r"z-index:\s*(\d+)", block))]
+        assert values, selector
+        return values[-1]
+
+    confirmation = layer(".typed-confirm-modal")
+    for selector in (".detail-modal", ".modal-overlay", ".ai-modal-overlay", "#privacy-modal"):
+        assert confirmation > layer(selector), selector
+    assert confirmation < layer(".toast-container")
 
 
 def test_skip_link_targets_populated_main_landmark(soup: BeautifulSoup) -> None:

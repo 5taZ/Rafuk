@@ -725,8 +725,7 @@
     text-align: center;
 }
 
-.ghost-btn.clear-list-btn:hover,
-.ghost-btn.clear-list-btn.is-confirming {
+.ghost-btn.clear-list-btn:hover {
     border-color: var(--danger-border);
     background: var(--red-soft);
     color: var(--red-text);

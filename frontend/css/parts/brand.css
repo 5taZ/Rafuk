@@ -2083,7 +2083,7 @@
     flex: 1;
 }
 
-.tracker-feed-meta .clear-list-btn:not(:hover):not(.is-confirming) {
+.tracker-feed-meta .clear-list-btn:not(:hover) {
     border-color: transparent;
 }
 
@@ -2351,8 +2351,7 @@ select.tracker-control {
     background: var(--bg-elevated);
 }
 
-.tracker-advanced summary,
-.tracker-delete summary {
+.tracker-advanced summary {
     display: flex;
     min-height: 44px;
     align-items: center;
@@ -2364,13 +2363,11 @@ select.tracker-control {
     cursor: pointer;
 }
 
-.tracker-advanced summary::-webkit-details-marker,
-.tracker-delete summary::-webkit-details-marker {
+.tracker-advanced summary::-webkit-details-marker {
     display: none;
 }
 
-.tracker-advanced summary::after,
-.tracker-delete summary::after {
+.tracker-advanced summary::after {
     content: "";
     width: 7px;
     height: 7px;
@@ -2380,8 +2377,7 @@ select.tracker-control {
     transform: rotate(45deg);
 }
 
-.tracker-advanced[open] summary::after,
-.tracker-delete[open] summary::after {
+.tracker-advanced[open] summary::after {
     transform: rotate(225deg);
 }
 
@@ -2415,13 +2411,9 @@ select.tracker-control {
     border-top: 1px solid var(--border);
 }
 
-.tracker-delete summary {
-    color: var(--red-text);
-    font-size: var(--text-xs);
-}
-
-.tracker-delete p {
-    margin-bottom: 8px;
+.tracker-delete {
+    width: 100%;
+    margin-top: 8px;
 }
 
 .tracker-form-footer {

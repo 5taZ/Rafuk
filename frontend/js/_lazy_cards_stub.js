@@ -20,8 +20,8 @@
  */
 /* global window */
 
-const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20261107-expense-spacing";
-const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20261107-expense-spacing";
+const _LAZY_CARDS_BUILDERS_URL = "js/render_card_builders.js?v=20261107-confirm-dialogs";
+const _LAZY_CARDS_RENDER_URL = "js/render_cards.js?v=20261107-confirm-dialogs";
 
 function _lazyLoadCardsSources(context) {
     if (_loadPromises.has("cards")) return _loadPromises.get("cards");

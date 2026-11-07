@@ -5,7 +5,7 @@ function createApiTrackers(context) {
     const {
         state, elements, hasTelegramInitData, renderTrackers, renderTrackerEvents,
         showToast, getJson, postJson, deleteJson, requestJson, domEl,
-        openModalAnimated, closeModalAnimated,
+        openModalAnimated, closeModalAnimated, confirmAction,
     } = context;
     const tracking = state.trackers;
     let refreshTimer = null;
@@ -110,6 +110,14 @@ function createApiTrackers(context) {
     }
 
     async function clearTrackerEvents() {
+        if (tracking.clearingEvents || tracking.eventFilterTrackerId != null || tracking.eventFilter !== "all") return;
+        if (!await confirmAction({
+            title: "Очистить всю ленту?",
+            message: "Все события автопоиска будут удалены. Трекеры продолжат работать и добавлять новые события.",
+            confirmLabel: "Очистить ленту",
+            destructive: true,
+        })) return;
+        // UI-08: recheck the scope after the dialog; filters may have changed while it was open.
         if (tracking.clearingEvents || tracking.eventFilterTrackerId != null || tracking.eventFilter !== "all") return;
         tracking.clearingEvents = true;
         renderTrackerEvents();
@@ -260,7 +268,6 @@ function createApiTrackers(context) {
         elements.trackerUseSearch.hidden = editing || !searchQuery;
         elements.trackerUseSearch.textContent = searchQuery ? `Из поиска · ${searchQuery}` : "";
         elements.trackerManage.hidden = !editing;
-        elements.trackerDelete.open = false;
         elements.toggleTrackerPause.textContent = tracker?.paused ? "Возобновить" : "Поставить на паузу";
         const interval = tracker?.interval_min ?? 15;
         elements.trackerFormNote.textContent = tracker?.paused
@@ -394,10 +401,18 @@ function createApiTrackers(context) {
         });
     }
 
-    function deleteTracker() {
+    async function deleteTracker() {
         const id = tracking.editingId;
-        if (id == null || !elements.trackerDelete.open) return;
-        void applyTrackerAction(() => deleteJson(`/api/v1/trackers/${id}`), {
+        const tracker = tracking.items.find((item) => item.id === id);
+        if (!tracker || formBusy) return;
+        if (!await confirmAction({
+            title: "Удалить трекер?",
+            message: `Автопоиск «${tracker.query}» остановится. Найденные объявления останутся в ленте.`,
+            confirmLabel: "Удалить трекер",
+            destructive: true,
+        })) return;
+        if (formBusy || tracking.editingId !== id || elements.editTrackerModal.hidden) return;
+        return applyTrackerAction(() => deleteJson(`/api/v1/trackers/${id}`), {
             successMessage: "Трекер удалён",
             button: elements.deleteTrackerButton,
             pendingLabel: "Удаляем…",

@@ -35,6 +35,7 @@ function createApiListingAssistant(context) {
         formatPriceNumber,
         formatPriceRange,
         checkAiConsent,
+        confirmAction,
         logClientError = () => {},
     } = context;
 
@@ -1000,7 +1001,13 @@ function createApiListingAssistant(context) {
                 attrs: { type: "button", "aria-label": "Удалить из истории" },
                 text: "✕",
             });
-            deleteBtnEl.addEventListener("click", () => {
+            deleteBtnEl.addEventListener("click", async () => {
+                if (!await confirmAction({
+                    title: "Удалить запрос из истории?",
+                    message: `Запрос «${entry.input?.title || "Без названия"}» и ответ помощника будут удалены с этого устройства.`,
+                    confirmLabel: "Удалить",
+                    destructive: true,
+                })) return;
                 const list = loadHistory().filter((e) => e.id !== entry.id);
                 saveHistory(list);
                 renderHistoryList();
@@ -1015,7 +1022,13 @@ function createApiListingAssistant(context) {
         }
     }
 
-    function clearHistory() {
+    async function clearHistory() {
+        if (!loadHistory().length || !await confirmAction({
+            title: "Очистить историю помощника?",
+            message: "Все сохранённые запросы и ответы AI-помощника на этом устройстве будут удалены.",
+            confirmLabel: "Очистить историю",
+            destructive: true,
+        })) return;
         try {
             localStorage.removeItem(HISTORY_KEY);
         } catch (_) {

@@ -2922,8 +2922,8 @@ def test_hot_path_view_switches_do_not_double_render() -> None:
 
     # api_events.js tab click handler: setActiveView(view) should not be
     # followed immediately by renderAll()
-    # UI-08: the tab handler now disarms confirms via _resetAllConfirms().
-    tab_handler_start = events_js.index("_resetAllConfirms();")
+    # UI-08: confirmations now use the shared modal, with no armed tab state.
+    tab_handler_start = events_js.index("_preloadCache.length = 0;")
     tab_section = events_js[tab_handler_start:tab_handler_start + 200]
     set_idx = tab_section.index("setActiveView(view);")
     after_set_tab = tab_section[set_idx + len("setActiveView(view);"):]
@@ -5144,59 +5144,239 @@ assert.strictEqual(document.documentElement.getAttribute("data-theme"), "dark");
     _node_ok(harness)
 
 
-def test_rv2_clear_events_confirmation_is_disarmed_by_a_tab_switch() -> None:
-    """UI-08: a tab switch resets the armed "Удалить всё?" state, so a
-    single tap afterwards re-arms instead of wiping the list."""
-    harness = _FAKE_DOM_JS + _js("dom_helpers.js") + r"""
+_CONFIRMATION_HARNESS = _FAKE_DOM_JS + _js(
+    "dom_helpers.js", "app_core_dom.js", "app_core.js", "api_trackers.js", "api_events.js",
+) + r"""
+const assert = require("node:assert/strict");
+function noop() {}
+function emptyApi() { return new Proxy({}, { get: () => noop }); }
+function createApiListings() { return emptyApi(); }
+function createApiLeads() { return emptyApi(); }
+function createApiWatchlist() { return emptyApi(); }
+function createImageProxyLoader() { return emptyApi(); }
 function _bindCarouselEvents() {}
 function _bindExpenseEvents() {}
-""" + _js("api_events.js") + r"""
-const assert = require("assert");
-let cleared = 0;
+const writes = [];
+let failDelete = false;
+let finishDelete = null;
+let sharedContext;
+function createApiCore(context) {
+    sharedContext = context;
+    return {
+        telegramHeaders: noop, buildCommonQuery: noop, requestJson: noop, postJson: noop,
+        getJson: async (url) => url === "/api/v1/trackers" ? context.state.trackers.items : [],
+        deleteJson: async (url) => {
+            writes.push(url);
+            if (failDelete) throw new Error("Test deletion error");
+            if (finishDelete) await new Promise(resolve => { finishDelete = resolve; });
+        },
+    };
+}
+""" + _js("app_actions.js") + r"""
 const toasts = [];
-const state = {
-    ui: { activeView: "deals" },
-    search: { draft: "", activeQuery: "", strictSearch: true, sort: "newest" },
-    filters: {},
-    trackers: { events: [] },
-    leads: { items: [] },
-    watchlist: { items: [{ id: 1, ad_id: 5 }] },
-    detail: { data: null },
-    admin: {},
-};
-const tab = el("button", { "data-view": "tracking" });
+const { state } = createAppCore();
+state.ui.activeView = "tracking";
+state.trackers.events = [{ id: 1 }];
 const elements = {
+    views: {},
     searchInput: el("input"),
     clearEventsButton: el("button", {}, "Очистить всю ленту"),
-    viewTabs: [tab],
+    recentSection: el("div", {}, el("button", {id: "recent-clear-btn"})),
+    recentList: el("div"),
+    editTrackerModal: el("div", {hidden: true}),
+    trackerForm: el("form"), trackerFormError: el("p"),
+    deleteTrackerButton: el("button", {}, "Удалить трекер"),
+    saveTrackerBtn: el("button"), cancelEditBtn: el("button"), closeEditModal: el("button"),
+    toggleTrackerPause: el("button"), trackerMarket: el("button"), trackQueryButton: el("button"),
+    trackerLoadCategories: el("button"), editCategoryStatus: el("small"),
 };
-document.body.append(elements.searchInput, elements.clearEventsButton, tab);
-createApiEvents({
-    state,
-    elements,
-    renderAll() {},
-    renderLoading() {},
-    setActiveView: (view) => { state.ui.activeView = view; },
-    loadTrackers() {},
-    startTrackerRefresh() {},
-    stopTrackerRefresh() {},
-    clearTrackerEvents: async () => { cleared += 1; },
+document.body.append(elements.searchInput, elements.clearEventsButton, elements.recentSection,
+    elements.editTrackerModal, elements.trackQueryButton);
+elements.editTrackerModal.append(elements.trackerForm);
+elements.trackerForm.append(elements.deleteTrackerButton);
+const actions = createAppActions({
+    state, elements, hasTelegramInitData: () => true, trapFocus,
+    renderAll: noop, renderTrackers: noop, renderTrackerEvents: noop, markDirty: noop,
+    saveRecentSearches: () => localStorage.setItem(
+        "recentSearches", JSON.stringify(state.search.recentSearches)),
     showToast: (...args) => toasts.push(args),
-}).bindEvents();
-
-const button = elements.clearEventsButton;
-button.click();
-assert.strictEqual(button.textContent, "Удалить всё?");
-assert.ok(button.classList.contains("is-confirming"));
-tab.click();
-assert.strictEqual(button.textContent, "Очистить всю ленту", "the tab switch restores the label");
-assert.ok(!button.classList.contains("is-confirming"));
-button.click();
-assert.strictEqual(cleared, 0, "one tap after the switch only re-arms");
-button.click();
-assert.strictEqual(cleared, 1);
-process.exit(0);
+});
+actions.bindEvents();
+const dialog = () => document.querySelector(".typed-confirm-modal");
+const cancel = () => dialog().querySelector('[data-role="cancel"]').click();
+const accept = () => dialog().querySelector('[data-role="confirm"]').click();
 """
+
+
+def test_tracker_feed_uses_shared_modal_and_deletes_only_after_confirmation() -> None:
+    """UI-08: cancel, Escape and backdrop clicks preserve events; repeated
+    clicks share one dialog, and one acceptance sends one DELETE."""
+    harness = _CONFIRMATION_HARNESS + r"""
+(async () => {
+    const button = elements.clearEventsButton;
+    button.focus();
+    button.click();
+    button.click();
+    assert.equal(document.querySelectorAll(".typed-confirm-modal").length, 1);
+    assert.equal(writes.length, 0);
+    assert.equal(button.textContent, "Очистить всю ленту");
+    assert.equal(document.activeElement.getAttribute("data-role"), "cancel");
+    assert.equal(dialog().querySelector('[role="dialog"]').getAttribute("aria-modal"), "true");
+    cancel();
+    await tick();
+    assert.equal(writes.length, 0);
+    assert.equal(state.trackers.events.length, 1);
+    assert.equal(document.activeElement, button);
+
+    const dismissals = [() => keydown(document.activeElement, "Escape"), () => dialog().click()];
+    for (const dismiss of dismissals) {
+        button.click();
+        dismiss();
+        await tick();
+        assert.equal(dialog(), null);
+        assert.equal(writes.length, 0);
+    }
+
+    button.click();
+    state.trackers.eventFilter = "price_drop";
+    accept();
+    await tick();
+    assert.equal(writes.length, 0, "a changed feed scope cannot clear the whole feed");
+    state.trackers.eventFilter = "all";
+    button.disabled = true;
+    button.click();
+    assert.equal(dialog(), null);
+    button.disabled = false;
+    button.hidden = true;
+    button.click();
+    assert.equal(dialog(), null);
+    button.hidden = false;
+
+    button.click();
+    finishDelete = true;
+    const confirm = dialog().querySelector('[data-role="confirm"]');
+    confirm.click();
+    confirm.click();
+    await tick();
+    button.click();
+    assert.equal(dialog(), null, "an in-flight deletion cannot open another dialog");
+    assert.equal(state.trackers.clearingEvents, true);
+    assert.deepEqual(writes, ["/api/v1/tracker-events"]);
+    finishDelete();
+    finishDelete = null;
+    await tick();
+    assert.equal(state.trackers.events.length, 0);
+    assert.equal(state.trackers.clearingEvents, false);
+    assert.equal(document.body.classList.contains("modal-open"), false);
+
+    failDelete = true;
+    button.click();
+    accept();
+    await tick();
+    assert.equal(state.trackers.clearingEvents, false);
+    assert.ok(toasts.some(([text]) => text === "Test deletion error"));
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_tracker_delete_and_recent_history_use_shared_confirmation() -> None:
+    harness = _CONFIRMATION_HARNESS + r"""
+(async () => {
+    const tracker = {id: 7, query: "iPhone 15"};
+    state.trackers.items = [tracker];
+    state.trackers.editingId = 7;
+    openModalAnimated(elements.editTrackerModal);
+    elements.deleteTrackerButton.focus();
+    elements.deleteTrackerButton.click();
+    assert.match(dialog().textContent, /iPhone 15/);
+    keydown(document.activeElement, "Escape");
+    await tick();
+    assert.equal(elements.editTrackerModal.hidden, false);
+    assert.equal(document.body.classList.contains("modal-open"), true);
+    assert.equal(document.activeElement, elements.deleteTrackerButton);
+    assert.deepEqual(state.trackers.items, [tracker]);
+    assert.equal(writes.length, 0);
+
+    elements.deleteTrackerButton.click();
+    state.trackers.editingId = 8;
+    accept();
+    await tick();
+    assert.equal(writes.length, 0, "a changed editor cannot delete the previous tracker");
+    state.trackers.editingId = 7;
+    elements.deleteTrackerButton.click();
+    accept();
+    await tick();
+    assert.deepEqual(writes, ["/api/v1/trackers/7"]);
+    assert.deepEqual(state.trackers.items, []);
+    assert.equal(elements.editTrackerModal.hidden, true);
+    assert.equal(document.body.classList.contains("modal-open"), false);
+
+    state.search.recentSearches = ["iPhone 15"];
+    const clear = document.getElementById("recent-clear-btn");
+    clear.click();
+    cancel();
+    await tick();
+    assert.deepEqual(state.search.recentSearches, ["iPhone 15"]);
+    clear.click();
+    accept();
+    await tick(5);
+    assert.deepEqual(state.search.recentSearches, []);
+    assert.equal(localStorage.getItem("recentSearches"), "[]");
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_assistant_history_deletions_wait_for_shared_confirmation() -> None:
+    harness = _CONFIRMATION_HARNESS + r"""
+Object.assign(window.App, {openModalAnimated, closeModalAnimated, bindRovingTablist});
+""" + _js("api_listing_assistant.js") + r"""
+const historyKey = "rafuk:listing-assistant:history";
+const entries = [7, 8].map(id => ({
+    id, ts: new Date().toISOString(), input: {title: `Товар ${id}`}, output: {},
+}));
+localStorage.setItem(historyKey, JSON.stringify(entries));
+const assistantModal = el("div", {id: "la-modal", hidden: true});
+const form = el("form", {id: "listing-assistant-form"});
+for (const id of ["la-title-input", "la-price-input", "la-condition-select",
+    "la-negotiable-checkbox", "la-notes-input"]) form.append(el("input", {id}));
+assistantModal.append(form, el("div", {id: "listing-assistant-result"}),
+    el("div", {id: "la-history-list"}), el("div", {id: "la-history-footer"}),
+    el("button", {id: "la-history-clear"}));
+const open = el("button", {id: "listing-assistant-open-btn"});
+document.body.append(assistantModal, open);
+const api = window.App.createApiListingAssistant(sharedContext);
+
+(async () => {
+    open.click();
+    assert.equal(document.querySelectorAll(".la-history-item").length, 2);
+    document.querySelector(".la-history-delete").click();
+    assert.match(dialog().textContent, /Товар 7/);
+    cancel();
+    await tick();
+    assert.deepEqual(JSON.parse(localStorage.getItem(historyKey)), entries);
+    document.querySelector(".la-history-delete").click();
+    accept();
+    await tick();
+    assert.deepEqual(JSON.parse(localStorage.getItem(historyKey)), [entries[1]]);
+    assert.equal(document.querySelectorAll(".la-history-item").length, 1);
+
+    const clear = document.getElementById("la-history-clear");
+    clear.click();
+    keydown(document.activeElement, "Escape");
+    await tick();
+    assert.equal(assistantModal.hidden, false, "Escape only cancels the top dialog");
+    assert.equal(document.body.classList.contains("modal-open"), true);
+    assert.deepEqual(JSON.parse(localStorage.getItem(historyKey)), [entries[1]]);
+    clear.click();
+    accept();
+    await tick();
+    assert.equal(localStorage.getItem(historyKey), null);
+    assert.equal(document.querySelectorAll(".la-history-item").length, 0);
+    assert.equal(document.getElementById("la-history-footer").hidden, true);
+    assert.deepEqual(writes, [], "local history never calls a deletion API");
+    closeModalAnimated(assistantModal);
+    api.destroy();
+})()""" + _NODE_FAIL
     _node_ok(harness)
 
 

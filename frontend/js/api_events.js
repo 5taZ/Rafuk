@@ -90,45 +90,6 @@ function createApiEvents(context) {
 
     // ── Event binding ────────────────────────────────────────────────────
     const _searchDebounce = { timer: null };
-    // UI-08: two-tap "Очистить" confirmations. The armed flag lives next
-    // to its timer so a tab switch disarms both — clearing only the
-    // timers left the button armed forever, and the next single tap
-    // wiped everything.
-    const _confirms = {};
-
-    function _resetConfirm(key) {
-        const entry = _confirms[key];
-        if (!entry) return;
-        clearTimeout(entry.timer);
-        entry.timer = undefined;
-        entry.armed = false;
-        if (entry.button) {
-            entry.button.textContent = entry.label;
-            entry.button.classList.remove("is-confirming");
-        }
-    }
-
-    function _resetAllConfirms() {
-        for (const key of Object.keys(_confirms)) _resetConfirm(key);
-    }
-
-    // Returns true on the confirming (second) tap.
-    function _confirmTap(key, button) {
-        if (!_confirms[key]) _confirms[key] = { armed: false, timer: undefined, button, label: button?.textContent };
-        const entry = _confirms[key];
-        if (entry.armed) {
-            _resetConfirm(key);
-            return true;
-        }
-        entry.armed = true;
-        if (button) {
-            button.textContent = "Удалить всё?";
-            button.classList.add("is-confirming");
-        }
-        showToast("Нажмите ещё раз для подтверждения");
-        entry.timer = setTimeout(() => _resetConfirm(key), 3000);
-        return false;
-    }
     const _preloadCache = [];
     let _filterCloseTimeout = null;
     // FE-NEW-8: keep dedup state in module scope, not on document.
@@ -205,8 +166,14 @@ function createApiEvents(context) {
 
     function bindRecentSearchEvents() {
         // ── Recent searches (chips + clear button) ────────────────────
-        elements.recentSection?.addEventListener("click", (event) => {
+        elements.recentSection?.addEventListener("click", async (event) => {
             if (event.target.closest("#recent-clear-btn")) {
+                if (!state.search.recentSearches.length || !await context.confirmAction({
+                    title: "Очистить недавние запросы?",
+                    message: "История поисковых запросов на этом устройстве будет удалена.",
+                    confirmLabel: "Очистить историю",
+                    destructive: true,
+                })) return;
                 // 1. Instant visual feedback — clear state and hide immediately
                 state.search.recentSearches = [];
 
@@ -313,7 +280,6 @@ function createApiEvents(context) {
                     return;
                 }
                 _preloadCache.length = 0;
-                _resetAllConfirms();
                 setActiveView(view);
                 // FE-NEW-7: setActiveView already calls markDirty + renderAll
                 if (view === "tracking") {
@@ -340,7 +306,6 @@ function createApiEvents(context) {
             button.addEventListener("click", () => {
                 const filter = button.dataset.itemsFilter;
                 if (!filter) return;
-                _resetAllConfirms();
                 state.leads.itemsFilter = filter;
                 renderLeads();
 
@@ -789,7 +754,6 @@ function createApiEvents(context) {
         }
         if (elements.trackerPanel) elements.trackerPanel.hidden = pane !== "trackers";
         if (elements.trackerEventsSection) elements.trackerEventsSection.hidden = pane !== "events";
-        _resetConfirm("events");
     }
     context.selectTrackingPane = selectTrackingPane;
 
@@ -816,21 +780,18 @@ function createApiEvents(context) {
         elements.trackerEventTrackerSelect?.addEventListener("change", (event) => {
             const value = event.currentTarget.value;
             state.trackers.eventFilterTrackerId = value ? Number(value) : null;
-            _resetConfirm("events");
             void refreshTrackerEvents();
         });
         elements.trackerEventTypeSelect?.addEventListener("change", (event) => {
             state.trackers.eventFilter = event.currentTarget.value;
-            _resetConfirm("events");
             void refreshTrackerEvents();
         });
         elements.refreshTrackerEventsButton?.addEventListener("click", () => {
-            _resetConfirm("events");
             void refreshTrackerEvents();
         });
         elements.clearEventsButton?.addEventListener("click", () => {
             const button = elements.clearEventsButton;
-            if (button.hidden || button.disabled || !_confirmTap("events", button)) return;
+            if (button.hidden || button.disabled) return;
             void clearTrackerEvents();
         });
 
