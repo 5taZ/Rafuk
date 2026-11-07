@@ -57,6 +57,111 @@ async def test_listing_description_extracts_public_item_text(mock_settings) -> N
         assert await kufar.get_listing_description(12345) == "Первый & второй\nАбзац"
 
 
+@pytest.mark.parametrize("host", ["auto.kufar.by", "re.kufar.by"])
+async def test_listing_description_follows_kufar_category_redirects(mock_settings, host) -> None:
+    """UX-DESC-01: car/property pages redirect before serving the description."""
+    urls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        if len(urls) == 1:
+            return httpx.Response(301, headers={"Location": f"https://{host}/vi/12345"})
+        if len(urls) == 2:
+            return httpx.Response(308, headers={"Location": "/vi/cars/12345"})
+        return httpx.Response(200, text=(
+            '<div class="description" itemprop=description>'
+            'Описание продавца<br>Вторая строка</div>'
+        ))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        kufar = KufarClient(mock_settings, http_client=client)
+        assert await kufar.get_listing_description(12345) == "Описание продавца\nВторая строка"
+    assert urls == [
+        "https://www.kufar.by/item/12345", f"https://{host}/vi/12345",
+        f"https://{host}/vi/cars/12345",
+    ]
+
+
+@pytest.mark.parametrize("status_code", [404, 410])
+async def test_removed_listing_description_after_redirect(mock_settings, status_code) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "www.kufar.by":
+            return httpx.Response(301, headers={"Location": "https://auto.kufar.by/vi/12345"})
+        return httpx.Response(status_code)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        kufar = KufarClient(mock_settings, http_client=client)
+        assert await kufar.get_listing_description(12345) is None
+
+
+@pytest.mark.parametrize("target", [
+    "http://auto.kufar.by/vi/12345", "https://example.com/item/12345",
+    "https://auto.kufar.by:8443/vi/12345", "https://user:pass@auto.kufar.by/vi/12345",
+])
+async def test_listing_description_rejects_unsupported_redirect(mock_settings, target) -> None:
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(301, headers={"Location": target})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), follow_redirects=True,
+    ) as client:
+        with pytest.raises(httpx.RequestError, match="Unsupported Kufar description redirect"):
+            await KufarClient(mock_settings, http_client=client).get_listing_description(12345)
+    assert len(requests) == 1
+
+
+async def test_listing_description_bounds_redirect_loops(mock_settings) -> None:
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(302, headers={"Location": "/item/12345"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(httpx.TooManyRedirects):
+            await KufarClient(mock_settings, http_client=client).get_listing_description(12345)
+    assert len(requests) == 3
+
+
+async def test_listing_description_stops_stream_after_text_is_complete(mock_settings) -> None:
+    class DescriptionStream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield '<div itemprop="description">Полный текст</div>'.encode()
+            raise AssertionError("Do not download page scripts after the description")
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = DescriptionStream()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, stream=stream),
+    )) as client:
+        kufar = KufarClient(mock_settings, http_client=client)
+        assert await kufar.get_listing_description(12345) == "Полный текст"
+    assert stream.closed
+
+
+async def test_listing_description_timeout_starts_after_queue_wait(mock_settings) -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, text='<div itemprop="description">Текст</div>'),
+    )) as client:
+        kufar = KufarClient(mock_settings, http_client=client)
+        await kufar._description_semaphore.acquire()
+        await kufar._description_semaphore.acquire()
+        with patch("api.services.kufar_client.asyncio.timeout", wraps=asyncio.timeout) as timeout:
+            pending = asyncio.create_task(kufar.get_listing_description(12345))
+            await asyncio.sleep(0)
+            timeout.assert_not_called()
+            kufar._description_semaphore.release()
+            assert await pending == "Текст"
+            timeout.assert_called_once_with(12.0)
+
+
 @pytest.fixture
 def mock_settings() -> MagicMock:
     settings = MagicMock()

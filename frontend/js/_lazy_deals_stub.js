@@ -18,9 +18,9 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261107-reminders-design";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261107-reminders-design";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261107-reminders-design";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261107-description-fix";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261107-description-fix";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261107-description-fix";
 
 function _lazyLoadDealsSources(context) {
     if (_loadPromises.has("deals")) return _loadPromises.get("deals");

@@ -2577,7 +2577,7 @@ const modals = createRenderModals({
     assert.equal(state.ui.error, "Search retry");
 
     const separate = listings.openListingDetail({...item, description: null, liquidity: null});
-    const [descriptionRequest, detailRequest] = requests.slice(-2);
+    const [detailRequest, descriptionRequest] = requests.slice(-2);
     assert.equal(descriptionRequest.path, "/api/v1/listing-description");
     assert.equal(state.detail.marketLoading, true);
     const parameters = [{label: "Память", value: "256 Гб"}];
@@ -2635,7 +2635,7 @@ const liquidity = {basis: "current_market", label: "Средняя", sample_size
 function finish(adId) {
     const pair = requests.filter((r) => r.url.searchParams.get("ad_id") === String(adId));
     pair.find((r) => r.url.pathname.endsWith("/listing-description"))
-        .resolve({description: "Полное описание продавца"});
+        ?.resolve({description: "Полное описание продавца"});
     pair.find((r) => r.url.pathname.endsWith("/listing-detail")).resolve({
         ad_id: adId, title: "iPhone 14 Pro 256", price: 990, price_byn: 990,
         images: ["first.jpg", "second.jpg"],
@@ -2646,13 +2646,17 @@ function finish(adId) {
     api.preloadListingDetail(event(1), options);
     api.preloadListingDetail(event(2), options);
     api.preloadListingDetail(event(3), options);
-    assert.equal(requests.length, 4, "only two background cards start loading");
+    // UX-DESC-01: unopened cards only preload JSON, not rate-limited HTML.
+    assert.equal(requests.length, 2, "only two background cards start loading");
+    assert.ok(requests.every(r => r.url.pathname.endsWith("/listing-detail")));
 
     const opened = api.openListingDetail(event(2), options);
-    assert.equal(requests.length, 4, "opening joins the existing requests");
+    assert.equal(requests.length, 3, "opening reuses metadata and starts its description");
+    assert.equal(requests.at(-1).url.pathname, "/api/v1/listing-description");
+    assert.equal(requests.at(-1).url.searchParams.get("ad_id"), "2");
     finish(2);
     await new Promise(setImmediate);
-    assert.equal(requests.length, 7, "market loading does not occupy a preload slot");
+    assert.equal(requests.length, 5, "market loading does not occupy a preload slot");
     const market = requests.find((r) => r.url.pathname.endsWith("/listing-market"));
     assert.equal(market.url.searchParams.get("ad_id"), "2");
     assert.equal(state.detail.marketLoading, true);
@@ -2678,14 +2682,14 @@ function finish(adId) {
     state.misc.currency = "USD";
     const changed = api.openListingDetail(event(2), options);
     assert.equal(requests.length, count + 2, "currency has a separate cache entry");
-    const latest = requests.at(-1);
+    const latest = requests.at(-2);
     assert.equal(latest.url.searchParams.get("category"), "17010");
     assert.equal(latest.url.searchParams.get("strict_search"), "true");
     assert.equal(latest.url.searchParams.get("query"), "iphone 14 pro 256");
     assert.equal(latest.url.searchParams.get("currency"), "USD");
     api.abortDetailRequest();
     state.detail.data = null;
-    requests.at(-2).resolve({description: "Late"});
+    requests.at(-1).resolve({description: "Late"});
     latest.resolve({ad_id: 2, title: "Late"});
     await changed;
     assert.equal(state.detail.data, null);

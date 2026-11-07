@@ -36,6 +36,8 @@ RETRYABLE_CLIENT_STATUSES = frozenset({408, 429})
 # longer than this; a longer server-requested pause fails fast instead
 # of retrying before Kufar allows it.
 RETRY_AFTER_MAX_SECONDS = 10.0
+# UX-DESC-01: category pages need an extra redirect and TLS handshake.
+DESCRIPTION_TIMEOUT_SECONDS = 12.0
 
 
 class KufarAPIError(Exception):
@@ -392,9 +394,10 @@ class KufarClient:
 
     async def get_listing_description(self, ad_id: int) -> str | None:
         # Separate the small page lookup from queued search pagination.
-        async with asyncio.timeout(4), self._description_semaphore:
-            client = await self._get_client()
-            return await fetch_listing_description(client, ad_id, user_agent=USER_AGENT)
+        async with self._description_semaphore:
+            async with asyncio.timeout(DESCRIPTION_TIMEOUT_SECONDS):
+                client = await self._get_client()
+                return await fetch_listing_description(client, ad_id, user_agent=USER_AGENT)
 
     async def search_all_ads(
         self,

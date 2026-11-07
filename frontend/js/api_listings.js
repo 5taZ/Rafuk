@@ -74,7 +74,7 @@ function createApiListings(context) {
         if (cached) return cached;
         const entry = {
             controller: new AbortController(), createdAt: Date.now(), complete: false,
-            data: null, market: null, description: item.description || null, descriptionError: false,
+            data: null, market: null, description: item.description || null,
         };
         _detailCache.set(key, entry);
         if (_detailCache.size > 32) _detailCache.delete(_detailCache.keys().next().value);
@@ -82,18 +82,6 @@ function createApiListings(context) {
         const discard = () => {
             if (_detailCache.get(key) === entry) _detailCache.delete(key);
         };
-        entry.descriptionRequest = item.description ? Promise.resolve(item.description) : getJson(
-            `/api/v1/listing-description?ad_id=${encodeURIComponent(item.ad_id)}`,
-            { signal, retry: false },
-        ).then(({ description }) => {
-            if (signal.aborted) return null;
-            entry.description = description;
-            return description;
-        }).catch(() => {
-            entry.descriptionError = true;
-            discard();
-            return null;
-        });
         entry.detailRequest = getJson(
             `/api/v1/listing-detail?${key}&include_market=false`, { signal, retry },
         ).then((data) => {
@@ -107,7 +95,9 @@ function createApiListings(context) {
             discard();
             throw error;
         });
-        entry.finished = Promise.allSettled([entry.detailRequest, entry.descriptionRequest])
+        // UX-DESC-01: preload metadata without spending public-page requests
+        // on unopened cards; Kufar rate-limits HTML separately from search.
+        entry.finished = Promise.allSettled([entry.detailRequest])
             .then(() => { entry.complete = true; });
         return entry;
     }
@@ -655,8 +645,8 @@ function createApiListings(context) {
         if (entry.market) _applyDetailMarket(state.detail.data, entry.market);
         state.detail.marketLoading = !entry.market;
         state.detail.marketError = false;
-        state.detail.descriptionLoading = !state.detail.data.description && !entry.complete;
-        state.detail.descriptionError = entry.descriptionError;
+        state.detail.descriptionLoading = !state.detail.data.description;
+        state.detail.descriptionError = false;
         state.detail.imageIndex = 0;
         state.detail.fromWatchlist = fromWatchlist;
         state.detail.ai = {
@@ -668,14 +658,23 @@ function createApiListings(context) {
         };
         renderDetailModal();
 
-        const descriptionRequest = entry.descriptionRequest.then((description) => {
+        const descriptionSource = state.detail.data.description
+            ? Promise.resolve(state.detail.data.description)
+            : getJson(`/api/v1/listing-description?ad_id=${encodeURIComponent(item.ad_id)}`, { signal, retry: false })
+                .then(payload => payload.description);
+        const descriptionRequest = descriptionSource.then((description) => {
             if (signal.aborted || !state.detail.descriptionLoading) return;
+            entry.description = description;
             state.detail.descriptionLoading = false;
-            state.detail.descriptionError = entry.descriptionError;
             if (!state.detail.data.description) {
                 state.detail.data.description = description;
                 renderDetailModal();
             }
+        }).catch(() => {
+            if (signal.aborted) return;
+            state.detail.descriptionLoading = false;
+            state.detail.descriptionError = !state.detail.data.description;
+            renderDetailModal();
         });
 
         try {
