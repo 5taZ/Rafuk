@@ -786,10 +786,8 @@ def test_listings_section_stays_visible_on_zero_result_queries() -> None:
     # for the 0-result case instead of the misleading "small sample"
     # branch.
     assert "if (totalResults === 0 && analyzedCount === 0) {" in core_js
-    assert (
-        "По запросу ничего не найдено. Откройте «Объявления» "
-        "и попробуйте снять фильтры или изменить запрос."
-    ) in core_js
+    # UX-P2-05: the recovery message also works while already on Ads.
+    assert "По запросу ничего не найдено. Снимите фильтры или измените запрос." in core_js
 
 
 def test_empty_state_offers_clear_filters_when_filters_narrow_to_zero() -> None:

@@ -92,6 +92,7 @@ function createAppActions(baseContext) {
         }
         markDirty('tabs', 'views', 'helper', 'summary');
         renderAll();
+        scrollPageToTop();
 
         const viewEl = elements.views[view];
         if (viewEl) {
@@ -156,10 +157,13 @@ function createAppActions(baseContext) {
     // FE-NEW-7: hot paths use targeted dirty flags; full renderAll only on cold init.
     function openOverview() {
         setActiveView("overview");
+        scrollPageToTop();
+        elements.searchInput?.focus({ preventScroll: true });
     }
 
     function openProfile(options = {}) {
         setActiveView("profile");
+        void loadConsentSettings();
         if (options.refresh || (!state.profile.data && !state.profile.loading)) {
             void context.loadProfile?.({ silent: true });
         }
@@ -175,9 +179,11 @@ function createAppActions(baseContext) {
             return;
         }
         setActiveView("admin");
-        markDirty("adminUsers", "adminStatuses");
+        if (!state.admin.auditLoading) state.admin.auditOffset = 0;
+        markDirty("adminUsers", "adminStatuses", "adminAudit");
         void context.loadAdminStatuses?.({ silent: true });
         void context.loadAdminUsers?.({ silent: true });
+        void context.loadAdminAudit?.();
     }
 
     function canUseAiFeature(bucket = "ai") {
@@ -263,6 +269,9 @@ function createAppActions(baseContext) {
         loadAdminStatuses: adminApi.loadAdminStatuses,
         updateStatusLimits: adminApi.updateStatusLimits,
         loadAdminAudit: adminApi.loadAdminAudit,
+        loadExpenses, createExpense, deleteExpense,
+        loadReminders, createReminder,
+        loadConsentSettings, revokeConsent, exportAccountData, deleteAccount,
     });
     let _aiModule = null;
     let _listingAssistantModule = null;
@@ -281,10 +290,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261107-p1-wave1"),
-                context._loadScript("js/api_ai_render.js?v=20261107-p1-wave1"),
-                context._loadScript("js/api_ai.js?v=20261107-p1-wave1"),
-                context._loadScript("js/api_listing_assistant.js?v=20261107-p1-wave1"),
+                context._loadScript("js/api_ai_modal.js?v=20261107-p2-wave2"),
+                context._loadScript("js/api_ai_render.js?v=20261107-p2-wave2"),
+                context._loadScript("js/api_ai.js?v=20261107-p2-wave2"),
+                context._loadScript("js/api_listing_assistant.js?v=20261107-p2-wave2"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -419,7 +428,30 @@ function createAppActions(baseContext) {
     function _refreshCollectionActionSurfaces() {
         if (typeof renderLeads === "function") renderLeads();
         if (state.detail?.data) renderDetailModal();
+        context.refreshCollectionButtons();
     }
+
+    context.refreshCollectionButtons = () => {
+        for (const card of document.querySelectorAll(".listing[data-collection-state]")) {
+            const adId = card._item?.ad_id;
+            if (adId == null) continue;
+            const inLeads = state.leads.items.some(item => sameAdId(item.ad_id, adId) && ACTIVE_LEAD_STATUSES.has(item.status));
+            const inWatchlist = state.watchlist.items.some(item => sameAdId(item.ad_id, adId));
+            card.dataset.collectionState = inLeads ? "lead" : inWatchlist ? "watchlist" : "";
+            for (const [role, text, disabled] of [
+                ["lead", inLeads ? "В покупках" : "В покупки", inLeads],
+                ["watch", inWatchlist && !inLeads ? "В избранном" : "В избранное", inLeads || inWatchlist],
+            ]) {
+                const button = card.querySelector(`[data-role="${role}"]`);
+                if (!button) continue;
+                button.textContent = text;
+                button.disabled = disabled;
+                button.setAttribute("aria-disabled", String(disabled));
+                button.setAttribute("aria-label", `${text}: ${card._item.title || "объявление"}`);
+            }
+        }
+        if (state.detail?.data) renderDetailModal();
+    };
 
     function _findWatchingSnapshot(item) {
         return state.watchlist.items.find(
@@ -573,35 +605,124 @@ function createAppActions(baseContext) {
 
     // ── Expenses ──────────────────────────────────────────────────────────
     async function loadExpenses(leadId) {
+        const requestId = state.expenses.requestId = (state.expenses.requestId || 0) + 1;
         state.expenses.loading = true;
+        state.expenses.error = "";
         renderExpensesModal();
         try {
-            state.expenses.items = await core.getJson(`/api/v1/leads/${leadId}/expenses`);
-        } catch (_) {
-            state.expenses.items = [];
+            const items = await core.getJson(`/api/v1/leads/${leadId}/expenses`);
+            if (requestId === state.expenses.requestId) state.expenses.items = items;
+        } catch (error) {
+            if (requestId === state.expenses.requestId) state.expenses.error = error.message || "Не удалось загрузить расходы.";
         } finally {
-            state.expenses.loading = false;
+            if (requestId === state.expenses.requestId) {
+                state.expenses.loading = false;
+                renderExpensesModal();
+            }
         }
-        renderExpensesModal();
     }
 
     async function createExpense(leadId, payload) {
+        const errorEl = document.getElementById("expense-form-error");
+        if (errorEl) errorEl.hidden = true;
         try {
             await core.postJson(`/api/v1/leads/${leadId}/expenses`, payload);
             showToast("Расход добавлен");
-            await loadExpenses(leadId);
+            await Promise.all([
+                state.expenses.currentLeadId === leadId ? loadExpenses(leadId) : null,
+                leads.loadLeads({ refreshAnalytics: true }),
+            ]);
+            return true;
         } catch (error) {
-            showToast(error.message || "Не удалось добавить расход");
+            if (errorEl && state.expenses.currentLeadId === leadId) {
+                errorEl.textContent = error.message || "Не удалось добавить расход. Повторите попытку.";
+                errorEl.hidden = false;
+            }
+            return false;
         }
     }
 
     async function deleteExpense(leadId, expenseId) {
+        if (!await context.confirmAction({ title: "Удалить расход?", message: "Сумма больше не будет учитываться в прибыли сделки.", confirmLabel: "Удалить", destructive: true })) return;
         try {
             await core.deleteJson(`/api/v1/leads/${leadId}/expenses/${expenseId}`);
             showToast("Расход удалён");
-            await loadExpenses(leadId);
+            await Promise.all([
+                state.expenses.currentLeadId === leadId ? loadExpenses(leadId) : null,
+                leads.loadLeads({ refreshAnalytics: true }),
+            ]);
         } catch (error) {
             showToast(error.message || "Не удалось удалить расход");
+        }
+    }
+
+    function renderReminders() {
+        const list = document.getElementById("reminder-list");
+        if (!list) return;
+        const data = state.reminders;
+        domClear(list);
+        const note = domEl("p", { className: "section-note", attrs: { role: "status" } });
+        list.appendChild(note);
+        if (data.loading) { note.textContent = "Загружаем напоминания…"; return; }
+        if (data.error) {
+            note.textContent = data.error;
+            const retry = domEl("button", { type: "button", className: "ghost-btn small", text: "Повторить" });
+            retry.onclick = () => { void loadReminders(data.leadId); };
+            list.appendChild(retry);
+            return;
+        }
+        note.textContent = data.items.length ? "Время указано в часовом поясе вашего устройства. Уведомление придёт в чат бота." : "Напоминаний пока нет. Время — по часовому поясу устройства.";
+        for (const item of data.items) {
+            const row = domEl("div", { className: "expense-row" });
+            const status = { pending: "Ожидает отправки", sent: "Отправлено", failed: "Не доставлено", cancelled: "Отменено" }[item.status] || "Ожидает отправки";
+            row.appendChild(domEl("span", { text: `${new Date(item.remind_at).toLocaleString("ru-RU")} · ${item.message || "Проверить сделку"} · ${status}` }));
+            const remove = domEl("button", { type: "button", className: "ghost-btn small", text: item.status === "pending" ? "Отменить" : "Удалить" });
+            remove.onclick = async () => {
+                const leadId = data.leadId;
+                if (!await context.confirmAction({ title: "Удалить напоминание?", message: item.message || "Проверить сделку", confirmLabel: "Удалить", destructive: true })) return;
+                remove.disabled = true;
+                try {
+                    await core.deleteJson(`/api/v1/leads/${leadId}/reminders/${item.id}`);
+                    if (data.leadId === leadId) await loadReminders(leadId);
+                } catch (error) { showToast(error.message || "Не удалось удалить напоминание", "error"); }
+                finally { remove.disabled = false; }
+            };
+            row.appendChild(remove);
+            list.appendChild(row);
+        }
+    }
+
+    async function loadReminders(leadId) {
+        const data = state.reminders;
+        const requestId = ++data.requestId;
+        data.leadId = leadId;
+        data.loading = true;
+        data.error = "";
+        renderReminders();
+        try {
+            const items = await core.getJson(`/api/v1/leads/${leadId}/reminders`);
+            if (data.leadId === leadId && requestId === data.requestId) data.items = items;
+        } catch (error) {
+            if (data.leadId === leadId && requestId === data.requestId) data.error = error.message || "Не удалось загрузить напоминания.";
+        } finally {
+            if (data.leadId === leadId && requestId === data.requestId) { data.loading = false; renderReminders(); }
+        }
+    }
+
+    async function createReminder(leadId, payload) {
+        const errorEl = document.getElementById("reminder-form-error");
+        if (errorEl) errorEl.hidden = true;
+        try {
+            await core.postJson(`/api/v1/leads/${leadId}/reminders`, payload);
+            showToast("Напоминание добавлено", "success");
+            if (state.reminders.leadId === leadId) await loadReminders(leadId);
+            return true;
+        } catch (error) {
+            if (errorEl && state.reminders.leadId === leadId) {
+                errorEl.textContent = error.message || "Не удалось добавить напоминание. Повторите попытку.";
+                errorEl.hidden = false;
+            }
+            return false;
         }
     }
 
@@ -656,6 +777,35 @@ function createAppActions(baseContext) {
     // ── Public API (every name the original file exported) ───────────────
 
     // ── Consent & Privacy ──────────────────────────────────────────────────
+
+    async function loadConsentSettings() {
+        if (state.profile.consentsLoading) return;
+        state.profile.consentsLoading = true;
+        state.profile.consentsError = "";
+        markDirty("profile");
+        renderAll();
+        try {
+            const types = ["pd_processing", "ai_analysis", "cross_border"];
+            const values = await Promise.all(types.map(type => core.getJson(`/api/v1/account/consent/${type}`)));
+            state.profile.consents = Object.fromEntries(types.map((type, i) => [type, values[i]]));
+        } catch (error) { state.profile.consentsError = error.message || "Не удалось загрузить согласия."; }
+        finally { state.profile.consentsLoading = false; markDirty("profile"); renderAll(); }
+    }
+
+    async function revokeConsent(type) {
+        if (!["pd_processing", "ai_analysis", "cross_border"].includes(type)) return;
+        const message = type === "pd_processing"
+            ? "Автопоиск будет поставлен на паузу. Для работы с данными потребуется снова дать согласие."
+            : "AI-функции будут недоступны до повторного согласия. Обычный поиск останется доступен.";
+        if (!await context.confirmAction({ title: "Отозвать согласие?", message, confirmLabel: "Отозвать" })) return;
+        try {
+            await core.deleteJson(`/api/v1/account/consent/${type}`);
+            closeAIModal();
+            showToast("Согласие отозвано", "success");
+            await loadConsentSettings();
+            if (type === "pd_processing") await trackers.loadTrackers();
+        } catch (error) { showToast(error.message || "Не удалось отозвать согласие", "error"); }
+    }
 
     function isLocalDebugContext() {
         const loc = window.location || {};
@@ -1154,6 +1304,7 @@ function createAppActions(baseContext) {
         startTrackerRefresh: trackers.startTrackerRefresh,
         stopTrackerRefresh: trackers.stopTrackerRefresh,
         openListingDetail: listings.openListingDetail,
+        retryDetailDescription: listings.retryDetailDescription,
         preloadListingDetail: listings.preloadListingDetail,
         // FE-C4: expose abort hooks so closeDetailModal and any
         // future cleanup paths (view tab change, route navigation)
@@ -1165,6 +1316,9 @@ function createAppActions(baseContext) {
         loadExpenses,
         createExpense,
         deleteExpense,
+        openExpensesModal,
+        loadReminders,
+        createReminder,
         exportLeads,
         exportLeadsCSV,
         exportLeadsXLSX,

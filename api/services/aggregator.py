@@ -1089,14 +1089,33 @@ def extract_search_refinements(
     if not ads:
         return []
     query_tokens = set(tokenize_search_text(query))
+    # UX-P2-08: keep units and compound colours meaningful without
+    # guessing that every recurring number in a title is storage.
+    memory_labels: dict[str, str] = {}
+    for ad in ads:
+        for match in re.finditer(r"\b(\d+)\s*(gb|гб|tb|тб)\b", str(ad.get("subject") or ""), re.I):
+            amount, unit = match.groups()
+            terabytes = unit.casefold() in {"tb", "тб"}
+            key = str(int(amount) * (1024 if terabytes else 1))
+            memory_labels[key] = f"{int(amount)} {'ТБ' if terabytes else 'ГБ'}"
+    colours = (
+        "deep purple", "space gray", "space grey", "midnight green",
+        "desert titanium", "natural titanium",
+    )
     counts: dict[str, int] = {}
     seen_per_ad: set[tuple[int, str]] = set()
     for idx, ad in enumerate(ads):
         title = str(ad.get("subject") or "")
         if not title:
             continue
-        for token in tokenize_search_text(title):
+        normalized = normalize_search_text(title)
+        phrases = [colour for colour in colours if f" {colour} " in f" {normalized} "]
+        for phrase in phrases:
+            normalized = re.sub(rf"\b{re.escape(phrase)}\b", " ", normalized)
+        for token in [*normalized.split(), *phrases]:
             if token in query_tokens:
+                continue
+            if " " in token and set(token.split()) <= query_tokens:
                 continue
             if token in _REFINEMENT_STOPWORDS:
                 continue
@@ -1104,6 +1123,10 @@ def extract_search_refinements(
             # — they're noise (e.g. "1", "2", lone letters).
             if len(token) < 3:
                 continue
+            if token.isdigit():
+                if token not in memory_labels:
+                    continue
+                token = memory_labels[token]
             # Skip tokens consisting only of letters from the query
             # (substring noise).
             key = (idx, token)

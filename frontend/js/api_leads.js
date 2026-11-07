@@ -91,6 +91,7 @@ function createApiLeads(context) {
         state.leads._loading = false;
         state.leads.error = null;
         state.leads.items = Array.isArray(nextLeads) ? nextLeads : [];
+        context.refreshCollectionButtons?.();
         renderLeads();
         renderDealsHeroStats();
         renderProfitDashboard();

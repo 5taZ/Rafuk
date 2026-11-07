@@ -285,7 +285,8 @@ def test_extract_search_refinements_returns_top_recurring_tokens() -> None:
     ]
     refinements = extract_search_refinements(ads, "iphone 13", min_support=2)
     assert "pro" in refinements
-    assert "256" in refinements
+    # UX-P2-08: storage is presented with units, not as an unexplained number.
+    assert "256 ГБ" in refinements
     assert "iphone" not in refinements
     assert "13" not in refinements
 
@@ -305,6 +306,17 @@ def test_extract_search_refinements_drops_stopwords_and_short_tokens() -> None:
     assert "минск" not in refinements
     assert "идеал" not in refinements
     assert "оригинал" not in refinements
+
+
+def test_refinements_keep_colour_phrases_and_only_label_proven_storage() -> None:
+    ads = [{"subject": "iPhone 14 Pro 256GB Deep Purple 2026"}] * 4
+    refinements = extract_search_refinements(ads, "iphone 14 pro")
+    assert "deep purple" in refinements
+    assert "deep" not in refinements
+    assert "purple" not in refinements
+    assert "256 ГБ" in refinements
+    assert "2026" not in refinements
+    assert "256 ГБ" not in extract_search_refinements(ads, "iphone 14 pro 256")
 
 
 def test_extract_search_refinements_returns_empty_for_unique_titles() -> None:

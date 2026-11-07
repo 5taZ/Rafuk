@@ -21,6 +21,8 @@ function cacheAppElements(elements) {
     elements.summaryStrip = document.getElementById("summary-strip");
     elements.summaryQuery = document.getElementById("summary-query");
     elements.summarySignal = document.getElementById("summary-signal");
+    elements.summaryMethod = document.getElementById("summary-method");
+    elements.summaryMethodNote = document.getElementById("summary-method-note");
     elements.summaryMedian = document.getElementById("summary-median");
     elements.summaryRange = document.getElementById("summary-range");
     elements.summaryFair = document.getElementById("summary-fair");
@@ -129,6 +131,11 @@ function cacheAppElements(elements) {
     elements.detailPrice = document.getElementById("detail-price");
     elements.detailMeta = document.getElementById("detail-meta");
     elements.detailDescription = document.getElementById("detail-description");
+    elements.detailDescriptionRetry = document.getElementById("detail-description-retry");
+    elements.detailPhotoCounter = document.getElementById("detail-photo-counter");
+    elements.detailExpensesButton = document.getElementById("detail-expenses-btn");
+    elements.detailRemindersButton = document.getElementById("detail-reminders-btn");
+    elements.detailReminderBlock = document.getElementById("detail-reminder-block");
     elements.detailProfitBlock = document.getElementById("detail-profit-block");
     elements.detailProfit = document.getElementById("detail-profit");
     elements.detailLiquidityBlock = document.getElementById("detail-liquidity-block");
@@ -193,6 +200,9 @@ function cacheAppElements(elements) {
     elements.trackerFormNote = document.getElementById("tracker-form-note");
     elements.trackerAdvanced = document.getElementById("tracker-advanced");
     elements.trackerUseSearch = document.getElementById("tracker-use-search-btn");
+    elements.trackerQueryHelp = document.getElementById("tracker-query-help");
+    elements.trackerCopyButton = document.getElementById("tracker-copy-btn");
+    elements.trackerSearchFiltersNote = document.getElementById("tracker-search-filters-note");
     elements.trackerLoadCategories = document.getElementById("tracker-load-categories-btn");
     elements.trackerManage = document.getElementById("tracker-manage");
     elements.toggleTrackerPause = document.getElementById("toggle-tracker-pause-btn");

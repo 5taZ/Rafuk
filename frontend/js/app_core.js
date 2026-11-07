@@ -312,8 +312,10 @@ function createAppCore() {
         expenses: {
             items: [],
             loading: false,
+            error: "",
             currentLeadId: null,
         },
+        reminders: { leadId: null, items: [], loading: false, error: "", requestId: 0 },
         analytics: {
             dashboard: null,
             loading: false,

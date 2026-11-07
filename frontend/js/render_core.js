@@ -620,7 +620,7 @@ function createRenderCore(context) {
 
     function renderSummary() {
         return safeRender('renderSummary', () => {
-            if (!state.misc.stats || !state.search.activeQuery || state.ui.activeView === "profile" || state.ui.activeView === "admin") {
+            if (!state.misc.stats || !state.search.activeQuery || !["overview", "ads"].includes(state.ui.activeView)) {
                 elements.summaryStrip.hidden = true;
                 elements.summaryQuery.textContent = "—";
                 elements.summarySignal.textContent = "—";
@@ -651,7 +651,7 @@ function createRenderCore(context) {
             // explicit so the user reads "ничего не найдено" instead
             // of guessing why every stat shows "—".
             if (totalResults === 0 && analyzedCount === 0) {
-                signal = "По запросу ничего не найдено. Откройте «Объявления» и попробуйте снять фильтры или изменить запрос.";
+                signal = "По запросу ничего не найдено. Снимите фильтры или измените запрос.";
             } else if (analyzedCount < 5) {
                 signal = "Выборка маленькая, смотрите объявления и сравнивайте вручную.";
             } else if (spreadRatio > 0.8 || meanDeltaRatio > 0.12) {
@@ -671,15 +671,22 @@ function createRenderCore(context) {
             ].filter(Boolean);
             const scope = market.length ? `${market.join(" · ")}. ` : "";
             const mixed = state.filters.category == null && (state.misc.stats.categories?.length || 0) > 1;
-            elements.summarySignal.textContent = `${scope}Объявлений с ценой в расчёте: ${analyzedCount}. ` +
-                (mixed ? "В выдаче несколько категорий. Уточните категорию для оценки цены." : signal);
-            elements.summaryMedian.textContent = Number.isFinite(marketMedian) && marketMedian > 0
+            const scopeNote = "Расчёт по выбранной категории, городу, состоянию и продавцу. Фильтры цены и скидки ограничивают только список объявлений.";
+            elements.summarySignal.textContent = totalResults === 0 && analyzedCount === 0 ? signal
+                : `${scope}` + (mixed ? "Несколько категорий: выберите одну ниже, чтобы получить оценку цены."
+                    : `В расчёте ${analyzedCount} из ${totalResults} объявлений с ценой.`);
+            if (elements.summaryMethod) elements.summaryMethod.hidden = analyzedCount === 0;
+            if (elements.summaryMethodNote) elements.summaryMethodNote.textContent =
+                `Крайние выбросы исключены. ${scopeNote} ${signal}`;
+            elements.summaryStrip.classList.toggle("summary-strip--mixed", mixed);
+            elements.summaryMedian.textContent = !mixed && Number.isFinite(marketMedian) && marketMedian > 0
                 ? formatPrice(marketMedian)
                 : "—";
-            elements.summaryRange.textContent = marketMin > 0 && marketMax > 0
+            elements.summaryRange.textContent = !mixed && marketMin > 0 && marketMax > 0
                 ? formatPriceRange(marketMin, marketMax)
                 : "—";
-            elements.summaryFair.textContent = formatPriceRange(fairFrom, fairTo);
+            elements.summaryFair.textContent = !mixed && analyzedCount > 0 && fairFrom > 0 && fairTo > 0
+                ? formatPriceRange(fairFrom, fairTo) : "—";
             elements.summaryStrip.hidden = false;
         });
     }

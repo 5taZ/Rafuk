@@ -328,7 +328,7 @@ function createRenderAdmin(context) {
                 elements.adminAuditState.textContent = "";
                 return;
             }
-            if (state.admin.auditLoading && !(state.admin.auditEntries || []).length) {
+            if (!state.admin.auditError && !state.admin.auditLoaded && !(state.admin.auditEntries || []).length) {
                 elements.adminAuditState.textContent = "Загружаю аудит…";
                 return;
             }

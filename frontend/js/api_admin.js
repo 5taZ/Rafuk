@@ -133,6 +133,8 @@ function createApiAdmin(context) {
 
     async function loadAdminAudit(options = {}) {
         if (!_isAdmin()) return [];
+        if (state.admin.auditLoading) return state.admin.auditEntries || [];
+        const offset = state.admin.auditOffset || 0;
         state.admin.auditLoading = true;
         state.admin.auditError = "";
         markDirty("adminAudit");
@@ -140,15 +142,16 @@ function createApiAdmin(context) {
         try {
             const params = new URLSearchParams();
             params.set("limit", "50");
-            params.set("offset", String(state.admin.auditOffset || 0));
+            params.set("offset", String(offset));
             const entries = await getJson(`/api/v1/admin/audit?${params.toString()}`, { retry: options.retry !== false });
             const list = Array.isArray(entries) ? entries : [];
-            if (state.admin.auditOffset > 0) {
+            if (offset > 0) {
                 state.admin.auditEntries = (state.admin.auditEntries || []).concat(list);
             } else {
                 state.admin.auditEntries = list;
             }
             state.admin.auditHasMore = list.length >= 50;
+            state.admin.auditLoaded = true;
             state.admin.auditError = "";
             return state.admin.auditEntries;
         } catch (error) {

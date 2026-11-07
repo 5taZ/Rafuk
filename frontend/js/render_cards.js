@@ -438,7 +438,7 @@ function createRenderCards(context) {
                 state.listings.total || null
             );
             if (elements.listingsFallbackBadge) {
-                elements.listingsFallbackBadge.hidden = !state.listings.fallbackUsed;
+                elements.listingsFallbackBadge.hidden = !state.listings.fallbackUsed || !state.listings.items.length;
             }
             if (hasContent && elements.listingsList) {
                 const reachableTotal = state.listings.isLimited && state.listings.servedCap
@@ -611,6 +611,12 @@ function createRenderCards(context) {
         return safeRender('renderLeads', () => {
         const container = elements.leadInboxList;
         if (!container) return;
+        // UX-P2-16: a background comparison refresh must not interrupt typing.
+        const active = document.activeElement;
+        const noteFocus = active?.dataset?.role === "notes" && container.contains(active) ? {
+            id: active.closest("[data-watchlist-id]")?.dataset.watchlistId,
+            start: active.selectionStart, end: active.selectionEnd,
+        } : null;
 
         // Destroy existing virtual list before reset
         if (container._virtualList) {
@@ -737,6 +743,11 @@ function createRenderCards(context) {
                 }
             }
             container.appendChild(list);
+        }
+        if (noteFocus?.id) {
+            const note = container.querySelector(`[data-watchlist-id="${noteFocus.id}"] [data-role="notes"]`);
+            note?.focus({ preventScroll: true });
+            if (note && Number.isInteger(noteFocus.start)) note.setSelectionRange?.(noteFocus.start, noteFocus.end);
         }
         });
     }

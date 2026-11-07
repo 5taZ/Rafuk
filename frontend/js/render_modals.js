@@ -29,6 +29,7 @@ function createRenderModals(context) {
     } = context;
 
     let _detailImageLoadId = 0;
+    let _renderedDetailId = null;
 
     function buildDetailField(label, value) {
         const item = document.createElement("div");
@@ -48,10 +49,7 @@ function createRenderModals(context) {
         const inLeads = (state.leads?.items || []).some(
             (lead) => sameAdId(lead.ad_id, adId) && ACTIVE_LEAD_STATUSES.has(lead.status),
         );
-        const inWatchlist = !inLeads && (
-            Boolean(state.detail.fromWatchlist)
-            || (state.watchlist?.items || []).some((watch) => sameAdId(watch.ad_id, adId))
-        );
+        const inWatchlist = !inLeads && (state.watchlist?.items || []).some((watch) => sameAdId(watch.ad_id, adId));
         return { inLeads, inWatchlist };
     }
 
@@ -179,6 +177,11 @@ function createRenderModals(context) {
         elements.detailDescription.textContent = detail.description || descriptionStatus;
         elements.detailDescription.hidden = !elements.detailDescription.textContent;
         elements.detailDescription.classList.toggle("detail-loading", !detail.description);
+        const descriptionRetry = elements.detailDescriptionRetry;
+        if (descriptionRetry) {
+            descriptionRetry.hidden = !state.detail.descriptionError || Boolean(detail.description);
+            descriptionRetry.onclick = () => { void actions.retryDetailDescription(); };
+        }
 
         // Flip estimates hidden — resale info now shown in AI analysis
         elements.detailProfitBlock.hidden = true;
@@ -191,6 +194,7 @@ function createRenderModals(context) {
             const total = images.length || 1;
             const current = images.length ? (state.detail.imageIndex + 1) : 1;
             elements.detailMedia.setAttribute("aria-label", `Фото объявления ${current} из ${total}`);
+            if (elements.detailPhotoCounter) elements.detailPhotoCounter.textContent = `${current} / ${total}`;
         }
 
         const optimizeWith = (url, width, useProxy = false) => {
@@ -261,6 +265,7 @@ function createRenderModals(context) {
                     "aria-label",
                     `Фото объявления ${state.detail.imageIndex + 1} из ${images.length}`,
                 );
+                if (elements.detailPhotoCounter) elements.detailPhotoCounter.textContent = `${state.detail.imageIndex + 1} / ${images.length}`;
             }
         };
         for (const [index, image] of images.entries()) {
@@ -297,6 +302,22 @@ function createRenderModals(context) {
         elements.detailSellerBlock.hidden = sellerFields.length === 0;
 
         const collectionState = _detailCollectionState(detail);
+        const lead = state.leads?.items.find(item => sameAdId(item.ad_id, detail.ad_id));
+        for (const button of [elements.detailExpensesButton, elements.detailRemindersButton]) {
+            if (button) button.hidden = !lead;
+        }
+        const expenseButton = elements.detailExpensesButton;
+        if (expenseButton) expenseButton.onclick = () => openExpensesModal(lead.id, lead.title);
+        const reminderBlock = elements.detailReminderBlock;
+        if (reminderBlock) reminderBlock.hidden = !lead;
+        if (lead && reminderBlock && state.reminders.leadId !== lead.id) {
+            document.getElementById("reminder-datetime-input").value = "";
+            document.getElementById("reminder-message-input").value = "";
+            document.getElementById("reminder-form-error").hidden = true;
+            void actions.loadReminders(lead.id);
+        }
+        const reminderButton = elements.detailRemindersButton;
+        if (reminderButton) reminderButton.onclick = () => reminderBlock.scrollIntoView({ block: "start", behavior: "smooth" });
         const detailTitleText = detail.title || "товар";
         const leadText = collectionState.inLeads ? "В покупках" : "В покупки";
         const watchText = collectionState.inWatchlist ? "В избранном" : "В избранное";
@@ -323,11 +344,9 @@ function createRenderModals(context) {
         const shouldOpenDetailModal = elements.detailModal.hidden
             || elements.detailModal.classList.contains("is-closing");
 
-        // Reset scroll position to top when modal opens
         const scrollContainer = elements.detailModal?.querySelector(".detail-sheet-content");
-        if (shouldOpenDetailModal && scrollContainer) {
-            scrollContainer.scrollTop = 0;
-        }
+        const resetScroll = shouldOpenDetailModal || _renderedDetailId !== String(detail.ad_id);
+        _renderedDetailId = String(detail.ad_id);
 
         // Pinch-zoom: lazy-init once per session and stash the controller
         // on the image so closeDetailModal / navigateDetailImage can
@@ -350,10 +369,13 @@ function createRenderModals(context) {
         if (shouldOpenDetailModal) {
             openModalAnimated(elements.detailModal);
         }
+        if (resetScroll && scrollContainer) scrollContainer.scrollTop = 0;
         });
     }
 
     function closeDetailModal() {
+        _renderedDetailId = null;
+        if (state.reminders) state.reminders.leadId = null;
         _detailImageLoadId++;
         // FE-C4: drop the in-flight detail/AI fetch (if any) before
         // we tear the modal down. Otherwise a slow /listing-detail
@@ -412,6 +434,20 @@ function createRenderModals(context) {
             return;
         }
 
+        if (state.expenses.error) {
+            const note = document.createElement("p");
+            note.className = "form-error";
+            note.setAttribute("role", "alert");
+            note.textContent = state.expenses.error;
+            const retry = document.createElement("button");
+            retry.type = "button";
+            retry.className = "ghost-btn small";
+            retry.textContent = "Повторить загрузку";
+            retry.onclick = () => { void actions.loadExpenses(state.expenses.currentLeadId); };
+            elements.expensesList.append(note, retry);
+            return;
+        }
+
         if (!state.expenses.items.length) {
             const note = document.createElement("p");
             note.className = "tracker-empty";
@@ -426,7 +462,7 @@ function createRenderModals(context) {
             totalExpenses += amount;
             const row = document.createElement("div");
             row.className = "expense-row";
-            const typeLabels = { delivery: "🚚 Доставка", repair: "🔧 Ремонт", other: "📦 Другое" };
+            const typeLabels = { delivery: "Доставка", repair: "Ремонт", customs: "Таможня", packaging: "Упаковка", transport: "Транспорт", other: "Другое" };
             const main = document.createElement("div");
             main.className = "expense-main";
             const type = document.createElement("span");
@@ -438,14 +474,16 @@ function createRenderModals(context) {
             main.append(type, meta);
             const amountEl = document.createElement("span");
             amountEl.className = "expense-amount mono";
-            amountEl.textContent = `-${Math.round(amount)} BYN`;
+            amountEl.textContent = `−${context.formatDealAmount(amount)} BYN`;
             const deleteBtn = document.createElement("button");
             deleteBtn.className = "expense-delete-btn";
             deleteBtn.type = "button";
             deleteBtn.setAttribute("aria-label", "Удалить расход");
             deleteBtn.textContent = "✕";
-            deleteBtn.addEventListener("click", () => {
-                void actions.deleteExpense(state.expenses.currentLeadId, expense.id);
+            deleteBtn.addEventListener("click", async () => {
+                deleteBtn.disabled = true;
+                try { await actions.deleteExpense(state.expenses.currentLeadId, expense.id); }
+                finally { deleteBtn.disabled = false; }
             });
             row.append(main, amountEl, deleteBtn);
             elements.expensesList.appendChild(row);
@@ -459,7 +497,7 @@ function createRenderModals(context) {
         totalLabel.textContent = "Итого расходов";
         const totalValue = document.createElement("span");
         totalValue.className = "expense-total-value mono";
-        totalValue.textContent = `-${Math.round(totalExpenses)} BYN`;
+        totalValue.textContent = `−${context.formatDealAmount(totalExpenses)} BYN`;
         totalRow.append(totalLabel, totalValue);
         elements.expensesList.prepend(totalRow);
         });
@@ -468,6 +506,11 @@ function createRenderModals(context) {
     function openExpensesModal(leadId, leadTitle) {
         state.expenses.currentLeadId = leadId;
         state.expenses.items = [];
+        state.expenses.error = "";
+        if (elements.expenseAmountInput) elements.expenseAmountInput.value = "";
+        if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";
+        const formError = document.getElementById("expense-form-error");
+        if (formError) formError.hidden = true;
         if (elements.expensesSubtitle) {
             elements.expensesSubtitle.textContent = leadTitle;
             elements.expensesSubtitle.hidden = false;
@@ -484,6 +527,7 @@ function createRenderModals(context) {
             // listeners to fight over Tab, and the outer cleanup never
             // ran because closeExpensesModal relies on closeModalAnimated.
             openModalAnimated(elements.expensesModal);
+            elements.expensesModal.querySelector(".detail-sheet-content").scrollTop = 0;
         }
         void actions.loadExpenses(leadId);
     }

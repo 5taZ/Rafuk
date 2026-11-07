@@ -57,6 +57,15 @@ function createApiListingAssistant(context) {
     const priceInput = document.getElementById("la-price-input");
     const conditionSelect = document.getElementById("la-condition-select");
     const negotiableCheckbox = document.getElementById("la-negotiable-checkbox");
+    const autoPriceCheckbox = document.getElementById("la-auto-price-checkbox");
+    const photoCount = document.getElementById("la-photo-count");
+    const photoStatus = document.getElementById("la-photo-status");
+    let photosLoading = false;
+    function syncAutoPrice() {
+        priceInput.disabled = Boolean(autoPriceCheckbox?.checked);
+        const help = document.getElementById("la-auto-price-help");
+        if (help) help.hidden = !autoPriceCheckbox?.checked;
+    }
     const notesInput = document.getElementById("la-notes-input");
     const notesCounter = document.getElementById("la-notes-counter");
     const photoInput = document.getElementById("la-photo-input");
@@ -194,6 +203,9 @@ function createApiListingAssistant(context) {
         priceInput.value = "";
         conditionSelect.value = "";
         negotiableCheckbox.checked = false;
+        if (autoPriceCheckbox) autoPriceCheckbox.checked = false;
+        syncAutoPrice();
+        if (photoStatus) photoStatus.textContent = "";
         notesInput.value = "";
         photos.length = 0;
         renderPhotoGrid();
@@ -315,19 +327,26 @@ function createApiListingAssistant(context) {
             photoGrid.appendChild(cell);
         });
         if (photoAdd) {
-            photoAdd.style.display = photos.length >= MAX_PHOTOS ? "none" : "";
+            photoAdd.disabled = photosLoading || photos.length >= MAX_PHOTOS;
+            photoAdd.querySelector(".la-photo-add-text").textContent = photosLoading ? "Обработка…" : photos.length >= MAX_PHOTOS ? "Лимит 4 фото" : "Добавить";
         }
+        if (photoCount) photoCount.textContent = `${photos.length} из ${MAX_PHOTOS}`;
     }
 
     async function handlePhotoFiles(fileList) {
         if (!fileList || !fileList.length) return;
+        if (photosLoading) return;
         const remaining = MAX_PHOTOS - photos.length;
         if (remaining <= 0) {
             showToast(`Максимум ${MAX_PHOTOS} фото`, "info");
             return;
         }
-        const files = Array.from(fileList).slice(0, remaining);
+        const files = Array.from(fileList);
+        photosLoading = true;
+        renderPhotoGrid();
+        let skipped = 0;
         for (const file of files) {
+            if (photos.length >= MAX_PHOTOS) { skipped++; continue; }
             if (!/^image\//.test(file.type)) {
                 showToast("Можно загружать только изображения", "error");
                 continue;
@@ -339,6 +358,9 @@ function createApiListingAssistant(context) {
                 showToast(err?.message || "Не удалось обработать фото", "error");
             }
         }
+        photosLoading = false;
+        if (photoStatus) photoStatus.textContent = skipped ? `Добавлено ${photos.length} из ${MAX_PHOTOS}. Не добавлено файлов сверх лимита: ${skipped}. Удалите фото, чтобы выбрать другие.` : `Выбрано фото: ${photos.length} из ${MAX_PHOTOS}.`;
+        if (skipped) showToast(`Лимит — ${MAX_PHOTOS} фото. Не добавлено: ${skipped}.`, "info");
         renderPhotoGrid();
     }
 
@@ -1015,6 +1037,7 @@ function createApiListingAssistant(context) {
     async function handleSubmit(event) {
         event.preventDefault();
         if (submitBtn?.disabled) return;
+        if (photosLoading) { showToast("Дождитесь обработки фотографий", "info"); return; }
         if (typeof context.canUseAiFeature === "function" && !context.canUseAiFeature("assistant")) return;
         const title = (titleInput.value || "").trim();
         if (title.length < 3) {
@@ -1025,7 +1048,7 @@ function createApiListingAssistant(context) {
 
         const priceRaw = (priceInput.value || "").trim();
         let draftPriceByn = null;
-        if (priceRaw) {
+        if (priceRaw && !autoPriceCheckbox?.checked) {
             const parsed = Number(priceRaw);
             if (!Number.isFinite(parsed) || parsed < 0) {
                 showToast("Цена должна быть числом", "error");
@@ -1156,6 +1179,7 @@ function createApiListingAssistant(context) {
     };
 
     form.addEventListener("submit", handleSubmit);
+    autoPriceCheckbox?.addEventListener("change", syncAutoPrice);
     notesInput?.addEventListener("input", _notesHandler);
     photoInput?.addEventListener("change", _photoHandler);
     photoAdd?.addEventListener("click", _photoOpenHandler);
@@ -1185,6 +1209,7 @@ function createApiListingAssistant(context) {
     return {
         destroy() {
             form.removeEventListener("submit", handleSubmit);
+            autoPriceCheckbox?.removeEventListener("change", syncAutoPrice);
             document.removeEventListener("keydown", _keydownHandler);
             notesInput?.removeEventListener("input", _notesHandler);
             photoInput?.removeEventListener("change", _photoHandler);

@@ -54,12 +54,6 @@ function createRenderViews(context) {
                 empty.textContent = "Нет категорий";
                 elements.filterCategories.appendChild(empty);
             } else {
-                // Use total_results from stats instead of sum of categories
-                // because not all ads have category data
-                const totalResults = Number(state.misc.stats?.total_results || 0);
-                const totalCount = state.filters.categories.reduce((sum, cat) => sum + cat.count, 0);
-                const displayTotal = totalResults || totalCount;
-                
                 // Use pendingCategory for display, fall back to applied category
                 const displayCategory = state.filters.pendingCategory !== undefined ? state.filters.pendingCategory : state.filters.category;
                 
@@ -69,7 +63,7 @@ function createRenderViews(context) {
                 allButton.dataset.category = "";
                 allButton.type = "button";
                 allButton.setAttribute("aria-pressed", String(allActive));
-                allButton.textContent = `Все (${displayTotal})`;
+                allButton.textContent = "Все категории";
                 elements.filterCategories.appendChild(allButton);
                 for (const cat of state.filters.categories) {
                     const button = document.createElement("button");
@@ -78,13 +72,13 @@ function createRenderViews(context) {
                     button.dataset.category = String(cat.id);
                     button.type = "button";
                     button.setAttribute("aria-pressed", String(active));
-                    button.textContent = `${cat.label} (${cat.count})`;
+                    button.textContent = cat.label;
                     elements.filterCategories.appendChild(button);
                 }
                 if (state.misc.stats?.categories_limited) {
                     const note = document.createElement("span");
                     note.className = "filter-empty";
-                    note.textContent = `Точные счётчики ограничены топ-${state.misc.stats.category_total_limit || state.filters.categories.length} категорий. Уточните запрос, чтобы сузить список.`;
+                    note.textContent = "Показаны основные категории. Уточните запрос, если нужной нет в списке.";
                     elements.filterCategories.appendChild(note);
                 }
             }
@@ -186,7 +180,8 @@ function createRenderViews(context) {
             return;
         }
 
-        const hasPrices = state.misc.stats.count > 0;
+        const mixed = state.filters.category == null && (state.misc.stats.categories?.length || 0) > 1;
+        const hasPrices = state.misc.stats.count > 0 && !mixed;
         elements.stats.median.textContent = hasPrices ? formatPrice(state.misc.stats.median) : "—";
         elements.stats.mean.textContent = hasPrices ? formatPrice(state.misc.stats.mean) : "—";
         elements.stats.min.textContent = hasPrices ? formatPrice(state.misc.stats.min) : "—";
@@ -199,9 +194,9 @@ function createRenderViews(context) {
         elements.stats.coverage.textContent =
             `${analyzedCount} / ${totalResults}`;
         // Show total with priced count in badge for better clarity
-        elements.marketTotalBadge.textContent = `${totalResults} (${analyzedCount} с ценой)`;
+        elements.marketTotalBadge.textContent = mixed ? `${totalResults} · выберите категорию` : `${totalResults} · в расчёте ${analyzedCount}`;
         elements.statsSection.hidden = false;
-        elements.chartSection.hidden = state.misc.stats.count <= 0;
+        elements.chartSection.hidden = !hasPrices;
         if (elements.chartSection.hidden || !state.panels.distribution) {
             if (context._hooks?.destroyChart) context._hooks.destroyChart();
         } else {

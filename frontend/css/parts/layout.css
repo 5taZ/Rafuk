@@ -62,16 +62,18 @@
 
 .view-nav {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;
     margin: 8px 0 12px;
+    position: sticky;
+    top: 53px;
+    z-index: 30;
+    background: var(--bg);
+    padding: 6px 0;
 }
 
-/* Two-row layout: row 1 = Обзор / Объявления / Автопоиск (each
-   1/3 of the row), row 2 = Мои объявления spanning all 3 columns
-   so the user has a generous tap target for the most-used tab. */
 .view-nav-grid .view-tab--wide {
-    grid-column: 1 / -1;
+    grid-column: auto;
     justify-content: center;
 }
 
@@ -88,25 +90,26 @@
     cursor: pointer;
     box-shadow: var(--shadow-sm);
     display: flex;
+    flex-direction: column;
+    justify-content: center;
     align-items: center;
     gap: 6px;
-    /* Stop the label from wrapping inside narrow phones — if it
-       doesn't fit we'd rather truncate than ladder onto two rows
-       and stretch every other tab. */
-    white-space: nowrap;
-    overflow: hidden;
+    white-space: normal;
     min-width: 0;
 }
 
 .view-tab .view-tab-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
+    text-align: center;
     min-width: 0;
 }
 
+@media (max-width: 520px) {
+    .view-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .view-tab { flex-direction: row; justify-content: center; }
+}
+
 @media (max-width: 380px) {
-    /* Very narrow phones: drop horizontal padding and shrink the
-       label so 3 tabs still fit on one row without overflowing. */
     .view-tab {
         padding: 10px 6px;
         font-size: var(--text-xs);
@@ -189,12 +192,18 @@
     color: var(--text-muted);
     font-size: var(--text-sm);
     line-height: 1.5;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
 }
+
+.summary-strip--mixed .summary-signal { color: var(--text); font-weight: 600; }
+.summary-method { margin-top: 12px; font-size: var(--text-sm); color: var(--text-muted); }
+.summary-method summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; gap: 8px; }
+.summary-method summary::before { content: "+"; }
+.summary-method[open] summary::before { content: "−"; }
+.sort-row.listing-sort-row { flex-wrap: wrap; overflow: visible; border-radius: var(--r-lg); }
+.listing-sort-row .s-tab { flex: 1 0 auto; }
+.form-error { color: var(--danger, #c33); font-size: var(--text-sm); margin: 8px 0; }
+.consent-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+.note-save-status { font-size: var(--text-sm); color: var(--text-muted); }
 
 .summary-metrics {
     display: grid;

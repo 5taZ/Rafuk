@@ -140,7 +140,7 @@ function createApiEvents(context) {
             return null;
         }
         const numeric = Number(trimmed);
-        return Number.isFinite(numeric) ? Math.max(0, numeric) : null;
+        return Number.isFinite(numeric) ? numeric : null;
     }
 
     function _normaliseRefinementText(value) {
@@ -410,6 +410,15 @@ function createApiEvents(context) {
                 openOverview();
             } else if (action === "retry") {
                 void loadProfile({ silent: false, retry: false });
+            } else if (["export-data", "delete-account", "reload-consents"].includes(action) || action.startsWith("revoke-")) {
+                const button = event.target.closest("button");
+                if (button.disabled) return;
+                button.disabled = true;
+                const task = action === "export-data" ? context.exportAccountData()
+                    : action === "delete-account" ? context.deleteAccount()
+                    : action === "reload-consents" ? context.loadConsentSettings()
+                    : context.revokeConsent(action.slice(7));
+                void Promise.resolve(task).finally(() => { button.disabled = false; });
             }
             _haptic("light");
         });
@@ -507,10 +516,17 @@ function createApiEvents(context) {
     }
 
     function bindFilterEvents() {
+        const errorEl = document.getElementById("filter-error");
+        function clearPriceError() {
+            if (errorEl) errorEl.hidden = true;
+            elements.filterMinPrice?.removeAttribute("aria-invalid");
+            elements.filterMaxPrice?.removeAttribute("aria-invalid");
+        }
         // ── Filter button (toggle dropdown) ───────────────────────────
         elements.filterBtn?.addEventListener("click", () => {
             const prefersReducedMotion = _prefersReducedMotion();
             if (!state.filters.filterDropdownOpen) {
+                clearPriceError();
                 if (_filterCloseTimeout) { clearTimeout(_filterCloseTimeout); _filterCloseTimeout = null; }
                 state.filters.pendingCategory = state.filters.category;
                 state.filters.pendingCondition = state.filters.condition;
@@ -608,6 +624,7 @@ function createApiEvents(context) {
 
         // ── Filter dropdown: price range inputs ──────────────────────
         elements.filterMinPrice?.addEventListener("input", () => {
+            clearPriceError();
             state.filters.pendingMinPrice = _parseFilterPrice(elements.filterMinPrice.value);
         });
 
@@ -616,6 +633,7 @@ function createApiEvents(context) {
         });
 
         elements.filterMaxPrice?.addEventListener("input", () => {
+            clearPriceError();
             state.filters.pendingMaxPrice = _parseFilterPrice(elements.filterMaxPrice.value);
         });
 
@@ -634,6 +652,20 @@ function createApiEvents(context) {
 
         // ── Filter dropdown: Apply button ─────────────────────────────
         elements.filterApplyBtn?.addEventListener("click", () => {
+            clearPriceError();
+            const minInput = elements.filterMinPrice;
+            const maxInput = elements.filterMaxPrice;
+            const invalid = [minInput, maxInput].find(input => input &&
+                (input.validity?.badInput || (input.value !== "" && (!Number.isFinite(Number(input.value)) || Number(input.value) < 0))));
+            const reversed = minInput && maxInput && minInput.value !== "" && maxInput.value !== "" && Number(minInput.value) > Number(maxInput.value);
+            if (invalid || reversed) {
+                const target = invalid || maxInput;
+                errorEl.textContent = reversed ? "Цена «До» должна быть не меньше цены «От»." : "Введите цену от 0 BYN.";
+                errorEl.hidden = false;
+                target.setAttribute("aria-invalid", "true");
+                target.focus();
+                return;
+            }
             const marketChanged = state.filters.pendingCategory !== state.filters.category
                 || state.filters.pendingCondition !== state.filters.condition
                 || state.filters.pendingSellerType !== state.filters.sellerType
@@ -681,6 +713,14 @@ function createApiEvents(context) {
     }
 
     function bindDiscountEvents() {
+        const errorEl = document.getElementById("discount-error");
+        const clearError = () => {
+            if (errorEl) errorEl.hidden = true;
+            elements.dealFromInput?.removeAttribute("aria-invalid");
+            elements.dealToInput?.removeAttribute("aria-invalid");
+        };
+        elements.dealFromInput?.addEventListener("input", clearError);
+        elements.dealToInput?.addEventListener("input", clearError);
         // ── Discount buttons ─────────────────────────────────────────
         // Discount range presets (10-20%, 10-30%, …) and the manual
         // From/To inputs both used to live in their own "Выгодно"
@@ -702,6 +742,7 @@ function createApiEvents(context) {
 
         for (const button of elements.discountButtons || []) {
             button.addEventListener("click", () => {
+                clearError();
                 const from = Number(button.dataset.discountFrom);
                 const to = Number(button.dataset.discountTo);
                 if (!Number.isFinite(from) || !Number.isFinite(to)) {
@@ -717,10 +758,21 @@ function createApiEvents(context) {
 
         // ── Discount apply button ────────────────────────────────────
         elements.dealApplyButton?.addEventListener("click", () => {
-            const from = Math.abs(Number(elements.dealFromInput?.value || state.filters.discountFromPercent));
-            const to = Math.abs(Number(elements.dealToInput?.value || state.filters.discountToPercent));
-            state.filters.discountFromPercent = Math.min(from, to);
-            state.filters.discountToPercent = Math.max(from, to);
+            clearError();
+            const from = Number(elements.dealFromInput.value);
+            const to = Number(elements.dealToInput.value);
+            const invalid = [elements.dealFromInput, elements.dealToInput].find(input =>
+                input.value === "" || !input.validity.valid || !Number.isInteger(Number(input.value)) || Number(input.value) > 100);
+            if (invalid || from > to) {
+                const target = invalid || elements.dealToInput;
+                errorEl.textContent = from > to ? "Скидка «До» должна быть не меньше скидки «От»." : "Введите целую скидку от 0 до 100 %.";
+                errorEl.hidden = false;
+                target.setAttribute("aria-invalid", "true");
+                target.focus();
+                return;
+            }
+            state.filters.discountFromPercent = from;
+            state.filters.discountToPercent = to;
             renderDiscountButtons();
             renderDealInputs();
             _activateCheapSort();
@@ -915,6 +967,7 @@ function createApiEvents(context) {
             closeExpensesModal,
             showToast,
             createExpense,
+            createReminder: context.createReminder,
             logClientError,
         });
     }

@@ -199,7 +199,7 @@ function createRenderProfile(context) {
                     _permission("Обычный поиск", true),
                     _permission("Объявления", true),
                     _permission("Автопоиск", true),
-                    _permission("Мои объявления", true),
+                    _permission("Сделки", true),
                     _permission("AI-функции", permissions.can_use_ai === true || permissions.can_use_assistant === true),
                 ),
             ),
@@ -215,6 +215,29 @@ function createRenderProfile(context) {
             ));
         }
 
+        const dataSection = domEl("section", { className: "profile-section" },
+            domEl("h3", { className: "profile-section-title", text: "Мои данные и согласия" }),
+            domEl("p", { className: "section-note", text: "Экспорт содержит ваши серверные данные. Удаление аккаунта потребует подтверждения." }),
+            domEl("div", { className: "profile-actions" },
+                domEl("button", { type: "button", className: "ghost-btn", text: "Экспорт данных", dataset: { profileAction: "export-data" } }),
+                domEl("button", { type: "button", className: "ghost-btn", text: "Удалить аккаунт", dataset: { profileAction: "delete-account" } }),
+            ),
+        );
+        if (state.profile.consentsLoading || !state.profile.consents && !state.profile.consentsError) {
+            dataSection.appendChild(domEl("p", { className: "section-note", text: "Загружаем согласия…", attrs: { role: "status" } }));
+        } else if (state.profile.consentsError) {
+            dataSection.appendChild(domEl("p", { className: "form-error", text: state.profile.consentsError, attrs: { role: "alert" } }));
+            dataSection.appendChild(domEl("button", { type: "button", className: "ghost-btn", text: "Повторить загрузку согласий", dataset: { profileAction: "reload-consents" } }));
+        } else {
+            for (const [type, label] of [["pd_processing", "Обработка персональных данных"], ["ai_analysis", "AI-анализ"], ["cross_border", "Трансграничная передача"]]) {
+                const granted = state.profile.consents[type]?.granted === true;
+                dataSection.appendChild(domEl("div", { className: "consent-setting-row" },
+                    domEl("span", { text: `${label} · ${granted ? "Согласие дано" : "Согласие не дано"}` }),
+                    granted ? domEl("button", { type: "button", className: "ghost-btn small", text: "Отозвать", dataset: { profileAction: `revoke-${type}` }, attrs: { "aria-label": `Отозвать: ${label}` } }) : null,
+                ));
+            }
+        }
+        shell.appendChild(dataSection);
         const actions = domEl(
             "div",
             { className: "profile-actions" },

@@ -215,22 +215,37 @@ function createApiTrackers(context) {
         const known = state.filters.categories || [];
         const missing = id != null && !known.some((category) => Number(category.id) === Number(id));
         showCategories(missing ? [{ id }, ...known] : known, id);
-        if (id != null || state.search.strictSearch) elements.trackerAdvanced.open = true;
+        elements.editMaxPriceInput.value = state.filters.maxPrice ?? "";
+        setSelect(elements.editConditionSelect, state.filters.condition, conditionLabel);
+        setSelect(elements.editSellerSelect, state.filters.sellerType, sellerLabel);
+        setSelect(elements.editRegionSelect, state.filters.regionName);
+        elements.editMinDiscountInput.value = state.search.sort === "cheap" ? state.filters.discountFromPercent : "";
+        elements.trackerAdvanced.open = true;
+        const note = elements.trackerSearchFiltersNote;
+        if (note) {
+            note.hidden = false;
+            note.textContent = "Перенесены запрос, категория, город, состояние, продавец, точность поиска и максимальная цена. " +
+            (state.filters.minPrice != null ? "Нижняя граница цены в трекерах не поддерживается. " : "") +
+            (state.search.sort === "cheap" ? "Перенесена минимальная скидка; верхняя граница скидки в трекерах не поддерживается." : "");
+        }
         elements.editTrackerQuery.focus();
     }
 
-    function openEditTracker(trackerId = null) {
+    function openEditTracker(trackerId = null, { copy = false } = {}) {
         if (!hasTelegramInitData() || formBusy) return;
         const tracker = tracking.items.find((item) => item.id === trackerId);
         if (trackerId != null && !tracker) return;
-        const editing = Boolean(tracker);
-        tracking.editingId = trackerId;
+        const editing = Boolean(tracker) && !copy;
+        tracking.editingId = editing ? trackerId : null;
         cancelCategoryRequest();
         setFormError();
-        elements.editTrackerTitle.textContent = editing ? "Настройки трекера" : "Новый трекер";
+        elements.editTrackerTitle.textContent = editing ? "Настройки трекера" : copy ? "Копия трекера" : "Новый трекер";
         elements.saveTrackerBtn.textContent = editing ? "Сохранить" : "Запустить автопоиск";
         elements.editTrackerQuery.value = tracker?.query ?? "";
         elements.editTrackerQuery.readOnly = editing;
+        if (elements.trackerQueryHelp) elements.trackerQueryHelp.hidden = !editing;
+        if (elements.trackerCopyButton) elements.trackerCopyButton.hidden = !editing;
+        if (elements.trackerSearchFiltersNote) elements.trackerSearchFiltersNote.hidden = true;
         elements.editMaxPriceInput.value = tracker?.max_price_byn ?? "";
         elements.editMinDiscountInput.value = tracker?.min_discount_percent || "";
         elements.editStrictModeToggle.checked = Boolean(tracker?.strict_mode);
@@ -252,6 +267,8 @@ function createApiTrackers(context) {
             ? "Трекер на паузе. Возобновите его, чтобы снова получать уведомления."
             : `Проверка каждые ${interval} мин. Уведомления приходят в чат бота.`;
         openModalAnimated(elements.editTrackerModal);
+        const scrollBody = elements.editTrackerModal.querySelector(".tracker-form-body");
+        if (scrollBody) scrollBody.scrollTop = 0;
         if (!editing) elements.editTrackerQuery.focus();
     }
 
@@ -426,6 +443,7 @@ function createApiTrackers(context) {
         setFormError();
     });
     elements.trackerUseSearch?.addEventListener("click", useCurrentSearch);
+    elements.trackerCopyButton?.addEventListener("click", () => openEditTracker(tracking.editingId, { copy: true }));
     elements.trackerLoadCategories?.addEventListener("click", loadTrackerCategories);
     elements.toggleTrackerPause?.addEventListener("click", togglePause);
     elements.trackerMarket?.addEventListener("click", openTrackerMarket);

@@ -620,18 +620,54 @@ function createRenderCardBuilders(context) {
 
     /** Watchlist-specific note input. */
     function _buildWatchlistFields(item, { signal } = {}) {
+        const drafts = state.watchlist.noteDrafts || (state.watchlist.noteDrafts = {});
+        const saves = state.watchlist.noteSaves || (state.watchlist.noteSaves = {});
+        const saving = saves[item.id] || (saves[item.id] = { pending: false, message: "", error: false, timer: null });
         const notesInput = domEl("input", {
             type: "text",
             attrs: { placeholder: "заметка к лоту…" },
             dataset: { role: "notes" },
         });
-        notesInput.value = item.notes || "";
-        notesInput.addEventListener("change", () => {
-            if (context._hooks?.showToast) context._hooks.showToast("Заметка сохранена");
-            void actions.updateWatchlistMeta(item.id, {
-                notes: notesInput.value.trim() || null,
-            });
+        notesInput.value = drafts[item.id] ?? item.notes ?? "";
+        const status = domEl("span", { className: "note-save-status", attrs: { role: "status", "aria-live": "polite" } });
+        const retry = domEl("button", { type: "button", className: "ghost-btn small", text: "Повторить сохранение", attrs: { hidden: true } });
+        saving.controls = { status, retry };
+        const syncStatus = () => {
+            saving.controls.status.textContent = saving.message || (Object.hasOwn(drafts, item.id) ? "Не сохранено" : "");
+            saving.controls.retry.hidden = !saving.error;
+        };
+        syncStatus();
+        notesInput.addEventListener("input", () => {
+            drafts[item.id] = notesInput.value;
+            saving.message = "Не сохранено";
+            saving.error = false;
+            syncStatus();
+            clearTimeout(saving.timer);
+            saving.timer = setTimeout(() => { void save(); }, 600);
         }, { signal });
+        async function save() {
+            clearTimeout(saving.timer);
+            if (saving.pending || !Object.hasOwn(drafts, item.id)) return;
+            const draft = drafts[item.id];
+            saving.pending = true;
+            saving.error = false;
+            saving.message = "Сохраняем…";
+            syncStatus();
+            const ok = await actions.updateWatchlistMeta(item.id, { notes: draft.trim() || null }, { reload: false });
+            saving.pending = false;
+            if (ok) {
+                if (drafts[item.id] !== draft) return void save();
+                delete drafts[item.id];
+                saving.message = "Заметка сохранена";
+            } else {
+                saving.message = "Не удалось сохранить. Текст сохранён в поле — повторите попытку.";
+                saving.error = true;
+            }
+            syncStatus();
+        }
+        notesInput.addEventListener("change", () => { void save(); }, { signal });
+        notesInput.addEventListener("blur", () => { void save(); }, { signal });
+        retry.addEventListener("click", () => { void save(); }, { signal });
         return domEl(
             "div",
             { className: "watchlist-card-fields" },
@@ -640,6 +676,8 @@ function createRenderCardBuilders(context) {
                 { className: "wl-field wl-field-wide" },
                 domEl("span", { className: "wl-field-label", text: "Заметка" }),
                 domEl("div", { className: "wl-field-input-wrap" }, notesInput),
+                status,
+                retry,
             ),
         );
     }
@@ -651,6 +689,10 @@ function createRenderCardBuilders(context) {
         return domEl(
             "div",
             { className: "lead-card-actions" },
+            domEl("div", { className: "lead-btn-row" },
+                domEl("button", { type: "button", className: "lead-btn", text: "Расходы", dataset: { role: "expenses" } }),
+                domEl("button", { type: "button", className: "lead-btn", text: "Напоминания", dataset: { role: "reminders" } }),
+            ),
             !isSold
                 ? domEl(
                     "div",
@@ -762,6 +804,11 @@ function createRenderCardBuilders(context) {
             }
         }, { signal });
         if (mode === "lead") {
+            card.querySelector('[data-role="expenses"]')?.addEventListener("click", () => actions.openExpensesModal(item.id, item.title), { signal });
+            card.querySelector('[data-role="reminders"]')?.addEventListener("click", async () => {
+                await actions.openLeadDetail(item);
+                if (String(state.detail.data?.ad_id) === String(item.ad_id)) document.getElementById("detail-reminder-block")?.scrollIntoView({ block: "start" });
+            }, { signal });
             card.querySelector('[data-role="confirm"]')?.addEventListener("click", () => {
                 void actions.confirmLead(item, card);
             }, { signal });

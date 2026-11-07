@@ -310,7 +310,7 @@ body.modal-open {
     overflow: hidden;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    max-height: 340px;
+    height: clamp(180px, 50vw, 300px);
     display: grid;
     place-items: center;
     position: relative;
@@ -337,7 +337,8 @@ body.modal-open {
 
 .detail-media img {
     width: 100%;
-    max-height: 340px;
+    height: 100%;
+    min-height: 0;
     object-fit: contain;
     /* Transform/opacity are driven inline by api_events.js when the
        user swipes — a lightweight ~340 ms opacity-crossfade with an
@@ -476,9 +477,24 @@ body.modal-open {
 }
 
 .detail-bottom-actions {
-    margin-top: var(--space-5);
-    padding: var(--space-4) 0 0;
+    margin-top: 0;
+    flex: 0 0 auto;
+    padding: 10px var(--detail-gutter) max(10px, env(safe-area-inset-bottom));
+    background: var(--bg);
     border-top: 1px solid var(--border);
+}
+
+.detail-photo-counter {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    padding: 4px 8px;
+    border-radius: 20px;
+    color: var(--text);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    font-size: var(--text-sm);
+    pointer-events: none;
 }
 
 .detail-bottom-actions .listing-btn {
@@ -1135,19 +1151,6 @@ body.modal-open {
 @media (max-width: 380px) {
     html {
         font-size: var(--text-norm);
-    }
-
-    .view-nav {
-        grid-template-columns: 1fr 1fr;
-    }
-
-    /* On narrow phones the wide-tab override fights us — it would
-       leave Автопоиск alone on row 2 and push Мои объявления to a
-       third row. Drop the override so the four tabs settle into a
-       clean 2×2 grid. */
-    .view-nav-grid .view-tab--wide {
-        grid-column: auto;
-        justify-content: flex-start;
     }
 
     /* Listing action buttons: 2x2 grid on very narrow screens */

@@ -462,7 +462,9 @@ def test_search_refresh_and_cap_disclosure_contracts() -> None:
     assert "elements.listingsSampleBadge" not in render_cards_js
     assert "выборка ${_formatCount(servedCap)} из ${_formatCount(total)}" not in render_cards_js
     assert "categories_limited" in render_views_js
-    assert "const displayTotal = totalResults || totalCount;" in render_views_js
+    # UX-P2-07: independently sampled category totals cannot be added up.
+    assert 'allButton.textContent = "Все категории";' in render_views_js
+    assert '${cat.count}' not in render_views_js
     assert "Math.max(totalResults, totalCount)" not in render_views_js
     assert "resultCap: 0" in core_js
 
@@ -2232,6 +2234,11 @@ const { state } = createAppCore();
 state.search.activeQuery = "Volkswagen Polo";
 state.filters.categories = [{ id: 2010, label: "Автомобили" }];
 state.filters.category = 2010;
+// UX-P2-14: copying a search preserves all filters supported by trackers.
+state.filters.regionName = "Минск";
+state.filters.condition = "used";
+state.filters.sellerType = "shop";
+state.filters.maxPrice = 1299.5;
 
 function select(...values) {
     const options = values.map((value) => domEl("option", { value, text: value }));
@@ -2283,6 +2290,10 @@ const submit = () => elements.trackerForm.dispatchEvent(new FakeEvent("submit"))
     elements.trackerUseSearch.click();
     assert.equal(elements.editTrackerQuery.value, "Volkswagen Polo");
     assert.equal(elements.editCategorySelect.value, "2010");
+    assert.equal(elements.editMaxPriceInput.value, 1299.5);
+    assert.equal(elements.editRegionSelect.value, "Минск");
+    assert.equal(elements.editConditionSelect.value, "Б/у");
+    assert.equal(elements.editSellerSelect.value, "Магазин");
 
     elements.editTrackerQuery.value = "iPhone 15";
     elements.editTrackerQuery.dispatchEvent(new FakeEvent("input"));
@@ -2340,6 +2351,12 @@ const submit = () => elements.trackerForm.dispatchEvent(new FakeEvent("submit"))
     assert.equal(state.filters.sellerType, "shop");
     assert.equal(state.filters.regionName, "Старый регион");
     assert.deepEqual(marketSearch, [["overview", {keepFilters: true}]]);
+    // UX-P2-15: the immutable original can be copied into an editable form.
+    api.openEditTracker(2, {copy: true});
+    assert.equal(state.trackers.editingId, null);
+    assert.equal(elements.editTrackerQuery.readOnly, false);
+    assert.equal(elements.editTrackerQuery.value, "Часы");
+    assert.equal(elements.editRegionSelect.value, "Старый регион");
 })()""" + _NODE_FAIL
     _node_ok(harness)
 
@@ -5233,4 +5250,172 @@ const error = elements.listingsList.querySelector(".empty-state--error");
 assert.ok(error && error.textContent.includes("Нет соединения с сервером."));
 assert.ok(!elements.listingsList.textContent.includes("ничего не найдено"));
 """
+    _node_ok(harness)
+
+
+def test_p2_invalid_price_and_discount_ranges_keep_drafts_without_requests() -> None:
+    """UX-P2-06: invalid ranges stay editable and never issue a search."""
+    harness = _FAKE_DOM_JS + _js('dom_helpers.js') + r'''
+function _bindCarouselEvents() {}
+function _bindExpenseEvents() {}
+''' + _js('api_events.js') + r'''
+const assert = require('node:assert/strict');
+const state = {
+    ui: {activeView: 'ads'}, search: {activeQuery: 'iphone', sort: 'newest'},
+    filters: {category: null, pendingCategory: null, condition: '', pendingCondition: '',
+        sellerType: '', pendingSellerType: '', regionName: '', pendingRegionName: '',
+        minPrice: null, maxPrice: null, pendingMinPrice: 2000, pendingMaxPrice: 1000,
+        discountFromPercent: 10, discountToPercent: 30, filterDropdownOpen: true},
+    trackers: {}, leads: {items: []}, watchlist: {items: []}, detail: {}, admin: {},
+};
+function input(value) {
+    const node = el('input');
+    node.value = value;
+    node.validity = {valid: true, badInput: false};
+    return node;
+}
+const error = el('p', {id: 'filter-error', hidden: true});
+const discountError = el('p', {id: 'discount-error', hidden: true});
+const elements = {
+    filterMinPrice: input('2000'), filterMaxPrice: input('1000'), filterApplyBtn: el('button'),
+    dealFromInput: input('90'), dealToInput: input('10'), dealApplyButton: el('button'),
+    viewTabs: [], sortButtons: [], discountButtons: [],
+};
+const controls = Object.values(elements).filter(value => !Array.isArray(value));
+document.body.append(error, discountError, ...controls);
+let requests = 0;
+createApiEvents({
+    state, elements, renderAll() {}, showToast() {},
+    renderSortButtons() {}, renderDiscountButtons() {},
+    renderDealInputs() {}, setActiveView() {}, loadListings() { requests++; },
+}).bindEvents();
+elements.filterApplyBtn.click();
+assert.equal(requests, 0);
+assert.equal(state.filters.filterDropdownOpen, true);
+assert.equal(elements.filterMinPrice.value, '2000');
+assert.equal(elements.filterMaxPrice.getAttribute('aria-invalid'), 'true');
+assert.equal(document.activeElement, elements.filterMaxPrice);
+assert.match(error.textContent, /не меньше/);
+elements.dealApplyButton.click();
+assert.equal(requests, 0);
+assert.equal(elements.dealFromInput.value, '90');
+assert.equal(elements.dealToInput.value, '10');
+assert.equal(state.filters.discountFromPercent, 10);
+assert.equal(state.filters.discountToPercent, 30);
+assert.match(discountError.textContent, /не меньше/);
+elements.filterMaxPrice.value = '3000';
+elements.filterMaxPrice.dispatchEvent(new FakeEvent('input'));
+elements.filterApplyBtn.click();
+assert.equal(requests, 1);
+assert.equal(state.filters.maxPrice, 3000);
+assert.equal(state.filters.filterDropdownOpen, false);
+'''
+    _node_ok(harness)
+
+
+def test_p2_favorite_note_reports_server_result_and_keeps_failed_draft() -> None:
+    """UX-P2-16: failed saves keep the draft and retries use the last version."""
+    harness = _FAKE_DOM_JS + _js(
+        'dom_helpers.js', 'virtual_list.js', 'render_card_builders.js', 'api_watchlist.js',
+    ) + _CARDS_HARNESS + r'''
+const assert = require('node:assert/strict');
+const item = {
+    id: 5, ad_id: 20, version: 1, title: 'Телефон',
+    notes: 'Прежняя заметка', initial_price_byn: 100,
+};
+const state = {leads: {items: []}, watchlist: {items: [item]}, misc: {}, detail: {data: null}};
+let reads = 0;
+const writes = [];
+const api = createApiWatchlist({
+    ...domContext, state, elements: {}, renderLeads() {}, showToast() {},
+    getJson() { reads++; return Promise.resolve([item]); },
+    requestJson(url, options) {
+        return new Promise((resolve, reject) => writes.push({url, options, resolve, reject}));
+    },
+});
+const builders = createRenderCardBuilders({
+    ...domContext, state, elements: {},
+    actions: {updateWatchlistMeta: api.updateWatchlistMeta},
+});
+const card = builders.buildWatchlistNode(item, () => 'На рынке');
+document.body.appendChild(card);
+const input = card.querySelector('[data-role=notes]');
+const status = card.querySelector('.note-save-status');
+(async () => {
+    input.value = 'Черновик';
+    input.dispatchEvent(new FakeEvent('input'));
+    input.dispatchEvent(new FakeEvent('change'));
+    await tick(2);
+    assert.equal(status.textContent, 'Сохраняем…');
+    assert.equal(writes.length, 1);
+    writes[0].reject(new Error('offline'));
+    await tick(3);
+    assert.equal(input.value, 'Черновик');
+    assert.match(status.textContent, /Не удалось сохранить/);
+    assert.equal(item.notes, 'Прежняя заметка');
+    const rebuilt = builders.buildWatchlistNode(item, () => 'На рынке');
+    assert.equal(rebuilt.querySelector('[data-role=notes]').value, 'Черновик');
+    document.body.removeChild(card);
+    document.body.appendChild(rebuilt);
+    rebuilt.querySelector('button.ghost-btn').click();
+    await tick(2);
+    assert.equal(JSON.parse(writes[1].options.body).version, 1);
+    const latestInput = rebuilt.querySelector('[data-role=notes]');
+    latestInput.value = 'Последняя правка';
+    latestInput.dispatchEvent(new FakeEvent('input'));
+    latestInput.dispatchEvent(new FakeEvent('change'));
+    assert.equal(writes.length, 2, 'only one write can be pending per note');
+    writes[1].resolve({...item, notes: 'Черновик', version: 2});
+    await tick(3);
+    assert.equal(JSON.parse(writes[2].options.body).version, 2);
+    assert.equal(JSON.parse(writes[2].options.body).notes, 'Последняя правка');
+    writes[2].resolve({...item, notes: 'Последняя правка', version: 3});
+    await tick(3);
+    assert.equal(rebuilt.querySelector('.note-save-status').textContent, 'Заметка сохранена');
+    assert.equal(item.notes, 'Последняя правка');
+    assert.equal(item.version, 3);
+    assert.equal(reads, 0, 'saving a note does not destroy the focused input');
+    assert.equal(Object.hasOwn(state.watchlist.noteDrafts, item.id), false);
+})()
+''' + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_p2_background_comparisons_keep_note_focus_and_auto_save() -> None:
+    """UX-P2-16: background renders preserve editing and the queued save."""
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "virtual_list.js", "render_card_builders.js", "render_cards.js",
+    ) + _CARDS_HARNESS + r'''
+const assert = require('node:assert/strict');
+const item = {id: 5, ad_id: 20, title: 'Телефон', notes: '', initial_price_byn: 100};
+const state = {
+    leads: {items: [], itemsFilter: 'watching'}, watchlist: {items: [item]}, misc: {},
+};
+const writes = [];
+const elements = {leadInboxList: el('div')};
+document.body.appendChild(elements.leadInboxList);
+const cards = createRenderCards({
+    ...domContext, state, elements,
+    actions: {updateWatchlistMeta: async (id, payload) => {
+        writes.push([id, payload]); return true;
+    }},
+});
+(async () => {
+    cards.renderLeads();
+    const firstInput = elements.leadInboxList.querySelector('[data-role=notes]');
+    firstInput.focus();
+    firstInput.value = 'Не терять при обновлении';
+    firstInput.dispatchEvent(new FakeEvent('input'));
+    state.watchlist.comparisons = {5: {ad_found: true, current_price_byn: 100}};
+    cards.renderLeads();
+    const currentInput = elements.leadInboxList.querySelector('[data-role=notes]');
+    assert.notEqual(currentInput, firstInput);
+    assert.equal(document.activeElement, currentInput);
+    assert.equal(currentInput.value, 'Не терять при обновлении');
+    await tick(700);
+    assert.deepEqual(writes, [[5, {notes: 'Не терять при обновлении'}]]);
+    assert.equal(elements.leadInboxList.querySelector('.note-save-status').textContent,
+        'Заметка сохранена');
+})()
+''' + _NODE_FAIL
     _node_ok(harness)

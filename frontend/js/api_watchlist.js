@@ -32,6 +32,7 @@ function createApiWatchlist(context) {
     // leaves the card visible until the user switches tabs.
     function refreshAfterWatchlistChange() {
         if (typeof renderLeads === "function") renderLeads();
+        context.refreshCollectionButtons?.();
     }
 
     function refreshCollectionActionSurfaces() {
@@ -218,15 +219,15 @@ function createApiWatchlist(context) {
     }
 
     // ── Update watchlist item metadata ───────────────────────────────────
-    async function updateWatchlistMeta(watchlistId, payload) {
+    async function updateWatchlistMeta(watchlistId, payload, { reload = true } = {}) {
         try {
             const item = state.watchlist.items.find((w) => w.id === watchlistId);
             const version = payload.version ?? await _resolveWatchlistVersion(item || watchlistId);
             if (!version) {
                 _showStaleWatchlistToast();
-                return;
+                return false;
             }
-            await requestJson(`/api/v1/watchlist/${watchlistId}`, {
+            const updated = await requestJson(`/api/v1/watchlist/${watchlistId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -234,9 +235,12 @@ function createApiWatchlist(context) {
                     version,
                 }),
             });
-            await loadWatchlist();
+            if (item && updated) Object.assign(item, updated);
+            if (reload) await loadWatchlist();
+            return true;
         } catch (error) {
-            showToast(error.message || "Не удалось обновить");
+            if (reload) showToast(error.message || "Не удалось обновить");
+            return false;
         }
     }
 

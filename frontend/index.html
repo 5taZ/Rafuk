@@ -52,17 +52,17 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#0a0a0b">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261107-p1-wave1">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261107-p1-wave1">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261107-p2-wave2">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261107-p2-wave2">
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
          depending on the user's network RTT. -->
     <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
     <link rel="dns-prefetch" href="https://rms.kufar.by">
-    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261107-p1-wave1" crossorigin>
-    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261107-p1-wave1" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
-    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261107-p1-wave1" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261107-p2-wave2" crossorigin>
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261107-p2-wave2" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261107-p2-wave2" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
     <!-- FE-M1: Preload the bundled stylesheet so the browser starts
          fetching it during HTML parse, in parallel with the font
          CSS request above. The subsequent ``<link rel="stylesheet">``
@@ -77,8 +77,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20261107-p1-wave1" crossorigin>
-    <link rel="stylesheet" href="css/style.css?v=20261107-p1-wave1" integrity="sha384-wUTcqFtvoryD53HXQ9YFi7kkivr2ZFiY/lGImJtxGGUiXuWHPwOhmV9GIsf36bFF" crossorigin>
+    <link rel="preload" as="style" href="css/style.css?v=20261107-p2-wave2" crossorigin>
+    <link rel="stylesheet" href="css/style.css?v=20261107-p2-wave2" integrity="sha384-E5ZA8BuCEqtkfvPTi+V/a+rrHsuP4fgBULa7dDJnjS4i7G5g5fY0IoggheuvrwNm" crossorigin>
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -95,14 +95,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20261107-p1-wave1"
+            src="vendor/telegram-web-app.js?v=20261107-p2-wave2"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
          on first paint of price history. Price distribution uses HTML.
          Keeps the initial bundle smaller for users who only
          use the watchlist or trackers without leaking IP to a CDN. -->
-    <script defer src="js/app_bundle.js?v=20261107-p1-wave1"></script>
+    <script defer src="js/app_bundle.js?v=20261107-p2-wave2"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -125,7 +125,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20261107-p1-wave1" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20261107-p2-wave2" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">
@@ -237,7 +237,7 @@
                 <polyline points="9 11 12 8 15 11"/>
                 <line x1="12" y1="2" x2="12" y2="14"/>
             </svg>
-            <span class="view-tab-label">Мои объявления</span>
+            <span class="view-tab-label">Сделки</span>
         </button>
     </nav>
 
@@ -254,11 +254,11 @@
                     <strong class="summary-pill-value mono" id="summary-median">—</strong>
                 </div>
                 <div class="summary-pill">
-                    <span class="summary-pill-label">Диапазон</span>
+                    <span class="summary-pill-label">Без выбросов</span>
                     <strong class="summary-pill-value mono" id="summary-range">—</strong>
                 </div>
                 <div class="summary-pill">
-                    <span class="summary-pill-label ui-hint" data-hint="Цена в пределах 25-75 перцентиля рынка">Справедливо</span>
+                    <span class="summary-pill-label ui-hint" data-hint="Средняя половина цен в расчётной выборке">Типичная цена</span>
                     <strong class="summary-pill-value mono" id="summary-fair">—</strong>
                 </div>
             </div>
@@ -267,6 +267,10 @@
             <span class="summary-refinements-label">Уточнить:</span>
             <div class="summary-refinements-chips" id="summary-refinements-chips"></div>
         </div>
+        <details class="summary-method" id="summary-method">
+            <summary>Как рассчитаны цены</summary>
+            <p class="section-note" id="summary-method-note"></p>
+        </details>
     </section>
 
     <div class="err-bar" id="error-bar" hidden role="status" aria-live="polite">
@@ -355,7 +359,7 @@
                     <span class="stat-sub">обычно в этих пределах</span>
                 </div>
                 <div class="stat-card wide">
-                    <span class="stat-lbl">Диапазон рынка</span>
+                    <span class="stat-lbl">Цены в расчёте · без крайних выбросов</span>
                     <div class="range-grid">
                         <div class="range-item">
                             <span class="range-label">Мин</span>
@@ -454,11 +458,11 @@
                     <div class="filter-price-range">
                         <label class="filter-price-field">
                             <span>От</span>
-                            <input id="filter-min-price" type="number" min="0" step="1" placeholder="0" inputmode="numeric">
+                            <input id="filter-min-price" type="number" min="0" step="0.01" placeholder="0" inputmode="decimal" aria-describedby="filter-error">
                         </label>
                         <label class="filter-price-field">
                             <span>До</span>
-                            <input id="filter-max-price" type="number" min="0" step="1" placeholder="∞" inputmode="numeric">
+                            <input id="filter-max-price" type="number" min="0" step="0.01" placeholder="∞" inputmode="decimal" aria-describedby="filter-error">
                         </label>
                     </div>
                 </div>
@@ -486,13 +490,14 @@
                         </select>
                     </div>
                 </div>
+                <p id="filter-error" class="form-error" role="alert" hidden></p>
                 <div class="filter-actions">
                     <button class="filter-btn filter-btn--cancel" type="button">Отменить</button>
                     <button class="filter-btn filter-btn--apply" type="button">Применить</button>
                 </div>
             </div>
 
-            <div class="sort-row">
+            <div class="sort-row listing-sort-row" aria-label="Сортировка объявлений">
                 <button class="s-tab active" data-sort="newest" type="button" aria-pressed="true">Новые</button>
                 <button class="s-tab" data-sort="cheap" type="button" aria-pressed="false">Выгодные</button>
                 <button class="s-tab" data-sort="price_asc" type="button" aria-pressed="false">Дешевле</button>
@@ -524,6 +529,7 @@
                     </label>
                     <button class="ghost-btn small deal-apply-btn" id="deal-apply-btn" type="button">Применить</button>
                 </div>
+                <p id="discount-error" class="form-error" role="alert" hidden></p>
                 <div class="sort-row" id="deal-threshold-row">
                     <button class="s-tab active" data-discount-from="10" data-discount-to="20" type="button" aria-pressed="true">10-20%</button>
                     <button class="s-tab" data-discount-from="10" data-discount-to="30" type="button" aria-pressed="false">10-30%</button>
@@ -613,7 +619,7 @@
 
     <section class="view-panel" id="deals-view" hidden role="tabpanel" aria-labelledby="tab-deals">
         <div class="view-hero deals-hero">
-            <h2 class="view-hero-title">Мои объявления</h2>
+            <h2 class="view-hero-title">Сделки</h2>
             <p class="view-hero-desc">Слежу, торгую, продаю — всё в одной воронке</p>
             <div class="view-hero-stats" id="deals-hero-stats"></div>
         </div>
@@ -746,9 +752,11 @@
                 </header>
                 <div class="detail-media" id="detail-media" aria-label="Фото объявления 1 из 1" hidden>
                     <img id="detail-main-image" alt="" hidden>
+                    <span class="detail-photo-counter" id="detail-photo-counter" aria-live="polite"></span>
                 </div>
                 <div class="detail-thumbs" id="detail-thumbs"></div>
                 <p class="detail-description" id="detail-description" hidden></p>
+                <button class="ghost-btn small" id="detail-description-retry" type="button" hidden>Повторить загрузку описания</button>
                 <section class="detail-block" id="detail-profit-block" hidden>
                     <h4 class="detail-block-title">Оценка цены</h4>
                     <div class="detail-fields" id="detail-profit"></div>
@@ -796,15 +804,18 @@
                         <div class="contact-form-actions">
                             <button class="primary-btn small" id="save-reminder-btn" type="button">Добавить</button>
                         </div>
+                        <p id="reminder-form-error" class="form-error" role="alert" hidden></p>
                     </div>
                     <div class="reminder-list" id="reminder-list"></div>
                 </section>
-                <div class="listing-actions detail-bottom-actions">
-                    <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
-                    <button class="listing-btn" id="detail-add-watchlist-btn" type="button">В избранное</button>
-                    <button class="listing-btn listing-btn--ai" id="detail-ai-btn" type="button">Анализ</button>
-                    <a class="listing-btn listing-btn--accent" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
-                </div>
+            </div>
+            <div class="listing-actions detail-bottom-actions">
+                <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
+                <button class="listing-btn" id="detail-add-watchlist-btn" type="button">В избранное</button>
+                <button class="listing-btn listing-btn--ai" id="detail-ai-btn" type="button">Анализ</button>
+                <a class="listing-btn listing-btn--accent" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
+                <button class="listing-btn" id="detail-expenses-btn" type="button" hidden>Расходы</button>
+                <button class="listing-btn" id="detail-reminders-btn" type="button" hidden>Напоминания</button>
             </div>
         </div>
     </div>
@@ -837,7 +848,7 @@
                         <label class="workflow-field">
                             <span class="workflow-field-label">Сумма</span>
                             <div class="deal-range-input-wrap workflow-input-wrap">
-                                <input id="expense-amount-input" type="number" min="0" step="1" inputmode="numeric" placeholder="50">
+                                <input id="expense-amount-input" type="number" min="0.01" max="10000000" step="0.01" inputmode="decimal" placeholder="50,50">
                                 <span id="expense-currency-label">BYN</span>
                             </div>
                         </label>
@@ -851,6 +862,7 @@
                             <button class="primary-btn small" id="save-expense-btn" type="button">Добавить</button>
                             <button class="ghost-btn small" id="cancel-expense-btn" type="button">Отмена</button>
                         </div>
+                        <p id="expense-form-error" class="form-error" role="alert" hidden></p>
                     </div>
                 </div>
             </div>
@@ -908,7 +920,10 @@
                     <div class="tracker-field">
                         <label for="edit-tracker-query">Что ищем?</label>
                         <input class="tracker-control" id="edit-tracker-query" type="text" required maxlength="255" autocomplete="off" enterkeyhint="done" placeholder="Например, iPhone 15 Pro 256 ГБ">
+                        <p class="section-note" id="tracker-query-help" hidden>Запрос действующего трекера сохраняет историю поиска. Для другого запроса создайте копию.</p>
+                        <button class="ghost-btn small" id="tracker-copy-btn" type="button" hidden>Создать копию с другим запросом</button>
                         <button class="tracker-reuse" id="tracker-use-search-btn" type="button" hidden></button>
+                        <p class="section-note" id="tracker-search-filters-note" hidden></p>
                     </div>
                     <div class="tracker-form-grid">
                         <label class="tracker-field">
@@ -1025,7 +1040,7 @@
                         <div class="la-photo-block">
                             <div class="la-photo-block-head">
                                 <span class="la-field-label">Фото</span>
-                                <span class="la-field-help">до 4 шт · ужмём автоматически</span>
+                                <span class="la-field-help" id="la-photo-count" aria-live="polite">0 из 4</span>
                             </div>
                             <div class="la-photo-upload" id="la-photo-upload">
                                 <div class="la-photo-grid" id="la-photo-grid"></div>
@@ -1064,9 +1079,15 @@
                             </label>
                         </div>
 
+                        <p class="la-field-help" id="la-photo-status" role="status" aria-live="polite"></p>
+                        <label class="la-field la-field--checkbox">
+                            <input type="checkbox" id="la-auto-price-checkbox">
+                            <span>Подобрать цену по рынку</span>
+                        </label>
+                        <p class="la-field-help" id="la-auto-price-help" hidden>Указанная выше цена не отправляется. Помощник предложит цену по данным рынка.</p>
                         <label class="la-field la-field--checkbox">
                             <input type="checkbox" id="la-negotiable-checkbox">
-                            <span>Не знаю цену (подбери цену)</span>
+                            <span>Готов торговаться</span>
                         </label>
 
                         <label class="la-field la-field--checkbox">
@@ -1173,7 +1194,7 @@
             <div class="detail-sheet-content privacy-content" id="privacy-content">
                 <section class="privacy-section">
                     <h4>1. Оператор персональных данных</h4>
-                    <p>Оператором персональных данных является разработчик приложения Rafuk. Контакты: через Telegram-бота @rafuk_bot.</p>
+                    <p>Оператором персональных данных является разработчик приложения Rafuk. Для связи используйте чат Telegram-бота, из которого открыто приложение. Экспорт, удаление данных и отзыв согласий доступны в профиле, в разделе «Мои данные и согласия».</p>
                 </section>
                 <section class="privacy-section">
                     <h4>2. Какие данные мы собираем</h4>
@@ -1208,7 +1229,7 @@
                 <section class="privacy-section">
                     <h4>7. Ваши права</h4>
                     <ul>
-                        <li><strong>Доступ</strong> — вы можете экспортировать свои данные</li>
+                        <li><strong>Доступ</strong> — вы можете экспортировать свои данные в профиле, раздел «Мои данные и согласия»</li>
                         <li><strong>Информация о передаче</strong> — вы можете запросить сведения о предоставлении данных третьим лицам</li>
                         <li><strong>Исправление</strong> — вы можете изменить неточные данные в интерфейсе или обратиться к оператору</li>
                         <li><strong>Удаление</strong> — вы можете удалить аккаунт и серверные данные</li>

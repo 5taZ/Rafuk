@@ -230,6 +230,13 @@ function domFragment() {
 let __scrollLockCount = 0;
 let __scrollLockY = 0;
 
+function scrollPageToTop() {
+    // UX-P2-11: a closing modal must restore the new view's position.
+    __scrollLockY = 0;
+    if (__scrollLockCount) document.body.style.top = "0px";
+    else window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+}
+
 function lockBodyScroll() {
     if (__scrollLockCount === 0) {
         __scrollLockY = window.scrollY || window.pageYOffset || 0;

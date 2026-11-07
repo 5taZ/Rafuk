@@ -635,6 +635,7 @@ function createApiListings(context) {
         }
 
         abortDetailRequest();
+        state.detail.openId = (state.detail.openId || 0) + 1;
         _detailItem = item;
         const entry = _loadDetail(item, params);
         const controller = entry.complete ? new AbortController() : entry.controller;
@@ -715,6 +716,27 @@ function createApiListings(context) {
     }
 
     // ── Search orchestration ─────────────────────────────────────────────
+    async function retryDetailDescription() {
+        const detail = state.detail.data;
+        if (!detail || state.detail.descriptionLoading) return;
+        const session = state.detail.openId;
+        state.detail.descriptionLoading = true;
+        state.detail.descriptionError = false;
+        renderDetailModal();
+        try {
+            const payload = await getJson(`/api/v1/listing-description?ad_id=${encodeURIComponent(detail.ad_id)}`, { retry: false });
+            if (!state.detail.data || session !== state.detail.openId) return;
+            state.detail.data.description = payload.description;
+        } catch (_) {
+            if (session === state.detail.openId) state.detail.descriptionError = true;
+        } finally {
+            if (state.detail.data && session === state.detail.openId) {
+                state.detail.descriptionLoading = false;
+                renderDetailModal();
+            }
+        }
+    }
+
     /**
      * Run a search and (re)load all dependent panels.
      *
@@ -844,6 +866,7 @@ function createApiListings(context) {
         loadListings,
         loadMoreListings,
         openListingDetail,
+        retryDetailDescription,
         preloadListingDetail,
         loadSearchDependencies,
         clearSearchData,
