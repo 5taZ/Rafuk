@@ -1172,6 +1172,10 @@ body.modal-open {
     border-top: 1px solid var(--border);
 }
 
+.expense-form-wrap .contact-form-actions {
+    margin-top: var(--space-4);
+}
+
 .expense-total {
     display: flex;
     align-items: center;
