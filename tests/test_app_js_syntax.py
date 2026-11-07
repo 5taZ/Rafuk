@@ -5419,3 +5419,74 @@ const cards = createRenderCards({
 })()
 ''' + _NODE_FAIL
     _node_ok(harness)
+
+
+def test_reminder_form_keeps_local_time_drafts_and_pending_session() -> None:
+    """UX-REM-01: separate date/time controls preserve scheduling and drafts."""
+    harness = _FAKE_DOM_JS + _js('dom_helpers.js', 'api_events_expenses.js') + r'''
+const assert = require('node:assert/strict');
+function input(value) {
+    const node = el('input'); node.value = value; node.validity = {valid: true}; return node;
+}
+const elements = {
+    reminderDateInput: input(''), reminderTimeInput: input('18:35'),
+    reminderMessageInput: el('textarea'), reminderFormError: el('p', {hidden: true}),
+    reminderSubmitStatus: el('p', {hidden: true}), saveReminderButton: el('button'),
+    remindersClose: el('button'), remindersOverlay: el('div'),
+};
+elements.reminderFields = el('fieldset', {}, elements.reminderDateInput,
+    elements.reminderTimeInput, elements.reminderMessageInput);
+elements.reminderForm = el('form', {}, elements.reminderFields, elements.saveReminderButton,
+    elements.reminderFormError, elements.reminderSubmitStatus);
+const chip = el('button', {'data-reminder-offset': '3d'});
+elements.remindersModal = el('div', {}, elements.reminderForm, chip,
+    elements.remindersClose, elements.remindersOverlay);
+document.body.appendChild(elements.remindersModal);
+const state = {reminders: {leadId: 7, sessionId: 1}};
+const requests = [];
+let closed = 0;
+_bindReminderEvents({
+    state, elements, closeRemindersModal: () => { closed++; },
+    createReminder: (id, payload) => new Promise(resolve => requests.push({id, payload, resolve})),
+});
+const submit = () => elements.reminderForm.dispatchEvent(new FakeEvent('submit'));
+(async () => {
+    submit();
+    assert.equal(requests.length, 0);
+    assert.equal(elements.reminderFormError.hidden, false);
+    assert.equal(document.activeElement, elements.reminderDateInput);
+    chip.click();
+    assert.equal(chip.getAttribute('aria-pressed'), 'true');
+    assert.equal(elements.reminderTimeInput.value, '18:35', 'quick dates preserve chosen time');
+    elements.reminderMessageInput.value = 'Написать продавцу';
+    submit(); submit();
+    assert.equal(requests.length, 1, 'double submission is blocked');
+    assert.equal(requests[0].id, 7);
+    assert.equal(requests[0].payload.remind_at,
+        new Date(`${elements.reminderDateInput.value}T18:35`).toISOString());
+    assert.equal(requests[0].payload.message, 'Написать продавцу');
+    assert.equal(elements.reminderFields.disabled, true);
+    requests[0].resolve(false);
+    await tick(2);
+    assert.equal(elements.reminderMessageInput.value, 'Написать продавцу');
+    assert.equal(elements.saveReminderButton.disabled, false);
+    submit();
+    requests[1].resolve({id: 10});
+    await tick(2);
+    assert.equal(elements.reminderMessageInput.value, '');
+    assert.equal(elements.reminderSubmitStatus.hidden, false);
+    elements.reminderMessageInput.value = 'Первая покупка';
+    submit();
+    state.reminders.leadId = 8;
+    state.reminders.sessionId++;
+    elements.reminderMessageInput.value = 'Черновик другой покупки';
+    requests[2].resolve({id: 11});
+    await tick(2);
+    assert.equal(elements.reminderMessageInput.value, 'Черновик другой покупки');
+    assert.equal(elements.reminderSubmitStatus.hidden, true);
+    elements.remindersClose.click();
+    elements.remindersOverlay.click();
+    assert.equal(closed, 2);
+})()
+''' + _NODE_FAIL
+    _node_ok(harness)

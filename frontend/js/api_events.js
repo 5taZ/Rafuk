@@ -937,6 +937,8 @@ function createApiEvents(context) {
             if (event.key !== "Escape") return;
             if (!elements.aiModal?.hidden) {
                 closeAIModal();
+            } else if (elements.remindersModal && !elements.remindersModal.hidden) {
+                context.closeRemindersModal();
             } else if (!elements.expensesModal?.hidden) {
                 closeExpensesModal();
             } else if (state.detail.data) {
@@ -968,6 +970,7 @@ function createApiEvents(context) {
             showToast,
             createExpense,
             createReminder: context.createReminder,
+            closeRemindersModal: context.closeRemindersModal,
             logClientError,
         });
     }

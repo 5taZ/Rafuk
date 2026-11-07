@@ -805,10 +805,7 @@ function createRenderCardBuilders(context) {
         }, { signal });
         if (mode === "lead") {
             card.querySelector('[data-role="expenses"]')?.addEventListener("click", () => actions.openExpensesModal(item.id, item.title), { signal });
-            card.querySelector('[data-role="reminders"]')?.addEventListener("click", async () => {
-                await actions.openLeadDetail(item);
-                if (String(state.detail.data?.ad_id) === String(item.ad_id)) document.getElementById("detail-reminder-block")?.scrollIntoView({ block: "start" });
-            }, { signal });
+            card.querySelector('[data-role="reminders"]')?.addEventListener("click", () => actions.openRemindersModal(item.id, item.title), { signal });
             card.querySelector('[data-role="confirm"]')?.addEventListener("click", () => {
                 void actions.confirmLead(item, card);
             }, { signal });

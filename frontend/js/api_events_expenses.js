@@ -43,35 +43,82 @@ function _bindExpenseEvents(ctx) {
         ctx.closeExpensesModal();
     });
 
-    const dateInput = document.getElementById("reminder-datetime-input");
-    const messageInput = document.getElementById("reminder-message-input");
-    const reminderButton = document.getElementById("save-reminder-btn");
-    for (const button of document.querySelectorAll("[data-reminder-offset]")) {
-        button.addEventListener("click", () => {
+    _bindReminderEvents(ctx);
+}
+
+function _bindReminderEvents(ctx) {
+    const { elements, state } = ctx;
+    const modal = elements.remindersModal;
+    if (!modal) return;
+    const dateInput = elements.reminderDateInput;
+    const timeInput = elements.reminderTimeInput;
+    const messageInput = elements.reminderMessageInput;
+    const button = elements.saveReminderButton;
+    const error = elements.reminderFormError;
+    const feedback = elements.reminderSubmitStatus;
+    const chips = modal.querySelectorAll("[data-reminder-offset]");
+    elements.remindersClose?.addEventListener("click", () => ctx.closeRemindersModal());
+    elements.remindersOverlay?.addEventListener("click", () => ctx.closeRemindersModal());
+    function clearFeedback() {
+        error.hidden = true;
+        feedback.hidden = true;
+        dateInput.removeAttribute("aria-invalid");
+        timeInput.removeAttribute("aria-invalid");
+    }
+    function syncChips() {
+        for (const chip of chips) {
             const date = new Date();
-            date.setDate(date.getDate() + Number.parseInt(button.dataset.reminderOffset, 10));
-            date.setMinutes(0, 0, 0);
+            date.setDate(date.getDate() + Number.parseInt(chip.dataset.reminderOffset, 10));
             const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-            dateInput.value = local.toISOString().slice(0, 16);
-            dateInput.removeAttribute("aria-invalid");
+            chip.setAttribute("aria-pressed", String(dateInput.value === local.toISOString().slice(0, 10)));
+        }
+    }
+    elements.reminderForm.addEventListener("input", clearFeedback);
+    dateInput.addEventListener("change", syncChips);
+    for (const chip of chips) {
+        chip.addEventListener("click", () => {
+            clearFeedback();
+            const date = new Date();
+            date.setDate(date.getDate() + Number.parseInt(chip.dataset.reminderOffset, 10));
+            const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+            dateInput.value = local.toISOString().slice(0, 10);
+            if (!timeInput.value) timeInput.value = "10:00";
+            syncChips();
         });
     }
-    reminderButton?.addEventListener("click", async () => {
-        const leadId = ctx.state.reminders.leadId;
-        if (!leadId || reminderButton.disabled) return;
-        const date = new Date(dateInput.value);
-        if (!dateInput.value || !Number.isFinite(date.getTime()) || date <= new Date() || date.getTime() > Date.now() + 366 * 86400000) {
-            dateInput.setAttribute("aria-invalid", "true");
-            dateInput.focus();
-            ctx.showToast("Выберите будущее время в пределах года", "error");
+    elements.reminderForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const leadId = state.reminders.leadId;
+        const sessionId = state.reminders.sessionId;
+        if (!leadId || button.disabled) return;
+        clearFeedback();
+        const invalid = [dateInput, timeInput].find(input => !input.value || !input.validity.valid);
+        const date = new Date(`${dateInput.value}T${timeInput.value}`);
+        if (invalid || !Number.isFinite(date.getTime()) || date <= new Date() || date.getTime() > Date.now() + 366 * 86400000) {
+            const target = invalid || timeInput;
+            error.textContent = invalid ? "Укажите дату и время напоминания." : "Выберите будущее время в пределах года.";
+            error.hidden = false;
+            target.setAttribute("aria-invalid", "true");
+            target.focus();
             return;
         }
-        dateInput.removeAttribute("aria-invalid");
-        reminderButton.disabled = true;
-        reminderButton.textContent = "Сохраняем…";
+        elements.reminderFields.disabled = true;
+        button.disabled = true;
+        button.textContent = "Добавляем…";
         try {
             const saved = await ctx.createReminder(leadId, { remind_at: date.toISOString(), message: messageInput.value.trim() || null });
-            if (saved && ctx.state.reminders.leadId === leadId) { dateInput.value = ""; messageInput.value = ""; }
-        } finally { reminderButton.disabled = false; reminderButton.textContent = "Добавить"; }
+            if (saved && state.reminders.leadId === leadId && state.reminders.sessionId === sessionId) {
+                messageInput.value = "";
+                feedback.textContent = "Напоминание добавлено.";
+                feedback.hidden = false;
+                const card = modal.querySelector(`[data-reminder-id="${saved.id}"]`);
+                card?.focus({ preventScroll: true });
+                card?.scrollIntoView({ block: "nearest", behavior: _prefersReducedMotion() ? "auto" : "smooth" });
+            }
+        } finally {
+            elements.reminderFields.disabled = false;
+            button.disabled = false;
+            button.textContent = "Добавить напоминание";
+        }
     });
 }

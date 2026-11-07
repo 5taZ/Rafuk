@@ -98,6 +98,7 @@ function analyticsApp() {
             if (isOpen(document.getElementById("la-result-overlay"))) return () => click("#la-result-back");
             if (isOpen(document.getElementById("la-modal"))) return () => click("#la-modal-close");
             if (isOpen(core.elements.aiModal)) return () => actions.closeAIModal?.();
+            if (isOpen(core.elements.remindersModal)) return () => renderers.closeRemindersModal?.();
             if (isOpen(core.elements.expensesModal)) return () => renderers.closeExpensesModal?.();
             if (isOpen(core.elements.detailModal)) return () => renderers.closeDetailModal?.();
             if (isOpen(core.elements.editTrackerModal)) return () => actions.closeEditTracker?.();

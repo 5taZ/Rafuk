@@ -52,17 +52,17 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#0a0a0b">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261107-p2-wave2">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261107-p2-wave2">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261107-reminders-design">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261107-reminders-design">
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
          depending on the user's network RTT. -->
     <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
     <link rel="dns-prefetch" href="https://rms.kufar.by">
-    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261107-p2-wave2" crossorigin>
-    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261107-p2-wave2" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
-    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261107-p2-wave2" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261107-reminders-design" crossorigin>
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261107-reminders-design" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261107-reminders-design" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
     <!-- FE-M1: Preload the bundled stylesheet so the browser starts
          fetching it during HTML parse, in parallel with the font
          CSS request above. The subsequent ``<link rel="stylesheet">``
@@ -77,8 +77,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20261107-p2-wave2" crossorigin>
-    <link rel="stylesheet" href="css/style.css?v=20261107-p2-wave2" integrity="sha384-E5ZA8BuCEqtkfvPTi+V/a+rrHsuP4fgBULa7dDJnjS4i7G5g5fY0IoggheuvrwNm" crossorigin>
+    <link rel="preload" as="style" href="css/style.css?v=20261107-reminders-design" crossorigin>
+    <link rel="stylesheet" href="css/style.css?v=20261107-reminders-design" integrity="sha384-BNOgky8qJdOxhFDkw9TW8aFbAv9WaiKWG6yji1ZDLWCphKXuBSt953KFyKkOlp/R" crossorigin>
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -95,14 +95,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20261107-p2-wave2"
+            src="vendor/telegram-web-app.js?v=20261107-reminders-design"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
          on first paint of price history. Price distribution uses HTML.
          Keeps the initial bundle smaller for users who only
          use the watchlist or trackers without leaking IP to a CDN. -->
-    <script defer src="js/app_bundle.js?v=20261107-p2-wave2"></script>
+    <script defer src="js/app_bundle.js?v=20261107-reminders-design"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -125,7 +125,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20261107-p2-wave2" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20261107-reminders-design" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">
@@ -657,7 +657,7 @@
                 </button>
             </div>
             <div class="reminder-upcoming" id="reminder-upcoming" hidden>
-                <span class="reminder-upcoming-label">📅 Ближайшие напоминания</span>
+                <span class="reminder-upcoming-label">Ближайшие напоминания</span>
                 <div class="reminder-upcoming-list" id="reminder-upcoming-list"></div>
             </div>
             <div class="items-clear-header" id="items-clear-header" hidden>
@@ -777,37 +777,6 @@
                     <h4 class="detail-block-title">AI Анализ</h4>
                     <div id="detail-ai-content"></div>
                 </section>
-                <section class="detail-block reminder-section" id="detail-reminder-block" hidden>
-                    <h4 class="detail-block-title">🔔 Напоминание</h4>
-                    <div class="reminder-form" id="reminder-form">
-                        <div class="reminder-form-row">
-                            <label class="workflow-field">
-                                <span class="workflow-field-label">Дата и время</span>
-                                <div class="deal-range-input-wrap workflow-input-wrap">
-                                    <input id="reminder-datetime-input" type="datetime-local">
-                                </div>
-                            </label>
-                        </div>
-                        <div class="reminder-chips" id="reminder-chips">
-                            <button class="reminder-chip" type="button" data-reminder-offset="1d">Завтра</button>
-                            <button class="reminder-chip" type="button" data-reminder-offset="3d">Через 3 дня</button>
-                            <button class="reminder-chip" type="button" data-reminder-offset="7d">Через неделю</button>
-                        </div>
-                        <div class="reminder-form-row">
-                            <label class="workflow-field workflow-field-wide">
-                                <span class="workflow-field-label">Сообщение</span>
-                                <div class="deal-range-input-wrap workflow-input-wrap">
-                                    <input id="reminder-message-input" type="text" placeholder="Проверить сделку" maxlength="255">
-                                </div>
-                            </label>
-                        </div>
-                        <div class="contact-form-actions">
-                            <button class="primary-btn small" id="save-reminder-btn" type="button">Добавить</button>
-                        </div>
-                        <p id="reminder-form-error" class="form-error" role="alert" hidden></p>
-                    </div>
-                    <div class="reminder-list" id="reminder-list"></div>
-                </section>
             </div>
             <div class="listing-actions detail-bottom-actions">
                 <button class="listing-btn" id="detail-add-lead-btn" type="button">В покупки</button>
@@ -816,6 +785,57 @@
                 <a class="listing-btn listing-btn--accent" id="detail-link" href="#" target="_blank" rel="noreferrer noopener">Kufar ↗</a>
                 <button class="listing-btn" id="detail-expenses-btn" type="button" hidden>Расходы</button>
                 <button class="listing-btn" id="detail-reminders-btn" type="button" hidden>Напоминания</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="detail-modal" id="reminders-modal" hidden>
+        <div class="detail-overlay" id="reminders-overlay"></div>
+        <div class="detail-sheet reminders-sheet" role="dialog" aria-modal="true" aria-labelledby="reminders-title" aria-describedby="reminders-subtitle">
+            <header class="reminders-header">
+                <div class="reminders-heading">
+                    <h3 id="reminders-title">Напоминания</h3>
+                    <p id="reminders-subtitle"></p>
+                </div>
+                <button class="detail-close" id="reminders-close" type="button" aria-label="Закрыть напоминания">×</button>
+            </header>
+            <div class="detail-sheet-content reminders-body">
+                <p class="reminders-intro">Уведомление придёт в чат бота. Выберите удобное время и добавьте, о чём напомнить.</p>
+                <form class="reminder-compose" id="reminder-form" novalidate>
+                    <fieldset class="reminder-fields" id="reminder-fields">
+                        <legend class="sr-only">Новое напоминание</legend>
+                        <div class="reminder-schedule">
+                            <label class="reminder-field" for="reminder-date-input">
+                                <span>Дата</span>
+                                <input id="reminder-date-input" type="date" required aria-describedby="reminder-timezone reminder-form-error">
+                            </label>
+                            <label class="reminder-field" for="reminder-time-input">
+                                <span>Время</span>
+                                <input id="reminder-time-input" type="time" required step="60" aria-describedby="reminder-timezone reminder-form-error">
+                            </label>
+                        </div>
+                        <p class="reminder-timezone" id="reminder-timezone"></p>
+                        <div class="reminder-chips" id="reminder-chips" role="group" aria-label="Быстрый выбор даты">
+                            <button class="reminder-chip" type="button" data-reminder-offset="1d" aria-pressed="false">Завтра</button>
+                            <button class="reminder-chip" type="button" data-reminder-offset="3d" aria-pressed="false">Через 3 дня</button>
+                            <button class="reminder-chip" type="button" data-reminder-offset="7d" aria-pressed="false">Через неделю</button>
+                        </div>
+                        <label class="reminder-field" for="reminder-message-input">
+                            <span>О чём напомнить <small>необязательно</small></span>
+                            <textarea id="reminder-message-input" rows="2" placeholder="Например, написать продавцу или проверить цену" maxlength="255"></textarea>
+                        </label>
+                    </fieldset>
+                    <p id="reminder-form-error" class="reminder-feedback reminder-feedback--error" role="alert" hidden></p>
+                    <button class="primary-btn reminder-submit" id="save-reminder-btn" type="submit">Добавить напоминание</button>
+                    <p id="reminder-submit-status" class="reminder-feedback" role="status" hidden></p>
+                </form>
+                <section class="reminder-saved" aria-labelledby="reminder-list-title">
+                    <div class="reminder-list-heading">
+                        <h4 id="reminder-list-title">Напоминания по сделке</h4>
+                        <span id="reminder-count" class="reminder-count" aria-label="Количество напоминаний">0</span>
+                    </div>
+                    <div class="reminder-list" id="reminder-list" aria-live="polite"></div>
+                </section>
             </div>
         </div>
     </div>

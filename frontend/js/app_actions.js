@@ -55,6 +55,9 @@ function createAppActions(baseContext) {
         renderExpensesModal,
         openExpensesModal,
         closeExpensesModal,
+        renderReminders,
+        openRemindersModal,
+        closeRemindersModal,
         renderProfitDashboard,
         renderDealsHeroStats,
     } = context;
@@ -270,7 +273,7 @@ function createAppActions(baseContext) {
         updateStatusLimits: adminApi.updateStatusLimits,
         loadAdminAudit: adminApi.loadAdminAudit,
         loadExpenses, createExpense, deleteExpense,
-        loadReminders, createReminder,
+        loadReminders, createReminder, deleteReminder, closeRemindersModal,
         loadConsentSettings, revokeConsent, exportAccountData, deleteAccount,
     });
     let _aiModule = null;
@@ -290,10 +293,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261107-p2-wave2"),
-                context._loadScript("js/api_ai_render.js?v=20261107-p2-wave2"),
-                context._loadScript("js/api_ai.js?v=20261107-p2-wave2"),
-                context._loadScript("js/api_listing_assistant.js?v=20261107-p2-wave2"),
+                context._loadScript("js/api_ai_modal.js?v=20261107-reminders-design"),
+                context._loadScript("js/api_ai_render.js?v=20261107-reminders-design"),
+                context._loadScript("js/api_ai.js?v=20261107-reminders-design"),
+                context._loadScript("js/api_listing_assistant.js?v=20261107-reminders-design"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -656,42 +659,6 @@ function createAppActions(baseContext) {
         }
     }
 
-    function renderReminders() {
-        const list = document.getElementById("reminder-list");
-        if (!list) return;
-        const data = state.reminders;
-        domClear(list);
-        const note = domEl("p", { className: "section-note", attrs: { role: "status" } });
-        list.appendChild(note);
-        if (data.loading) { note.textContent = "Загружаем напоминания…"; return; }
-        if (data.error) {
-            note.textContent = data.error;
-            const retry = domEl("button", { type: "button", className: "ghost-btn small", text: "Повторить" });
-            retry.onclick = () => { void loadReminders(data.leadId); };
-            list.appendChild(retry);
-            return;
-        }
-        note.textContent = data.items.length ? "Время указано в часовом поясе вашего устройства. Уведомление придёт в чат бота." : "Напоминаний пока нет. Время — по часовому поясу устройства.";
-        for (const item of data.items) {
-            const row = domEl("div", { className: "expense-row" });
-            const status = { pending: "Ожидает отправки", sent: "Отправлено", failed: "Не доставлено", cancelled: "Отменено" }[item.status] || "Ожидает отправки";
-            row.appendChild(domEl("span", { text: `${new Date(item.remind_at).toLocaleString("ru-RU")} · ${item.message || "Проверить сделку"} · ${status}` }));
-            const remove = domEl("button", { type: "button", className: "ghost-btn small", text: item.status === "pending" ? "Отменить" : "Удалить" });
-            remove.onclick = async () => {
-                const leadId = data.leadId;
-                if (!await context.confirmAction({ title: "Удалить напоминание?", message: item.message || "Проверить сделку", confirmLabel: "Удалить", destructive: true })) return;
-                remove.disabled = true;
-                try {
-                    await core.deleteJson(`/api/v1/leads/${leadId}/reminders/${item.id}`);
-                    if (data.leadId === leadId) await loadReminders(leadId);
-                } catch (error) { showToast(error.message || "Не удалось удалить напоминание", "error"); }
-                finally { remove.disabled = false; }
-            };
-            row.appendChild(remove);
-            list.appendChild(row);
-        }
-    }
-
     async function loadReminders(leadId) {
         const data = state.reminders;
         const requestId = ++data.requestId;
@@ -710,20 +677,34 @@ function createAppActions(baseContext) {
     }
 
     async function createReminder(leadId, payload) {
+        const sessionId = state.reminders.sessionId;
         const errorEl = document.getElementById("reminder-form-error");
         if (errorEl) errorEl.hidden = true;
         try {
-            await core.postJson(`/api/v1/leads/${leadId}/reminders`, payload);
-            showToast("Напоминание добавлено", "success");
-            if (state.reminders.leadId === leadId) await loadReminders(leadId);
-            return true;
+            const created = await core.postJson(`/api/v1/leads/${leadId}/reminders`, payload);
+            if (state.reminders.leadId === leadId && state.reminders.sessionId === sessionId) await loadReminders(leadId);
+            return created;
         } catch (error) {
-            if (errorEl && state.reminders.leadId === leadId) {
+            if (errorEl && state.reminders.leadId === leadId && state.reminders.sessionId === sessionId) {
                 errorEl.textContent = error.message || "Не удалось добавить напоминание. Повторите попытку.";
                 errorEl.hidden = false;
             }
             return false;
         }
+    }
+
+    async function deleteReminder(leadId, item) {
+        const pending = item.status === "pending";
+        if (!await context.confirmAction({
+            title: pending ? "Отменить напоминание?" : "Удалить напоминание?",
+            message: item.message || "Проверить сделку",
+            confirmLabel: pending ? "Да, отменить" : "Удалить",
+            destructive: true,
+        })) return;
+        try {
+            await core.deleteJson(`/api/v1/leads/${leadId}/reminders/${item.id}`);
+            if (state.reminders.leadId === leadId) await loadReminders(leadId);
+        } catch (error) { showToast(error.message || "Не удалось удалить напоминание", "error"); }
     }
 
     // ── Leads export ─────────────────────────────────────────────────────
@@ -1317,8 +1298,11 @@ function createAppActions(baseContext) {
         createExpense,
         deleteExpense,
         openExpensesModal,
+        openRemindersModal,
+        closeRemindersModal,
         loadReminders,
         createReminder,
+        deleteReminder,
         exportLeads,
         exportLeadsCSV,
         exportLeadsXLSX,

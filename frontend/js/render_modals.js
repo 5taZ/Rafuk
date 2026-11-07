@@ -1,5 +1,5 @@
 /**
- * render_modals.js — Detail modal, expenses modal, edit tracker modal.
+ * render_modals.js — Listing detail, expenses and reminders.
  */
 
 function createRenderModals(context) {
@@ -308,16 +308,8 @@ function createRenderModals(context) {
         }
         const expenseButton = elements.detailExpensesButton;
         if (expenseButton) expenseButton.onclick = () => openExpensesModal(lead.id, lead.title);
-        const reminderBlock = elements.detailReminderBlock;
-        if (reminderBlock) reminderBlock.hidden = !lead;
-        if (lead && reminderBlock && state.reminders.leadId !== lead.id) {
-            document.getElementById("reminder-datetime-input").value = "";
-            document.getElementById("reminder-message-input").value = "";
-            document.getElementById("reminder-form-error").hidden = true;
-            void actions.loadReminders(lead.id);
-        }
         const reminderButton = elements.detailRemindersButton;
-        if (reminderButton) reminderButton.onclick = () => reminderBlock.scrollIntoView({ block: "start", behavior: "smooth" });
+        if (reminderButton) reminderButton.onclick = () => openRemindersModal(lead.id, lead.title);
         const detailTitleText = detail.title || "товар";
         const leadText = collectionState.inLeads ? "В покупках" : "В покупки";
         const watchText = collectionState.inWatchlist ? "В избранном" : "В избранное";
@@ -375,7 +367,6 @@ function createRenderModals(context) {
 
     function closeDetailModal() {
         _renderedDetailId = null;
-        if (state.reminders) state.reminders.leadId = null;
         _detailImageLoadId++;
         // FE-C4: drop the in-flight detail/AI fetch (if any) before
         // we tear the modal down. Otherwise a slow /listing-detail
@@ -547,12 +538,125 @@ function createRenderModals(context) {
         if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";
     }
 
+    function renderReminders() {
+        return safeRender("renderReminders", () => {
+            const list = elements.reminderList;
+            if (!list) return;
+            const data = state.reminders;
+            domClear(list);
+            if (elements.reminderCount) {
+                elements.reminderCount.textContent = data.loading ? "…" : String(data.items.length);
+                elements.reminderCount.hidden = Boolean(data.error);
+            }
+            if (data.loading || data.error || !data.items.length) {
+                const status = document.createElement("div");
+                status.className = "reminder-list-state";
+                const title = document.createElement("strong");
+                title.textContent = data.loading ? "Загружаем напоминания…" : data.error ? "Не удалось загрузить список" : "Напоминаний пока нет";
+                status.appendChild(title);
+                if (!data.loading) {
+                    const note = document.createElement("p");
+                    note.textContent = data.error || "Добавьте первое — оно появится здесь.";
+                    status.appendChild(note);
+                }
+                if (data.error) {
+                    const retry = document.createElement("button");
+                    retry.className = "ghost-btn";
+                    retry.type = "button";
+                    retry.textContent = "Повторить загрузку";
+                    retry.onclick = () => { void actions.loadReminders(data.leadId); };
+                    status.appendChild(retry);
+                }
+                list.appendChild(status);
+                return;
+            }
+            const leadId = data.leadId;
+            for (const item of data.items) {
+                const date = new Date(item.remind_at);
+                const card = document.createElement("article");
+                card.className = "reminder-card";
+                card.dataset.reminderId = item.id;
+                card.tabIndex = -1;
+                const header = document.createElement("div");
+                header.className = "reminder-card-header";
+                for (const [className, text] of [
+                    ["reminder-card-date", date.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric" })],
+                    ["reminder-card-time", date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })],
+                ]) {
+                    const time = document.createElement("time");
+                    time.className = className;
+                    time.dateTime = item.remind_at;
+                    time.textContent = text;
+                    header.appendChild(time);
+                }
+                const message = document.createElement("p");
+                message.className = "reminder-card-message";
+                message.textContent = item.message || "Проверить сделку";
+                const footer = document.createElement("div");
+                footer.className = "reminder-card-footer";
+                const status = document.createElement("span");
+                const key = ["pending", "sent", "failed", "cancelled"].includes(item.status) ? item.status : "pending";
+                status.className = `reminder-status reminder-status--${key}`;
+                status.textContent = { pending: "Запланировано", sent: "Отправлено", failed: "Не доставлено", cancelled: "Отменено" }[key];
+                const remove = document.createElement("button");
+                remove.className = "reminder-cancel";
+                remove.type = "button";
+                remove.textContent = key === "pending" ? "Отменить" : "Удалить";
+                remove.setAttribute("aria-label", `${remove.textContent} напоминание: ${item.message || "Проверить сделку"}`);
+                remove.onclick = async () => {
+                    remove.disabled = true;
+                    try { await actions.deleteReminder(leadId, item); }
+                    finally { remove.disabled = false; }
+                };
+                footer.append(status, remove);
+                card.append(header, message, footer);
+                list.appendChild(card);
+            }
+        });
+    }
+
+    function openRemindersModal(leadId, leadTitle) {
+        if (!elements.remindersModal) return;
+        state.reminders.sessionId++;
+        elements.remindersSubtitle.textContent = leadTitle || "Сделка";
+        const date = new Date();
+        date.setDate(date.getDate() + 1);
+        const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+        elements.reminderDateInput.value = local.toISOString().slice(0, 10);
+        elements.reminderTimeInput.value = "10:00";
+        elements.reminderDateInput.removeAttribute("aria-invalid");
+        elements.reminderTimeInput.removeAttribute("aria-invalid");
+        elements.reminderMessageInput.value = "";
+        elements.reminderFormError.hidden = true;
+        elements.reminderSubmitStatus.hidden = true;
+        for (const chip of elements.remindersModal.querySelectorAll("[data-reminder-offset]")) {
+            chip.setAttribute("aria-pressed", String(chip.dataset.reminderOffset === "1d"));
+        }
+        const zone = new Intl.DateTimeFormat("ru-RU", { timeZoneName: "short" }).formatToParts(date).find(part => part.type === "timeZoneName")?.value;
+        const timezone = document.getElementById("reminder-timezone");
+        if (timezone) timezone.textContent = `Время вашего устройства${zone ? ` · ${zone}` : ""}`;
+        openModalAnimated(elements.remindersModal);
+        elements.remindersModal.querySelector(".detail-sheet-content").scrollTop = 0;
+        void actions.loadReminders(leadId);
+    }
+
+    function closeRemindersModal() {
+        if (!elements.remindersModal || elements.remindersModal.hidden) return;
+        state.reminders.leadId = null;
+        state.reminders.sessionId++;
+        state.reminders.requestId++;
+        closeModalAnimated(elements.remindersModal);
+    }
+
     return {
         renderDetailModal,
         closeDetailModal,
         renderExpensesModal,
         openExpensesModal,
         closeExpensesModal,
+        renderReminders,
+        openRemindersModal,
+        closeRemindersModal,
     };
 }
 

@@ -198,6 +198,9 @@ function createAppRenderers(baseContext) {
         renderExpensesModal,
         openExpensesModal,
         closeExpensesModal,
+        renderReminders,
+        openRemindersModal,
+        closeRemindersModal,
     } = modals;
 
     const {
@@ -323,6 +326,9 @@ function createAppRenderers(baseContext) {
         openExpensesModal,
         closeExpensesModal,
         destroyChart,
+        renderReminders,
+        openRemindersModal,
+        closeRemindersModal,
         destroyHistoryChart,
         renderDetailModal,
         closeDetailModal,

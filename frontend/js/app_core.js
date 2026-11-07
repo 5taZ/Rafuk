@@ -315,7 +315,7 @@ function createAppCore() {
             error: "",
             currentLeadId: null,
         },
-        reminders: { leadId: null, items: [], loading: false, error: "", requestId: 0 },
+        reminders: { leadId: null, items: [], loading: false, error: "", requestId: 0, sessionId: 0 },
         analytics: {
             dashboard: null,
             loading: false,

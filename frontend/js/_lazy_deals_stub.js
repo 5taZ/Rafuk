@@ -18,9 +18,9 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261107-p2-wave2";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261107-p2-wave2";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261107-p2-wave2";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261107-reminders-design";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261107-reminders-design";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261107-reminders-design";
 
 function _lazyLoadDealsSources(context) {
     if (_loadPromises.has("deals")) return _loadPromises.get("deals");
@@ -154,6 +154,9 @@ function createRenderModals(context) {
         renderExpensesModal: (...args) => _delegate("renderExpensesModal", args),
         openExpensesModal: (...args) => _delegate("openExpensesModal", args),
         closeExpensesModal: (...args) => _lazyTeardownCall(lazy, "closeExpensesModal", args),
+        renderReminders: (...args) => _delegate("renderReminders", args),
+        openRemindersModal: (...args) => _delegate("openRemindersModal", args),
+        closeRemindersModal: (...args) => _lazyTeardownCall(lazy, "closeRemindersModal", args),
         _ensureLoaded: lazy.ensure,
     };
 }
